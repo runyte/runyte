@@ -178,8 +178,15 @@ pub struct OverlayRow {
     /// the reader separates the rows that are doing something from the ones
     /// that are merely known.
     pub dimmed: bool,
+    /// Character positions that carry the row's secondary, muted emphasis,
+    /// such as the category prefix of a command-palette entry. This is
+    /// distinct from `dimmed`: these characters stay muted even while the
+    /// row is selected, while a dimmed row as a whole becomes legible at its
+    /// selected position.
+    pub muted: Vec<usize>,
     /// Character positions a frontend may emphasize (for fuzzy matches or an
-    /// active signature parameter).
+    /// active signature parameter, or the available command in a categorized
+    /// palette row).
     pub emphasis: Vec<usize>,
 }
 

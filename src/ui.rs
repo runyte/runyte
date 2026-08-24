@@ -26,8 +26,8 @@ use ratatui::{
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::{
-        Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph, StatefulWidget,
-        Wrap,
+        Block, BorderType, Borders, Clear, HighlightSpacing, List, ListItem, ListState, Paragraph,
+        StatefulWidget, Wrap,
     },
 };
 use unicode_segmentation::UnicodeSegmentation;
@@ -204,6 +204,110 @@ pub fn frame_geometry(screen: TuiRect) -> FrameGeometry {
         status: from_tui_rect(global_status_line),
         message: from_tui_rect(interaction_line),
     }
+}
+
+// How every selectable row says it is the selected one, kept together
+// because the two renderers below drifted apart on it once already. Three
+// separable signals: a marker in a reserved gutter, a background that runs
+// the whole row, and the per-character emphasis that the other two never
+// repaint. `context/reference/ui-vocabulary.md` names them.
+
+/// The marker drawn in a selected row's gutter.
+const SELECTION_MARKER: &str = "▸ ";
+
+/// What an unselected row puts in the gutter instead. Every row of a
+/// marker-using list pays for the gutter, selected or not, so a label never
+/// shifts sideways as the selection moves; the two must therefore stay the
+/// same width, which `the_selection_marker_reserves_its_gutter_on_every_row`
+/// checks.
+const SELECTION_GUTTER: &str = "  ";
+
+/// The style that distinguishes the selected row, everywhere one is drawn.
+///
+/// Background only, deliberately. Ratatui paints `highlight_style` over the
+/// finished row with `Buffer::set_style`, which patches rather than replaces,
+/// so a foreground here also repainted the per-character emphasis
+/// underneath: the accent on a row's mnemonic letter, and the fuzzy-match
+/// highlights that say why a candidate matched. The background says *which*
+/// row is selected; emphasis says *what about it*. Neither can overwrite the
+/// other and still be read.
+fn selection_style(theme: &TuiTheme) -> Style {
+    Style::default().bg(theme.selection)
+}
+
+/// The gutter marker, in the accent the overlay borders already use.
+///
+/// Returned styled rather than as a bare string so a Ratatui list draws the
+/// same marker the hand-built snapshot rows do: `highlight_style` carries no
+/// foreground any more, so an unstyled symbol would inherit the list's body
+/// colour and the two renderers would disagree again.
+fn selection_marker(theme: &TuiTheme) -> Line<'static> {
+    Line::from(Span::styled(
+        SELECTION_MARKER,
+        Style::default().fg(theme.accent),
+    ))
+}
+
+/// Trims one row's spans to the width it has, then squares off a selected
+/// row by padding the remainder with its own background.
+///
+/// Snapshot overlay rows share a paragraph with the overlay's message, which
+/// still has to wrap. Fitting each row here keeps that wrap from ever
+/// reaching one, which matters twice over: a wrapped row takes two lines out
+/// of a height budget that is counted in rows, and its selection background
+/// stops wherever the text happens to end instead of squaring off the
+/// column. A Ratatui list truncates its items for the same reason, so this
+/// is also what keeps the two renderers agreeing about a row too long to
+/// show.
+fn fit_row(spans: Vec<Span<'static>>, width: usize, ground: Option<Style>) -> Line<'static> {
+    let mut fitted: Vec<Span<'static>> = Vec::with_capacity(spans.len() + 1);
+    let mut used = 0usize;
+    for span in spans {
+        if used >= width {
+            break;
+        }
+        let span_width = UnicodeWidthStr::width(span.content.as_ref());
+        if used + span_width <= width {
+            used += span_width;
+            fitted.push(span);
+            continue;
+        }
+        let mut content = String::new();
+        for character in span.content.chars() {
+            let cells = character.width().unwrap_or(0);
+            if used + cells > width {
+                break;
+            }
+            used += cells;
+            content.push(character);
+        }
+        if !content.is_empty() {
+            fitted.push(Span::styled(content, span.style));
+        }
+        break;
+    }
+    if let Some(ground) = ground
+        && used < width
+    {
+        fitted.push(Span::styled(" ".repeat(width - used), ground));
+    }
+    Line::from(fitted)
+}
+
+/// Whether an overlay kind draws the selection marker gutter.
+///
+/// Choose-one row lists do. Caret-anchored context overlays do not: they are
+/// narrow by design and sit against the source text they describe, where two
+/// borrowed columns cost more than the marker adds, and the full-width
+/// background already answers which row is selected on its own.
+fn uses_selection_marker(kind: OverlayKind) -> bool {
+    !matches!(
+        kind,
+        OverlayKind::Completion
+            | OverlayKind::Signature
+            | OverlayKind::Hover
+            | OverlayKind::KeyHints
+    )
 }
 
 /// Draws one immutable normal-editor snapshot and any current overlays.
@@ -544,6 +648,11 @@ fn draw_snapshot_overlay(
             .constraints([Constraint::Percentage(100)])
             .split(content)
     };
+    // The marker gutter is charged to every row of a marker-using list, not
+    // just the selected one, so a label never shifts sideways as the
+    // selection moves.
+    let marker = uses_selection_marker(overlay.kind);
+    let row_width = usize::from(columns[0].width);
     let mut lines = Vec::new();
     for (index, row) in overlay
         .rows
@@ -553,11 +662,17 @@ fn draw_snapshot_overlay(
         .take(row_capacity)
     {
         let selected = overlay.selected == Some(index);
-        let mut style = if selected {
-            Style::default().fg(theme.foreground).bg(theme.selection)
+        // The selection contributes a background and nothing else, so the
+        // accent on a mnemonic letter and the emphasis on a fuzzy match both
+        // survive it. A row whose label is one mnemonic character used to be
+        // the whole of the highlight; now the background runs the full width
+        // and the letter keeps its own colour on top of it.
+        let ground = if selected {
+            selection_style(theme)
         } else {
-            Style::default().fg(theme.foreground)
+            Style::default()
         };
+        let mut style = ground.fg(theme.foreground);
         // Dormant first, unavailable second: a row can be both, and being
         // unable to act is the stronger thing to say about it. Dormancy alone
         // spares the selected row, so the reader can always read what they
@@ -579,19 +694,33 @@ fn draw_snapshot_overlay(
             .iter()
             .copied()
             .collect::<std::collections::HashSet<_>>();
-        let mut spans = row
-            .label
-            .chars()
-            .enumerate()
-            .map(|(position, character)| {
-                let mut character_style = style;
-                if emphasized.contains(&position) {
-                    character_style = character_style.fg(theme.accent).bold();
-                }
-                Span::styled(character.to_string(), character_style)
-            })
-            .collect::<Vec<_>>();
-        let mut detail_style = Style::default().fg(if row.dimmed && !selected {
+        let muted = row
+            .muted
+            .iter()
+            .copied()
+            .collect::<std::collections::HashSet<_>>();
+        let mut spans = Vec::new();
+        if marker {
+            spans.push(Span::styled(
+                if selected {
+                    SELECTION_MARKER
+                } else {
+                    SELECTION_GUTTER
+                },
+                ground.fg(theme.accent),
+            ));
+        }
+        spans.extend(row.label.chars().enumerate().map(|(position, character)| {
+            let mut character_style = style;
+            if muted.contains(&position) {
+                character_style = character_style.fg(theme.muted);
+            }
+            if emphasized.contains(&position) {
+                character_style = character_style.fg(theme.accent).bold();
+            }
+            Span::styled(character.to_string(), character_style)
+        }));
+        let mut detail_style = ground.fg(if row.dimmed && !selected {
             theme.jump_text_muted
         } else {
             theme.muted
@@ -600,7 +729,7 @@ fn draw_snapshot_overlay(
             detail_style = detail_style.fg(theme.muted).add_modifier(Modifier::DIM);
         }
         spans.push(Span::styled(detail, detail_style));
-        lines.push(Line::from(spans));
+        lines.push(fit_row(spans, row_width, selected.then_some(ground)));
     }
     if let Some(message) = &overlay.message {
         let style = Style::default().fg(match overlay.purpose {
@@ -759,7 +888,9 @@ fn draw_fs_confirmation(frame: &mut Frame<'_>, app: &TuiApp<'_>, editor_area: Re
                     .fg(app.theme.foreground)
                     .bg(app.theme.overlay_background),
             )
-            .highlight_style(Style::default().bg(app.theme.selection)),
+            .highlight_style(selection_style(&app.theme))
+            .highlight_symbol(selection_marker(&app.theme))
+            .highlight_spacing(HighlightSpacing::Always),
         operations,
         frame.buffer_mut(),
         &mut state,
@@ -1845,13 +1976,9 @@ fn draw_picker(frame: &mut Frame<'_>, app: &TuiApp<'_>, editor_area: Rect) {
             .collect::<Vec<_>>()
     };
     let list = List::new(items)
-        .highlight_style(
-            Style::default()
-                .fg(app.theme.foreground)
-                .bg(app.theme.selection)
-                .bold(),
-        )
-        .highlight_symbol("▸ ");
+        .highlight_style(selection_style(&app.theme))
+        .highlight_symbol(selection_marker(&app.theme))
+        .highlight_spacing(HighlightSpacing::Always);
     let visible_rows = columns[0].height.max(1) as usize;
     let window_start = picker
         .selected
@@ -2004,13 +2131,9 @@ fn draw_resource_finder(
             .collect()
     };
     let list = List::new(items)
-        .highlight_style(
-            Style::default()
-                .fg(app.theme.foreground)
-                .bg(app.theme.selection)
-                .bold(),
-        )
-        .highlight_symbol("▸ ");
+        .highlight_style(selection_style(&app.theme))
+        .highlight_symbol(selection_marker(&app.theme))
+        .highlight_spacing(HighlightSpacing::Always);
     let selected = (!finder.matches.is_empty()).then_some(finder.selected - window_start);
     let mut state = ListState::default().with_selected(selected);
     StatefulWidget::render(list, columns[0], frame.buffer_mut(), &mut state);
@@ -2261,6 +2384,8 @@ fn draw_list(frame: &mut Frame<'_>, app: &TuiApp<'_>, editor_area: Rect) {
         })
         .copied()
         .collect::<Vec<_>>();
+    let selected = (!report && !visible.is_empty())
+        .then_some(picker.selected.min(visible.len().saturating_sub(1)));
     let items = if visible.is_empty() {
         vec![
             ListItem::new(if report {
@@ -2273,17 +2398,21 @@ fn draw_list(frame: &mut Frame<'_>, app: &TuiApp<'_>, editor_area: Rect) {
     } else {
         displayed
             .iter()
-            .filter_map(|index| picker.items.get(*index))
-            .map(|item| {
+            .enumerate()
+            .filter_map(|(position, index)| picker.items.get(*index).map(|item| (position, item)))
+            .map(|(position, item)| {
                 // A dormant row keeps its shape and its place and gives up
                 // only its colours, so the list still reads as one column of
                 // names rather than two kinds of row. The selected row is
-                // exempt: `highlight_style` repaints it anyway, and the
-                // reader has to be able to read what they are about to act
-                // on. `label_color` names the identifier column of the plain
-                // layout; `text_color` is everything else, which is the
-                // detail there and the whole label in the preview layout.
-                let (label_color, text_color) = if item.is_dimmed() {
+                // exempt, because the reader has to be able to read what they
+                // are about to act on. That exemption is spelled out here:
+                // `selection_style` contributes a background and no
+                // foreground, so it no longer repaints a dormant row back to
+                // legibility on its own. `label_color` names the identifier
+                // column of the plain layout; `text_color` is everything
+                // else, which is the detail there and the whole label in the
+                // preview layout.
+                let (label_color, text_color) = if item.is_dimmed() && selected != Some(position) {
                     (app.theme.jump_text_muted, app.theme.jump_text_muted)
                 } else {
                     (app.theme.accent, app.theme.foreground)
@@ -2320,15 +2449,9 @@ fn draw_list(frame: &mut Frame<'_>, app: &TuiApp<'_>, editor_area: Rect) {
             .collect()
     };
     let list = List::new(items)
-        .highlight_style(
-            Style::default()
-                .fg(app.theme.foreground)
-                .bg(app.theme.selection)
-                .bold(),
-        )
-        .highlight_symbol("▸ ");
-    let selected = (!report && !visible.is_empty())
-        .then_some(picker.selected.min(visible.len().saturating_sub(1)));
+        .highlight_style(selection_style(&app.theme))
+        .highlight_symbol(selection_marker(&app.theme))
+        .highlight_spacing(HighlightSpacing::Always);
     let mut state = ListState::default().with_selected(selected);
     frame.render_widget(Clear, area);
     frame.render_widget(block, area);
@@ -2396,13 +2519,9 @@ fn draw_buffer_actions(frame: &mut Frame<'_>, app: &TuiApp<'_>, editor_area: Rec
         .collect::<Vec<_>>();
     let list = List::new(items)
         .block(block)
-        .highlight_style(
-            Style::default()
-                .fg(app.theme.foreground)
-                .bg(app.theme.selection)
-                .bold(),
-        )
-        .highlight_symbol("▸ ");
+        .highlight_style(selection_style(&app.theme))
+        .highlight_symbol(selection_marker(&app.theme))
+        .highlight_spacing(HighlightSpacing::Always);
     let mut state = ListState::default().with_selected(Some(menu.selected));
     frame.render_widget(Clear, area);
     StatefulWidget::render(list, area, frame.buffer_mut(), &mut state);
@@ -2469,12 +2588,7 @@ fn draw_completion(
                 .fg(app.theme.foreground)
                 .bg(app.theme.overlay_background),
         )
-        .highlight_style(
-            Style::default()
-                .fg(app.theme.foreground)
-                .bg(app.theme.selection)
-                .bold(),
-        );
+        .highlight_style(selection_style(&app.theme));
     let mut list_state =
         ListState::default().with_selected(Some(state.selected.min(visible.len() - 1)));
     frame.render_widget(Clear, area);
@@ -2728,13 +2842,9 @@ fn draw_command_palette(frame: &mut Frame<'_>, app: &TuiApp<'_>, editor_area: Re
                 .fg(app.theme.foreground)
                 .bg(app.theme.overlay_background),
         )
-        .highlight_style(
-            Style::default()
-                .fg(app.theme.foreground)
-                .bg(app.theme.selection)
-                .bold(),
-        )
-        .highlight_symbol("▸ ");
+        .highlight_style(selection_style(&app.theme))
+        .highlight_symbol(selection_marker(&app.theme))
+        .highlight_spacing(HighlightSpacing::Always);
     let selected =
         (!matches.is_empty()).then_some(app.command_selection.min(matches.len().saturating_sub(1)));
     let mut state = ListState::default().with_selected(selected);
@@ -2798,13 +2908,9 @@ fn draw_command_path_hints(
                 .fg(app.theme.foreground)
                 .bg(app.theme.overlay_background),
         )
-        .highlight_style(
-            Style::default()
-                .fg(app.theme.foreground)
-                .bg(app.theme.selection)
-                .bold(),
-        )
-        .highlight_symbol("▸ ");
+        .highlight_style(selection_style(&app.theme))
+        .highlight_symbol(selection_marker(&app.theme))
+        .highlight_spacing(HighlightSpacing::Always);
     let selected =
         (!hints.is_empty()).then_some(app.command_selection.min(hints.len().saturating_sub(1)));
     let mut state = ListState::default().with_selected(selected);
@@ -2870,13 +2976,9 @@ fn draw_program_hints(frame: &mut Frame<'_>, app: &TuiApp<'_>, editor_area: Rect
                 .fg(app.theme.foreground)
                 .bg(app.theme.overlay_background),
         )
-        .highlight_style(
-            Style::default()
-                .fg(app.theme.foreground)
-                .bg(app.theme.selection)
-                .bold(),
-        )
-        .highlight_symbol("▸ ");
+        .highlight_style(selection_style(&app.theme))
+        .highlight_symbol(selection_marker(&app.theme))
+        .highlight_spacing(HighlightSpacing::Always);
     let selected =
         (!choices.is_empty()).then_some(app.command_selection.min(choices.len().saturating_sub(1)));
     let mut state = ListState::default().with_selected(selected);
@@ -2919,13 +3021,9 @@ fn draw_program_actions(frame: &mut Frame<'_>, app: &TuiApp<'_>, parent: Rect) {
                 .fg(app.theme.foreground)
                 .bg(app.theme.overlay_background),
         )
-        .highlight_style(
-            Style::default()
-                .fg(app.theme.foreground)
-                .bg(app.theme.selection)
-                .bold(),
-        )
-        .highlight_symbol("▸ ");
+        .highlight_style(selection_style(&app.theme))
+        .highlight_symbol(selection_marker(&app.theme))
+        .highlight_spacing(HighlightSpacing::Always);
     let selected = Some(menu.selected.min(menu.actions.len().saturating_sub(1)));
     let mut state = ListState::default().with_selected(selected);
     frame.render_widget(Clear, area);
@@ -4977,17 +5075,350 @@ mod tests {
         assert!(rendered.contains("Choose and save the editor theme"));
     }
 
+    /// Renders one overlay snapshot on its own, the way an attached client
+    /// draws it, and returns the finished screen.
+    fn draw_overlay_alone(
+        app: &mut App,
+        theme: &TuiTheme,
+        overlay: &OverlaySnapshot,
+    ) -> ratatui::buffer::Buffer {
+        let mut terminal = Terminal::new(TestBackend::new(100, 20)).unwrap();
+        terminal
+            .draw(|frame| {
+                let prepared = app.prepare_view(frame_geometry(frame.area()));
+                let snapshot = app.snapshot(&prepared);
+                for pane in &snapshot.panes {
+                    draw_pane(frame, theme, snapshot.mode, pane);
+                }
+                draw_snapshot_overlay(frame, theme, overlay, &snapshot);
+            })
+            .unwrap();
+        terminal.backend().buffer().clone()
+    }
+
+    /// A snapshot shaped like a contextual action menu: one mnemonic letter
+    /// per label, with the description carried in the detail column.
+    fn action_menu_overlay(
+        app: &mut App,
+        rows: Vec<(&str, &str)>,
+        selected: usize,
+    ) -> OverlaySnapshot {
+        app.handle_key(crate::input::KeyStroke::char(':')).unwrap();
+        let mut overlay = app
+            .overlay_snapshots()
+            .into_iter()
+            .find(|overlay| overlay.kind == OverlayKind::CommandPalette)
+            .expect("a palette snapshot to reshape");
+        app.handle_key(crate::input::KeyStroke::new(
+            crate::input::KeyCode::Escape,
+            crate::input::Modifiers::NONE,
+        ))
+        .unwrap();
+        overlay.total_rows = rows.len();
+        overlay.rows = rows
+            .into_iter()
+            .map(|(label, detail)| crate::snapshot::OverlayRow {
+                identity: label.into(),
+                label: label.to_owned(),
+                detail: detail.to_owned(),
+                available: true,
+                dimmed: false,
+                muted: Vec::new(),
+                emphasis: Vec::new(),
+            })
+            .collect();
+        overlay.kind = OverlayKind::BufferActions;
+        overlay.title = "Actions".to_owned();
+        overlay.query = String::new();
+        overlay.query_cursor = None;
+        overlay.selected = Some(selected);
+        overlay.scroll_anchor = Some(selected);
+        overlay.row_offset = 0;
+        overlay.omitted_rows = 0;
+        overlay.message = None;
+        overlay.show_preview = false;
+        overlay.preview = None;
+        overlay.preview_title = None;
+        overlay
+    }
+
+    /// The content columns of the titled overlay, read off the corners of its
+    /// own border rather than off the panes drawn behind it.
+    fn overlay_extent(buffer: &ratatui::buffer::Buffer, title: &str) -> (u16, u16) {
+        let (_, y) = find_text(buffer, title).expect("the overlay title");
+        let left = (0..buffer.area.width)
+            .find(|x| buffer[(*x, y)].symbol() == "┌")
+            .expect("the overlay's top-left corner");
+        let right = (0..buffer.area.width)
+            .rev()
+            .find(|x| buffer[(*x, y)].symbol() == "┐")
+            .expect("the overlay's top-right corner");
+        assert!(left + 1 < right, "the overlay should enclose some content");
+        (left + 1, right)
+    }
+
+    /// The reported behavior: an action row's label is a single mnemonic
+    /// letter, so a selection drawn only under the label was one highlighted
+    /// cell and the reader could not tell which row they were on. The
+    /// background now runs from the gutter to the far edge of the overlay.
+    #[test]
+    fn a_selected_action_row_is_highlighted_across_the_whole_row() {
+        let mut app = App::new(Config::default(), None).unwrap();
+        let theme = TuiTheme::new(&app.theme);
+        let overlay = action_menu_overlay(
+            &mut app,
+            vec![
+                ("s", "row · Stage every file the selection covers"),
+                ("u", "row · Unstage every file the selection covers"),
+            ],
+            1,
+        );
+        let buffer = draw_overlay_alone(&mut app, &theme, &overlay);
+
+        let (_, selected_row) = find_text(&buffer, "Unstage every file").expect("the second row");
+        let (first, last) = overlay_extent(&buffer, &overlay.title);
+        for x in first..last {
+            assert_eq!(
+                buffer[(x, selected_row)].bg,
+                theme.selection,
+                "column {x} of the selected row should carry the selection"
+            );
+        }
+
+        let (_, other_row) = find_text(&buffer, "Stage every file").expect("the first row");
+        assert_ne!(other_row, selected_row);
+        for x in first..last {
+            assert_eq!(
+                buffer[(x, other_row)].bg,
+                theme.overlay_background,
+                "column {x} of an unselected row should keep the overlay ground"
+            );
+        }
+    }
+
+    /// The marker is charged to every row of the list, not only the selected
+    /// one, so a label never shifts sideways as the selection moves.
+    #[test]
+    fn the_selection_marker_reserves_its_gutter_on_every_row() {
+        assert_eq!(
+            UnicodeWidthStr::width(SELECTION_MARKER),
+            UnicodeWidthStr::width(SELECTION_GUTTER),
+            "the marker and the blank gutter must occupy the same columns"
+        );
+
+        let mut app = App::new(Config::default(), None).unwrap();
+        let theme = TuiTheme::new(&app.theme);
+        let overlay = action_menu_overlay(
+            &mut app,
+            vec![("s", "row · stage"), ("u", "row · unstage")],
+            1,
+        );
+        let buffer = draw_overlay_alone(&mut app, &theme, &overlay);
+
+        let (stage_label, stage_row) = find_text(&buffer, "row · stage").expect("the first row");
+        let (unstage_label, unstage_row) =
+            find_text(&buffer, "row · unstage").expect("the second row");
+        assert_eq!(
+            stage_label, unstage_label,
+            "the detail column should not move between a selected and an unselected row"
+        );
+
+        let (first, _) = overlay_extent(&buffer, &overlay.title);
+        assert_eq!(buffer[(first, unstage_row)].symbol(), "▸");
+        assert_eq!(buffer[(first, unstage_row)].fg, theme.accent);
+        assert_eq!(
+            buffer[(first, stage_row)].symbol(),
+            " ",
+            "an unselected row pays for the gutter but draws nothing in it"
+        );
+    }
+
+    /// The selection says which row; emphasis says what about it. Painting a
+    /// foreground over the selected row used to erase the second, so a
+    /// selected candidate no longer showed why it matched.
+    #[test]
+    fn a_selected_row_keeps_the_emphasis_that_says_why_it_matched() {
+        let mut app = App::new(Config::default(), None).unwrap();
+        let theme = TuiTheme::new(&app.theme);
+        let mut overlay = action_menu_overlay(&mut app, vec![("stage", "row · stage")], 0);
+        overlay.rows[0].emphasis = vec![0, 1];
+        let buffer = draw_overlay_alone(&mut app, &theme, &overlay);
+
+        let (label, row) = find_text(&buffer, "stage").expect("the row");
+        assert_eq!(buffer[(label, row)].bg, theme.selection);
+        assert_eq!(
+            buffer[(label, row)].fg,
+            theme.accent,
+            "the emphasized character keeps its own colour on the selection"
+        );
+        assert_eq!(
+            buffer[(label + 2, row)].fg,
+            theme.foreground,
+            "an unemphasized character does not"
+        );
+    }
+
+    /// The same rule through the Ratatui list renderer, which is where it
+    /// used to break the other way: `highlight_style` is applied over the
+    /// finished row with a patch, so a foreground in it repainted the accent
+    /// on the command name and the muted category label alike, and the
+    /// selected row was the one row that stopped saying what its parts were.
+    #[test]
+    fn a_selected_list_row_keeps_the_colours_of_its_columns() {
+        let mut app = App::new(Config::default(), None).unwrap();
+        let theme = TuiTheme::new(&app.theme);
+        app.handle_key(crate::input::KeyStroke::char(':')).unwrap();
+        for character in "about".chars() {
+            app.handle_key(crate::input::KeyStroke::char(character))
+                .unwrap();
+        }
+
+        let mut terminal = Terminal::new(TestBackend::new(100, 14)).unwrap();
+        terminal
+            .draw(|frame| render_test_frame(frame, &mut app, &KeyHintState::default()))
+            .unwrap();
+        let buffer = terminal.backend().buffer().clone();
+
+        // The palette is drawn in the editor area, above the interaction line
+        // that echoes the same text, so the first hit is the palette's row.
+        let (name, row) = find_text(&buffer, ":about").expect("the palette lists the command");
+        assert_eq!(
+            buffer[(name, row)].bg,
+            theme.selection,
+            "the only match is the selected row"
+        );
+        assert_eq!(
+            buffer[(name, row)].fg,
+            theme.accent,
+            "the command name keeps the accent that marks it available"
+        );
+
+        let (category, _) =
+            find_text_in_row(&buffer, "[", row).expect("the palette labels the row's category");
+        assert_eq!(
+            buffer[(category, row)].fg,
+            theme.muted,
+            "the category label stays muted on the selected row"
+        );
+        assert_eq!(buffer[(category, row)].bg, theme.selection);
+    }
+
+    /// The persistent frontend receives the category and command name as one
+    /// label, so the snapshot has to identify both semantic runs rather than
+    /// asking the renderer to recover them from punctuation.
+    #[test]
+    fn a_host_frame_command_row_keeps_its_category_and_command_emphasis() {
+        let mut app = App::new(Config::default(), None).unwrap();
+        let theme = TuiTheme::new(&app.theme);
+        app.handle_key(crate::input::KeyStroke::char(':')).unwrap();
+        for character in "about".chars() {
+            app.handle_key(crate::input::KeyStroke::char(character))
+                .unwrap();
+        }
+
+        let overlay = app
+            .overlay_snapshots()
+            .into_iter()
+            .find(|overlay| overlay.kind == OverlayKind::CommandPalette)
+            .expect("the command palette snapshot");
+        let row = overlay.rows.first().expect("the matching command");
+        let command_start = row
+            .label
+            .chars()
+            .position(|character| character == ':')
+            .expect("the command prefix");
+        assert_eq!(row.muted, (0..command_start).collect::<Vec<_>>());
+        assert_eq!(
+            row.emphasis,
+            (command_start..row.label.chars().count()).collect::<Vec<_>>()
+        );
+
+        let buffer = draw_overlay_alone(&mut app, &theme, &overlay);
+        let (command, rendered_row) = find_text(&buffer, ":about").expect("the command name");
+        let (category, _) =
+            find_text_in_row(&buffer, "[", rendered_row).expect("the category prefix");
+        assert_eq!(buffer[(command, rendered_row)].fg, theme.accent);
+        assert_eq!(buffer[(category, rendered_row)].fg, theme.muted);
+        assert_eq!(buffer[(command, rendered_row)].bg, theme.selection);
+        assert_eq!(buffer[(category, rendered_row)].bg, theme.selection);
+    }
+
+    /// Reports have a scroll anchor but no actionable selection. They still
+    /// use the shared list vocabulary, so their blank marker gutter must not
+    /// disappear just because Ratatui receives `selected: None`.
+    #[test]
+    fn a_standalone_report_reserves_the_selection_gutter_without_a_selection() {
+        let mut app = App::new(Config::default(), None).unwrap();
+        app.list = Some(
+            crate::picker::ListPicker::new(
+                "Report",
+                vec![crate::picker::PickerItem::new("report-entry", "detail", 0)],
+            )
+            .as_report(),
+        );
+
+        let mut terminal = Terminal::new(TestBackend::new(100, 14)).unwrap();
+        terminal
+            .draw(|frame| render_test_frame(frame, &mut app, &KeyHintState::default()))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let (label, row) = find_text(buffer, "report-entry").expect("the report row");
+        let (first, _) = overlay_extent(buffer, "Report");
+        assert_eq!(label, first + 2, "the report pays for the marker gutter");
+        assert_eq!(buffer[(first, row)].symbol(), " ");
+        assert_eq!(buffer[(first + 1, row)].symbol(), " ");
+    }
+
+    /// Caret-anchored assistance is narrow by design and sits against the
+    /// source it describes, so it spends no columns on a gutter. The
+    /// background alone still says which candidate is selected.
+    #[test]
+    fn a_caret_anchored_overlay_marks_its_selection_without_a_gutter() {
+        let mut app = App::new(Config::default(), None).unwrap();
+        let theme = TuiTheme::new(&app.theme);
+        let mut overlay = action_menu_overlay(&mut app, vec![("alpha", ""), ("beta", "")], 1);
+        overlay.kind = OverlayKind::Completion;
+        overlay.title = "Complete".to_owned();
+        let buffer = draw_overlay_alone(&mut app, &theme, &overlay);
+
+        let rendered = buffer
+            .content
+            .iter()
+            .map(|cell| cell.symbol().chars().next().unwrap_or(' '))
+            .collect::<String>();
+        assert!(
+            !rendered.contains('▸'),
+            "a caret-anchored overlay draws no marker gutter"
+        );
+
+        let (label, row) = find_text(&buffer, "beta").expect("the selected candidate");
+        let (first, _) = overlay_extent(&buffer, &overlay.title);
+        assert_eq!(
+            label, first,
+            "its label starts at the overlay's first column"
+        );
+        assert_eq!(buffer[(label, row)].bg, theme.selection);
+    }
+
     /// The screen position of `needle`'s first cell, searched row by row.
     fn find_text(buffer: &ratatui::buffer::Buffer, needle: &str) -> Option<(u16, u16)> {
+        (0..buffer.area.height).find_map(|y| find_text_in_row(buffer, needle, y))
+    }
+
+    /// The same search confined to one row, for text a surface above the row
+    /// is entitled to repeat.
+    fn find_text_in_row(
+        buffer: &ratatui::buffer::Buffer,
+        needle: &str,
+        y: u16,
+    ) -> Option<(u16, u16)> {
         let needle = needle.chars().collect::<Vec<_>>();
-        (0..buffer.area.height).find_map(|y| {
-            let row = (0..buffer.area.width)
-                .map(|x| buffer[(x, y)].symbol().chars().next().unwrap_or(' '))
-                .collect::<Vec<_>>();
-            row.windows(needle.len())
-                .position(|window| window == needle)
-                .map(|x| (x as u16, y))
-        })
+        let row = (0..buffer.area.width)
+            .map(|x| buffer[(x, y)].symbol().chars().next().unwrap_or(' '))
+            .collect::<Vec<_>>();
+        row.windows(needle.len())
+            .position(|window| window == needle)
+            .map(|x| (x as u16, y))
     }
 
     /// An overlay floats on a ground one step off the pane's, through the
@@ -5534,6 +5965,18 @@ mod tests {
         let screen = rendered(&mut app, 70, 12);
         assert!(screen.contains("40/40"));
         assert!(screen.contains("entry-39"));
+
+        let mut terminal = Terminal::new(TestBackend::new(70, 12)).unwrap();
+        terminal
+            .draw(|frame| render_test_frame(frame, &mut app, &KeyHintState::default()))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let (entry, row) = find_text(buffer, "entry-39").expect("the selected operation");
+        let marker = (0..entry)
+            .rev()
+            .find(|column| buffer[(*column, row)].symbol() == "▸")
+            .expect("the filesystem selection marker");
+        assert_eq!(buffer[(marker, row)].fg, TuiTheme::new(&app.theme).accent);
         std::fs::remove_dir(root).unwrap();
     }
 
@@ -6400,7 +6843,13 @@ mod tests {
             "the caret should keep the Command colour"
         );
         // The typed command is drawn below the panes and is never dimmed.
-        let (column, row) = find_text(&buffer, ":quit").expect("the prompt is drawn");
+        // Searched on the interaction line itself rather than screen-wide:
+        // the command palette above it lists `:quit` as a candidate too, and
+        // a palette row is entitled to its own accent now that the selection
+        // contributes a background and no longer repaints one.
+        let prompt_row = buffer.area.height.saturating_sub(1);
+        let (column, row) =
+            find_text_in_row(&buffer, ":quit", prompt_row).expect("the prompt is drawn");
         assert_eq!(
             buffer[(column, row)].style().fg,
             Some(to_tui_color(theme.foreground))

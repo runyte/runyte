@@ -91,6 +91,46 @@ browsing, search, and splits. `Space g /` opens a picker because fuzzy typing
 resolves one immediate commit choice. Enter from either surface opens the same
 retained commit-detail special buffer.
 
+## Row selection
+
+Every surface that draws a list of rows — picker overlay, pane-backed
+filterable list, command palette, contextual action menu, completion — says
+which row is selected the same way. The vocabulary is three separable
+signals, and each one answers a different question.
+
+- **Selection marker** — `▸ ` in the accent colour, in a two-column
+  **selection gutter** at the start of the row. Every row of a
+  marker-using list pays for the gutter whether or not it is selected, so a
+  label never shifts sideways as the selection moves. It answers *which row*
+  at a glance, and it survives a theme whose selection ground is low in
+  contrast.
+- **Selection ground** — the `selection` colour, run across the row from the
+  gutter to the far edge of the surface, including the detail column and the
+  empty space past the last character. It answers *how far the row reaches*.
+  A row is one line: content too wide for the surface is truncated, never
+  wrapped, so the ground always squares off a single rectangle.
+- **Row emphasis** — the colours a row assigns to its own parts: the matched
+  characters of a fuzzy query, the active parameter of a signature, an
+  available command's accented name against its muted category, an action's
+  mnemonic label against its muted description. It answers *what about this
+  row*, and the other two signals never repaint it. The selection therefore
+  contributes a background and no foreground, so a row's columns still read
+  as columns while it is selected.
+
+Two consequences follow from the last point and are easy to get wrong.
+Ratatui applies a list's highlight style over the finished row as a patch, so
+any foreground set there silently erases emphasis underneath it; give the
+highlight a background only. And a row dimmed for dormancy is exempt from
+dimming while it is selected, which has to be written out where the row's
+colours are chosen, because the selection ground no longer repaints it back
+to legibility on its own.
+
+Caret-anchored context overlays — completion, signature, hover — are the one
+deliberate exception, and they omit only the marker. They are narrow by
+design and sit against the source text they describe, where two borrowed
+columns cost more than the marker adds; the selection ground alone says which
+candidate is selected.
+
 ## Notifications
 
 A **notification** is retained feedback that should remain inspectable after

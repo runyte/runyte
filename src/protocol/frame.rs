@@ -479,6 +479,8 @@ pub struct OverlayRow {
     pub detail: String,
     pub available: bool,
     pub dimmed: bool,
+    #[serde(default)]
+    pub muted: Vec<usize>,
     pub emphasis: Vec<usize>,
 }
 
@@ -490,6 +492,7 @@ impl From<core::OverlayRow> for OverlayRow {
             detail: value.detail,
             available: value.available,
             dimmed: value.dimmed,
+            muted: value.muted,
             emphasis: value.emphasis,
         }
     }
@@ -502,6 +505,7 @@ impl From<OverlayRow> for core::OverlayRow {
             detail: value.detail,
             available: value.available,
             dimmed: value.dimmed,
+            muted: value.muted,
             emphasis: value.emphasis,
         }
     }
@@ -519,6 +523,7 @@ mod tests {
             detail: "Language (LSP) · unavailable: no server".to_owned(),
             available: false,
             dimmed: true,
+            muted: vec![0, 1],
             emphasis: Vec::new(),
         };
 

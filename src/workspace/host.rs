@@ -866,6 +866,7 @@ impl WorkspaceHost {
                         detail: format!("{}{markers}{availability}", hint.description),
                         available,
                         dimmed: false,
+                        muted: Vec::new(),
                         emphasis: Vec::new(),
                     }
                 })

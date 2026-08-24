@@ -7643,6 +7643,7 @@ impl App {
                 detail: detail.into(),
                 available: true,
                 dimmed: false,
+                muted: Vec::new(),
                 emphasis: Vec::new(),
             }
         }
@@ -8038,20 +8039,31 @@ impl App {
                         matches
                             .iter()
                             .map(|matched| {
+                                let category = matched.category.label();
+                                let label = format!("[{category}] :{}", matched.usage());
+                                let command_start = category.chars().count() + 3;
+                                let available = matched.availability.is_available();
                                 let aliases = matched.other_names().join(", ");
                                 let availability = matched.availability.reason().map_or_else(
                                     || "available".to_owned(),
                                     |reason| format!("unavailable: {reason}"),
                                 );
-                                row(
+                                let mut row = row(
                                     matched.spec.name,
-                                    format!("[{}] :{}", matched.category.label(), matched.usage()),
+                                    label,
                                     format!(
                                         "{} · aliases: {} · {availability}",
                                         matched.spec.description,
                                         if aliases.is_empty() { "-" } else { &aliases }
                                     ),
-                                )
+                                );
+                                row.available = available;
+                                row.muted = (0..command_start).collect();
+                                if available {
+                                    row.emphasis =
+                                        (command_start..row.label.chars().count()).collect();
+                                }
+                                row
                             })
                             .collect(),
                         (!matches.is_empty()).then_some(self.command_selection),
