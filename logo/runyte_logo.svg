@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- Created with Inkscape (http://www.inkscape.org/) -->
+
+<svg
+   width="69.999863mm"
+   height="69.999863mm"
+   viewBox="0 0 69.999863 69.999862"
+   version="1.1"
+   id="svg1"
+   inkscape:version="1.4.4 (dcaf3e7d9e, 2026-05-05)"
+   sodipodi:docname="runyte_logo.svg"
+   inkscape:export-filename="runyte.png"
+   inkscape:export-xdpi="76.199997"
+   inkscape:export-ydpi="76.199997"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <sodipodi:namedview
+     id="namedview1"
+     pagecolor="#ffffff"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     inkscape:document-units="mm"
+     showgrid="true"
+     inkscape:zoom="1.6246205"
+     inkscape:cx="53.550968"
+     inkscape:cy="61.552837"
+     inkscape:window-width="2560"
+     inkscape:window-height="1371"
+     inkscape:window-x="0"
+     inkscape:window-y="0"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="layer1">
+    <inkscape:grid
+       id="grid1"
+       units="mm"
+       originx="-15.000118"
+       originy="-5.0002117"
+       spacingx="0.99999998"
+       spacingy="1"
+       empcolor="#0099e5"
+       empopacity="0.30196078"
+       color="#0099e5"
+       opacity="0.14901961"
+       empspacing="5"
+       enabled="true"
+       visible="true" />
+  </sodipodi:namedview>
+  <defs
+     id="defs1" />
+  <g
+     inkscape:label="Layer 1"
+     inkscape:groupmode="layer"
+     id="layer1"
+     transform="translate(-15.000118,-5.0002116)">
+    <path
+       id="path1"
+       style="display:inline;fill:#323232;fill-opacity:1;stroke:none;stroke-width:14;stroke-linecap:butt;stroke-opacity:0.360352"
+       inkscape:label="upper_rectangle"
+       d="M 50.000049,5.0002116 15.000118,40.000142 40.000142,65.000167 50.000049,54.999744 34.999931,40.000142 50.000049,25.000024 65.000167,40.000142 50.000049,54.999744 59.999955,65.000167 84.99998,40.000142 Z" />
+  </g>
+</svg>

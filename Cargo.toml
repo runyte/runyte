@@ -1,0 +1,95 @@
+# SPDX-License-Identifier: MPL-2.0
+
+[package]
+name = "runyte"
+version = "0.1.0"
+edition = "2024"
+# Edition 2024 needs 1.85; the resolved dependency graph raises the floor to
+# 1.88. Declaring it turns an obscure build failure into a clear message.
+rust-version = "1.88"
+description = "A fast modal terminal editor with selection-first editing, tree-sitter highlighting, and language servers"
+license = "MPL-2.0"
+repository = "https://github.com/runyte/runyte"
+# Left empty while the most useful topic labels are still undecided.
+keywords = []
+categories = []
+readme = "README.md"
+# The published crate carries what is needed to build, license, and configure
+# Runyte. Repository development context under `context/`, contributor guidance, the
+# test suite, and local scratch files are deliberately left out; `docs/` stays
+# because `THIRD_PARTY_NOTICES.md` cites its provenance and dependency records.
+# Patterns are anchored with a leading slash: these are gitignore globs, so a
+# bare `README.md` would also match a nested development-context README.
+include = [
+    "/src/**",
+    "/docs/**",
+    "/licenses/**",
+    "/logo/ascii/logo.txt",
+    "/README.md",
+    "/LICENSE",
+    "/NOTICE",
+    "/THIRD_PARTY_NOTICES.md",
+    "/config.example.yaml",
+]
+autobins = false
+default-run = "runyte"
+
+[features]
+default = []
+startup-timing = []
+
+[[bin]]
+name = "runyte"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1.0"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+crossterm = { version = "0.29", features = ["event-stream"] }
+futures-util = "0.3"
+libc = "0.2"
+lsp-types = "0.97"
+ratatui = { version = "0.30", default-features = false, features = ["crossterm"] }
+regex = "1.13.1"
+ropey = { version = "1.6.1", default-features = false, features = ["simd"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_yaml = "0.9"
+shlex = "2.0"
+tokio = { version = "1.47", features = ["io-std", "io-util", "macros", "net", "process", "rt-multi-thread", "sync", "time"] }
+trash = "5.2.6"
+tree-house = { version = "=0.4.0", default-features = false }
+tree-house-bindings = { version = "=0.3.2", features = ["tree-sitter-language", "ropey"] }
+tree-sitter-c = "0.24.2"
+tree-sitter-cpp = "0.23.4"
+tree-sitter-bash = "=0.25.1"
+tree-sitter-css = "=0.25.0"
+tree-sitter-go = "=0.25.0"
+tree-sitter-html = "=0.23.2"
+tree-sitter-java = "=0.23.5"
+tree-sitter-javascript = "=0.25.0"
+tree-sitter-json = "0.24.8"
+tree-sitter-kotlin-sg = "=0.4.1"
+tree-sitter-language = "0.1.7"
+tree-sitter-md = "0.5.3"
+tree-sitter-python = "0.25.0"
+tree-sitter-rust = "0.24.2"
+tree-sitter-swift = "0.7.3"
+tree-sitter-typescript = "=0.23.2"
+tree-sitter-toml-ng = "0.7.0"
+tree-sitter-yaml = "0.7.2"
+unicode-segmentation = "1.13"
+unicode-width = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_Security_Cryptography",
+    "Win32_Storage_FileSystem",
+] }
+
+[profile.release]
+lto = true
+strip = true

@@ -1,0 +1,406 @@
+// SPDX-License-Identifier: MPL-2.0
+
+//! The pseudoterminal one child process runs on.
+//!
+//! The only place in Runyte that forks a process onto a tty. Everything above
+//! it sees bytes in, bytes out, a size, and an exit — never a file descriptor.
+//!
+//! Unix only. Windows needs ConPTY, which is a second implementation of the
+//! hardest part of this file; `context/issues/windows_support.md` already
+//! records that Runyte disables a feature there rather than shipping an
+//! unsound one.
+
+use std::{
+    ffi::{CString, OsStr},
+    io,
+    os::unix::{
+        ffi::OsStrExt,
+        io::{AsRawFd, FromRawFd, OwnedFd, RawFd},
+        process::CommandExt,
+    },
+    path::Path,
+    process::{Child, Command, Stdio},
+    sync::mpsc,
+    thread,
+};
+
+/// How much of one read is handed upward at a time.
+const READ_CHUNK: usize = 64 * 1024;
+const WRITE_CHUNK: usize = 16 * 1024;
+const INPUT_QUEUE: usize = 8;
+pub const MAX_INPUT_BYTES: usize = 1024 * 1024;
+
+/// What a running child produces.
+#[derive(Debug)]
+pub enum PtyEvent {
+    Output(Vec<u8>),
+    /// The child is gone. Carries its status code when one was reported.
+    Exited(Option<i32>),
+}
+
+/// A child process attached to a pseudoterminal.
+pub struct Pty {
+    master: OwnedFd,
+    input: mpsc::SyncSender<Vec<u8>>,
+    child: Child,
+}
+
+impl std::fmt::Debug for Pty {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("Pty")
+            .field("pid", &self.child.id())
+            .finish_non_exhaustive()
+    }
+}
+
+impl Pty {
+    /// Runs `program` with `arguments` on a new pseudoterminal.
+    ///
+    /// `events` receives everything the child writes and, once, its exit.
+    pub fn spawn(
+        program: &OsStr,
+        arguments: &[String],
+        directory: &Path,
+        columns: u16,
+        rows: u16,
+        events: impl Fn(PtyEvent) + Send + 'static,
+    ) -> io::Result<Self> {
+        let (master, slave) = open_pair(columns, rows)?;
+        let slave_descriptor = slave.as_raw_fd();
+
+        let mut command = Command::new(program);
+        command.args(arguments);
+        command.current_dir(directory);
+        command.stdin(Stdio::null());
+        command.stdout(Stdio::null());
+        command.stderr(Stdio::null());
+        // A child inheriting the outer terminal's identity would advertise
+        // capabilities this emulator does not have. Name what is actually
+        // implemented instead.
+        command.env("TERM", "xterm-256color");
+        command.env("COLORTERM", "truecolor");
+        command.env_remove("TERM_PROGRAM");
+        command.env_remove("TERM_PROGRAM_VERSION");
+        // Nothing below runs in the parent: `pre_exec` is on the child side of
+        // the fork, where only async-signal-safe calls are allowed. Opening the
+        // already-open slave here becomes the controlling terminal only after
+        // `setsid`; opening it with `O_NOCTTY` in `openpty` keeps the parent
+        // from acquiring it. Keeping both endpoints open before the fork also
+        // lets macOS apply the initial window size to the slave, as its PTY API
+        // requires.
+        unsafe {
+            command.pre_exec(move || {
+                if libc::setsid() < 0 {
+                    return Err(io::Error::last_os_error());
+                }
+                if libc::ioctl(slave_descriptor, libc::TIOCSCTTY as _, 0) < 0 {
+                    return Err(io::Error::last_os_error());
+                }
+                for descriptor in 0..3 {
+                    if libc::dup2(slave_descriptor, descriptor) < 0 {
+                        return Err(io::Error::last_os_error());
+                    }
+                }
+                if slave_descriptor > 2 {
+                    libc::close(slave_descriptor);
+                }
+                Ok(())
+            });
+        }
+        let child = command.spawn()?;
+        // The child has duplicated this endpoint onto stdin/stdout/stderr.
+        // Closing the parent's copy is what lets the reader observe EOF when
+        // the child and all of its descendants finally close theirs.
+        drop(slave);
+
+        let (input, pending) = mpsc::sync_channel::<Vec<u8>>(INPUT_QUEUE);
+        let reader = duplicate(master.as_raw_fd())?;
+        let writer = duplicate(master.as_raw_fd())?;
+
+        // Writing on the caller's thread would let a child that has stopped
+        // reading — a paused pager, a program waiting on something else —
+        // block the editor's event loop. The queue is what keeps a keystroke
+        // from ever doing that.
+        thread::Builder::new()
+            .name("runyte-pty-write".to_owned())
+            .spawn(move || {
+                let writer = writer;
+                while let Ok(bytes) = pending.recv() {
+                    for chunk in bytes.chunks(WRITE_CHUNK) {
+                        if write_all(writer.as_raw_fd(), chunk).is_err() {
+                            return;
+                        }
+                    }
+                }
+            })?;
+
+        thread::Builder::new()
+            .name("runyte-pty-read".to_owned())
+            .spawn(move || {
+                let reader = reader;
+                let mut buffer = vec![0_u8; READ_CHUNK];
+                loop {
+                    let read = unsafe {
+                        libc::read(reader.as_raw_fd(), buffer.as_mut_ptr().cast(), buffer.len())
+                    };
+                    match read {
+                        // Zero is a clean end of file. `EIO` is what Linux
+                        // reports when the last slave closes, which is the
+                        // same event by another name.
+                        0 => break,
+                        count if count > 0 => {
+                            events(PtyEvent::Output(buffer[..count as usize].to_vec()));
+                        }
+                        _ => {
+                            let error = io::Error::last_os_error();
+                            if error.kind() == io::ErrorKind::Interrupted {
+                                continue;
+                            }
+                            break;
+                        }
+                    }
+                }
+                events(PtyEvent::Exited(None));
+            })?;
+
+        Ok(Self {
+            master,
+            input,
+            child,
+        })
+    }
+
+    /// Queues bytes for the child. Never blocks the caller.
+    pub fn write(&self, bytes: Vec<u8>) -> bool {
+        if bytes.is_empty() {
+            return true;
+        }
+        if bytes.len() > MAX_INPUT_BYTES {
+            return false;
+        }
+        self.input.try_send(bytes).is_ok()
+    }
+
+    pub fn resize(&self, columns: u16, rows: u16) -> io::Result<()> {
+        set_size(self.master.as_raw_fd(), columns, rows)
+    }
+
+    /// Asks the child's process group to end, then ends it.
+    ///
+    /// `SIGHUP` first because that is what a closing terminal sends and what a
+    /// shell knows how to act on; `SIGKILL` after, because a pane that has
+    /// been closed must not leave a process holding the pty open.
+    pub fn terminate(&mut self) {
+        let pid = self.child.id() as libc::pid_t;
+        unsafe {
+            libc::kill(-pid, libc::SIGHUP);
+            libc::kill(-pid, libc::SIGKILL);
+        }
+        let _ = self.child.wait();
+    }
+
+    /// Reports the child's status if it has already finished, without waiting.
+    pub fn finished(&mut self) -> Option<Option<i32>> {
+        match self.child.try_wait() {
+            Ok(Some(status)) => Some(status.code()),
+            Ok(None) => None,
+            Err(_) => Some(None),
+        }
+    }
+}
+
+impl Drop for Pty {
+    fn drop(&mut self) {
+        self.terminate();
+    }
+}
+
+fn open_pair(columns: u16, rows: u16) -> io::Result<(OwnedFd, OwnedFd)> {
+    let mut master = -1;
+    let mut slave = -1;
+    // Apple and several BSD libc declarations expose these inputs as mutable
+    // pointers, while glibc exposes them as const. Mutable pointers satisfy
+    // both declarations; `openpty` only reads the values on either platform.
+    let mut size = window_size(columns, rows);
+    let result = unsafe {
+        libc::openpty(
+            &mut master,
+            &mut slave,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::addr_of_mut!(size),
+        )
+    };
+    if result < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let master = unsafe { OwnedFd::from_raw_fd(master) };
+    let slave = unsafe { OwnedFd::from_raw_fd(slave) };
+    // Neither endpoint may survive into an unrelated child: an editor that
+    // spawns a language server while a terminal is open would otherwise hand
+    // it descriptors it has no business holding. `dup2` clears this flag on
+    // the child's three standard descriptors.
+    for descriptor in [master.as_raw_fd(), slave.as_raw_fd()] {
+        if unsafe { libc::fcntl(descriptor, libc::F_SETFD, libc::FD_CLOEXEC) } < 0 {
+            return Err(io::Error::last_os_error());
+        }
+    }
+    Ok((master, slave))
+}
+
+fn duplicate(descriptor: RawFd) -> io::Result<OwnedFd> {
+    let copy = unsafe { libc::fcntl(descriptor, libc::F_DUPFD_CLOEXEC, 0) };
+    if copy < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(unsafe { OwnedFd::from_raw_fd(copy) })
+}
+
+fn set_size(descriptor: RawFd, columns: u16, rows: u16) -> io::Result<()> {
+    let size = window_size(columns, rows);
+    let result = unsafe { libc::ioctl(descriptor, libc::TIOCSWINSZ as _, &size) };
+    if result < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+fn window_size(columns: u16, rows: u16) -> libc::winsize {
+    libc::winsize {
+        ws_row: rows.max(1),
+        ws_col: columns.max(1),
+        ws_xpixel: 0,
+        ws_ypixel: 0,
+    }
+}
+
+fn write_all(descriptor: RawFd, bytes: &[u8]) -> io::Result<()> {
+    let mut written = 0;
+    while written < bytes.len() {
+        let count = unsafe {
+            libc::write(
+                descriptor,
+                bytes[written..].as_ptr().cast(),
+                bytes.len() - written,
+            )
+        };
+        if count > 0 {
+            written += count as usize;
+            continue;
+        }
+        let error = io::Error::last_os_error();
+        if error.kind() == io::ErrorKind::Interrupted {
+            continue;
+        }
+        return Err(error);
+    }
+    Ok(())
+}
+
+/// The program a bare terminal request runs.
+///
+/// `$SHELL` is the person's stated choice, so it wins. `/bin/sh` exists on
+/// every Unix and is the fallback that cannot fail to be a shell.
+pub fn default_shell() -> std::ffi::OsString {
+    match std::env::var_os("SHELL") {
+        Some(shell) if !shell.is_empty() => shell,
+        _ => std::ffi::OsString::from("/bin/sh"),
+    }
+}
+
+/// Whether a path names something this process could execute.
+pub fn is_executable(path: &Path) -> bool {
+    let Ok(path) = CString::new(path.as_os_str().as_bytes()) else {
+        return false;
+    };
+    unsafe { libc::access(path.as_ptr(), libc::X_OK) == 0 }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{
+        sync::{Arc, Mutex},
+        time::{Duration, Instant},
+    };
+
+    /// A running child, everything it has written so far, and whether it has
+    /// ended. The `Pty` comes back so the caller keeps it alive: dropping one
+    /// kills its child.
+    struct Running {
+        output: Arc<Mutex<Vec<u8>>>,
+        exited: Arc<Mutex<bool>>,
+        pty: Pty,
+    }
+
+    fn collect(program: &str, arguments: &[&str]) -> Running {
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let exited = Arc::new(Mutex::new(false));
+        let sink = Arc::clone(&output);
+        let done = Arc::clone(&exited);
+        let arguments = arguments
+            .iter()
+            .map(|value| (*value).to_owned())
+            .collect::<Vec<_>>();
+        let pty = Pty::spawn(
+            OsStr::new(program),
+            &arguments,
+            Path::new("/"),
+            40,
+            10,
+            move |event| match event {
+                PtyEvent::Output(bytes) => sink.lock().unwrap().extend_from_slice(&bytes),
+                PtyEvent::Exited(_) => *done.lock().unwrap() = true,
+            },
+        )
+        .expect("a pty can be opened in a test environment");
+        Running {
+            output,
+            exited,
+            pty,
+        }
+    }
+
+    fn wait_until(deadline: Duration, mut ready: impl FnMut() -> bool) -> bool {
+        let start = Instant::now();
+        while start.elapsed() < deadline {
+            if ready() {
+                return true;
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+        ready()
+    }
+
+    #[test]
+    fn a_child_writes_to_the_pty_and_then_exits() {
+        let running = collect("/bin/echo", &["hello"]);
+        assert!(wait_until(Duration::from_secs(5), || {
+            String::from_utf8_lossy(&running.output.lock().unwrap()).contains("hello")
+        }));
+        assert!(wait_until(Duration::from_secs(5), || *running
+            .exited
+            .lock()
+            .unwrap()));
+    }
+
+    #[test]
+    fn a_child_sees_the_size_the_pty_was_opened_with() {
+        // `stty` reads the controlling terminal, so its answer is the child's
+        // own view rather than anything this process told it.
+        let running = collect("/bin/sh", &["-c", "stty size"]);
+        assert!(wait_until(Duration::from_secs(5), || {
+            String::from_utf8_lossy(&running.output.lock().unwrap()).contains("10 40")
+        }));
+    }
+
+    #[test]
+    fn input_reaches_the_child() {
+        let running = collect("/bin/cat", &[]);
+        running.pty.write(b"ping\n".to_vec());
+        assert!(wait_until(Duration::from_secs(5), || {
+            String::from_utf8_lossy(&running.output.lock().unwrap()).contains("ping")
+        }));
+    }
+}

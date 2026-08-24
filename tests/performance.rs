@@ -1,0 +1,759 @@
+// SPDX-License-Identifier: MPL-2.0
+
+//! Performance limits Runyte has to meet on large documents.
+//!
+//! These are budgets, not measurements: each one is far above what the editor
+//! currently needs, because the point is to catch a change that makes an
+//! operation pathological rather than to record today's numbers. A regression
+//! here is a stall a person would feel, not a few percent.
+//!
+//! Two shapes of large file are covered, because they fail in different ways.
+//! A document with very many rows stresses everything that walks lines; a
+//! minified document, where one line is the whole file, stresses everything
+//! that works from the start of a line. Both are checked with soft wrap on and
+//! off, since wrapping is measured per logical line and is the part most
+//! easily made quadratic.
+
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    sync::{Mutex, OnceLock},
+    time::{Duration, Instant},
+};
+
+use runyte::{
+    buffer::SOFT_WRAP_LINE_LIMIT,
+    command::{CommandExecutionContext, CommandInvocation, EditorCommand, parse_colon_command},
+    file_picker::{CONTENT_ENTRY_LIMIT, FileHits, FilePicker, scan_content},
+    headless::HeadlessEditor,
+    selection::Selection,
+    snapshot::{EditorSnapshot, SnapshotRow, TextRunKind},
+    syntax::SyntaxEvents,
+    text::{Text, Transaction},
+    wrap,
+};
+
+/// Whether any pane shows a wrapped row, which is how a soft-wrapped document
+/// is told apart from one shown a line to a row.
+fn has_continuation(snapshot: &EditorSnapshot) -> bool {
+    snapshot.panes.iter().any(|pane| {
+        pane.rows
+            .iter()
+            .any(|row| matches!(row, SnapshotRow::Text(row) if row.continuation))
+    })
+}
+
+/// Whether any visible run carries a syntax scope, which is how a highlighted
+/// document is told apart from one shown as plain text.
+fn has_syntax_scope(snapshot: &EditorSnapshot) -> bool {
+    snapshot.panes.iter().any(|pane| {
+        pane.rows.iter().any(|row| {
+            let SnapshotRow::Text(row) = row else {
+                return false;
+            };
+            row.runs
+                .iter()
+                .any(|run| matches!(run.kind, TextRunKind::Text { scope: Some(_), .. }))
+        })
+    })
+}
+
+/// One frame at 60Hz. Every redraw budget here is this, because a redraw that
+/// misses it is a redraw the person sees miss it.
+const FRAME: Duration = Duration::from_millis(16);
+
+/// What a document Runyte chooses to soft-wrap has to redraw within.
+///
+/// Wrapping a very long line is linear and unavoidably costly, so the line
+/// limit is set where a frame would reach about a second. This is the other
+/// half of that promise: anything under the limit, and therefore still
+/// wrapped, has to stay inside it. Between one frame and this ceiling the
+/// editor is progressively slower to scroll but still usable, which is the
+/// trade the limit deliberately makes.
+const WRAPPED_FRAME_CEILING: Duration = Duration::from_secs(1);
+
+/// Budgets describe an optimized build, the only one whose numbers say
+/// anything about what a person feels. A debug build does the same work an
+/// order of magnitude slower, so the limits are relaxed there rather than
+/// skipped: `cargo test` still catches anything pathological, and
+/// `cargo test --release` holds the real line.
+fn budget(release: Duration) -> Duration {
+    if cfg!(debug_assertions) {
+        release * 25
+    } else {
+        release
+    }
+}
+
+#[track_caller]
+fn within(label: &str, elapsed: Duration, limit: Duration) {
+    assert!(
+        elapsed <= limit,
+        "{label} took {elapsed:?}, over its {limit:?} budget"
+    );
+}
+
+fn fixture_root() -> &'static PathBuf {
+    static ROOT: OnceLock<PathBuf> = OnceLock::new();
+    ROOT.get_or_init(|| {
+        // Deliberately stable rather than per-run: these fixtures are tens of
+        // megabytes, and a fresh directory each run would leave a pile of them
+        // behind in the temporary directory.
+        let root = std::env::temp_dir().join("runyte-performance-fixtures");
+        fs::create_dir_all(&root).unwrap();
+        root
+    })
+}
+
+/// Builds a fixture once and reuses it afterwards, so the cost of writing tens
+/// of megabytes is charged neither to every test nor to every run.
+///
+/// The content is written under a name unique to this process and then renamed
+/// into place, because the directory is shared: two runs at once must not read
+/// a file the other is still writing.
+fn fixture(name: &str, build: fn() -> String) -> PathBuf {
+    static BUILD: Mutex<()> = Mutex::new(());
+    let _build = BUILD.lock().unwrap();
+    let path = fixture_root().join(name);
+    if !path.exists() {
+        let pending = fixture_root().join(format!("{name}.{}.pending", std::process::id()));
+        fs::write(&pending, build()).unwrap();
+        fs::rename(&pending, &path).unwrap();
+    }
+    path
+}
+
+/// A million rows of ordinary text, around 45MB.
+fn million_rows() -> PathBuf {
+    fixture("million_rows.txt", || {
+        let mut text = String::with_capacity(46_000_000);
+        for index in 0..1_000_000 {
+            text.push_str(&format!("line {index} of the document with some content\n"));
+        }
+        text
+    })
+}
+
+/// Rows behind a grammar, large enough that synchronous reparsing is visible.
+fn highlighted_rows() -> PathBuf {
+    fixture("highlighted_rows.json", || {
+        let mut text = String::from("[\n");
+        for index in 0..150_000 {
+            text.push_str(&format!(
+                "  {{\"id\": {index}, \"name\": \"item-{index}\"}},\n"
+            ));
+        }
+        text.push_str("  null\n]\n");
+        text
+    })
+}
+
+/// Rows past the former 200,000-line refusal.
+fn past_the_old_syntax_line_limit() -> PathBuf {
+    fixture("over_syntax_limit.json", || {
+        let mut text = String::from("[\n");
+        for index in 0..250_000 {
+            text.push_str(&format!(
+                "  {{\"id\": {index}, \"name\": \"item-{index}\"}},\n"
+            ));
+        }
+        text.push_str("  null\n]\n");
+        text
+    })
+}
+
+/// One line holding the whole document, the shape of a minified file.
+fn minified_json() -> PathBuf {
+    fixture("minified.json", || {
+        let mut text = String::from("{\"items\":[");
+        for index in 0..52_000 {
+            if index > 0 {
+                text.push(',');
+            }
+            text.push_str(&format!("{{\"id\":{index},\"name\":\"item-{index}\"}}"));
+        }
+        text.push_str("]}");
+        text
+    })
+}
+
+/// One line past [`runyte::buffer::SOFT_WRAP_LINE_LIMIT`], so the point where
+/// wrapping is withheld is tested where it actually sits rather than in the
+/// abstract. Large, and reused across runs for that reason.
+fn over_the_wrap_limit() -> PathBuf {
+    fixture("over_wrap_limit.txt", || {
+        "abcdefghij ".repeat(SOFT_WRAP_LINE_LIMIT / 11 + 100_000)
+    })
+}
+
+/// A single line past the former 8 MB syntax refusal.
+fn past_the_old_syntax_byte_limit() -> PathBuf {
+    fixture("over_syntax_bytes.json", || {
+        let mut text = String::from("{\"items\":[");
+        while text.len() < 9 * 1024 * 1024 {
+            if text.len() > 10 {
+                text.push(',');
+            }
+            let index = text.len();
+            text.push_str(&format!("{{\"id\":{index},\"name\":\"item-{index}\"}}"));
+        }
+        text.push_str("]}");
+        text
+    })
+}
+
+/// Prose with lines long enough to wrap but short enough to stay wrappable.
+fn wrapping_prose() -> PathBuf {
+    fixture("prose.md", || {
+        let paragraph = "Wrapped prose that runs well past the width of any pane it is shown in \
+             and therefore has to be broken into several screen rows to be read. ";
+        let mut text = String::new();
+        for _ in 0..20_000 {
+            text.push_str(paragraph);
+            text.push('\n');
+        }
+        text
+    })
+}
+
+fn editor_at(path: &Path, soft_wrap: bool) -> HeadlessEditor {
+    let mut editor = HeadlessEditor::new_in(fixture_root()).unwrap();
+    if soft_wrap {
+        editor
+            .execute(
+                CommandInvocation::editor(
+                    EditorCommand::ToggleSoftWrap,
+                    CommandExecutionContext::default(),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+    }
+    editor
+        .execute(parse_colon_command(&format!("open {}", path.display())).unwrap())
+        .unwrap();
+    editor
+}
+
+/// The slowest of several redraws, so a budget is not met by one lucky frame.
+fn slowest_frame(editor: &mut HeadlessEditor) -> Duration {
+    (0..3)
+        .map(|_| {
+            let start = Instant::now();
+            editor.snapshot(120, 40);
+            start.elapsed()
+        })
+        .max()
+        .unwrap()
+}
+
+/// Wrapping has to be linear in the length of the line.
+///
+/// Deriving the display cell of each break by rescanning the line from its
+/// start once made this quadratic, which is what turned a one-line file into a
+/// hang. The budget is generous by two orders of magnitude on purpose: a
+/// linear implementation finishes this in single-digit milliseconds, and a
+/// quadratic one takes minutes, so nothing in between needs deciding.
+#[test]
+fn wrapping_a_very_long_line_is_linear_in_its_length() {
+    let line: String = "abcdefghij ".repeat(200_000);
+    assert!(line.chars().count() > 2_000_000);
+    let start = Instant::now();
+    let spans = wrap::segments(&line, 100, 4);
+    let elapsed = start.elapsed();
+    assert!(spans.len() > 20_000);
+    within(
+        "wrapping a 2,200,000 character line",
+        elapsed,
+        budget(Duration::from_millis(250)),
+    );
+}
+
+#[test]
+fn a_million_row_file_opens_and_redraws_within_budget() {
+    let path = million_rows();
+    for soft_wrap in [false, true] {
+        let start = Instant::now();
+        let mut editor = editor_at(&path, soft_wrap);
+        within(
+            &format!("opening a million rows (soft wrap {soft_wrap})"),
+            start.elapsed(),
+            budget(Duration::from_millis(1500)),
+        );
+        within(
+            &format!("redrawing a million rows (soft wrap {soft_wrap})"),
+            slowest_frame(&mut editor),
+            budget(FRAME),
+        );
+    }
+}
+
+/// Moving the caret far from the viewport must not cost a walk of the document.
+///
+/// Measuring the visual gap between the viewport and the caret means wrapping
+/// every line in between, so the count is taken only as far as one screen.
+#[test]
+fn a_caret_far_from_the_viewport_redraws_within_budget() {
+    let path = million_rows();
+    let text_len = fs::read_to_string(&path).unwrap().chars().count();
+    for soft_wrap in [false, true] {
+        let mut editor = editor_at(&path, soft_wrap);
+        editor.snapshot(120, 40);
+        editor.set_active_selection(Selection::point(text_len * 9 / 10));
+        within(
+            &format!("redrawing after a far jump (soft wrap {soft_wrap})"),
+            slowest_frame(&mut editor),
+            budget(FRAME),
+        );
+    }
+}
+
+/// Highlighting has to be paid for the rows on screen, not for the document.
+#[test]
+fn a_large_highlighted_file_opens_and_redraws_within_budget() {
+    let path = highlighted_rows();
+    for soft_wrap in [false, true] {
+        let start = Instant::now();
+        let mut editor = editor_at(&path, soft_wrap);
+        within(
+            &format!("opening 150,000 highlighted rows (soft wrap {soft_wrap})"),
+            start.elapsed(),
+            budget(Duration::from_millis(1500)),
+        );
+        within(
+            &format!("redrawing 150,000 highlighted rows (soft wrap {soft_wrap})"),
+            slowest_frame(&mut editor),
+            budget(FRAME),
+        );
+    }
+}
+
+/// The reported case: a megabyte-and-a-half of minified JSON on one line.
+///
+/// Unwrapped it has to meet the ordinary frame budget. Wrapped it only has to
+/// meet the promise the line limit makes — see [`WRAPPED_FRAME_CEILING`] — and
+/// it is a long way inside it, at roughly 17ms.
+#[test]
+fn a_minified_single_line_file_opens_and_redraws_within_budget() {
+    let path = minified_json();
+    assert!(fs::metadata(&path).unwrap().len() > 1_500_000);
+    for soft_wrap in [false, true] {
+        let start = Instant::now();
+        let mut editor = editor_at(&path, soft_wrap);
+        within(
+            &format!("opening a minified file (soft wrap {soft_wrap})"),
+            start.elapsed(),
+            budget(Duration::from_millis(750)),
+        );
+        within(
+            &format!("redrawing a minified file (soft wrap {soft_wrap})"),
+            slowest_frame(&mut editor),
+            budget(if soft_wrap {
+                WRAPPED_FRAME_CEILING
+            } else {
+                FRAME
+            }),
+        );
+    }
+}
+
+/// The delay between a keystroke and the character appearing: the edit plus
+/// the frame that shows it.
+fn slowest_keystroke(editor: &mut HeadlessEditor, at: usize) -> Duration {
+    (0..5)
+        .map(|index| {
+            let start = Instant::now();
+            editor
+                .apply_transaction(Transaction::insert(at + index, "x"))
+                .unwrap();
+            editor.snapshot(120, 40);
+            start.elapsed()
+        })
+        .max()
+        .unwrap()
+}
+
+async fn apply_finished_syntax(editor: &mut HeadlessEditor, events: &mut SyntaxEvents) {
+    let event = tokio::time::timeout(Duration::from_secs(10), events.recv())
+        .await
+        .expect("background syntax parse timed out")
+        .expect("background syntax worker stopped");
+    assert!(editor.apply_syntax_event(event));
+}
+
+/// Typing into a document with no grammar behind it costs the edit, not the
+/// document, however large it is.
+#[test]
+fn typing_into_a_large_plain_file_stays_within_budget() {
+    let mut editor = editor_at(&million_rows(), true);
+    editor.snapshot(120, 40);
+    within(
+        "typing into a million rows",
+        slowest_keystroke(&mut editor, 0),
+        budget(FRAME),
+    );
+}
+
+/// Typing into a large highlighted document queues a background reparse, so
+/// the keystroke itself costs nothing extra.
+///
+/// The reparse Tree-sitter does after an edit is incremental, but its cost
+/// grows with the size of the document rather than with the size of the edit:
+/// a flat structure gives the root node one child per element, and an edit
+/// anywhere rebuilds that list. Measured on this fixture it is roughly linear
+/// — about 6ms at 25,000 rows and about 96ms at 200,000 — which is why it
+/// cannot run on the keystroke that caused it.
+///
+/// The retained tree translates viewport spans through the pending edits, so
+/// the document remains coloured for the whole burst.
+#[tokio::test(flavor = "multi_thread")]
+async fn typing_into_a_large_highlighted_file_keeps_colours_during_reparse() {
+    let path = highlighted_rows();
+    let mut editor = editor_at(&path, true);
+    assert!(
+        has_syntax_scope(&editor.snapshot(120, 40)),
+        "the document should start out highlighted"
+    );
+    let mut events = editor.enable_background_syntax();
+
+    editor
+        .execute(
+            CommandInvocation::editor(
+                EditorCommand::EnterInsertMode,
+                CommandExecutionContext::default(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    // Mid-document, so the edit is a realistic one rather than a caret sitting
+    // outside the structure the grammar has parsed.
+    let middle = fs::metadata(&path).unwrap().len() as usize / 2;
+    within(
+        "typing into a large highlighted file",
+        slowest_keystroke(&mut editor, middle),
+        budget(FRAME),
+    );
+    assert!(
+        editor.has_pending_syntax(),
+        "a burst in a large document should queue a reparse"
+    );
+    assert!(
+        has_syntax_scope(&editor.snapshot(120, 40)),
+        "translated spans should keep colours during the burst"
+    );
+
+    apply_finished_syntax(&mut editor, &mut events).await;
+    assert!(!editor.has_pending_syntax());
+    assert!(
+        has_syntax_scope(&editor.snapshot(120, 40)),
+        "the completed tree should remain highlighted"
+    );
+}
+
+/// A minified document takes the same background path despite having one line,
+/// and documents past the former byte refusal remain highlighted.
+///
+/// Reparsing costs what a document holds rather than how it is broken up, so a
+/// one-line fixture verifies both the asynchronous edit path and removal of
+/// the former byte refusal.
+#[tokio::test(flavor = "multi_thread")]
+async fn minified_documents_reparse_in_background_past_the_old_byte_limit() {
+    let path = minified_json();
+    assert_eq!(
+        Text::from_str(&fs::read_to_string(&path).unwrap()).len_lines(),
+        1,
+        "the fixture has to be a single line for this to test anything"
+    );
+
+    let mut editor = editor_at(&path, false);
+    assert!(has_syntax_scope(&editor.snapshot(120, 40)));
+    let mut events = editor.enable_background_syntax();
+    editor
+        .execute(
+            CommandInvocation::editor(
+                EditorCommand::EnterInsertMode,
+                CommandExecutionContext::default(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    within(
+        "typing into a minified document",
+        slowest_keystroke(&mut editor, 100),
+        budget(FRAME),
+    );
+    assert!(
+        editor.has_pending_syntax(),
+        "a minified document should queue its reparse"
+    );
+    assert!(has_syntax_scope(&editor.snapshot(120, 40)));
+    apply_finished_syntax(&mut editor, &mut events).await;
+
+    let path = past_the_old_syntax_byte_limit();
+    let mut oversized = HeadlessEditor::new_in(fixture_root()).unwrap();
+    oversized
+        .execute(parse_colon_command(&format!("open {}", path.display())).unwrap())
+        .unwrap();
+    assert!(
+        has_syntax_scope(&oversized.snapshot(120, 40)),
+        "a single line past the former byte limit should be highlighted"
+    );
+}
+
+/// A discrete edit only queues parser work and stays inside one frame.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_discrete_edit_in_a_large_highlighted_file_stays_under_its_ceiling() {
+    const REPARSE_CEILING: Duration = FRAME;
+    for (label, path) in [
+        ("a large highlighted file", highlighted_rows()),
+        ("a minified file", minified_json()),
+    ] {
+        let mut editor = editor_at(&path, true);
+        editor.snapshot(120, 40);
+        let _events = editor.enable_background_syntax();
+        let middle = fs::metadata(&path).unwrap().len() as usize / 2;
+        within(
+            &format!("editing {label}"),
+            slowest_keystroke(&mut editor, middle),
+            budget(REPARSE_CEILING),
+        );
+        assert!(
+            editor.has_pending_syntax(),
+            "a discrete edit should queue parser work"
+        );
+    }
+}
+
+/// Wrapping stays on, and stays fast, for the documents it is meant for.
+#[test]
+fn a_large_wrapped_prose_file_redraws_within_budget() {
+    let mut editor = editor_at(&wrapping_prose(), true);
+    let snapshot = editor.snapshot(120, 40);
+    assert!(
+        has_continuation(&snapshot),
+        "prose within the line limit should still be soft-wrapped"
+    );
+    within(
+        "redrawing wrapped prose",
+        slowest_frame(&mut editor),
+        budget(FRAME),
+    );
+}
+
+/// Soft wrap is withheld only where wrapping a frame would take about a
+/// second, and kept everywhere below that.
+///
+/// The check is on the measured length of the longest line rather than on the
+/// file's size or name, so a large file made of ordinary lines is unaffected,
+/// and so is a minified file of a few megabytes.
+#[test]
+fn soft_wrap_is_withheld_only_from_a_line_that_takes_about_a_second() {
+    let mut prose = editor_at(&wrapping_prose(), true);
+    assert!(
+        has_continuation(&prose.snapshot(120, 40)),
+        "a document of ordinary lines should keep soft wrap"
+    );
+
+    let mut minified = editor_at(&minified_json(), true);
+    assert!(
+        has_continuation(&minified.snapshot(120, 40)),
+        "a few megabytes on one line is still cheap enough to wrap"
+    );
+
+    let mut huge = editor_at(&over_the_wrap_limit(), true);
+    let snapshot = huge.snapshot(120, 40);
+    assert!(
+        !has_continuation(&snapshot),
+        "a line past the limit should be shown unwrapped"
+    );
+    // Withholding wrapping is what makes this document usable at all, so the
+    // ordinary frame budget applies to it rather than the wrapped ceiling.
+    within(
+        "redrawing a line past the wrap limit",
+        slowest_frame(&mut huge),
+        budget(FRAME),
+    );
+}
+
+/// A document past the former line refusal is highlighted and its edits stay
+/// responsive because reparsing is background work.
+#[tokio::test(flavor = "multi_thread")]
+async fn syntax_highlighting_continues_past_the_old_line_limit() {
+    let mut highlighted = editor_at(&highlighted_rows(), false);
+    assert!(
+        has_syntax_scope(&highlighted.snapshot(120, 40)),
+        "a document under the line limit should still be highlighted"
+    );
+
+    let path = past_the_old_syntax_line_limit();
+    let mut oversized = HeadlessEditor::new_in(fixture_root()).unwrap();
+    oversized
+        .execute(parse_colon_command(&format!("open {}", path.display())).unwrap())
+        .unwrap();
+    assert!(
+        has_syntax_scope(&oversized.snapshot(120, 40)),
+        "a document over the former line limit should be highlighted"
+    );
+
+    within(
+        "redrawing a document over the former syntax limit",
+        slowest_frame(&mut oversized),
+        budget(FRAME),
+    );
+    let _events = oversized.enable_background_syntax();
+    within(
+        "typing into a document over the former syntax limit",
+        slowest_keystroke(&mut oversized, 0),
+        budget(FRAME),
+    );
+}
+
+// -- Fuzzy content search ---------------------------------------------------
+
+/// The needle, and the query that reaches it.
+///
+/// Deliberately not a word any generated line contains as a subsequence:
+/// content search is fuzzy, so a query has to be checked against the filler
+/// rather than merely look unlike it.
+const GREP_NEEDLE: &str = "call_the_marked_thing(context);";
+const GREP_QUERY: &str = "markedthing";
+
+/// A project too large for its lines to all be candidates at once: 600 files
+/// over 30 directories, 300,000 lines in all, plus one file of 60,000 lines so
+/// the single-large-file path is covered too.
+///
+/// The needle sits in one file near the end of the walk. The point is not
+/// where it is — a filtered scan does not care — but that far more than
+/// `CONTENT_ENTRY_LIMIT` lines lie between the root and it, which is what a
+/// scan bounded by lines read rather than by matches found could never cross.
+fn large_project() -> &'static Path {
+    static ROOT: OnceLock<PathBuf> = OnceLock::new();
+    ROOT.get_or_init(|| {
+        let root = fixture_root().join("large_project");
+        if root.exists() {
+            return root;
+        }
+        let pending = fixture_root().join(format!("large_project.{}.pending", std::process::id()));
+        let filler = (0..500)
+            .map(|line| format!("    let value_{line} = compute(input, {line}) + offset;\n"))
+            .collect::<String>();
+        for file in 0..600 {
+            let directory = pending.join(format!("module{}", file % 30));
+            fs::create_dir_all(&directory).unwrap();
+            fs::write(directory.join(format!("part{file}.rs")), &filler).unwrap();
+        }
+        fs::write(
+            pending.join("one_large_file.rs"),
+            (0..120).map(|_| filler.as_str()).collect::<String>(),
+        )
+        .unwrap();
+        fs::write(
+            pending.join("zzz_needle.rs"),
+            format!("{filler}{GREP_NEEDLE}\n"),
+        )
+        .unwrap();
+        // Renamed into place so a second run never reads a tree this one is
+        // still writing, the same way the single-file fixtures are built.
+        if fs::rename(&pending, &root).is_err() {
+            fs::remove_dir_all(&pending).ok();
+        }
+        root
+    })
+}
+
+/// What a full content scan of a large project has to finish within.
+///
+/// This reads every tracked file and tests every line, so it is linear in the
+/// project and cannot be made instant. The budget is where a person would
+/// start to feel the picker lag behind their typing rather than where the scan
+/// currently lands, which is several times under it.
+const GREP_SCAN_CEILING: Duration = Duration::from_millis(1_500);
+
+/// Content search has to reach a match anywhere in a project, not only in the
+/// part of it a scan happened to read first.
+///
+/// The scan filters as it walks, so its candidate ceiling bounds the matches
+/// it collects rather than how far into the project it got. The empty query is
+/// the control: it matches everything, so it does still fill the budget and
+/// stop early, and that is the state the picker leaves as soon as anything is
+/// typed.
+#[test]
+fn a_content_scan_finds_a_match_anywhere_in_a_large_project() {
+    let root = large_project();
+    let state_root = root.join(".runyte");
+
+    let start = Instant::now();
+    let (entries, _, limited) = scan_content(root, root, &state_root, false, GREP_QUERY).unwrap();
+    let elapsed = start.elapsed();
+    assert!(
+        !limited,
+        "one match in 360,000 lines must not report a truncated scan"
+    );
+    assert_eq!(
+        entries
+            .iter()
+            .flat_map(|hits| hits.lines.iter().map(|line| (
+                hits.path.strip_prefix(root).unwrap().to_path_buf(),
+                line.text.clone()
+            )))
+            .collect::<Vec<_>>(),
+        [(PathBuf::from("zzz_needle.rs"), GREP_NEEDLE.to_owned())],
+        "the needle is the only line the query matches, and it has to be found"
+    );
+    within(
+        "scanning a large project for one match",
+        elapsed,
+        budget(GREP_SCAN_CEILING),
+    );
+
+    let start = Instant::now();
+    let (entries, _, limited) = scan_content(root, root, &state_root, false, "").unwrap();
+    assert!(
+        limited,
+        "a query matching every line has to stop at the cap"
+    );
+    assert_eq!(
+        entries.iter().map(FileHits::len).sum::<usize>(),
+        CONTENT_ENTRY_LIMIT,
+        "the budget counts matching lines, not the files holding them"
+    );
+    within(
+        "opening content search on a large project",
+        start.elapsed(),
+        budget(GREP_SCAN_CEILING),
+    );
+}
+
+/// Typing into content search has to stay inside a few frames.
+///
+/// The picker holds at most `CONTENT_ENTRY_LIMIT` candidates and re-ranks them
+/// on every keystroke, so this is the cost the person feels between pressing a
+/// key and seeing the list move, and it is what the candidate budget is really
+/// a budget on. Every candidate here matches, which is the state a picker is
+/// in immediately after a scan, and the ranked line is the same shape as the
+/// query, which is the expensive case rather than the typical one. The scan
+/// itself is not measured: it runs on its own thread and cannot stall a
+/// redraw.
+#[test]
+fn ranking_a_full_content_budget_stays_within_a_frame() {
+    let root = large_project();
+    let (entries, _, limited) =
+        scan_content(root, root, &root.join(".runyte"), false, "value").unwrap();
+    assert!(limited, "the fixture has to fill the ranking budget");
+    let mut picker = FilePicker::grep(1, root.to_path_buf());
+    picker.add_content(entries);
+    assert_eq!(picker.entries.len(), CONTENT_ENTRY_LIMIT);
+
+    let slowest = "compute"
+        .chars()
+        .fold(Duration::ZERO, |slowest, character| {
+            let start = Instant::now();
+            picker.insert_query(character);
+            slowest.max(start.elapsed())
+        });
+    assert!(
+        !picker.matches.is_empty(),
+        "narrowing must not lose the lines the query still matches"
+    );
+    within("a keystroke in content search", slowest, budget(FRAME * 4));
+}

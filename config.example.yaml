@@ -1,0 +1,73 @@
+# SPDX-License-Identifier: MPL-2.0
+
+# Copy to ~/.config/runyte/config.yaml.
+editor:
+  line_numbers: true
+  tab_width: 4
+  scroll_offset: 3
+  # Cursor motions per held-key repeat event. Set to 1 for terminal-native speed.
+  motion_repeat_multiplier: 2
+  show_hidden_files: false
+  soft_wrap: false
+  zen_width: 100
+  hard_wrap_width: 80
+  # Gray out every pane's text while a command prompt is open.
+  command_mode_dim: true
+
+# Refresh visible Git views and tracked-file gutters. Zero disables the timer;
+# :git-refresh remains available.
+git:
+  refresh_interval_seconds: 5
+
+# Where this workspace keeps its local runtime state: persistent-host
+# transport and lock files. Keep this ignored. `root` is the original spelling
+# and is still accepted.
+workspace:
+  state: .runyte
+  # standalone is the default. persistent makes a bare `runyte` start or reuse
+  # this project's host and attach to it.
+  mode: standalone
+  # A clean host with no TUI and no --wait request retires after this many
+  # minutes. Zero disables retirement.
+  idle_retirement_minutes: 1440
+
+# Newest workspace-lifetime notifications retained in memory. Opening
+# :notifications (alias :not) acknowledges the entries currently present.
+notifications:
+  history_limit: 50
+
+# Built-ins: dark, light, base16, paper, gruvbox, and Everforest's dark/light
+# hard/medium/soft variants (for example, everforest-dark-medium).
+theme: gruvbox
+
+# Custom themes can be added here. Every color has a default, so fields may be
+# omitted when only a small adjustment is needed.
+themes:
+  midnight:
+    background: "#10131a"
+    foreground: "#d8dee9"
+    muted: "#65737e"
+    # Optional ordinary-text colour while `gw` is active; omitted uses muted.
+    # jump_text_muted: "#65737e"
+    accent: "#88c0d0"
+    # Carets and the status line distinguish modes. Omitted values use accent,
+    # error, warning, and info respectively.
+    cursor_normal: "#ff5555"
+    cursor_insert: "#ff79c6"
+    cursor_select: "#ffb86c"
+    cursor_command: "#bd93f9"
+    directory: "#8be9fd"
+    selection: "#2e3440"
+    error: "#bf616a"
+    warning: "#d08770"
+    info: "#a3be8c"
+    # Immediate `gw` keys are red. Two-key labels keep one neon-cyan hue;
+    # make the secondary darker on dark themes and lighter on light themes.
+    jump_label_immediate: "#ff5555"
+    jump_label_primary: "#5fd7e7"
+    jump_label_secondary: "#4ab7c6"
+    # Git gutter marks, measured against the index. Omitted values use the
+    # terminal's own green, yellow, and red.
+    change_added: "#a3be8c"
+    change_modified: "#ebcb8b"
+    change_removed: "#bf616a"
