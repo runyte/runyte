@@ -1384,7 +1384,7 @@ pub const COMMANDS: &[CommandSpec] = &[
     editor_spec!(
         Editor::OpenTerminal,
         "terminal",
-        ["term"],
+        ["t", "term"],
         "terminal [command]",
         Optional(FreeText)
     ),
@@ -2876,6 +2876,33 @@ mod tests {
             assert!(
                 resolve_command(retired).is_none(),
                 ":{retired} still resolves"
+            );
+        }
+    }
+
+    #[test]
+    fn terminal_is_reachable_as_t_term_and_terminal() {
+        let terminal = resolve_command("terminal").unwrap();
+        assert_eq!(terminal.aliases, &["t", "term"]);
+        for spelling in ["t", "term", "terminal"] {
+            assert_eq!(
+                resolve_command(spelling).unwrap().id,
+                terminal.id,
+                ":{spelling} must open a terminal"
+            );
+            assert_eq!(
+                parse_colon_command(spelling),
+                Ok(CommandInvocation::new(
+                    CommandId::Editor(EditorCommand::OpenTerminal),
+                    InvocationParameters::OptionalText(None)
+                ))
+            );
+            assert_eq!(
+                parse_colon_command(&format!("{spelling} htop")),
+                Ok(CommandInvocation::new(
+                    CommandId::Editor(EditorCommand::OpenTerminal),
+                    InvocationParameters::OptionalText(Some("htop".to_owned()))
+                ))
             );
         }
     }
