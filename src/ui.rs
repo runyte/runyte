@@ -424,6 +424,8 @@ fn draw_snapshot_overlay(
     if editor_area.width < 3 || editor_area.height < 3 {
         return;
     }
+    let query_height = usize::from(!overlay.query.is_empty());
+    let message_height = usize::from(overlay.message.is_some());
     let area = if overlay.layout == OverlayLayout::Setting {
         to_tui_rect(setting_popup_area(editor_area))
     } else if overlay.layout == OverlayLayout::SettingChoice {
@@ -446,20 +448,23 @@ fn draw_snapshot_overlay(
                 })
             }
             OverlayKind::Completion | OverlayKind::Signature | OverlayKind::Hover => {
-                let rows = overlay.rows.len().clamp(1, 12) as u16;
-                anchored_snapshot(
-                    editor,
-                    editor_area,
-                    editor_area.width.clamp(16, 80),
-                    rows + 2,
-                )
-                .unwrap_or_else(|| to_tui_rect(centered(editor_area, 80, 40, 16, 4)))
+                let rows = overlay.rows.len().clamp(1, 12);
+                // The shared snapshot renderer shows a completion's filter
+                // above its candidates. Account for that row (and an inline
+                // message when present) when sizing an anchored overlay;
+                // otherwise the query displaces one candidate, and a single
+                // remaining match has no drawable row at all.
+                let height = rows
+                    .saturating_add(query_height)
+                    .saturating_add(message_height)
+                    .saturating_add(2)
+                    .min(usize::from(u16::MAX)) as u16;
+                anchored_snapshot(editor, editor_area, editor_area.width.clamp(16, 80), height)
+                    .unwrap_or_else(|| to_tui_rect(centered(editor_area, 80, 40, 16, 4)))
             }
             _ => to_tui_rect(centered(editor_area, 80, 75, 28, 7)),
         }
     };
-    let query_height = usize::from(!overlay.query.is_empty());
-    let message_height = usize::from(overlay.message.is_some());
     let row_capacity = usize::from(area.height)
         .saturating_sub(2 + query_height + message_height)
         .max(1);
@@ -4667,6 +4672,52 @@ mod tests {
             })
             .expect("the attached Space menu renders the LSP namespace");
         assert!(screen[cell].modifier.contains(Modifier::DIM));
+    }
+
+    #[test]
+    fn attached_completion_keeps_a_row_below_its_query() {
+        let root = std::env::temp_dir().join(format!(
+            "runyte-attached-completion-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let config = root.join("config");
+        std::fs::create_dir_all(config.join("alacritty")).unwrap();
+        let note = root.join("note.txt");
+        std::fs::write(&note, "").unwrap();
+
+        let mut app = App::new_in_project(Config::default(), Some(note), &root).unwrap();
+        app.handle_key(crate::input::KeyStroke::char('i')).unwrap();
+        for character in "config/al".chars() {
+            app.handle_key(crate::input::KeyStroke::char(character))
+                .unwrap();
+        }
+        let mut host = crate::workspace::WorkspaceHost::new(app);
+        let frame = host.prepare_frame(frame_geometry(TuiRect::new(0, 0, 100, 24)));
+        let completion = frame
+            .overlays
+            .iter()
+            .find(|overlay| overlay.kind == OverlayKind::Completion)
+            .expect("path completion reaches the attached frame");
+        assert_eq!(completion.query, "al");
+        assert_eq!(completion.rows.len(), 1);
+        assert_eq!(completion.rows[0].label, "alacritty/");
+
+        let mut terminal = Terminal::new(TestBackend::new(100, 24)).unwrap();
+        terminal
+            .draw(|terminal_frame| render_host_frame(terminal_frame, &frame))
+            .unwrap();
+        let screen = terminal.backend().buffer();
+        assert!(find_text(screen, "> al").is_some(), "the typed filter");
+        assert!(
+            find_text(screen, "alacritty/").is_some(),
+            "the only matching candidate"
+        );
+
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

@@ -32,6 +32,14 @@ Symlink-derived directory kinds are revalidated whenever a cached listing is
 reused because changes to a link target do not update the containing
 directory's modification time.
 
+A later presentation fix corrected `ui::draw_snapshot_overlay` for attached
+persistent clients. The renderer sized an anchored completion for its
+candidate rows and borders, then drew the typed query in an additional
+interior row. That displaced one candidate: three matches rendered as two,
+and narrowing to one match left only the query visible. Anchored overlays now
+include their query and message rows in the requested height, so the semantic
+candidate set and the visible rows agree.
+
 The completion behavior is covered by
 `tests/path_completion.rs::a_wide_directory_offers_every_name_typed_into_it`,
 `tests/path_completion.rs::a_wide_directory_offers_every_name_typed_into_the_palette`,
@@ -52,6 +60,8 @@ are covered by the unit tests in `src/directory_listing.rs`, including
 `a_directory_that_disappears_does_not_return_its_kept_listing`,
 `a_listing_larger_than_the_entry_bound_is_still_kept`, and
 `a_symlink_that_gains_or_loses_its_target_is_reclassified`.
+Attached-client presentation of a path completion narrowed to one row is
+covered by `src/ui.rs::attached_completion_keeps_a_row_below_its_query`.
 
 Known limitation: the first completion request for a directory still reads
 the complete directory synchronously, and the visible result remains bounded
