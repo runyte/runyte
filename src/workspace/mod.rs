@@ -29,7 +29,8 @@ pub use catalog::{
 };
 pub use host::{
     BufferRequestError, FrameId, HostCommand, HostEvent, HostFrame, HostInputOutcome,
-    HostServiceSubmitError, WorkspaceHost,
+    HostServiceSubmitError, SessionPreview, SessionPreviewPane, SessionPreviewPaneKind,
+    WorkspaceHost,
 };
 pub use identity::WorkspaceIdentity;
 pub use service::{

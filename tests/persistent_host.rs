@@ -437,6 +437,21 @@ async fn detach_reattach_preserves_live_editor_and_refuses_a_second_tui() {
         response(&mut control).await,
         HostResponse::Welcome { .. }
     ));
+    control.send(&ClientRequest::SessionPreview).await.unwrap();
+    let preview = match response(&mut control).await {
+        HostResponse::SessionPreview { preview } => preview,
+        response => panic!("expected semantic session preview, got {response:?}"),
+    };
+    assert_eq!(preview.layout_panes, 1);
+    assert!(preview.panes[0].active);
+    assert!(preview.panes[0].title.ends_with("note.txt"));
+    assert!(
+        preview.panes[0]
+            .lines
+            .iter()
+            .any(|line| line.contains("word word")),
+        "{preview:?}"
+    );
     control.send(&ClientRequest::ListBuffers).await.unwrap();
     let dirty = match response(&mut control).await {
         HostResponse::Buffers { buffers } => buffers

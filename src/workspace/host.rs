@@ -31,6 +31,10 @@ use super::{
 
 const MAX_BUFFER_READ_BYTES: usize = 1024 * 1024;
 const MAX_WAIT_REQUESTS: usize = 256;
+const SESSION_PREVIEW_PANES: usize = 8;
+const SESSION_PREVIEW_LINES: usize = 8;
+const SESSION_PREVIEW_COLUMNS: usize = 240;
+const SESSION_PREVIEW_OTHER_RESOURCES: usize = 8;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum BufferRequestError {
@@ -101,6 +105,60 @@ pub struct HostFrame {
     pub active_revision: BufferRevision,
     pub editor: EditorSnapshot,
     pub overlays: Vec<OverlaySnapshot>,
+}
+
+/// A bounded, presentation-neutral reading of the live panes a person would
+/// return to after attaching to a persistent session.
+///
+/// This is deliberately not a miniature [`HostFrame`]. Preparing a frame for
+/// synthetic thumbnail geometry would mutate viewport state and resize PTYs;
+/// a session preview only reads the pane state the host already owns.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SessionPreview {
+    /// Every pane in the retained split layout, including panes hidden behind
+    /// a maximized presentation.
+    pub layout_panes: usize,
+    /// Visible panes included below. Bounded independently from the layout so
+    /// an unusually split workspace cannot make a control response unbounded.
+    pub panes: Vec<SessionPreviewPane>,
+    pub omitted_panes: usize,
+    /// Open resources not represented by a visible pane, as structural names
+    /// such as `[file] path` and `[terminal] shell`.
+    pub other_resources: Vec<String>,
+    pub omitted_resources: usize,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SessionPreviewPane {
+    pub active: bool,
+    pub title: String,
+    pub kind: SessionPreviewPaneKind,
+    /// One-based document row of `lines[0]` for a buffer, and `None` for a
+    /// terminal tail whose retained scrollback has no document coordinates.
+    pub start_line: Option<usize>,
+    /// Buffer rows begin at the pane's retained viewport anchor; terminal
+    /// rows are the tail of its parsed plain-text screen and scrollback.
+    pub lines: Vec<String>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SessionPreviewPaneKind {
+    Buffer { dirty: bool, read_only: bool },
+    Terminal { live: bool },
+}
+
+fn session_preview_line(line: &str) -> String {
+    line.trim_end_matches(['\r', '\n'])
+        .chars()
+        .take(SESSION_PREVIEW_COLUMNS)
+        .map(|character| {
+            if character == '\t' || !character.is_control() {
+                character
+            } else {
+                '\u{fffd}'
+            }
+        })
+        .collect()
 }
 
 /// Typed direct-host commands. Serialization DTOs are deliberately separate.
@@ -255,6 +313,122 @@ impl WorkspaceHost {
                 closed: self.app.host_buffer_is_closed(index),
             })
             .collect()
+    }
+
+    /// Reads a compact overview without preparing new viewport geometry.
+    ///
+    /// Buffer snippets begin where each pane was last scrolled. Terminal
+    /// snippets use parsed plain text rather than raw escape sequences. The
+    /// active/maximized pane rules mirror what attachment will show, while
+    /// hidden resources remain names only.
+    pub fn session_preview(&self) -> SessionPreview {
+        let mut layout_panes = Vec::new();
+        self.app.layout.panes(&mut layout_panes);
+        let mut visible_panes = layout_panes
+            .iter()
+            .copied()
+            .find(|pane| self.app.maximized_view(*pane).is_some())
+            .map_or_else(|| layout_panes.clone(), |pane| vec![pane]);
+        if let Some(position) = visible_panes
+            .iter()
+            .position(|pane| *pane == self.app.active_pane)
+        {
+            let active = visible_panes.remove(position);
+            visible_panes.insert(0, active);
+        }
+
+        let represented_buffers = visible_panes
+            .iter()
+            .filter_map(|pane_id| self.app.panes.get(pane_id))
+            .filter(|pane| pane.terminal.is_none())
+            .map(|pane| pane.buffer)
+            .collect::<HashSet<_>>();
+        let represented_terminals = visible_panes
+            .iter()
+            .filter_map(|pane_id| self.app.panes.get(pane_id)?.terminal)
+            .collect::<HashSet<_>>();
+
+        let panes = visible_panes
+            .iter()
+            .take(SESSION_PREVIEW_PANES)
+            .filter_map(|pane_id| {
+                let pane = self.app.panes.get(pane_id)?;
+                if let Some(id) = pane.terminal
+                    && let Some(terminal) = self.app.terminals.get(id)
+                {
+                    let text = terminal.plain_text();
+                    let mut lines = text
+                        .lines()
+                        .rev()
+                        .take(SESSION_PREVIEW_LINES)
+                        .map(session_preview_line)
+                        .collect::<Vec<_>>();
+                    lines.reverse();
+                    return Some(SessionPreviewPane {
+                        active: *pane_id == self.app.active_pane,
+                        title: session_preview_line(&terminal.display_name()),
+                        kind: SessionPreviewPaneKind::Terminal {
+                            live: terminal.live(),
+                        },
+                        start_line: None,
+                        lines,
+                    });
+                }
+
+                let buffer = self.app.buffers.get(pane.buffer)?;
+                let start = pane.scroll_row.min(buffer.len_lines().saturating_sub(1));
+                let lines = (start..buffer.len_lines())
+                    .take(SESSION_PREVIEW_LINES)
+                    .map(|row| session_preview_line(&buffer.line_string(row)))
+                    .collect();
+                Some(SessionPreviewPane {
+                    active: *pane_id == self.app.active_pane,
+                    title: session_preview_line(&buffer.pane_title()),
+                    kind: SessionPreviewPaneKind::Buffer {
+                        dirty: buffer.dirty,
+                        read_only: buffer.is_read_only(),
+                    },
+                    start_line: Some(start + 1),
+                    lines,
+                })
+            })
+            .collect::<Vec<_>>();
+
+        let mut resources = self
+            .app
+            .buffers
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| {
+                !represented_buffers.contains(index) && !self.app.host_buffer_is_closed(*index)
+            })
+            .map(|(_, buffer)| {
+                session_preview_line(&format!(
+                    "{}{}",
+                    buffer.pane_title(),
+                    if buffer.dirty { " [+]" } else { "" }
+                ))
+            })
+            .chain(
+                self.app
+                    .terminals
+                    .iter()
+                    .filter(|terminal| !represented_terminals.contains(&terminal.id()))
+                    .map(|terminal| session_preview_line(&terminal.display_name())),
+            )
+            .collect::<Vec<_>>();
+        let omitted_resources = resources
+            .len()
+            .saturating_sub(SESSION_PREVIEW_OTHER_RESOURCES);
+        resources.truncate(SESSION_PREVIEW_OTHER_RESOURCES);
+
+        SessionPreview {
+            layout_panes: layout_panes.len(),
+            omitted_panes: visible_panes.len().saturating_sub(panes.len()),
+            panes,
+            other_resources: resources,
+            omitted_resources,
+        }
     }
 
     /// How many live buffers hold unsaved work.
@@ -1044,6 +1218,48 @@ mod tests {
         host.execute(HostCommand::Input(InputEvent::Text("hello".to_owned())))
             .unwrap();
         assert_eq!(host.app().active_buffer().to_string(), "hello");
+    }
+
+    #[test]
+    fn session_preview_reads_the_retained_viewport_without_preparing_a_frame() {
+        let mut host = host();
+        let text = (1..=20)
+            .map(|line| format!("line {line}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        host.app_mut().buffers[0].apply(&Transaction::insert(0, text));
+        host.app_mut().panes.get_mut(&0).unwrap().scroll_row = 9;
+
+        let preview = host.session_preview();
+
+        assert_eq!(preview.layout_panes, 1);
+        assert_eq!(preview.omitted_panes, 0);
+        assert!(preview.other_resources.is_empty());
+        let pane = &preview.panes[0];
+        assert!(pane.active);
+        assert_eq!(pane.start_line, Some(10));
+        assert_eq!(pane.lines.first().map(String::as_str), Some("line 10"));
+        assert_eq!(pane.lines.last().map(String::as_str), Some("line 17"));
+        assert!(matches!(
+            pane.kind,
+            SessionPreviewPaneKind::Buffer {
+                dirty: true,
+                read_only: false
+            }
+        ));
+        // Reading a preview must not replace the geometry/pointer witness the
+        // interactive frontend last received.
+        assert!(host.current_frame_id().is_none());
+    }
+
+    #[test]
+    fn session_preview_lines_are_bounded_and_strip_terminal_controls() {
+        let line = format!("abc\u{0}{}", "x".repeat(SESSION_PREVIEW_COLUMNS + 20));
+        let preview = session_preview_line(&line);
+
+        assert_eq!(preview.chars().count(), SESSION_PREVIEW_COLUMNS);
+        assert!(preview.starts_with("abc\u{fffd}"));
+        assert!(!preview.contains('\u{0}'));
     }
 
     #[test]

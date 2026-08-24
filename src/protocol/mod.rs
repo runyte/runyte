@@ -23,7 +23,9 @@ use crate::app::{
 use crate::workspace::{
     BufferContents as CoreBufferContents, BufferId as CoreBufferId,
     BufferMetadata as CoreBufferMetadata, BufferRevision as CoreBufferRevision,
-    WaitStatus as CoreWaitStatus, WaitToken as CoreWaitToken,
+    SessionPreview as CoreSessionPreview, SessionPreviewPane as CoreSessionPreviewPane,
+    SessionPreviewPaneKind as CoreSessionPreviewPaneKind, WaitStatus as CoreWaitStatus,
+    WaitToken as CoreWaitToken,
 };
 
 /// Moves whenever the wire surface gains a case a peer of the previous version
@@ -111,7 +113,11 @@ use crate::workspace::{
 /// attached client marks `:zen` and `:fullscreen` the way standalone does. The
 /// field is required rather than optional on the wire, so a host still running
 /// the previous binary sends a title a newer client cannot deserialize at all.
-pub const VERSION: u32 = 34;
+/// Version 35 adds a bounded semantic session preview for the persistent-
+/// session manager. A previous host cannot answer the new control request, so
+/// the handshake rejects it before the manager waits for a response it will
+/// never receive.
+pub const VERSION: u32 = 35;
 pub const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const MAX_PATHS: usize = 32;
 pub const MAX_PATH_BYTES: usize = 32 * 1024;
@@ -201,6 +207,101 @@ impl From<CoreBufferContents> for BufferContents {
             metadata: value.metadata.into(),
             text: value.text,
             truncated: value.truncated,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct SessionPreview {
+    pub layout_panes: usize,
+    pub panes: Vec<SessionPreviewPane>,
+    pub omitted_panes: usize,
+    pub other_resources: Vec<String>,
+    pub omitted_resources: usize,
+}
+
+impl From<CoreSessionPreview> for SessionPreview {
+    fn from(value: CoreSessionPreview) -> Self {
+        Self {
+            layout_panes: value.layout_panes,
+            panes: value.panes.into_iter().map(Into::into).collect(),
+            omitted_panes: value.omitted_panes,
+            other_resources: value.other_resources,
+            omitted_resources: value.omitted_resources,
+        }
+    }
+}
+
+impl From<SessionPreview> for CoreSessionPreview {
+    fn from(value: SessionPreview) -> Self {
+        Self {
+            layout_panes: value.layout_panes,
+            panes: value.panes.into_iter().map(Into::into).collect(),
+            omitted_panes: value.omitted_panes,
+            other_resources: value.other_resources,
+            omitted_resources: value.omitted_resources,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct SessionPreviewPane {
+    pub active: bool,
+    pub title: String,
+    pub kind: SessionPreviewPaneKind,
+    pub start_line: Option<usize>,
+    pub lines: Vec<String>,
+}
+
+impl From<CoreSessionPreviewPane> for SessionPreviewPane {
+    fn from(value: CoreSessionPreviewPane) -> Self {
+        Self {
+            active: value.active,
+            title: value.title,
+            kind: value.kind.into(),
+            start_line: value.start_line,
+            lines: value.lines,
+        }
+    }
+}
+
+impl From<SessionPreviewPane> for CoreSessionPreviewPane {
+    fn from(value: SessionPreviewPane) -> Self {
+        Self {
+            active: value.active,
+            title: value.title,
+            kind: value.kind.into(),
+            start_line: value.start_line,
+            lines: value.lines,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum SessionPreviewPaneKind {
+    Buffer { dirty: bool, read_only: bool },
+    Terminal { live: bool },
+}
+
+impl From<CoreSessionPreviewPaneKind> for SessionPreviewPaneKind {
+    fn from(value: CoreSessionPreviewPaneKind) -> Self {
+        match value {
+            CoreSessionPreviewPaneKind::Buffer { dirty, read_only } => {
+                Self::Buffer { dirty, read_only }
+            }
+            CoreSessionPreviewPaneKind::Terminal { live } => Self::Terminal { live },
+        }
+    }
+}
+
+impl From<SessionPreviewPaneKind> for CoreSessionPreviewPaneKind {
+    fn from(value: SessionPreviewPaneKind) -> Self {
+        match value {
+            SessionPreviewPaneKind::Buffer { dirty, read_only } => {
+                Self::Buffer { dirty, read_only }
+            }
+            SessionPreviewPaneKind::Terminal { live } => Self::Terminal { live },
         }
     }
 }
@@ -295,6 +396,7 @@ pub enum ClientRequest {
         message: String,
     },
     Health,
+    SessionPreview,
     ListBuffers,
     ReadBuffer {
         buffer: BufferId,
@@ -672,6 +774,9 @@ pub enum HostResponse {
         /// All retained terminal sessions, including exited screens.
         terminal_sessions: usize,
     },
+    SessionPreview {
+        preview: SessionPreview,
+    },
     CommandResult {
         outcome: CommandOutcome,
     },
@@ -766,7 +871,7 @@ mod tests {
 
     #[test]
     fn protocol_version_and_request_bounds_are_explicit() {
-        assert_eq!(VERSION, 34);
+        assert_eq!(VERSION, 35);
         let oversized_command = ClientRequest::Invoke {
             command: CommandRequest {
                 name: "open".to_owned(),
@@ -978,6 +1083,33 @@ mod tests {
                 remaining: vec![BufferId(7)],
             }
         );
+    }
+
+    #[test]
+    fn semantic_session_preview_round_trips_over_the_wire() {
+        let core = CoreSessionPreview {
+            layout_panes: 2,
+            panes: vec![CoreSessionPreviewPane {
+                active: true,
+                title: "[file] src/app.rs".to_owned(),
+                kind: CoreSessionPreviewPaneKind::Buffer {
+                    dirty: true,
+                    read_only: false,
+                },
+                start_line: Some(42),
+                lines: vec!["fn preview()".to_owned()],
+            }],
+            omitted_panes: 1,
+            other_resources: vec!["[terminal] tests".to_owned()],
+            omitted_resources: 3,
+        };
+
+        let wire: SessionPreview = core.clone().into();
+        let encoded = serde_json::to_string(&wire).unwrap();
+        let decoded: SessionPreview = serde_json::from_str(&encoded).unwrap();
+        let round_trip: CoreSessionPreview = decoded.into();
+
+        assert_eq!(round_trip, core);
     }
 
     #[test]

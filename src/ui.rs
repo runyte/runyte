@@ -5301,13 +5301,13 @@ mod tests {
              {running:?} {running_detail:?}"
         );
         let (stopped, stopped_detail) = row_colors("qqqq");
-        assert!(!stopped_detail.is_empty());
-        // Name and detail both recede, so the whole row reads as one dormant
-        // line rather than a bright name with a grayed tail.
+        // A preview-layout manager keeps only the identifying name in the
+        // list column; its metadata moved to the semantic preview beside it.
+        // The dormant identity still recedes without dimming unrelated text
+        // that happens to occupy the same terminal row in that second column.
         assert!(
             stopped
                 .iter()
-                .chain(&stopped_detail)
                 .all(|color| *color == Some(to_tui_color(theme.jump_text_muted))),
             "a stopped session uses the dimming role: {stopped:?} {stopped_detail:?}"
         );
