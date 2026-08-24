@@ -405,7 +405,7 @@ fn nested_space_tree_is_exact_primary_and_keeps_fast_compatibility_paths() {
     use BindingTarget::{Colon, Editor};
 
     let cases = [
-        (" W", Colon(ColonCommand::SessionList)),
+        ("  ", Colon(ColonCommand::SessionList)),
         (" cy", Editor(EditorCommand::ClipboardYank)),
         (" cp", Editor(EditorCommand::ClipboardPasteAfter)),
         (" cP", Editor(EditorCommand::ClipboardPasteBefore)),

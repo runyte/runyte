@@ -97,7 +97,7 @@ fn convert_mouse_event(event: CrosstermMouseEvent) -> Result<PointerEvent, Unsup
 /// Enhanced keyboard protocols report pressing a modifier separately from the
 /// character produced while it is held. The standalone report carries no
 /// editor intent; admitting it would cancel a pending sequence such as
-/// `Space W` before the shifted `W` arrives.
+/// `Space E` before the shifted `E` arrives.
 pub fn convert_key_event(
     event: CrosstermKeyEvent,
 ) -> Result<Option<KeyStroke>, UnsupportedModifiers> {

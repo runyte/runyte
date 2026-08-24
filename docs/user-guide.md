@@ -311,14 +311,14 @@ rebase message files this lifecycle. Persistent hosting and `--wait` currently
 use the private, versioned Unix local protocol; it is a bundled-client contract,
 not a public automation API.
 
-`Space W` or `:session-list` (`:sl`) opens a filterable list of running and
-recently visited persistent sessions in either mode, most recently visited
+`Space Space` or `:session-list` (`:sl`) opens a filterable list of running
+and recently visited persistent sessions in either mode, most recently visited
 first. In persistent mode the current session leads the list; Enter attaches
 to the selected workspace's session in the same TUI and starts it when
 necessary. A stopped session keeps its place in that order but is drawn in the
 theme's dimmed text colour, the one a command prompt grays the panes behind it
 with, so the running hosts stand out without any row being hidden or moved.
-`Space W` is the complete binding,
+`Space Space` is the complete binding,
 not a prefix with subcommands. Tab opens one manager menu listing only the
 actions the selected row's own state can answer: a running row offers Open,
 Rename, Number, Close, and Force close, and a stopped row offers Open, Rename,
@@ -338,9 +338,9 @@ for later listings.
 
 Sessions carry a number from `1` to `9`, shown in the manager's first column
 and in the status line as `[S1]` before the workspace directory. Pressing that
-digit in the manager attaches to its session directly, so `Space W 1` reaches
-the first session as one gesture. The digit is a shortcut only while the
-manager's filter is empty: Runyte's own default names are `runyte`, `runyte-2`,
+digit in the manager attaches to its session directly, so `Space Space 1`
+reaches the first session as one gesture. The digit is a shortcut only while
+the manager's filter is empty: Runyte's default names are `runyte`, `runyte-2`,
 `runyte-3`, and project paths routinely contain digits, so once anything has
 been typed a digit is ordinary filter text. Clearing the filter, with Delete or
 by backspacing to empty, arms the shortcut again. A workspace whose name or
@@ -838,9 +838,6 @@ remains navigable so its individual commands can explain their availability;
 in particular, LSP status and restart can remain usable without an attached
 document. The **Git** row at `Space g` follows the same rule and is dimmed when
 Git is not installed or the current project is not inside a Git repository.
-Press <kbd>Space</kbd> twice to repeat the last
-successfully invoked `Space` command against the current editor state; a
-`Ctrl-w` compatibility alias does not replace that history.
 
 `:grammar` reports the active Runyte grammar. `helix` remains accepted as a
 configuration and command alias for `runyte`.
@@ -1255,7 +1252,7 @@ it.
 | `Space c y` / `Space c p` / `Space c P` | System clipboard yank / paste after / paste before |
 | `Space e` | Open the active buffer's directory as an editable explorer; from a file, select that file |
 | `Space E` | Open the working directory (controlled by `:cd`) as an editable explorer |
-| `Space W` | Open the persistent-session manager (`:session-list`, `:sl`); `1`-`9` attach to a numbered session while the filter is empty; `Tab` shows the actions the selected row's state allows |
+| `Space Space` | Open the persistent-session manager (`:session-list`, `:sl`); `1`-`9` attach to a numbered session while the filter is empty; `Tab` shows the actions the selected row's state allows |
 | `Space / f` / `Space f` | Find project files, open buffers, or terminals; `Tab` switches modes and `Ctrl-t` toggles preview |
 | `Space / g` | Fuzzy-search contents below the stable project root |
 | `:file-picker-directory` | Fuzzy-find a file or directory below the active file/explorer directory |

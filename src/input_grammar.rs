@@ -241,10 +241,6 @@ pub struct GrammarOutput {
     /// Frontends can pair it with the target description after execution;
     /// semantic callers remain independent of interactive key bindings.
     pub resolved_binding: Option<(KeySequence, BindingTarget)>,
-    /// The emitted command resolved from an actual `Space ...` key sequence.
-    /// `Ctrl-w` may delegate through the same canonical registry branch, but
-    /// must not replace the application-command repeat history.
-    pub remember_space_command: bool,
 }
 
 impl GrammarOutput {
@@ -928,7 +924,6 @@ impl RunyteGrammar {
                             .awaiting_character
                             .is_none()
                             .then_some((prefix, target)),
-                        ..GrammarOutput::default()
                     })
                 } else {
                     Ok(GrammarOutput::one(EditorIntent::Notice(
@@ -1050,10 +1045,6 @@ impl RunyteGrammar {
             Lookup::Exact(binding) => {
                 let target = binding.target;
                 let availability = binding.availability;
-                let remember_space_command = candidate
-                    .as_slice()
-                    .first()
-                    .is_some_and(|key| *key == Key::char(' '));
                 let sticky = candidate
                     .as_slice()
                     .first()
@@ -1071,7 +1062,6 @@ impl RunyteGrammar {
                     } else {
                         GrammarPostAction::None
                     },
-                    remember_space_command,
                     resolved_binding: self
                         .awaiting_character
                         .is_none()
@@ -1539,10 +1529,6 @@ impl VimGrammar {
                 )))
             }
             Lookup::Exact(binding) => {
-                let remember_space_command = candidate
-                    .as_slice()
-                    .first()
-                    .is_some_and(|key| *key == KeyStroke::char(' '));
                 self.pending.clear();
                 // A namespace can end on a command that names its operand with
                 // the next key, such as the macro registers. Vim waits for that
@@ -1565,7 +1551,6 @@ impl VimGrammar {
                 self.count = None;
                 Ok(GrammarOutput {
                     intents: vec![direct_binding_intent(binding.target, binding.availability)?],
-                    remember_space_command,
                     ..GrammarOutput::default()
                 })
             }
@@ -2674,36 +2659,6 @@ mod tests {
             EditorIntent::Notice(GrammarNotice::CountNotSupported(BindingTarget::Colon(
                 crate::command::ColonCommand::LspStatus
             )))
-        );
-    }
-
-    #[test]
-    fn both_grammars_mark_only_actual_space_namespace_commands_for_history() {
-        let mut runyte = RunyteGrammar::default();
-        translate_key(
-            &mut runyte,
-            Mode::Normal,
-            BindingScope::Global,
-            KeyStroke::char(' '),
-        );
-        let runyte_space = translate_key(
-            &mut runyte,
-            Mode::Normal,
-            BindingScope::Global,
-            KeyStroke::char('e'),
-        );
-        assert!(runyte_space.remember_space_command);
-
-        let mut vim = VimGrammar::default();
-        translate_vim(&mut vim, Mode::Normal, KeyStroke::char(' '));
-        let vim_space = translate_vim(&mut vim, Mode::Normal, KeyStroke::char('e'));
-        assert!(vim_space.remember_space_command);
-
-        translate_vim(&mut vim, Mode::Normal, KeyStroke::ctrl('w'));
-        let ctrl_w = translate_vim(&mut vim, Mode::Normal, KeyStroke::char('v'));
-        assert!(
-            !ctrl_w.remember_space_command,
-            "Ctrl-w delegates through the registry without becoming a Space command"
         );
     }
 

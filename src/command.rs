@@ -421,7 +421,6 @@ macro_rules! editor_commands {
 editor_commands! {
     EnterNormalMode => ("enter-normal-mode", "Return to normal mode"),
     OpenCommandPalette => ("open-command-palette", "Open the command palette"),
-    RepeatLastSpaceCommand => ("repeat-last-space-command", "Repeat the last Space command"),
 
     MoveLeft => ("move-left", "Move left"),
     MoveRight => ("move-right", "Move right"),
@@ -882,9 +881,7 @@ impl EditorCommand {
 
     pub const fn category(self) -> CommandCategory {
         match self {
-            Self::EnterNormalMode | Self::OpenCommandPalette | Self::RepeatLastSpaceCommand => {
-                CommandCategory::Application
-            }
+            Self::EnterNormalMode | Self::OpenCommandPalette => CommandCategory::Application,
             Self::MoveLeft
             | Self::MoveRight
             | Self::MoveUp

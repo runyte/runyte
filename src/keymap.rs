@@ -889,10 +889,6 @@ fn built_in_bindings() -> Vec<Binding> {
         modal(Key::ctrl('\\'), Command::EnterNormalMode),
         modal(Key::ctrl('4'), Command::EnterNormalMode).with_role(BindingRole::Compatibility),
         modal(Key::char(':'), Command::OpenCommandPalette),
-        modal(
-            [Key::char(' '), Key::char(' ')],
-            Command::RepeatLastSpaceCommand,
-        ),
         modal(Key::char('h'), Command::MoveLeft),
         modal(Key::plain(KeyCode::Left), Command::MoveLeft),
         modal(Key::char('j'), Command::MoveDown),
@@ -1098,7 +1094,7 @@ fn built_in_bindings() -> Vec<Binding> {
             Command::OpenWorkingDirectoryExplorer,
         ),
         modal([Key::char(' '), Key::char('f')], Command::OpenFilePicker),
-        primary_modal([Key::char(' '), Key::char('W')], ColonCommand::SessionList),
+        primary_modal([Key::char(' '), Key::char(' ')], ColonCommand::SessionList),
         modal([Key::char(' '), Key::char('?')], Command::ShowHelp),
         // Buffers. `Space b b` repeats the namespace letter the way `Space m m`
         // does: the most-reached-for thing in a group is spelled with the group
@@ -2486,14 +2482,25 @@ mod tests {
     }
 
     #[test]
-    fn space_space_is_the_exact_repeat_command_in_both_modal_modes() {
+    fn space_space_is_the_exact_session_list_command_in_both_modal_modes() {
         let sequence = KeySequence::from([Key::char(' '), Key::char(' ')]);
         for mode in [Mode::Normal, Mode::Select] {
             assert!(matches!(
                 default_keymap().lookup(mode, &sequence),
                 Lookup::Exact(binding)
-                    if binding.target
-                        == BindingTarget::Editor(EditorCommand::RepeatLastSpaceCommand)
+                    if binding.target == BindingTarget::Colon(ColonCommand::SessionList)
+            ));
+        }
+    }
+
+    /// The session manager moved off the shifted `W`, which is now free.
+    #[test]
+    fn space_shift_w_is_unbound() {
+        let sequence = KeySequence::from([Key::char(' '), Key::char('W')]);
+        for mode in [Mode::Normal, Mode::Select] {
+            assert!(matches!(
+                default_keymap().lookup(mode, &sequence),
+                Lookup::NoMatch
             ));
         }
     }

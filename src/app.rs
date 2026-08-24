@@ -2070,7 +2070,6 @@ pub struct App {
     /// Last successfully invoked command reached through an actual `Space ...`
     /// binding. The semantic invocation is replayed against current state;
     /// aliases such as `Ctrl-w` never enter this history.
-    last_space_invocation: Option<CommandInvocation>,
     /// Live `goto-word` jump labels, painted over the active pane until two
     /// keystrokes name one or a stray key spends them.
     pub jump: Option<JumpLabels>,
@@ -2395,7 +2394,6 @@ impl App {
             recording_macro: None,
             macro_staging: Vec::new(),
             replay_depth: 0,
-            last_space_invocation: None,
             jump: None,
             line_select: None,
             keymap,
@@ -9171,14 +9169,11 @@ impl App {
                 intents,
                 reprocess,
                 post_action,
-                remember_space_command,
                 resolved_binding,
             } = self.grammar.translate(input, context)?;
             let mut command_outcome = None;
             for intent in intents {
-                command_outcome = self
-                    .apply_editor_intent(intent, remember_space_command)?
-                    .or(command_outcome);
+                command_outcome = self.apply_editor_intent(intent)?.or(command_outcome);
                 self.reconcile_search_selection_presentation();
             }
             self.grammar.complete(post_action, self.mode);
@@ -9242,26 +9237,10 @@ impl App {
         }
     }
 
-    fn apply_editor_intent(
-        &mut self,
-        intent: EditorIntent,
-        remember_space_command: bool,
-    ) -> Result<Option<CommandOutcome>> {
+    fn apply_editor_intent(&mut self, intent: EditorIntent) -> Result<Option<CommandOutcome>> {
         match intent {
             EditorIntent::Command(invocation) => {
-                let should_remember = remember_space_command
-                    && invocation.id() != CommandId::Editor(EditorCommand::RepeatLastSpaceCommand);
-                let remembered = should_remember.then(|| invocation.clone());
-                let outcome = self.execute(invocation)?;
-                if remembered.is_some()
-                    && !matches!(
-                        outcome,
-                        CommandOutcome::Unavailable(_) | CommandOutcome::UserError(_)
-                    )
-                {
-                    self.last_space_invocation = remembered;
-                }
-                return Ok(Some(outcome));
+                return Ok(Some(self.execute(invocation)?));
             }
             EditorIntent::InsertText(text) => {
                 if let Some(reason) = self.active_buffer().read_only_reason() {
@@ -10953,13 +10932,6 @@ impl App {
         match command {
             Command::EnterNormalMode => self.enter_normal_mode(),
             Command::OpenCommandPalette => self.open_prompt(PromptKind::Command),
-            Command::RepeatLastSpaceCommand => {
-                let Some(invocation) = self.last_space_invocation.clone() else {
-                    self.status("no Space command to repeat");
-                    return Ok(());
-                };
-                self.execute(invocation)?;
-            }
             Command::MoveLeft => self.motion(Motion::Left),
             Command::MoveRight => self.motion(Motion::Right),
             Command::MoveUp => self.motion(Motion::Up),
@@ -21529,9 +21501,9 @@ impl App {
     /// `runyte-2`, `runyte-3` and their paths are full of digits, so a digit
     /// has to stay ordinary filter input the moment somebody is filtering;
     /// what it cannot be is the *first* thing typed, because that is the
-    /// keystroke `Space W 1` is made of. Clearing the filter arms it again, so
-    /// the rule is the state of the filter rather than a mode to keep track
-    /// of.
+    /// keystroke `Space Space 1` is made of. Clearing the filter arms it again,
+    /// so
+    /// the rule is the state of the filter rather than a mode to keep track of.
     #[cfg(unix)]
     fn session_number_shortcut_is_armed(&self) -> bool {
         self.list
@@ -24926,44 +24898,6 @@ mod tests {
         assert_eq!(text(&macros), "xxx");
     }
 
-    #[test]
-    fn space_space_repeats_the_last_successful_space_invocation_in_both_grammars() {
-        for mut app in [App::new(Config::default(), None).unwrap(), vim_app("")] {
-            assert_eq!(app.panes.len(), 1);
-
-            press(&mut app, ' ');
-            press(&mut app, ' ');
-            assert_eq!(app.status, "no Space command to repeat");
-
-            press(&mut app, ' ');
-            press(&mut app, 'w');
-            press(&mut app, 'v');
-            assert_eq!(app.panes.len(), 2);
-
-            // The compatibility alias resolves to the same semantic command,
-            // but actual input provenance keeps it out of Space history.
-            key(&mut app, KeyCode::Char('w'), Modifiers::CONTROL);
-            press(&mut app, 'w');
-
-            // An unavailable Space command also leaves the successful split
-            // invocation in place.
-            press(&mut app, ' ');
-            press(&mut app, 'l');
-            press(&mut app, 'h');
-            assert!(app.status_error);
-
-            press(&mut app, ' ');
-            press(&mut app, ' ');
-            assert_eq!(app.panes.len(), 3);
-
-            // Repeating does not replace the remembered invocation with the
-            // repeat command itself.
-            press(&mut app, ' ');
-            press(&mut app, ' ');
-            assert_eq!(app.panes.len(), 4);
-        }
-    }
-
     fn type_text(app: &mut App, text: &str) {
         for character in text.chars() {
             press(app, character);
@@ -25594,7 +25528,7 @@ mod tests {
     #[test]
     fn command_inventory_classifies_every_command_and_current_binding() {
         let bindings = crate::keymap::default_keymap().bindings();
-        assert_eq!(bindings.len(), 335, "current binding inventory changed");
+        assert_eq!(bindings.len(), 334, "current binding inventory changed");
 
         let mut rows = HashSet::new();
         for binding in bindings {
@@ -25616,7 +25550,7 @@ mod tests {
                 );
             }
         }
-        assert_eq!(rows.len(), 628, "mode-expanded binding inventory changed");
+        assert_eq!(rows.len(), 626, "mode-expanded binding inventory changed");
 
         let shared_colon = COMMANDS
             .iter()
