@@ -138,9 +138,11 @@ impl LaunchArguments {
                     set_mode(&mut parsed.mode, &mut mode_explicit, LaunchMode::Standalone)?
                 }
                 "--serve" => set_mode(&mut parsed.mode, &mut mode_explicit, LaunchMode::Serve)?,
-                // Session attachment from a shell always means the workspace
-                // found from the current directory. Selecting a different
-                // workspace is an editor switch rather than a launch mode.
+                // A bare `-a` attaches to the workspace found from the
+                // current directory. A trailing selector names one outright,
+                // in the same grammar `--session-start` and `:session-attach`
+                // already accept, so attaching from anywhere is one launch
+                // rather than a launch followed by an editor switch.
                 "-a" | "--persistent" => {
                     set_mode(&mut parsed.mode, &mut mode_explicit, LaunchMode::Persistent)?
                 }
@@ -293,11 +295,14 @@ impl LaunchArguments {
         );
         if matches!(
             parsed.mode,
-            LaunchMode::StartSession | LaunchMode::RestartSession | LaunchMode::StopSession
+            LaunchMode::Persistent
+                | LaunchMode::StartSession
+                | LaunchMode::RestartSession
+                | LaunchMode::StopSession
         ) {
             ensure!(
                 parsed.targets.len() <= 1,
-                "this session-management mode accepts at most one workspace ID, name, or directory"
+                "this workspace mode accepts at most one workspace ID, name, or directory"
             );
             if let Some(target) = parsed.targets.pop() {
                 ensure!(
@@ -316,6 +321,14 @@ impl LaunchArguments {
                     | LaunchMode::RenameSession
             ) || parsed.targets.is_empty(),
             "this session-management mode does not accept file targets"
+        );
+        ensure!(
+            parsed.workspace_selector.is_none() || parsed.init.is_none(),
+            "a workspace selector cannot be combined with --init"
+        );
+        ensure!(
+            parsed.workspace_selector.is_none() || parsed.project_root.is_none(),
+            "a workspace selector cannot be combined with --project-root"
         );
         parsed.mode_explicit = mode_explicit;
         Ok(parsed)
@@ -463,9 +476,69 @@ mod tests {
         );
         assert!(LaunchArguments::parse_from(["--wait".into()]).is_err());
         assert!(LaunchArguments::parse_from(["--serve".into(), "--persistent".into()]).is_err());
-        // Session attachment from a shell always selects the workspace found
-        // from its current directory; only the editor accepts a selector.
+        // Attachment is spelled as the mode it selects. The colon command's
+        // name is not a second spelling of it on the command line.
         assert!(LaunchArguments::parse_from(["--session-attach".into()]).is_err());
+    }
+
+    #[test]
+    fn persistent_mode_takes_a_workspace_selector() {
+        for spelling in ["--persistent", "-a"] {
+            let selected = LaunchArguments::parse_from([spelling.into(), "a1b2c3".into()]).unwrap();
+            assert_eq!(selected.mode, LaunchMode::Persistent);
+            assert_eq!(selected.workspace_selector, Some(PathBuf::from("a1b2c3")));
+            assert!(selected.targets.is_empty());
+
+            let bare = LaunchArguments::parse_from([spelling.into()]).unwrap();
+            assert_eq!(bare.mode, LaunchMode::Persistent);
+            assert_eq!(bare.workspace_selector, None);
+        }
+
+        let by_directory = LaunchArguments::parse_from(["-a".into(), "/work/api".into()]).unwrap();
+        assert_eq!(
+            by_directory.workspace_selector,
+            Some(PathBuf::from("/work/api"))
+        );
+
+        // A selector is a workspace, not a file, so it carries no caret and
+        // never appears beside a second one.
+        assert!(LaunchArguments::parse_from(["-a".into(), "one".into(), "two".into()]).is_err());
+        assert!(LaunchArguments::parse_from(["-a".into(), "+3".into(), "api".into()]).is_err());
+    }
+
+    #[test]
+    fn a_workspace_selector_rejects_the_options_that_resolve_a_project() {
+        // Both options answer the question the selector already answered, and
+        // --project-root additionally requires the launch directory to sit
+        // inside the root it names, which an attachment from elsewhere never
+        // does.
+        assert!(
+            LaunchArguments::parse_from([
+                "-a".into(),
+                "api".into(),
+                "--project-root".into(),
+                "/work/api".into(),
+            ])
+            .is_err()
+        );
+        assert!(
+            LaunchArguments::parse_from([
+                "-a".into(),
+                "api".into(),
+                "--init".into(),
+                "/work/new".into(),
+            ])
+            .is_err()
+        );
+        assert!(
+            LaunchArguments::parse_from([
+                "--session-stop".into(),
+                "api".into(),
+                "--project-root".into(),
+                "/work/api".into(),
+            ])
+            .is_err()
+        );
     }
 
     #[test]
@@ -606,6 +679,8 @@ mod tests {
             "--session-restart",
             "--session-stop",
             "-s",
+            "--persistent",
+            "-a",
         ] {
             let selected = LaunchArguments::parse_from([mode.into(), "/work/api".into()]).unwrap();
             assert_eq!(
@@ -623,6 +698,10 @@ mod tests {
         );
         assert!(
             LaunchArguments::parse_from(["--session-stop".into(), "one".into(), "two".into(),])
+                .is_err()
+        );
+        assert!(
+            LaunchArguments::parse_from(["--persistent".into(), "one".into(), "two".into()])
                 .is_err()
         );
         assert!(LaunchArguments::parse_from(["--session-list".into(), "file".into()]).is_err());

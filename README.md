@@ -131,6 +131,7 @@ a multiplexer session:
 ```sh
 runyte --persistent
 runyte --session-list
+runyte --persistent api   # attach to a session by ID, name, or directory
 ```
 
 Persistent mode keeps open and unsaved buffers, selections, registers, syntax

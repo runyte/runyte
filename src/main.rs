@@ -218,6 +218,25 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
         reserved_user_roots.push(cache_root);
     }
     startup.mark(StartupPhase::ProjectResolutionStarted);
+    // `-a WORKSPACE` names the workspace outright, so the project this process
+    // serves is resolved from the selector rather than from the directory the
+    // shell happens to be in. Every lifecycle mode that takes a selector has
+    // already returned above, so a selector still present here is an
+    // attachment.
+    #[cfg(unix)]
+    let selected_workspace = match arguments.workspace_selector.take() {
+        Some(selector) => Some(resolve_attached_workspace(&selector, &config).await?),
+        None => None,
+    };
+    #[cfg(not(unix))]
+    let selected_workspace: Option<PathBuf> = {
+        anyhow::ensure!(
+            arguments.workspace_selector.is_none(),
+            "persistent mode is not yet supported on this platform"
+        );
+        None
+    };
+    let attaching_elsewhere = selected_workspace.is_some();
     let initializing = arguments.init.is_some();
     let project_root = match arguments.init.take() {
         Some(requested) => {
@@ -231,6 +250,11 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
                 &config.workspace.state,
                 &reserved_user_roots,
             )?;
+            startup.mark(StartupPhase::ProjectResolvedAutomatically);
+            project_root
+        }
+        None if attaching_elsewhere => {
+            let project_root = selected_workspace.expect("selector resolved a workspace");
             startup.mark(StartupPhase::ProjectResolvedAutomatically);
             project_root
         }
@@ -266,7 +290,10 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
     };
     let state_root = project_root::resolve_state_root(&project_root, &config.workspace.state);
     project_root::validate_state_root(&state_root, &reserved_user_roots)?;
-    let working_directory = if initializing {
+    // A selected workspace does not contain the launch directory, so the host
+    // it starts is given the workspace's own root. Handing it the directory the
+    // shell was in would place a host outside the project it serves.
+    let working_directory = if initializing || attaching_elsewhere {
         project_root.clone()
     } else {
         launch_directory.clone()
@@ -604,6 +631,51 @@ fn uses_automatic_persistent_mode(
     !arguments.mode_explicit
         && arguments.targets.is_empty()
         && workspace_mode == WorkspaceMode::Persistent
+}
+
+/// Resolves the workspace a persistent attachment named on the command line.
+///
+/// The selector is matched against the workspace catalog first, so an ID, an
+/// unambiguous ID prefix, a persistent name, or a known root attaches without
+/// consulting the filesystem. A directory the catalog does not know is resolved
+/// the way a bare launch inside it would resolve its project, which is what
+/// makes `runyte -a DIRECTORY` and `cd DIRECTORY && runyte -a` the same
+/// request.
+///
+/// Discovery is not allowed to fall back to the interactive project-root
+/// prompt here. Naming a workspace is a request to attach to one, not an offer
+/// to create one somewhere the shell is not; `--init` remains the way to make a
+/// root out of a directory that has neither a Git root nor state of its own.
+#[cfg(unix)]
+async fn resolve_attached_workspace(selector: &Path, config: &Config) -> Result<PathBuf> {
+    if let Some(project_root) = resolve_known_workspace(selector, &config.workspace.state).await? {
+        return Ok(project_root);
+    }
+    resolve_attached_directory(selector, &config.workspace.state)
+}
+
+/// Resolves a selector the workspace catalog does not recognize.
+///
+/// Only a directory can still name a workspace at this point, and it names the
+/// project a launch inside it would resolve, so a subdirectory of a project
+/// attaches to that project exactly as `cd` and a bare attachment would. A
+/// selector that is not a directory at all was an ID or a name that matched
+/// nothing, which the listing is the way to correct.
+fn resolve_attached_directory(selector: &Path, state: &Path) -> Result<PathBuf> {
+    let unknown = || {
+        anyhow::anyhow!(
+            "no session matches {}; use --session-list to see available sessions",
+            selector.display()
+        )
+    };
+    let directory = selector.canonicalize().map_err(|_| unknown())?;
+    anyhow::ensure!(directory.is_dir(), unknown());
+    project_root::discover(&directory, state)?.with_context(|| {
+        format!(
+            "{} is not a workspace and has no project root above it; use --init to make one",
+            directory.display()
+        )
+    })
 }
 
 /// Accepts a caller-resolved workspace root, or explains why it cannot be one.
@@ -2671,13 +2743,21 @@ MODES:
     between TUIs and is currently available only on Unix.
 
         --standalone     Use standalone mode, overriding configuration
-    -a, --persistent     Use persistent mode, starting the workspace if needed
+    -a, --persistent [WORKSPACE]
+                         Attach to the selected or current session, starting it
+                         if needed
 
 PERSISTENT SESSIONS:
     A persistent session is the durable local process and retained editor state
     associated with one workspace. Listing also works from standalone mode; attaching,
     starting, and stopping inside the editor need
     workspace.mode: persistent inside the editor.
+
+    WORKSPACE selects a session by ID, unambiguous ID prefix, persistent name,
+    or directory, so a session is reachable from anywhere. Omitting it uses the
+    workspace found from the current directory. A directory the catalog does
+    not know yet resolves its project root as a launch inside it would; use
+    --init to make a root out of one that has none.
 
         --serve          Keep a persistent session alive in the foreground
         --wait FILE...   Edit files through persistent mode and wait for
@@ -2706,8 +2786,8 @@ TARGETS:
 
     Naming a target always runs standalone, so its relative path and caret
     position keep their ordinary meaning: workspace.mode: persistent changes
-    only a bare runyte, and --persistent accepts no targets. Use --wait to open
-    files through a persistent session.
+    only a bare runyte, and --persistent reads its argument as a workspace
+    rather than a file. Use --wait to open files through a persistent session.
 
 :quit-here moves the shell to the editor's directory on exit; it requires the
 runyte() shell function documented in README.md.
@@ -2720,7 +2800,7 @@ Inside the editor press Space+? for the complete key reference."
 mod tests {
     use std::{
         fs,
-        path::PathBuf,
+        path::{Path, PathBuf},
         time::{Duration, Instant, SystemTime, UNIX_EPOCH},
     };
 
@@ -2745,8 +2825,8 @@ mod tests {
     };
     use super::{
         KeyRepeatDetector, is_passive_pointer, is_redraw_only_event, motion_repeat_dispatches,
-        resolve_cwd_file_path, resolve_requested_project_root, starts_on_about,
-        uses_automatic_persistent_mode, write_cwd_file,
+        resolve_attached_directory, resolve_cwd_file_path, resolve_requested_project_root,
+        starts_on_about, uses_automatic_persistent_mode, write_cwd_file,
     };
     use runyte::launch::LaunchArguments;
     use runyte::{
@@ -3220,6 +3300,49 @@ mod tests {
 
         assert!(LaunchArguments::parse_from(["--project-root".into()]).is_err());
         assert!(LaunchArguments::parse_from(["--project-root".into(), "".into()]).is_err());
+    }
+
+    #[test]
+    fn an_attachment_selector_resolves_a_directory_to_its_project_root() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "runyte-attach-selector-{}-{nanos}",
+            std::process::id()
+        ));
+        let project = root.join("project");
+        let nested = project.join("src").join("deep");
+        let plain = root.join("plain");
+        fs::create_dir_all(&nested).unwrap();
+        fs::create_dir_all(project.join(".git")).unwrap();
+        fs::write(project.join(".git").join("HEAD"), "ref: refs/heads/main\n").unwrap();
+        fs::create_dir_all(&plain).unwrap();
+        let state = PathBuf::from(".runyte");
+        let expected = project.canonicalize().unwrap();
+
+        assert_eq!(
+            resolve_attached_directory(&project, &state).unwrap(),
+            expected
+        );
+        // A directory inside a project names that project, so an attachment
+        // reaches the same workspace a bare launch there would.
+        assert_eq!(
+            resolve_attached_directory(&nested, &state).unwrap(),
+            expected
+        );
+
+        // Naming a workspace is a request to attach to one, not an offer to
+        // create one somewhere the shell is not.
+        let error = resolve_attached_directory(&plain, &state).unwrap_err();
+        assert!(error.to_string().contains("--init"), "{error}");
+
+        // An ID or name that matched nothing is not a directory either.
+        let error = resolve_attached_directory(Path::new("no-such-session"), &state).unwrap_err();
+        assert!(error.to_string().contains("--session-list"), "{error}");
+
+        fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
