@@ -318,6 +318,44 @@ fn fast_pane_keys_move_out_of_terminal_input_without_reaching_the_child() {
     assert!(!session.app.terminals.get(terminal).unwrap().reviewing());
 }
 
+#[test]
+fn pane_keys_dispatch_over_a_read_only_buffer_hidden_by_the_terminal() {
+    for fast in [false, true] {
+        let mut config = Config::default();
+        config.editor.fast_pane_keys = fast;
+        let mut app = App::new(config, None).unwrap();
+        type_colon(&mut app, "about");
+        assert!(app.active_buffer().is_read_only());
+
+        let mut session = Session::start_from_app(app, "/bin/cat");
+        let terminal = session.app.active_terminal().unwrap();
+        session.colon("vsplit");
+        assert!(session.app.active_terminal().is_none());
+        render(&mut session.app, 60, 12);
+
+        if fast {
+            session.app.handle_key(KeyStroke::ctrl('h')).unwrap();
+        } else {
+            session.app.handle_key(KeyStroke::ctrl('w')).unwrap();
+            assert_eq!(session.app.mode, Mode::Normal);
+            session.type_text("h");
+        }
+        assert_eq!(session.app.active_terminal(), Some(terminal));
+        assert_eq!(session.app.mode, Mode::Insert);
+
+        if fast {
+            session.app.handle_key(KeyStroke::ctrl('l')).unwrap();
+        } else {
+            session.app.handle_key(KeyStroke::ctrl('w')).unwrap();
+            assert_eq!(session.app.mode, Mode::Insert);
+            session.type_text("l");
+        }
+        assert!(session.app.active_terminal().is_none());
+        assert_eq!(session.app.mode, Mode::Normal);
+        assert!(!session.app.terminals.get(terminal).unwrap().reviewing());
+    }
+}
+
 /// Both directional spellings activate live input on a terminal destination,
 /// and can move away again without an intermediate mode change.
 #[test]

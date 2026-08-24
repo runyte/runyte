@@ -9033,6 +9033,11 @@ impl App {
     fn handle_editor_input(&mut self, mut input: InputEvent) -> Result<()> {
         loop {
             if self.mode == Mode::Insert
+                // A terminal is pane content in front of its backing buffer.
+                // The terminal-specific gate in `handle_key_stroke` only lets
+                // Runyte-owned keys reach this grammar, so a read-only backing
+                // buffer must not reject those commands before they dispatch.
+                && self.active_terminal().is_none()
                 && let Some(reason) = self.active_buffer().read_only_reason()
                 && matches!(
                     self.grammar.kind(),
