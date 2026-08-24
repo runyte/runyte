@@ -1380,11 +1380,11 @@ fn built_in_bindings() -> Vec<Binding> {
         ),
         primary_modal(
             [Key::char(' '), Key::char('x'), Key::char('f')],
-            Command::ToggleSyntaxFold,
+            Command::FoldAllSyntax,
         ),
         primary_modal(
-            [Key::char(' '), Key::char('x'), Key::char('F')],
-            Command::FoldAllSyntax,
+            [Key::char(' '), Key::char('x'), Key::char('x')],
+            Command::ToggleSyntaxFold,
         ),
         primary_modal(
             [Key::char(' '), Key::char('x'), Key::char('u')],
@@ -2502,6 +2502,29 @@ mod tests {
                 default_keymap().lookup(mode, &sequence),
                 Lookup::NoMatch
             ));
+        }
+    }
+
+    #[test]
+    fn syntax_folding_uses_the_unshifted_namespace_bindings() {
+        let keymap = default_keymap();
+        for mode in [Mode::Normal, Mode::Select] {
+            for (suffix, command) in [
+                ('f', EditorCommand::FoldAllSyntax),
+                ('x', EditorCommand::ToggleSyntaxFold),
+                ('u', EditorCommand::UnfoldAllSyntax),
+            ] {
+                let sequence =
+                    KeySequence::from([Key::char(' '), Key::char('x'), Key::char(suffix)]);
+                assert!(matches!(
+                    keymap.lookup(mode, &sequence),
+                    Lookup::Exact(binding)
+                        if binding.target == BindingTarget::Editor(command)
+                ));
+            }
+
+            let removed = KeySequence::from([Key::char(' '), Key::char('x'), Key::char('F')]);
+            assert!(matches!(keymap.lookup(mode, &removed), Lookup::NoMatch));
         }
     }
 

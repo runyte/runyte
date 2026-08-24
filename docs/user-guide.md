@@ -1944,8 +1944,8 @@ it off, or change the trigger length, with `editor.word_completion` and
 | `Space x p` / `Space x c` | Select syntax parent / first child |
 | `Space x h` / `Space x l` | Select previous / next syntax sibling |
 | `Space x o` | Open the immediate Tree-sitter document outline |
-| `Space x f` | Toggle the syntax fold at the cursor |
-| `Space x F` / `Space x u` | Fold / unfold all syntax regions in this pane |
+| `Space x x` | Toggle the syntax fold at the cursor |
+| `Space x f` / `Space x u` | Fold / unfold all syntax regions in this pane |
 | `Space x a f/c/p` | Select around the enclosing function / class / parameter |
 | `Space x i f/c/p` | Select inside the enclosing function / class / parameter |
 | `Space x a (/[/{/</"/'/\`` | Select around the matching delimiter pair; closing brackets are aliases |

@@ -35321,7 +35321,7 @@ mod tests {
 
         press(&mut app, ' ');
         press(&mut app, 'x');
-        press(&mut app, 'F');
+        press(&mut app, 'f');
         assert!(!app.panes[&0].folds.collapsed.is_empty());
         assert!(app.panes[&1].folds.collapsed.is_empty());
 
