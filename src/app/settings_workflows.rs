@@ -1,0 +1,947 @@
+// SPDX-License-Identifier: MPL-2.0
+
+//! Settings, themes, notifications, service health, and lifecycle feedback.
+
+// Application-module dependencies:
+use super::{
+    ActionFeedback, ActiveGrammar, App, Buffer, CommandOutcome, DefaultColors, InputGrammar,
+    ListAction, ListPicker, Mode, NotificationCenter, NotificationCounts, NotificationDraft,
+    NotificationSeverity, Path, PickerItem, PreviewPolicy, PromptKind, Result, Selection,
+    ServiceHealthEntry, ServiceHealthSnapshot, ServiceState, SettingId, SettingPreview,
+    SettingType, SettingValue, SettingsView, Theme, ThemeAppearance, WorkspaceMode, fs,
+    outcome_clause, persist_setting, registry_failure_summary, render_settings_page,
+    startup_status,
+};
+
+impl App {
+    /// Returns a complete optional-service report without starting a provider
+    /// or requiring any of the reported services to be present.
+    pub fn service_health_snapshot(&self) -> ServiceHealthSnapshot {
+        self.service_health_with_environment()
+    }
+
+    fn service_health_with_environment(&self) -> ServiceHealthSnapshot {
+        let mut entries = Vec::new();
+        let syntax_errors = self.registry.errors();
+        let active_syntax = self
+            .syntax
+            .get(self.active().buffer)
+            .is_some_and(Option::is_some);
+        if syntax_errors.is_empty() {
+            entries.push(ServiceHealthEntry::new(
+                "syntax",
+                if active_syntax {
+                    ServiceState::Ready
+                } else {
+                    ServiceState::Idle
+                },
+                if active_syntax {
+                    "active buffer parsed successfully"
+                } else {
+                    "active buffer is using plain text"
+                },
+            ));
+        } else {
+            for error in syntax_errors {
+                entries.push(ServiceHealthEntry::new(
+                    "syntax",
+                    ServiceState::Degraded,
+                    error.to_string(),
+                ));
+            }
+        }
+
+        let buffer_id = self.active().buffer;
+        let language = self.language_of(buffer_id);
+        let (lsp_state, lsp_detail) = if !self.config.lsp.enable {
+            (ServiceState::Disabled, "disabled in settings".to_owned())
+        } else if !self.ports.has_lsp() {
+            (
+                ServiceState::Unavailable,
+                "language-server manager is not attached".to_owned(),
+            )
+        } else if let Some(language) = language {
+            if !self.config.lsp.servers.contains_key(&language) {
+                (
+                    ServiceState::Idle,
+                    format!("no server configured for active {language} buffer"),
+                )
+            } else if self.lsp_servers.contains_key(&language)
+                && self.lsp_documents.contains_key(&buffer_id)
+            {
+                (
+                    ServiceState::Ready,
+                    format!("{language} server and document are attached"),
+                )
+            } else {
+                (
+                    ServiceState::Idle,
+                    format!("{language} server is configured and starting or stopped"),
+                )
+            }
+        } else {
+            (
+                ServiceState::Idle,
+                "active buffer has no recognized language".to_owned(),
+            )
+        };
+        entries.push(ServiceHealthEntry::new("lsp", lsp_state, lsp_detail));
+
+        ServiceHealthSnapshot { entries }
+    }
+
+    pub(super) fn open_service_health(&mut self) {
+        let report = self.service_health_snapshot();
+        let items = report
+            .entries
+            .into_iter()
+            .enumerate()
+            .map(|(index, entry)| {
+                PickerItem::new(
+                    entry.service,
+                    format!("{} · {}", entry.state.label(), entry.detail),
+                    index,
+                )
+            })
+            .collect();
+        self.list_actions.clear();
+        self.settings_view = None;
+        self.list = Some(ListPicker::new("Service health", items).as_report());
+    }
+
+    pub(super) fn effective_setting_value(&self, setting: SettingId) -> SettingValue {
+        match setting {
+            SettingId::EditorGrammar => SettingValue::Grammar(self.grammar.kind()),
+            SettingId::Theme => SettingValue::Text(self.theme_name.clone()),
+            SettingId::LspEnable => SettingValue::Boolean(self.config.lsp.enable),
+            SettingId::GitRefreshIntervalSeconds => {
+                SettingValue::Integer(self.config.git.refresh_interval_seconds)
+            }
+            SettingId::WorkspaceMode => SettingValue::WorkspaceMode(self.config.workspace.mode),
+            _ => setting.configured_value(&self.config),
+        }
+    }
+
+    fn persisted_setting_label(&self, setting: SettingId) -> String {
+        if setting == SettingId::Theme && self.persisted_config.theme.is_none() {
+            format!(
+                "default ({})",
+                setting.configured_value(&self.persisted_config)
+            )
+        } else {
+            setting.configured_value(&self.persisted_config).to_string()
+        }
+    }
+
+    pub(super) fn settings_buffer(&self) -> Buffer {
+        let values = SettingId::ALL
+            .iter()
+            .copied()
+            .map(|setting| (setting, self.persisted_setting_label(setting)))
+            .collect::<Vec<_>>();
+        let page = render_settings_page(&values);
+        Buffer::settings(&page.text, page.rows)
+    }
+
+    pub(super) fn open_settings_buffer(&mut self) {
+        let rendered = self.settings_buffer();
+        let buffer = match self.buffers.iter().enumerate().find_map(|(index, buffer)| {
+            (!self.closed_buffers.contains(&index) && buffer.is_settings()).then_some(index)
+        }) {
+            Some(existing) => {
+                self.buffers[existing] = rendered;
+                self.normalize_buffer(existing);
+                existing
+            }
+            None => {
+                self.buffers.push(rendered);
+                self.syntax.push(None);
+                self.buffers.len() - 1
+            }
+        };
+        self.push_jump();
+        let pane = self.active_mut();
+        pane.retarget(buffer);
+        pane.replace_selection(Selection::point(0));
+        pane.scroll_row = 0;
+        pane.scroll_wrap = 0;
+        pane.scroll_col = 0;
+        pane.preserve_scroll = false;
+        self.mode = Mode::Normal;
+        self.status("config · Enter changes the setting on this row");
+    }
+
+    pub(super) fn open_notifications_buffer(&mut self) {
+        self.notifications.acknowledge();
+        let rendered = Buffer::notifications(self.notifications.render());
+        let buffer = match self.buffers.iter().enumerate().find_map(|(index, buffer)| {
+            (!self.closed_buffers.contains(&index) && buffer.is_notifications()).then_some(index)
+        }) {
+            Some(existing) => {
+                self.buffers[existing] = rendered;
+                self.normalize_buffer(existing);
+                existing
+            }
+            None => {
+                self.buffers.push(rendered);
+                self.syntax.push(None);
+                self.buffers.len() - 1
+            }
+        };
+        self.push_jump();
+        let pane = self.active_mut();
+        pane.retarget(buffer);
+        pane.replace_selection(Selection::point(0));
+        pane.scroll_row = 0;
+        pane.scroll_wrap = 0;
+        pane.scroll_col = 0;
+        pane.preserve_scroll = false;
+        self.mode = Mode::Normal;
+    }
+
+    fn refresh_notification_buffers(&mut self) {
+        let open = self
+            .buffers
+            .iter()
+            .enumerate()
+            .filter_map(|(index, buffer)| {
+                (!self.closed_buffers.contains(&index) && buffer.is_notifications())
+                    .then_some(index)
+            })
+            .collect::<Vec<_>>();
+        if open.is_empty() {
+            return;
+        }
+        let rendered = Buffer::notifications(self.notifications.render());
+        for index in open {
+            self.buffers[index] = rendered.clone();
+            self.normalize_buffer(index);
+        }
+    }
+
+    pub fn unread_notification_counts(&self) -> NotificationCounts {
+        self.notifications.unread_counts()
+    }
+
+    pub fn notifications(&self) -> &NotificationCenter {
+        &self.notifications
+    }
+
+    pub fn push_notification(&mut self, notification: NotificationDraft) {
+        self.notifications.push(notification);
+        self.refresh_notification_buffers();
+    }
+
+    fn refresh_settings_buffers(&mut self) {
+        let rendered = self.settings_buffer();
+        for index in 0..self.buffers.len() {
+            if self.buffers[index].is_settings() {
+                self.buffers[index] = rendered.clone();
+                self.normalize_buffer(index);
+            }
+        }
+    }
+
+    pub(super) fn activate_selected_setting(&mut self) {
+        let row = self.cursor_position().row;
+        let Some(setting) = self.active_buffer().setting_at(row) else {
+            self.status("no setting on this row");
+            return;
+        };
+        self.open_setting_values(setting);
+    }
+
+    pub(super) fn setting_values(&self, setting: SettingId) -> Vec<SettingValue> {
+        match setting.descriptor().value_type {
+            SettingType::Grammar => crate::command::GrammarKind::ALL
+                .iter()
+                .copied()
+                .map(SettingValue::Grammar)
+                .collect(),
+            SettingType::Boolean => vec![SettingValue::Boolean(true), SettingValue::Boolean(false)],
+            SettingType::Theme => setting
+                .allowed_values(&self.config)
+                .into_iter()
+                .map(SettingValue::Text)
+                .collect(),
+            SettingType::WorkspaceMode => WorkspaceMode::ALL
+                .iter()
+                .copied()
+                .map(SettingValue::WorkspaceMode)
+                .collect(),
+            SettingType::Integer { minimum, maximum } => {
+                (minimum..=maximum).map(SettingValue::Integer).collect()
+            }
+            SettingType::Text => Vec::new(),
+        }
+    }
+
+    /// Which Tab-cycled group a choice belongs to, or `None` when the setting
+    /// has no such axis. Only themes do: they divide into the dark and the
+    /// light ones, and the list is long enough that reading it is easier one
+    /// half at a time.
+    fn setting_value_group(&self, setting: SettingId, value: &SettingValue) -> Option<String> {
+        if setting.descriptor().value_type != SettingType::Theme {
+            return None;
+        }
+        let SettingValue::Text(name) = value else {
+            return None;
+        };
+        Some(
+            self.config
+                .resolve_theme(name)
+                .ok()?
+                .appearance()?
+                .to_string(),
+        )
+    }
+
+    pub(super) fn open_setting_values(&mut self, setting: SettingId) {
+        if matches!(
+            setting.descriptor().value_type,
+            SettingType::Integer { .. } | SettingType::Text
+        ) {
+            self.list = None;
+            self.list_actions.clear();
+            self.settings_view = None;
+            self.open_prompt(PromptKind::SettingValue(setting));
+            self.command = self.effective_setting_value(setting).to_string();
+            self.command_cursor = self.command.chars().count();
+            return;
+        }
+        let values = self.setting_values(setting);
+        if values.is_empty() {
+            self.error(format!(
+                "{} has no valid choices in the loaded configuration",
+                setting.descriptor().title
+            ));
+            return;
+        }
+        let effective = self.effective_setting_value(setting);
+        let saved = self.persisted_setting_label(setting);
+        let items = values
+            .iter()
+            .enumerate()
+            .map(|(index, value)| {
+                let marker = if *value == effective {
+                    "effective"
+                } else if value.to_string() == saved {
+                    "saved"
+                } else {
+                    "choice"
+                };
+                let item = PickerItem::new(value.to_string(), marker, index);
+                match self.setting_value_group(setting, value) {
+                    Some(group) => item.with_tag(group),
+                    None => item,
+                }
+            })
+            .collect();
+        self.list_actions = values
+            .into_iter()
+            .map(|value| ListAction::SettingValue { setting, value })
+            .collect();
+        let mut picker = ListPicker::new(setting.descriptor().key, items).as_choice("to save");
+        if setting.descriptor().value_type == SettingType::Theme {
+            picker = picker.with_tags(vec![
+                ThemeAppearance::Dark.to_string(),
+                ThemeAppearance::Light.to_string(),
+            ]);
+        }
+        picker.selected = self
+            .list_actions
+            .iter()
+            .position(|action| {
+                matches!(
+                    action,
+                    ListAction::SettingValue { value, .. } if *value == effective
+                )
+            })
+            .unwrap_or(0);
+        self.settings_view = Some(SettingsView::Values(Box::new(SettingPreview {
+            setting,
+            original_config: self.config.clone(),
+            original_theme: self.theme.clone(),
+            original_theme_name: self.theme_name.clone(),
+            original_grammar: self.grammar.clone(),
+            original_mode: self.mode,
+        })));
+        self.list = Some(picker);
+        self.preview_selected_setting_value();
+    }
+
+    pub(super) fn preview_selected_setting_value(&mut self) {
+        let Some(SettingsView::Values(preview)) = self.settings_view.as_ref() else {
+            return;
+        };
+        let setting = preview.setting;
+        let Some(ListAction::SettingValue { value, .. }) = self.selected_list_action() else {
+            return;
+        };
+        if setting.descriptor().preview == PreviewPolicy::RestartRequired {
+            self.status(format!(
+                "{}: {value} · Enter saves · restart required to apply",
+                setting.descriptor().title
+            ));
+            return;
+        }
+        if let Err(error) = setting.apply(&value, &mut self.config) {
+            self.error(error.to_string());
+            return;
+        }
+        self.sync_keymap();
+        match value {
+            SettingValue::Grammar(kind) => {
+                if let Ok(grammar) = ActiveGrammar::new(kind) {
+                    self.grammar = grammar;
+                    self.mode = self.grammar.preferred_mode().unwrap_or(Mode::Normal);
+                }
+            }
+            SettingValue::Text(ref name) if setting == SettingId::Theme => {
+                if let Ok(theme) = self.config.resolve_theme(name) {
+                    self.replace_theme(name.clone(), theme);
+                }
+            }
+            SettingValue::Boolean(_)
+            | SettingValue::Integer(_)
+            | SettingValue::WorkspaceMode(_)
+            | SettingValue::Text(_) => {}
+        }
+        self.status(format!(
+            "previewing {}: {value} · Enter saves · Esc rolls back",
+            setting.descriptor().title
+        ));
+    }
+
+    pub(super) fn cancel_settings_picker(&mut self) {
+        let view = self.settings_view.take();
+        let Some(SettingsView::Values(preview)) = view else {
+            self.list = None;
+            self.list_actions.clear();
+            return;
+        };
+        self.config = preview.original_config;
+        self.sync_keymap();
+        self.replace_theme(preview.original_theme_name, preview.original_theme);
+        self.grammar = preview.original_grammar;
+        self.mode = preview.original_mode;
+        self.list = None;
+        self.list_actions.clear();
+        self.status(format!(
+            "{} preview rolled back",
+            preview.setting.descriptor().title
+        ));
+    }
+
+    pub(super) fn persist_selected_setting(
+        &mut self,
+        setting: SettingId,
+        value: SettingValue,
+    ) -> bool {
+        let Some(path) = self.config_path.clone() else {
+            self.error("settings cannot be saved because no config path was loaded");
+            return false;
+        };
+        let updated = match persist_setting(&path, setting, &value) {
+            Ok(updated) => updated,
+            Err(error) => {
+                let recovery = if self.settings_view.is_some() {
+                    " · press Esc to roll back the preview"
+                } else {
+                    ""
+                };
+                self.error(format!(
+                    "could not save {}: {error}{recovery}",
+                    setting.descriptor().key,
+                ));
+                return false;
+            }
+        };
+        self.persisted_config = updated;
+        if setting.descriptor().preview == PreviewPolicy::Immediate
+            && let Err(error) = setting.apply(&value, &mut self.config)
+        {
+            self.error(format!(
+                "saved {}, but could not keep its preview active: {error}",
+                setting.descriptor().key
+            ));
+            return false;
+        }
+        self.sync_keymap();
+        if setting == SettingId::NotificationsHistoryLimit {
+            self.notifications
+                .set_limit(self.config.notifications.history_limit);
+            self.refresh_notification_buffers();
+        }
+        match &value {
+            SettingValue::Grammar(kind) => self.select_grammar(*kind),
+            SettingValue::Text(name) if setting == SettingId::Theme => {
+                if let Ok(theme) = self.config.resolve_theme(name) {
+                    self.replace_theme(name.clone(), theme);
+                }
+            }
+            SettingValue::Boolean(_)
+            | SettingValue::Integer(_)
+            | SettingValue::WorkspaceMode(_)
+            | SettingValue::Text(_) => {}
+        }
+        self.settings_view = None;
+        self.list = None;
+        self.list_actions.clear();
+        self.refresh_settings_buffers();
+        let suffix = if setting.descriptor().preview == PreviewPolicy::RestartRequired {
+            " · restart Runyte to apply"
+        } else {
+            ""
+        };
+        self.status(format!(
+            "saved {}: {value}{suffix}",
+            setting.descriptor().key
+        ));
+        true
+    }
+
+    pub(super) fn set_theme(&mut self, name: &str) -> Result<()> {
+        if let Err(error) = self.config.resolve_theme(name) {
+            self.error(error.to_string());
+            return Ok(());
+        }
+        self.persist_selected_setting(SettingId::Theme, SettingValue::Text(name.to_owned()));
+        Ok(())
+    }
+
+    fn replace_theme(&mut self, name: String, theme: Theme) {
+        self.theme = theme;
+        self.theme_name = name;
+        self.sync_terminal_default_colors();
+    }
+
+    pub(super) fn sync_terminal_default_colors(&mut self) {
+        self.terminals.set_default_colors(DefaultColors::new(
+            self.theme.foreground.channels(),
+            self.theme.background.channels(),
+        ));
+    }
+
+    pub(super) fn request_quit(&mut self, force: bool, force_command: &str) {
+        if self.quit_allowed(force, force_command) {
+            self.quit_directory = None;
+            self.should_quit = true;
+        }
+    }
+
+    /// Leaves a persistent client without applying editor-exit guards.
+    ///
+    /// The host retains the complete editor state, so dirty buffers and live
+    /// terminals are not being abandoned and do not require a force spelling.
+    pub(super) fn request_detach(&mut self) {
+        if !self.persistent_session {
+            self.error(":detach is available only in persistent mode");
+            return;
+        }
+        self.quit_directory = None;
+        self.should_quit = true;
+    }
+
+    /// Applies Vim/Helix-style `:q` semantics to the active view.
+    ///
+    /// A pane's uniquely displayed buffer leaves with it, so dirty text needs
+    /// the force spelling; a buffer shared by another pane stays open. A
+    /// terminal session survives the pane. The last pane is the application
+    /// boundary and uses the ordinary global quit guard. A commit message is a
+    /// workflow rather than a document that makes sense hidden: leaving its
+    /// view cancels it, with force required when authored text would be lost.
+    pub(super) fn request_view_quit(&mut self, force: bool) {
+        let buffer = self.active().buffer;
+        if self.panes.len() == 1 {
+            if self.active_terminal().is_none() && self.buffers[buffer].is_commit_message() {
+                if self.buffers[buffer].dirty && !force {
+                    self.error(
+                        "modified commit message; use :q! to discard it and cancel the commit",
+                    );
+                    return;
+                }
+                self.abandon_commit_message(buffer);
+            }
+            self.request_quit(force, ":q!");
+            return;
+        }
+        if let Some(maximized) = self.maximized {
+            self.status(format!(
+                "leave {} before closing the pane",
+                maximized.view.label()
+            ));
+            return;
+        }
+        if self.active_terminal().is_some() {
+            self.close_pane();
+            return;
+        }
+
+        let displayed_elsewhere = self.panes.iter().any(|(pane_id, pane)| {
+            *pane_id != self.active_pane && pane.terminal.is_none() && pane.buffer == buffer
+        });
+        if !displayed_elsewhere {
+            if self.buffers[buffer].dirty && !force {
+                self.error("modified buffer; use :q! to discard its unsaved changes");
+                return;
+            }
+            if force {
+                self.close_buffer_discarding(buffer);
+            } else {
+                self.close_buffer_returning_from_commit(buffer);
+            }
+        }
+        self.close_pane();
+    }
+
+    pub(super) fn request_quit_here(&mut self, force: bool) {
+        if !self.quit_directory_handoff {
+            self.error(":qh requires the runyte() shell function from README.md");
+            return;
+        }
+        if !self.quit_allowed(force, ":qh!") {
+            return;
+        }
+        let requested = self.quit_here_directory();
+        let directory = match fs::canonicalize(&requested) {
+            Ok(directory) if directory.is_dir() => directory,
+            Ok(_) => {
+                self.error(format!(
+                    "cannot quit here: {} is not a directory",
+                    requested.display()
+                ));
+                return;
+            }
+            Err(error) => {
+                self.error(format!(
+                    "cannot quit here at {}: {error}",
+                    requested.display()
+                ));
+                return;
+            }
+        };
+        self.working_directory = directory.clone();
+        self.quit_directory = Some(directory);
+        self.should_quit = true;
+    }
+
+    fn quit_allowed(&mut self, force: bool, force_command: &str) -> bool {
+        if !force && self.buffers.iter().any(|buffer| buffer.dirty) {
+            self.error(format!(
+                "unsaved changes; use {force_command} to discard them"
+            ));
+            return false;
+        }
+        // A terminal can only be ended by its child or the terminal manager.
+        // Persistent quitting merely detaches its client, so host-owned live
+        // children are not a guard there; standalone exit must always refuse.
+        let running = self
+            .terminals
+            .iter()
+            .filter(|session| session.live())
+            .count();
+        if !self.persistent_session && running > 0 {
+            let plural = if running == 1 { "" } else { "s" };
+            self.error(format!(
+                "{running} terminal{plural} still running; close {} in :terminals before quitting",
+                if running == 1 { "it" } else { "them" }
+            ));
+            return false;
+        }
+        true
+    }
+
+    /// Records the loaded config without hiding unavailable editing or syntax
+    /// grammars discovered during construction.
+    pub fn note_loaded_config(&mut self, path: &Path) {
+        self.config_path = Some(path.to_path_buf());
+        self.persisted_config = self.config.clone();
+        let errors = self.registry.errors();
+        let configured_grammar_error = None::<&str>;
+        let help = ":? or Space+? for help";
+        let mut parts = Vec::new();
+        if let Some(error) = configured_grammar_error {
+            parts.push(error.to_owned());
+        }
+        if !errors.is_empty() {
+            parts.push(startup_status(&errors, help));
+        } else if parts.is_empty() {
+            parts.push(help.to_owned());
+        }
+        let message = format!("config: {} · {}", path.display(), parts.join(" · "));
+        if errors.is_empty() && configured_grammar_error.is_none() {
+            self.status(message);
+        } else {
+            self.error(message);
+        }
+    }
+
+    /// Reports each failed lazy language configuration once. A cached failure
+    /// is still returned by the registry on later parses, but does not replace
+    /// an unrelated success status again.
+    pub(super) fn report_new_registry_errors(&mut self) -> bool {
+        let unseen = self
+            .registry
+            .errors()
+            .into_iter()
+            .filter(|error| {
+                self.reported_registry_errors
+                    .insert((error.language, error.plain))
+            })
+            .collect::<Vec<_>>();
+        if unseen.is_empty() {
+            return false;
+        }
+        let summary = registry_failure_summary(&unseen);
+        let message = if self.status.is_empty() {
+            summary
+        } else {
+            format!("{} │ {summary}", self.status)
+        };
+        self.error(message);
+        true
+    }
+
+    pub(super) fn status(&mut self, message: impl Into<String>) {
+        self.status = message.into();
+        self.status_error = false;
+        self.status_revision = self.status_revision.wrapping_add(1);
+    }
+
+    pub(super) fn report_completed_action(
+        &mut self,
+        spelling: &str,
+        description: &str,
+        outcome: CommandOutcome,
+    ) {
+        if self.fs_confirmation.is_some()
+            || self.directory_reload_confirmation.is_some()
+            || self.buffer_discard_confirmation.is_some()
+            || self.git_discard_confirmation.is_some()
+            || self.git_stash_confirmation.is_some()
+            || self.git_branch_deletion.is_some()
+            || self.git_pull_rebase.is_some()
+            || self.git_worktree_removal.is_some()
+        {
+            return;
+        }
+        let (detail, is_error) = match outcome {
+            CommandOutcome::Completed => (Some(description.to_owned()), false),
+            CommandOutcome::Status(message)
+            | CommandOutcome::AsynchronousRequest(Some(message)) => (Some(message), false),
+            CommandOutcome::AsynchronousRequest(None) => (Some(description.to_owned()), false),
+            CommandOutcome::UserError(message) => (
+                Some(format!(
+                    "{description}{}",
+                    outcome_clause("failed", &message)
+                )),
+                true,
+            ),
+            CommandOutcome::Unavailable(message) => (
+                Some(format!(
+                    "{description}{}",
+                    outcome_clause("unavailable", &message)
+                )),
+                false,
+            ),
+            CommandOutcome::Confirmation(_) | CommandOutcome::Prompt(_) => (None, false),
+        };
+        if let Some(detail) = detail {
+            let id = self.active_action_id.unwrap_or_else(|| {
+                let id = self.next_action_id;
+                self.next_action_id = self.next_action_id.wrapping_add(1).max(1);
+                id
+            });
+            self.action_feedback = Some(ActionFeedback {
+                id,
+                spelling: spelling.to_owned(),
+                text: format!("{spelling} ({detail})"),
+                is_error,
+            });
+        }
+    }
+
+    pub(super) fn mark_action_feedback_failed(&mut self, action: Option<u64>, message: &str) {
+        let Some(action) = action else {
+            return;
+        };
+        let Some(feedback) = self.action_feedback.as_mut() else {
+            return;
+        };
+        // `is_error` is the idempotency guard: once this echo has been
+        // marked failed, a second asynchronous failure for the same action
+        // (which should not happen, but would otherwise double-append)
+        // leaves it alone rather than matching on the suffix text itself.
+        if feedback.id != action || feedback.is_error {
+            return;
+        }
+        let suffix = outcome_clause("failed", message);
+        if feedback.text.ends_with(')') {
+            feedback.text.pop();
+            feedback.text.push_str(&suffix);
+            feedback.text.push(')');
+        } else {
+            feedback.text.push_str(&suffix);
+        }
+        feedback.is_error = true;
+    }
+
+    pub(super) fn update_action_feedback(&mut self, action: Option<u64>, detail: &str) -> bool {
+        let Some(action) = action else {
+            return false;
+        };
+        let Some(feedback) = self.action_feedback.as_mut() else {
+            return false;
+        };
+        if feedback.id != action {
+            return false;
+        }
+        feedback.text = format!("{} ({detail})", feedback.spelling);
+        true
+    }
+
+    /// Live echo of keys typed so far that have not yet resolved to a
+    /// command: a chord prefix, a numeric count, or a character-taking
+    /// command awaiting its operand. `None` once nothing is pending, so
+    /// [`Self::displayed_status_message`]'s completed-action text can show
+    /// through instead.
+    pub(crate) fn live_pending_display(&self) -> Option<String> {
+        if let Some(command) = self.grammar.awaiting_character() {
+            return Some(format!("{} …", command.metadata().description));
+        }
+        let count = self.grammar.pending_count();
+        let sequence = self.grammar.pending_sequence();
+        if count.is_none() && sequence.is_empty() {
+            return None;
+        }
+        let mut parts = Vec::new();
+        if let Some(count) = count {
+            parts.push(count.to_string());
+        }
+        if !sequence.is_empty() {
+            parts.push(sequence.to_string());
+        }
+        Some(format!("{} …", parts.join(" ")))
+    }
+
+    pub(crate) fn displayed_status_message(&self) -> &str {
+        self.action_feedback
+            .as_ref()
+            .map_or("", |feedback| feedback.text.as_str())
+    }
+
+    /// Whether [`Self::displayed_status_message`] reports a failure, for the
+    /// interaction line's error/non-error styling distinction.
+    pub(crate) fn displayed_status_message_is_error(&self) -> bool {
+        self.action_feedback
+            .as_ref()
+            .is_some_and(|feedback| feedback.is_error)
+    }
+
+    pub(super) fn mark_unavailable(&mut self, message: impl Into<String>) {
+        let message = message.into();
+        self.status = message.clone();
+        self.status_error = false;
+        self.status_revision = self.status_revision.wrapping_add(1);
+        self.unavailable_revision = self.unavailable_revision.wrapping_add(1);
+        self.push_notification(NotificationDraft::new(
+            NotificationSeverity::Warning,
+            "Runyte",
+            "Action unavailable",
+            message,
+        ));
+    }
+
+    /// Like [`Self::mark_unavailable`], but does not retain a notification.
+    ///
+    /// Used when a language-server request is suppressed because the server
+    /// never advertised the capability it needs: `CommandOutcome::Unavailable`
+    /// and the interaction line still need to hear about it, but this is
+    /// reachable once per keystroke while typing next to a trigger character
+    /// the server does not support (`(` and `,` for signature help, `.` and
+    /// `:` for completion), and nothing about "this server cannot do this" is
+    /// worth reading back later. A `Method not found` that arrives from a
+    /// server that did advertise the capability is a real protocol violation
+    /// and still goes through `error`, retained as usual.
+    pub(super) fn mark_unsupported(&mut self, message: impl Into<String>) {
+        self.status = message.into();
+        self.status_error = false;
+        self.status_revision = self.status_revision.wrapping_add(1);
+        self.unavailable_revision = self.unavailable_revision.wrapping_add(1);
+    }
+
+    pub(super) fn error(&mut self, message: impl Into<String>) {
+        self.error_from("Runyte", "Action failed", message);
+    }
+
+    /// Like [`Self::error`], but does not retain a notification.
+    ///
+    /// Used for `No binding: X`: it is already visible at the moment it
+    /// happens, through the same status this sets, and through the key
+    /// hints, which read the grammar notice directly rather than this
+    /// status. A burst of mistyping is otherwise the single largest
+    /// contributor to a notification count that never goes away, because
+    /// unlike most other errors it has no natural rate limit — nothing stops
+    /// the next keystroke from producing another one.
+    pub(super) fn error_unretained(&mut self, message: impl Into<String>) {
+        self.status = message.into();
+        self.status_error = true;
+        self.status_revision = self.status_revision.wrapping_add(1);
+    }
+
+    pub(super) fn error_from(
+        &mut self,
+        source: impl Into<String>,
+        title: impl Into<String>,
+        message: impl Into<String>,
+    ) {
+        let message = message.into();
+        self.status.clone_from(&message);
+        self.status_error = true;
+        self.status_revision = self.status_revision.wrapping_add(1);
+        self.push_notification(NotificationDraft::new(
+            NotificationSeverity::Error,
+            source,
+            title,
+            message,
+        ));
+    }
+
+    /// Like [`Self::error`], but for a search that ran cleanly and simply
+    /// found nothing — expected, not a failure — so it is retained at
+    /// [`NotificationSeverity::Warning`] and never styled with `theme.error`
+    /// on the interaction line, unlike [`Self::error`].
+    pub(super) fn search_warning(&mut self, message: impl Into<String>) {
+        let message = message.into();
+        self.status.clone_from(&message);
+        self.status_error = false;
+        self.status_revision = self.status_revision.wrapping_add(1);
+        self.push_notification(NotificationDraft::new(
+            NotificationSeverity::Warning,
+            "Runyte",
+            "Search",
+            message,
+        ));
+    }
+
+    pub(super) fn info_from(
+        &mut self,
+        source: impl Into<String>,
+        title: impl Into<String>,
+        message: impl Into<String>,
+    ) {
+        self.push_notification(NotificationDraft::new(
+            NotificationSeverity::Info,
+            source,
+            title,
+            message,
+        ));
+    }
+
+    /// Reports a failure detected by a host boundary after command dispatch.
+    /// Hosts enter here so it is retained without replacing the action echo.
+    pub fn report_host_error(&mut self, message: impl Into<String>) {
+        self.error_from("Host", "Host operation failed", message);
+    }
+}

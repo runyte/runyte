@@ -2429,7 +2429,9 @@ See [config.example.yaml](../config.example.yaml) for a complete starting point.
 
 ```text
 src/
-  app.rs          modes, commands, key handling, panes, and editing actions
+  app.rs          editor state, shared application types, and startup coordination
+  app/            editor-level Git, workspace, pane, input, editing, terminal,
+                  search, syntax, file, picker, settings, and LSP workflows
   buffer.rs       rope-backed buffers, file I/O, and transactional undo
   clipboard.rs    testable operating-system clipboard adapters
   text.rs         rope storage, character offsets, and transactions
