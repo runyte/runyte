@@ -4511,11 +4511,13 @@ impl App {
                 .dimmed(!row.running)
             })
             .collect();
-        let mut picker = ListPicker::new(
-            "Sessions · 1-9 or Enter attaches in persistent mode · Tab actions",
-            items,
-        )
-        .with_preview("Session");
+        let title = if self.persistent_session {
+            "Sessions · 1-9 attach · Tab actions"
+        } else {
+            "Sessions · Enter cannot attach in standalone mode · Tab actions"
+        };
+        let mut picker = ListPicker::new(title, items).with_preview("Session");
+        picker.primary_action = self.persistent_session.then(|| "attach".to_owned());
         picker.filter = filter;
         picker.selected = selected.min(self.workspace_rows.len().saturating_sub(1));
         self.list = Some(picker);
@@ -12135,7 +12137,14 @@ impl App {
                 {
                     self.workspace_previews.clear();
                     self.workspace_preview_target = None;
-                    self.list = Some(ListPicker::new("Sessions · loading…", Vec::new()));
+                    let title = if self.persistent_session {
+                        "Sessions · loading…"
+                    } else {
+                        "Sessions · Enter cannot attach in standalone mode · loading…"
+                    };
+                    let mut picker = ListPicker::new(title, Vec::new());
+                    picker.primary_action = self.persistent_session.then(|| "attach".to_owned());
+                    self.list = Some(picker);
                     self.request_workspace_refresh();
                 }
                 Ok(())
@@ -37263,6 +37272,10 @@ mod tests {
 
         app.execute_command("sl").unwrap();
         assert!(app.list.is_some(), "standalone listing was refused");
+        assert_eq!(
+            app.list.as_ref().map(|picker| picker.title.as_str()),
+            Some("Sessions · Enter cannot attach in standalone mode · loading…")
+        );
         let generation = app.workspace_generation;
         app.apply_workspace_event(WorkspaceEvent::Refreshed {
             generation,
@@ -37285,7 +37298,26 @@ mod tests {
             picker.items[0].detail,
             format!("{} · stopped", root.display())
         );
-        assert!(picker.title.contains("persistent mode"));
+        assert_eq!(
+            picker.title,
+            "Sessions · Enter cannot attach in standalone mode · Tab actions"
+        );
+        assert_eq!(picker.primary_action, None);
+        let overlay = app
+            .overlay_snapshots()
+            .into_iter()
+            .find(|overlay| overlay.title.starts_with("Sessions"))
+            .expect("the session picker has a semantic overlay");
+        assert_eq!(
+            overlay.title,
+            "Sessions · Enter cannot attach in standalone mode · Tab actions"
+        );
+        assert!(
+            overlay
+                .actions
+                .iter()
+                .all(|action| action.key_hint != "Enter")
+        );
 
         key(&mut app, KeyCode::Enter, Modifiers::NONE);
         assert_eq!(
@@ -37371,6 +37403,10 @@ mod tests {
                 "{} · running · unsaved 2 · terminals 1 · TUI attached",
                 current.display()
             )
+        );
+        assert_eq!(
+            app.list.as_ref().unwrap().primary_action.as_deref(),
+            Some("attach")
         );
         app.list.as_mut().unwrap().filter = "archive".to_owned();
         app.apply_workspace_event(WorkspaceEvent::Refreshed {
