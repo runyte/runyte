@@ -10,6 +10,7 @@ pub mod content_alignment;
 pub mod diff;
 pub mod diff_view;
 pub mod directory_buffer;
+pub mod directory_listing;
 pub mod external_open;
 pub mod file_picker;
 pub mod finder;

@@ -22,10 +22,13 @@ use std::{
 };
 
 use runyte::{
+    app::App,
     buffer::SOFT_WRAP_LINE_LIMIT,
     command::{CommandExecutionContext, CommandInvocation, EditorCommand, parse_colon_command},
+    config::Config,
     file_picker::{CONTENT_ENTRY_LIMIT, FileHits, FilePicker, scan_content},
     headless::HeadlessEditor,
+    input::{KeyCode, KeyStroke, Modifiers},
     selection::Selection,
     snapshot::{EditorSnapshot, SnapshotRow, TextRunKind},
     syntax::SyntaxEvents,
@@ -756,4 +759,131 @@ fn ranking_a_full_content_budget_stays_within_a_frame() {
         "narrowing must not lose the lines the query still matches"
     );
     within("a keystroke in content search", slowest, budget(FRAME * 4));
+}
+
+// -- Path completion --------------------------------------------------------
+
+/// Entries in the wide fixture directory.
+///
+/// Far past the few hundred rows either path popup will show, so that the
+/// work being measured is the whole directory rather than what survives it.
+const WIDE_ENTRIES: usize = 40_000;
+
+/// One directory holding `WIDE_ENTRIES` files and a tenth as many
+/// subdirectories, beside the note the editor opens.
+fn wide_directory() -> &'static Path {
+    static ROOT: OnceLock<PathBuf> = OnceLock::new();
+    ROOT.get_or_init(|| {
+        let root = fixture_root().join("wide_directory");
+        if root.exists() {
+            return root;
+        }
+        let pending = fixture_root().join(format!("wide_directory.{}.pending", std::process::id()));
+        let wide = pending.join("wide");
+        fs::create_dir_all(&wide).unwrap();
+        fs::write(pending.join("note.txt"), "").unwrap();
+        for index in 0..WIDE_ENTRIES {
+            fs::write(wide.join(format!("file_{index:05}.txt")), "").unwrap();
+            if index % 10 == 0 {
+                fs::create_dir_all(wide.join(format!("dir_{index:05}"))).unwrap();
+            }
+        }
+        // Renamed into place so a second run never reads a tree this one is
+        // still writing, the same way the other fixtures are built.
+        if fs::rename(&pending, &root).is_err() {
+            fs::remove_dir_all(&pending).ok();
+        }
+        root
+    })
+    .as_path()
+}
+
+fn editor_in(root: &Path) -> App {
+    App::new_in_project(Config::default(), Some(root.join("note.txt")), root).unwrap()
+}
+
+fn press(app: &mut App, character: char) {
+    app.handle_key(KeyStroke::new(KeyCode::Char(character), Modifiers::NONE))
+        .unwrap();
+}
+
+fn type_text(app: &mut App, text: &str) {
+    for character in text.chars() {
+        press(app, character);
+    }
+}
+
+/// Completing a path in a very wide directory has to stay inside a keystroke.
+///
+/// Both path popups read the directory whole, because a name being typed can
+/// sit anywhere in it and a directory read returns names in no useful order.
+/// That read happens on the input thread, between the keystroke and the
+/// redraw answering it, so this is what the person waits for. The first read
+/// is allowed several frames — it is one directory read of forty thousand
+/// entries and nothing can make it free — but every keystroke after it is
+/// held to a frame, which is what the kept listing buys.
+#[test]
+fn completing_a_path_in_a_wide_directory_stays_within_budget() {
+    let root = wide_directory();
+    let mut app = editor_in(root);
+    press(&mut app, 'i');
+    type_text(&mut app, "wide");
+
+    let start = Instant::now();
+    press(&mut app, '/');
+    within("opening a path popup", start.elapsed(), budget(FRAME * 8));
+    assert!(
+        app.completion.is_some(),
+        "the popup has to open on the separator"
+    );
+
+    let slowest = "file_39999"
+        .chars()
+        .fold(Duration::ZERO, |slowest, character| {
+            let start = Instant::now();
+            press(&mut app, character);
+            slowest.max(start.elapsed())
+        });
+    within("a keystroke inside a path popup", slowest, budget(FRAME));
+
+    // The whole point of the read is that the name typed is the one offered,
+    // however deep in the directory the filesystem happened to put it.
+    let state = app.completion.as_ref().expect("the popup stays open");
+    let offered = state
+        .visible_indices()
+        .into_iter()
+        .map(|index| state.items[index].label.clone())
+        .collect::<Vec<_>>();
+    assert_eq!(offered, vec!["file_39999.txt".to_owned()]);
+}
+
+/// The palette's rows for a path argument have to stay inside a frame.
+///
+/// They are recomputed for every frame drawn while the palette is open, so
+/// this budget is a redraw budget rather than a keystroke budget, and it
+/// covers the widest case: an argument ending in a separator, where every
+/// name in the directory is a candidate row.
+#[test]
+fn palette_path_rows_redraw_within_budget() {
+    let root = wide_directory();
+    let mut app = editor_in(root);
+    press(&mut app, ':');
+    type_text(&mut app, &format!("open {}/wide/", root.display()));
+
+    let first = Instant::now();
+    let rows = app
+        .matching_path_hints()
+        .expect("a path argument owns the rows");
+    within("the first path rows", first.elapsed(), budget(FRAME * 8));
+    assert_eq!(rows.len(), 512);
+
+    let slowest = (0..8).fold(Duration::ZERO, |slowest, _| {
+        let start = Instant::now();
+        let rows = app
+            .matching_path_hints()
+            .expect("a path argument owns the rows");
+        assert_eq!(rows.len(), 512);
+        slowest.max(start.elapsed())
+    });
+    within("redrawing path rows", slowest, budget(FRAME * 2));
 }

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 
 use std::{
+    cell::RefCell,
+    cmp::Ordering,
     collections::{BTreeMap, HashMap, HashSet},
     ffi::{OsStr, OsString},
     fs,
@@ -31,6 +33,7 @@ use crate::{
     diff::{Alignment, Side},
     diff_view::{DiffSession, DiffSide, MAX_DIFF_BYTES},
     directory_buffer::DirectoryTransfer,
+    directory_listing::DirectoryListings,
     external_open::{self, ProgramCache},
     file_picker::{
         CONTENT_ENTRY_LIMIT, FilePicker, FilePickerEvent, FilePickerKind, FilePreview, FileScanner,
@@ -1415,9 +1418,16 @@ pub enum CompletionSource {
     Word,
 }
 
-/// Filesystem work happens on the input thread, so one trigger may inspect at
-/// most this many entries in each of its at-most-two distinct path roots.
-const PATH_COMPLETION_ENTRY_LIMIT_PER_ROOT: usize = 512;
+/// Bounds how many candidates one path popup keeps from each of its
+/// at-most-two distinct path roots, so a full directory on one root cannot
+/// crowd out the other's names.
+///
+/// The bound is on what is kept, not on what is read: every entry of the
+/// directory is offered to the typed prefix first, because a directory read
+/// returns names in whatever order the filesystem holds them, and cutting
+/// that order short would hide matches for no reason a person could see.
+const PATH_COMPLETION_ITEM_LIMIT_PER_ROOT: usize = 512;
+/// The same bound for the command palette's path argument rows.
 const COMMAND_PATH_HINT_LIMIT: usize = 512;
 /// Bounds one word-completion popup's candidate count, independent of the
 /// worker's own per-buffer memory bound.
@@ -1945,6 +1955,11 @@ pub struct App {
     /// and so tests can inject a disposable home without mutating the process
     /// environment shared by concurrently running tests.
     home_directory: Option<PathBuf>,
+    /// Directory listings kept for path completion. Behind a cell because the
+    /// palette computes its rows while drawing, from a shared editor, and
+    /// re-reading a large directory once per frame is the cost this exists to
+    /// avoid.
+    path_listings: RefCell<DirectoryListings>,
     pub project_root: PathBuf,
     pub state_root: PathBuf,
     /// What Git says about the project and about each open file. Marks are
@@ -2308,6 +2323,7 @@ impl App {
             areas: HashMap::new(),
             working_directory,
             home_directory: user_home_directory(),
+            path_listings: RefCell::default(),
             external_target: None,
             programs,
             prompt_origin_mode: Mode::Normal,
@@ -8411,35 +8427,52 @@ impl App {
 
         let base_end = raw.rfind(is_path_separator).map_or(0, |index| index + 1);
         let display_base = &raw[..base_end];
-        let Ok(entries) = fs::read_dir(&directory) else {
+        let Some(entries) = self.path_listings.borrow_mut().read(&directory) else {
             return Some(Vec::new());
         };
         let show_hidden = self.config.editor.show_hidden_files || prefix.starts_with('.');
-        let mut hints = Vec::new();
-        for entry in entries.take(COMMAND_PATH_HINT_LIMIT).flatten() {
-            let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
-                continue;
-            };
+        // Where each row's detail column starts, resolved once: naming the
+        // directory per row would ask the operating system for the working
+        // directory once per row.
+        let detail_base = PathBuf::from(display_path(&directory));
+        // Keyed by the order the rows are shown in, so the bound below drops
+        // the last row rather than whichever entries the filesystem happened
+        // to return late. Reading the whole directory before bounding is what
+        // lets a typed prefix find its matches in a directory larger than the
+        // bound. The exact spelling is part of the key only to separate two
+        // names that differ just in case.
+        let mut kept = BTreeMap::<(bool, String, String), PathHint>::new();
+        for entry in entries.iter() {
+            let name = entry.name.as_str();
             if !name.starts_with(prefix) || (!show_hidden && name.starts_with('.')) {
                 continue;
             }
-            let is_directory = entry.path().is_dir();
-            let suffix = if is_directory {
-                separator.to_string()
-            } else {
-                String::new()
-            };
-            hints.push(PathHint {
-                value: format!("{display_base}{name}{suffix}"),
-                detail: display_path(&entry.path()),
-                is_directory,
-            });
+            let is_directory = entry.is_directory;
+            // Once the bound is full, only a name that sorts before the last
+            // row kept can change the answer. The key holds the row without
+            // the base every row shares, so this compares just the name.
+            if kept.len() >= COMMAND_PATH_HINT_LIMIT
+                && kept.last_key_value().is_some_and(|(last, _)| {
+                    hint_is_not_before(name, is_directory, separator, last)
+                })
+            {
+                continue;
+            }
+            let row = row_characters(name, is_directory, separator).collect::<String>();
+            let folded = row.chars().flat_map(char::to_lowercase).collect::<String>();
+            kept.insert(
+                (!is_directory, folded, row.clone()),
+                PathHint {
+                    value: format!("{display_base}{row}"),
+                    detail: detail_base.join(name).display().to_string(),
+                    is_directory,
+                },
+            );
+            if kept.len() > COMMAND_PATH_HINT_LIMIT {
+                kept.pop_last();
+            }
         }
-        hints.sort_by(|left, right| {
-            (!left.is_directory, left.value.to_lowercase())
-                .cmp(&(!right.is_directory, right.value.to_lowercase()))
-        });
-        Some(hints)
+        Some(kept.into_values().collect())
     }
 
     fn resolve_hint_path(&self, path: PathBuf) -> PathBuf {
@@ -10317,20 +10350,25 @@ impl App {
             return;
         }
         let was_path_completion = self.path_completion_active();
-        if let Some(state) = self.completion.as_mut() {
-            let keeps_popup = match state.source {
+        if let Some(source) = self.completion.as_ref().map(|state| state.source) {
+            let keeps_popup = match source {
                 CompletionSource::Language => character.is_alphanumeric() || character == '_',
                 CompletionSource::Path => !is_path_token_boundary(character) && character != '/',
                 CompletionSource::Word => !character.is_whitespace(),
             };
-            if keeps_popup {
+            // A path popup is rebuilt from the directory below rather than
+            // narrowed in place. Its items are only the bounded best of a
+            // listing collected for the shorter prefix, so filtering them
+            // would answer the longer one from a set that never contained
+            // every match for it.
+            if !keeps_popup || source == CompletionSource::Path {
+                self.completion = None;
+            } else if let Some(state) = self.completion.as_mut() {
                 state.filter.push(character);
                 state.selected = 0;
                 if state.visible_indices().is_empty() {
                     self.completion = None;
                 }
-            } else {
-                self.completion = None;
             }
         }
         if character == '/' || self.completion.is_none() {
@@ -19980,6 +20018,12 @@ impl App {
 
         let mut visited = HashSet::new();
         let mut candidates = BTreeMap::<String, Completion>::new();
+        // The typed fragment narrows the listing here rather than only in
+        // `visible_indices`, so that the bound below is spent on names the
+        // person could still be typing. Both filter without regard to case,
+        // and the popup's own filter is the one a person sees, so this one
+        // folds names exactly as that one does.
+        let wanted = fragment.to_lowercase();
         for directory in directories {
             let Ok(directory) = directory.canonicalize() else {
                 continue;
@@ -19987,32 +20031,53 @@ impl App {
             if !directory.is_dir() || !visited.insert(directory.clone()) {
                 continue;
             }
-            let Ok(entries) = fs::read_dir(&directory) else {
+            let Some(entries) = self.path_listings.borrow_mut().read(&directory) else {
                 continue;
             };
-            for entry in entries.take(PATH_COMPLETION_ENTRY_LIMIT_PER_ROOT) {
-                let Ok(entry) = entry else {
+            let detail = display_path(&directory);
+            let mut kept = BTreeMap::<String, Completion>::new();
+            for entry in entries.iter() {
+                if !entry.name.to_lowercase().starts_with(&wanted) {
                     continue;
-                };
-                let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+                }
+                let is_directory = entry.is_directory;
+                // Once the bound is full, only a name that sorts before the
+                // last row kept can change the answer.
+                if kept.len() >= PATH_COMPLETION_ITEM_LIMIT_PER_ROOT
+                    && kept.last_key_value().is_some_and(|(last, _)| {
+                        row_is_not_before(&entry.name, is_directory, '/', last)
+                    })
+                {
                     continue;
-                };
-                let is_directory = entry.path().is_dir();
+                }
                 let label = if is_directory {
-                    format!("{name}/")
+                    format!("{}/", entry.name)
                 } else {
-                    name
+                    entry.name.clone()
                 };
-                candidates.entry(label.clone()).or_insert(Completion {
-                    label: label.clone(),
-                    filter_text: None,
-                    sort_text: None,
-                    detail: display_path(&directory),
-                    kind: if is_directory { "directory" } else { "file" },
-                    insert: label,
-                    edit: None,
-                    additional: Vec::new(),
-                });
+                kept.insert(
+                    label.clone(),
+                    Completion {
+                        label: label.clone(),
+                        filter_text: None,
+                        sort_text: None,
+                        detail: detail.clone(),
+                        kind: if is_directory { "directory" } else { "file" },
+                        insert: label,
+                        edit: None,
+                        additional: Vec::new(),
+                    },
+                );
+                // Dropping the largest label keeps the smallest ones, so a
+                // directory too large to offer whole is cut at a place the
+                // person can predict instead of wherever the filesystem
+                // happened to return entries.
+                if kept.len() > PATH_COMPLETION_ITEM_LIMIT_PER_ROOT {
+                    kept.pop_last();
+                }
+            }
+            for (label, candidate) in kept {
+                candidates.entry(label).or_insert(candidate);
             }
         }
 
@@ -23958,6 +24023,66 @@ fn prompt_word_forward(value: &str, cursor: usize) -> usize {
         cursor += 1;
     }
     cursor
+}
+
+/// The characters of the row a listing name is shown as: the name, followed
+/// by the separator that marks a directory.
+///
+/// Comparing these against a row already kept costs nothing but the
+/// comparison. A path popup in a large directory decides against far more
+/// names than it keeps, and building the row for each of those only to drop
+/// it is most of what completing a path in such a directory would cost.
+fn row_characters(
+    name: &str,
+    is_directory: bool,
+    separator: char,
+) -> impl Iterator<Item = char> + Clone {
+    name.chars().chain(is_directory.then_some(separator))
+}
+
+/// Whether `name`'s row sorts at or after `row`, and so cannot displace it.
+///
+/// Character order and the byte order [`str`] compares by agree, because
+/// UTF-8 keeps code points in order.
+fn row_is_not_before(name: &str, is_directory: bool, separator: char, row: &str) -> bool {
+    row_characters(name, is_directory, separator).cmp(row.chars()) != Ordering::Less
+}
+
+/// The same question for the palette's order, which puts directories first
+/// and compares rows without regard to case before falling back to the exact
+/// spelling.
+fn hint_is_not_before(
+    name: &str,
+    is_directory: bool,
+    separator: char,
+    row: &(bool, String, String),
+) -> bool {
+    let (row_is_file, folded, exact) = row;
+    let ordering = (!is_directory)
+        .cmp(row_is_file)
+        .then_with(|| compare_folded(name, is_directory, separator, folded))
+        .then_with(|| row_characters(name, is_directory, separator).cmp(exact.chars()));
+    ordering != Ordering::Less
+}
+
+/// Orders `name`'s row against an already-lowercased `folded` row, as
+/// comparing their lowercased spellings would.
+///
+/// The ASCII case is answered from bytes because `char::to_lowercase`
+/// consults the Unicode case tables for every character it is handed, and
+/// this comparison is what a large directory spends most of its time on:
+/// it runs once per entry, while the work it avoids runs a few hundred times.
+fn compare_folded(name: &str, is_directory: bool, separator: char, folded: &str) -> Ordering {
+    if name.is_ascii() && folded.is_ascii() && separator.is_ascii() {
+        return name
+            .bytes()
+            .chain(is_directory.then_some(separator as u8))
+            .map(|byte| byte.to_ascii_lowercase())
+            .cmp(folded.bytes());
+    }
+    row_characters(name, is_directory, separator)
+        .flat_map(char::to_lowercase)
+        .cmp(folded.chars())
 }
 
 fn is_path_token_boundary(character: char) -> bool {
@@ -33508,7 +33633,7 @@ mod tests {
         let root = temporary("bounded-path-completion");
         let huge = root.join("huge");
         fs::create_dir_all(&huge).unwrap();
-        for index in 0..PATH_COMPLETION_ENTRY_LIMIT_PER_ROOT + 16 {
+        for index in 0..PATH_COMPLETION_ITEM_LIMIT_PER_ROOT + 16 {
             fs::write(huge.join(format!("candidate-{index:04}.txt")), "").unwrap();
         }
         let active = root.join("note.txt");
@@ -33520,7 +33645,7 @@ mod tests {
 
         assert_eq!(
             app.completion.as_ref().unwrap().items.len(),
-            PATH_COMPLETION_ENTRY_LIMIT_PER_ROOT
+            PATH_COMPLETION_ITEM_LIMIT_PER_ROOT
         );
         fs::remove_dir_all(root).unwrap();
     }
@@ -33534,7 +33659,7 @@ mod tests {
         let project_candidates = project.join("dir");
         fs::create_dir_all(&local_candidates).unwrap();
         fs::create_dir_all(&project_candidates).unwrap();
-        for index in 0..PATH_COMPLETION_ENTRY_LIMIT_PER_ROOT + 16 {
+        for index in 0..PATH_COMPLETION_ITEM_LIMIT_PER_ROOT + 16 {
             fs::write(local_candidates.join(format!("local-{index:04}.txt")), "").unwrap();
         }
         fs::write(project_candidates.join("project-only.txt"), "").unwrap();

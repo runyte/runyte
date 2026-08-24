@@ -1878,7 +1878,11 @@ as typing it fresh would. Relative paths are resolved against both the active
 file's parent and the stable project root, so spellings such as `dir/`,
 `files/`, `./files/`, and `../files/` can follow whichever context makes them
 valid. Directory candidates retain a trailing `/`; accepting one immediately
-offers its children.
+offers its children. A directory with more names than the popup will show is
+offered as its first few hundred in order, and typing more of a name narrows
+against the whole directory rather than against what the popup happened to be
+showing, so a name that exists is reachable however large the directory it
+sits in. The command palette's rows for a path argument work the same way.
 
 Word completion offers words already seen elsewhere in the workspace — every
 open buffer contributes, including the explorer, whose entries are filenames.

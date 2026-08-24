@@ -178,6 +178,11 @@ and the order of the push. Do not infer any of those from the commit history.
   producer of a buffer can be a side.
 - `src/directory_buffer.rs`: editable directory projections and hidden entry
   identities.
+- `src/directory_listing.rs`: recently read directory listings, kept so that
+  completing a path does not re-read the same directory for every keystroke
+  and every redraw. A listing is reused only while the directory's own
+  modification time says nothing has changed in it. Knows nothing about
+  buffers, panes, or what makes a name worth offering.
 - `src/fs_plan.rs`: confirmed filesystem plans, conflict detection, trash,
   and cycle-safe application.
 - `src/external_open.rs`: binary detection, the platform cache of programs
