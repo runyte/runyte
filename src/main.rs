@@ -2,7 +2,7 @@
 
 use std::{
     fs,
-    io::{self, stdout},
+    io::{self, Write, stdout},
     path::{Path, PathBuf},
     sync::Arc,
     time::{Duration, Instant},
@@ -378,6 +378,8 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
     // Standalone mode uses the same owner and command/event boundary that a
     // persistent process will host. No transport or daemon is required.
     let mut app = WorkspaceHost::new(app);
+    #[cfg(debug_assertions)]
+    let mut input_trace = open_input_trace()?;
 
     if arguments.mode == LaunchMode::Serve {
         #[cfg(unix)]
@@ -457,6 +459,15 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
                             Some(&input),
                             Instant::now(),
                         );
+                        #[cfg(debug_assertions)]
+                        trace_input(
+                            input_trace.as_mut(),
+                            "before",
+                            app.app(),
+                            &input,
+                            repeated,
+                            None,
+                        )?;
                         if is_passive_pointer(&input) {
                             // Passive motion from Crossterm's any-motion mode
                             // is not editor input. Preserve hints/status and
@@ -501,6 +512,15 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
                                 }
                             }
                         }
+                        #[cfg(debug_assertions)]
+                        trace_input(
+                            input_trace.as_mut(),
+                            "after",
+                            app.app(),
+                            &input,
+                            repeated,
+                            Some(hint_result),
+                        )?;
                     }
                     None => break,
                 }
@@ -1105,6 +1125,59 @@ fn observe_editor_key_hint(
         return HintEventResult::Forward;
     };
     key_hints.observe_in(key, mode, app.key_binding_scope(), app.keymap())
+}
+
+/// Opens the opt-in development trace used to diagnose native key dispatch.
+///
+/// `InputEvent` deliberately redacts pasted/composed text in its `Debug`
+/// representation. The remaining state is limited to key metadata and the
+/// terminal pane transition needed for this diagnosis.
+#[cfg(debug_assertions)]
+fn open_input_trace() -> Result<Option<fs::File>> {
+    let Some(path) = std::env::var_os("RUNYTE_INPUT_TRACE") else {
+        return Ok(None);
+    };
+    fs::OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .open(&path)
+        .with_context(|| {
+            format!(
+                "failed to open RUNYTE_INPUT_TRACE path {}",
+                Path::new(&path).display()
+            )
+        })
+        .map(Some)
+}
+
+#[cfg(debug_assertions)]
+fn trace_input(
+    trace: Option<&mut fs::File>,
+    phase: &str,
+    app: &App,
+    input: &InputEvent,
+    repeated: bool,
+    hint: Option<HintEventResult>,
+) -> Result<()> {
+    let Some(trace) = trace else {
+        return Ok(());
+    };
+    let terminal = app.active_terminal();
+    let reviewing = terminal
+        .and_then(|id| app.terminals.get(id))
+        .is_some_and(|session| session.reviewing());
+    writeln!(
+        trace,
+        "{phase} input={input:?} repeated={repeated} hint={hint:?} mode={:?} pane={} \
+         terminal={terminal:?} reviewing={reviewing} pending={} fast_pane_keys={}",
+        app.mode,
+        app.active_pane,
+        app.pending_sequence(),
+        app.config.editor.fast_pane_keys,
+    )
+    .context("failed to write RUNYTE_INPUT_TRACE")?;
+    trace.flush().context("failed to flush RUNYTE_INPUT_TRACE")
 }
 
 #[cfg(unix)]

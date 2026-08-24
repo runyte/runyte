@@ -20,8 +20,13 @@ review or send its control bytes to the child.
 Commit `31b13b9` requested the keyboard protocol's disambiguation-only profile
 on macOS while retaining legacy repeat detection. Testing on macOS confirmed
 that this did not change the reported behavior, so protocol availability alone
-is not the cause. The native Crossterm key identities for the affected chords
-still need to be captured at Runyte's frontend boundary.
+is not the cause. A probe under tmux 3.6a then confirmed that Crossterm reports
+`Ctrl-h/j/k/l/w` as the expected lowercase `Char` key with exactly the
+`CONTROL` modifier, followed by a plain `h` for the prefixed form. Native key
+conversion is therefore not the failing boundary either. The next diagnostic
+step records the real standalone TUI's before/after mode, active pane, terminal
+review, pending sequence, and key-hint outcome without recording terminal
+contents.
 
 The correction must retain the macOS safeguard against unreliable enhanced
 keyboard repeat and release events.
