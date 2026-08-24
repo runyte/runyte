@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: MPL-2.0
 
+#[cfg(debug_assertions)]
+use std::io::Write;
 use std::{
     fs,
-    io::{self, Write, stdout},
+    io::{self, stdout},
     path::{Path, PathBuf},
     sync::Arc,
     time::{Duration, Instant},
