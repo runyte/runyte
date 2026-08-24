@@ -103,7 +103,11 @@ use crate::workspace::{
 /// Version 32 makes every pane-focus route enter live Insert on a terminal
 /// destination. The host owns this mode transition, so an older host would
 /// otherwise retain the superseded directional-focus behavior.
-pub const VERSION: u32 = 32;
+/// Version 33 requests disambiguated Ctrl-key reporting from macOS terminals.
+/// Physical terminal input is client-owned, so an older attached client would
+/// otherwise retain the superseded two-step terminal pane motions even when
+/// the workspace host was built with the correction.
+pub const VERSION: u32 = 33;
 pub const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const MAX_PATHS: usize = 32;
 pub const MAX_PATH_BYTES: usize = 32 * 1024;
@@ -758,7 +762,7 @@ mod tests {
 
     #[test]
     fn protocol_version_and_request_bounds_are_explicit() {
-        assert_eq!(VERSION, 32);
+        assert_eq!(VERSION, 33);
         let oversized_command = ClientRequest::Invoke {
             command: CommandRequest {
                 name: "open".to_owned(),

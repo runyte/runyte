@@ -9,7 +9,7 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-#[cfg(all(unix, not(target_os = "macos")))]
+#[cfg(unix)]
 use crossterm::event::{
     KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
 };
@@ -2483,8 +2483,22 @@ struct TerminalGuard {
     keyboard_enhancement: bool,
 }
 
-#[cfg(all(unix, not(target_os = "macos")))]
+#[cfg(unix)]
 fn keyboard_enhancement_flags() -> KeyboardEnhancementFlags {
+    keyboard_enhancement_flags_for(cfg!(target_os = "macos"))
+}
+
+#[cfg(unix)]
+fn keyboard_enhancement_flags_for(legacy_repeat_cadence: bool) -> KeyboardEnhancementFlags {
+    if legacy_repeat_cadence {
+        // macOS terminals have not been reliable sources of explicit repeat
+        // and release events. Disambiguation alone is enough to encode Ctrl
+        // chords, including the terminal pane keys, without opting plain
+        // typing into that event stream. Unsupported terminals ignore the
+        // request and retain Crossterm's legacy control-byte decoding.
+        return KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+            | KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS;
+    }
     // Reporting every key encodes a shifted printable key from its unshifted
     // codepoint. The alternate codepoint is what lets Crossterm recover the
     // character produced by the active layout, such as `:` from Shift-`;`.
@@ -2501,12 +2515,10 @@ impl TerminalGuard {
             let _ = disable_raw_mode();
             return Err(error).context("failed to enter alternate screen");
         }
-        // macOS terminals do not consistently implement the enhanced key
-        // reporting protocol. Leaving it enabled there can turn an ordinary
-        // file-boundary key into a repeat stream, which is especially costly
-        // in a large read-only Git commit view. The legacy cadence detector
-        // remains the safe fallback for macOS.
-        #[cfg(all(unix, not(target_os = "macos")))]
+        // macOS uses the disambiguation-only profile above: it makes Ctrl
+        // chords deterministic without requesting the unreliable repeat and
+        // release stream. The cadence detector remains its repeat fallback.
+        #[cfg(unix)]
         let keyboard_enhancement = {
             let flags = keyboard_enhancement_flags();
             if let Err(error) = output.execute(PushKeyboardEnhancementFlags(flags)) {
@@ -2516,10 +2528,10 @@ impl TerminalGuard {
             }
             true
         };
-        #[cfg(any(not(unix), target_os = "macos"))]
+        #[cfg(not(unix))]
         let keyboard_enhancement = false;
         if let Err(error) = output.execute(EnableBracketedPaste) {
-            #[cfg(all(unix, not(target_os = "macos")))]
+            #[cfg(unix)]
             if keyboard_enhancement {
                 let _ = output.execute(PopKeyboardEnhancementFlags);
             }
@@ -2529,7 +2541,7 @@ impl TerminalGuard {
         }
         if mouse_enabled && let Err(error) = output.execute(EnableMouseCapture) {
             let _ = output.execute(DisableBracketedPaste);
-            #[cfg(all(unix, not(target_os = "macos")))]
+            #[cfg(unix)]
             if keyboard_enhancement {
                 let _ = output.execute(PopKeyboardEnhancementFlags);
             }
@@ -2551,7 +2563,7 @@ impl Drop for TerminalGuard {
             let _ = output.execute(DisableMouseCapture);
         }
         let _ = output.execute(DisableBracketedPaste);
-        #[cfg(all(unix, not(target_os = "macos")))]
+        #[cfg(unix)]
         if self.keyboard_enhancement {
             let _ = output.execute(PopKeyboardEnhancementFlags);
         }
@@ -2634,7 +2646,7 @@ mod tests {
         time::{Duration, Instant, SystemTime, UNIX_EPOCH},
     };
 
-    #[cfg(all(unix, not(target_os = "macos")))]
+    #[cfg(unix)]
     use crossterm::event::{
         KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
     };
@@ -2646,8 +2658,8 @@ mod tests {
         },
     };
 
-    #[cfg(all(unix, not(target_os = "macos")))]
-    use super::keyboard_enhancement_flags;
+    #[cfg(unix)]
+    use super::keyboard_enhancement_flags_for;
     #[cfg(unix)]
     use super::{
         AttachedClient, PointerBatcher, dispatch_host_key_or_text, recover_switched_attachment,
@@ -2798,27 +2810,42 @@ mod tests {
         assert_ne!(enable, disable);
     }
 
-    #[cfg(all(unix, not(target_os = "macos")))]
+    #[cfg(unix)]
     #[test]
-    fn enhanced_keyboard_reporting_requests_shifted_keycodes() {
-        let mut enable = String::new();
-        let mut disable = String::new();
-        let flags = keyboard_enhancement_flags();
+    fn keyboard_reporting_profiles_keep_macos_control_keys_unambiguous_without_event_types() {
+        let macos = keyboard_enhancement_flags_for(true);
         assert_eq!(
-            flags,
+            macos,
+            KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+                | KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS
+        );
+        assert!(!macos.contains(KeyboardEnhancementFlags::REPORT_EVENT_TYPES));
+        assert!(!macos.contains(KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES));
+        let mut macos_enable = String::new();
+        PushKeyboardEnhancementFlags(macos)
+            .write_ansi(&mut macos_enable)
+            .unwrap();
+        assert_eq!(macos_enable, "\u{1b}[>5u");
+
+        let full = keyboard_enhancement_flags_for(false);
+        let mut disable = String::new();
+        assert_eq!(
+            full,
             KeyboardEnhancementFlags::REPORT_EVENT_TYPES
                 | KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS
                 | KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES
         );
-        PushKeyboardEnhancementFlags(flags)
-            .write_ansi(&mut enable)
+        let mut full_enable = String::new();
+        PushKeyboardEnhancementFlags(full)
+            .write_ansi(&mut full_enable)
             .unwrap();
         PopKeyboardEnhancementFlags
             .write_ansi(&mut disable)
             .unwrap();
-        assert_eq!(enable, "\u{1b}[>14u");
+        assert_eq!(full_enable, "\u{1b}[>14u");
         assert!(!disable.is_empty());
-        assert_ne!(enable, disable);
+        assert_ne!(full_enable, disable);
+        assert_ne!(macos_enable, disable);
     }
 
     #[test]

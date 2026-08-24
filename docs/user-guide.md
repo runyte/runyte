@@ -463,10 +463,11 @@ working either way.
 
 The exit is staged: the first `Ctrl-\` changes INSERT to live NORMAL without
 freezing output, and the second captures the terminal's immutable review
-snapshot. `i` returns either Normal state to terminal input. On terminals
-without the enhanced keyboard protocol — every terminal on macOS, and older
-ones elsewhere — the same physical `Ctrl-\` key arrives as `Ctrl-4`, and both
-spellings work.
+snapshot. `i` returns either Normal state to terminal input. Runyte requests
+unambiguous Ctrl-key reports on macOS without requesting repeat and release
+events there. A terminal that does not implement that protocol keeps using
+legacy control bytes, where the same physical `Ctrl-\` key arrives as
+`Ctrl-4`; both spellings work.
 
 **Normal/review mode navigates and copies. It does not edit.** The cells on screen are
 a picture of the program's text rather than the text itself: the program owns
@@ -2192,9 +2193,11 @@ theme: gruvbox
 single-key movement commands, including the arrow keys and `h`, `j`, `k`, and
 `l`; an ordinary key press still runs once. Runyte requests enhanced keyboard
 event reporting from terminals that support it so held presses can be
-distinguished from fresh presses. For terminals that report auto-repeat as
-ordinary presses, Runyte recognizes the long initial delay followed by the
-regular held-key cadence and applies the same multiplier.
+distinguished from fresh presses. On macOS it requests only unambiguous key
+codes and keeps repeat detection on the legacy cadence path, avoiding terminal
+event streams that have reported ordinary keys as repeats there. For terminals
+that report auto-repeat as ordinary presses, Runyte recognizes the long initial
+delay followed by the regular held-key cadence and applies the same multiplier.
 
 Git-derived views and tracked-file gutters refresh every five seconds while
 relevant state is visible. Set `git.refresh_interval_seconds` to another
