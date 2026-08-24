@@ -200,17 +200,26 @@ directory already exists, Runyte uses it without resetting or removing
 anything. Explicit initialization selects the named directory even when an
 ancestor has its own workspace state directory.
 
-Choose persistent mode for the current project with:
+Attach to the current project's persistent session with:
 
 ```sh
-runyte --persistent   # or runyte -a
+runyte --persistent   # or runyte -a, for attach
 ```
 
 `workspace.mode: persistent` makes a bare `runyte` do the same; `--standalone`
 overrides that setting. Target-bearing invocations remain standalone so their
 relative paths and `+LINE[:COLUMN]` positions retain ordinary launch semantics.
-`--persistent` accepts no targets; `--wait` is how a file reaches a persistent
-session.
+`--persistent` reads its argument as a workspace rather than a file; `--wait` is
+how a file reaches a persistent session.
+
+`runyte --persistent WORKSPACE` (or `runyte -a WORKSPACE`) attaches to a named
+session from any directory, using the same selector the lifecycle commands
+accept. A session that is not running is started first, exactly as a bare
+attachment starts the current project's. A directory the catalog does not know
+yet resolves its project root the way a launch inside that directory would;
+when it has neither a Git root nor workspace state, the attachment fails rather
+than offering to create one, and `--init` remains the way to make a root out of
+it.
 
 Persistent mode uses a local host process that owns the workspace state and a
 client TUI that displays it. `--persistent` starts the host when necessary and
@@ -252,9 +261,10 @@ Session names persist across restarts and must be unique among running
 sessions. `WORKSPACE` may be the abbreviated
 ID a listing shows, any other unambiguous ID prefix, the full ID, its exact
 session name, or its project directory.
-The same selector works for lifecycle commands:
+The same selector works for attachment and the lifecycle commands:
 
 ```sh
+runyte --persistent [WORKSPACE]         # or runyte -a [WORKSPACE]
 runyte --session-start [WORKSPACE]
 runyte --session-stop [WORKSPACE]       # or runyte -s [WORKSPACE]
 runyte --session-restart [WORKSPACE]
@@ -262,8 +272,8 @@ runyte --session-stop-all
 runyte --session-clear-all
 ```
 
-Omitting `WORKSPACE` from start, stop, or restart selects the project found
-from the current directory. Start is idempotent and leaves the session
+Omitting `WORKSPACE` from attach, start, stop, or restart selects the project
+found from the current directory. Start is idempotent and leaves the session
 detached. Restart starts a detached replacement and retains its name. Stop and
 restart refuse while the host owns unsaved buffers, pending `--wait`
 requests, or live terminal children. Add `--force` to discard that protected
