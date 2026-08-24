@@ -902,6 +902,7 @@ async fn run_host_server(
                             ClientRequest::Hello { .. } => {}
                             ClientRequest::Invoke { .. }
                             | ClientRequest::Health
+                            | ClientRequest::SessionPreview
                             | ClientRequest::ListBuffers
                             | ClientRequest::ReadBuffer { .. }
                             | ClientRequest::OpenBuffers { .. }
@@ -1186,6 +1187,7 @@ fn is_workspace_request(request: &ClientRequest) -> bool {
         request,
         ClientRequest::Invoke { .. }
             | ClientRequest::Health
+            | ClientRequest::SessionPreview
             | ClientRequest::ListBuffers
             | ClientRequest::ReadBuffer { .. }
             | ClientRequest::OpenBuffers { .. }
@@ -1227,6 +1229,9 @@ fn handle_workspace_request(
             pending_wait_requests: host.protected_state().pending_wait_requests,
             live_terminals: host.protected_state().live_terminals,
             terminal_sessions: host.app().terminals.len(),
+        }),
+        ClientRequest::SessionPreview => Ok(HostResponse::SessionPreview {
+            preview: host.session_preview().into(),
         }),
         ClientRequest::Invoke { command } => {
             if !allow_invoke {

@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use unicode_width::UnicodeWidthChar;
 
 use crate::{
-    app::{App, Mode, PreparedPane, PreparedView, PromptKind},
+    app::{App, MaximizedView, Mode, PreparedPane, PreparedView, PromptKind},
     buffer::{Buffer, Position},
     command::EditorCommand,
     config::Theme,
@@ -300,6 +300,10 @@ pub struct PaneTitle {
     /// Whether the buffer refuses text edits. Carried here rather than
     /// re-derived by a frontend so every surface names it the same way.
     pub read_only: bool,
+    /// The maximized presentation this pane is drawn with, if it is the one
+    /// being maximized. `None` for every pane in an ordinary layout, so a
+    /// frontend marks the view only while it is on.
+    pub maximized: Option<MaximizedView>,
 }
 
 /// A screen row in a prepared pane.
@@ -584,6 +588,7 @@ impl App {
                     // is not a document. Saying "read only" here would answer
                     // a question nobody asked of it.
                     read_only: false,
+                    maximized: self.maximized_view(prepared.pane_id),
                 },
                 line_numbers: false,
                 line_digits: 0,
@@ -629,6 +634,7 @@ impl App {
                 name: buffer.pane_title(),
                 dirty: buffer.dirty,
                 read_only: buffer.is_read_only(),
+                maximized: self.maximized_view(prepared.pane_id),
             },
             line_numbers: self.config.editor.line_numbers,
             line_digits: prepared.line_digits,

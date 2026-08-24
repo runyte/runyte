@@ -324,6 +324,18 @@ actions the selected row's own state can answer: a running row offers Open,
 Rename, Number, Close, and Force close, and a stopped row offers Open, Rename,
 Number, and Forget. Open is identical to Enter.
 
+The selected running session has a live preview, shown in the picker's right
+column and toggled with `Ctrl-t`. It reads the host through a bounded,
+read-only control request without becoming a second interactive attachment.
+Each visible pane is named and marked when active; buffer snippets begin at
+that pane's retained viewport, while terminal snippets show the latest parsed
+plain-text output. Buffers and terminals not represented by a visible pane are
+listed by name at the bottom. A maximized session previews the pane currently
+shown and reports how many panes remain in its retained layout. Stopped
+sessions have no retained live preview, and a host using another protocol
+version reports the preview as unavailable. Preview text is never persisted
+for later listings.
+
 Sessions carry a number from `1` to `9`, shown in the manager's first column
 and in the status line as `[S1]` before the workspace directory. Pressing that
 digit in the manager attaches to its session directly, so `Space W 1` reaches
@@ -896,7 +908,9 @@ closing wait until the maximized view is toggled off so no hidden layout change
 can be mistaken for the restored one, and directional focus and pane cycling
 are refused for the same reason: while one pane is maximized it is the only
 pane keys can reach, so what is on screen and what is being typed into cannot
-come apart.
+come apart. The maximized pane's title carries `[zen]` or `[fullscreen]` after
+its `[+]` and `[RO]` markers, so the one pane on screen says which view is
+hiding the rest of the layout; an ordinary pane carries neither tag.
 In the Runyte grammar, `Space ?` opens contextual help for the current buffer
 type. `:help` and its `:?` alias instead open the general Runyte manual;
 `:help <topic>` opens the same manual at a section such as

@@ -15,12 +15,13 @@ use std::{
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 
 use crate::protocol::{ClientRequest, HostResponse};
 use crate::{external_open, project_root};
 
 use super::{
+    SessionPreview,
     lifecycle::{
         HostStartup, connect_control, ensure_workspace_host, force_shutdown_host, rename_host,
         resolve_registered_host_from, resolve_workspace_endpoint, shutdown_host,
@@ -163,6 +164,11 @@ pub enum WorkspaceEvent {
         generation: u64,
         result: Result<Vec<WorkspaceRow>, String>,
     },
+    Previewed {
+        generation: u64,
+        path: PathBuf,
+        result: Result<SessionPreview, String>,
+    },
     Started {
         generation: u64,
         path: PathBuf,
@@ -201,6 +207,13 @@ pub enum WorkspaceEvent {
 #[derive(Clone)]
 pub struct WorkspaceServiceHandle {
     requests: mpsc::Sender<WorkspaceRequest>,
+    previews: watch::Sender<Option<WorkspacePreviewRequest>>,
+}
+
+#[derive(Clone, Debug)]
+struct WorkspacePreviewRequest {
+    generation: u64,
+    path: PathBuf,
 }
 
 impl WorkspaceServiceHandle {
@@ -211,6 +224,15 @@ impl WorkspaceServiceHandle {
                 mpsc::error::TrySendError::Full(_) => "session service queue is full",
                 mpsc::error::TrySendError::Closed(_) => "session service is unavailable",
             })
+    }
+
+    /// Requests the selected session's live overview. A watch slot retains
+    /// only the newest selection while an earlier host is answering, so fast
+    /// picker movement cannot build a queue of stale socket round trips.
+    pub fn try_preview(&self, generation: u64, path: PathBuf) -> Result<(), &'static str> {
+        self.previews
+            .send(Some(WorkspacePreviewRequest { generation, path }))
+            .map_err(|_| "session preview service is unavailable")
     }
 
     pub fn try_stop(
@@ -321,6 +343,31 @@ impl WorkspaceService {
     ) -> (WorkspaceServiceHandle, mpsc::Receiver<WorkspaceEvent>) {
         let (request_tx, mut request_rx) = mpsc::channel(REQUEST_CAPACITY);
         let (event_tx, event_rx) = mpsc::channel(EVENT_CAPACITY);
+        let (preview_tx, mut preview_rx) = watch::channel(None::<WorkspacePreviewRequest>);
+        let preview_events = event_tx.clone();
+        let preview_state = state.clone();
+        tokio::spawn(async move {
+            while preview_rx.changed().await.is_ok() {
+                let request = preview_rx.borrow_and_update().clone();
+                let Some(WorkspacePreviewRequest { generation, path }) = request else {
+                    continue;
+                };
+                let result = preview_session(&path, &preview_state)
+                    .await
+                    .map_err(|error| format!("{error:#}"));
+                if preview_events
+                    .send(WorkspaceEvent::Previewed {
+                        generation,
+                        path,
+                        result,
+                    })
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        });
         tokio::spawn(async move {
             while let Some(request) = request_rx.recv().await {
                 let event = match request {
@@ -447,6 +494,7 @@ impl WorkspaceService {
         (
             WorkspaceServiceHandle {
                 requests: request_tx,
+                previews: preview_tx,
             },
             event_rx,
         )
@@ -796,6 +844,27 @@ async fn inspect_endpoint(endpoint: &LocalEndpoint) -> HostInspection {
     .await;
     let _ = inspection;
     result
+}
+
+/// Reads only the live host selected in the session manager. Unlike catalog
+/// health, this request is intentionally lazy because it contains editor text
+/// and terminal output rather than a few scalar counts.
+async fn preview_session(project_root: &Path, state: &Path) -> Result<SessionPreview> {
+    let endpoint = published_endpoint(project_root, state, None)?;
+    tokio::time::timeout(CONTROL_TIMEOUT, async {
+        let mut client = connect_control(&endpoint).await?;
+        client.send(&ClientRequest::SessionPreview).await?;
+        match client.recv().await? {
+            Some(HostResponse::SessionPreview { preview }) => Ok(preview.into()),
+            Some(HostResponse::Refused { message } | HostResponse::Error { message }) => {
+                anyhow::bail!(message)
+            }
+            Some(_) => anyhow::bail!("workspace host returned the wrong session preview response"),
+            None => anyhow::bail!("workspace host closed before returning a session preview"),
+        }
+    })
+    .await
+    .context("session preview timed out")?
 }
 
 async fn start(

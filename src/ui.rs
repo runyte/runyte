@@ -3,7 +3,7 @@
 use std::ops::Deref;
 
 use crate::{
-    app::{App, CompletionSource, FrameGeometry, Mode, PromptKind},
+    app::{App, CompletionSource, FrameGeometry, MaximizedView, Mode, PromptKind},
     config::{Color as RunyteColor, Theme},
     diff::Change,
     git::{CountKind, DiffLine, LineChange},
@@ -781,6 +781,7 @@ fn draw_pane(frame: &mut Frame<'_>, theme: &TuiTheme, mode: Mode, pane: &PaneSna
         &pane.title.name,
         pane.title.dirty,
         pane.title.read_only,
+        pane.title.maximized,
         usize::from(area.width),
     );
     let block = Block::default()
@@ -1467,16 +1468,32 @@ fn draw_normal_status(
 /// Formats a pane's top-border title, trimming a long path from its start
 /// rather than letting ratatui hard-clip the end of the whole title and
 /// swallow the filename that identifies the buffer.
-fn pane_title_text(name: &str, dirty: bool, read_only: bool, pane_width: usize) -> String {
+///
+/// The buffer's own markers come first and the maximized view last: the first
+/// two say what the buffer is, while the third says how this pane is being
+/// presented, and only while it is.
+fn pane_title_text(
+    name: &str,
+    dirty: bool,
+    read_only: bool,
+    maximized: Option<MaximizedView>,
+    pane_width: usize,
+) -> String {
     let dirty_marker = if dirty { " [+]" } else { "" };
     let read_only_marker = if read_only { " [RO]" } else { "" };
+    let maximized_marker = match maximized {
+        Some(MaximizedView::Zen) => " [zen]",
+        Some(MaximizedView::Fullscreen) => " [fullscreen]",
+        None => "",
+    };
     let fixed_width = 2 // border cells
         + 2 // leading/trailing padding spaces
         + UnicodeWidthStr::width(dirty_marker)
-        + UnicodeWidthStr::width(read_only_marker);
+        + UnicodeWidthStr::width(read_only_marker)
+        + UnicodeWidthStr::width(maximized_marker);
     let name_width = pane_width.saturating_sub(fixed_width);
     let name = clip_path_start(name, name_width);
-    format!(" {name}{dirty_marker}{read_only_marker} ")
+    format!(" {name}{dirty_marker}{read_only_marker}{maximized_marker} ")
 }
 
 /// Keeps the identifying end of a workspace path when the status row is
@@ -3616,14 +3633,14 @@ mod tests {
 
     #[test]
     fn pane_title_leaves_a_short_path_untouched() {
-        let title = pane_title_text("[file] /tmp/x.rs", false, false, 40);
+        let title = pane_title_text("[file] /tmp/x.rs", false, false, None, 40);
         assert_eq!(title, " [file] /tmp/x.rs ");
     }
 
     #[test]
     fn pane_title_trims_a_long_path_from_the_start_keeping_markers() {
         let name = "[file] /home/user/code/runyte/src/very/deeply/nested/module.rs";
-        let title = pane_title_text(name, true, true, 40);
+        let title = pane_title_text(name, true, true, None, 40);
 
         assert!(title.starts_with(" ..."), "{title:?}");
         assert!(title.ends_with("module.rs [+] [RO] "), "{title:?}");
@@ -3634,8 +3651,46 @@ mod tests {
 
     #[test]
     fn pane_title_degrades_gracefully_when_too_narrow_for_an_ellipsis() {
-        let title = pane_title_text("[file] /a/b/c.rs", false, false, 2);
+        let title = pane_title_text("[file] /a/b/c.rs", false, false, None, 2);
         assert_eq!(title, "  ");
+    }
+
+    #[test]
+    fn pane_title_names_the_maximized_view_only_while_one_is_active() {
+        assert_eq!(
+            pane_title_text(
+                "[file] /tmp/x.rs",
+                false,
+                false,
+                Some(MaximizedView::Zen),
+                40
+            ),
+            " [file] /tmp/x.rs [zen] "
+        );
+        assert_eq!(
+            pane_title_text(
+                "[file] /tmp/x.rs",
+                false,
+                false,
+                Some(MaximizedView::Fullscreen),
+                40
+            ),
+            " [file] /tmp/x.rs [fullscreen] "
+        );
+        assert_eq!(
+            pane_title_text("[file] /tmp/x.rs", false, false, None, 40),
+            " [file] /tmp/x.rs "
+        );
+    }
+
+    #[test]
+    fn pane_title_keeps_the_maximized_tag_when_the_path_is_trimmed() {
+        let name = "[file] /home/user/code/runyte/src/very/deeply/nested/module.rs";
+        let title = pane_title_text(name, true, true, Some(MaximizedView::Zen), 40);
+
+        assert!(title.starts_with(" ..."), "{title:?}");
+        assert!(title.ends_with("module.rs [+] [RO] [zen] "), "{title:?}");
+        assert_eq!(UnicodeWidthStr::width(title.as_str()), 40 - 2);
     }
 
     #[test]
@@ -3915,6 +3970,7 @@ mod tests {
                 name: "fold.rs".to_owned(),
                 dirty: false,
                 read_only: false,
+                maximized: None,
             },
             line_numbers: true,
             line_digits: 3,
@@ -3980,6 +4036,7 @@ mod tests {
                 name: "changed.rs".to_owned(),
                 dirty: true,
                 read_only: false,
+                maximized: None,
             },
             line_numbers: false,
             line_digits: 0,
@@ -4062,6 +4119,7 @@ mod tests {
                 name: "changed.rs".to_owned(),
                 dirty: true,
                 read_only: false,
+                maximized: None,
             },
             line_numbers: true,
             line_digits: 2,
@@ -4146,6 +4204,7 @@ mod tests {
                 name: "changed.rs".to_owned(),
                 dirty: true,
                 read_only: false,
+                maximized: None,
             },
             line_numbers: true,
             line_digits: 2,
@@ -4215,6 +4274,7 @@ mod tests {
                 name: "[git diff a.rs]".to_owned(),
                 dirty: false,
                 read_only: false,
+                maximized: None,
             },
             line_numbers: false,
             line_digits: 0,
@@ -5241,13 +5301,13 @@ mod tests {
              {running:?} {running_detail:?}"
         );
         let (stopped, stopped_detail) = row_colors("qqqq");
-        assert!(!stopped_detail.is_empty());
-        // Name and detail both recede, so the whole row reads as one dormant
-        // line rather than a bright name with a grayed tail.
+        // A preview-layout manager keeps only the identifying name in the
+        // list column; its metadata moved to the semantic preview beside it.
+        // The dormant identity still recedes without dimming unrelated text
+        // that happens to occupy the same terminal row in that second column.
         assert!(
             stopped
                 .iter()
-                .chain(&stopped_detail)
                 .all(|color| *color == Some(to_tui_color(theme.jump_text_muted))),
             "a stopped session uses the dimming role: {stopped:?} {stopped_detail:?}"
         );

@@ -17,7 +17,8 @@ use unicode_width::UnicodeWidthChar;
 
 #[cfg(unix)]
 use crate::workspace::{
-    MAX_WORKSPACE_NUMBER, WorkspaceEvent, WorkspaceRow, WorkspaceServiceHandle,
+    MAX_WORKSPACE_NUMBER, SessionPreview, SessionPreviewPaneKind, WorkspaceEvent, WorkspaceRow,
+    WorkspaceServiceHandle,
 };
 
 use crate::{
@@ -2038,6 +2039,12 @@ pub struct App {
     #[cfg(unix)]
     workspace_generation: u64,
     #[cfg(unix)]
+    workspace_preview_generation: u64,
+    #[cfg(unix)]
+    workspace_preview_target: Option<PathBuf>,
+    #[cfg(unix)]
+    workspace_previews: HashMap<PathBuf, Result<SessionPreview, String>>,
+    #[cfg(unix)]
     session_rename_target: Option<PathBuf>,
     #[cfg(unix)]
     session_number_target: Option<PathBuf>,
@@ -2369,6 +2376,12 @@ impl App {
             #[cfg(unix)]
             workspace_generation: 0,
             #[cfg(unix)]
+            workspace_preview_generation: 0,
+            #[cfg(unix)]
+            workspace_preview_target: None,
+            #[cfg(unix)]
+            workspace_previews: HashMap::new(),
+            #[cfg(unix)]
             session_rename_target: None,
             #[cfg(unix)]
             session_number_target: None,
@@ -2533,8 +2546,29 @@ impl App {
                             self.note_workspace_number(number);
                         }
                         self.rebuild_workspace_picker();
+                        self.request_selected_workspace_preview();
                     }
                     Err(error) => self.error(error),
+                }
+            }
+            WorkspaceEvent::Previewed {
+                generation,
+                path,
+                result,
+            } => {
+                if generation != self.workspace_preview_generation
+                    || self.workspace_preview_target.as_ref() != Some(&path)
+                {
+                    return;
+                }
+                self.workspace_preview_target = None;
+                self.workspace_previews.insert(path, result);
+                if self
+                    .list
+                    .as_ref()
+                    .is_some_and(|picker| picker.title.starts_with("Sessions"))
+                {
+                    self.rebuild_workspace_picker();
                 }
             }
             WorkspaceEvent::Started {
@@ -4451,6 +4485,11 @@ impl App {
                     details.join(" · "),
                     index,
                 )
+                .with_preview(session_picker_preview(
+                    row,
+                    self.workspace_previews.get(&row.project_root),
+                    self.workspace_preview_target.as_ref() == Some(&row.project_root),
+                ))
                 // A stopped session is still worth listing and still starts
                 // on Enter, so it stays in place rather than being hidden or
                 // sorted away; dimming is what separates it from the hosts
@@ -4461,10 +4500,47 @@ impl App {
         let mut picker = ListPicker::new(
             "Sessions · 1-9 or Enter attaches in persistent mode · Tab actions",
             items,
-        );
+        )
+        .with_preview("Session");
         picker.filter = filter;
         picker.selected = selected.min(self.workspace_rows.len().saturating_sub(1));
         self.list = Some(picker);
+    }
+
+    /// Starts one coalesced control request for the selected running session.
+    /// Stopped and incompatible rows have complete static previews, while a
+    /// successful live preview remains cached until the manager is reopened.
+    #[cfg(unix)]
+    fn request_selected_workspace_preview(&mut self) {
+        let Some(ListAction::Workspace(index)) = self.selected_list_action() else {
+            return;
+        };
+        let Some(row) = self.workspace_rows.get(index) else {
+            return;
+        };
+        if !row.running
+            || row.incompatible_protocol.is_some()
+            || self.workspace_previews.contains_key(&row.project_root)
+            || self.workspace_preview_target.as_ref() == Some(&row.project_root)
+        {
+            return;
+        }
+        let path = row.project_root.clone();
+        self.workspace_preview_generation =
+            self.workspace_preview_generation.wrapping_add(1).max(1);
+        let generation = self.workspace_preview_generation;
+        self.workspace_preview_target = Some(path.clone());
+        let result = self
+            .ports
+            .workspace_service
+            .as_ref()
+            .ok_or("session preview service is unavailable")
+            .and_then(|service| service.try_preview(generation, path.clone()));
+        if let Err(error) = result {
+            self.workspace_preview_target = None;
+            self.workspace_previews.insert(path, Err(error.to_owned()));
+        }
+        self.rebuild_workspace_picker();
     }
 
     #[cfg(unix)]
@@ -12069,6 +12145,8 @@ impl App {
                 }
                 #[cfg(unix)]
                 {
+                    self.workspace_previews.clear();
+                    self.workspace_preview_target = None;
                     self.list = Some(ListPicker::new("Sessions · loading…", Vec::new()));
                     self.request_workspace_refresh();
                 }
@@ -18010,7 +18088,7 @@ impl App {
 
     /// The maximized presentation the named pane is currently drawn with, if
     /// it is the one being maximized.
-    fn maximized_view(&self, pane: usize) -> Option<MaximizedView> {
+    pub(crate) fn maximized_view(&self, pane: usize) -> Option<MaximizedView> {
         self.maximized
             .filter(|maximized| maximized.pane == pane)
             .map(|maximized| maximized.view)
@@ -21439,6 +21517,8 @@ impl App {
         }
         if preview_changed {
             self.preview_selected_setting_value();
+            #[cfg(unix)]
+            self.request_selected_workspace_preview();
         }
         Ok(())
     }
@@ -22522,6 +22602,119 @@ fn terminal_preview(session: &TerminalSession) -> String {
     let lines = text.lines().collect::<Vec<_>>();
     let start = lines.len().saturating_sub(PREVIEW_LINES);
     lines[start..].join("\n")
+}
+
+#[cfg(unix)]
+fn session_picker_preview(
+    row: &WorkspaceRow,
+    preview: Option<&Result<SessionPreview, String>>,
+    loading: bool,
+) -> String {
+    let mut lines = vec![
+        format!("{} · {}", row.display_name(), row.state_label()),
+        row.project_root.display().to_string(),
+    ];
+    let mut health = Vec::new();
+    if let Some(count) = row.unsaved_buffers.filter(|count| *count > 0) {
+        health.push(format!("{count} unsaved"));
+    }
+    if let Some(count) = row.live_terminals.filter(|count| *count > 0) {
+        health.push(format!(
+            "{count} live terminal{}",
+            if count == 1 { "" } else { "s" }
+        ));
+    }
+    if let Some(count) = row.pending_wait_requests.filter(|count| *count > 0) {
+        health.push(format!("{count} waiting"));
+    }
+    if let Some(attached) = row.interactive_attached {
+        health.push(if attached {
+            "TUI attached".to_owned()
+        } else {
+            "detached".to_owned()
+        });
+    }
+    if !health.is_empty() {
+        lines.push(health.join(" · "));
+    }
+    lines.push(String::new());
+
+    if !row.running {
+        lines.push("No live editor state; opening this row starts the session.".to_owned());
+        return lines.join("\n");
+    }
+    if let Some(protocol) = row.incompatible_protocol {
+        lines.push(format!(
+            "Preview unavailable: this host uses protocol {protocol}."
+        ));
+        return lines.join("\n");
+    }
+    if loading {
+        lines.push("Loading live pane preview…".to_owned());
+        return lines.join("\n");
+    }
+    let Some(preview) = preview else {
+        lines.push("Select this session to load its live pane preview.".to_owned());
+        return lines.join("\n");
+    };
+    let preview = match preview {
+        Ok(preview) => preview,
+        Err(error) => {
+            lines.push(format!("Preview unavailable: {error}"));
+            return lines.join("\n");
+        }
+    };
+
+    let shown = preview.panes.len();
+    if shown == preview.layout_panes {
+        lines.push(format!("{shown} pane{}", if shown == 1 { "" } else { "s" }));
+    } else {
+        lines.push(format!(
+            "{shown} pane{} shown · {} in layout",
+            if shown == 1 { "" } else { "s" },
+            preview.layout_panes
+        ));
+    }
+    if preview.omitted_panes > 0 {
+        lines.push(format!("+ {} more visible panes", preview.omitted_panes));
+    }
+
+    for pane in &preview.panes {
+        lines.push(String::new());
+        let marker = if pane.active { "●" } else { " " };
+        let state = match pane.kind {
+            SessionPreviewPaneKind::Buffer { dirty, read_only } => format!(
+                "{}{}",
+                if dirty { " [+]" } else { "" },
+                if read_only { " [RO]" } else { "" }
+            ),
+            SessionPreviewPaneKind::Terminal { live } => {
+                if live { " · running" } else { " · exited" }.to_owned()
+            }
+        };
+        lines.push(format!("{marker} {}{state}", pane.title));
+        if pane.lines.is_empty() {
+            lines.push("    (empty)".to_owned());
+            continue;
+        }
+        for (index, text) in pane.lines.iter().enumerate() {
+            if let Some(start) = pane.start_line {
+                lines.push(format!("  {:>4}  {text}", start + index));
+            } else {
+                lines.push(format!("    {text}"));
+            }
+        }
+    }
+
+    if !preview.other_resources.is_empty() || preview.omitted_resources > 0 {
+        lines.push(String::new());
+        let mut other = preview.other_resources.join(" · ");
+        if preview.omitted_resources > 0 {
+            other.push_str(&format!(" · +{}", preview.omitted_resources));
+        }
+        lines.push(format!("Other: {other}"));
+    }
+    lines.join("\n")
 }
 
 /// A bounded view of authoritative buffer text for picker previews.
@@ -37264,6 +37457,95 @@ mod tests {
             overlay.kind == crate::snapshot::OverlayKind::BufferActions
                 && overlay.rows.iter().any(|row| row.label == "Close")
         }));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn session_picker_rebuilds_with_the_selected_hosts_semantic_preview() {
+        let root = temporary("session-picker-preview");
+        fs::create_dir_all(&root).unwrap();
+        let root = root.canonicalize().unwrap();
+        let mut app = App::new_in_isolated_project(
+            &root,
+            HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+                String::new(),
+            ))))),
+        )
+        .unwrap();
+        app.enable_persistent_session();
+        app.workspace_generation = 3;
+        app.apply_workspace_event(WorkspaceEvent::Refreshed {
+            generation: 3,
+            result: Ok(vec![WorkspaceRow {
+                id: "aaaaaaaaaaaaaaaa".to_owned(),
+                name: Some("current".to_owned()),
+                number: Some(1),
+                project_root: root.clone(),
+                running: true,
+                incompatible_protocol: None,
+                unsaved_buffers: Some(1),
+                pending_wait_requests: Some(0),
+                live_terminals: Some(1),
+                terminal_sessions: Some(1),
+                interactive_attached: Some(false),
+            }]),
+        });
+
+        // The isolated app has no socket service. Model the same result a
+        // selected live host returns and verify that applying it preserves the
+        // manager while replacing its loading/error text.
+        app.workspace_previews.clear();
+        app.workspace_preview_generation = 7;
+        app.workspace_preview_target = Some(root.clone());
+        app.apply_workspace_event(WorkspaceEvent::Previewed {
+            generation: 7,
+            path: root.clone(),
+            result: Ok(SessionPreview {
+                layout_panes: 2,
+                panes: vec![crate::workspace::SessionPreviewPane {
+                    active: true,
+                    title: "[file] src/app.rs".to_owned(),
+                    kind: SessionPreviewPaneKind::Buffer {
+                        dirty: true,
+                        read_only: false,
+                    },
+                    start_line: Some(4381),
+                    lines: vec!["fn rebuild_workspace_picker(&mut self) {".to_owned()],
+                }],
+                omitted_panes: 0,
+                other_resources: vec!["[terminal] cargo test".to_owned()],
+                omitted_resources: 0,
+            }),
+        });
+
+        let picker = app.list.as_ref().unwrap();
+        assert!(picker.has_preview());
+        assert_eq!(picker.preview_title(), Some("Session"));
+        let preview = picker.selected_preview().unwrap();
+        assert!(preview.contains("1 pane shown · 2 in layout"), "{preview}");
+        assert!(preview.contains("● [file] src/app.rs [+]"), "{preview}");
+        assert!(
+            preview.contains("4381  fn rebuild_workspace_picker"),
+            "{preview}"
+        );
+        assert!(
+            preview.contains("Other: [terminal] cargo test"),
+            "{preview}"
+        );
+
+        let overlay = app
+            .overlay_snapshots()
+            .into_iter()
+            .find(|overlay| overlay.title.starts_with("Sessions"))
+            .unwrap();
+        assert_eq!(overlay.layout, crate::snapshot::OverlayLayout::Preview);
+        assert!(overlay.show_preview);
+        assert!(matches!(
+            overlay.preview,
+            Some(crate::snapshot::OverlayPreview::MatchedText { lines, .. })
+                if lines.iter().any(|line| line.contains("src/app.rs"))
+        ));
         fs::remove_dir_all(root).unwrap();
     }
 

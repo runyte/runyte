@@ -906,6 +906,7 @@ pub struct PaneTitle {
     pub name: String,
     pub dirty: bool,
     pub read_only: bool,
+    pub maximized: Option<MaximizedView>,
 }
 impl From<core::PaneTitle> for PaneTitle {
     fn from(value: core::PaneTitle) -> Self {
@@ -913,6 +914,7 @@ impl From<core::PaneTitle> for PaneTitle {
             name: value.name,
             dirty: value.dirty,
             read_only: value.read_only,
+            maximized: value.maximized.map(Into::into),
         }
     }
 }
@@ -922,6 +924,31 @@ impl From<PaneTitle> for core::PaneTitle {
             name: value.name,
             dirty: value.dirty,
             read_only: value.read_only,
+            maximized: value.maximized.map(Into::into),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub enum MaximizedView {
+    Zen,
+    Fullscreen,
+}
+
+impl From<crate::app::MaximizedView> for MaximizedView {
+    fn from(value: crate::app::MaximizedView) -> Self {
+        match value {
+            crate::app::MaximizedView::Zen => Self::Zen,
+            crate::app::MaximizedView::Fullscreen => Self::Fullscreen,
+        }
+    }
+}
+
+impl From<MaximizedView> for crate::app::MaximizedView {
+    fn from(value: MaximizedView) -> Self {
+        match value {
+            MaximizedView::Zen => Self::Zen,
+            MaximizedView::Fullscreen => Self::Fullscreen,
         }
     }
 }
