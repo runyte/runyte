@@ -367,12 +367,13 @@ manager menu sets the shortcut for the selected session, prefilled with the
 number it already has; an empty answer takes its number away. Giving a session
 a number another one holds swaps the two, so both keep a shortcut, and the
 status line names the workspace that took the number given up.
-In standalone mode the inventory remains
-available, but Enter, `:session-attach`, `:session-start`, and `:session-stop`
-explain that the operation needs
-`workspace.mode: persistent`. Fields only a running host can answer, such as
-the unsaved-buffer count and attached-TUI state, are blank when unavailable, so
-a stopped row carries none of them. A running row whose bounded health request
+In standalone mode the inventory remains available, and its picker title reads
+`Enter cannot attach in standalone mode` before a row is selected. Pressing
+Enter, `:session-attach`, `:session-start`, and `:session-stop` also explain
+that the operation needs `workspace.mode: persistent`. Fields only a running
+host can answer, such as the unsaved-buffer count and attached-TUI state, are
+blank when unavailable, so a stopped row carries none of them. A running row
+whose bounded health request
 does not answer is marked `health unavailable`; its unsaved buffers, pending
 waits, terminals, and attached-TUI state are unknown, so absence of a count on
 that row is not evidence that it is safe to stop. After a successful health
