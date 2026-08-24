@@ -603,6 +603,39 @@ fn pane_titles_show_structural_file_and_explorer_types() {
     std::fs::remove_dir_all(directory).unwrap();
 }
 
+/// A maximized pane names the view it is showing in its own title, so the one
+/// pane left on screen still says why the split it came from is not there. The
+/// tag appears only while the view is on, and the two views never both claim
+/// the title.
+#[test]
+fn a_maximized_pane_is_tagged_with_the_view_it_shows() {
+    let hints = KeyHintState::default();
+    let mut app = App::new(Config::default(), None).unwrap();
+
+    let ordinary = render(100, 20, &mut app, &hints);
+    assert!(!ordinary.contains("[zen]"), "{ordinary}");
+    assert!(!ordinary.contains("[fullscreen]"), "{ordinary}");
+
+    type_colon(&mut app, "zen");
+    let zen = render(100, 20, &mut app, &hints);
+    let title = zen.lines().next().unwrap();
+    assert!(title.contains("[zen]"), "{zen}");
+    assert!(!zen.contains("[fullscreen]"), "{zen}");
+
+    // The two views are one state, so asking for the other one replaces the
+    // tag rather than adding a second.
+    type_colon(&mut app, "fullscreen");
+    let fullscreen = render(100, 20, &mut app, &hints);
+    let title = fullscreen.lines().next().unwrap();
+    assert!(title.contains("[fullscreen]"), "{fullscreen}");
+    assert!(!fullscreen.contains("[zen]"), "{fullscreen}");
+
+    type_colon(&mut app, "fullscreen");
+    let restored = render(100, 20, &mut app, &hints);
+    assert!(!restored.contains("[fullscreen]"), "{restored}");
+    assert!(!restored.contains("[zen]"), "{restored}");
+}
+
 /// Help for an editable buffer type says nothing about being read-only, even
 /// though the help buffer showing it is. The title is about the subject; the
 /// status line is about what is on screen.

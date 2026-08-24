@@ -12,7 +12,10 @@ them, regardless of which extensibility direction is chosen.
   use a derived ground halfway between it and the overlay ground.
 - **Pane border** — the frame delimiting a pane.
 - **Pane title** — structural buffer identity in the pane's top border, such as
-  `[file] path`, `[explorer] path`, or `[notifications]`, plus `[+]` and `[RO]`.
+  `[file] path`, `[explorer] path`, or `[notifications]`, plus `[+]` and `[RO]`,
+  and finally `[zen]` or `[fullscreen]` while the pane is the maximized one.
+  The first markers describe the buffer; the last describes how this pane is
+  presented, and is absent in an ordinary layout.
 - **Pane body** — the complete drawable interior of a pane border.
 - **Gutter** — the left part of a pane body reserved for line numbers,
   soft-wrap continuation markers, syntax-fold markers, Git change marks, and

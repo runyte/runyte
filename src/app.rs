@@ -17972,7 +17972,7 @@ impl App {
 
     /// The maximized presentation the named pane is currently drawn with, if
     /// it is the one being maximized.
-    fn maximized_view(&self, pane: usize) -> Option<MaximizedView> {
+    pub(crate) fn maximized_view(&self, pane: usize) -> Option<MaximizedView> {
         self.maximized
             .filter(|maximized| maximized.pane == pane)
             .map(|maximized| maximized.view)

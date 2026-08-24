@@ -107,7 +107,11 @@ use crate::workspace::{
 /// Physical terminal input is client-owned, so an older attached client would
 /// otherwise retain the superseded two-step terminal pane motions even when
 /// the workspace host was built with the correction.
-pub const VERSION: u32 = 33;
+/// Version 34 carries the maximized presentation in a pane title, so an
+/// attached client marks `:zen` and `:fullscreen` the way standalone does. The
+/// field is required rather than optional on the wire, so a host still running
+/// the previous binary sends a title a newer client cannot deserialize at all.
+pub const VERSION: u32 = 34;
 pub const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const MAX_PATHS: usize = 32;
 pub const MAX_PATH_BYTES: usize = 32 * 1024;
@@ -762,7 +766,7 @@ mod tests {
 
     #[test]
     fn protocol_version_and_request_bounds_are_explicit() {
-        assert_eq!(VERSION, 33);
+        assert_eq!(VERSION, 34);
         let oversized_command = ClientRequest::Invoke {
             command: CommandRequest {
                 name: "open".to_owned(),

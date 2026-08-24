@@ -896,7 +896,9 @@ closing wait until the maximized view is toggled off so no hidden layout change
 can be mistaken for the restored one, and directional focus and pane cycling
 are refused for the same reason: while one pane is maximized it is the only
 pane keys can reach, so what is on screen and what is being typed into cannot
-come apart.
+come apart. The maximized pane's title carries `[zen]` or `[fullscreen]` after
+its `[+]` and `[RO]` markers, so the one pane on screen says which view is
+hiding the rest of the layout; an ordinary pane carries neither tag.
 In the Runyte grammar, `Space ?` opens contextual help for the current buffer
 type. `:help` and its `:?` alias instead open the general Runyte manual;
 `:help <topic>` opens the same manual at a section such as
