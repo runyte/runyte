@@ -4458,13 +4458,22 @@ impl App {
                     .map_or_else(|| "  ".to_owned(), |number| format!("{number} "));
                 let state = row.state_label();
                 let mut details = vec![row.project_root.display().to_string(), state.to_owned()];
-                // A count of zero is the uninteresting answer, and the detail
-                // line is the only room a row has for anything beyond its
-                // name. Dropping it leaves a quiet session reading as its path
-                // and state, so a count that is present is one worth reading.
-                // Only a running host answers these at all, so an absent count
-                // on a running row means zero and on a stopped row means
-                // nobody was there to ask.
+                // A successful health reply populates every live field,
+                // including confirmed zeroes. Keep a timed-out reply distinct
+                // from those omitted zeroes: this host may still own protected
+                // state even though the bounded inspection did not answer.
+                let health_available = row.unsaved_buffers.is_some()
+                    && row.pending_wait_requests.is_some()
+                    && row.live_terminals.is_some()
+                    && row.terminal_sessions.is_some()
+                    && row.interactive_attached.is_some();
+                if row.running && row.incompatible_protocol.is_none() && !health_available {
+                    details.push("health unavailable".to_owned());
+                }
+                // A confirmed count of zero is the uninteresting answer, and
+                // the detail line is the only room a row has for anything
+                // beyond its name. Dropping it leaves a quiet session reading
+                // as its path and state, so a shown count is worth reading.
                 if let Some(count) = row.unsaved_buffers.filter(|count| *count > 0) {
                     details.push(format!("unsaved {count}"));
                 }
@@ -37399,7 +37408,7 @@ mod tests {
                 running: true,
                 incompatible_protocol: None,
                 unsaved_buffers: Some(2),
-                pending_wait_requests: None,
+                pending_wait_requests: Some(0),
                 live_terminals: Some(1),
                 terminal_sessions: Some(1),
                 interactive_attached: Some(true),
@@ -37452,9 +37461,9 @@ mod tests {
                 running: true,
                 incompatible_protocol: None,
                 unsaved_buffers: Some(2),
-                pending_wait_requests: None,
-                live_terminals: None,
-                terminal_sessions: None,
+                pending_wait_requests: Some(0),
+                live_terminals: Some(0),
+                terminal_sessions: Some(0),
                 interactive_attached: Some(true),
             }]),
         });
@@ -37531,6 +37540,45 @@ mod tests {
                 "{} · running · exited terminals 2 · TUI attached",
                 exited.display()
             )
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn session_picker_marks_a_running_hosts_unanswered_health_as_unavailable() {
+        let root = temporary("session-picker-health-unavailable");
+        fs::create_dir_all(&root).unwrap();
+        let root = root.canonicalize().unwrap();
+        let mut app = App::new_in_isolated_project(
+            &root,
+            HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+                String::new(),
+            ))))),
+        )
+        .unwrap();
+        app.enable_persistent_session();
+        app.workspace_generation = 7;
+        app.apply_workspace_event(WorkspaceEvent::Refreshed {
+            generation: 7,
+            result: Ok(vec![WorkspaceRow {
+                id: "aaaaaaaaaaaaaaaa".to_owned(),
+                name: Some("unanswered".to_owned()),
+                number: None,
+                project_root: root.clone(),
+                running: true,
+                incompatible_protocol: None,
+                unsaved_buffers: None,
+                pending_wait_requests: None,
+                live_terminals: None,
+                terminal_sessions: None,
+                interactive_attached: None,
+            }]),
+        });
+
+        assert_eq!(
+            app.list.as_ref().unwrap().items[0].detail,
+            format!("{} · running · health unavailable", root.display())
         );
         fs::remove_dir_all(root).unwrap();
     }

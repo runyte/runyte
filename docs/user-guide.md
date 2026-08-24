@@ -362,12 +362,16 @@ available, but Enter, `:session-attach`, `:session-start`, and `:session-stop`
 explain that the operation needs
 `workspace.mode: persistent`. Fields only a running host can answer, such as
 the unsaved-buffer count and attached-TUI state, are blank when unavailable, so
-a stopped row carries none of them. A running row omits `unsaved`, `terminals`,
-and `waiting` when the count is zero, leaving a quiet session reading as its
-path and state; a count that is shown is one worth reading. The unsaved count
-is the host's own answer, so a running row showing no `unsaved` is one the same
-host will agree to stop. Retained terminal screens whose children have exited
-are still named as `exited terminals`, since they are not live state.
+a stopped row carries none of them. A running row whose bounded health request
+does not answer is marked `health unavailable`; its unsaved buffers, pending
+waits, terminals, and attached-TUI state are unknown, so absence of a count on
+that row is not evidence that it is safe to stop. After a successful health
+reply, the row omits `unsaved`, `terminals`, and `waiting` when the confirmed
+count is zero, leaving a quiet session reading as its path and state; a count
+that is shown is one worth reading. The unsaved count is the host's own answer,
+so a healthy running row showing no `unsaved` is one the same host will agree
+to stop. Retained terminal screens whose children have exited are still named
+as `exited terminals`, since they are not live state.
 Forget removes only the visited-history record behind a stopped row: nothing in
 the project is touched, and naming the directory again starts a host there and
 lists it once more.
