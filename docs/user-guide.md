@@ -361,9 +361,13 @@ In standalone mode the inventory remains
 available, but Enter, `:session-attach`, `:session-start`, and `:session-stop`
 explain that the operation needs
 `workspace.mode: persistent`. Fields only a running host can answer, such as
-the unsaved-buffer count and attached-TUI state, are blank when unavailable.
-The unsaved count is the host's own answer, so a row that reads `unsaved 0` is
-one the same host will agree to stop.
+the unsaved-buffer count and attached-TUI state, are blank when unavailable, so
+a stopped row carries none of them. A running row omits `unsaved`, `terminals`,
+and `waiting` when the count is zero, leaving a quiet session reading as its
+path and state; a count that is shown is one worth reading. The unsaved count
+is the host's own answer, so a running row showing no `unsaved` is one the same
+host will agree to stop. Retained terminal screens whose children have exited
+are still named as `exited terminals`, since they are not live state.
 Forget removes only the visited-history record behind a stopped row: nothing in
 the project is touched, and naming the directory again starts a host there and
 lists it once more.

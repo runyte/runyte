@@ -4458,13 +4458,20 @@ impl App {
                     .map_or_else(|| "  ".to_owned(), |number| format!("{number} "));
                 let state = row.state_label();
                 let mut details = vec![row.project_root.display().to_string(), state.to_owned()];
-                if let Some(count) = row.unsaved_buffers {
+                // A count of zero is the uninteresting answer, and the detail
+                // line is the only room a row has for anything beyond its
+                // name. Dropping it leaves a quiet session reading as its path
+                // and state, so a count that is present is one worth reading.
+                // Only a running host answers these at all, so an absent count
+                // on a running row means zero and on a stopped row means
+                // nobody was there to ask.
+                if let Some(count) = row.unsaved_buffers.filter(|count| *count > 0) {
                     details.push(format!("unsaved {count}"));
                 }
-                if let Some(count) = row.live_terminals {
+                if let Some(count) = row.live_terminals.filter(|count| *count > 0) {
                     details.push(format!("terminals {count}"));
                 }
-                if let Some(count) = row.pending_wait_requests {
+                if let Some(count) = row.pending_wait_requests.filter(|count| *count > 0) {
                     details.push(format!("waiting {count}"));
                 }
                 if let (Some(total), Some(live)) = (row.terminal_sessions, row.live_terminals) {
@@ -37457,6 +37464,74 @@ mod tests {
             overlay.kind == crate::snapshot::OverlayKind::BufferActions
                 && overlay.rows.iter().any(|row| row.label == "Close")
         }));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn session_picker_omits_counts_a_running_host_answers_with_zero() {
+        let root = temporary("session-picker-zero-counts");
+        let quiet = root.join("quiet");
+        let exited = root.join("exited");
+        fs::create_dir_all(&quiet).unwrap();
+        fs::create_dir_all(&exited).unwrap();
+        let quiet = quiet.canonicalize().unwrap();
+        let exited = exited.canonicalize().unwrap();
+        let mut app = App::new_in_isolated_project(
+            &quiet,
+            HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+                String::new(),
+            ))))),
+        )
+        .unwrap();
+        app.enable_persistent_session();
+        app.workspace_generation = 6;
+        app.apply_workspace_event(WorkspaceEvent::Refreshed {
+            generation: 6,
+            result: Ok(vec![
+                WorkspaceRow {
+                    id: "aaaaaaaaaaaaaaaa".to_owned(),
+                    name: Some("quiet".to_owned()),
+                    number: None,
+                    project_root: quiet.clone(),
+                    running: true,
+                    incompatible_protocol: None,
+                    unsaved_buffers: Some(0),
+                    pending_wait_requests: Some(0),
+                    live_terminals: Some(0),
+                    terminal_sessions: Some(0),
+                    interactive_attached: Some(true),
+                },
+                WorkspaceRow {
+                    id: "bbbbbbbbbbbbbbbb".to_owned(),
+                    name: Some("exited".to_owned()),
+                    number: None,
+                    project_root: exited.clone(),
+                    running: true,
+                    incompatible_protocol: None,
+                    unsaved_buffers: Some(0),
+                    pending_wait_requests: Some(0),
+                    live_terminals: Some(0),
+                    terminal_sessions: Some(2),
+                    interactive_attached: Some(true),
+                },
+            ]),
+        });
+        // A host answering zero everywhere leaves the row reading as its path
+        // and state; nothing is blank because the host failed to answer.
+        assert_eq!(
+            app.list.as_ref().unwrap().items[0].detail,
+            format!("{} · running · TUI attached", quiet.display())
+        );
+        // Retained screens whose children have exited are still worth naming,
+        // and they do not bring `terminals 0` back with them.
+        assert_eq!(
+            app.list.as_ref().unwrap().items[1].detail,
+            format!(
+                "{} · running · exited terminals 2 · TUI attached",
+                exited.display()
+            )
+        );
         fs::remove_dir_all(root).unwrap();
     }
 
