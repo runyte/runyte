@@ -44,6 +44,15 @@ pub struct GitConfig {
     pub refresh_interval_seconds: usize,
 }
 
+/// Largest interval accepted for automatic Git refreshes.
+pub(crate) const MAX_GIT_REFRESH_INTERVAL_SECONDS: usize = 3_600;
+
+/// Largest idle-retirement interval accepted for a persistent workspace host.
+///
+/// Thirty days is beyond the useful range for a minute-based timer. Zero has
+/// its own meaning (never retire), so it remains the lower bound.
+pub(crate) const MAX_IDLE_RETIREMENT_MINUTES: usize = 43_200;
+
 /// The theme Runyte starts in when nothing else has been chosen.
 pub const DEFAULT_THEME: &str = "light";
 
@@ -1456,8 +1465,30 @@ impl Config {
         let Some(path) = path else {
             return Ok((Self::default(), None));
         };
-        if !path.exists() {
-            return Ok((Self::default(), Some(path)));
+        if path.is_absolute() {
+            return Self::load_absolute(path);
+        }
+        let launch_directory = std::env::current_dir()
+            .context("failed to resolve relative config path from the launch directory")?;
+        Self::load_from(path, &launch_directory)
+    }
+
+    fn load_from(path: PathBuf, launch_directory: &Path) -> Result<(Self, Option<PathBuf>)> {
+        let path = absolute_config_path(path, launch_directory);
+        Self::load_absolute(path)
+    }
+
+    fn load_absolute(path: PathBuf) -> Result<(Self, Option<PathBuf>)> {
+        debug_assert!(path.is_absolute());
+        match fs::symlink_metadata(&path) {
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok((Self::default(), Some(path)));
+            }
+            Err(error) => {
+                return Err(error)
+                    .with_context(|| format!("failed to inspect config {}", path.display()));
+            }
         }
 
         let source = fs::read_to_string(&path)
@@ -1466,9 +1497,9 @@ impl Config {
             .with_context(|| format!("invalid YAML in {}", path.display()))?;
         config.merge_builtin_defaults();
         config
-            .validate_editor_settings()
+            .validate_settings()
             .map_err(anyhow::Error::msg)
-            .with_context(|| format!("invalid editor settings in {}", path.display()))?;
+            .with_context(|| format!("invalid settings in {}", path.display()))?;
         Ok((config, Some(path)))
     }
 
@@ -1481,7 +1512,7 @@ impl Config {
         self
     }
 
-    pub(crate) fn validate_editor_settings(&self) -> std::result::Result<(), String> {
+    pub(crate) fn validate_settings(&self) -> std::result::Result<(), String> {
         if !(1..=16).contains(&self.editor.tab_width) {
             return Err("editor.tab_width must be between 1 and 16".to_owned());
         }
@@ -1507,6 +1538,16 @@ impl Config {
                 "notifications.history_limit must be between {} and {}",
                 crate::notification::MIN_HISTORY_LIMIT,
                 crate::notification::MAX_HISTORY_LIMIT
+            ));
+        }
+        if self.workspace.idle_retirement_minutes > MAX_IDLE_RETIREMENT_MINUTES {
+            return Err(format!(
+                "workspace.idle_retirement_minutes must be between 0 and {MAX_IDLE_RETIREMENT_MINUTES}"
+            ));
+        }
+        if self.git.refresh_interval_seconds > MAX_GIT_REFRESH_INTERVAL_SECONDS {
+            return Err(format!(
+                "git.refresh_interval_seconds must be between 0 and {MAX_GIT_REFRESH_INTERVAL_SECONDS}"
             ));
         }
         Ok(())
@@ -1762,6 +1803,20 @@ fn default_config_path() -> Option<PathBuf> {
     default_config_root().map(|root| root.join("config.yaml"))
 }
 
+/// Pin configuration identity to the directory from which it was discovered.
+///
+/// Runyte may enter a newly initialized workspace after loading configuration.
+/// Keeping a relative path here would make later settings writes address a
+/// different file after that directory change. This deliberately does not
+/// canonicalize: a configured symlink is retained as the authored identity and
+/// the settings writer resolves its target while preserving the link itself.
+fn absolute_config_path(path: PathBuf, launch_directory: &Path) -> PathBuf {
+    if path.is_absolute() {
+        return path;
+    }
+    launch_directory.join(path)
+}
+
 fn parse_color(value: &str) -> Result<Color> {
     let value = value.trim();
     if let Some(hex) = value.strip_prefix('#') {
@@ -1795,6 +1850,31 @@ fn parse_color(value: &str) -> Result<Color> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static TEMP_ID: AtomicU64 = AtomicU64::new(0);
+
+    struct TempDir(PathBuf);
+
+    impl TempDir {
+        fn new() -> Self {
+            let id = TEMP_ID.fetch_add(1, Ordering::Relaxed);
+            let path =
+                std::env::temp_dir().join(format!("runyte-config-{}-{id}", std::process::id()));
+            fs::create_dir(&path).unwrap();
+            Self(path)
+        }
+
+        fn path(&self, name: &str) -> PathBuf {
+            self.0.join(name)
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
 
     #[test]
     fn parses_hex_colors() {
@@ -1836,7 +1916,7 @@ mod tests {
         let mut invalid = Config::default();
         invalid.editor.zen_width = 0;
         assert_eq!(
-            invalid.validate_editor_settings().unwrap_err(),
+            invalid.validate_settings().unwrap_err(),
             "editor.zen_width must be between 1 and 1000"
         );
     }
@@ -1851,7 +1931,7 @@ mod tests {
         let mut invalid = Config::default();
         invalid.notifications.history_limit = 0;
         assert_eq!(
-            invalid.validate_editor_settings().unwrap_err(),
+            invalid.validate_settings().unwrap_err(),
             "notifications.history_limit must be between 1 and 1000"
         );
     }
@@ -1905,15 +1985,119 @@ mod tests {
 
     #[test]
     fn a_filename_only_config_path_resolves_from_the_launch_directory() {
-        let launch = std::env::temp_dir().join(format!(
-            "runyte-relative-config-root-{}",
-            std::process::id()
-        ));
-        fs::create_dir_all(&launch).unwrap();
+        let launch = TempDir::new();
+        let config_path = launch.path("config.yaml");
+        fs::write(&config_path, "theme: paper\n").unwrap();
 
-        assert_eq!(config_root_for(Path::new("config.yaml"), &launch), launch);
+        let (config, loaded_path) =
+            Config::load_from(PathBuf::from("config.yaml"), &launch.0).unwrap();
 
-        fs::remove_dir_all(launch).unwrap();
+        assert_eq!(loaded_path.as_deref(), Some(config_path.as_path()));
+        assert_eq!(config.theme.as_deref(), Some("paper"));
+        assert_eq!(
+            config_root_for(Path::new("config.yaml"), &launch.0),
+            launch.0
+        );
+    }
+
+    #[test]
+    fn loading_enforces_every_registry_backed_runtime_interval_bound() {
+        let directory = TempDir::new();
+        for (name, source, expected) in [
+            (
+                "idle.yaml",
+                "workspace:\n  idle_retirement_minutes: 43201\n",
+                "workspace.idle_retirement_minutes must be between 0 and 43200",
+            ),
+            (
+                "git.yaml",
+                "git:\n  refresh_interval_seconds: 3601\n",
+                "git.refresh_interval_seconds must be between 0 and 3600",
+            ),
+        ] {
+            let path = directory.path(name);
+            fs::write(&path, source).unwrap();
+            let error = format!("{:#}", Config::load(Some(&path)).unwrap_err());
+            assert!(error.contains(expected), "{error}");
+            assert_eq!(fs::read_to_string(path).unwrap(), source);
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn loading_a_dangling_config_symlink_reports_the_broken_identity() {
+        let directory = TempDir::new();
+        let target = directory.path("missing.yaml");
+        let link = directory.path("config.yaml");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        let error = format!("{:#}", Config::load(Some(&link)).unwrap_err());
+
+        assert!(error.contains("failed to read config"), "{error}");
+        assert!(error.contains("config.yaml"), "{error}");
+        assert!(
+            fs::symlink_metadata(&link)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert!(!target.exists());
+    }
+
+    const ABSOLUTE_CONFIG_HELPER_PATH: &str = "RUNYTE_TEST_ABSOLUTE_CONFIG_PATH";
+    const ABSOLUTE_CONFIG_HELPER_CWD: &str = "RUNYTE_TEST_REMOVED_CONFIG_CWD";
+
+    #[cfg(unix)]
+    #[test]
+    #[ignore = "subprocess helper for absolute_config_load_does_not_require_a_live_cwd"]
+    fn absolute_config_without_cwd_process_helper() {
+        let Some(config_path) = std::env::var_os(ABSOLUTE_CONFIG_HELPER_PATH).map(PathBuf::from)
+        else {
+            return;
+        };
+        let cwd = PathBuf::from(
+            std::env::var_os(ABSOLUTE_CONFIG_HELPER_CWD).expect("helper cwd was not supplied"),
+        );
+        std::env::set_current_dir(&cwd).unwrap();
+        fs::remove_dir(&cwd).unwrap();
+        assert!(std::env::current_dir().is_err());
+
+        let (config, loaded_path) = Config::load(Some(&config_path)).unwrap();
+        assert_eq!(loaded_path.as_deref(), Some(config_path.as_path()));
+        assert_eq!(config.theme.as_deref(), Some("paper"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn absolute_config_load_does_not_require_a_live_cwd() {
+        use std::process::Command;
+
+        let directory = TempDir::new();
+        let config_path = directory.path("config.yaml");
+        let removed_cwd = directory.path("removed-cwd");
+        fs::write(&config_path, "theme: paper\n").unwrap();
+        fs::create_dir(&removed_cwd).unwrap();
+
+        let output = Command::new(std::env::current_exe().unwrap())
+            .arg("config::tests::absolute_config_without_cwd_process_helper")
+            .arg("--ignored")
+            .arg("--exact")
+            .env(ABSOLUTE_CONFIG_HELPER_PATH, &config_path)
+            .env(ABSOLUTE_CONFIG_HELPER_CWD, &removed_cwd)
+            .output()
+            .unwrap();
+
+        assert!(
+            output.status.success(),
+            "absolute config helper failed:\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            String::from_utf8_lossy(&output.stdout).contains("1 passed"),
+            "absolute config helper did not run:\n{}",
+            String::from_utf8_lossy(&output.stdout)
+        );
     }
 
     #[test]

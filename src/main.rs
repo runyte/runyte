@@ -126,10 +126,10 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
                     start_selected_session(selector, arguments.config.as_deref()).await
                 }
                 LaunchMode::StopAllSessions => {
-                    let config = Config::load(arguments.config.as_deref())?.0;
+                    let (config, config_path) = Config::load(arguments.config.as_deref())?;
                     stop_all_sessions(
                         &config.workspace.state,
-                        arguments.config.as_deref(),
+                        config_path.as_deref(),
                         arguments.force,
                     )
                     .await
@@ -159,15 +159,15 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
                         .workspace_selector
                         .as_deref()
                         .expect("selector checked");
-                    let config = Config::load(arguments.config.as_deref())?.0;
+                    let (config, config_path) = Config::load(arguments.config.as_deref())?;
                     let endpoint = resolve_lifecycle_endpoint(
                         selector,
                         &config.workspace.state,
-                        arguments.config.as_deref(),
+                        config_path.as_deref(),
                     )
                     .await?;
                     let startup = HostStartup::new(std::env::current_exe()?, "restarted")
-                        .with_config(arguments.config.as_deref());
+                        .with_config(config_path.as_deref());
                     if arguments.force {
                         force_restart_host(&endpoint, startup).await
                     } else {
@@ -179,11 +179,11 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
                         .workspace_selector
                         .as_deref()
                         .expect("selector checked");
-                    let config = Config::load(arguments.config.as_deref())?.0;
+                    let (config, config_path) = Config::load(arguments.config.as_deref())?;
                     let endpoint = resolve_lifecycle_endpoint(
                         selector,
                         &config.workspace.state,
-                        arguments.config.as_deref(),
+                        config_path.as_deref(),
                     )
                     .await?;
                     stop_selected_session(&endpoint, arguments.force).await
@@ -352,7 +352,7 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
                     .await
                 }
                 LaunchMode::Wait => {
-                    run_wait(endpoint, arguments.targets, arguments.config, mouse_enabled).await
+                    run_wait(endpoint, arguments.targets, config_path, mouse_enabled).await
                 }
                 LaunchMode::StartSession => {
                     let startup = HostStartup::new(std::env::current_exe()?, "started")
@@ -2184,7 +2184,7 @@ fn pad_table_cell(value: &str, width: usize) -> String {
 
 #[cfg(unix)]
 async fn start_selected_session(selector: &Path, config_path: Option<&Path>) -> Result<()> {
-    let config = Config::load(config_path)?.0;
+    let (config, config_path) = Config::load(config_path)?;
     let working_directory = std::env::current_dir()?;
     let requested = resolve_known_workspace_from_directory(
         selector,
@@ -2199,10 +2199,16 @@ async fn start_selected_session(selector: &Path, config_path: Option<&Path>) -> 
             working_directory.join(selector)
         }
     });
-    let startup = HostStartup::new(std::env::current_exe()?, "started").with_config(config_path);
-    ensure_workspace_host(&requested, &config.workspace.state, config_path, startup)
-        .await
-        .map(|_| ())
+    let startup =
+        HostStartup::new(std::env::current_exe()?, "started").with_config(config_path.as_deref());
+    ensure_workspace_host(
+        &requested,
+        &config.workspace.state,
+        config_path.as_deref(),
+        startup,
+    )
+    .await
+    .map(|_| ())
 }
 
 /// Renames a session whether or not it is running.
@@ -2218,8 +2224,14 @@ async fn rename_selected_session(
     name: &str,
     config_path: Option<&Path>,
 ) -> Result<()> {
-    let config = Config::load(config_path)?.0;
-    rename_known_workspace(selector, name, &config.workspace.state, config_path).await
+    let (config, config_path) = Config::load(config_path)?;
+    rename_known_workspace(
+        selector,
+        name,
+        &config.workspace.state,
+        config_path.as_deref(),
+    )
+    .await
 }
 
 /// Stops the selected host, preferring the request only it can answer.

@@ -2203,7 +2203,9 @@ $XDG_CONFIG_HOME/runyte/config.yaml
 ```
 
 or `~/.config/runyte/config.yaml` when `XDG_CONFIG_HOME` is unset. Use
-`--config <path>` to load another file. All fields are optional.
+`--config <path>` to load another file. A relative path is anchored to the
+directory where Runyte was launched, even when workspace initialization later
+enters another directory. All fields are optional.
 
 Open the registry-backed `[config]` buffer with `Space o o`, `:config`, or
 `:settings`. It is a left-aligned, read-only, searchable document: normal
@@ -2231,7 +2233,8 @@ saved choice applies to future bare launches.
 persistent host reads it each time it considers retiring, so a shorter or
 longer interval takes effect without restarting the host it governs.
 YAML features that cannot be patched losslessly are rejected with the file
-left untouched.
+left untouched. A failed save also rolls back any live preview while keeping
+the choice popup open for correction or retry.
 
 `Space o s` or `:service-health` opens a read-only snapshot of syntax registry
 failures and the active document's LSP configuration and attachment. The

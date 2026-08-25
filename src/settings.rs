@@ -19,7 +19,10 @@ use std::{
 
 use crate::{
     command::GrammarKind,
-    config::{Config, DEFAULT_THEME, WorkspaceMode},
+    config::{
+        Config, DEFAULT_THEME, MAX_GIT_REFRESH_INTERVAL_SECONDS, MAX_IDLE_RETIREMENT_MINUTES,
+        WorkspaceMode,
+    },
 };
 
 use unicode_width::UnicodeWidthChar;
@@ -27,11 +30,6 @@ use unicode_width::UnicodeWidthChar;
 pub const SETTINGS_BUFFER_NAME: &str = "[config]";
 pub const SETTINGS_PAGE_WIDTH: usize = 80;
 const SETTING_COLUMN_WIDTH: usize = 32;
-/// Thirty days. Retirement is measured in minutes because useful values are
-/// hours, and "never" is spelled zero rather than by a very large number, so
-/// the ceiling only has to be past every interval anyone would wait out.
-const MAX_IDLE_RETIREMENT_MINUTES: usize = 43_200;
-
 const DESCRIPTION_COLUMN_WIDTH: usize = 34;
 const VALUE_COLUMN_WIDTH: usize = 10;
 const COLUMN_GAP: &str = "  ";
@@ -320,7 +318,7 @@ const DESCRIPTORS: &[SettingDescriptor] = &[
         description: "Seconds between visible Git refreshes; zero disables",
         value_type: SettingType::Integer {
             minimum: 0,
-            maximum: 3600,
+            maximum: MAX_GIT_REFRESH_INTERVAL_SECONDS,
         },
         preview: PreviewPolicy::Immediate,
         persistence: PersistencePolicy::ConfigFile,
@@ -803,7 +801,7 @@ fn parse_config(source: &str) -> Result<Config, SettingError> {
     };
     let config = config.with_builtin_defaults();
     config
-        .validate_editor_settings()
+        .validate_settings()
         .map_err(SettingError::InvalidConfig)?;
     Ok(config)
 }

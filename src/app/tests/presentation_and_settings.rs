@@ -1582,13 +1582,13 @@ fn workspace_mode_is_visible_and_saved_for_future_launches_only() {
 }
 
 #[test]
-fn failed_setting_write_keeps_the_picker_and_can_roll_back_preview() {
+fn failed_setting_write_keeps_the_picker_but_rolls_back_its_live_preview() {
     let path = temporary("settings-unsafe.yaml");
-    let original = "shared: &defaults true\neditor:\n  mouse: true\n";
+    let original = "shared: &defaults true\neditor:\n  line_numbers: true\n";
     fs::write(&path, original).unwrap();
     let mut app = App::new(Config::default(), None).unwrap();
     app.note_loaded_config(&path);
-    app.open_setting_values(SettingId::EditorMouse);
+    app.open_setting_values(SettingId::EditorLineNumbers);
     let disabled = app
         .list_actions
         .iter()
@@ -1604,13 +1604,45 @@ fn failed_setting_write_keeps_the_picker_and_can_roll_back_preview() {
         .unwrap();
     app.list.as_mut().unwrap().selected = disabled;
     app.preview_selected_setting_value();
+    assert!(!app.config.editor.line_numbers);
 
     key(&mut app, KeyCode::Enter, Modifiers::NONE);
     assert!(app.status_error);
-    assert!(app.status.contains("press Esc to roll back"));
+    assert!(app.status.contains("preview rolled back"));
     assert!(app.list.is_some());
+    assert!(app.config.editor.line_numbers);
     assert_eq!(fs::read_to_string(&path).unwrap(), original);
     key(&mut app, KeyCode::Escape, Modifiers::NONE);
-    assert!(app.config.editor.mouse);
+    assert!(app.config.editor.line_numbers);
     fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn missing_config_path_refuses_the_save_and_rolls_back_its_live_preview() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    app.open_setting_values(SettingId::EditorLineNumbers);
+    let disabled = app
+        .list_actions
+        .iter()
+        .position(|action| {
+            matches!(
+                action,
+                ListAction::SettingValue {
+                    value: SettingValue::Boolean(false),
+                    ..
+                }
+            )
+        })
+        .unwrap();
+    app.list.as_mut().unwrap().selected = disabled;
+    app.preview_selected_setting_value();
+    assert!(!app.config.editor.line_numbers);
+
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+
+    assert!(app.status_error);
+    assert!(app.status.contains("no config path"));
+    assert!(app.status.contains("preview rolled back"));
+    assert!(app.config.editor.line_numbers);
+    assert!(app.list.is_some());
 }

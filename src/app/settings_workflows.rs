@@ -414,23 +414,33 @@ impl App {
     }
 
     pub(super) fn cancel_settings_picker(&mut self) {
-        let view = self.settings_view.take();
-        let Some(SettingsView::Values(preview)) = view else {
+        let Some(setting) = self.rollback_setting_preview() else {
             self.list = None;
             self.list_actions.clear();
             return;
         };
+        self.settings_view = None;
+        self.list = None;
+        self.list_actions.clear();
+        self.status(format!(
+            "{} preview rolled back",
+            setting.descriptor().title
+        ));
+    }
+
+    /// Restore the runtime snapshot behind a setting preview without closing
+    /// its choice list. A failed save uses this so a value that could not be
+    /// persisted never remains effective merely because the person has not
+    /// pressed Escape yet; the list stays open and can be retried.
+    fn rollback_setting_preview(&mut self) -> Option<SettingId> {
+        let SettingsView::Values(preview) = self.settings_view.as_ref()?;
+        let preview = (**preview).clone();
         self.config = preview.original_config;
         self.sync_keymap();
         self.replace_theme(preview.original_theme_name, preview.original_theme);
         self.grammar = preview.original_grammar;
         self.mode = preview.original_mode;
-        self.list = None;
-        self.list_actions.clear();
-        self.status(format!(
-            "{} preview rolled back",
-            preview.setting.descriptor().title
-        ));
+        Some(preview.setting)
     }
 
     pub(super) fn persist_selected_setting(
@@ -439,17 +449,22 @@ impl App {
         value: SettingValue,
     ) -> bool {
         let Some(path) = self.config_path.clone() else {
-            self.error("settings cannot be saved because no config path was loaded");
+            let recovery = self
+                .rollback_setting_preview()
+                .map(|_| " · preview rolled back")
+                .unwrap_or("");
+            self.error(format!(
+                "settings cannot be saved because no config path was loaded{recovery}"
+            ));
             return false;
         };
         let updated = match persist_setting(&path, setting, &value) {
             Ok(updated) => updated,
             Err(error) => {
-                let recovery = if self.settings_view.is_some() {
-                    " · press Esc to roll back the preview"
-                } else {
-                    ""
-                };
+                let recovery = self
+                    .rollback_setting_preview()
+                    .map(|_| " · preview rolled back; Enter retries")
+                    .unwrap_or("");
                 self.error(format!(
                     "could not save {}: {error}{recovery}",
                     setting.descriptor().key,
@@ -461,8 +476,13 @@ impl App {
         if setting.descriptor().preview == PreviewPolicy::Immediate
             && let Err(error) = setting.apply(&value, &mut self.config)
         {
+            self.rollback_setting_preview();
+            self.settings_view = None;
+            self.list = None;
+            self.list_actions.clear();
+            self.refresh_settings_buffers();
             self.error(format!(
-                "saved {}, but could not keep its preview active: {error}",
+                "saved {}, but could not apply it to this session; runtime preview rolled back, restart Runyte to apply: {error}",
                 setting.descriptor().key
             ));
             return false;
