@@ -642,6 +642,7 @@ impl App {
             || self.buffer_discard_confirmation.is_some()
             || self.git_discard_confirmation.is_some()
             || self.git_stash_confirmation.is_some()
+            || self.git_branch_switch.is_some()
             || self.git_branch_deletion.is_some()
             || self.git_pull_rebase.is_some()
             || self.git_worktree_removal.is_some()
@@ -705,6 +706,14 @@ impl App {
                 accept,
                 message: confirmation.message.clone(),
                 input: None,
+            });
+        }
+        if let Some(confirmation) = &self.git_branch_switch {
+            return Some(ConfirmationOverlay {
+                title: "Switch branch",
+                accept: "switch branches",
+                message: confirmation.action.message(),
+                input: Some((confirmation.input.clone(), confirmation.cursor)),
             });
         }
         if let Some(confirmation) = &self.git_branch_deletion {

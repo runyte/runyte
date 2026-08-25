@@ -784,6 +784,9 @@ impl App {
         if self.git_stash_confirmation.is_some() {
             return self.handle_git_stash_confirmation(key);
         }
+        if self.git_branch_switch.is_some() {
+            return self.handle_branch_switch_confirmation(key);
+        }
         if self.git_branch_deletion.is_some() {
             return self.handle_branch_deletion_confirmation(key);
         }
@@ -889,6 +892,11 @@ impl App {
 
     fn handle_text(&mut self, text: &str) -> Result<()> {
         if text.is_empty() {
+            return Ok(());
+        }
+        if let Some(confirmation) = self.git_branch_switch.as_mut() {
+            insert_confirmation_text(&mut confirmation.input, &mut confirmation.cursor, text);
+            self.confirmation_revision = self.confirmation_revision.wrapping_add(1);
             return Ok(());
         }
         if let Some(confirmation) = self.git_branch_deletion.as_mut() {
@@ -1969,6 +1977,42 @@ impl App {
                 if let Some(confirmation) = self.git_branch_deletion.as_mut()
                     && confirmation.typed()
                 {
+                    edit_confirmation_text(&mut confirmation.input, &mut confirmation.cursor, key);
+                    self.confirmation_revision = self.confirmation_revision.wrapping_add(1);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn handle_branch_switch_confirmation(&mut self, key: KeyStroke) -> Result<()> {
+        match (key.code, key.modifiers) {
+            (KeyCode::Escape, _) => {
+                if let Some(confirmation) = self.git_branch_switch.take() {
+                    self.status(confirmation.action.cancelled_message());
+                }
+            }
+            (KeyCode::Char('c'), modifiers) if modifiers.contains(Modifiers::CONTROL) => {
+                if let Some(confirmation) = self.git_branch_switch.take() {
+                    self.status(confirmation.action.cancelled_message());
+                }
+            }
+            (KeyCode::Enter, _) => {
+                let valid = self
+                    .git_branch_switch
+                    .as_ref()
+                    .is_some_and(|confirmation| confirmation.input == confirmation.action.branch());
+                if !valid {
+                    self.error("type the exact branch name before switching branches");
+                    return Ok(());
+                }
+                let Some(confirmation) = self.git_branch_switch.take() else {
+                    return Ok(());
+                };
+                self.apply_branch_switch(confirmation.repository, confirmation.action);
+            }
+            _ => {
+                if let Some(confirmation) = self.git_branch_switch.as_mut() {
                     edit_confirmation_text(&mut confirmation.input, &mut confirmation.cursor, key);
                     self.confirmation_revision = self.confirmation_revision.wrapping_add(1);
                 }

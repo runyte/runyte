@@ -524,6 +524,28 @@ pub struct GitServiceHandle {
 }
 
 impl GitServiceHandle {
+    #[cfg(test)]
+    pub(crate) fn recording_for_test() -> (Self, Receiver<GitOperation>) {
+        let (requests, receiver) = sync_channel::<Request>(REQUEST_CAPACITY);
+        let (operations, recorded) = channel();
+        std::thread::spawn(move || {
+            while let Ok(request) = receiver.recv() {
+                if operations.send(request.operation).is_err() {
+                    break;
+                }
+            }
+        });
+        (
+            Self {
+                requests,
+                next_id: Arc::new(AtomicU64::new(1)),
+                cancellations: Arc::new(Mutex::new(HashMap::new())),
+                ordered_with_worktrees: false,
+            },
+            recorded,
+        )
+    }
+
     pub fn try_submit(&self, operation: GitOperation) -> Result<GitRequestId> {
         let id = GitRequestId(self.next_id.fetch_add(1, Ordering::Relaxed));
         let cancelled = Arc::new(AtomicBool::new(false));

@@ -441,6 +441,17 @@ matched by identity — the commit, path, branch, or hunk it was on — and fall
 back to the nearest surviving position, with the column clamped to the end of
 whatever row it lands on.
 
+`Space g b` opens the local branch list. Enter checks out the selected branch,
+and `Tab n` creates a branch at the selected row and switches to it. Both are
+refused while the working tree, index, or an open file buffer has uncommitted
+changes. If this workspace owns any live terminal session — visible, hidden, or
+shown in another pane — Runyte instead asks for the exact target branch name.
+Accepting acknowledges that the terminal job keeps its working directory while
+Git replaces files beneath it; Escape or Ctrl-c leaves the checkout unchanged.
+Exited terminal sessions need no confirmation. Opening another worktree with
+`Space g w` remains a workspace attachment switch rather than an in-place
+checkout and does not use this confirmation.
+
 `Space g d` opens the active file's unstaged patch. `Space g D` opens the same
 comparison as two complete, aligned file versions: the index on the left and
 the working tree on the right. In the changed-file list both commands follow

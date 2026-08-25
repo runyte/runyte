@@ -1963,6 +1963,139 @@ fn space_g_b_opens_local_branches_and_enter_checks_one_out() {
     fs::remove_dir_all(root).unwrap();
 }
 
+#[cfg(unix)]
+#[test]
+fn a_hidden_live_terminal_requires_exact_branch_name_before_checkout() {
+    use crate::git::{MemoryGitProvider, Repository};
+
+    let root = temporary("git-branch-terminal-confirmation");
+    fs::create_dir_all(&root).unwrap();
+    let root = root.canonicalize().unwrap();
+    let mut ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    let provider = Rc::new(
+        MemoryGitProvider::new(Repository::new(&root)).with_branches(&["feature", "main"], "main"),
+    );
+    ports.replace_git(Box::new(Rc::clone(&provider)));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    app.execute_command("git-branches").unwrap();
+    press(&mut app, 'k');
+
+    app.open_terminal_at(Some("/bin/cat".to_owned()), root.clone());
+    let terminal = app.active_terminal().unwrap();
+    app.leave_terminal();
+    assert!(app.terminals.get(terminal).unwrap().live());
+    assert_eq!(app.active_terminal(), None);
+
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+
+    assert!(provider.checkouts().is_empty());
+    let overlay = confirmation_snapshot(&app);
+    assert_eq!(overlay.title, "Switch branch");
+    assert_eq!(overlay.actions[0].label, "confirm exact text");
+    assert_eq!(overlay.input, crate::snapshot::OverlayInput::Text);
+    let message = overlay.message.unwrap();
+    assert!(message.contains("Switch to branch feature."), "{message}");
+    assert!(
+        message.contains("terminal session is still running"),
+        "{message}"
+    );
+    assert!(message.contains("Type feature exactly"), "{message}");
+
+    let transported: InputEvent = crate::protocol::InputEvent::Text("main".to_owned()).into();
+    app.handle_input(transported).unwrap();
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert!(app.git_branch_switch.is_some());
+    assert!(provider.checkouts().is_empty());
+    assert_eq!(
+        app.status,
+        "type the exact branch name before switching branches"
+    );
+
+    key(&mut app, KeyCode::Escape, Modifiers::NONE);
+    assert!(app.git_branch_switch.is_none());
+    assert_eq!(app.status, "checkout cancelled; the branch was not changed");
+
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert!(app.git_branch_switch.is_some());
+    assert!(provider.checkouts().is_empty());
+    key(&mut app, KeyCode::Escape, Modifiers::NONE);
+
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    let transported: InputEvent = crate::protocol::InputEvent::Text("feature".to_owned()).into();
+    app.handle_input(transported).unwrap();
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+
+    assert_eq!(provider.checkouts(), vec!["feature"]);
+    assert_eq!(app.status, "checked out feature");
+    assert!(app.git_branch_switch.is_none());
+
+    app.apply_terminal_output(crate::terminal::TerminalOutput::Exited {
+        id: terminal,
+        code: Some(0),
+    });
+    assert!(app.terminals.get(terminal).is_none());
+    press(&mut app, 'j');
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+
+    assert_eq!(provider.checkouts(), vec!["feature", "main"]);
+    assert_eq!(app.status, "checked out main");
+    assert!(app.git_branch_switch.is_none());
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn confirmed_terminal_branch_checkout_is_submitted_to_the_git_service() {
+    use crate::git::{GitOperation, GitServiceHandle, MemoryGitProvider, Repository};
+
+    let root = temporary("git-branch-terminal-service");
+    fs::create_dir_all(&root).unwrap();
+    let root = root.canonicalize().unwrap();
+    let mut ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    ports.replace_git(Box::new(
+        MemoryGitProvider::new(Repository::new(&root)).with_branches(&["feature", "main"], "main"),
+    ));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    app.execute_command("git-branches").unwrap();
+    press(&mut app, 'k');
+    app.open_terminal_at(Some("/bin/cat".to_owned()), root.clone());
+    let terminal = app.active_terminal().unwrap();
+    app.leave_terminal();
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+
+    let (service, operations) = GitServiceHandle::recording_for_test();
+    app.attach_git_service(service);
+    let transported: InputEvent = crate::protocol::InputEvent::Text("feature".to_owned()).into();
+    app.handle_input(transported).unwrap();
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+
+    assert!(matches!(
+        operations
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .unwrap(),
+        GitOperation::Discover { .. }
+    ));
+    assert!(matches!(
+        operations
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .unwrap(),
+        GitOperation::Mutate {
+            mutation: GitMutation::Checkout { branch },
+            ..
+        } if branch == "feature"
+    ));
+    assert!(app.git_branch_switch.is_none());
+
+    app.close_terminal_id(terminal);
+    fs::remove_dir_all(root).unwrap();
+}
+
 /// `Tab n` starts a branch at the selected row and switches to it, so the
 /// list that comes back marks the new branch rather than the old one.
 #[test]
@@ -2019,6 +2152,59 @@ fn n_creates_a_branch_at_the_selected_row_and_switches_to_it() {
     );
     assert_eq!(app.cursor_position(), Position::new(2, 0));
 
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn creating_a_branch_with_a_live_terminal_requires_exact_name_confirmation() {
+    use crate::git::{MemoryGitProvider, Repository};
+
+    let root = temporary("git-branch-create-terminal-confirmation");
+    fs::create_dir_all(&root).unwrap();
+    let root = root.canonicalize().unwrap();
+    let mut ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    let provider = Rc::new(
+        MemoryGitProvider::new(Repository::new(&root)).with_branches(&["feature", "main"], "main"),
+    );
+    ports.replace_git(Box::new(Rc::clone(&provider)));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    app.execute_command("git-branches").unwrap();
+    press(&mut app, 'k');
+    app.open_terminal_at(Some("/bin/cat".to_owned()), root.clone());
+    let terminal = app.active_terminal().unwrap();
+    app.leave_terminal();
+
+    context_action(&mut app, 'n');
+    for character in "spike".chars() {
+        press(&mut app, character);
+    }
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+
+    assert!(provider.creations().is_empty());
+    let overlay = confirmation_snapshot(&app);
+    assert_eq!(overlay.title, "Switch branch");
+    let message = overlay.message.unwrap();
+    assert!(
+        message.contains("Create and switch to branch spike."),
+        "{message}"
+    );
+    assert!(message.contains("Type spike exactly"), "{message}");
+
+    let transported: InputEvent = crate::protocol::InputEvent::Text("spike".to_owned()).into();
+    app.handle_input(transported).unwrap();
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+
+    assert_eq!(
+        provider.creations(),
+        vec![("spike".to_owned(), "feature".to_owned())]
+    );
+    assert_eq!(app.status, "created spike from feature");
+    assert!(app.git_branch_switch.is_none());
+
+    app.close_terminal_id(terminal);
     fs::remove_dir_all(root).unwrap();
 }
 

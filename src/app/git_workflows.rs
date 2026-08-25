@@ -8,19 +8,19 @@ use super::{PendingWorktreeRemovalCheck, WorkspaceRow};
 // Application-module dependencies:
 use super::{
     App, Axis, BindingTarget, BlameLine, BlameRequest, BlameSource, Branch,
-    BranchDeletionConfirmation, BranchDeletionPlan, Buffer, BufferKind, BufferRevisionGuard,
-    COMMIT_INSTRUCTIONS, ColonCommand, CommitDetail, CommitSearchResult, CommitSummary,
-    DeletionAuthorization, DiffScope, DiffSession, DiffSide, Duration, FileComparison,
-    GeneralWorktreeRow, GeneratedViewIdentity, GitDiscardConfirmation, GitMutation, GitOperation,
-    GitProvider, GitRequestId, GitResponse, GitServiceEvent, GitServiceHandle, GitServiceProgress,
-    GitServiceState, GitStashConfirmation, GitTracker, HashMap, HashSet, Instant, KeyCode,
-    KeyStroke, LineChange, ListAction, ListPicker, LogCursor, LogPage, LogRequest, LogViewRequest,
-    MAX_BLAME_INPUT_BYTES, MAX_BLAME_LINES, MAX_DIFF_BYTES, Mode, PartialStageSelection, PatchHunk,
-    Path, PathBuf, PickerItem, PromptKind, PullRebaseConfirmation, RefreshSpec, Repository,
-    RepositoryGeneration, RepositorySnapshot, Result, Selection, StashEntry, StashMutation,
-    StashScope, StatusSide, WorkspaceSwitchRequest, Worktree, WorktreeCreate,
-    WorktreeRemovalConfirmation, WorktreeRemovalPlan, buffer_language, commit_message_body,
-    is_refreshed_projection, selection_is_deliberate,
+    BranchDeletionConfirmation, BranchDeletionPlan, BranchSwitch, BranchSwitchConfirmation, Buffer,
+    BufferKind, BufferRevisionGuard, COMMIT_INSTRUCTIONS, ColonCommand, CommitDetail,
+    CommitSearchResult, CommitSummary, DeletionAuthorization, DiffScope, DiffSession, DiffSide,
+    Duration, FileComparison, GeneralWorktreeRow, GeneratedViewIdentity, GitDiscardConfirmation,
+    GitMutation, GitOperation, GitProvider, GitRequestId, GitResponse, GitServiceEvent,
+    GitServiceHandle, GitServiceProgress, GitServiceState, GitStashConfirmation, GitTracker,
+    HashMap, HashSet, Instant, KeyCode, KeyStroke, LineChange, ListAction, ListPicker, LogCursor,
+    LogPage, LogRequest, LogViewRequest, MAX_BLAME_INPUT_BYTES, MAX_BLAME_LINES, MAX_DIFF_BYTES,
+    Mode, PartialStageSelection, PatchHunk, Path, PathBuf, PickerItem, PromptKind,
+    PullRebaseConfirmation, RefreshSpec, Repository, RepositoryGeneration, RepositorySnapshot,
+    Result, Selection, StashEntry, StashMutation, StashScope, StatusSide, WorkspaceSwitchRequest,
+    Worktree, WorktreeCreate, WorktreeRemovalConfirmation, WorktreeRemovalPlan, buffer_language,
+    commit_message_body, is_refreshed_projection, selection_is_deliberate,
 };
 
 /// Git-service bookkeeping and semantic row identities owned by the editor's
@@ -3097,30 +3097,12 @@ impl App {
             self.error("this project is not in a Git repository");
             return;
         };
-        if !self.branch_switch_allowed(&repository) {
-            return;
-        }
-        if self.ports.git_service.is_some() {
-            let refresh = self.git_refresh_spec(&repository);
-            let _ = self.request_git(GitOperation::Mutate {
-                repository,
-                mutation: GitMutation::Checkout {
-                    branch: branch.name,
-                },
-                refresh,
-            });
-            return;
-        }
-        let Some(provider) = self.ports.git.as_deref() else {
-            self.error("no `git` executable was found");
-            return;
-        };
-        if let Err(error) = provider.checkout_branch(&repository, &branch.name) {
-            self.error(error.to_string());
-            return;
-        }
-        let outcome = format!("checked out {}", branch.name);
-        self.finish_branch_switch(&repository, &branch.name, outcome);
+        self.request_branch_switch(
+            repository,
+            BranchSwitch::Checkout {
+                branch: branch.name,
+            },
+        );
     }
 
     /// The branch the active branch-list row acts on.
@@ -3144,6 +3126,80 @@ impl App {
     /// checkout would then reload out from under.
     fn branch_switch_allowed(&mut self, repository: &Repository) -> bool {
         self.repository_buffers_clean(repository, "switch branches")
+    }
+
+    fn request_branch_switch(&mut self, repository: Repository, action: BranchSwitch) {
+        if !self.branch_switch_allowed(&repository) {
+            return;
+        }
+        if self.terminals.any_live() {
+            let confirmation = BranchSwitchConfirmation {
+                repository,
+                action,
+                input: String::new(),
+                cursor: 0,
+            };
+            let message = confirmation.action.message();
+            self.git_branch_switch = Some(confirmation);
+            self.confirmation_revision = self.confirmation_revision.wrapping_add(1);
+            self.status(message);
+            return;
+        }
+        self.apply_branch_switch(repository, action);
+    }
+
+    pub(super) fn apply_branch_switch(&mut self, repository: Repository, action: BranchSwitch) {
+        if !self.branch_switch_allowed(&repository) {
+            return;
+        }
+        let (mutation, branch, outcome) = match action {
+            BranchSwitch::Checkout { branch } => {
+                let outcome = format!("checked out {branch}");
+                (
+                    GitMutation::Checkout {
+                        branch: branch.clone(),
+                    },
+                    branch,
+                    outcome,
+                )
+            }
+            BranchSwitch::Create { branch, start } => {
+                let outcome = format!("created {branch} from {start}");
+                (
+                    GitMutation::CreateBranch {
+                        branch: branch.clone(),
+                        start,
+                    },
+                    branch,
+                    outcome,
+                )
+            }
+        };
+        if self.ports.git_service.is_some() {
+            let refresh = self.git_refresh_spec(&repository);
+            let _ = self.request_git(GitOperation::Mutate {
+                repository,
+                mutation,
+                refresh,
+            });
+            return;
+        }
+        let Some(provider) = self.ports.git.as_deref() else {
+            self.error("no `git` executable was found");
+            return;
+        };
+        let result = match mutation {
+            GitMutation::Checkout { .. } => provider.checkout_branch(&repository, &branch),
+            GitMutation::CreateBranch { start, .. } => {
+                provider.create_branch(&repository, &branch, &start)
+            }
+            _ => unreachable!("branch switches use only checkout or create mutations"),
+        };
+        if let Err(error) = result {
+            self.error(error.to_string());
+            return;
+        }
+        self.finish_branch_switch(&repository, &branch, outcome);
     }
 
     fn repository_buffers_clean(&mut self, repository: &Repository, action: &str) -> bool {
@@ -3245,28 +3301,13 @@ impl App {
             self.error("this project is not in a Git repository");
             return;
         };
-        if self.ports.git_service.is_some() {
-            let refresh = self.git_refresh_spec(&repository);
-            let _ = self.request_git(GitOperation::Mutate {
-                repository,
-                mutation: GitMutation::CreateBranch {
-                    branch: name,
-                    start: start_point,
-                },
-                refresh,
-            });
-            return;
-        }
-        let Some(provider) = self.ports.git.as_deref() else {
-            self.error("no `git` executable was found");
-            return;
-        };
-        if let Err(error) = provider.create_branch(&repository, &name, &start_point) {
-            self.error(error.to_string());
-            return;
-        }
-        let outcome = format!("created {name} from {start_point}");
-        self.finish_branch_switch(&repository, &name, outcome);
+        self.request_branch_switch(
+            repository,
+            BranchSwitch::Create {
+                branch: name,
+                start: start_point,
+            },
+        );
     }
 
     /// Fast-forwards the current branch onto what it tracks.

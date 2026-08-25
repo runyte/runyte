@@ -720,6 +720,7 @@ impl App {
             || self.buffer_discard_confirmation.is_some()
             || self.git_discard_confirmation.is_some()
             || self.git_stash_confirmation.is_some()
+            || self.git_branch_switch.is_some()
             || self.git_branch_deletion.is_some()
             || self.git_pull_rebase.is_some()
             || self.git_worktree_removal.is_some()

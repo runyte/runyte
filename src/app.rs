@@ -960,6 +960,46 @@ struct BranchDeletionConfirmation {
     cursor: usize,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum BranchSwitch {
+    Checkout { branch: String },
+    Create { branch: String, start: String },
+}
+
+impl BranchSwitch {
+    fn branch(&self) -> &str {
+        match self {
+            Self::Checkout { branch } | Self::Create { branch, .. } => branch,
+        }
+    }
+
+    fn message(&self) -> String {
+        let action = match self {
+            Self::Checkout { branch } => format!("Switch to branch {branch}."),
+            Self::Create { branch, .. } => format!("Create and switch to branch {branch}."),
+        };
+        format!(
+            "{action}\nA terminal session is still running in this workspace and will keep using the same working directory while Git replaces files.\nType {} exactly to continue.\nEscape keeps the current branch.",
+            self.branch()
+        )
+    }
+
+    fn cancelled_message(&self) -> &'static str {
+        match self {
+            Self::Checkout { .. } => "checkout cancelled; the branch was not changed",
+            Self::Create { .. } => "branch creation cancelled; nothing was changed",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct BranchSwitchConfirmation {
+    repository: Repository,
+    action: BranchSwitch,
+    input: String,
+    cursor: usize,
+}
+
 impl BranchDeletionConfirmation {
     fn typed(&self) -> bool {
         self.plan.required_authorization == DeletionAuthorization::Typed
@@ -2078,6 +2118,9 @@ pub struct App {
     /// The branch a confirmed `D` would delete, and whether deleting it needs
     /// to be forced because its commits are not reachable from `HEAD`.
     git_branch_deletion: Option<BranchDeletionConfirmation>,
+    /// A checkout or branch creation that needs exact-name authorization
+    /// because a terminal child remains live in this workspace.
+    git_branch_switch: Option<BranchSwitchConfirmation>,
     /// The drift a refused pull reported, held while the reader decides
     /// whether to replay their commits on top of it.
     git_pull_rebase: Option<PullRebaseConfirmation>,
@@ -2410,6 +2453,7 @@ impl App {
             git: GitTracker::new(),
             git_state: GitWorkflowState::default(),
             git_branch_deletion: None,
+            git_branch_switch: None,
             git_pull_rebase: None,
             git_branch_start: None,
             git_worktree_removal: None,
