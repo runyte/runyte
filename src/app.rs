@@ -7696,7 +7696,7 @@ impl App {
                 snapshot.layout = OverlayLayout::Preview;
                 snapshot.actions = vec![
                     OverlayAction::new("Enter", "open"),
-                    OverlayAction::new("Tab/Shift-Tab", "files"),
+                    OverlayAction::new("Tab", "files"),
                     OverlayAction::new("Ctrl-t", "toggle preview"),
                     OverlayAction::new("Esc", "cancel"),
                 ];
@@ -7768,10 +7768,9 @@ impl App {
                     None => OverlayPreview::Empty,
                 });
                 if self.finder.is_some() {
-                    snapshot.actions.insert(
-                        1,
-                        OverlayAction::new("Tab/Shift-Tab", "buffers + terminals"),
-                    );
+                    snapshot
+                        .actions
+                        .insert(1, OverlayAction::new("Tab", "buffers + terminals"));
                 }
                 overlays.push(snapshot);
             }
@@ -10614,12 +10613,7 @@ impl App {
             return Ok(());
         }
 
-        if self.finder.is_some()
-            && matches!(key.code, KeyCode::Tab | KeyCode::BackTab)
-            && !key
-                .modifiers
-                .intersects(Modifiers::CONTROL | Modifiers::ALT | Modifiers::SUPER)
-        {
+        if self.finder.is_some() && key.code == KeyCode::Tab && key.modifiers.is_empty() {
             self.toggle_finder_mode();
             return Ok(());
         }
@@ -10815,7 +10809,7 @@ impl App {
                 self.finder.as_mut().unwrap().page_down(page);
             }
             (KeyCode::Down, _) => self.finder.as_mut().unwrap().down(),
-            (KeyCode::Up, _) => self.finder.as_mut().unwrap().up(),
+            (KeyCode::Up | KeyCode::BackTab, _) => self.finder.as_mut().unwrap().up(),
             (KeyCode::PageUp, _) => self.finder.as_mut().unwrap().page_up(page),
             (KeyCode::PageDown, _) => self.finder.as_mut().unwrap().page_down(page),
             (KeyCode::Home, _) => self.finder.as_mut().unwrap().first(),
@@ -29074,7 +29068,7 @@ mod tests {
             overlay
                 .actions
                 .iter()
-                .any(|action| { action.key_hint == "Tab/Shift-Tab" && action.label == "files" })
+                .any(|action| { action.key_hint == "Tab" && action.label == "files" })
         );
         assert!(
             overlay
@@ -29087,6 +29081,11 @@ mod tests {
         assert!(!app.picker.as_ref().unwrap().show_preview);
 
         key(&mut app, KeyCode::BackTab, Modifiers::SHIFT);
+        assert_eq!(app.finder.as_ref().unwrap().mode, FinderMode::Resources);
+        assert_eq!(app.picker.as_ref().unwrap().query, "alpha");
+        assert!(!app.picker.as_ref().unwrap().show_preview);
+
+        key(&mut app, KeyCode::Tab, Modifiers::NONE);
         assert_eq!(app.finder.as_ref().unwrap().mode, FinderMode::Files);
         assert_eq!(app.picker.as_ref().unwrap().matches.len(), file_matches);
         assert_eq!(app.picker.as_ref().unwrap().query, "alpha");
@@ -29133,8 +29132,18 @@ mod tests {
         app.open_project_picker().unwrap();
 
         key(&mut app, KeyCode::Tab, Modifiers::NONE);
+        let first_resource = app.finder.as_ref().unwrap().selected_target();
         key(&mut app, KeyCode::Down, Modifiers::NONE);
         let resource = app.finder.as_ref().unwrap().selected_target();
+        assert_ne!(resource, first_resource);
+        key(&mut app, KeyCode::BackTab, Modifiers::SHIFT);
+        assert_eq!(app.finder.as_ref().unwrap().mode, FinderMode::Resources);
+        assert_eq!(
+            app.finder.as_ref().unwrap().selected_target(),
+            first_resource
+        );
+        key(&mut app, KeyCode::Down, Modifiers::NONE);
+        assert_eq!(app.finder.as_ref().unwrap().selected_target(), resource);
         key(&mut app, KeyCode::Tab, Modifiers::NONE);
         key(&mut app, KeyCode::Down, Modifiers::NONE);
         assert_eq!(app.picker.as_ref().unwrap().selected, 1);

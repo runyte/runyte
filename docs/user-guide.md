@@ -1413,11 +1413,11 @@ The explorer that applied the plan keeps its edited row order, so a renamed or
 new entry stays where it was written. Entering that clean explorer again after
 visiting a file or another directory restores the canonical sorted listing.
 
-The project finder opens in file mode. `Tab` and `Shift-Tab` switch between
-project files and a combined view of open buffers plus terminals without
-clearing the query. Both modes preview the selected item, with authoritative
-in-memory text for buffers and bounded recent output for terminals; `Ctrl-t`
-toggles the preview without changing the mode or query. The existing
+The project finder opens in file mode. `Tab` switches between project files
+and a combined view of open buffers plus terminals without clearing the query.
+Both modes preview the selected item, with authoritative in-memory text for
+buffers and bounded recent output for terminals; `Ctrl-t` toggles the preview
+without changing the mode or query. The existing
 `Space b b` and `Space t t` managers remain available for Save, Discard,
 Close, Rename, and other contextual actions; the combined finder is an
 Enter-to-open surface.
@@ -1446,8 +1446,9 @@ toggles that preview. Enter opens a file for editing and a directory in the
 editable explorer.
 
 Use Up/Down, `Ctrl-p`/`Ctrl-n`, paging, and Home/End to move. In the project
-finder Tab/Shift-Tab switch modes; in directory-scoped and fuzzy-content
-pickers they retain their previous next/previous navigation.
+finder `Tab` switches modes; `Shift-Tab` selects the previous row, as it does
+in directory-scoped and fuzzy-content pickers. In those other pickers, `Tab`
+retains its previous next-row navigation.
 Enter opens, `Ctrl-s` opens horizontally, `Ctrl-v` opens vertically, and
 Escape or `Ctrl-c` closes. Backspace/Delete and the ordinary prompt control
 keys edit the query. Printable letters such as `q`, `j`, and `k` are query
