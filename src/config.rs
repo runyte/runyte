@@ -930,6 +930,7 @@ impl Default for Config {
         themes.insert("atom-one-light".into(), atom_one_light_theme());
         themes.insert("github-light".into(), github_light_theme());
         themes.insert("nordfox".into(), nordfox_theme());
+        themes.insert("nordfox-warm".into(), nordfox_warm_theme());
         themes.insert("terafox".into(), terafox_theme());
         themes.extend(zenbones::themes());
         Self {
@@ -1254,6 +1255,21 @@ fn nordfox_theme() -> ThemeDefinition {
             ("variable", "#e5e9f0"),
         ]),
     }
+}
+
+/// Nordfox with brighter dimmed text and warm selection grounds.
+///
+/// The base and syntax palette stay canonical Nordfox. The selection grounds
+/// are deliberately dark tints rather than Nightfox text accents: Runyte fills
+/// whole cells with them, including terminal-review selections whose text is
+/// using `jump_text_muted` at the same time.
+fn nordfox_warm_theme() -> ThemeDefinition {
+    let mut theme = nordfox_theme();
+    theme.muted = "#71839a".into();
+    theme.jump_text_muted = Some("#929fae".into());
+    theme.selection = "#603f54".into();
+    theme.selection_primary = Some("#5c4e27".into());
+    theme
 }
 
 /// Runyte roles mapped onto Nightfox's canonical Terafox palette and spec.
@@ -1987,6 +2003,7 @@ mod tests {
             "macchiato",
             "mocha",
             "nordfox",
+            "nordfox-warm",
             "terafox",
         ];
         let light = ["latte", "paper"];
@@ -2152,6 +2169,7 @@ mod tests {
                 "neobones-light",
                 "nordbones-dark",
                 "nordfox",
+                "nordfox-warm",
                 "paper",
                 "rosebones-dark",
                 "rosebones-light",
@@ -2505,6 +2523,43 @@ mod tests {
         assert_eq!(
             terafox.syntax_color(crate::syntax::Scope::named("string").unwrap()),
             Some(Color::Rgb(0x7a, 0xa4, 0xa1))
+        );
+    }
+
+    #[test]
+    fn nordfox_warm_pairs_legible_dimmed_text_with_warm_selections() {
+        fn contrast(left: Color, right: Color) -> f64 {
+            let left = left.relative_luminance().unwrap();
+            let right = right.relative_luminance().unwrap();
+            (left.max(right) + 0.05) / (left.min(right) + 0.05)
+        }
+
+        let config = Config::default();
+        let nordfox = config.resolve_theme("nordfox").unwrap();
+        let warm = config.resolve_theme("nordfox-warm").unwrap();
+
+        assert_eq!(warm.background, nordfox.background);
+        assert_eq!(warm.foreground, nordfox.foreground);
+        assert_eq!(warm.syntax, nordfox.syntax);
+        assert_eq!(warm.muted, Color::Rgb(0x71, 0x83, 0x9a));
+        assert_eq!(warm.jump_text_muted, Color::Rgb(0x92, 0x9f, 0xae));
+        assert_eq!(warm.selection, Color::Rgb(0x60, 0x3f, 0x54));
+        assert_eq!(warm.selection_primary, Color::Rgb(0x5c, 0x4e, 0x27));
+        assert!(
+            contrast(warm.jump_text_muted, warm.selection) >= 3.0,
+            "dimmed text should remain readable on the pink selection"
+        );
+        assert!(
+            contrast(warm.jump_text_muted, warm.selection_primary) >= 3.0,
+            "dimmed text should remain readable on the yellow selection"
+        );
+        assert!(
+            contrast(warm.foreground, warm.selection) >= 4.5,
+            "ordinary text should remain readable on the pink selection"
+        );
+        assert!(
+            contrast(warm.foreground, warm.selection_primary) >= 4.5,
+            "ordinary text should remain readable on the yellow selection"
         );
     }
 

@@ -2285,11 +2285,13 @@ Built-in themes are `dark`, `light`, `base16`, `paper`, `gruvbox`,
 Catppuccin flavours (`latte`, `frappe`, `macchiato`, and `mocha`), and the six
 Everforest variants (`everforest-dark-hard`, `everforest-dark-medium`,
 `everforest-dark-soft`, `everforest-light-hard`, `everforest-light-medium`,
-and `everforest-light-soft`), plus `nordfox` and `terafox`. The Fox themes use
-the canonical palettes from
+and `everforest-light-soft`), plus `nordfox`, `nordfox-warm`, and `terafox`.
+The Fox themes use the canonical palettes from
 [Nightfox](https://github.com/EdenEast/nightfox.nvim): `nordfox` is a cool
-Nord-derived dark theme, while `terafox` uses deep blue-green backgrounds and
-warm accents. `atom-one-light` follows Atom's official
+Nord-derived dark theme, `nordfox-warm` keeps that base while using brighter
+dimmed text with pink secondary and yellow primary selections, and `terafox`
+uses deep blue-green backgrounds and warm accents. `atom-one-light` follows
+Atom's official
 [One Light UI](https://github.com/atom/one-light-ui) and companion
 [One Light syntax](https://github.com/atom/one-light-syntax) palettes.
 `github-light` follows projekt0n's

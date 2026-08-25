@@ -1330,6 +1330,7 @@ mod tests {
                 "neobones-light",
                 "nordbones-dark",
                 "nordfox",
+                "nordfox-warm",
                 "paper",
                 "rosebones-dark",
                 "rosebones-light",

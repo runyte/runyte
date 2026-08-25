@@ -127,10 +127,10 @@ Upstream revision: `4dacd3f0185a2227bdf3b6c0975a8f0bf87cac9a`
 
 License: MIT; copyright (c) 2021 James Simpson
 
-Runyte's `nordfox` and `terafox` themes map the corresponding Nightfox palette
-and syntax-spec values to Runyte roles and add Runyte-specific diff-background
-tints. The exact upstream license text is preserved in
-`licenses/Nightfox-MIT.txt`.
+Runyte's `nordfox`, `nordfox-warm`, and `terafox` themes map the corresponding
+Nightfox palette and syntax-spec values to Runyte roles and add Runyte-specific
+selection and diff-background tints. The exact upstream license text is
+preserved in `licenses/Nightfox-MIT.txt`.
 
 ### Zenbones
 
