@@ -136,7 +136,11 @@ and the order of the push. Do not infer any of those from the commit history.
 
 ## Architecture
 
-- `src/app.rs`: editor state, commands, key dispatch, panes, and integration.
+- `src/app.rs`: editor state, shared application types, and startup coordination.
+- `src/app/`: editor-level workflow coordination for commands, key dispatch,
+  panes, editing, Git, persistent sessions, terminals, search, files, pickers,
+  settings, syntax, and language services. Lower-level feature ownership stays
+  in the dedicated modules listed below.
 - `src/buffer.rs`: rope-backed buffers, file I/O, and transactional undo.
 - `src/text.rs`: rope storage, character offsets, and transactions. Every
   buffer mutation goes through a transaction; nothing writes text directly.
