@@ -906,13 +906,15 @@ Producer safety bounds remain explicit: one notification retains at most 1 MiB
 and one workspace at most 8 MiB, in addition to the configured entry-count
 limit. Git failures retain labelled stdout and stderr within that 1 MiB budget,
 enough for thousands of ordinary lines, and append a visible truncation marker
-when a hostile hook exceeds it. Successful asynchronous Git output updates the
-initiating action echo when it is still current; multiline output, or output
-whose echo has already been superseded, is retained as `INFO`. A mistyped key
-sequence (`No binding: g z`) is reported the same way on the interaction line
-and in the key hints, but is not retained: it says nothing worth reading back
-later, and a burst of mistyping would otherwise be the single largest and only
-unbounded contributor to the unread count.
+when a hostile hook exceeds it. The rest of an overlong stream is still drained
+while the subprocess runs, so retaining less diagnostic text does not itself
+break an otherwise successful hook or helper. Successful asynchronous Git
+output updates the initiating action echo when it is still current; multiline
+output, or output whose echo has already been superseded, is retained as
+`INFO`. A mistyped key sequence (`No binding: g z`) is reported the same way on
+the interaction line and in the key hints, but is not retained: it says nothing
+worth reading back later, and a burst of mistyping would otherwise be the
+single largest and only unbounded contributor to the unread count.
 
 `:about` opens a centered, read-only introduction with Runyte's logo, current
 version, and a short getting-started guide. It is centered against the pane
@@ -1862,7 +1864,12 @@ Network operations retain their two-minute deadline. Nothing can prompt while th
 Git's own prompts are off, `ssh` is put in batch mode unless you have set
 `GIT_SSH_COMMAND` yourself, and no askpass helper falls back to the terminal —
 so an authentication that needs a password fails with a message instead of
-hanging behind a prompt you cannot see.
+hanging behind a prompt you cannot see. Repository- and object-selection
+variables such as `GIT_DIR`, `GIT_INDEX_FILE`, and inherited one-shot Git
+configuration are removed from every child environment, so starting Runyte
+from another Git command cannot silently retarget its repository operations.
+File arguments are always literal as well: a filename that resembles Git's
+pathspec syntax still names only that file.
 
 `Tab p` fast-forwards where it can, and asks where it cannot. A fast-forward is
 silent, because it decides nothing: the branch had no commits of its own to

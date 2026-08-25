@@ -132,8 +132,14 @@ impl Drop for RepositoryGuard {
         let mut state = state
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if let Some(repository) = state.repositories.get_mut(&self.common_directory) {
+        let remove = if let Some(repository) = state.repositories.get_mut(&self.common_directory) {
             repository.active = false;
+            repository.queue.is_empty()
+        } else {
+            false
+        };
+        if remove {
+            state.repositories.remove(&self.common_directory);
         }
         changed.notify_all();
     }
@@ -176,10 +182,15 @@ pub(crate) fn acquire(common_directory: &Path) -> RepositoryGuard {
 }
 
 fn remove_waiter(state: &mut LockState, common_directory: &Path, ticket: u64) {
+    let mut remove = false;
     if let Some(repository) = state.repositories.get_mut(common_directory)
         && let Some(position) = repository.queue.iter().position(|queued| *queued == ticket)
     {
         repository.queue.remove(position);
+        remove = !repository.active && repository.queue.is_empty();
+    }
+    if remove {
+        state.repositories.remove(common_directory);
     }
 }
 
@@ -248,5 +259,24 @@ mod tests {
         let inner = reserve(&repository).acquire(None).unwrap();
         drop(inner);
         drop(outer);
+    }
+
+    #[test]
+    fn an_idle_repository_does_not_leave_lock_state_behind() {
+        let repository = PathBuf::from(format!(
+            "/released-{}/.git",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let guard = reserve(&repository).acquire(None).unwrap();
+        drop(guard);
+
+        let (state, _) = state();
+        let state = state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        assert!(!state.repositories.contains_key(&repository));
     }
 }

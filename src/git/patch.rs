@@ -139,7 +139,10 @@ pub fn parse_hunks(patch: &[u8]) -> Result<Vec<PatchHunk>> {
     }
     let header_end = hunks[0].1;
     let header = &patch[..header_end];
-    if !header.windows(7).any(|value| value == b"diff --") {
+    if !header
+        .split(|byte| *byte == b'\n')
+        .any(|line| line.starts_with(b"diff --git "))
+    {
         return malformed("patch has no file header");
     }
     // Every hunk is reassembled onto this one file header, so a second file
@@ -149,7 +152,7 @@ pub fn parse_hunks(patch: &[u8]) -> Result<Vec<PatchHunk>> {
     // instead of relying on that.
     if starts
         .iter()
-        .any(|start| *start >= header_end && patch[*start..].starts_with(b"diff --"))
+        .any(|start| *start >= header_end && patch[*start..].starts_with(b"diff --git "))
     {
         return refused("multi-file patches cannot be partially staged; stage one file at a time");
     }
@@ -357,6 +360,14 @@ mod tests {
         let patch = b"diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-old\n+new\ndiff --git a/b.txt b/b.txt\n--- a/b.txt\n+++ b/b.txt\n@@ -1 +1 @@\n-x\n+y\n";
         let error = parse_hunks(patch).unwrap_err().to_string();
         assert!(error.contains("multi-file"), "{error}");
+    }
+
+    #[test]
+    fn a_non_git_diff_header_is_not_an_applicable_patch() {
+        let patch =
+            b"diff --no-index a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-old\n+new\n";
+        let error = parse_hunks(patch).unwrap_err().to_string();
+        assert!(error.contains("no file header"), "{error}");
     }
 
     #[test]

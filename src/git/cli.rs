@@ -14,8 +14,8 @@
 
 use std::{
     ffi::{OsStr, OsString},
-    io::{Read, Write},
-    path::{Path, PathBuf},
+    io::{self, Read, Write},
+    path::{Component, Path, PathBuf},
     process::{Command, Stdio},
     sync::{
         Arc,
@@ -76,15 +76,49 @@ const MAX_FAILURE_OUTPUT_BYTES: usize = 1024 * 1024;
 
 fn read_bounded_stderr(mut reader: impl Read) -> Vec<u8> {
     let mut stderr = Vec::new();
-    let _ = reader
-        .by_ref()
-        .take(MAX_STDERR_BYTES as u64 + 1)
-        .read_to_end(&mut stderr);
-    if stderr.len() > MAX_STDERR_BYTES {
-        stderr.truncate(MAX_STDERR_BYTES);
+    let mut truncated = false;
+    let mut buffer = [0_u8; 8192];
+    loop {
+        let read = match reader.read(&mut buffer) {
+            Ok(0) | Err(_) => break,
+            Ok(read) => read,
+        };
+        let retained = MAX_STDERR_BYTES.saturating_sub(stderr.len());
+        stderr.extend_from_slice(&buffer[..read.min(retained)]);
+        truncated |= read > retained;
+    }
+    if truncated {
         stderr.extend_from_slice(STDERR_TRUNCATED);
     }
     stderr
+}
+
+/// Drains a child stream while retaining only enough bytes to classify it.
+///
+/// The reader must keep draining after the limit: closing a full pipe would
+/// send SIGPIPE to Git or a hook and turn Runyte's presentation bound into a
+/// change in command behavior. The parent observes `exceeded` and kills the
+/// whole child process group instead.
+fn read_bounded_output(
+    mut reader: impl Read,
+    limit: usize,
+    exceeded: &AtomicBool,
+) -> (Vec<u8>, io::Result<()>) {
+    let mut output = Vec::new();
+    let retained_limit = limit.saturating_add(1);
+    let mut buffer = [0_u8; 8192];
+    loop {
+        let read = match reader.read(&mut buffer) {
+            Ok(0) => return (output, Ok(())),
+            Ok(read) => read,
+            Err(error) => return (output, Err(error)),
+        };
+        let retained = retained_limit.saturating_sub(output.len());
+        output.extend_from_slice(&buffer[..read.min(retained)]);
+        if output.len() > limit || read > retained {
+            exceeded.store(true, Ordering::Release);
+        }
+    }
 }
 
 fn failure_output(stdout: &[u8], stderr: &[u8]) -> String {
@@ -294,15 +328,11 @@ impl GitCliProvider {
         let stderr_pipe = child.stderr.take().expect("stderr was piped");
         let stderr_reader = std::thread::spawn(move || read_bounded_stderr(stderr_pipe));
 
-        let mut stdout_pipe = child.stdout.take().expect("stdout was piped");
-        let stdout_reader = std::thread::spawn(move || {
-            let mut stdout = Vec::new();
-            let read = stdout_pipe
-                .by_ref()
-                .take(limit as u64 + 1)
-                .read_to_end(&mut stdout);
-            (stdout, read)
-        });
+        let stdout_pipe = child.stdout.take().expect("stdout was piped");
+        let output_exceeded = Arc::new(AtomicBool::new(false));
+        let reader_exceeded = Arc::clone(&output_exceeded);
+        let stdout_reader =
+            std::thread::spawn(move || read_bounded_output(stdout_pipe, limit, &reader_exceeded));
 
         let status = loop {
             match child.try_wait() {
@@ -321,8 +351,20 @@ impl GitCliProvider {
                 stop_child_tree(&mut child);
                 return Err(GitError::Cancelled { command: described });
             }
+            if output_exceeded.load(Ordering::Acquire) {
+                stop_child_tree(&mut child);
+                return Err(GitError::TooLarge {
+                    command: described,
+                    limit,
+                });
+            }
             std::thread::sleep(NETWORK_POLL_INTERVAL);
         };
+        if !finish_readers_or_stop(&mut child, || {
+            stdout_reader.is_finished() && stderr_reader.is_finished()
+        }) {
+            return Err(unclosed_output_error(directory));
+        }
         let (stdout, read) = stdout_reader.join().map_err(|_| GitError::Io {
             action: "read the output of Git in",
             path: directory.to_path_buf(),
@@ -335,7 +377,8 @@ impl GitCliProvider {
             path: directory.to_path_buf(),
             detail: error.to_string(),
         })?;
-        if stdout.len() > limit {
+        if stdout.len() > limit || output_exceeded.load(Ordering::Acquire) {
+            stop_child_tree(&mut child);
             return Err(GitError::TooLarge {
                 command: described,
                 limit,
@@ -371,15 +414,11 @@ impl GitCliProvider {
         let mut child = self.spawn(directory, arguments, false, false)?;
         let stderr_pipe = child.stderr.take().expect("stderr was piped");
         let stderr_reader = std::thread::spawn(move || read_bounded_stderr(stderr_pipe));
-        let mut stdout_pipe = child.stdout.take().expect("stdout was piped");
-        let stdout_reader = std::thread::spawn(move || {
-            let mut stdout = Vec::new();
-            let read = stdout_pipe
-                .by_ref()
-                .take(limit as u64 + 1)
-                .read_to_end(&mut stdout);
-            (stdout, read)
-        });
+        let stdout_pipe = child.stdout.take().expect("stdout was piped");
+        let output_exceeded = Arc::new(AtomicBool::new(false));
+        let reader_exceeded = Arc::clone(&output_exceeded);
+        let stdout_reader =
+            std::thread::spawn(move || read_bounded_output(stdout_pipe, limit, &reader_exceeded));
         let started = std::time::Instant::now();
         let status = loop {
             match child.try_wait() {
@@ -398,6 +437,13 @@ impl GitCliProvider {
                 stop_child_tree(&mut child);
                 return Err(GitError::Cancelled { command: described });
             }
+            if output_exceeded.load(Ordering::Acquire) {
+                stop_child_tree(&mut child);
+                return Err(GitError::TooLarge {
+                    command: described,
+                    limit,
+                });
+            }
             if started.elapsed() >= timeout {
                 stop_child_tree(&mut child);
                 return Err(GitError::TimedOut {
@@ -407,6 +453,11 @@ impl GitCliProvider {
             }
             std::thread::sleep(NETWORK_POLL_INTERVAL);
         };
+        if !finish_readers_or_stop(&mut child, || {
+            stdout_reader.is_finished() && stderr_reader.is_finished()
+        }) {
+            return Err(unclosed_output_error(directory));
+        }
         let (stdout, read) = stdout_reader.join().map_err(|_| GitError::Io {
             action: "read the output of Git in",
             path: directory.to_path_buf(),
@@ -418,7 +469,8 @@ impl GitCliProvider {
             path: directory.to_path_buf(),
             detail: error.to_string(),
         })?;
-        if stdout.len() > limit {
+        if stdout.len() > limit || output_exceeded.load(Ordering::Acquire) {
+            stop_child_tree(&mut child);
             return Err(GitError::TooLarge {
                 command: described,
                 limit,
@@ -448,15 +500,11 @@ impl GitCliProvider {
         let stdin_writer = std::thread::spawn(move || stdin.write_all(&input));
         let stderr_pipe = child.stderr.take().expect("stderr was piped");
         let stderr_reader = std::thread::spawn(move || read_bounded_stderr(stderr_pipe));
-        let mut stdout_pipe = child.stdout.take().expect("stdout was piped");
-        let stdout_reader = std::thread::spawn(move || {
-            let mut stdout = Vec::new();
-            let read = stdout_pipe
-                .by_ref()
-                .take(limit as u64 + 1)
-                .read_to_end(&mut stdout);
-            (stdout, read)
-        });
+        let stdout_pipe = child.stdout.take().expect("stdout was piped");
+        let output_exceeded = Arc::new(AtomicBool::new(false));
+        let reader_exceeded = Arc::clone(&output_exceeded);
+        let stdout_reader =
+            std::thread::spawn(move || read_bounded_output(stdout_pipe, limit, &reader_exceeded));
         let started = std::time::Instant::now();
         let status = loop {
             match child.try_wait() {
@@ -475,6 +523,13 @@ impl GitCliProvider {
                 stop_child_tree(&mut child);
                 return Err(GitError::Cancelled { command: described });
             }
+            if output_exceeded.load(Ordering::Acquire) {
+                stop_child_tree(&mut child);
+                return Err(GitError::TooLarge {
+                    command: described,
+                    limit,
+                });
+            }
             if started.elapsed() >= self.local_read_timeout {
                 stop_child_tree(&mut child);
                 return Err(GitError::TimedOut {
@@ -484,6 +539,11 @@ impl GitCliProvider {
             }
             std::thread::sleep(NETWORK_POLL_INTERVAL);
         };
+        if !finish_readers_or_stop(&mut child, || {
+            stdin_writer.is_finished() && stdout_reader.is_finished() && stderr_reader.is_finished()
+        }) {
+            return Err(unclosed_output_error(directory));
+        }
         let _ = stdin_writer.join();
         let (stdout, read) = stdout_reader.join().map_err(|_| GitError::Io {
             action: "read the output of Git in",
@@ -496,7 +556,8 @@ impl GitCliProvider {
             path: directory.to_path_buf(),
             detail: error.to_string(),
         })?;
-        if stdout.len() > limit {
+        if stdout.len() > limit || output_exceeded.load(Ordering::Acquire) {
+            stop_child_tree(&mut child);
             return Err(GitError::TooLarge {
                 command: described,
                 limit,
@@ -525,6 +586,43 @@ impl GitCliProvider {
         network: bool,
         pipe_stdin: bool,
     ) -> Result<std::process::Child> {
+        if !directory.is_dir() {
+            return Err(GitError::Io {
+                action: "start Git in",
+                path: directory.to_path_buf(),
+                detail: "the working directory is not a directory".to_owned(),
+            });
+        }
+        let mut command = self.command(directory, arguments, network, pipe_stdin);
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            // Hooks and filters can outlive Git just like network helpers.
+            // Every service-owned command therefore gets a process group that
+            // cancellation can terminate as one unit.
+            // SAFETY: `setsid` is async-signal-safe and only changes the child
+            // process's session before exec.
+            unsafe {
+                command.pre_exec(|| {
+                    if libc::setsid() == -1 {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                    Ok(())
+                });
+            }
+        }
+        command.spawn().map_err(|error| GitError::Unavailable {
+            detail: format!("cannot start `{}`: {error}", self.program.display()),
+        })
+    }
+
+    fn command<S: AsRef<OsStr>>(
+        &self,
+        directory: &Path,
+        arguments: &[S],
+        network: bool,
+        pipe_stdin: bool,
+    ) -> Command {
         let mut command = Command::new(&self.program);
         // `--no-optional-locks` keeps a read from taking the index lock, so
         // asking what changed can never collide with a Git command the person
@@ -547,6 +645,20 @@ impl GitCliProvider {
             .env_remove("GIT_WORK_TREE")
             .env_remove("GIT_INDEX_FILE")
             .env_remove("GIT_OBJECT_DIRECTORY")
+            .env_remove("GIT_ALTERNATE_OBJECT_DIRECTORIES")
+            .env_remove("GIT_COMMON_DIR")
+            .env_remove("GIT_NAMESPACE")
+            .env_remove("GIT_REPLACE_REF_BASE")
+            .env_remove("GIT_SHALLOW_FILE")
+            .env_remove("GIT_GRAFT_FILE")
+            // Config injected by an outer Git command must not become
+            // repository authority for this independent operation.
+            .env_remove("GIT_CONFIG_PARAMETERS")
+            .env_remove("GIT_CONFIG_COUNT")
+            // Use the helpers installed alongside the resolved Git binary,
+            // not an inherited command-specific replacement directory.
+            .env_remove("GIT_EXEC_PATH")
+            .env_remove("GIT_TEMPLATE_DIR")
             // Nothing here can answer a prompt, and a blocked credential
             // helper would hang the editor rather than fail it.
             .env("GIT_TERMINAL_PROMPT", "0");
@@ -563,36 +675,8 @@ impl GitCliProvider {
             // falling back to the terminal is not.
             command.env("GIT_ASKPASS", "");
         }
-        #[cfg(unix)]
-        {
-            use std::os::unix::process::CommandExt;
-            // Hooks and filters can outlive Git just like network helpers.
-            // Every service-owned command therefore gets a process group that
-            // cancellation can terminate as one unit.
-            // SAFETY: `setsid` is async-signal-safe and only changes the child
-            // process's session before exec.
-            unsafe {
-                command.pre_exec(|| {
-                    if libc::setsid() == -1 {
-                        return Err(std::io::Error::last_os_error());
-                    }
-                    Ok(())
-                });
-            }
-        }
-        command.spawn().map_err(|error| {
-            if error.kind() == std::io::ErrorKind::NotFound {
-                GitError::Unavailable {
-                    detail: format!("`{}` was not found", self.program.display()),
-                }
-            } else {
-                GitError::Io {
-                    action: "start Git in",
-                    path: directory.to_path_buf(),
-                    detail: error.to_string(),
-                }
-            }
-        })
+        remove_inherited_config_entries(&mut command, std::env::vars_os().map(|(name, _)| name));
+        command
     }
 
     /// Runs a Git command that reaches the network, and gives up on it.
@@ -619,15 +703,11 @@ impl GitCliProvider {
         let mut child = self.spawn(directory, arguments, true, false)?;
         let limit = self.max_output_bytes;
 
-        let mut stdout_pipe = child.stdout.take().expect("stdout was piped");
-        let stdout_reader = std::thread::spawn(move || {
-            let mut stdout = Vec::new();
-            let _ = stdout_pipe
-                .by_ref()
-                .take(limit as u64 + 1)
-                .read_to_end(&mut stdout);
-            stdout
-        });
+        let stdout_pipe = child.stdout.take().expect("stdout was piped");
+        let output_exceeded = Arc::new(AtomicBool::new(false));
+        let reader_exceeded = Arc::clone(&output_exceeded);
+        let stdout_reader =
+            std::thread::spawn(move || read_bounded_output(stdout_pipe, limit, &reader_exceeded).0);
         let stderr_pipe = child.stderr.take().expect("stderr was piped");
         let stderr_reader = std::thread::spawn(move || read_bounded_stderr(stderr_pipe));
 
@@ -661,12 +741,25 @@ impl GitCliProvider {
                 stop_child_tree(&mut child);
                 return Err(GitError::Cancelled { command: described });
             }
+            if output_exceeded.load(Ordering::Acquire) {
+                stop_child_tree(&mut child);
+                return Err(GitError::TooLarge {
+                    command: described,
+                    limit,
+                });
+            }
             std::thread::sleep(NETWORK_POLL_INTERVAL);
         };
 
+        if !finish_readers_or_stop(&mut child, || {
+            stdout_reader.is_finished() && stderr_reader.is_finished()
+        }) {
+            return Err(unclosed_output_error(directory));
+        }
         let stdout = stdout_reader.join().unwrap_or_default();
         let stderr = stderr_reader.join().unwrap_or_default();
-        if stdout.len() > limit {
+        if stdout.len() > limit || output_exceeded.load(Ordering::Acquire) {
+            stop_child_tree(&mut child);
             return Err(GitError::TooLarge {
                 command: described,
                 limit,
@@ -844,11 +937,22 @@ impl GitCliProvider {
 
     /// The repository-relative form of a path, refusing one that is elsewhere.
     fn relative<'a>(&self, repository: &Repository, path: &'a Path) -> Result<&'a Path> {
-        repository
+        let relative = repository
             .relative(path)
             .ok_or_else(|| GitError::NotARepository {
                 path: path.to_path_buf(),
-            })
+            })?;
+        if relative.components().any(|component| {
+            matches!(
+                component,
+                Component::ParentDir | Component::RootDir | Component::Prefix(_)
+            )
+        }) {
+            return Err(GitError::NotARepository {
+                path: path.to_path_buf(),
+            });
+        }
+        Ok(relative)
     }
 
     fn head_content(&self, repository: &Repository, path: &Path) -> Result<BaseContent> {
@@ -859,6 +963,7 @@ impl GitCliProvider {
         let entries = self.run(
             repository.workdir(),
             &[
+                OsStr::new("--literal-pathspecs"),
                 OsStr::new("ls-tree"),
                 OsStr::new("-z"),
                 OsStr::new("HEAD"),
@@ -889,7 +994,8 @@ impl GitCliProvider {
             .unwrap_or(BaseContent::Binary))
     }
 
-    fn working_content(&self, path: &Path) -> Result<BaseContent> {
+    fn working_content(&self, repository: &Repository, path: &Path) -> Result<BaseContent> {
+        self.relative(repository, path)?;
         let metadata = match std::fs::symlink_metadata(path) {
             Ok(metadata) => metadata,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -906,6 +1012,11 @@ impl GitCliProvider {
         if !metadata.file_type().is_file() {
             return Ok(BaseContent::Binary);
         }
+        crate::path_safety::ensure_within_root(repository.workdir(), path).map_err(|_| {
+            GitError::NotARepository {
+                path: path.to_path_buf(),
+            }
+        })?;
         let content = read_file_for_comparison(path, self.max_output_bytes)?;
         if crate::external_open::is_binary(&content, true) {
             return Ok(BaseContent::Binary);
@@ -929,6 +1040,18 @@ impl GitCliProvider {
     }
 }
 
+fn remove_inherited_config_entries(
+    command: &mut Command,
+    names: impl IntoIterator<Item = OsString>,
+) {
+    for name in names {
+        let name_text = name.to_string_lossy();
+        if name_text.starts_with("GIT_CONFIG_KEY_") || name_text.starts_with("GIT_CONFIG_VALUE_") {
+            command.env_remove(name);
+        }
+    }
+}
+
 /// Reads a regular file that Git will not read for us, refusing one that is
 /// too large.
 ///
@@ -939,11 +1062,12 @@ impl GitCliProvider {
 /// measured. Symlinks are deliberately not followed: their target may be
 /// outside the repository, and Git would stage the link rather than that
 /// target's contents.
-fn read_bounded_file(path: &Path, limit: usize) -> Option<Vec<u8>> {
+fn read_bounded_file(root: &Path, path: &Path, limit: usize) -> Option<Vec<u8>> {
     let metadata = std::fs::symlink_metadata(path).ok()?;
     if !metadata.file_type().is_file() || metadata.len() > limit as u64 {
         return None;
     }
+    crate::path_safety::ensure_within_root(root, path).ok()?;
     let file = std::fs::File::open(path).ok()?;
     let mut content = Vec::new();
     let mut bounded = file.take(limit as u64);
@@ -966,6 +1090,41 @@ fn stop_child_tree(child: &mut std::process::Child) {
     }
     let _ = child.kill();
     let _ = child.wait();
+}
+
+/// Gives pipe workers one scheduling turn after Git exits, then stops the
+/// owned process group and gives the readers one final bounded grace period.
+///
+/// A detached hook or helper is still part of the service-owned process tree;
+/// it must not keep a repository lock or worker alive after the top-level Git
+/// command has completed. A descendant that escaped the process group can
+/// keep its detached reader thread until it closes the pipe, but never the
+/// caller waiting on an unbounded join.
+fn finish_readers_or_stop(
+    child: &mut std::process::Child,
+    mut readers_finished: impl FnMut() -> bool,
+) -> bool {
+    let deadline = std::time::Instant::now() + NETWORK_POLL_INTERVAL;
+    while !readers_finished() && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    if readers_finished() {
+        return true;
+    }
+    stop_child_tree(child);
+    let deadline = std::time::Instant::now() + NETWORK_POLL_INTERVAL;
+    while !readers_finished() && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    readers_finished()
+}
+
+fn unclosed_output_error(directory: &Path) -> GitError {
+    GitError::Io {
+        action: "finish reading Git output in",
+        path: directory.to_path_buf(),
+        detail: "a Git descendant kept inherited pipes open after Git exited".to_owned(),
+    }
 }
 
 impl GitProvider for GitCliProvider {
@@ -1035,7 +1194,7 @@ impl GitProvider for GitCliProvider {
                 continue;
             }
             let limit = MAX_UNTRACKED_STAT_BYTES.min(budget);
-            let Some(content) = read_bounded_file(&path, limit) else {
+            let Some(content) = read_bounded_file(repository.workdir(), &path, limit) else {
                 continue;
             };
             budget -= content.len();
@@ -1506,8 +1665,21 @@ impl GitProvider for GitCliProvider {
                 detail: "the exact patch must contain only its identified hunk".to_owned(),
             });
         }
+        self.relative(repository, &request.path)?;
+        let current_diff = self.diff(repository, request.scope, Some(&request.path))?;
+        let current_hunks = match super::parse_hunks(current_diff.as_bytes()) {
+            Ok(hunks) => hunks,
+            Err(GitError::Failed { .. }) => return stale_partial(),
+            Err(error) => return Err(error),
+        };
+        if !current_hunks
+            .iter()
+            .any(|hunk| hunk.identity == request.hunk && hunk.patch == request.patch)
+        {
+            return stale_partial();
+        }
         let actual = self.repository_fingerprint(repository)?;
-        let disk = bounded_file_sha256(&request.path)?;
+        let disk = bounded_file_sha256(repository, &request.path)?;
         if actual != request.fingerprint || disk != request.disk_sha256 {
             return stale_partial();
         }
@@ -1531,7 +1703,7 @@ impl GitProvider for GitCliProvider {
             return stale_partial();
         }
         if self.repository_fingerprint(repository)? != request.fingerprint
-            || bounded_file_sha256(&request.path)? != request.disk_sha256
+            || bounded_file_sha256(repository, &request.path)? != request.disk_sha256
         {
             return stale_partial();
         }
@@ -1563,7 +1735,7 @@ impl GitProvider for GitCliProvider {
             });
         }
         let fingerprint = self.repository_fingerprint(repository)?;
-        let disk_sha256 = bounded_file_sha256(&selection.path)?;
+        let disk_sha256 = bounded_file_sha256(repository, &selection.path)?;
         let relative = self.relative(repository, &selection.path)?;
         let status = self.status(repository)?;
         let file = status
@@ -1621,7 +1793,7 @@ impl GitProvider for GitCliProvider {
             });
         };
         if self.repository_fingerprint(repository)? != fingerprint
-            || bounded_file_sha256(&selection.path)? != disk_sha256
+            || bounded_file_sha256(repository, &selection.path)? != disk_sha256
             || selection
                 .guard
                 .as_ref()
@@ -1715,9 +1887,9 @@ impl GitProvider for GitCliProvider {
                 stderr: format!("full-file blame is limited to {MAX_BLAME_LINES} lines"),
             });
         }
-        let relative = repository
-            .relative(&request.path)
-            .ok_or_else(|| GitError::Failed {
+        let relative = self
+            .relative(repository, &request.path)
+            .map_err(|_| GitError::Failed {
                 command: "git blame".to_owned(),
                 code: None,
                 stderr: "the buffer is outside this working tree".to_owned(),
@@ -1730,6 +1902,7 @@ impl GitProvider for GitCliProvider {
             .and_then(|file| file.original_path.as_deref())
             .unwrap_or(relative);
         let mut arguments = vec![
+            OsString::from("--literal-pathspecs"),
             OsString::from("blame"),
             OsString::from("--line-porcelain"),
             OsString::from("--contents"),
@@ -1964,6 +2137,7 @@ impl GitProvider for GitCliProvider {
         let entries = self.run(
             repository.workdir(),
             &[
+                OsStr::new("--literal-pathspecs"),
                 OsStr::new("ls-files"),
                 OsStr::new("--stage"),
                 OsStr::new("-z"),
@@ -2005,7 +2179,7 @@ impl GitProvider for GitCliProvider {
             }),
             DiffScope::Unstaged => Ok(FileComparison {
                 previous: current,
-                current: self.working_content(path)?,
+                current: self.working_content(repository, path)?,
             }),
         }
     }
@@ -2020,6 +2194,7 @@ impl GitProvider for GitCliProvider {
         // repository, so leaving them on would let a checkout decide what
         // program runs when someone opens a diff.
         let mut arguments = vec![
+            OsString::from("--literal-pathspecs"),
             OsString::from("diff"),
             OsString::from("--no-ext-diff"),
             OsString::from("--no-textconv"),
@@ -2040,7 +2215,12 @@ impl GitProvider for GitCliProvider {
         let relative = self.relative(repository, path)?;
         self.run(
             repository.workdir(),
-            &[OsStr::new("add"), OsStr::new("--"), relative.as_os_str()],
+            &[
+                OsStr::new("--literal-pathspecs"),
+                OsStr::new("add"),
+                OsStr::new("--"),
+                relative.as_os_str(),
+            ],
         )
         .map(|_| ())
     }
@@ -2054,6 +2234,7 @@ impl GitProvider for GitCliProvider {
         self.run(
             repository.workdir(),
             &[
+                OsStr::new("--literal-pathspecs"),
                 OsStr::new("checkout"),
                 OsStr::new("HEAD"),
                 OsStr::new("--"),
@@ -2266,6 +2447,7 @@ impl GitProvider for GitCliProvider {
         self.run(
             repository.workdir(),
             &[
+                OsStr::new("--literal-pathspecs"),
                 OsStr::new("reset"),
                 OsStr::new("-q"),
                 OsStr::new("--"),
@@ -2457,7 +2639,35 @@ fn read_file_for_comparison(path: &Path, limit: usize) -> Result<Vec<u8>> {
     Ok(content)
 }
 
-fn bounded_file_sha256(path: &Path) -> Result<String> {
+fn bounded_file_sha256(repository: &Repository, path: &Path) -> Result<String> {
+    let is_within = path
+        .strip_prefix(repository.workdir())
+        .ok()
+        .is_some_and(|relative| {
+            !relative.components().any(|component| {
+                matches!(
+                    component,
+                    Component::ParentDir | Component::RootDir | Component::Prefix(_)
+                )
+            })
+        });
+    if !is_within {
+        return Err(GitError::NotARepository {
+            path: path.to_path_buf(),
+        });
+    }
+    let metadata = std::fs::symlink_metadata(path).map_err(|error| GitError::Io {
+        action: "fingerprint",
+        path: path.to_path_buf(),
+        detail: error.to_string(),
+    })?;
+    if !metadata.file_type().is_file()
+        || crate::path_safety::ensure_within_root(repository.workdir(), path).is_err()
+    {
+        return Err(GitError::NotARepository {
+            path: path.to_path_buf(),
+        });
+    }
     let file = std::fs::File::open(path).map_err(|error| GitError::Io {
         action: "fingerprint",
         path: path.to_path_buf(),
@@ -2518,9 +2728,109 @@ mod tests {
         assert_eq!(read_bounded_stderr(short.as_slice()), short);
 
         let long = vec![b'x'; MAX_STDERR_BYTES + 100];
-        let retained = read_bounded_stderr(long.as_slice());
+        let mut source = std::io::Cursor::new(long.as_slice());
+        let retained = read_bounded_stderr(&mut source);
         assert!(retained.starts_with(&long[..MAX_STDERR_BYTES]));
         assert!(retained.ends_with(STDERR_TRUNCATED));
+        assert_eq!(source.position(), long.len() as u64, "the pipe was drained");
+    }
+
+    #[test]
+    fn oversized_stdout_is_signalled_after_the_retained_bound() {
+        let source = vec![b'x'; 4096];
+        let exceeded = AtomicBool::new(false);
+        let (retained, read) = read_bounded_output(source.as_slice(), 128, &exceeded);
+
+        read.unwrap();
+        assert_eq!(retained.len(), 129);
+        assert!(exceeded.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn inherited_git_authority_is_removed_from_every_command() {
+        let provider = GitCliProvider::new("git");
+        let command = provider.command(Path::new("."), &["status"], false, false);
+        assert_eq!(
+            command.get_args().collect::<Vec<_>>(),
+            [OsStr::new("--no-optional-locks"), OsStr::new("status")]
+        );
+        let environment = command
+            .get_envs()
+            .map(|(name, value)| (name.to_owned(), value.map(OsStr::to_owned)))
+            .collect::<std::collections::HashMap<_, _>>();
+
+        for name in [
+            "GIT_DIR",
+            "GIT_WORK_TREE",
+            "GIT_INDEX_FILE",
+            "GIT_OBJECT_DIRECTORY",
+            "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+            "GIT_COMMON_DIR",
+            "GIT_NAMESPACE",
+            "GIT_REPLACE_REF_BASE",
+            "GIT_SHALLOW_FILE",
+            "GIT_GRAFT_FILE",
+            "GIT_CONFIG_PARAMETERS",
+            "GIT_CONFIG_COUNT",
+            "GIT_EXEC_PATH",
+            "GIT_TEMPLATE_DIR",
+        ] {
+            assert_eq!(environment.get(OsStr::new(name)), Some(&None), "{name}");
+        }
+        assert_eq!(
+            environment.get(OsStr::new("GIT_TERMINAL_PROMPT")),
+            Some(&Some(OsString::from("0")))
+        );
+
+        let mut command = Command::new("git");
+        remove_inherited_config_entries(
+            &mut command,
+            [
+                OsString::from("GIT_CONFIG_KEY_0"),
+                OsString::from("GIT_CONFIG_VALUE_0"),
+                OsString::from("GIT_CONFIG_OTHER"),
+            ],
+        );
+        let removed = command
+            .get_envs()
+            .map(|(name, value)| (name.to_owned(), value.map(OsStr::to_owned)))
+            .collect::<std::collections::HashMap<_, _>>();
+        assert_eq!(removed.get(OsStr::new("GIT_CONFIG_KEY_0")), Some(&None));
+        assert_eq!(removed.get(OsStr::new("GIT_CONFIG_VALUE_0")), Some(&None));
+        assert!(!removed.contains_key(OsStr::new("GIT_CONFIG_OTHER")));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn local_reads_refuse_traversal_and_symlinked_parent_escapes() {
+        use std::os::unix::fs::symlink;
+
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let base = std::env::temp_dir().join(format!(
+            "runyte-git-local-path-{}-{nonce}",
+            std::process::id()
+        ));
+        let root = base.join("repository");
+        let outside = base.join("outside");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("secret.txt"), "outside\n").unwrap();
+        symlink(&outside, root.join("escape")).unwrap();
+        let repository = Repository::new(&root);
+        let provider = GitCliProvider::new("git");
+
+        assert!(matches!(
+            provider.relative(&repository, &root.join("../outside/secret.txt")),
+            Err(GitError::NotARepository { .. })
+        ));
+        assert!(matches!(
+            provider.working_content(&repository, &root.join("escape/secret.txt")),
+            Err(GitError::NotARepository { .. })
+        ));
+        std::fs::remove_dir_all(base).unwrap();
     }
 
     #[test]
@@ -2870,6 +3180,75 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 
+    /// A helper may detach just before Git exits successfully. Its inherited
+    /// pipes must not keep the completed worker blocked in a reader join.
+    #[cfg(unix)]
+    #[test]
+    fn a_detached_helper_cannot_hold_completed_command_pipes_open() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "runyte-git-detached-helper-{}-{nonce}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let program = root.join("git-with-detached-helper");
+        std::fs::write(&program, "#!/bin/sh\nsleep 30 &\nexit 0\n").unwrap();
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let started = std::time::Instant::now();
+
+        GitCliProvider::new(&program)
+            .run(&root, &["status"])
+            .unwrap();
+
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(2),
+            "a detached helper kept the completed command's pipes open"
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// Even a descendant that creates a new session and therefore cannot be
+    /// reached through Git's process group must not turn a completed command
+    /// into an unbounded reader join.
+    #[cfg(unix)]
+    #[test]
+    fn a_session_escaping_helper_fails_without_blocking_the_worker() {
+        use std::os::unix::fs::PermissionsExt;
+
+        if Command::new("setsid").arg("true").status().is_err() {
+            return;
+        }
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "runyte-git-escaped-helper-{}-{nonce}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let program = root.join("git-with-escaped-helper");
+        std::fs::write(&program, "#!/bin/sh\nsetsid sleep 2 &\nexit 0\n").unwrap();
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let started = std::time::Instant::now();
+
+        let error = GitCliProvider::new(&program)
+            .run(&root, &["status"])
+            .unwrap_err();
+
+        assert!(matches!(error, GitError::Io { .. }), "{error:?}");
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(1),
+            "an escaped helper kept the completed command's pipes open"
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn a_missing_git_reads_as_unavailable_rather_than_a_failure() {
         let provider = GitCliProvider::new("runyte-git-that-does-not-exist");
@@ -2878,6 +3257,35 @@ mod tests {
             .unwrap_err();
 
         assert!(error.is_unavailable(), "{error}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_non_executable_git_reads_as_unavailable() {
+        let root = std::env::temp_dir().join(format!(
+            "runyte-non-executable-git-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let program = root.join("git");
+        std::fs::write(&program, "not executable").unwrap();
+
+        let error = GitCliProvider::new(&program)
+            .run_text(&root, &["status"])
+            .unwrap_err();
+
+        assert!(error.is_unavailable(), "{error}");
+        let not_directory = root.join("ordinary-file");
+        std::fs::write(&not_directory, "content").unwrap();
+        assert!(matches!(
+            GitCliProvider::new("git").run_text(&not_directory, &["status"]),
+            Err(GitError::Io { .. })
+        ));
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

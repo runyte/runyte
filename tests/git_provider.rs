@@ -993,6 +993,32 @@ fn awkward_paths_survive_status_and_staged_reads() {
     );
 }
 
+/// `--` terminates option parsing, but only Git's literal-pathspec mode keeps
+/// the leading `:(glob)` from widening this one-file action to every path.
+#[test]
+fn pathspec_magic_in_a_filename_never_broadens_staging() {
+    let repository = TempRepository::new("literal-pathspec");
+    let magic = ":(glob)*";
+    repository.write(magic, "old magic\n");
+    repository.write("victim.txt", "old victim\n");
+    repository.commit("base");
+    repository.write(magic, "new magic\n");
+    repository.write("victim.txt", "new victim\n");
+
+    provider()
+        .stage(&repository.repository(), &repository.path().join(magic))
+        .unwrap();
+
+    assert_eq!(
+        git_output(&repository, &["diff", "--cached", "--name-only"]),
+        format!("{magic}\n")
+    );
+    assert_eq!(
+        git_output(&repository, &["diff", "--name-only"]),
+        "victim.txt\n"
+    );
+}
+
 #[test]
 fn staged_content_is_the_index_rather_than_head() {
     let repository = TempRepository::new("staged");
@@ -1974,6 +2000,30 @@ fn a_path_outside_the_repository_is_refused() {
 }
 
 #[test]
+fn blame_refuses_a_parent_traversal_before_git_sees_it() {
+    let repository = TempRepository::new("blame-parent-traversal");
+    repository.write("source.rs", "inside\n");
+    repository.commit("base");
+    let path = repository.path().join("../outside.rs");
+
+    let error = provider()
+        .blame(
+            &repository.repository(),
+            &BlameRequest {
+                path,
+                content: "outside\n".to_owned(),
+                lines: None,
+            },
+        )
+        .unwrap_err();
+
+    assert!(
+        error.to_string().contains("outside this working tree"),
+        "{error}"
+    );
+}
+
+#[test]
 fn the_two_diff_scopes_are_different_comparisons() {
     let repository = TempRepository::new("diff-scopes");
     repository.write("source.rs", "committed\n");
@@ -2256,6 +2306,32 @@ fn a_message_full_of_shell_characters_is_recorded_verbatim() {
         .unwrap();
     assert_eq!(String::from_utf8_lossy(&logged.stdout).trim(), awkward);
     assert!(!repository.path().join("pwned").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn a_successful_verbose_hook_is_not_killed_by_the_error_bound() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let repository = TempRepository::new("verbose-hook");
+    repository.write("source.rs", "staged\n");
+    repository.git(&["add", "source.rs"]);
+    let hook = repository.path().join(".git/hooks/pre-commit");
+    fs::write(
+        &hook,
+        "#!/bin/sh\nset -e\ndd if=/dev/zero bs=1100000 count=1 2>/dev/null | tr '\\000' x >&2\nexit 0\n",
+    )
+    .unwrap();
+    fs::set_permissions(&hook, fs::Permissions::from_mode(0o700)).unwrap();
+
+    provider()
+        .commit(&repository.repository(), "verbose hook")
+        .expect("bounding retained stderr must not close the hook's pipe");
+
+    assert_eq!(
+        git_output(&repository, &["log", "-1", "--format=%s"]).trim(),
+        "verbose hook"
+    );
 }
 
 #[test]
@@ -3061,6 +3137,31 @@ fn partial_patch_identity_and_single_hunk_are_enforced_at_apply() {
         git_output(&repository, &["show", ":source.txt"]),
         "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\n"
     );
+}
+
+#[test]
+fn partial_patch_bytes_are_bound_to_the_claimed_path_at_apply() {
+    let repository = TempRepository::new("partial-request-path-binding");
+    repository.write("first.txt", "old\n");
+    repository.write("second.txt", "old\n");
+    repository.commit("base");
+    repository.write("first.txt", "new\n");
+    repository.write("second.txt", "new\n");
+    let provider = provider();
+    let first = repository.path().join("first.txt");
+    let second = repository.path().join("second.txt");
+    let mut request = provider
+        .prepare_partial(&repository.repository(), &line_selection(first, (1, 1)))
+        .unwrap();
+    request.path = second;
+
+    let error = provider
+        .apply_partial(&repository.repository(), &request)
+        .unwrap_err();
+
+    assert!(error.to_string().contains("stale patch"), "{error}");
+    assert_eq!(git_output(&repository, &["show", ":first.txt"]), "old\n");
+    assert_eq!(git_output(&repository, &["show", ":second.txt"]), "old\n");
 }
 
 #[test]
