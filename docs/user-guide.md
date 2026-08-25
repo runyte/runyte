@@ -799,7 +799,10 @@ the terminal, leaving the first text file active. Put a one-based `+LINE` or
 `+LINE:COLUMN` immediately before a file to place its caret when that buffer is
 first shown; columns count Unicode characters rather than bytes. For example,
 `runyte +12:4 "notes with spaces.md" src/main.rs` opens both files at once.
-Repeated spellings of the same resolved path share one buffer. Use `--` before
+Repeated spellings of the same resolved path share one buffer, both at startup
+and when opened later in standalone or persistent mode. A save-as refuses a
+path already owned by another live buffer, including its resolved aliases;
+close that buffer before deliberately taking the path over. Use `--` before
 paths beginning with `-` or `+`, as in `runyte -- +draft.md -notes.md`.
 Binary startup targets still use the interactive external-program prompt;
 open binary files one at a time so no explicit target can be silently skipped.
@@ -1517,9 +1520,11 @@ title means the project holds more than 50,000 matches for the query, which a
 longer query resolves — on a project of 150,000 lines only a single-character
 query reaches it.
 
-Opening a binary file — one whose first eight kilobytes hold a NUL byte or do
-not decode as UTF-8 — asks which program should have it instead of loading it
-as text. Type a name found on `PATH` or an absolute path; Enter hands the file
+Opening a binary file — one whose bytes hold a NUL or do not decode as UTF-8 —
+asks which program should have it instead of loading it as text. An initial
+eight-kilobyte probe avoids reading an obvious binary twice; the final read
+still validates the complete file before it becomes a buffer. Type a name
+found on `PATH` or an absolute path; Enter hands the file
 over and Esc leaves it alone. Recent choices are offered above the prompt, most
 recent first, with `↑`/`↓` to select and Tab to complete, and the most recent
 one seeds the prompt. The list is cached under Runyte's platform cache

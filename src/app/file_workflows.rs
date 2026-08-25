@@ -9,7 +9,7 @@ use super::{
     FsPlan, GeneratedViewIdentity, HashSet, InputGrammar, Layout, MAX_DIFF_BYTES, MaximizedPane,
     MaximizedView, Mode, PaneDirectory, Path, PathBuf, PromptKind, Result, Selection, Transaction,
     TransferMode, bail, buffer_language, diff_row_for_identity, diff_row_identity, enclosing_area,
-    ensure, expand_home_path, external_open, fs, open_or_new, parse_buffer,
+    ensure, expand_home_path, external_open, fs, open_or_new_at_identity, parse_buffer,
     resolved_operation_path, trailing_whitespace_changes,
 };
 
@@ -471,6 +471,7 @@ impl App {
 
     pub(super) fn open_file(&mut self, path: PathBuf) -> Result<()> {
         let path = self.resolve_working_path(path);
+        let requested_identity = crate::path_safety::path_identity(&path)?;
         self.remember_active_directory_view();
         let was_showing = self.active().buffer;
         let buffer_id = if path.is_dir() {
@@ -478,11 +479,7 @@ impl App {
                 Some(buffer_id) => buffer_id,
                 None => return Ok(()),
             }
-        } else if let Some(index) = self.buffers.iter().enumerate().find_map(|(index, buffer)| {
-            (!self.closed_buffers.contains(&index)
-                && buffer.path.as_deref() == Some(path.as_path()))
-            .then_some(index)
-        }) {
+        } else if let Some(index) = self.live_buffer_for_path(&path) {
             index
         } else if external_open::looks_binary(&path) {
             // Before the buffer exists, so a file Runyte cannot edit never
@@ -490,7 +487,21 @@ impl App {
             self.ask_for_external_program(path);
             return Ok(());
         } else {
-            let buffer = open_or_new(&path, self.config.editor.show_hidden_files)?;
+            let buffer = match open_or_new_at_identity(
+                &path,
+                &requested_identity,
+                self.config.editor.show_hidden_files,
+            ) {
+                Ok(buffer) => buffer,
+                Err(error) if error.is::<crate::buffer::BinaryFileError>() => {
+                    // The file changed after the bounded probe, or binary
+                    // bytes appeared beyond it. The final read owns the
+                    // classification and must still use the external opener.
+                    self.ask_for_external_program(path);
+                    return Ok(());
+                }
+                Err(error) => return Err(error),
+            };
             self.syntax.push(parse_buffer(&buffer, &self.registry));
             self.buffers.push(buffer);
             // A newly opened file is the one moment its staged text has to be
@@ -533,9 +544,18 @@ impl App {
     }
 
     fn live_buffer_for_path(&self, path: &Path) -> Option<usize> {
+        let identity = crate::path_safety::path_identity(path).ok()?;
+        self.live_buffer_for_identity(&identity)
+    }
+
+    fn live_buffer_for_identity(&self, identity: &Path) -> Option<usize> {
         self.buffers.iter().enumerate().find_map(|(index, buffer)| {
-            (!self.closed_buffers.contains(&index) && buffer.path.as_deref() == Some(path))
-                .then_some(index)
+            (!self.closed_buffers.contains(&index)
+                && buffer.path.as_deref().is_some_and(|candidate| {
+                    crate::path_safety::path_identity(candidate)
+                        .is_ok_and(|candidate| candidate == identity)
+                }))
+            .then_some(index)
         })
     }
 
@@ -591,10 +611,19 @@ impl App {
             .into_iter()
             .map(|path| self.resolve_working_path(path))
             .collect::<Vec<_>>();
-        let mut staged: Vec<(PathBuf, Buffer, Option<DocumentSyntax>)> = Vec::new();
+        let identities = paths
+            .iter()
+            .map(|path| crate::path_safety::path_identity(path))
+            .collect::<Result<Vec<_>>>()?;
+        let mut staged: Vec<(PathBuf, PathBuf, Buffer, Option<DocumentSyntax>)> = Vec::new();
         let mut refreshed = Vec::new();
         let mut prepared = Vec::with_capacity(paths.len());
-        for path in &paths {
+        for (path, identity) in paths.iter().zip(&identities) {
+            ensure!(
+                crate::path_safety::path_identity(path)? == *identity,
+                "{} changed its resolved identity while the request was being prepared; retry the open",
+                path.display()
+            );
             if let Some(index) = self.live_buffer_for_path(path) {
                 if let Some(pending_wait_buffers) = pending_wait_buffers
                     && !self.buffers[index].dirty
@@ -614,7 +643,10 @@ impl App {
                 prepared.push(Prepared::Live(index));
                 continue;
             }
-            if let Some(slot) = staged.iter().position(|(staged, _, _)| staged == path) {
+            if let Some(slot) = staged
+                .iter()
+                .position(|(_, staged_identity, _, _)| staged_identity == identity)
+            {
                 prepared.push(Prepared::Staged(slot));
                 continue;
             }
@@ -622,15 +654,16 @@ impl App {
                 !external_open::looks_binary(path),
                 "binary files cannot be opened through the workspace protocol"
             );
-            let buffer = open_or_new(path, self.config.editor.show_hidden_files)?;
+            let buffer =
+                open_or_new_at_identity(path, identity, self.config.editor.show_hidden_files)?;
             let syntax = parse_buffer(&buffer, &self.registry);
             prepared.push(Prepared::Staged(staged.len()));
-            staged.push((path.clone(), buffer, syntax));
+            staged.push((path.clone(), identity.clone(), buffer, syntax));
         }
 
         let first_is_directory = prepared.first().is_some_and(|prepared| match prepared {
             Prepared::Live(index) => self.buffers[*index].is_directory(),
-            Prepared::Staged(slot) => staged[*slot].1.is_directory(),
+            Prepared::Staged(slot) => staged[*slot].2.is_directory(),
         });
         let activated_directory = if activate && first_is_directory {
             let path = &paths[0];
@@ -673,7 +706,7 @@ impl App {
             self.normalize_buffer(index);
         }
         let mut staged_ids = vec![None; staged.len()];
-        for (slot, (path, buffer, syntax)) in staged.into_iter().enumerate() {
+        for (slot, (path, _, buffer, syntax)) in staged.into_iter().enumerate() {
             if Some(slot) == activated_slot {
                 staged_ids[slot] = activated_directory;
                 continue;
@@ -944,15 +977,45 @@ impl App {
             }
             return Ok(());
         }
+        let path = path.map(|path| self.resolve_working_path(path));
+        let destination = path.as_deref().or(self.buffers[buffer_id].path.as_deref());
+        let expected_identity = destination
+            .map(crate::path_safety::path_identity)
+            .transpose()?;
+        if let Some(identity) = expected_identity.as_deref()
+            && let Some(owner) = self.buffers.iter().enumerate().find_map(|(index, buffer)| {
+                (index != buffer_id
+                    && !self.closed_buffers.contains(&index)
+                    && buffer.path.as_deref().is_some_and(|candidate| {
+                        crate::path_safety::path_identity(candidate)
+                            .is_ok_and(|candidate| candidate == identity)
+                    }))
+                .then_some(index)
+            })
+        {
+            self.error(format!(
+                "{} is already open in buffer {}; close that buffer before writing this one there",
+                destination
+                    .expect("a checked identity came from a destination")
+                    .display(),
+                self.buffers[owner].display_name()
+            ));
+            return Ok(());
+        }
         if self.config.editor.trim_trailing_whitespace
             && (path.is_some() || self.buffers[buffer_id].path.is_some())
         {
             self.trim_trailing_whitespace(buffer_id);
         }
         let result = if let Some(path) = path {
-            let path = self.resolve_working_path(path);
             self.invalidate_partial_guards(buffer_id);
-            self.buffers[buffer_id].save_as(path, replace)
+            self.buffers[buffer_id].save_as_checked(
+                path,
+                replace,
+                expected_identity.expect("save-as has a destination identity"),
+            )
+        } else if let Some(expected_identity) = expected_identity {
+            self.buffers[buffer_id].save_checked(replace, expected_identity)
         } else {
             self.buffers[buffer_id].save(replace)
         };

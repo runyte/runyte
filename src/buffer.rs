@@ -31,6 +31,22 @@ pub use crate::text::Position;
 
 static NEXT_SAVE_TEMPORARY: AtomicU64 = AtomicU64::new(1);
 
+/// A file whose complete bytes cannot be represented safely by a text buffer.
+///
+/// Kept typed so the application can route a file that changed after its
+/// bounded binary probe to the external-program workflow instead of showing a
+/// generic read failure.
+#[derive(Debug)]
+pub struct BinaryFileError;
+
+impl std::fmt::Display for BinaryFileError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("binary file cannot be loaded as editable text")
+    }
+}
+
+impl std::error::Error for BinaryFileError {}
+
 /// The display name of the changed-file list, which is also how the editor
 /// finds the buffer again rather than opening a second one.
 pub const GIT_STATUS_NAME: &str = "[git status]";
@@ -420,10 +436,16 @@ fn read_text_and_state(path: &Path, action: &str) -> Result<(String, DiskState)>
     let metadata = file
         .metadata()
         .with_context(|| format!("failed to inspect {}", path.display()))?;
-    let mut contents = String::new();
-    file.read_to_string(&mut contents)
+    let mut contents = Vec::new();
+    file.read_to_end(&mut contents)
         .with_context(|| format!("failed to {action} {}", path.display()))?;
-    let state = DiskState::from_contents(&file, &metadata, contents.as_bytes())?;
+    if crate::external_open::is_binary(&contents, true) {
+        return Err(BinaryFileError)
+            .with_context(|| format!("failed to {action} {}", path.display()));
+    }
+    let state = DiskState::from_contents(&file, &metadata, &contents)?;
+    let contents =
+        String::from_utf8(contents).expect("complete binary classification rejects invalid UTF-8");
     Ok((contents, state))
 }
 
@@ -524,6 +546,22 @@ fn atomic_write(
     )
 }
 
+fn atomic_write_checked(
+    path: &Path,
+    contents: &[u8],
+    policy: ReplacePolicy<'_>,
+    expected_identity: &Path,
+) -> Result<AtomicWriteStatus> {
+    atomic_write_with_identity(
+        path,
+        contents,
+        policy,
+        Some(expected_identity),
+        |file, contents| file.write_all(contents),
+        sync_parent,
+    )
+}
+
 fn atomic_write_with(
     path: &Path,
     contents: &[u8],
@@ -531,6 +569,24 @@ fn atomic_write_with(
     write_contents: impl FnOnce(&mut File, &[u8]) -> io::Result<()>,
     sync_directory: impl FnOnce(&Path) -> io::Result<()>,
 ) -> Result<AtomicWriteStatus> {
+    atomic_write_with_identity(path, contents, policy, None, write_contents, sync_directory)
+}
+
+fn atomic_write_with_identity(
+    path: &Path,
+    contents: &[u8],
+    policy: ReplacePolicy<'_>,
+    expected_identity: Option<&Path>,
+    write_contents: impl FnOnce(&mut File, &[u8]) -> io::Result<()>,
+    sync_directory: impl FnOnce(&Path) -> io::Result<()>,
+) -> Result<AtomicWriteStatus> {
+    if let Some(expected) = expected_identity {
+        ensure!(
+            crate::path_safety::path_identity(path)?.as_path() == expected,
+            "{} changed its resolved identity before it could be saved",
+            path.display()
+        );
+    }
     let destination = resolve_write_target(path, 0)?;
     let parent = destination
         .parent()
@@ -569,6 +625,13 @@ fn atomic_write_with(
          installed",
         path.display()
     );
+    if let Some(expected) = expected_identity {
+        ensure!(
+            crate::path_safety::path_identity(path)?.as_path() == expected,
+            "{} changed its resolved identity while it was being saved; the replacement was not installed",
+            path.display()
+        );
+    }
     let replacement_warning = match replace_file(temporary.path(), &destination, policy) {
         Ok(warning) => warning,
         Err(error) => {
@@ -2306,6 +2369,16 @@ impl Buffer {
         self.save_with(replace, atomic_write)
     }
 
+    pub(crate) fn save_checked(
+        &mut self,
+        replace: bool,
+        expected_identity: PathBuf,
+    ) -> Result<SaveOutcome> {
+        self.save_with(replace, move |path, contents, policy| {
+            atomic_write_checked(path, contents, policy, &expected_identity)
+        })
+    }
+
     fn save_with(
         &mut self,
         replace: bool,
@@ -2356,7 +2429,7 @@ impl Buffer {
     /// unlike an explorer plan it neither stages nor trashes what it destroys.
     /// `:write! <path>` is the way to mean it.
     pub fn save_as(&mut self, path: PathBuf, replace: bool) -> Result<SaveOutcome> {
-        let same_path = self.path.as_deref() == Some(path.as_path());
+        let same_path = self.has_path_identity(&path);
         let expected = self.disk_state.clone();
         self.save_as_with(path, replace, move |path, contents| {
             let policy = match (replace, same_path, expected.as_ref()) {
@@ -2365,6 +2438,24 @@ impl Buffer {
                 (false, _, _) => ReplacePolicy::NoReplace,
             };
             atomic_write(path, contents, policy)
+        })
+    }
+
+    pub(crate) fn save_as_checked(
+        &mut self,
+        path: PathBuf,
+        replace: bool,
+        expected_identity: PathBuf,
+    ) -> Result<SaveOutcome> {
+        let same_path = self.has_path_identity(&path);
+        let expected_state = self.disk_state.clone();
+        self.save_as_with(path, replace, move |path, contents| {
+            let policy = match (replace, same_path, expected_state.as_ref()) {
+                (true, _, _) => ReplacePolicy::Force,
+                (false, true, Some(state)) => ReplacePolicy::Expected(state),
+                (false, _, _) => ReplacePolicy::NoReplace,
+            };
+            atomic_write_checked(path, contents, policy, &expected_identity)
         })
     }
 
@@ -2381,7 +2472,7 @@ impl Buffer {
             !self.is_directory(),
             "directory buffers cannot be written to another path"
         );
-        if !replace && self.path.as_deref() != Some(path.as_path()) {
+        if !replace && !self.has_path_identity(&path) {
             // `symlink_metadata` so a dangling symlink still counts as taken;
             // writing through it would create the file it points at.
             anyhow::ensure!(
@@ -2415,6 +2506,22 @@ impl Buffer {
             )),
         }
         Ok(write_status.finish())
+    }
+
+    fn has_path_identity(&self, requested: &Path) -> bool {
+        let Some(current) = self.path.as_deref() else {
+            return false;
+        };
+        if current == requested {
+            return true;
+        }
+        match (
+            crate::path_safety::path_identity(current),
+            crate::path_safety::path_identity(requested),
+        ) {
+            (Ok(current), Ok(requested)) => current == requested,
+            _ => false,
+        }
     }
 
     /// Replaces a file buffer with its current contents on disk.
@@ -3291,6 +3398,63 @@ mod tests {
     }
 
     #[test]
+    fn reload_rejects_binary_replacement_without_changing_live_state() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "runyte-buffer-binary-reload-{}-{unique}.txt",
+            std::process::id()
+        ));
+        fs::write(&path, "original\n").unwrap();
+        let mut buffer = Buffer::open(&path).unwrap();
+        assert!(buffer.apply(&Transaction::insert(0, "unsaved ")));
+        let revision = buffer.revision();
+        fs::write(&path, b"replacement\0binary").unwrap();
+
+        let error = buffer.reload().unwrap_err();
+
+        assert!(error.is::<BinaryFileError>(), "{error:#}");
+        assert_eq!(buffer.to_string(), "unsaved original\n");
+        assert_eq!(buffer.revision(), revision);
+        assert!(buffer.dirty);
+        assert!(buffer.undo(), "a refused reload must retain undo history");
+        assert_eq!(buffer.to_string(), "original\n");
+        assert!(!buffer.dirty);
+        fs::remove_file(path).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn save_as_accepts_an_alias_of_the_buffers_current_file() {
+        use std::os::unix::fs::symlink;
+
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "runyte-buffer-save-as-alias-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let target = directory.join("target.txt");
+        let alias = directory.join("alias.txt");
+        fs::write(&target, "original\n").unwrap();
+        symlink("target.txt", &alias).unwrap();
+        let mut buffer = Buffer::open(&target).unwrap();
+        assert!(buffer.apply(&Transaction::insert(0, "edited ")));
+
+        buffer.save_as(alias.clone(), false).unwrap();
+
+        assert_eq!(fs::read_to_string(&target).unwrap(), "edited original\n");
+        assert_eq!(buffer.path.as_deref(), Some(alias.as_path()));
+        assert!(!buffer.dirty);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn retargeting_does_not_accept_an_unrelated_destination_state() {
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -3507,6 +3671,52 @@ mod tests {
         assert_eq!(fs::read_to_string(first).unwrap(), "first\n");
         assert_eq!(fs::read_to_string(second).unwrap(), "second\n");
         assert!(buffer.dirty);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_identity_checked_force_save_rejects_a_retargeted_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "runyte-buffer-checked-save-race-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let first = directory.join("first.txt");
+        let second = directory.join("second.txt");
+        let link = directory.join("link.txt");
+        fs::write(&first, "first\n").unwrap();
+        fs::write(&second, "second\n").unwrap();
+        symlink(&first, &link).unwrap();
+        let expected_identity = crate::path_safety::path_identity(&link).unwrap();
+
+        let error = atomic_write_with_identity(
+            &link,
+            b"replacement\n",
+            ReplacePolicy::Force,
+            Some(&expected_identity),
+            |file, contents| {
+                file.write_all(contents)?;
+                fs::remove_file(&link)?;
+                symlink(&second, &link)
+            },
+            sync_parent,
+        )
+        .unwrap_err();
+
+        assert!(
+            error.to_string().contains("symbolic-link target")
+                || error.to_string().contains("resolved identity"),
+            "{error:#}"
+        );
+        assert_eq!(fs::read_to_string(first).unwrap(), "first\n");
+        assert_eq!(fs::read_to_string(second).unwrap(), "second\n");
         fs::remove_dir_all(directory).unwrap();
     }
 

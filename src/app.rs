@@ -22,7 +22,9 @@ use crate::workspace::{
 };
 
 use crate::{
-    buffer::{Buffer, BufferKind, GeneratedViewIdentity, Position, WorkspaceSearchTarget},
+    buffer::{
+        BinaryFileError, Buffer, BufferKind, GeneratedViewIdentity, Position, WorkspaceSearchTarget,
+    },
     clipboard::{CommandClipboard, SystemClipboard},
     command::{
         ArgumentKind, COMMANDS, ColonCommand, CommandArguments, CommandCategory,
@@ -3516,6 +3518,20 @@ fn open_or_new(path: &Path, show_hidden: bool) -> Result<Buffer> {
     }
 }
 
+fn open_or_new_at_identity(
+    path: &Path,
+    expected_identity: &Path,
+    show_hidden: bool,
+) -> Result<Buffer> {
+    let buffer = open_or_new(path, show_hidden)?;
+    ensure!(
+        crate::path_safety::path_identity(path)?.as_path() == expected_identity,
+        "{} changed its resolved identity while it was being opened; retry the open",
+        path.display()
+    );
+    Ok(buffer)
+}
+
 fn workspace_edit_path_identity(path: &Path) -> Result<PathBuf> {
     let resolved = crate::path_safety::canonicalize_existing_prefix(path)?;
     let mut normalized = PathBuf::new();
@@ -3561,13 +3577,14 @@ fn open_launch_targets(
 
     for target in targets {
         let path = resolve_launch_path(target.path, working_directory);
-        if let Some(buffer) = buffer_by_path.get(&path).copied() {
+        let identity = crate::path_safety::path_identity(&path)?;
+        if let Some(buffer) = buffer_by_path.get(&identity).copied() {
             if let Some(position) = target.position {
                 launch_positions.entry(buffer).or_insert(position);
             }
             continue;
         }
-        if !seen_paths.insert(path.clone()) {
+        if !seen_paths.insert(identity.clone()) {
             continue;
         }
         if external_open::looks_binary(&path) {
@@ -3579,14 +3596,25 @@ fn open_launch_targets(
             continue;
         }
 
-        let buffer = open_or_new(&path, show_hidden)?;
+        let buffer = match open_or_new_at_identity(&path, &identity, show_hidden) {
+            Ok(buffer) => buffer,
+            Err(error) if error.is::<BinaryFileError>() => {
+                ensure!(
+                    binary_argument.is_none(),
+                    "multiple binary startup targets are not supported; open binary files one at a time"
+                );
+                binary_argument = Some(path);
+                continue;
+            }
+            Err(error) => return Err(error),
+        };
         let buffer_id = buffers.len();
         if let Some(position) = target.position {
             launch_positions.insert(buffer_id, position);
         }
         syntax.push(parse_buffer(&buffer, registry));
         buffers.push(buffer);
-        buffer_by_path.insert(path, buffer_id);
+        buffer_by_path.insert(identity, buffer_id);
     }
 
     if buffers.is_empty() {

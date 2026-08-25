@@ -1580,6 +1580,39 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn one_host_request_deduplicates_resolved_file_aliases() {
+        use std::os::unix::fs::symlink;
+
+        let root = std::env::temp_dir().join(format!(
+            "runyte-host-alias-{}-{}",
+            std::process::id(),
+            unique_test_id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let target = root.join("target.txt");
+        let alias = root.join("alias.txt");
+        std::fs::write(&target, "shared").unwrap();
+        symlink("target.txt", &alias).unwrap();
+        let mut host = host();
+
+        let opened = host
+            .open_buffers([alias.clone(), target.clone()], false)
+            .unwrap();
+
+        assert_eq!(opened.len(), 2);
+        assert_eq!(opened[0], opened[1]);
+        assert_eq!(
+            live_paths(&host)
+                .into_iter()
+                .filter(|path| path == &alias || path == &target)
+                .count(),
+            1
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn a_failing_later_path_opens_no_buffer_and_moves_no_pane() {
         let root = std::env::temp_dir().join(format!(

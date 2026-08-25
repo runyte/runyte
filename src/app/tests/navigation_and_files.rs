@@ -2,6 +2,107 @@
 
 use super::*;
 
+#[cfg(unix)]
+#[test]
+fn opening_a_symlink_alias_reuses_the_live_file_buffer() {
+    use std::os::unix::fs::symlink;
+
+    let directory = temporary("open-symlink-alias");
+    fs::create_dir_all(&directory).unwrap();
+    let target = directory.join("target.txt");
+    let alias = directory.join("alias.txt");
+    fs::write(&target, "original\n").unwrap();
+    symlink("target.txt", &alias).unwrap();
+    let mut app = App::new(Config::default(), None).unwrap();
+
+    app.open_file(alias).unwrap();
+    let buffer = app.active().buffer;
+    app.apply_to_buffer(buffer, &Transaction::insert(0, "unsaved "));
+    app.open_file(target).unwrap();
+
+    assert_eq!(app.active().buffer, buffer);
+    assert_eq!(app.active_buffer().to_string(), "unsaved original\n");
+    assert_eq!(
+        app.buffers
+            .iter()
+            .enumerate()
+            .filter(|(index, buffer)| {
+                !app.closed_buffers.contains(index) && buffer.path.is_some()
+            })
+            .count(),
+        1,
+        "one resolved file identity must own one live buffer"
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn force_save_as_refuses_a_path_owned_by_another_live_buffer() {
+    let directory = temporary("save-as-live-buffer-collision");
+    fs::create_dir_all(&directory).unwrap();
+    let first = directory.join("first.txt");
+    let second = directory.join("second.txt");
+    fs::write(&first, "first on disk\n").unwrap();
+    fs::write(&second, "second on disk\n").unwrap();
+    let mut app = App::new(Config::default(), None).unwrap();
+    app.open_file(first.clone()).unwrap();
+    let first_buffer = app.active().buffer;
+    app.open_file(second.clone()).unwrap();
+    let second_buffer = app.active().buffer;
+    app.apply_to_buffer(second_buffer, &Transaction::insert(0, "edited "));
+
+    app.save(Some(first.clone()), true).unwrap();
+
+    assert!(app.status_error);
+    assert!(app.status.contains("already open"), "{}", app.status);
+    assert_eq!(fs::read_to_string(&first).unwrap(), "first on disk\n");
+    assert_eq!(
+        app.buffers[first_buffer].path.as_deref(),
+        Some(first.as_path())
+    );
+    assert_eq!(
+        app.buffers[second_buffer].path.as_deref(),
+        Some(second.as_path())
+    );
+    assert!(app.buffers[second_buffer].dirty);
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn saving_refuses_a_second_buffer_that_converged_on_the_same_file() {
+    use std::os::unix::fs::symlink;
+
+    let directory = temporary("save-converged-live-buffer-collision");
+    fs::create_dir_all(&directory).unwrap();
+    let first = directory.join("first.txt");
+    let second = directory.join("second.txt");
+    fs::write(&first, "first on disk\n").unwrap();
+    fs::write(&second, "second on disk\n").unwrap();
+    let mut app = App::new(Config::default(), None).unwrap();
+    app.open_file(first.clone()).unwrap();
+    let first_buffer = app.active().buffer;
+    app.open_file(second.clone()).unwrap();
+    let second_buffer = app.active().buffer;
+    app.open_file(first.clone()).unwrap();
+    app.apply_to_buffer(first_buffer, &Transaction::insert(0, "edited "));
+
+    fs::remove_file(&second).unwrap();
+    symlink("first.txt", &second).unwrap();
+    app.save(None, true).unwrap();
+
+    assert!(app.status_error);
+    assert!(app.status.contains("already open"), "{}", app.status);
+    assert_eq!(fs::read_to_string(&first).unwrap(), "first on disk\n");
+    assert_eq!(app.active().buffer, first_buffer);
+    assert_eq!(
+        app.buffers[second_buffer].path.as_deref(),
+        Some(second.as_path())
+    );
+    assert!(app.buffers[first_buffer].dirty);
+    fs::remove_dir_all(directory).unwrap();
+}
+
 // -- Jumplist ----------------------------------------------------------
 
 #[test]

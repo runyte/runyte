@@ -74,6 +74,49 @@ fn multiple_binary_launch_targets_fail_before_one_can_be_silently_dropped() {
     fs::remove_dir_all(directory).unwrap();
 }
 
+#[test]
+fn a_late_binary_startup_target_reaches_the_external_program_prompt() {
+    let directory = temporary("launch-late-binary");
+    fs::create_dir_all(&directory).unwrap();
+    let binary = directory.join("late-invalid.bin");
+    let mut contents = vec![b'a'; 8192];
+    contents.push(0xff);
+    fs::write(&binary, contents).unwrap();
+
+    let app = App::new_with_targets(Config::default(), vec![LaunchTarget::new(&binary)]).unwrap();
+
+    assert_eq!(app.prompt_kind, PromptKind::ExternalProgram);
+    assert_eq!(app.external_target.as_deref(), Some(binary.as_path()));
+    assert!(
+        app.buffers.iter().all(|buffer| buffer.path.is_none()),
+        "the binary startup target became an editable buffer"
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn a_file_open_rejects_a_symlink_identity_changed_after_preflight() {
+    use std::os::unix::fs::symlink;
+
+    let directory = temporary("open-identity-race");
+    fs::create_dir_all(&directory).unwrap();
+    let first = directory.join("first.txt");
+    let second = directory.join("second.txt");
+    let alias = directory.join("alias.txt");
+    fs::write(&first, "first").unwrap();
+    fs::write(&second, "second").unwrap();
+    symlink(&first, &alias).unwrap();
+    let expected = crate::path_safety::path_identity(&alias).unwrap();
+    fs::remove_file(&alias).unwrap();
+    symlink(&second, &alias).unwrap();
+
+    let error = open_or_new_at_identity(&alias, &expected, false).unwrap_err();
+
+    assert!(error.to_string().contains("changed its resolved identity"));
+    fs::remove_dir_all(directory).unwrap();
+}
+
 #[cfg(unix)]
 #[test]
 fn unresolved_launch_paths_preserve_parent_components_across_symlinks() {
@@ -88,6 +131,33 @@ fn unresolved_launch_paths_preserve_parent_components_across_symlinks() {
     assert_eq!(unresolved, directory.join("link/../new"));
     assert_ne!(unresolved, directory.join("new"));
 
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn missing_launch_targets_below_a_symlinked_parent_share_one_buffer() {
+    use std::os::unix::fs::symlink;
+
+    let directory = temporary("launch-missing-symlink-parent");
+    let real = directory.join("real");
+    let alias = directory.join("alias");
+    fs::create_dir_all(&real).unwrap();
+    symlink("real", &alias).unwrap();
+    let target = real.join("new.txt");
+    let alias_target = alias.join("new.txt");
+
+    let app = App::new_with_targets(
+        Config::default(),
+        vec![LaunchTarget::new(&alias_target), LaunchTarget::new(&target)],
+    )
+    .unwrap();
+
+    assert_eq!(app.buffers.len(), 1);
+    assert_eq!(
+        app.active_buffer().path.as_deref(),
+        Some(alias_target.as_path())
+    );
     fs::remove_dir_all(directory).unwrap();
 }
 
@@ -2278,6 +2348,30 @@ fn opening_a_binary_file_asks_for_a_program_instead_of_a_buffer() {
     assert_eq!(app.buffers.len(), buffers + 1);
     assert_eq!(app.active_buffer().to_string(), "plain\n");
 
+    fs::remove_dir_all(directory).unwrap();
+}
+
+/// The bounded probe is only an optimization. The bytes accepted by the
+/// final read still decide whether the file can safely become editable text.
+#[test]
+fn binary_bytes_beyond_the_probe_still_use_the_external_program_prompt() {
+    let directory = temporary("binary-beyond-probe");
+    fs::create_dir_all(&directory).unwrap();
+    let binary = directory.join("late-invalid.bin");
+    let mut contents = vec![b'a'; 8192];
+    contents.push(0xff);
+    fs::write(&binary, contents).unwrap();
+    assert!(!external_open::looks_binary(&binary));
+
+    let mut app = App::new(Config::default(), None).unwrap();
+    app.programs = ProgramCache::load(Some(directory.join("cache")));
+    let buffers = app.buffers.len();
+
+    app.open_file(binary.clone()).unwrap();
+
+    assert_eq!(app.prompt_kind, PromptKind::ExternalProgram);
+    assert_eq!(app.external_target.as_deref(), Some(binary.as_path()));
+    assert_eq!(app.buffers.len(), buffers);
     fs::remove_dir_all(directory).unwrap();
 }
 
