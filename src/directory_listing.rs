@@ -15,11 +15,13 @@
 //! be reused is answered in two ways, because one of them is not always
 //! available:
 //!
-//! - The directory's own modification time, which the filesystem updates when
-//!   an entry is created, removed, or renamed — exactly the changes that make
-//!   a listing wrong. When it is unchanged, and was already old enough when
-//!   the listing was read that a change could not have hidden inside the same
-//!   clock tick, the listing is good for as long as that stays true.
+//! - The directory's filesystem identity and own modification time. The
+//!   identity changes when another directory replaces it at the same path;
+//!   the modification time changes when an entry is created, removed, or
+//!   renamed — exactly the changes that make a listing wrong. When both are
+//!   unchanged, and the timestamp was already old enough when the listing was
+//!   read that a change could not have hidden inside the same clock tick, the
+//!   listing is good for as long as that stays true.
 //! - Otherwise — a directory written to moments before it was listed, on a
 //!   filesystem that records modification times to a whole second, or one that
 //!   will not report a modification time at all — the listing is reused only
@@ -94,6 +96,10 @@ const ENTRIES: usize = 250_000;
 
 struct Cached {
     directory: PathBuf,
+    /// Filesystem object currently named by `directory`. A rename can replace
+    /// that object without changing either the canonical spelling or the new
+    /// directory's own modification time.
+    identity: Option<DirectoryIdentity>,
     /// The directory's modification time when the listing was read. Absent
     /// when the platform would not say, which leaves the window below as the
     /// only thing vouching for this listing.
@@ -108,6 +114,27 @@ struct Cached {
     /// so has to be asked again on reuse.
     symlinks: Vec<usize>,
     entries: Arc<[Entry]>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct DirectoryIdentity {
+    device: u64,
+    inode: u64,
+}
+
+#[cfg(unix)]
+fn directory_identity(metadata: &fs::Metadata) -> Option<DirectoryIdentity> {
+    use std::os::unix::fs::MetadataExt;
+
+    Some(DirectoryIdentity {
+        device: metadata.dev(),
+        inode: metadata.ino(),
+    })
+}
+
+#[cfg(not(unix))]
+fn directory_identity(_metadata: &fs::Metadata) -> Option<DirectoryIdentity> {
+    None
 }
 
 /// A bounded, most-recently-used cache of directory listings.
@@ -131,19 +158,22 @@ impl DirectoryListings {
     /// exercised without waiting for a real clock or rewriting a directory's
     /// recorded times, which not every platform allows.
     fn read_at(&mut self, directory: &Path, now: SystemTime) -> Option<Arc<[Entry]>> {
-        let modified = fs::metadata(directory)
-            .and_then(|metadata| metadata.modified())
-            .ok();
+        let directory = fs::canonicalize(directory).ok()?;
+        let metadata = fs::metadata(&directory).ok();
+        let modified = metadata
+            .as_ref()
+            .and_then(|metadata| metadata.modified().ok());
+        let identity = metadata.as_ref().and_then(directory_identity);
         if let Some(index) = self
             .cached
             .iter()
             .position(|cached| cached.directory == directory)
         {
             let mut cached = self.cached.remove(index);
-            // A modification time that has moved is proof the listing is out
-            // of date. One that has not moved proves nothing unless it was
-            // already settled when the listing was read, which is what the
-            // window covers for.
+            // A changed filesystem identity or modification time proves the
+            // listing is out of date. An unchanged time proves nothing unless
+            // it was already settled when the listing was read, which is what
+            // the window covers for.
             // Losing metadata is a change too: a settled directory may have
             // been renamed or removed since it was listed. Treating
             // `Some(_) -> None` as unchanged would let that old listing live
@@ -151,7 +181,7 @@ impl DirectoryListings {
             // verify. Gaining metadata after an unverified read likewise
             // earns a fresh listing rather than spending the rest of the
             // volatile window on weaker evidence.
-            let changed = cached.modified != modified;
+            let changed = cached.modified != modified || cached.identity != identity;
             let within_window = now
                 .duration_since(cached.read_at)
                 .is_ok_and(|age| age < VOLATILE);
@@ -165,7 +195,7 @@ impl DirectoryListings {
 
         let mut entries = Vec::new();
         let mut symlinks = Vec::new();
-        for entry in fs::read_dir(directory).ok()?.flatten() {
+        for entry in fs::read_dir(&directory).ok()?.flatten() {
             let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
                 continue;
             };
@@ -183,7 +213,8 @@ impl DirectoryListings {
         let settled = modified
             .is_some_and(|modified| now.duration_since(modified).is_ok_and(|age| age >= SETTLED));
         self.cached.push(Cached {
-            directory: directory.to_path_buf(),
+            directory,
+            identity,
             modified,
             settled,
             read_at: now,
@@ -441,6 +472,7 @@ mod tests {
     fn a_listing_larger_than_the_entry_bound_is_still_kept() {
         let fabricate = |name: &str, entries: usize| Cached {
             directory: PathBuf::from(name),
+            identity: None,
             modified: None,
             settled: false,
             read_at: SystemTime::now(),
@@ -538,5 +570,86 @@ mod tests {
         );
 
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_retargeted_directory_symlink_cannot_reuse_the_old_targets_listing() {
+        use std::os::unix::fs::symlink;
+
+        let root = temporary("retargeted-directory-symlink");
+        let first = root.join("first");
+        let second = root.join("second");
+        let alias = root.join("alias");
+        fs::create_dir_all(&first).unwrap();
+        fs::create_dir_all(&second).unwrap();
+        fs::write(first.join("old"), "").unwrap();
+        fs::write(second.join("new"), "").unwrap();
+        let fixed = SystemTime::now() - Duration::from_secs(60);
+        set_times(&first, fixed);
+        set_times(&second, fixed);
+        symlink(&first, &alias).unwrap();
+
+        let mut listings = DirectoryListings::default();
+        let old = listings.read_at(&alias, later()).unwrap();
+        assert_eq!(old[0].name, "old");
+        fs::remove_file(&alias).unwrap();
+        symlink(&second, &alias).unwrap();
+
+        let entries = listings.read_at(&alias, later()).unwrap();
+
+        assert_eq!(
+            entries.as_ref(),
+            [Entry {
+                name: "new".to_owned(),
+                is_directory: false,
+            }]
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_replaced_directory_cannot_reuse_the_previous_objects_listing() {
+        let root = temporary("replaced-directory");
+        let listed = root.join("listed");
+        let replacement = root.join("replacement");
+        let displaced = root.join("displaced");
+        fs::create_dir_all(&listed).unwrap();
+        fs::create_dir_all(&replacement).unwrap();
+        fs::write(listed.join("old"), "").unwrap();
+        fs::write(replacement.join("new"), "").unwrap();
+        let fixed = SystemTime::now() - Duration::from_secs(60);
+        set_times(&listed, fixed);
+        set_times(&replacement, fixed);
+
+        let mut listings = DirectoryListings::default();
+        let old = listings.read_at(&listed, later()).unwrap();
+        assert_eq!(old[0].name, "old");
+        fs::rename(&listed, &displaced).unwrap();
+        fs::rename(&replacement, &listed).unwrap();
+
+        let current = listings.read_at(&listed, later()).unwrap();
+
+        assert_eq!(current[0].name, "new");
+        assert!(!Arc::ptr_eq(&old, &current));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    fn set_times(path: &Path, time: SystemTime) {
+        use std::{ffi::CString, os::unix::ffi::OsStrExt};
+
+        let duration = time.duration_since(UNIX_EPOCH).unwrap();
+        let instant = libc::timespec {
+            tv_sec: duration.as_secs().try_into().unwrap(),
+            tv_nsec: duration.subsec_nanos().into(),
+        };
+        let times = [instant, instant];
+        let path = CString::new(path.as_os_str().as_bytes()).unwrap();
+        // SAFETY: `path` is NUL terminated and `times` holds the two live
+        // timestamps required by utimensat for the duration of the call.
+        let result = unsafe { libc::utimensat(libc::AT_FDCWD, path.as_ptr(), times.as_ptr(), 0) };
+        assert_eq!(result, 0, "failed to set directory timestamps");
     }
 }

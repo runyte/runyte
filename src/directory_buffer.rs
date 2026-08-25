@@ -141,7 +141,7 @@ impl DirectoryBuffer {
                     source: self.root.join(&entry.path),
                     label: entry.display_name()?,
                     kind: entry.kind,
-                    expected: entry.source_fingerprint(),
+                    expected: SourceFingerprint::capture(&self.root.join(&entry.path))?,
                 }))
             }
             RowOrigin::Transfer {
@@ -582,6 +582,10 @@ fn parse_line(line: &str) -> Result<(PathBuf, EntryKind)> {
         (line, EntryKind::File)
     };
     ensure!(!name.is_empty(), "directory entries cannot be empty");
+    ensure!(
+        !name.chars().any(char::is_control),
+        "directory entries cannot contain control characters"
+    );
     let path = PathBuf::from(name);
     let text = path
         .to_str()

@@ -48,17 +48,63 @@ impl EntryKind {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct SourceFingerprint {
+struct EntryFingerprint {
     kind: EntryKind,
     len: u64,
     modified_nanos: Option<u128>,
     symlink_target: Option<PathBuf>,
+    readonly: bool,
+    unix: Option<UnixFingerprint>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct UnixFingerprint {
+    device: u64,
+    inode: u64,
+    mode: u32,
+    uid: u32,
+    gid: u32,
+    changed_seconds: i64,
+    changed_nanoseconds: i64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SourceFingerprint {
+    entry: EntryFingerprint,
+    descendants: Vec<(PathBuf, EntryFingerprint)>,
 }
 
 impl SourceFingerprint {
     pub fn capture(path: &Path) -> Result<Self> {
+        let entry = EntryFingerprint::capture(path, "transfer source")?;
+        let mut descendants = Vec::new();
+        if entry.kind == EntryKind::Directory {
+            capture_descendants(path, Path::new(""), &mut descendants)?;
+        }
+        Ok(Self { entry, descendants })
+    }
+
+    fn shallow(path: &Path, purpose: &str) -> Result<Self> {
+        Ok(Self {
+            entry: EntryFingerprint::capture(path, purpose)?,
+            descendants: Vec::new(),
+        })
+    }
+
+    pub fn kind(&self) -> EntryKind {
+        self.entry.kind
+    }
+
+    /// The path this entry links to, exactly as the link stores it.
+    pub fn symlink_target(&self) -> Option<&Path> {
+        self.entry.symlink_target.as_deref()
+    }
+}
+
+impl EntryFingerprint {
+    fn capture(path: &Path, purpose: &str) -> Result<Self> {
         let metadata = fs::symlink_metadata(path)
-            .with_context(|| format!("failed to inspect transfer source {}", path.display()))?;
+            .with_context(|| format!("failed to inspect {purpose} {}", path.display()))?;
         let file_type = metadata.file_type();
         let kind = if file_type.is_symlink() {
             EntryKind::Symlink
@@ -83,17 +129,57 @@ impl SourceFingerprint {
             len: metadata.len(),
             modified_nanos,
             symlink_target,
+            readonly: metadata.permissions().readonly(),
+            unix: unix_fingerprint(&metadata),
         })
     }
+}
 
-    pub fn kind(&self) -> EntryKind {
-        self.kind
-    }
+#[cfg(unix)]
+fn unix_fingerprint(metadata: &fs::Metadata) -> Option<UnixFingerprint> {
+    use std::os::unix::fs::MetadataExt;
 
-    /// The path this entry links to, exactly as the link stores it.
-    pub fn symlink_target(&self) -> Option<&Path> {
-        self.symlink_target.as_deref()
+    Some(UnixFingerprint {
+        device: metadata.dev(),
+        inode: metadata.ino(),
+        mode: metadata.mode(),
+        uid: metadata.uid(),
+        gid: metadata.gid(),
+        changed_seconds: metadata.ctime(),
+        changed_nanoseconds: metadata.ctime_nsec(),
+    })
+}
+
+#[cfg(not(unix))]
+fn unix_fingerprint(_metadata: &fs::Metadata) -> Option<UnixFingerprint> {
+    None
+}
+
+fn capture_descendants(
+    root: &Path,
+    relative: &Path,
+    captured: &mut Vec<(PathBuf, EntryFingerprint)>,
+) -> Result<()> {
+    let directory = root.join(relative);
+    let mut children = fs::read_dir(&directory)
+        .with_context(|| format!("failed to inspect directory source {}", directory.display()))?
+        .map(|entry| {
+            entry
+                .map(|entry| (entry.file_name(), entry.path()))
+                .with_context(|| format!("failed to inspect entry in {}", directory.display()))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    children.sort_by(|left, right| left.0.cmp(&right.0));
+    for (name, path) in children {
+        let child = relative.join(name);
+        let fingerprint = EntryFingerprint::capture(&path, "directory source entry")?;
+        let recurse = fingerprint.kind == EntryKind::Directory;
+        captured.push((child.clone(), fingerprint));
+        if recurse {
+            capture_descendants(root, &child, captured)?;
+        }
     }
+    Ok(())
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -101,42 +187,18 @@ pub struct SnapshotEntry {
     pub id: EntryId,
     pub path: PathBuf,
     pub kind: EntryKind,
-    len: u64,
-    modified_nanos: Option<u128>,
-    symlink_target: Option<PathBuf>,
+    fingerprint: EntryFingerprint,
 }
 
 impl SnapshotEntry {
     fn from_path(id: EntryId, root: &Path, path: PathBuf) -> Result<Self> {
         let absolute = root.join(&path);
-        let metadata = fs::symlink_metadata(&absolute)
-            .with_context(|| format!("failed to inspect {}", absolute.display()))?;
-        let file_type = metadata.file_type();
-        let kind = if file_type.is_symlink() {
-            EntryKind::Symlink
-        } else if file_type.is_dir() {
-            EntryKind::Directory
-        } else if file_type.is_file() {
-            EntryKind::File
-        } else {
-            EntryKind::Other
-        };
-        let modified_nanos = metadata
-            .modified()
-            .ok()
-            .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
-            .map(|duration| duration.as_nanos());
-        let symlink_target = (kind == EntryKind::Symlink)
-            .then(|| fs::read_link(&absolute))
-            .transpose()
-            .with_context(|| format!("failed to read link {}", absolute.display()))?;
+        let fingerprint = EntryFingerprint::capture(&absolute, "directory entry")?;
         Ok(Self {
             id,
             path,
-            kind,
-            len: metadata.len(),
-            modified_nanos,
-            symlink_target,
+            kind: fingerprint.kind,
+            fingerprint,
         })
     }
 
@@ -150,15 +212,13 @@ impl SnapshotEntry {
 
     /// The path this entry links to, exactly as the link stores it.
     pub fn symlink_target(&self) -> Option<&Path> {
-        self.symlink_target.as_deref()
+        self.fingerprint.symlink_target.as_deref()
     }
 
     pub fn source_fingerprint(&self) -> SourceFingerprint {
         SourceFingerprint {
-            kind: self.kind,
-            len: self.len,
-            modified_nanos: self.modified_nanos,
-            symlink_target: self.symlink_target.clone(),
+            entry: self.fingerprint.clone(),
+            descendants: Vec::new(),
         }
     }
 }
@@ -206,6 +266,11 @@ impl DirectorySnapshot {
                     ensure!(
                         !text.chars().any(char::is_control),
                         "{} contains a filename with control characters that the editable directory explorer cannot represent",
+                        root.display()
+                    );
+                    ensure!(
+                        !text.chars().last().is_some_and(char::is_whitespace),
+                        "{} contains a filename ending in whitespace that the editable directory explorer cannot represent",
                         root.display()
                     );
                     Ok(PathBuf::from(&name))
@@ -362,16 +427,36 @@ impl FsOperation {
             Self::Create { path, kind } => {
                 format!("create {}{}", path.display(), kind.marker())
             }
-            Self::Rename { from, to, .. } => {
-                format!("rename {} → {}", from.display(), to.display())
+            Self::Rename { from, to, kind } => {
+                format!(
+                    "rename {}{} → {}{}",
+                    from.display(),
+                    kind.marker(),
+                    to.display(),
+                    kind.marker()
+                )
             }
-            Self::Move { from, to, .. } => {
-                format!("move {} → {}", from.display(), to.display())
+            Self::Move { from, to, kind } => {
+                format!(
+                    "move {}{} → {}{}",
+                    from.display(),
+                    kind.marker(),
+                    to.display(),
+                    kind.marker()
+                )
             }
-            Self::Copy { from, to, .. } => {
-                format!("copy {} → {}", from.display(), to.display())
+            Self::Copy { from, to, kind } => {
+                format!(
+                    "copy {}{} → {}{}",
+                    from.display(),
+                    kind.marker(),
+                    to.display(),
+                    kind.marker()
+                )
             }
-            Self::Delete { path, .. } => format!("delete {}", path.display()),
+            Self::Delete { path, kind } => {
+                format!("delete {}{}", path.display(), kind.marker())
+            }
         }
     }
 
@@ -461,6 +546,7 @@ pub struct FsPlan {
     expected: DirectorySnapshot,
     operations: Vec<FsOperation>,
     transfer_sources: Vec<(PathBuf, SourceFingerprint)>,
+    confirmed_sources: Vec<(PathBuf, Option<SourceFingerprint>)>,
 }
 
 impl FsPlan {
@@ -656,11 +742,37 @@ impl FsPlan {
         creates.extend(copies);
         creates.extend(deletes);
 
+        let mut seen_sources = HashSet::new();
+        let confirmed_sources = creates
+            .iter()
+            .filter_map(|operation| match operation {
+                FsOperation::Rename { from, .. }
+                | FsOperation::Move { from, .. }
+                | FsOperation::Copy { from, .. } => Some(from),
+                FsOperation::Delete { path, .. } => Some(path),
+                FsOperation::Create { .. } => None,
+            })
+            .filter(|source| {
+                expected
+                    .entries()
+                    .iter()
+                    .any(|entry| &entry.path == *source)
+            })
+            .filter(|source| seen_sources.insert((*source).clone()))
+            .map(|source| {
+                (
+                    source.clone(),
+                    SourceFingerprint::capture(&root.join(source)).ok(),
+                )
+            })
+            .collect::<Vec<_>>();
+
         Ok(Self {
             root,
             expected,
             operations: creates,
             transfer_sources,
+            confirmed_sources,
         })
     }
 
@@ -701,7 +813,10 @@ impl FsPlan {
         }
         let current = DirectorySnapshot::read_with(&self.root, self.expected.show_hidden())
             .map_err(|error| ApplyError::new(ApplyReport::default(), None, error))?;
-        if !self.expected.matches_current(&current) || !self.operation_sources_unchanged() {
+        if !self.expected.matches_current(&current)
+            || !self.operation_sources_unchanged()
+            || !self.confirmed_sources_unchanged()
+        {
             return Err(ApplyError::new(
                 ApplyReport::default(),
                 None,
@@ -721,7 +836,14 @@ impl FsPlan {
         let mut staged = Vec::new();
         for operation in &moves {
             let source = operation.staged_source().expect("move source");
-            let temporary = self.temporary_path();
+            let temporary = match self.temporary_path() {
+                Ok(temporary) => temporary,
+                Err(error) => {
+                    let cleanup = rollback_staged(&self.root, &staged);
+                    let message = combine_error(error, cleanup);
+                    return Err(ApplyError::new(report, Some(operation.clone()), message));
+                }
+            };
             if let Err(error) = fs::rename(self.root.join(source), self.root.join(&temporary)) {
                 let cleanup = rollback_staged(&self.root, &staged);
                 let message = combine_error(error, cleanup);
@@ -854,9 +976,18 @@ impl FsPlan {
                     .find(|entry| &entry.path == source)
             })
             .all(|expected| {
-                SourceFingerprint::capture(&self.root.join(&expected.path))
+                SourceFingerprint::shallow(&self.root.join(&expected.path), "plan source")
                     .is_ok_and(|current| current == expected.source_fingerprint())
             })
+    }
+
+    fn confirmed_sources_unchanged(&self) -> bool {
+        self.confirmed_sources.iter().all(|(source, expected)| {
+            expected.as_ref().is_some_and(|expected| {
+                SourceFingerprint::capture(&self.root.join(source))
+                    .is_ok_and(|current| &current == expected)
+            })
+        })
     }
 
     fn preflight(&self) -> Result<()> {
@@ -955,12 +1086,24 @@ impl FsPlan {
         }
     }
 
-    fn temporary_path(&self) -> PathBuf {
+    fn temporary_path(&self) -> Result<PathBuf> {
         loop {
             let value = NEXT_TEMP.fetch_add(1, Ordering::Relaxed);
             let candidate = PathBuf::from(format!(".runyte-move-{}-{value}", std::process::id()));
-            if !self.root.join(&candidate).exists() {
-                return candidate;
+            let absolute = self.root.join(&candidate);
+            match fs::symlink_metadata(&absolute) {
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    return Ok(candidate);
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    return Err(error).with_context(|| {
+                        format!(
+                            "failed to inspect temporary move path {}",
+                            absolute.display()
+                        )
+                    });
+                }
             }
         }
     }
@@ -1194,8 +1337,17 @@ fn rollback_staged(root: &Path, staged: &[(FsOperation, PathBuf)]) -> Option<Str
             continue;
         };
         let temporary = root.join(temporary);
-        if !temporary.exists() {
-            continue;
+        match fs::symlink_metadata(&temporary) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Ok(_) => {}
+            Err(error) => {
+                failures.push(format!(
+                    "could not inspect staged {} at {}: {error}",
+                    source.display(),
+                    temporary.display()
+                ));
+                continue;
+            }
         }
         if let Err(error) = fs::rename(&temporary, root.join(source)) {
             failures.push(format!(

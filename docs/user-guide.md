@@ -1377,7 +1377,11 @@ recursive operations. A directory cannot be moved below itself: editing
 `dir/` into `dir/child` is rejected by `:w` before any confirmation opens.
 Trailing whitespace and whitespace-only rows do not represent filesystem
 changes; writing a listing with only those edits refreshes
-it to the canonical directory view.
+it to the canonical directory view. A filename included in the listing that
+ends in whitespace, contains a control character, or is not valid UTF-8 makes
+the editable projection refuse to open, because such a name cannot be
+distinguished safely from the explorer's row syntax. New rows are held to the
+same boundary before a confirmation opens.
 
 Dotfiles start out listed or not according to `editor.show_hidden_files`, and
 `.` flips that for the session without writing it to `config.yaml`. Because
@@ -1444,6 +1448,10 @@ reported as stale instead of being silently redirected.
 The explorer that applied the plan keeps its edited row order, so a renamed or
 new entry stays where it was written. Entering that clean explorer again after
 visiting a file or another directory restores the canonical sorted listing.
+
+Preparing a plan records the complete trees of directories it will move, copy,
+or delete. A change anywhere below one of those directories before confirmation
+is applied rejects the whole plan before any operation begins.
 
 The project finder opens in file mode. `Tab` switches between project files
 and a combined view of open buffers plus terminals without clearing the query.

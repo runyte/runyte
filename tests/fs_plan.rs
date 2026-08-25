@@ -393,6 +393,27 @@ fn changes_inside_a_child_directory_being_deleted_stale_the_plan() {
 }
 
 #[test]
+fn changes_below_a_nested_directory_stale_a_confirmed_recursive_delete() {
+    let directory = TempDir::new("nested-deleted-child-change");
+    let removed = directory.path().join("removed");
+    let nested = removed.join("nested");
+    fs::create_dir_all(&nested).unwrap();
+    fs::write(nested.join("kept"), "original").unwrap();
+    let snapshot = DirectorySnapshot::read(directory.path()).unwrap();
+    let plan = FsPlan::build(directory.path().to_path_buf(), snapshot, Vec::new()).unwrap();
+
+    // Changing a grandchild does not change `removed`'s own metadata. The
+    // source tree captured with the confirmation still has to notice it.
+    fs::write(nested.join("added-after-confirmation"), "changed").unwrap();
+
+    let error = plan.apply(DeletionMode::Permanent).unwrap_err();
+
+    assert!(error.to_string().contains("directory changed on disk"));
+    assert!(error.report.applied.is_empty());
+    assert!(nested.join("added-after-confirmation").is_file());
+}
+
+#[test]
 fn a_partial_failure_reports_exactly_what_was_applied() {
     let directory = TempDir::new("partial");
     let snapshot = DirectorySnapshot::read(directory.path()).unwrap();
@@ -423,6 +444,50 @@ fn a_partial_failure_reports_exactly_what_was_applied() {
     assert!(error.to_string().contains("applied: create a-created"));
     assert!(directory.path().join("a-created").is_file());
     assert!(!directory.path().join("z".repeat(300)).exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn a_dangling_symlink_is_restored_when_a_later_plan_step_fails() {
+    use std::os::unix::fs::symlink;
+
+    let directory = TempDir::new("dangling-symlink-rollback");
+    let link = directory.path().join("link");
+    symlink("missing-target", &link).unwrap();
+    let snapshot = DirectorySnapshot::read(directory.path()).unwrap();
+    let entry = snapshot.entries().first().unwrap();
+    let plan = FsPlan::build(
+        directory.path().to_path_buf(),
+        snapshot.clone(),
+        vec![
+            DesiredEntry::existing(entry, "renamed-link"),
+            DesiredEntry::create("z".repeat(300), EntryKind::File),
+        ],
+    )
+    .unwrap();
+
+    let error = plan.apply(DeletionMode::Permanent).unwrap_err();
+
+    assert!(error.report.applied.is_empty());
+    assert_eq!(fs::read_link(&link).unwrap(), Path::new("missing-target"));
+    assert!(!directory.path().join("renamed-link").exists());
+    assert!(fs::read_dir(directory.path()).unwrap().all(|entry| {
+        !entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".runyte-move-")
+    }));
+}
+
+#[test]
+fn directory_operations_are_marked_as_recursive_in_the_review_text() {
+    let directory = TempDir::new("directory-review-marker");
+    fs::create_dir(directory.path().join("removed")).unwrap();
+    let snapshot = DirectorySnapshot::read(directory.path()).unwrap();
+    let plan = FsPlan::build(directory.path().to_path_buf(), snapshot, Vec::new()).unwrap();
+
+    assert_eq!(plan.lines(), vec!["delete removed/"]);
 }
 
 #[test]

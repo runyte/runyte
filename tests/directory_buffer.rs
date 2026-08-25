@@ -78,6 +78,38 @@ fn a_directory_with_a_newline_filename_is_refused_before_rendering() {
 }
 
 #[test]
+fn a_directory_with_a_trailing_whitespace_filename_is_refused_before_rendering() {
+    let directory = TempDir::new("trailing-whitespace-filename");
+    fs::write(directory.path().join("ambiguous "), "original").unwrap();
+
+    let error = Buffer::open_directory(directory.path(), true)
+        .unwrap_err()
+        .to_string();
+
+    assert!(error.contains("filename ending in whitespace"), "{error}");
+    assert_eq!(
+        fs::read_to_string(directory.path().join("ambiguous ")).unwrap(),
+        "original"
+    );
+    assert!(!directory.path().join("ambiguous").exists());
+}
+
+#[test]
+fn an_edited_control_character_name_is_rejected_before_confirmation() {
+    let directory = TempDir::new("typed-control-filename");
+    let mut app = App::new(Config::default(), Some(directory.path().to_path_buf())).unwrap();
+    assert!(app.buffers[0].apply(&Transaction::insert(0, "bad\tname\n")));
+
+    app.handle_key(KeyStroke::new(KeyCode::Char('s'), Modifiers::CONTROL))
+        .unwrap();
+
+    assert!(app.status_error);
+    assert!(app.status.contains("control characters"), "{}", app.status);
+    assert!(app.fs_confirmation.is_none());
+    assert!(!directory.path().join("bad\tname").exists());
+}
+
+#[test]
 fn directory_row_kinds_survive_edits_and_transfers_while_new_rows_use_the_marker() {
     let source = TempDir::new("row-kind-source");
     fs::create_dir(source.path().join("nested")).unwrap();
