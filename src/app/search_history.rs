@@ -4,12 +4,14 @@
 
 // Application-module dependencies:
 use super::{
-    App, BindingScope, BindingTarget, DEFAULT_MACRO_REGISTER, EditorCommand, ListAction,
-    ListPicker, Mode, PickerItem, Range, Register, Result, SearchMode, SearchQuery, SearchRegion,
-    SearchSelectionPresentation, Selection, SelectionSemantics, Transaction, ViewAlignment,
-    buffer_language, buffer_matches, move_projected_start_backward, next_offset, next_visible_row,
-    offsets_after, offsets_before, operative_span, previous_offset, previous_visible_row,
-    word_bounds,
+    App, BindingScope, BindingTarget, DEFAULT_MACRO_REGISTER, EditorCommand, InputGrammar,
+    ListAction, ListPicker, MACRO_REPLAY_BATCH_INPUTS, MAX_MACRO_REPLAY_ATOMIC_REPETITIONS,
+    MAX_MACRO_REPLAY_DEPTH, MAX_MACRO_REPLAY_WORK, MacroReplay, MacroReplayAction,
+    MacroReplayCommand, MacroReplayFrame, Mode, PickerItem, Range, Register, Result, SearchMode,
+    SearchQuery, SearchRegion, SearchSelectionPresentation, Selection, SelectionSemantics,
+    Transaction, ViewAlignment, buffer_language, buffer_matches, move_projected_start_backward,
+    next_offset, next_visible_row, offsets_after, offsets_before, operative_span, previous_offset,
+    previous_visible_row, word_bounds,
 };
 
 impl App {
@@ -138,7 +140,7 @@ impl App {
     }
 
     pub(super) fn replay_macro(&mut self, register: char, count: usize) -> Result<()> {
-        let Some(inputs) = self.macros.get(&register).cloned() else {
+        let Some(inputs) = self.macros.get(&register) else {
             self.error(if register == DEFAULT_MACRO_REGISTER {
                 "no default macro recorded; Space m m records one".to_owned()
             } else {
@@ -146,21 +148,322 @@ impl App {
             });
             return Ok(());
         };
-        if self.replay_depth >= 16 {
-            self.error("macro recursion limit reached");
+
+        if let Some(replay) = self.macro_replay.as_mut() {
+            if let Some(cycle_start) = replay
+                .frames
+                .iter()
+                .position(|frame| frame.register == register)
+            {
+                let mut chain = replay.frames[cycle_start..]
+                    .iter()
+                    .map(|frame| format!("@{}", frame.register))
+                    .collect::<Vec<_>>();
+                chain.push(format!("@{register}"));
+                replay.abort_reason = Some(format!(
+                    "recursive macro replay stopped: {}",
+                    chain.join(" -> ")
+                ));
+                return Ok(());
+            }
+            if replay.frames.len() >= MAX_MACRO_REPLAY_DEPTH {
+                replay.abort_reason = Some(format!(
+                    "macro replay stopped at the {MAX_MACRO_REPLAY_DEPTH}-level nesting limit"
+                ));
+                return Ok(());
+            }
+        }
+
+        // Validate one snapshot before cloning it. The scan itself stops just
+        // past the remaining budget, so rejecting a huge recording cannot do
+        // huge work or copy input that this replay can never reach.
+        let remaining_work = self
+            .macro_replay
+            .as_ref()
+            .map_or(MAX_MACRO_REPLAY_WORK, |replay| replay.remaining_work);
+        let snapshot_work = inputs
+            .iter()
+            .try_fold(0usize, |work, input| {
+                let next =
+                    work.saturating_add(Self::macro_input_work(input, remaining_work - work));
+                (next <= remaining_work).then_some(next)
+            })
+            .unwrap_or_else(|| remaining_work.saturating_add(1));
+        if snapshot_work > remaining_work {
+            let processed = self
+                .macro_replay
+                .as_ref()
+                .map_or(0, |replay| replay.processed_work);
+            let reason = Self::macro_replay_limit_reason(processed);
+            if let Some(replay) = self.macro_replay.as_mut() {
+                replay.abort_reason = Some(reason);
+            } else {
+                self.error(reason);
+            }
             return Ok(());
         }
-        self.replay_depth += 1;
-        let outcome = (|| {
-            for _ in 0..count {
-                for input in &inputs {
-                    self.handle_input(input.clone())?;
-                }
+
+        let frame = MacroReplayFrame {
+            register,
+            inputs: inputs.clone(),
+            repetitions_remaining: count,
+            next_input: 0,
+        };
+        if let Some(replay) = self.macro_replay.as_mut() {
+            replay.frames.push(frame);
+            return Ok(());
+        }
+
+        self.macro_replay = Some(MacroReplay {
+            root_register: register,
+            frames: vec![frame],
+            commands: Vec::new(),
+            remaining_work: MAX_MACRO_REPLAY_WORK,
+            processed_work: 0,
+            abort_reason: None,
+            last_action_error: false,
+        });
+        self.macro_replay_progress_status();
+        Ok(())
+    }
+
+    /// Whether a frontend should schedule another cooperative playback slice.
+    pub fn macro_replay_pending(&self) -> bool {
+        self.macro_replay.is_some()
+    }
+
+    /// Advances one bounded slice and returns whether replay state changed.
+    pub fn advance_macro_replay(&mut self) -> Result<bool> {
+        if self.macro_replay.is_none() {
+            return Ok(false);
+        }
+
+        let slice_start_work = self
+            .macro_replay
+            .as_ref()
+            .map_or(0, |replay| replay.processed_work);
+        loop {
+            if self.macro_replay.as_ref().is_some_and(|replay| {
+                replay.processed_work.saturating_sub(slice_start_work) >= MACRO_REPLAY_BATCH_INPUTS
+            }) {
+                break;
             }
-            Ok(())
-        })();
-        self.replay_depth -= 1;
-        outcome
+            if let Some(reason) = self
+                .macro_replay
+                .as_mut()
+                .and_then(|replay| replay.abort_reason.take())
+            {
+                self.abort_macro_replay(reason);
+                return Ok(true);
+            }
+
+            let action = self.next_macro_replay_action();
+            if let Some(reason) = self
+                .macro_replay
+                .as_mut()
+                .and_then(|replay| replay.abort_reason.take())
+            {
+                self.abort_macro_replay(reason);
+                return Ok(true);
+            }
+            let Some((action, work)) = action else {
+                let finished = self.finish_macro_replay_if_exhausted();
+                debug_assert!(finished);
+                return Ok(true);
+            };
+
+            if let Some(replay) = self.macro_replay.as_mut() {
+                replay.remaining_work -= work;
+                replay.processed_work += work;
+            }
+            let outcome = match action {
+                MacroReplayAction::Input(input) => self.handle_replayed_input(input),
+                MacroReplayAction::Command(invocation) => self.execute(invocation).map(|_| ()),
+            };
+            if let Err(error) = outcome {
+                self.macro_replay = None;
+                self.grammar.reset();
+                return Err(error);
+            }
+            if let Some(replay) = self.macro_replay.as_mut() {
+                replay.last_action_error = self.status_error;
+            }
+            if self.should_quit || self.workspace_switch.is_some() {
+                self.macro_replay = None;
+                self.grammar.reset();
+                return Ok(true);
+            }
+        }
+
+        if self.finish_macro_replay_if_exhausted() {
+            return Ok(true);
+        }
+        if self
+            .macro_replay
+            .as_ref()
+            .is_some_and(|replay| !replay.last_action_error)
+        {
+            self.macro_replay_progress_status();
+        }
+        Ok(true)
+    }
+
+    /// Drops exhausted top frames without consuming the next action, then
+    /// releases input ownership immediately when the complete root is done.
+    fn finish_macro_replay_if_exhausted(&mut self) -> bool {
+        let Some(replay) = self.macro_replay.as_mut() else {
+            return false;
+        };
+        while replay
+            .frames
+            .last()
+            .is_some_and(|frame| frame.inputs.is_empty() || frame.repetitions_remaining == 0)
+        {
+            replay.frames.pop();
+        }
+        if !replay.commands.is_empty() || !replay.frames.is_empty() {
+            return false;
+        }
+        let replay = self
+            .macro_replay
+            .take()
+            .expect("exhausted macro replay was just inspected");
+        if !replay.last_action_error {
+            self.status(format!(
+                "replayed macro @{}; {} work unit(s)",
+                replay.root_register, replay.processed_work
+            ));
+        }
+        true
+    }
+
+    fn next_macro_replay_action(&mut self) -> Option<(MacroReplayAction, usize)> {
+        loop {
+            let replay = self.macro_replay.as_mut()?;
+            if let Some(command) = replay.commands.last_mut() {
+                if replay.remaining_work == 0 {
+                    replay.abort_reason =
+                        Some(Self::macro_replay_limit_reason(replay.processed_work));
+                    return None;
+                }
+                let invocation = command.invocation.clone();
+                command.repetitions_remaining -= 1;
+                if command.repetitions_remaining == 0 {
+                    replay.commands.pop();
+                }
+                return Some((MacroReplayAction::Command(invocation), 1));
+            }
+            let frame = replay.frames.last_mut()?;
+            if frame.inputs.is_empty() || frame.repetitions_remaining == 0 {
+                replay.frames.pop();
+                continue;
+            }
+
+            let work =
+                Self::macro_input_work(&frame.inputs[frame.next_input], replay.remaining_work);
+            if work > replay.remaining_work {
+                replay.abort_reason = Some(Self::macro_replay_limit_reason(replay.processed_work));
+                return None;
+            }
+            let input = frame.inputs[frame.next_input].clone();
+            frame.next_input += 1;
+            if frame.next_input == frame.inputs.len() {
+                frame.next_input = 0;
+                frame.repetitions_remaining -= 1;
+            }
+            return Some((MacroReplayAction::Input(input), work));
+        }
+    }
+
+    fn macro_input_work(input: &super::InputEvent, remaining_work: usize) -> usize {
+        match input {
+            super::InputEvent::Text(text) => text
+                .chars()
+                .take(remaining_work.saturating_add(1))
+                .count()
+                .max(1),
+            super::InputEvent::Key(_) | super::InputEvent::Pointer(_) => 1,
+        }
+    }
+
+    fn macro_replay_limit_reason(processed_work: usize) -> String {
+        format!(
+            "macro replay stopped after {processed_work} work unit(s); \
+             {MAX_MACRO_REPLAY_WORK}-unit safety limit reached"
+        )
+    }
+
+    /// Charges semantic repetitions resolved from already-charged raw input.
+    /// Returning false leaves the intent unapplied and makes the whole root
+    /// replay abort at the next scheduler boundary.
+    pub(super) fn reserve_macro_replay_range_work(&mut self, repetitions: usize) -> bool {
+        let Some(replay) = self.macro_replay.as_mut() else {
+            return true;
+        };
+        if repetitions > MAX_MACRO_REPLAY_ATOMIC_REPETITIONS {
+            replay.abort_reason = Some(format!(
+                "macro replay stopped after {} work unit(s); counted range exceeds the \
+                 {MAX_MACRO_REPLAY_ATOMIC_REPETITIONS}-repetition per-action limit",
+                replay.processed_work
+            ));
+            return false;
+        }
+        let work = repetitions.saturating_sub(1);
+        if work > replay.remaining_work {
+            replay.abort_reason = Some(Self::macro_replay_limit_reason(replay.processed_work));
+            return false;
+        }
+        replay.remaining_work -= work;
+        replay.processed_work += work;
+        true
+    }
+
+    pub(super) fn defer_macro_command(
+        &mut self,
+        invocation: super::CommandInvocation,
+        repetitions: usize,
+    ) {
+        if repetitions == 0 {
+            return;
+        }
+        let replay = self
+            .macro_replay
+            .as_mut()
+            .expect("only replayed input defers counted macro commands");
+        replay.commands.push(MacroReplayCommand {
+            invocation,
+            repetitions_remaining: repetitions,
+        });
+    }
+
+    pub(super) fn macro_replay_progress_status(&mut self) {
+        let Some(replay) = self.macro_replay.as_ref() else {
+            return;
+        };
+        let register = replay.root_register;
+        let processed = replay.processed_work;
+        self.status(format!(
+            "replaying macro @{register}; {processed} work unit(s) · Esc/Ctrl-c cancels"
+        ));
+    }
+
+    /// Cancels generated input but keeps actions that already completed.
+    pub fn cancel_macro_replay(&mut self) -> bool {
+        let Some(replay) = self.macro_replay.take() else {
+            return false;
+        };
+        self.grammar.reset();
+        self.status(format!(
+            "macro replay @{} cancelled after {} work unit(s)",
+            replay.root_register, replay.processed_work
+        ));
+        true
+    }
+
+    fn abort_macro_replay(&mut self, reason: String) {
+        self.macro_replay = None;
+        self.grammar.reset();
+        self.error(reason);
     }
 
     pub(super) fn undo(&mut self) {

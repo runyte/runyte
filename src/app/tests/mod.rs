@@ -24,6 +24,18 @@ fn press(app: &mut App, character: char) {
     key(app, KeyCode::Char(character), Modifiers::NONE);
 }
 
+fn finish_macro_replay(app: &mut App) {
+    let mut slices = 0;
+    while app.macro_replay_pending() {
+        app.advance_macro_replay().unwrap();
+        slices += 1;
+        assert!(
+            slices <= 100,
+            "macro replay did not reach a bounded outcome"
+        );
+    }
+}
+
 fn context_action(app: &mut App, mnemonic: char) {
     key(app, KeyCode::Tab, Modifiers::NONE);
     press(app, mnemonic);

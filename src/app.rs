@@ -1927,6 +1927,53 @@ fn commit_message_body(text: &str) -> String {
 /// Helix and Vim already spell macros with.
 const DEFAULT_MACRO_REGISTER: char = '@';
 
+/// Work admitted by one top-level macro invocation, including raw events,
+/// counted command repetitions, text characters, and nested macros.
+const MAX_MACRO_REPLAY_WORK: usize = 10_000;
+
+/// Work returned to the host as one cooperative macro-replay slice.
+const MACRO_REPLAY_BATCH_INPUTS: usize = 128;
+
+/// Largest grammar-level range count allowed to execute as one action. Range
+/// intents carry stateful semantics that cannot always be split into repeated
+/// count-one commands, so larger counts are refused before they take effect.
+const MAX_MACRO_REPLAY_ATOMIC_REPETITIONS: usize = MACRO_REPLAY_BATCH_INPUTS;
+
+/// Defensive bound on distinct nested macro frames. Cycles are rejected
+/// earlier with their register chain; this still bounds malformed state.
+const MAX_MACRO_REPLAY_DEPTH: usize = 16;
+
+#[derive(Clone, Debug)]
+struct MacroReplayFrame {
+    register: char,
+    inputs: Vec<InputEvent>,
+    repetitions_remaining: usize,
+    next_input: usize,
+}
+
+#[derive(Clone, Debug)]
+struct MacroReplayCommand {
+    invocation: CommandInvocation,
+    repetitions_remaining: usize,
+}
+
+#[derive(Clone, Debug)]
+enum MacroReplayAction {
+    Input(InputEvent),
+    Command(CommandInvocation),
+}
+
+#[derive(Clone, Debug)]
+struct MacroReplay {
+    root_register: char,
+    frames: Vec<MacroReplayFrame>,
+    commands: Vec<MacroReplayCommand>,
+    remaining_work: usize,
+    processed_work: usize,
+    abort_reason: Option<String>,
+    last_action_error: bool,
+}
+
 /// Clean special buffers retained across pane switches. The current view and
 /// its immediate predecessor are enough for back/forward navigation without
 /// letting generated views accumulate in the buffer picker.
@@ -2180,7 +2227,7 @@ pub struct App {
     /// appended once the recording ends. Everything else joins the macro the
     /// moment its sequence completes, in the order it arrived.
     macro_staging: Vec<InputEvent>,
-    replay_depth: usize,
+    macro_replay: Option<MacroReplay>,
     /// Last successfully invoked command reached through an actual `Space ...`
     /// binding. The semantic invocation is replayed against current state;
     /// aliases such as `Ctrl-w` never enter this history.
@@ -2490,7 +2537,7 @@ impl App {
             macros: HashMap::new(),
             recording_macro: None,
             macro_staging: Vec::new(),
-            replay_depth: 0,
+            macro_replay: None,
             jump: None,
             line_select: None,
             keymap,

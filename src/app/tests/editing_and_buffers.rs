@@ -162,6 +162,7 @@ fn named_macros_record_stop_and_replay_through_the_macro_namespace() {
     for stroke in [' ', 'm', 'R', 'a'] {
         press(&mut app, stroke);
     }
+    finish_macro_replay(&mut app);
     assert_eq!(text(&app), "xxx");
 }
 
@@ -185,6 +186,7 @@ fn the_default_macro_is_recorded_replayed_and_listed_from_one_namespace() {
     for stroke in [' ', 'm', 'r'] {
         press(&mut app, stroke);
     }
+    finish_macro_replay(&mut app);
     assert_eq!(text(&app), "xxx");
 
     for stroke in [' ', 'm', 'l'] {
@@ -195,6 +197,7 @@ fn the_default_macro_is_recorded_replayed_and_listed_from_one_namespace() {
     assert_eq!(list.items[0].label, "@@");
     assert_eq!(list.items[0].detail, "default · 3 input(s)");
     key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    finish_macro_replay(&mut app);
     assert!(app.list.is_none());
     assert_eq!(text(&app), "xxxx");
 }
@@ -244,10 +247,12 @@ fn the_macro_namespace_awaits_its_register_under_the_vim_grammar_too() {
     for stroke in [' ', 'm', 'R', 'a'] {
         press(&mut app, stroke);
     }
+    finish_macro_replay(&mut app);
     assert_eq!(text(&app), "xx");
     press(&mut app, '2');
     press(&mut app, '@');
     press(&mut app, 'a');
+    finish_macro_replay(&mut app);
     assert_eq!(text(&app), "xxxx");
 }
 
@@ -295,7 +300,302 @@ fn literal_text_is_one_insert_transaction_and_one_macro_event() {
     for stroke in [' ', 'm', 'R', 'a'] {
         press(&mut app, stroke);
     }
+    finish_macro_replay(&mut app);
     assert_eq!(text(&app), "α\nβ", "macro replay preserves text ordering");
+}
+
+fn replay_inputs(register: char) -> Vec<InputEvent> {
+    [' ', 'm', 'R', register]
+        .into_iter()
+        .map(|character| InputEvent::Key(KeyStroke::char(character)))
+        .collect()
+}
+
+#[test]
+fn recursive_macro_replay_aborts_the_whole_root_before_trailing_inputs() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    let mut inputs = replay_inputs('a');
+    inputs.extend([
+        InputEvent::Key(KeyStroke::char('i')),
+        InputEvent::Text("unreachable".to_owned()),
+        InputEvent::Key(KeyStroke::new(KeyCode::Escape, Modifiers::NONE)),
+    ]);
+    app.macros.insert('a', inputs);
+
+    app.replay_macro('a', 1).unwrap();
+    finish_macro_replay(&mut app);
+
+    assert_eq!(text(&app), "");
+    assert!(app.status_error);
+    assert_eq!(app.status, "recursive macro replay stopped: @a -> @a");
+}
+
+#[test]
+fn mutual_macro_recursion_reports_the_active_register_chain() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    app.macros.insert('a', replay_inputs('b'));
+    app.macros.insert('b', replay_inputs('a'));
+
+    app.replay_macro('a', 1).unwrap();
+    finish_macro_replay(&mut app);
+
+    assert!(app.status_error);
+    assert_eq!(app.status, "recursive macro replay stopped: @a -> @b -> @a");
+}
+
+#[test]
+fn one_total_work_budget_bounds_large_counted_replay() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    app.macros
+        .insert('a', vec![InputEvent::Key(KeyStroke::char('l'))]);
+
+    app.replay_macro('a', 999_999).unwrap();
+    finish_macro_replay(&mut app);
+
+    assert!(app.status_error);
+    assert_eq!(
+        app.status,
+        format!(
+            "macro replay stopped after {MAX_MACRO_REPLAY_WORK} work unit(s); \
+             {MAX_MACRO_REPLAY_WORK}-unit safety limit reached"
+        )
+    );
+}
+
+#[test]
+fn a_recorded_maximal_command_count_is_expanded_cooperatively() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    seed(&mut app, &"x".repeat(MAX_MACRO_REPLAY_WORK + 100));
+    app.macros.insert(
+        'a',
+        "999999l"
+            .chars()
+            .map(|character| InputEvent::Key(KeyStroke::char(character)))
+            .collect(),
+    );
+
+    app.replay_macro('a', 1).unwrap();
+    app.advance_macro_replay().unwrap();
+
+    assert!(app.macro_replay_pending());
+    assert!(app.active().head() < MAX_MACRO_REPLAY_WORK);
+    finish_macro_replay(&mut app);
+    assert!(app.status_error);
+    assert_eq!(
+        app.status,
+        format!(
+            "macro replay stopped after {MAX_MACRO_REPLAY_WORK} work unit(s); \
+             {MAX_MACRO_REPLAY_WORK}-unit safety limit reached"
+        )
+    );
+}
+
+#[test]
+fn grammar_level_counts_cannot_bypass_the_macro_work_budget() {
+    for (mut app, recorded) in [
+        (
+            App::new(Config::default(), None).unwrap(),
+            "999999x".to_owned(),
+        ),
+        (super::commands::vim_app("abcdef"), "999999l".to_owned()),
+    ] {
+        let selection = app.active().selection.clone();
+        app.macros.insert(
+            'a',
+            recorded
+                .chars()
+                .map(|character| InputEvent::Key(KeyStroke::char(character)))
+                .collect(),
+        );
+
+        app.replay_macro('a', 1).unwrap();
+        finish_macro_replay(&mut app);
+
+        assert_eq!(app.active().selection, selection);
+        assert!(app.status_error);
+        assert_eq!(
+            app.status,
+            format!(
+                "macro replay stopped after 7 work unit(s); counted range exceeds the \
+                 {MAX_MACRO_REPLAY_ATOMIC_REPETITIONS}-repetition per-action limit"
+            )
+        );
+    }
+}
+
+#[test]
+fn macro_replay_preserves_action_errors_across_progress_and_completion() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    seed(&mut app, "abc");
+    let mut inputs = vec![InputEvent::Key(KeyStroke::char('l')); 126];
+    inputs.extend([
+        InputEvent::Key(KeyStroke::char('f')),
+        InputEvent::Key(KeyStroke::char('z')),
+        InputEvent::Key(KeyStroke::char('l')),
+    ]);
+    app.macros.insert('a', inputs);
+
+    app.replay_macro('a', 1).unwrap();
+    app.advance_macro_replay().unwrap();
+
+    assert!(app.macro_replay_pending());
+    assert!(app.status_error);
+    assert_eq!(app.status, "character not found: z");
+
+    finish_macro_replay(&mut app);
+    assert!(!app.status_error);
+    assert_eq!(
+        app.status,
+        format!("replayed macro @a; {} work unit(s)", 129)
+    );
+
+    app.macros.insert(
+        'b',
+        vec![
+            InputEvent::Key(KeyStroke::char('f')),
+            InputEvent::Key(KeyStroke::char('z')),
+        ],
+    );
+    app.replay_macro('b', 1).unwrap();
+    finish_macro_replay(&mut app);
+    assert!(app.status_error);
+    assert_eq!(app.status, "character not found: z");
+}
+
+#[test]
+fn replay_finishing_on_a_batch_boundary_releases_input_immediately() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    seed(&mut app, &"x".repeat(MACRO_REPLAY_BATCH_INPUTS + 1));
+    app.macros.insert(
+        'a',
+        vec![InputEvent::Key(KeyStroke::char('l')); MACRO_REPLAY_BATCH_INPUTS],
+    );
+
+    app.replay_macro('a', 1).unwrap();
+    app.advance_macro_replay().unwrap();
+
+    assert!(!app.macro_replay_pending());
+    assert_eq!(app.active().head(), MACRO_REPLAY_BATCH_INPUTS);
+    assert_eq!(
+        app.status,
+        format!("replayed macro @a; {MACRO_REPLAY_BATCH_INPUTS} work unit(s)")
+    );
+}
+
+#[test]
+fn semantic_range_work_counts_toward_the_current_replay_slice() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    app.macros.insert(
+        'a',
+        "128x128x"
+            .chars()
+            .map(|character| InputEvent::Key(KeyStroke::char(character)))
+            .collect(),
+    );
+
+    app.replay_macro('a', 1).unwrap();
+    app.advance_macro_replay().unwrap();
+
+    assert!(app.macro_replay_pending());
+    assert!(app.pending_sequence().is_empty());
+    assert_eq!(
+        app.status,
+        "replaying macro @a; 131 work unit(s) · Esc/Ctrl-c cancels"
+    );
+
+    finish_macro_replay(&mut app);
+    assert_eq!(app.status, "replayed macro @a; 262 work unit(s)");
+}
+
+#[test]
+fn an_oversized_recorded_text_event_is_refused_before_it_edits() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    app.mode = Mode::Insert;
+    app.macros.insert(
+        'a',
+        vec![InputEvent::Text("x".repeat(MAX_MACRO_REPLAY_WORK + 1))],
+    );
+
+    app.replay_macro('a', 1).unwrap();
+    finish_macro_replay(&mut app);
+
+    assert_eq!(text(&app), "");
+    assert!(app.status_error);
+    assert_eq!(
+        app.status,
+        format!(
+            "macro replay stopped after 0 work unit(s); \
+             {MAX_MACRO_REPLAY_WORK}-unit safety limit reached"
+        )
+    );
+}
+
+#[test]
+fn an_oversized_raw_recording_is_refused_before_snapshotting() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    app.macros.insert(
+        'a',
+        vec![InputEvent::Key(KeyStroke::char('l')); MAX_MACRO_REPLAY_WORK + 1],
+    );
+
+    app.replay_macro('a', 1).unwrap();
+
+    assert!(!app.macro_replay_pending());
+    assert_eq!(app.active().head(), 0);
+    assert!(app.status_error);
+    assert_eq!(
+        app.status,
+        format!(
+            "macro replay stopped after 0 work unit(s); \
+             {MAX_MACRO_REPLAY_WORK}-unit safety limit reached"
+        )
+    );
+}
+
+#[test]
+fn a_lifecycle_command_stops_trailing_macro_input() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    app.macros.insert(
+        'a',
+        vec![
+            InputEvent::Key(KeyStroke::char(':')),
+            InputEvent::Key(KeyStroke::char('q')),
+            InputEvent::Key(KeyStroke::new(KeyCode::Enter, Modifiers::NONE)),
+            InputEvent::Key(KeyStroke::char('i')),
+            InputEvent::Text("unreachable".to_owned()),
+        ],
+    );
+
+    app.replay_macro('a', 1).unwrap();
+    finish_macro_replay(&mut app);
+
+    assert!(app.should_quit);
+    assert_eq!(text(&app), "");
+    assert!(!app.macro_replay_pending());
+}
+
+#[test]
+fn escape_and_ctrl_c_cancel_cooperative_macro_replay() {
+    for cancel in [
+        KeyStroke::new(KeyCode::Escape, Modifiers::NONE),
+        KeyStroke::ctrl('c'),
+    ] {
+        let mut app = App::new(Config::default(), None).unwrap();
+        app.macros
+            .insert('a', vec![InputEvent::Key(KeyStroke::char('l'))]);
+        app.replay_macro('a', 999_999).unwrap();
+        app.advance_macro_replay().unwrap();
+        assert!(app.macro_replay_pending());
+
+        app.handle_key(cancel).unwrap();
+
+        assert!(!app.macro_replay_pending());
+        assert!(app.pending_sequence().is_empty());
+        assert_eq!(
+            app.status,
+            format!("macro replay @a cancelled after {MACRO_REPLAY_BATCH_INPUTS} work unit(s)")
+        );
+    }
 }
 
 #[test]

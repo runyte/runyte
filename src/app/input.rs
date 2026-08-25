@@ -390,6 +390,22 @@ impl App {
     /// Literal text stays one event and one edit transaction. Macro recording
     /// stores the same raw event ordering that arrived at this boundary.
     pub fn handle_input(&mut self, input: InputEvent) -> Result<()> {
+        if self.macro_replay.is_some() {
+            if is_macro_replay_cancel(&input) {
+                self.cancel_macro_replay();
+            } else {
+                self.macro_replay_progress_status();
+            }
+            return Ok(());
+        }
+        self.handle_input_inner(input, false)
+    }
+
+    pub(super) fn handle_replayed_input(&mut self, input: InputEvent) -> Result<()> {
+        self.handle_input_inner(input, true)
+    }
+
+    fn handle_input_inner(&mut self, input: InputEvent, replaying: bool) -> Result<()> {
         // A selected-line request belongs to the exact interaction state that
         // produced it. Later keyboard or text intent makes that selection
         // stale even when it did not edit the buffer.
@@ -411,7 +427,6 @@ impl App {
         self.last_interaction = Instant::now();
         self.status_error = false;
         let recording_before = self.recording_macro;
-        let replaying = self.replay_depth > 0;
         let recordable = !matches!(input, InputEvent::Pointer(_));
         let recorded_input = input.clone();
         let result = match input {
@@ -464,6 +479,9 @@ impl App {
         view: &PreparedView,
         repetitions: u16,
     ) -> Result<PointerOutcome> {
+        if self.macro_replay.is_some() {
+            return Ok(PointerOutcome::Unchanged);
+        }
         // Crossterm's mouse capture includes passive any-motion events. They
         // carry no editor intent and must not clear status, hints, or trigger
         // any semantic work when this owned boundary is used by another
@@ -1083,6 +1101,27 @@ impl App {
     }
 
     fn apply_editor_intent(&mut self, intent: EditorIntent) -> Result<Option<CommandOutcome>> {
+        if let EditorIntent::Range(range) = &intent {
+            let repetitions = match range {
+                RangeIntent::SelectLine { count, .. }
+                | RangeIntent::VimMotion { count, .. }
+                | RangeIntent::VimVisualLine { count }
+                | RangeIntent::VimRepeatSearch { count, .. }
+                | RangeIntent::VimSearchWord { count, .. } => count.get(),
+                RangeIntent::VimOperator { target, .. } => match target {
+                    VimRangeTarget::Characters { count }
+                    | VimRangeTarget::Motion { count, .. }
+                    | VimRangeTarget::Line { count, .. } => count.get(),
+                    VimRangeTarget::Syntax { .. } => 1,
+                },
+                RangeIntent::VimVisualOperator { .. }
+                | RangeIntent::VimSyntaxSelection { .. }
+                | RangeIntent::VimReplace { .. } => 1,
+            };
+            if !self.reserve_macro_replay_range_work(repetitions) {
+                return Ok(None);
+            }
+        }
         match intent {
             EditorIntent::Command(invocation) => {
                 return Ok(Some(self.execute(invocation)?));
@@ -3904,6 +3943,18 @@ impl App {
         }
 
         if let Some(character) = execution.character() {
+            let repeated_character_command = matches!(
+                command,
+                EditorCommand::FindNextChar
+                    | EditorCommand::FindPreviousChar
+                    | EditorCommand::FindTillNextChar
+                    | EditorCommand::FindTillPreviousChar
+            );
+            let repetitions = if self.macro_replay.is_some() && repeated_character_command {
+                1
+            } else {
+                execution.repetitions()
+            };
             if let Some(id) = self.active_terminal() {
                 match command {
                     EditorCommand::FindNextChar
@@ -3923,7 +3974,7 @@ impl App {
                         let extend = self.mode == Mode::Select;
                         let mut found = true;
                         if let Some(session) = self.terminals.get_mut(id) {
-                            for _ in 0..execution.repetitions() {
+                            for _ in 0..repetitions {
                                 found &=
                                     session.find_review_character(character, forward, till, extend);
                             }
@@ -3933,6 +3984,11 @@ impl App {
                         if !found {
                             self.error(format!("character not found: {character}"));
                         }
+                        self.defer_replayed_character_repetitions(
+                            command,
+                            character,
+                            execution.repetitions().saturating_sub(repetitions),
+                        )?;
                         return Ok(());
                     }
                     EditorCommand::ReplaceChar => {
@@ -3948,22 +4004,22 @@ impl App {
             match command {
                 EditorCommand::ReplaceChar => self.replace_with_char(character),
                 EditorCommand::FindNextChar => {
-                    for _ in 0..execution.repetitions() {
+                    for _ in 0..repetitions {
                         self.find_character(character, true, false);
                     }
                 }
                 EditorCommand::FindPreviousChar => {
-                    for _ in 0..execution.repetitions() {
+                    for _ in 0..repetitions {
                         self.find_character(character, false, false);
                     }
                 }
                 EditorCommand::FindTillNextChar => {
-                    for _ in 0..execution.repetitions() {
+                    for _ in 0..repetitions {
                         self.find_character(character, true, true);
                     }
                 }
                 EditorCommand::FindTillPreviousChar => {
-                    for _ in 0..execution.repetitions() {
+                    for _ in 0..repetitions {
                         self.find_character(character, false, true);
                     }
                 }
@@ -3973,6 +4029,13 @@ impl App {
                     self.replay_macro(character, execution.repetitions())?;
                 }
                 _ => unreachable!("validated invocation owns a character-taking command"),
+            }
+            if repeated_character_command {
+                self.defer_replayed_character_repetitions(
+                    command,
+                    character,
+                    execution.repetitions().saturating_sub(repetitions),
+                )?;
             }
             return Ok(());
         }
@@ -3996,9 +4059,40 @@ impl App {
             }
             return Ok(());
         }
-        for _ in 0..execution.repetitions() {
+        if command == EditorCommand::ReplayDefaultMacro {
+            self.replay_macro(DEFAULT_MACRO_REGISTER, execution.repetitions())?;
+            return Ok(());
+        }
+        let repetitions = if self.macro_replay.is_some() {
+            1
+        } else {
+            execution.repetitions()
+        };
+        for _ in 0..repetitions {
             self.execute_editor_command(command)?;
         }
+        let deferred = execution.repetitions().saturating_sub(repetitions);
+        if deferred > 0 && !self.should_quit && self.workspace_switch.is_none() {
+            let invocation =
+                CommandInvocation::editor(command, CommandExecutionContext::default())?;
+            self.defer_macro_command(invocation, deferred);
+        }
+        Ok(())
+    }
+
+    fn defer_replayed_character_repetitions(
+        &mut self,
+        command: EditorCommand,
+        character: char,
+        repetitions: usize,
+    ) -> Result<()> {
+        if repetitions == 0 {
+            return Ok(());
+        }
+        let execution =
+            CommandExecutionContext::resolved(std::num::NonZeroUsize::MIN, Some(character));
+        let invocation = CommandInvocation::editor(command, execution)?;
+        self.defer_macro_command(invocation, repetitions);
         Ok(())
     }
 
@@ -4440,6 +4534,16 @@ impl App {
         self.command_cursor = self.command.chars().count();
         self.command_selection = 0;
     }
+}
+
+fn is_macro_replay_cancel(input: &InputEvent) -> bool {
+    matches!(
+        input,
+        InputEvent::Key(KeyStroke {
+            code: KeyCode::Escape,
+            ..
+        })
+    ) || matches!(input, InputEvent::Key(key) if *key == KeyStroke::ctrl('c'))
 }
 
 fn edit_confirmation_text(input: &mut String, cursor: &mut usize, key: KeyStroke) {

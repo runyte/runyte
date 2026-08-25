@@ -472,6 +472,7 @@ fn vim_registers_are_deferred_validated_and_macros_stop_post_dispatch() {
     press(&mut macros, '2');
     press(&mut macros, '@');
     press(&mut macros, 'a');
+    finish_macro_replay(&mut macros);
     assert_eq!(text(&macros), "xxx");
 }
 

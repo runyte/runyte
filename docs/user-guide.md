@@ -1270,6 +1270,21 @@ any printable key as the name. Only one recording runs at a time: starting a
 second one while the first is open is refused rather than silently replacing
 it.
 
+Replay advances between frames rather than holding the editor's input loop.
+`Escape` or `Ctrl-c` cancels the work still queued; inputs that already ran are
+kept because a macro may invoke actions that cannot be rolled back. Direct and
+mutual recursion are refused with the register chain that caused the cycle.
+Distinct acyclic macro calls may nest up to 16 levels; reaching that defensive
+limit also stops the top-level replay.
+One top-level replay has a 10,000-unit work budget shared by raw key events,
+characters in literal text, counted command repetitions, and nested macros.
+Counted commands are expanded between frames instead of running their whole
+count at once. Grammar-level range operations whose exact semantics cannot be
+split are limited to 128 repetitions in one recorded input and are refused
+before taking effect when larger. Reaching either safety limit stops the whole
+replay. While work remains, the interaction line shows its progress and the
+cancellation keys.
+
 | Key | Action |
 | --- | --- |
 | `Space m m` | Start recording the default macro, or stop the recording |

@@ -604,6 +604,49 @@ fn pointer_respects_prompt_and_insert_ownership_and_cancels_modal_state() {
 }
 
 #[test]
+fn direct_pointer_input_cannot_interleave_with_macro_replay() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    seed(&mut app, "abcdef");
+    let geometry = FrameGeometry {
+        screen: Rect {
+            width: 30,
+            height: 8,
+            ..Rect::default()
+        },
+        editor: Rect {
+            width: 30,
+            height: 6,
+            ..Rect::default()
+        },
+        status: Rect::default(),
+        message: Rect::default(),
+    };
+    let view = app.prepare_view(geometry);
+    let body = view.pane(0).unwrap().body;
+    app.macros
+        .insert('a', vec![InputEvent::Key(KeyStroke::char('l'))]);
+    app.replay_macro('a', 1_000).unwrap();
+    let selection = app.active().selection.clone();
+
+    let outcome = app
+        .handle_pointer_repeated(
+            PointerEvent {
+                kind: PointerEventKind::Down(PointerButton::Left),
+                column: body.x + 5,
+                row: body.y,
+                modifiers: Modifiers::NONE,
+            },
+            &view,
+            1,
+        )
+        .unwrap();
+
+    assert_eq!(outcome, PointerOutcome::Unchanged);
+    assert_eq!(app.active().selection, selection);
+    assert!(app.macro_replay_pending());
+}
+
+#[test]
 fn pointer_focus_leaves_insert_and_drag_selection_still_enters_select() {
     let mut config = Config::default();
     config.editor.line_numbers = false;

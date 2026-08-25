@@ -929,6 +929,11 @@ impl WorkspaceHost {
         revision: BufferRevision,
         invocation: CommandInvocation,
     ) -> Result<CommandOutcome, BufferRequestError> {
+        if self.app.macro_replay_pending() {
+            return Err(BufferRequestError::Refused(
+                "macro replay owns editor input; cancel it before invoking a command".to_owned(),
+            ));
+        }
         let Some(prepared) = self.prepared.as_ref() else {
             return Err(BufferRequestError::Refused(
                 "no prepared editor frame is available".to_owned(),
@@ -1105,6 +1110,7 @@ mod tests {
         app::HostPorts,
         buffer::BufferKind,
         clipboard::SystemClipboard,
+        command::{CommandExecutionContext, EditorCommand},
         input::{KeyStroke, Modifiers, PointerButton, PointerEventKind},
         layout::Rect,
         text::Transaction,
@@ -1219,6 +1225,69 @@ mod tests {
         host.execute(HostCommand::Input(InputEvent::Text("hello".to_owned())))
             .unwrap();
         assert_eq!(host.app().active_buffer().to_string(), "hello");
+    }
+
+    #[test]
+    fn host_macro_replay_returns_between_input_and_cooperative_playback() {
+        let mut host = host();
+        for character in [' ', 'm', 'm', 'i', 'x'] {
+            host.execute(HostCommand::Input(InputEvent::Key(KeyStroke::char(
+                character,
+            ))))
+            .unwrap();
+        }
+        host.execute(HostCommand::Input(InputEvent::Key(KeyStroke::new(
+            crate::input::KeyCode::Escape,
+            Modifiers::NONE,
+        ))))
+        .unwrap();
+        for character in [' ', 'm', 'm', ' ', 'm', 'r'] {
+            host.execute(HostCommand::Input(InputEvent::Key(KeyStroke::char(
+                character,
+            ))))
+            .unwrap();
+        }
+
+        assert!(host.macro_replay_pending());
+        assert_eq!(host.app().active_buffer().to_string(), "x");
+
+        host.advance_macro_replay().unwrap();
+
+        assert!(!host.macro_replay_pending());
+        assert_eq!(host.app().active_buffer().to_string(), "xx");
+    }
+
+    #[test]
+    fn attached_semantic_commands_cannot_interleave_with_macro_replay() {
+        let mut host = host();
+        host.app_mut().buffers[0].apply(&Transaction::insert(0, "abcdef"));
+        for character in [' ', 'm', 'm', 'l', ' ', 'm', 'm', ' ', 'm', 'r'] {
+            host.execute(HostCommand::Input(InputEvent::Key(KeyStroke::char(
+                character,
+            ))))
+            .unwrap();
+        }
+        assert!(host.macro_replay_pending());
+        let head = host.app().active().head();
+        let frame = host.prepare_frame(geometry());
+        let invocation =
+            CommandInvocation::editor(EditorCommand::MoveRight, CommandExecutionContext::default())
+                .unwrap();
+
+        let result = host.execute_expected_command(
+            frame.id,
+            frame.active_buffer,
+            frame.active_revision,
+            invocation,
+        );
+
+        assert!(matches!(
+            result,
+            Err(BufferRequestError::Refused(message))
+                if message == "macro replay owns editor input; cancel it before invoking a command"
+        ));
+        assert!(host.macro_replay_pending());
+        assert_eq!(host.app().active().head(), head);
     }
 
     #[test]

@@ -504,9 +504,6 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
                             continue;
                         }
                         let hint_result = match &input {
-                            InputEvent::Key(key) if !app.has_input_overlay() => {
-                                observe_editor_key_hint(app.app(), &mut key_hints, *key)
-                            }
                             InputEvent::Pointer(event) => {
                                 key_hints.clear();
                                 if let Some(frame) = app.current_frame_id() {
@@ -528,8 +525,7 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
                                 HintEventResult::Consumed
                             }
                             InputEvent::Key(_) | InputEvent::Text(_) => {
-                                key_hints.clear();
-                                HintEventResult::Forward
+                                observe_key_or_text_hint(app.app(), &mut key_hints, &input)
                             }
                         };
                         if hint_result == HintEventResult::Forward {
@@ -598,6 +594,11 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
                 }
             }
             _ = status_animation_tick.tick(), if app.has_long_running_action() => {}
+            _ = tokio::task::yield_now(), if app.macro_replay_pending() => {
+                if let Err(error) = app.advance_macro_replay() {
+                    app.report_host_error(error.to_string());
+                }
+            }
             _ = tokio::time::sleep(hint_timeout.unwrap_or_default()), if hint_timeout.is_some() => {
                 key_hints.expire_at(Instant::now());
             }
@@ -1069,6 +1070,12 @@ async fn run_host_server(
             _ = status_animation_tick.tick(), if host.has_long_running_action() => {
                 changed = true;
             }
+            _ = tokio::task::yield_now(), if host.macro_replay_pending() => {
+                if let Err(error) = host.advance_macro_replay() {
+                    host.report_host_error(error.to_string());
+                }
+                changed = true;
+            }
             _ = terminal_frame_tick.tick(), if terminal_frame_pending && active.is_some() => {
                 changed = true;
             }
@@ -1168,16 +1175,7 @@ fn dispatch_host_key_or_text(
     input: InputEvent,
     repeated: bool,
 ) {
-    let hint_result = match &input {
-        InputEvent::Key(key) if !host.has_input_overlay() => {
-            observe_editor_key_hint(host.app(), key_hints, *key)
-        }
-        InputEvent::Key(_) | InputEvent::Text(_) => {
-            key_hints.clear();
-            HintEventResult::Forward
-        }
-        InputEvent::Pointer(_) => return,
-    };
+    let hint_result = observe_key_or_text_hint(host.app(), key_hints, &input);
     if hint_result != HintEventResult::Forward {
         return;
     }
@@ -1186,6 +1184,30 @@ fn dispatch_host_key_or_text(
         if let Err(error) = host.execute(HostCommand::Input(input.clone())) {
             host.report_host_error(error.to_string());
             break;
+        }
+    }
+}
+
+fn observe_key_or_text_hint(
+    app: &App,
+    key_hints: &mut KeyHintState,
+    input: &InputEvent,
+) -> HintEventResult {
+    if app.macro_replay_pending() {
+        key_hints.clear();
+        return HintEventResult::Forward;
+    }
+    match input {
+        InputEvent::Key(key) if !app.has_input_overlay() => {
+            observe_editor_key_hint(app, key_hints, *key)
+        }
+        InputEvent::Key(_) | InputEvent::Text(_) => {
+            key_hints.clear();
+            HintEventResult::Forward
+        }
+        InputEvent::Pointer(_) => {
+            key_hints.clear();
+            HintEventResult::Consumed
         }
     }
 }
@@ -2827,8 +2849,9 @@ mod tests {
     };
     use super::{
         KeyRepeatDetector, is_passive_pointer, is_redraw_only_event, motion_repeat_dispatches,
-        resolve_attached_directory, resolve_cwd_file_path, resolve_requested_project_root,
-        starts_on_about, uses_automatic_persistent_mode, write_cwd_file,
+        observe_key_or_text_hint, resolve_attached_directory, resolve_cwd_file_path,
+        resolve_requested_project_root, starts_on_about, uses_automatic_persistent_mode,
+        write_cwd_file,
     };
     use runyte::launch::LaunchArguments;
     use runyte::{
@@ -3066,6 +3089,25 @@ mod tests {
             true,
         );
         assert!(host.active().head() < 4, "repeat input was not accelerated");
+    }
+
+    #[test]
+    fn macro_owned_input_clears_hints_before_frontend_dispatch() {
+        let mut app = App::new(Config::default(), None).unwrap();
+        for character in [' ', 'm', 'm', 'l', ' ', 'm', 'm', ' ', 'm', 'r'] {
+            app.handle_key(KeyStroke::char(character)).unwrap();
+        }
+        assert!(app.macro_replay_pending());
+
+        let mut hints = KeyHintState::default();
+        hints.push(KeyStroke::char('g'));
+        assert!(hints.is_pending());
+
+        assert_eq!(
+            observe_key_or_text_hint(&app, &mut hints, &InputEvent::Key(KeyStroke::char('g')),),
+            runyte::key_hints::HintEventResult::Forward
+        );
+        assert!(!hints.is_pending());
     }
 
     #[cfg(unix)]

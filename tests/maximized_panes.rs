@@ -19,6 +19,12 @@ fn run(app: &mut App, command: EditorCommand) {
         .unwrap();
 }
 
+fn finish_macro_replay(app: &mut App) {
+    while app.macro_replay_pending() {
+        app.advance_macro_replay().unwrap();
+    }
+}
+
 fn press(app: &mut App, code: KeyCode, modifiers: Modifiers) {
     app.handle_key(KeyStroke::new(code, modifiers)).unwrap();
 }
@@ -330,6 +336,7 @@ fn a_macro_cannot_focus_a_hidden_pane_by_maximizing_before_the_next_frame() {
     // Replaying it turns the view back off and must still never leave focus on
     // a pane the frame is not showing.
     run(&mut app, EditorCommand::ReplayDefaultMacro);
+    finish_macro_replay(&mut app);
     assert_eq!(app.active_pane, maximized);
     let frame = prepare(&mut app, 220, 40);
     assert!(
