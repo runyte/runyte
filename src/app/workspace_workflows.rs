@@ -19,6 +19,11 @@ impl App {
     #[cfg(unix)]
     pub fn apply_workspace_event(&mut self, event: WorkspaceEvent) {
         match event {
+            WorkspaceEvent::Inspected {
+                generation,
+                path,
+                result,
+            } => self.finish_worktree_session_check(generation, path, result),
             WorkspaceEvent::Refreshed { generation, result } => {
                 if generation != self.workspace_generation {
                     return;

@@ -129,6 +129,10 @@ enum WorkspaceRequest {
     Refresh {
         generation: u64,
     },
+    Inspect {
+        generation: u64,
+        path: PathBuf,
+    },
     Start {
         generation: u64,
         selector: PathBuf,
@@ -163,6 +167,11 @@ pub enum WorkspaceEvent {
     Refreshed {
         generation: u64,
         result: Result<Vec<WorkspaceRow>, String>,
+    },
+    Inspected {
+        generation: u64,
+        path: PathBuf,
+        result: Result<Option<WorkspaceRow>, String>,
     },
     Previewed {
         generation: u64,
@@ -220,6 +229,15 @@ impl WorkspaceServiceHandle {
     pub fn try_refresh(&self, generation: u64) -> Result<(), &'static str> {
         self.requests
             .try_send(WorkspaceRequest::Refresh { generation })
+            .map_err(|error| match error {
+                mpsc::error::TrySendError::Full(_) => "session service queue is full",
+                mpsc::error::TrySendError::Closed(_) => "session service is unavailable",
+            })
+    }
+
+    pub fn try_inspect(&self, generation: u64, path: PathBuf) -> Result<(), &'static str> {
+        self.requests
+            .try_send(WorkspaceRequest::Inspect { generation, path })
             .map_err(|error| match error {
                 mpsc::error::TrySendError::Full(_) => "session service queue is full",
                 mpsc::error::TrySendError::Closed(_) => "session service is unavailable",
@@ -331,7 +349,14 @@ impl WorkspaceService {
         state: PathBuf,
         config: Option<PathBuf>,
     ) -> (WorkspaceServiceHandle, mpsc::Receiver<WorkspaceEvent>) {
-        Self::spawn_with(registry_roots(), recent_file(), executable, state, config)
+        Self::spawn_with(
+            registry_roots(),
+            recent_file(),
+            executable,
+            state,
+            config,
+            None,
+        )
     }
 
     fn spawn_with(
@@ -340,6 +365,7 @@ impl WorkspaceService {
         executable: PathBuf,
         state: PathBuf,
         config: Option<PathBuf>,
+        runtime: Option<PathBuf>,
     ) -> (WorkspaceServiceHandle, mpsc::Receiver<WorkspaceEvent>) {
         let (request_tx, mut request_rx) = mpsc::channel(REQUEST_CAPACITY);
         let (event_tx, event_rx) = mpsc::channel(EVENT_CAPACITY);
@@ -373,10 +399,20 @@ impl WorkspaceService {
                 let event = match request {
                     WorkspaceRequest::Refresh { generation } => WorkspaceEvent::Refreshed {
                         generation,
-                        result: refresh(&roots, recents.as_deref(), &state, None)
+                        result: refresh(&roots, recents.as_deref(), &state, runtime.as_deref())
                             .await
                             .map_err(|error| format!("{error:#}")),
                     },
+                    WorkspaceRequest::Inspect { generation, path } => {
+                        let result = inspect_workspace_target(&path, &state, runtime.as_deref())
+                            .await
+                            .map_err(|error| format!("{error:#}"));
+                        WorkspaceEvent::Inspected {
+                            generation,
+                            path,
+                            result,
+                        }
+                    }
                     WorkspaceRequest::Start {
                         generation,
                         selector,
@@ -771,6 +807,65 @@ async fn published_row(
     })
 }
 
+/// Inspects one exact workspace endpoint for a destructive operation.
+///
+/// Unlike the catalog refresh, this does not depend on registry or recent
+/// history membership and does not turn an endpoint it cannot verify into a
+/// stopped row. Endpoint artifacts with an unverifiable owner fail closed.
+async fn inspect_workspace_target(
+    project_root: &Path,
+    state: &Path,
+    runtime: Option<&Path>,
+) -> Result<Option<WorkspaceRow>> {
+    let project_root = project_root
+        .canonicalize()
+        .with_context(|| format!("cannot resolve workspace {}", project_root.display()))?;
+    let endpoint = published_endpoint(&project_root, state, runtime)?;
+    if !endpoint.metadata().exists() && !endpoint.socket().exists() {
+        return Ok(None);
+    }
+    let host = endpoint.published_host()?.with_context(|| {
+        format!(
+            "workspace endpoint for {} exists but its owner or health cannot be verified",
+            project_root.display()
+        )
+    })?;
+    anyhow::ensure!(
+        host.project_root == project_root,
+        "workspace endpoint identity does not match {}",
+        project_root.display()
+    );
+    if !host.speaks_current_protocol() {
+        return Ok(Some(WorkspaceRow {
+            id: host.id,
+            name: host.name,
+            number: None,
+            project_root,
+            running: true,
+            incompatible_protocol: Some(host.protocol),
+            unsaved_buffers: None,
+            pending_wait_requests: None,
+            live_terminals: None,
+            terminal_sessions: None,
+            interactive_attached: None,
+        }));
+    }
+    let inspection = inspect_endpoint_strict(&endpoint).await?;
+    Ok(Some(WorkspaceRow {
+        id: host.id,
+        name: host.name,
+        number: None,
+        project_root,
+        running: true,
+        incompatible_protocol: None,
+        unsaved_buffers: Some(inspection.unsaved_buffers),
+        pending_wait_requests: Some(inspection.pending_wait_requests),
+        live_terminals: Some(inspection.live_terminals),
+        terminal_sessions: Some(inspection.terminal_sessions),
+        interactive_attached: Some(inspection.interactive_attached),
+    }))
+}
+
 /// Resolves the endpoint a project root publishes, the same way a connecting
 /// client resolves it.
 fn published_endpoint(
@@ -817,6 +912,44 @@ struct HostInspection {
     live_terminals: Option<usize>,
     terminal_sessions: Option<usize>,
     interactive_attached: Option<bool>,
+}
+
+struct StrictHostInspection {
+    unsaved_buffers: usize,
+    pending_wait_requests: usize,
+    live_terminals: usize,
+    terminal_sessions: usize,
+    interactive_attached: bool,
+}
+
+async fn inspect_endpoint_strict(endpoint: &LocalEndpoint) -> Result<StrictHostInspection> {
+    tokio::time::timeout(CONTROL_TIMEOUT, async {
+        let mut client = connect_control(endpoint).await?;
+        client.send(&ClientRequest::Health).await?;
+        match client.recv().await? {
+            Some(HostResponse::Health {
+                interactive_attached,
+                unsaved_buffers,
+                pending_wait_requests,
+                live_terminals,
+                terminal_sessions,
+                ..
+            }) => Ok(StrictHostInspection {
+                unsaved_buffers,
+                pending_wait_requests,
+                live_terminals,
+                terminal_sessions,
+                interactive_attached,
+            }),
+            Some(HostResponse::Refused { message } | HostResponse::Error { message }) => {
+                anyhow::bail!(message)
+            }
+            Some(_) => anyhow::bail!("workspace host returned the wrong health response"),
+            None => anyhow::bail!("workspace host closed before returning its health"),
+        }
+    })
+    .await
+    .context("workspace health check timed out")?
 }
 
 async fn inspect_endpoint(endpoint: &LocalEndpoint) -> HostInspection {
@@ -1089,6 +1222,7 @@ mod tests {
             PathBuf::from("runyte-does-not-run"),
             PathBuf::from(".runyte"),
             None,
+            None,
         );
         service.try_refresh(7).unwrap();
         let Some(WorkspaceEvent::Refreshed { generation, result }) = events.recv().await else {
@@ -1096,6 +1230,132 @@ mod tests {
         };
         assert_eq!(generation, 7);
         assert!(result.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn targeted_inspection_probes_a_live_host_absent_from_registry_and_recents() {
+        use std::collections::HashMap;
+
+        use crate::{
+            protocol::FeatureGroup,
+            workspace::transport::{LocalServer, PROTOCOL_VERSION, ServerEvent},
+        };
+
+        let root = unique_test_root("targeted-unregistered-inspection");
+        let project = root.join("project");
+        let runtime = std::env::temp_dir().join(format!(
+            "ryt-ti-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(project.join(".runyte")).unwrap();
+        fs::create_dir_all(&runtime).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&runtime, fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let project = project.canonicalize().unwrap();
+        let endpoint = LocalEndpoint::discover_with_runtime(
+            &project.join(".runyte"),
+            &project,
+            Some(&runtime),
+        )
+        .unwrap();
+        let mut server = match LocalServer::bind(&endpoint).await {
+            Ok(server) => server,
+            Err(error)
+                if error.chain().any(|cause| {
+                    cause
+                        .downcast_ref::<io::Error>()
+                        .is_some_and(|error| error.raw_os_error() == Some(libc::EPERM))
+                }) =>
+            {
+                fs::remove_dir_all(runtime).unwrap();
+                fs::remove_dir_all(root).unwrap();
+                return;
+            }
+            Err(error) => panic!("cannot bind test transport: {error:#}"),
+        };
+        fs::remove_file(
+            runtime
+                .join("runyte/hosts")
+                .join(format!("{}.json", endpoint.id())),
+        )
+        .unwrap();
+        let host = tokio::spawn(async move {
+            let mut clients = HashMap::new();
+            while let Some(event) = server.recv().await {
+                match event {
+                    ServerEvent::Connected { id, responses, .. } => {
+                        let _ = responses
+                            .send(HostResponse::Welcome {
+                                protocol: PROTOCOL_VERSION,
+                                pid: std::process::id(),
+                                features: vec![
+                                    FeatureGroup::Control,
+                                    FeatureGroup::Buffers,
+                                    FeatureGroup::Wait,
+                                ],
+                                host_version: env!("CARGO_PKG_VERSION").to_owned(),
+                            })
+                            .await;
+                        clients.insert(id, responses);
+                    }
+                    ServerEvent::Request {
+                        id,
+                        request: ClientRequest::Health,
+                    } => {
+                        if let Some(responses) = clients.get(&id) {
+                            let _ = responses
+                                .send(HostResponse::Health {
+                                    protocol: PROTOCOL_VERSION,
+                                    pid: std::process::id(),
+                                    interactive_attached: false,
+                                    unsaved_buffers: 3,
+                                    pending_wait_requests: 0,
+                                    live_terminals: 0,
+                                    terminal_sessions: 0,
+                                })
+                                .await;
+                        }
+                    }
+                    ServerEvent::Disconnected { id } => {
+                        clients.remove(&id);
+                    }
+                    ServerEvent::Request { .. } => {}
+                }
+            }
+        });
+        let (service, mut events) = WorkspaceService::spawn_with(
+            vec![root.join("empty-registry")],
+            None,
+            PathBuf::from("runyte-does-not-run"),
+            PathBuf::from(".runyte"),
+            None,
+            Some(runtime.clone()),
+        );
+        service.try_inspect(9, project.clone()).unwrap();
+        let Some(WorkspaceEvent::Inspected {
+            generation,
+            path,
+            result,
+        }) = events.recv().await
+        else {
+            panic!("workspace service ended")
+        };
+        assert_eq!(generation, 9);
+        assert_eq!(path, project);
+        let row = result.unwrap().expect("the unregistered host is running");
+        assert!(row.running);
+        assert_eq!(row.unsaved_buffers, Some(3));
+        host.abort();
+        let _ = host.await;
+        fs::remove_dir_all(runtime).unwrap();
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[tokio::test]
@@ -1403,6 +1663,7 @@ mod tests {
             PathBuf::from("runyte-does-not-run"),
             PathBuf::from(".runyte"),
             None,
+            None,
         );
         for (generation, selector, name) in [
             (1, PathBuf::from(row.id), "by-id"),
@@ -1459,6 +1720,7 @@ mod tests {
             Some(recents),
             PathBuf::from("runyte-does-not-run"),
             PathBuf::from(".runyte"),
+            None,
             None,
         );
         for (generation, selector) in [

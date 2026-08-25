@@ -181,6 +181,22 @@ impl fmt::Display for GitError {
 
 impl std::error::Error for GitError {}
 
+fn stale_deletion(target: &str) -> GitError {
+    GitError::Failed {
+        command: format!("delete {target}"),
+        code: None,
+        stderr: format!("the {target} changed after it was reviewed; review the deletion again"),
+    }
+}
+
+fn typed_deletion_required(target: &str) -> GitError {
+    GitError::Failed {
+        command: format!("delete {target}"),
+        code: None,
+        stderr: format!("the {target} has unpublished history and needs typed confirmation"),
+    }
+}
+
 /// A working tree Runyte can ask questions about.
 ///
 /// Only the top level is kept: it is what every other call is resolved
@@ -246,7 +262,7 @@ pub enum Head {
 /// The drift is optional rather than zeroed because "in step with its upstream"
 /// and "the upstream it names is gone" are different answers, and a reader
 /// deciding whether to push needs to tell them apart.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct Upstream {
     /// The short ref name, as `origin/main`.
     pub name: String,
@@ -322,10 +338,40 @@ impl Head {
 }
 
 /// How far the current branch has drifted from its upstream.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 pub struct Divergence {
     pub ahead: usize,
     pub behind: usize,
+}
+
+/// How strongly the person authorized a destructive Git operation.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum DeletionAuthorization {
+    Enter,
+    Typed,
+}
+
+/// A reviewed branch deletion tied to the exact ref tip it described.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct BranchDeletionPlan {
+    pub branch: String,
+    pub tip: String,
+    pub upstream: Option<Upstream>,
+    /// Other local branches whose tips contain `tip`.
+    pub retaining_branches: Vec<String>,
+    pub required_authorization: DeletionAuthorization,
+}
+
+/// A reviewed worktree removal tied to the checkout identity it described.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct WorktreeRemovalPlan {
+    pub path: PathBuf,
+    pub head: Option<String>,
+    /// Short local branch name, when the worktree is attached.
+    pub branch: Option<String>,
+    pub upstream: Option<Upstream>,
+    pub detached_retained: bool,
+    pub required_authorization: DeletionAuthorization,
 }
 
 /// What happened to one side of one path.
@@ -586,6 +632,70 @@ pub trait GitProvider {
         })
     }
 
+    /// Prepares a clean, identity-bound worktree removal for confirmation.
+    fn prepare_worktree_removal(
+        &self,
+        repository: &Repository,
+        path: &Path,
+    ) -> Result<WorktreeRemovalPlan> {
+        let worktree = self
+            .worktrees(repository)?
+            .into_iter()
+            .find(|worktree| worktree.path == path)
+            .ok_or_else(|| GitError::Failed {
+                command: "git worktree list".to_owned(),
+                code: None,
+                stderr: format!("{} is no longer a registered worktree", path.display()),
+            })?;
+        let branch = worktree.branch.as_deref().map(|branch| {
+            branch
+                .strip_prefix("refs/heads/")
+                .unwrap_or(branch)
+                .to_owned()
+        });
+        let upstream = branch.as_deref().and_then(|name| {
+            self.branches(repository)
+                .ok()?
+                .into_iter()
+                .find(|candidate| candidate.name == name)?
+                .upstream
+        });
+        let required_authorization = if upstream.as_ref().is_some_and(|upstream| {
+            upstream
+                .divergence
+                .is_none_or(|divergence| divergence.ahead > 0)
+        }) {
+            DeletionAuthorization::Typed
+        } else {
+            DeletionAuthorization::Enter
+        };
+        Ok(WorktreeRemovalPlan {
+            path: worktree.path,
+            head: worktree.head,
+            branch,
+            upstream,
+            detached_retained: false,
+            required_authorization,
+        })
+    }
+
+    /// Applies only the worktree removal that was reviewed, after rechecking it.
+    fn remove_worktree_guarded(
+        &self,
+        repository: &Repository,
+        plan: &WorktreeRemovalPlan,
+        authorization: DeletionAuthorization,
+    ) -> Result<()> {
+        let current = self.prepare_worktree_removal(repository, &plan.path)?;
+        if current != *plan {
+            return Err(stale_deletion("worktree"));
+        }
+        if authorization < current.required_authorization {
+            return Err(typed_deletion_required("worktree"));
+        }
+        self.remove_worktree(repository, &plan.path)
+    }
+
     /// One bounded topological history page, continued by object identity.
     fn log_page(&self, _repository: &Repository, _request: &LogRequest) -> Result<LogPage> {
         Err(GitError::Unavailable {
@@ -678,6 +788,67 @@ pub trait GitProvider {
     /// database and named by the reflog, so it is recoverable for as long as
     /// the reflog keeps it.
     fn delete_branch(&self, repository: &Repository, branch: &str, force: bool) -> Result<()>;
+
+    /// Prepares a branch deletion and records which refs retain its tip.
+    fn prepare_branch_deletion(
+        &self,
+        repository: &Repository,
+        branch: &str,
+    ) -> Result<BranchDeletionPlan> {
+        let branches = self.branches(repository)?;
+        let target = branches
+            .iter()
+            .find(|candidate| candidate.name == branch)
+            .ok_or_else(|| GitError::Failed {
+                command: "git branch".to_owned(),
+                code: None,
+                stderr: format!("`{branch}` is not a local branch"),
+            })?;
+        let retaining_branches = target
+            .merged
+            .then(|| {
+                branches
+                    .iter()
+                    .find(|candidate| candidate.current)
+                    .map(|candidate| candidate.name.clone())
+            })
+            .flatten()
+            .into_iter()
+            .collect::<Vec<_>>();
+        let upstream_retains = target.upstream.as_ref().is_some_and(|upstream| {
+            upstream
+                .divergence
+                .is_some_and(|divergence| divergence.ahead == 0)
+        });
+        Ok(BranchDeletionPlan {
+            branch: branch.to_owned(),
+            tip: branch.to_owned(),
+            upstream: target.upstream.clone(),
+            required_authorization: if upstream_retains || !retaining_branches.is_empty() {
+                DeletionAuthorization::Enter
+            } else {
+                DeletionAuthorization::Typed
+            },
+            retaining_branches,
+        })
+    }
+
+    /// Deletes only the exact branch tip that was reviewed.
+    fn delete_branch_guarded(
+        &self,
+        repository: &Repository,
+        plan: &BranchDeletionPlan,
+        authorization: DeletionAuthorization,
+    ) -> Result<()> {
+        let current = self.prepare_branch_deletion(repository, &plan.branch)?;
+        if current != *plan {
+            return Err(stale_deletion("branch"));
+        }
+        if authorization < current.required_authorization {
+            return Err(typed_deletion_required("branch"));
+        }
+        self.delete_branch(repository, &plan.branch, true)
+    }
 
     /// The staged text of one path.
     ///

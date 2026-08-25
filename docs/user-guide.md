@@ -1587,14 +1587,17 @@ no longer exists. A branch tracking nothing says nothing.
 
 `Tab n` asks for a name, creates that branch at the one under the cursor, and
 switches to it — the same two refusals as a checkout apply, and they are
-reported before the name is asked for rather than after. `Tab D` asks first.
-When the branch holds commits that are not reachable from `HEAD`, the
-confirmation says so: deleting it then leaves those commits reachable only
-from the reflog,
-which is not the same as the unrecoverable `Tab D` in the changed-file list.
-A branch checked out in any registered worktree is refused before confirmation;
-remove that checkout with `Tab D` in `:git-worktrees` first, then return to the
-branch list if the branch itself should also be deleted.
+reported before the name is asked for rather than after. `Tab D` first reviews
+the exact branch tip. When its commits are retained by the configured upstream
+or another local branch, Enter confirms; the confirmation names the retaining
+local branches. When no such ref retains the tip, the exact branch name must be
+typed before Enter accepts it. Upstream reachability uses the locally cached
+remote-tracking ref and says so in the confirmation; fetch first when that
+answer needs to include newer remote state. A branch checked out in any
+registered worktree is refused before review; remove that checkout with
+`Tab D` in `:git-worktrees` first, then return to the branch list if the branch
+itself should also be deleted. The final mutation rechecks the tip and its
+retaining refs, so a branch changed after review is not deleted.
 
 `Space g w` (equivalently `:git-worktrees`) opens every checkout registered with the repository, including
 linked, detached, locked, prunable, and bare worktrees. The current root is
@@ -1618,9 +1621,15 @@ the same attachment, so a newly created worktree needs no separate Enter.
 Standalone Runyte keeps the worktree list and its create/remove Git actions,
 but Enter explains that attachment needs `workspace.mode: persistent` and
 creation stays in the current workspace. `Tab D` removes one selected ordinary
-worktree at a time and never deletes its branch or forces Git past dirty or
-untracked files. The current Runyte root, locked, bare, missing, and otherwise
-unavailable worktrees are refused before confirmation.
+worktree at a time and never deletes its branch. Staged, unstaged, or untracked
+files refuse removal before confirmation, as does a running persistent session
+with unsaved file buffers or unavailable health. A clean worktree whose branch
+has commits ahead of its cached upstream (or whose upstream is gone) requires
+the exact branch name; an unretained detached checkout requires its displayed
+path. Other clean removals use Enter. Git status, worktree identity, upstream
+state, and persistent-session health are checked again after confirmation. The
+current Runyte root, locked, bare, missing, and otherwise unavailable worktrees
+are refused before confirmation.
 
 `Space g l` opens commit history in pages of up to 10,000 commits, newest first
 in Git's topological order. The first line gives the current and total page

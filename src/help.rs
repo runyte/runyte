@@ -456,7 +456,7 @@ const GIT_BRANCHES_OVERVIEW: &[&str] = &[
     "The branch list shows local branches, with the current branch marked by an asterisk. A `[worktree: /local/path]` note identifies every registered checkout of a branch.",
     "A branch that tracks a remote one carries its drift in brackets: `[↑2 ↓1]` is two commits it has that the upstream does not and one the upstream has that it does not, `[=]` is in step, and `[gone]` is an upstream that no longer exists. A branch tracking nothing says nothing.",
     "Checking out a branch is refused while the working tree, index, or an open file buffer has uncommitted changes.",
-    "`Tab n` starts a new branch at the selected one and switches to it, under the same rules. `Tab D` deletes the selected branch after a confirmation, which says so when the branch holds commits that would then be reachable only from the reflog. A checked-out branch must first have its linked checkout removed from the worktree list.",
+    "`Tab n` starts a new branch at the selected one and switches to it, under the same rules. `Tab D` reviews the selected branch: Enter is enough when an upstream or another local branch retains its tip; otherwise type the exact branch name. Cached upstream state reflects the last fetch. A checked-out branch must first have its linked checkout removed from the worktree list.",
     "`Tab p` fast-forwards the current branch onto what it tracks. When the two have both moved on it offers instead to replay the local commits on top of the upstream's: Enter rebases, Escape leaves the branch as it is, and a conflict undoes the replay rather than leaving a tree to resolve here. In the branch list it refuses a row that is not the current branch. `Tab P` publishes the selected branch, setting an upstream the first time; it never forces.",
     "Both reach the network and hold the editor until the remote answers or two minutes pass. Nothing can prompt for a password while they run, so an authentication that needs one fails instead of hanging.",
 ];
@@ -468,7 +468,7 @@ const GIT_WORKTREES_OVERVIEW: &[&str] = &[
     "`prunable` means Git considers the registration stale and eligible for `git worktree prune`, usually because its administrative metadata or checkout path is gone. A row can be both missing and prunable.",
     "Enter opens the selected root as a separate workspace; it never retargets this workspace's buffers or language servers in place. Unsaved buffers refuse the switch.",
     "`Tab n` creates a checkout of the selected branch at an explicit destination. `Tab N` first names a new branch, then asks for its destination.",
-    "`Tab D` removes one ordinary worktree after confirmation, leaving its branch. It refuses the current, dirty, locked, bare, and unavailable worktrees and never forces Git.",
+    "`Tab D` removes one ordinary worktree after confirmation, leaving its branch. It refuses Git changes and unsaved persistent-session buffers; unpublished tracked or unretained detached history needs the exact branch name or displayed path. Current, locked, bare, and unavailable worktrees are also refused.",
 ];
 
 const GIT_LOG_OVERVIEW: &[&str] = &[

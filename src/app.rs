@@ -43,13 +43,14 @@ use crate::{
     finder::{FinderMode, ResourceFinder, ResourceItem, ResourceKind, ResourceTarget},
     fs_plan::{ApplyReport, DeletionMode, EntryKind, FsOperation, FsPlan, TransferMode},
     git::{
-        BlameLine, BlameRequest, BlameSource, Branch, BufferRevisionGuard, CommitDetail,
-        CommitSearchResult, CommitSummary, DiffScope, FileComparison, GitMutation, GitOperation,
-        GitProvider, GitRequestId, GitResponse, GitServiceEvent, GitServiceHandle,
-        GitServiceProgress, GitServiceState, GitTracker, LineChange, LogCursor, LogPage,
-        LogRequest, MAX_BLAME_INPUT_BYTES, MAX_BLAME_LINES, PartialStageSelection, PatchHunk,
-        RefreshSpec, Repository, RepositoryGeneration, RepositorySnapshot, StashEntry,
-        StashMutation, StashScope, StatusSide, Worktree, WorktreeCreate,
+        BlameLine, BlameRequest, BlameSource, Branch, BranchDeletionPlan, BufferRevisionGuard,
+        CommitDetail, CommitSearchResult, CommitSummary, DeletionAuthorization, DiffScope,
+        FileComparison, GitMutation, GitOperation, GitProvider, GitRequestId, GitResponse,
+        GitServiceEvent, GitServiceHandle, GitServiceProgress, GitServiceState, GitTracker,
+        LineChange, LogCursor, LogPage, LogRequest, MAX_BLAME_INPUT_BYTES, MAX_BLAME_LINES,
+        PartialStageSelection, PatchHunk, RefreshSpec, Repository, RepositoryGeneration,
+        RepositorySnapshot, StashEntry, StashMutation, StashScope, StatusSide, Worktree,
+        WorktreeCreate, WorktreeRemovalPlan,
     },
     help::HelpTopic,
     input::{
@@ -910,8 +911,20 @@ struct GeneralWorktreeRow {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct WorktreeRemovalConfirmation {
-    path: PathBuf,
-    branch: Option<String>,
+    plan: WorktreeRemovalPlan,
+    input: String,
+    cursor: usize,
+}
+
+#[cfg(unix)]
+#[derive(Clone, Debug)]
+struct PendingWorktreeRemovalCheck {
+    plan: WorktreeRemovalPlan,
+    authorization: Option<DeletionAuthorization>,
+    /// Present before the confirmation is first shown. Once confirmation has
+    /// been accepted, the second health check belongs to that explicit action
+    /// even though its overlay has closed.
+    origin: Option<(usize, u64)>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -942,19 +955,51 @@ impl GitDiscardConfirmation {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct BranchDeletionConfirmation {
-    branch: String,
-    force: bool,
+    plan: BranchDeletionPlan,
+    input: String,
+    cursor: usize,
 }
 
 impl BranchDeletionConfirmation {
+    fn typed(&self) -> bool {
+        self.plan.required_authorization == DeletionAuthorization::Typed
+    }
+
     fn message(&self) -> String {
-        let mut sentences = vec![format!("Press Enter to delete {}.", self.branch)];
-        if self.force {
-            sentences.push(
-                "Its commits are not on this branch and would then be reachable only from the \
-                 reflog."
-                    .to_owned(),
+        let mut sentences = vec![format!("Delete branch {}.", self.plan.branch)];
+        if !self.plan.retaining_branches.is_empty() {
+            sentences.push(format!(
+                "Its commits are retained by local branch{} {}.",
+                if self.plan.retaining_branches.len() == 1 {
+                    ""
+                } else {
+                    "es"
+                },
+                self.plan.retaining_branches.join(", ")
+            ));
+        }
+        if let Some(upstream) = &self.plan.upstream {
+            let state = upstream.divergence.map_or_else(
+                || "is gone".to_owned(),
+                |divergence| {
+                    format!(
+                        "is {} commit(s) ahead and {} behind",
+                        divergence.ahead, divergence.behind
+                    )
+                },
             );
+            sentences.push(format!(
+                "Cached upstream {} {state}; fetch to refresh this information.",
+                upstream.name
+            ));
+        }
+        if self.typed() {
+            sentences.push(format!(
+                "Its tip is not retained by another known branch; type {} exactly to continue.",
+                self.plan.branch
+            ));
+        } else {
+            sentences.push("Press Enter to continue.".to_owned());
         }
         sentences.push("Escape keeps it.".to_owned());
         sentences.join("\n")
@@ -973,18 +1018,55 @@ struct ConfirmationOverlay {
     title: &'static str,
     accept: &'static str,
     message: String,
+    input: Option<(String, usize)>,
 }
 
 impl WorktreeRemovalConfirmation {
+    fn typed(&self) -> bool {
+        self.plan.required_authorization == DeletionAuthorization::Typed
+    }
+
+    fn expected(&self) -> String {
+        self.plan
+            .branch
+            .clone()
+            .unwrap_or_else(|| crate::git::display_path(&self.plan.path))
+    }
+
     fn message(&self) -> String {
-        let branch_note = self.branch.as_deref().map_or_else(
+        let branch_note = self.plan.branch.as_deref().map_or_else(
             || "No branch will be deleted".to_owned(),
             |branch| format!("Branch {branch} will remain"),
         );
-        format!(
-            "Press Enter to remove worktree {}.\n{branch_note}.\nEscape keeps it.",
-            crate::git::display_path(&self.path)
-        )
+        let mut lines = vec![
+            format!(
+                "Remove worktree {}.",
+                crate::git::display_path(&self.plan.path)
+            ),
+            format!("{branch_note}."),
+        ];
+        if let Some(upstream) = &self.plan.upstream {
+            let state = upstream.divergence.map_or_else(
+                || "is gone".to_owned(),
+                |divergence| {
+                    format!(
+                        "is {} commit(s) ahead and {} behind",
+                        divergence.ahead, divergence.behind
+                    )
+                },
+            );
+            lines.push(format!(
+                "Cached upstream {} {state}; fetch to refresh this information.",
+                upstream.name
+            ));
+        }
+        if self.typed() {
+            lines.push(format!("Type {} exactly to continue.", self.expected()));
+        } else {
+            lines.push("Press Enter to continue.".to_owned());
+        }
+        lines.push("Escape keeps it.".to_owned());
+        lines.join("\n")
     }
 }
 
@@ -2004,6 +2086,10 @@ pub struct App {
     /// The typed path a confirmed `D` would remove from the worktree list.
     /// Never reconstructed from the lossy row text.
     git_worktree_removal: Option<WorktreeRemovalConfirmation>,
+    #[cfg(unix)]
+    pending_worktree_removal: Option<PendingWorktreeRemovalCheck>,
+    #[cfg(unix)]
+    worktree_removal_generation: u64,
     git_worktree_start: Option<String>,
     git_worktree_new_branch: Option<String>,
     git_stash_confirmation: Option<GitStashConfirmation>,
@@ -2327,6 +2413,10 @@ impl App {
             git_pull_rebase: None,
             git_branch_start: None,
             git_worktree_removal: None,
+            #[cfg(unix)]
+            pending_worktree_removal: None,
+            #[cfg(unix)]
+            worktree_removal_generation: 0,
             git_worktree_start: None,
             git_worktree_new_branch: None,
             git_stash_confirmation: None,

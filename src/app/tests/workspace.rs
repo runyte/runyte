@@ -36,6 +36,279 @@ fn session_attach_captures_the_editor_working_directory_for_relative_selectors()
 
 #[cfg(unix)]
 #[test]
+fn worktree_removal_refuses_unsaved_or_uninspectable_persistent_sessions() {
+    let root = temporary("worktree-session-delete-guard");
+    fs::create_dir_all(&root).unwrap();
+    let root = root.canonicalize().unwrap();
+    let target = root.join("linked");
+    fs::create_dir_all(&target).unwrap();
+    let target = target.canonicalize().unwrap();
+    let mut app = App::new_in_isolated_project(
+        &root,
+        HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+            String::new(),
+        ))))),
+    )
+    .unwrap();
+    let plan = WorktreeRemovalPlan {
+        path: target.clone(),
+        head: Some("0123456789abcdef".to_owned()),
+        branch: Some("feature".to_owned()),
+        upstream: None,
+        detached_retained: false,
+        required_authorization: DeletionAuthorization::Enter,
+    };
+    let row = |unsaved_buffers| WorkspaceRow {
+        id: "linked".to_owned(),
+        name: None,
+        number: None,
+        project_root: target.clone(),
+        running: true,
+        incompatible_protocol: None,
+        unsaved_buffers,
+        pending_wait_requests: Some(0),
+        live_terminals: Some(0),
+        terminal_sessions: Some(0),
+        interactive_attached: Some(false),
+    };
+
+    app.worktree_removal_generation = 1;
+    app.pending_worktree_removal = Some(PendingWorktreeRemovalCheck {
+        plan: plan.clone(),
+        authorization: None,
+        origin: None,
+    });
+    app.finish_worktree_session_check(1, target.clone(), Ok(Some(row(Some(2)))));
+    assert!(app.status_error);
+    assert!(
+        app.status.contains("2 unsaved file buffers"),
+        "{}",
+        app.status
+    );
+    assert!(app.git_worktree_removal.is_none());
+
+    app.worktree_removal_generation = 2;
+    app.pending_worktree_removal = Some(PendingWorktreeRemovalCheck {
+        plan: plan.clone(),
+        authorization: None,
+        origin: None,
+    });
+    app.finish_worktree_session_check(2, target.clone(), Ok(Some(row(None))));
+    assert!(app.status_error);
+    assert!(
+        app.status.contains("unsaved state is unavailable"),
+        "{}",
+        app.status
+    );
+
+    app.worktree_removal_generation = 3;
+    app.pending_worktree_removal = Some(PendingWorktreeRemovalCheck {
+        plan,
+        authorization: None,
+        origin: None,
+    });
+    app.finish_worktree_session_check(3, target.clone(), Ok(Some(row(Some(0)))));
+    assert!(app.git_worktree_removal.is_some());
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn worktree_typed_confirmation_accepts_pasted_unicode_text() {
+    let root = temporary("worktree-pasted-confirmation");
+    fs::create_dir_all(&root).unwrap();
+    let root = root.canonicalize().unwrap();
+    app_with_confirmation(&root, "feat/λ", |app| {
+        app.handle_input(InputEvent::Text("feat/λ".to_owned()))
+            .unwrap();
+        assert_eq!(
+            app.git_worktree_removal
+                .as_ref()
+                .map(|confirmation| confirmation.input.as_str()),
+            Some("feat/λ")
+        );
+        assert_eq!(
+            app.git_worktree_removal
+                .as_ref()
+                .map(|confirmation| confirmation.cursor),
+            Some(6)
+        );
+    });
+    fs::remove_dir_all(root).unwrap();
+}
+
+fn app_with_confirmation(root: &Path, branch: &str, inspect: impl FnOnce(&mut App)) {
+    let mut app = App::new_in_isolated_project(
+        root,
+        HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+            String::new(),
+        ))))),
+    )
+    .unwrap();
+    app.git_worktree_removal = Some(WorktreeRemovalConfirmation {
+        plan: WorktreeRemovalPlan {
+            path: root.join("linked"),
+            head: Some("1".repeat(40)),
+            branch: Some(branch.to_owned()),
+            upstream: None,
+            detached_retained: false,
+            required_authorization: DeletionAuthorization::Typed,
+        },
+        input: String::new(),
+        cursor: 0,
+    });
+    inspect(&mut app);
+}
+
+#[test]
+fn stale_async_worktree_removal_preflights_never_open_a_confirmation() {
+    use crate::{
+        app::git_workflows::DeletionPreflight,
+        git::{MemoryGitProvider, Repository},
+    };
+
+    let root = temporary("worktree-stale-preflight");
+    let current = root.join("current");
+    let linked = root.join("linked");
+    fs::create_dir_all(&current).unwrap();
+    fs::create_dir_all(&linked).unwrap();
+    let current = current.canonicalize().unwrap();
+    let linked = linked.canonicalize().unwrap();
+    let repository = Repository::new(&current);
+    let rows = vec![
+        test_worktree(current.clone(), "main", &root),
+        test_worktree(linked.clone(), "feature", &root),
+    ];
+    let mut ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    ports.replace_git(Box::new(
+        MemoryGitProvider::new(repository.clone()).with_worktrees(rows.clone()),
+    ));
+    let mut app = App::new_in_isolated_project(&current, ports).unwrap();
+    app.open_git_worktrees_result(rows, true);
+    let offset = app.active_buffer().line_to_offset(1);
+    app.active_mut().replace_selection(Selection::point(offset));
+    let source_buffer = app.active().buffer;
+    let old_id = GitRequestId::from_raw(51);
+    let latest_id = GitRequestId::from_raw(52);
+    app.git_state.worktree_removal_request = Some(DeletionPreflight {
+        id: latest_id,
+        source_buffer,
+        interaction_generation: app.next_action_id,
+        target: linked.clone(),
+    });
+    let operation = || GitOperation::PrepareWorktreeRemoval {
+        repository: repository.clone(),
+        path: linked.clone(),
+    };
+    let response = || {
+        Box::new(Ok(GitResponse::PreparedWorktreeRemoval(
+            WorktreeRemovalPlan {
+                path: linked.clone(),
+                head: Some("1".repeat(40)),
+                branch: Some("feature".to_owned()),
+                upstream: None,
+                detached_retained: false,
+                required_authorization: DeletionAuthorization::Enter,
+            },
+        )))
+    };
+    app.apply_git_service_event(GitServiceEvent::Completed {
+        id: old_id,
+        operation: operation(),
+        result: response(),
+        state: GitServiceState::Completed,
+        coalesced: false,
+    });
+    assert!(app.git_worktree_removal.is_none());
+    assert_eq!(
+        app.git_state
+            .worktree_removal_request
+            .as_ref()
+            .map(|pending| pending.id),
+        Some(latest_id)
+    );
+
+    app.open_file(current.join("elsewhere.txt")).unwrap();
+    app.apply_git_service_event(GitServiceEvent::Completed {
+        id: latest_id,
+        operation: operation(),
+        result: response(),
+        state: GitServiceState::Completed,
+        coalesced: false,
+    });
+    assert!(app.git_worktree_removal.is_none());
+    assert!(app.git_state.worktree_removal_request.is_none());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn stale_initial_session_inspection_never_opens_a_worktree_confirmation() {
+    use crate::git::{MemoryGitProvider, Repository};
+
+    let root = temporary("worktree-stale-session-inspection");
+    let current = root.join("current");
+    let linked = root.join("linked");
+    fs::create_dir_all(&current).unwrap();
+    fs::create_dir_all(&linked).unwrap();
+    let current = current.canonicalize().unwrap();
+    let linked = linked.canonicalize().unwrap();
+    let rows = vec![
+        test_worktree(current.clone(), "main", &root),
+        test_worktree(linked.clone(), "feature", &root),
+    ];
+    let mut ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    ports.replace_git(Box::new(
+        MemoryGitProvider::new(Repository::new(&current)).with_worktrees(rows.clone()),
+    ));
+    let mut app = App::new_in_isolated_project(&current, ports).unwrap();
+    app.open_git_worktrees_result(rows, true);
+    let offset = app.active_buffer().line_to_offset(1);
+    app.active_mut().replace_selection(Selection::point(offset));
+    let source_buffer = app.active().buffer;
+    let plan = WorktreeRemovalPlan {
+        path: linked.clone(),
+        head: Some("1".repeat(40)),
+        branch: Some("feature".to_owned()),
+        upstream: None,
+        detached_retained: false,
+        required_authorization: DeletionAuthorization::Enter,
+    };
+    app.worktree_removal_generation = 11;
+    app.pending_worktree_removal = Some(PendingWorktreeRemovalCheck {
+        plan,
+        authorization: None,
+        origin: Some((source_buffer, app.next_action_id)),
+    });
+
+    app.open_file(current.join("elsewhere.txt")).unwrap();
+    app.finish_worktree_session_check(11, linked, Ok(None));
+
+    assert!(app.git_worktree_removal.is_none());
+    assert!(app.pending_worktree_removal.is_none());
+    fs::remove_dir_all(root).unwrap();
+}
+
+fn test_worktree(path: PathBuf, branch: &str, root: &Path) -> Worktree {
+    Worktree {
+        path,
+        head: Some("1".repeat(40)),
+        branch: Some(format!("refs/heads/{branch}")),
+        detached: false,
+        bare: false,
+        locked: None,
+        prunable: None,
+        missing: false,
+        common_dir: root.join("common"),
+    }
+}
+
+#[cfg(unix)]
+#[test]
 fn standalone_can_list_sessions_but_cannot_attach_start_or_stop_them() {
     let root = temporary("standalone-session-list");
     fs::create_dir_all(&root).unwrap();
@@ -1002,7 +1275,7 @@ fn worktree_shift_d_confirms_cancels_and_removes_only_the_typed_path() {
     assert_eq!(
         app.git_worktree_removal
             .as_ref()
-            .map(|confirmation| confirmation.path.as_path()),
+            .map(|confirmation| confirmation.plan.path.as_path()),
         Some(linked.as_path())
     );
     assert!(app.status.contains(&crate::git::display_path(&linked)));
@@ -1090,14 +1363,14 @@ fn worktree_control_path_is_one_safe_row_and_confirmation_with_typed_identity() 
 
     context_action(&mut app, 'D');
     let confirmation = app.git_worktree_removal.as_ref().unwrap();
-    assert_eq!(confirmation.path, linked);
+    assert_eq!(confirmation.plan.path, linked);
     let question = confirmation.message();
     assert!(
         question
             .chars()
             .all(|character| character == '\n' || !character.is_control())
     );
-    assert_eq!(question.lines().count(), 3);
+    assert_eq!(question.lines().count(), 4);
     assert!(question.contains("\\n"));
     assert!(question.contains("\\t"));
     assert!(question.contains("\\u{1b}"));

@@ -670,6 +670,7 @@ impl App {
                     "discard and refresh"
                 },
                 message: confirmation.message(),
+                input: None,
             });
         }
         if let Some(buffer) = self.buffer_discard_confirmation {
@@ -681,6 +682,7 @@ impl App {
                 title: "Discard buffer changes",
                 accept: "discard changes",
                 message: format!("Discard changes to {name}?\nEnter confirms.\nEscape cancels."),
+                input: None,
             });
         }
         if let Some(confirmation) = &self.git_discard_confirmation {
@@ -688,6 +690,7 @@ impl App {
                 title: "Discard Git changes",
                 accept: "discard changes",
                 message: confirmation.message(),
+                input: None,
             });
         }
         if let Some(confirmation) = &self.git_stash_confirmation {
@@ -700,6 +703,7 @@ impl App {
                 title,
                 accept,
                 message: confirmation.message.clone(),
+                input: None,
             });
         }
         if let Some(confirmation) = &self.git_branch_deletion {
@@ -707,6 +711,9 @@ impl App {
                 title: "Delete branch",
                 accept: "delete branch",
                 message: confirmation.message(),
+                input: confirmation
+                    .typed()
+                    .then(|| (confirmation.input.clone(), confirmation.cursor)),
             });
         }
         if let Some(confirmation) = &self.git_pull_rebase {
@@ -714,6 +721,7 @@ impl App {
                 title: "Replay commits",
                 accept: "replay commits",
                 message: confirmation.message(),
+                input: None,
             });
         }
         self.git_worktree_removal
@@ -722,6 +730,9 @@ impl App {
                 title: "Remove worktree",
                 accept: "remove worktree",
                 message: confirmation.message(),
+                input: confirmation
+                    .typed()
+                    .then(|| (confirmation.input.clone(), confirmation.cursor)),
             })
     }
 
@@ -1245,18 +1256,32 @@ impl App {
         }
 
         if let Some(confirmation) = self.confirmation_overlay() {
+            let typed_input = confirmation.input.clone();
             let mut overlay = bounded(
                 OverlayKind::Confirmation,
                 confirmation.title,
-                "",
+                typed_input
+                    .as_ref()
+                    .map_or_else(String::new, |(input, _)| input.clone()),
                 Vec::new(),
                 None,
                 Some(confirmation.message),
             );
             overlay.actions = vec![
-                OverlayAction::new("Enter", confirmation.accept),
+                OverlayAction::new(
+                    "Enter",
+                    if typed_input.is_some() {
+                        "confirm exact text"
+                    } else {
+                        confirmation.accept
+                    },
+                ),
                 OverlayAction::new("Esc", "cancel"),
             ];
+            if let Some((_, cursor)) = typed_input {
+                overlay.input = OverlayInput::Text;
+                overlay.query_cursor = Some(cursor);
+            }
             overlays.push(overlay);
         }
 

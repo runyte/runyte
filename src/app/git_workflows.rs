@@ -2,20 +2,24 @@
 
 //! Editor coordination for Git status, history, branches, worktrees, and mutations.
 
+#[cfg(unix)]
+use super::{PendingWorktreeRemovalCheck, WorkspaceRow};
+
 // Application-module dependencies:
 use super::{
     App, Axis, BindingTarget, BlameLine, BlameRequest, BlameSource, Branch,
-    BranchDeletionConfirmation, Buffer, BufferKind, BufferRevisionGuard, COMMIT_INSTRUCTIONS,
-    ColonCommand, CommitDetail, CommitSearchResult, CommitSummary, DiffScope, DiffSession,
-    DiffSide, Duration, FileComparison, GeneralWorktreeRow, GeneratedViewIdentity,
-    GitDiscardConfirmation, GitMutation, GitOperation, GitProvider, GitRequestId, GitResponse,
-    GitServiceEvent, GitServiceHandle, GitServiceProgress, GitServiceState, GitStashConfirmation,
-    GitTracker, HashMap, HashSet, Instant, KeyCode, KeyStroke, LineChange, ListAction, ListPicker,
-    LogCursor, LogPage, LogRequest, LogViewRequest, MAX_BLAME_INPUT_BYTES, MAX_BLAME_LINES,
-    MAX_DIFF_BYTES, Mode, PartialStageSelection, PatchHunk, Path, PathBuf, PickerItem, PromptKind,
-    PullRebaseConfirmation, RefreshSpec, Repository, RepositoryGeneration, RepositorySnapshot,
-    Result, Selection, StashEntry, StashMutation, StashScope, StatusSide, WorkspaceSwitchRequest,
-    Worktree, WorktreeCreate, WorktreeRemovalConfirmation, buffer_language, commit_message_body,
+    BranchDeletionConfirmation, BranchDeletionPlan, Buffer, BufferKind, BufferRevisionGuard,
+    COMMIT_INSTRUCTIONS, ColonCommand, CommitDetail, CommitSearchResult, CommitSummary,
+    DeletionAuthorization, DiffScope, DiffSession, DiffSide, Duration, FileComparison,
+    GeneralWorktreeRow, GeneratedViewIdentity, GitDiscardConfirmation, GitMutation, GitOperation,
+    GitProvider, GitRequestId, GitResponse, GitServiceEvent, GitServiceHandle, GitServiceProgress,
+    GitServiceState, GitStashConfirmation, GitTracker, HashMap, HashSet, Instant, KeyCode,
+    KeyStroke, LineChange, ListAction, ListPicker, LogCursor, LogPage, LogRequest, LogViewRequest,
+    MAX_BLAME_INPUT_BYTES, MAX_BLAME_LINES, MAX_DIFF_BYTES, Mode, PartialStageSelection, PatchHunk,
+    Path, PathBuf, PickerItem, PromptKind, PullRebaseConfirmation, RefreshSpec, Repository,
+    RepositoryGeneration, RepositorySnapshot, Result, Selection, StashEntry, StashMutation,
+    StashScope, StatusSide, WorkspaceSwitchRequest, Worktree, WorktreeCreate,
+    WorktreeRemovalConfirmation, WorktreeRemovalPlan, buffer_language, commit_message_body,
     is_refreshed_projection, selection_is_deliberate,
 };
 
@@ -61,6 +65,8 @@ pub(super) struct GitWorkflowState {
     /// Zero-based index of the displayed page within `log_cursors`.
     log_page: usize,
     log_requests: HashMap<GitRequestId, LogViewRequest>,
+    pub(super) branch_deletion_request: Option<DeletionPreflight<String>>,
+    pub(super) worktree_removal_request: Option<DeletionPreflight<PathBuf>>,
     blame_rows: Vec<BlameLine>,
     stash_rows: Vec<StashEntry>,
     patch_hunks: HashMap<usize, Vec<PatchHunk>>,
@@ -91,6 +97,8 @@ impl Default for GitWorkflowState {
             log_cursors: vec![None],
             log_page: 0,
             log_requests: HashMap::new(),
+            branch_deletion_request: None,
+            worktree_removal_request: None,
             blame_rows: Vec::new(),
             stash_rows: Vec::new(),
             patch_hunks: HashMap::new(),
@@ -98,6 +106,20 @@ impl Default for GitWorkflowState {
             partial_guards: HashMap::new(),
         }
     }
+}
+
+/// The exact view interaction which requested a destructive preflight.
+///
+/// Git reads finish asynchronously. A result is useful only while it is still
+/// the newest request, the originating projection remains active, and no later
+/// keyboard or text intent has happened. That prevents a delayed ordinary
+/// Enter confirmation from consuming Enter in an unrelated view.
+#[derive(Clone, Debug)]
+pub(super) struct DeletionPreflight<T> {
+    pub(super) id: GitRequestId,
+    pub(super) source_buffer: usize,
+    pub(super) interaction_generation: u64,
+    pub(super) target: T,
 }
 
 impl GitWorkflowState {
@@ -422,6 +444,9 @@ impl App {
                 let action = self.git_state.action_origins.remove(&id);
                 let explicit_index_open = self.git_state.index_open_requests.remove(&id);
                 let log_view_request = self.git_state.log_requests.remove(&id);
+                if !self.accept_deletion_preflight(id, &operation, result.as_ref().as_ref().ok()) {
+                    return;
+                }
                 if matches!(
                     state,
                     GitServiceState::Cancelled | GitServiceState::CompletedWithUncertainState
@@ -467,6 +492,49 @@ impl App {
         }
     }
 
+    fn accept_deletion_preflight(
+        &mut self,
+        id: GitRequestId,
+        operation: &GitOperation,
+        response: Option<&GitResponse>,
+    ) -> bool {
+        match operation {
+            GitOperation::PrepareBranchDeletion { branch, .. } => {
+                let Some(pending) = self.git_state.branch_deletion_request.as_ref() else {
+                    return false;
+                };
+                if pending.id != id {
+                    return false;
+                }
+                let pending = self.git_state.branch_deletion_request.take().unwrap();
+                pending.target == *branch
+                    && pending.interaction_generation == self.next_action_id
+                    && self.active().buffer == pending.source_buffer
+                    && self.selected_branch_name().as_deref() == Some(branch)
+                    && response.is_none_or(|response| {
+                        matches!(response, GitResponse::PreparedBranchDeletion(plan) if plan.branch == *branch)
+                    })
+            }
+            GitOperation::PrepareWorktreeRemoval { path, .. } => {
+                let Some(pending) = self.git_state.worktree_removal_request.as_ref() else {
+                    return false;
+                };
+                if pending.id != id {
+                    return false;
+                }
+                let pending = self.git_state.worktree_removal_request.take().unwrap();
+                pending.target == *path
+                    && pending.interaction_generation == self.next_action_id
+                    && self.active().buffer == pending.source_buffer
+                    && self.selected_worktree_path().as_deref() == Some(path)
+                    && response.is_none_or(|response| {
+                        matches!(response, GitResponse::PreparedWorktreeRemoval(plan) if plan.path == *path)
+                    })
+            }
+            _ => true,
+        }
+    }
+
     pub(super) fn apply_git_response(
         &mut self,
         operation: GitOperation,
@@ -506,6 +574,12 @@ impl App {
             GitResponse::Worktrees(worktrees) => {
                 let activate = !self.active_buffer().is_git_worktrees();
                 self.open_git_worktrees_result(worktrees, activate);
+            }
+            GitResponse::PreparedBranchDeletion(plan) => {
+                self.open_branch_deletion_confirmation(plan);
+            }
+            GitResponse::PreparedWorktreeRemoval(plan) => {
+                self.open_worktree_removal_confirmation(plan);
             }
             GitResponse::Log { request, page } => {
                 if request.cursor.is_some()
@@ -765,7 +839,9 @@ impl App {
                 GitMutation::CreateBranch { branch, start } => {
                     format!("created {branch} from {start}")
                 }
-                GitMutation::DeleteBranch { branch, .. } => format!("deleted branch {branch}"),
+                GitMutation::DeleteBranch { plan, .. } => {
+                    format!("deleted branch {}", plan.branch)
+                }
                 GitMutation::Commit { .. } => "committed".to_owned(),
                 GitMutation::Pull => "pull completed".to_owned(),
                 GitMutation::RebaseOntoUpstream => "replayed onto the upstream".to_owned(),
@@ -773,10 +849,10 @@ impl App {
                 GitMutation::CreateWorktree(request) => {
                     format!("created worktree at {}", request.destination.display())
                 }
-                GitMutation::RemoveWorktree(path) => {
+                GitMutation::RemoveWorktree { plan, .. } => {
                     format!(
                         "removed worktree {}; no branch was deleted",
-                        crate::git::display_path(&path)
+                        crate::git::display_path(&plan.path)
                     )
                 }
                 GitMutation::Stash(StashMutation::Create { .. }) => "stash created".to_owned(),
@@ -1923,6 +1999,18 @@ impl App {
             .map(|row| row.worktree.path.clone())
     }
 
+    fn selected_branch_name(&self) -> Option<String> {
+        if !self.active_buffer().is_git_branches() {
+            return None;
+        }
+        let row = self.active_buffer().offset_to_row(self.active().head());
+        self.git_state
+            .branch_rows
+            .get(row)
+            .and_then(|row| row.branch.as_ref())
+            .map(|branch| branch.name.clone())
+    }
+
     pub(super) fn selected_worktree(&mut self) -> Option<GeneralWorktreeRow> {
         if !self.active_buffer().is_git_worktrees() {
             self.error("worktree actions are only available in the worktree list");
@@ -1995,21 +2083,70 @@ impl App {
             self.error("no `git` executable was found");
             return;
         }
+        let Some(repository) = self.git.repository().cloned() else {
+            return;
+        };
+        if self.ports.git_service.is_some() {
+            let source_buffer = self.active().buffer;
+            let target = worktree.path.clone();
+            if let Some(id) = self.request_git(GitOperation::PrepareWorktreeRemoval {
+                repository,
+                path: worktree.path,
+            }) {
+                self.git_state.worktree_removal_request = Some(DeletionPreflight {
+                    id,
+                    source_buffer,
+                    interaction_generation: self.next_action_id,
+                    target,
+                });
+            }
+            return;
+        }
+        let Some(provider) = self.ports.git.as_deref() else {
+            return;
+        };
+        match provider.prepare_worktree_removal(&repository, &worktree.path) {
+            Ok(plan) => self.open_worktree_removal_confirmation(plan),
+            Err(error) => self.error(error.to_string()),
+        }
+    }
+
+    fn open_worktree_removal_confirmation(&mut self, plan: WorktreeRemovalPlan) {
+        #[cfg(unix)]
+        if self.request_worktree_session_check(plan.clone(), None) {
+            return;
+        }
+        self.show_worktree_removal_confirmation(plan);
+    }
+
+    fn show_worktree_removal_confirmation(&mut self, plan: WorktreeRemovalPlan) {
         let confirmation = WorktreeRemovalConfirmation {
-            path: worktree.path,
-            branch: worktree.branch.map(|branch| {
-                branch
-                    .strip_prefix("refs/heads/")
-                    .unwrap_or(&branch)
-                    .to_owned()
-            }),
+            plan,
+            input: String::new(),
+            cursor: 0,
         };
         self.status(confirmation.message());
         self.git_worktree_removal = Some(confirmation);
         self.confirmation_revision = self.confirmation_revision.wrapping_add(1);
     }
 
-    pub(super) fn apply_worktree_removal(&mut self, path: PathBuf) {
+    pub(super) fn apply_worktree_removal(
+        &mut self,
+        plan: WorktreeRemovalPlan,
+        authorization: DeletionAuthorization,
+    ) {
+        #[cfg(unix)]
+        if self.request_worktree_session_check(plan.clone(), Some(authorization)) {
+            return;
+        }
+        self.apply_guarded_worktree_removal(plan, authorization);
+    }
+
+    fn apply_guarded_worktree_removal(
+        &mut self,
+        plan: WorktreeRemovalPlan,
+        authorization: DeletionAuthorization,
+    ) {
         let Some(repository) = self.git.repository().cloned() else {
             return;
         };
@@ -2021,7 +2158,10 @@ impl App {
             refresh.branches = true;
             let _ = self.request_git(GitOperation::Mutate {
                 repository,
-                mutation: GitMutation::RemoveWorktree(path),
+                mutation: GitMutation::RemoveWorktree {
+                    plan: Box::new(plan),
+                    authorization,
+                },
                 refresh,
             });
             return;
@@ -2029,7 +2169,7 @@ impl App {
         let Some(provider) = self.ports.git.as_deref() else {
             return;
         };
-        if let Err(error) = provider.remove_worktree(&repository, &path) {
+        if let Err(error) = provider.remove_worktree_guarded(&repository, &plan, authorization) {
             self.error(error.to_string());
             return;
         }
@@ -2043,8 +2183,89 @@ impl App {
         }
         self.status(format!(
             "removed worktree {}; no branch was deleted",
-            crate::git::display_path(&path)
+            crate::git::display_path(&plan.path)
         ));
+    }
+
+    #[cfg(unix)]
+    fn request_worktree_session_check(
+        &mut self,
+        plan: WorktreeRemovalPlan,
+        authorization: Option<DeletionAuthorization>,
+    ) -> bool {
+        let Some(service) = self.ports.workspace_service.as_ref() else {
+            return false;
+        };
+        self.worktree_removal_generation = self.worktree_removal_generation.wrapping_add(1).max(1);
+        let generation = self.worktree_removal_generation;
+        match service.try_inspect(generation, plan.path.clone()) {
+            Ok(()) => {
+                let origin = authorization
+                    .is_none()
+                    .then_some((self.active().buffer, self.next_action_id));
+                self.pending_worktree_removal = Some(PendingWorktreeRemovalCheck {
+                    plan,
+                    authorization,
+                    origin,
+                });
+                self.status("checking the worktree session for unsaved buffers…");
+            }
+            Err(error) => self.error(error),
+        }
+        true
+    }
+
+    #[cfg(unix)]
+    pub(super) fn finish_worktree_session_check(
+        &mut self,
+        generation: u64,
+        path: PathBuf,
+        result: std::result::Result<Option<WorkspaceRow>, String>,
+    ) {
+        if generation != self.worktree_removal_generation {
+            return;
+        }
+        let Some(PendingWorktreeRemovalCheck {
+            plan,
+            authorization,
+            origin,
+        }) = self.pending_worktree_removal.take()
+        else {
+            return;
+        };
+        if plan.path != path {
+            return;
+        }
+        if let Some((source_buffer, interaction_generation)) = origin
+            && (self.active().buffer != source_buffer
+                || self.next_action_id != interaction_generation
+                || self.selected_worktree_path().as_deref() != Some(plan.path.as_path()))
+        {
+            return;
+        }
+        match result {
+            Err(error) => {
+                self.error(format!(
+                    "cannot verify whether the worktree session has unsaved buffers: {error}"
+                ));
+            }
+            Ok(Some(row)) if row.running && row.unsaved_buffers.is_none() => {
+                self.error(
+                    "cannot remove this worktree because its running session's unsaved state is unavailable",
+                );
+            }
+            Ok(Some(row)) if row.unsaved_buffers.is_some_and(|count| count > 0) => {
+                let count = row.unsaved_buffers.unwrap_or_default();
+                self.error(format!(
+                    "cannot remove this worktree because its persistent session has {count} unsaved file buffer{}",
+                    if count == 1 { "" } else { "s" }
+                ));
+            }
+            Ok(_) => match authorization {
+                Some(authorization) => self.apply_guarded_worktree_removal(plan, authorization),
+                None => self.show_worktree_removal_confirmation(plan),
+            },
+        }
     }
 
     pub(super) fn create_worktree_prompt(&mut self, new_branch: bool) {
@@ -3286,13 +3507,39 @@ impl App {
             self.error("no `git` executable was found");
             return;
         }
-        // Unmerged commits are not lost the way discarded edits are — they stay
-        // in the object database, named by the reflog — so the confirmation
-        // says what deleting costs rather than calling it irreversible.
-        let force = !branch.merged;
+        let Some(repository) = self.git.repository().cloned() else {
+            return;
+        };
+        if self.ports.git_service.is_some() {
+            let source_buffer = self.active().buffer;
+            let target = branch.name.clone();
+            if let Some(id) = self.request_git(GitOperation::PrepareBranchDeletion {
+                repository,
+                branch: branch.name,
+            }) {
+                self.git_state.branch_deletion_request = Some(DeletionPreflight {
+                    id,
+                    source_buffer,
+                    interaction_generation: self.next_action_id,
+                    target,
+                });
+            }
+            return;
+        }
+        let Some(provider) = self.ports.git.as_deref() else {
+            return;
+        };
+        match provider.prepare_branch_deletion(&repository, &branch.name) {
+            Ok(plan) => self.open_branch_deletion_confirmation(plan),
+            Err(error) => self.error(error.to_string()),
+        }
+    }
+
+    fn open_branch_deletion_confirmation(&mut self, plan: BranchDeletionPlan) {
         let confirmation = BranchDeletionConfirmation {
-            branch: branch.name,
-            force,
+            plan,
+            input: String::new(),
+            cursor: 0,
         };
         let message = confirmation.message();
         self.git_branch_deletion = Some(confirmation);
@@ -3301,7 +3548,11 @@ impl App {
     }
 
     /// Removes the confirmed branch and re-reads the list.
-    pub(super) fn apply_branch_deletion(&mut self, branch: String, force: bool) {
+    pub(super) fn apply_branch_deletion(
+        &mut self,
+        plan: BranchDeletionPlan,
+        authorization: DeletionAuthorization,
+    ) {
         let Some(repository) = self.git.repository().cloned() else {
             return;
         };
@@ -3309,7 +3560,10 @@ impl App {
             let refresh = self.git_refresh_spec(&repository);
             let _ = self.request_git(GitOperation::Mutate {
                 repository,
-                mutation: GitMutation::DeleteBranch { branch, force },
+                mutation: GitMutation::DeleteBranch {
+                    plan: Box::new(plan),
+                    authorization,
+                },
                 refresh,
             });
             return;
@@ -3317,14 +3571,14 @@ impl App {
         let Some(provider) = self.ports.git.as_deref() else {
             return;
         };
-        if let Err(error) = provider.delete_branch(&repository, &branch, force) {
+        if let Err(error) = provider.delete_branch_guarded(&repository, &plan, authorization) {
             self.error(error.to_string());
             return;
         }
         // The deleted branch is gone from the list, so the caret is asked to
         // follow a name that is not there; the refresh keeps it where it was.
-        self.refresh_git_branches_buffer(&branch);
-        self.status(format!("deleted {branch}"));
+        self.refresh_git_branches_buffer(&plan.branch);
+        self.status(format!("deleted {}", plan.branch));
     }
 
     /// Reprojects the branch list, returning its text.

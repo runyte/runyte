@@ -21,10 +21,11 @@ use std::{
 use tokio::sync::mpsc;
 
 use super::{
-    BaseContent, BlameLine, BlameRequest, Branch, CommitDetail, CommitSearchResult, DiffScope,
-    FileComparison, GitCliProvider, GitError, GitProvider, LogPage, LogRequest,
-    PartialStageRequest, PartialStageSelection, Repository, RepositoryStatus, Result, StashEntry,
-    StashMutation, StatusStats, Worktree, WorktreeCreate,
+    BaseContent, BlameLine, BlameRequest, Branch, BranchDeletionPlan, CommitDetail,
+    CommitSearchResult, DeletionAuthorization, DiffScope, FileComparison, GitCliProvider, GitError,
+    GitProvider, LogPage, LogRequest, PartialStageRequest, PartialStageSelection, Repository,
+    RepositoryStatus, Result, StashEntry, StashMutation, StatusStats, Worktree, WorktreeCreate,
+    WorktreeRemovalPlan,
 };
 use crate::workspace::{BufferId, BufferRevision};
 
@@ -102,8 +103,8 @@ pub enum GitMutation {
         start: String,
     },
     DeleteBranch {
-        branch: String,
-        force: bool,
+        plan: Box<BranchDeletionPlan>,
+        authorization: DeletionAuthorization,
     },
     Commit {
         message: String,
@@ -117,7 +118,10 @@ pub enum GitMutation {
         branch: String,
     },
     CreateWorktree(WorktreeCreate),
-    RemoveWorktree(PathBuf),
+    RemoveWorktree {
+        plan: Box<WorktreeRemovalPlan>,
+        authorization: DeletionAuthorization,
+    },
     Stash(StashMutation),
     PartialStage(Box<PartialStageRequest>),
 }
@@ -129,7 +133,7 @@ enum MutationIdentity {
     Discard(Vec<PathBuf>),
     Checkout(String),
     CreateBranch(String, String),
-    DeleteBranch(String, bool),
+    DeleteBranch(String),
     Commit(String),
     Pull,
     RebaseOntoUpstream,
@@ -149,15 +153,15 @@ impl GitMutation {
             Self::CreateBranch { branch, start } => {
                 MutationIdentity::CreateBranch(branch.clone(), start.clone())
             }
-            Self::DeleteBranch { branch, force } => {
-                MutationIdentity::DeleteBranch(branch.clone(), *force)
-            }
+            Self::DeleteBranch { plan, .. } => MutationIdentity::DeleteBranch(plan.branch.clone()),
             Self::Commit { message } => MutationIdentity::Commit(message.clone()),
             Self::Pull => MutationIdentity::Pull,
             Self::RebaseOntoUpstream => MutationIdentity::RebaseOntoUpstream,
             Self::Push { branch } => MutationIdentity::Push(branch.clone()),
             Self::CreateWorktree(request) => MutationIdentity::CreateWorktree(request.clone()),
-            Self::RemoveWorktree(path) => MutationIdentity::RemoveWorktree(path.clone()),
+            Self::RemoveWorktree { plan, .. } => {
+                MutationIdentity::RemoveWorktree(plan.path.clone())
+            }
             Self::Stash(mutation) => MutationIdentity::Stash(mutation.clone()),
             // Repeating an exact partial request after the first succeeds must
             // run and fail its fingerprint check, not be mistaken for a
@@ -181,7 +185,7 @@ impl GitMutation {
             Self::RebaseOntoUpstream => "rebase onto upstream",
             Self::Push { .. } => "push",
             Self::CreateWorktree(_) => "create worktree",
-            Self::RemoveWorktree(_) => "remove worktree",
+            Self::RemoveWorktree { .. } => "remove worktree",
             Self::Stash(StashMutation::Create { .. }) => "create stash",
             Self::Stash(StashMutation::Apply { .. }) => "apply stash",
             Self::Stash(StashMutation::Drop { .. }) => "drop stash",
@@ -218,6 +222,14 @@ pub enum GitOperation {
     },
     Worktrees {
         repository: Repository,
+    },
+    PrepareBranchDeletion {
+        repository: Repository,
+        branch: String,
+    },
+    PrepareWorktreeRemoval {
+        repository: Repository,
+        path: PathBuf,
     },
     Log {
         repository: Repository,
@@ -263,6 +275,8 @@ impl GitOperation {
             | Self::FileComparison { repository, .. }
             | Self::Branches { repository }
             | Self::Worktrees { repository }
+            | Self::PrepareBranchDeletion { repository, .. }
+            | Self::PrepareWorktreeRemoval { repository, .. }
             | Self::Log { repository, .. }
             | Self::SearchCommits { repository }
             | Self::Stashes { repository }
@@ -296,6 +310,8 @@ impl GitOperation {
                 | Self::FileComparison { .. }
                 | Self::SearchCommits { .. }
                 | Self::PreparePartial { .. }
+                | Self::PrepareBranchDeletion { .. }
+                | Self::PrepareWorktreeRemoval { .. }
         )
     }
 
@@ -316,6 +332,8 @@ impl GitOperation {
             Self::FileComparison { .. } => "read file comparison",
             Self::Branches { .. } => "list branches",
             Self::Worktrees { .. } => "list worktrees",
+            Self::PrepareBranchDeletion { .. } => "review branch deletion",
+            Self::PrepareWorktreeRemoval { .. } => "review worktree removal",
             Self::Log { .. } => "read log",
             Self::SearchCommits { .. } => "search commits",
             Self::Stashes { .. } => "list stashes",
@@ -361,6 +379,7 @@ impl GitOperation {
             Self::Worktrees { repository } => {
                 Some(ReadKey::Worktrees(repository.workdir().to_path_buf()))
             }
+            Self::PrepareBranchDeletion { .. } | Self::PrepareWorktreeRemoval { .. } => None,
             Self::Log {
                 repository,
                 request,
@@ -439,6 +458,8 @@ pub enum GitResponse {
     },
     Branches(Vec<Branch>),
     Worktrees(Vec<Worktree>),
+    PreparedBranchDeletion(BranchDeletionPlan),
+    PreparedWorktreeRemoval(WorktreeRemovalPlan),
     Log {
         request: LogRequest,
         page: LogPage,
@@ -1056,6 +1077,12 @@ fn execute(
         GitOperation::Worktrees { repository } => {
             provider.worktrees(repository).map(GitResponse::Worktrees)
         }
+        GitOperation::PrepareBranchDeletion { repository, branch } => provider
+            .prepare_branch_deletion(repository, branch)
+            .map(GitResponse::PreparedBranchDeletion),
+        GitOperation::PrepareWorktreeRemoval { repository, path } => provider
+            .prepare_worktree_removal(repository, path)
+            .map(GitResponse::PreparedWorktreeRemoval),
         GitOperation::Log {
             repository,
             request,
@@ -1136,8 +1163,11 @@ fn execute(
                 GitMutation::CreateBranch { branch, start } => provider
                     .create_branch(repository, branch, start)
                     .map(|()| None),
-                GitMutation::DeleteBranch { branch, force } => provider
-                    .delete_branch(repository, branch, *force)
+                GitMutation::DeleteBranch {
+                    plan,
+                    authorization,
+                } => provider
+                    .delete_branch_guarded(repository, plan, *authorization)
                     .map(|()| None),
                 GitMutation::Commit { message } => provider.commit(repository, message).map(Some),
                 GitMutation::Pull => provider.pull(repository).map(Some),
@@ -1148,9 +1178,12 @@ fn execute(
                 GitMutation::CreateWorktree(request) => {
                     provider.create_worktree(repository, request).map(|()| None)
                 }
-                GitMutation::RemoveWorktree(path) => {
-                    provider.remove_worktree(repository, path).map(|()| None)
-                }
+                GitMutation::RemoveWorktree {
+                    plan,
+                    authorization,
+                } => provider
+                    .remove_worktree_guarded(repository, plan, *authorization)
+                    .map(|()| None),
                 GitMutation::Stash(request) => provider.mutate_stash(repository, request).map(Some),
                 GitMutation::PartialStage(request) => {
                     provider.apply_partial(repository, request).map(|()| {

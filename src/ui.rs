@@ -528,7 +528,10 @@ fn draw_snapshot_overlay(
     if editor_area.width < 3 || editor_area.height < 3 {
         return;
     }
-    let query_height = usize::from(!overlay.query.is_empty());
+    let shows_query = !overlay.query.is_empty()
+        || (overlay.kind == OverlayKind::Confirmation
+            && overlay.input == crate::snapshot::OverlayInput::Text);
+    let query_height = usize::from(shows_query);
     let message_height = usize::from(overlay.message.is_some());
     let area = if overlay.layout == OverlayLayout::Setting {
         to_tui_rect(setting_popup_area(editor_area))
@@ -619,7 +622,7 @@ fn draw_snapshot_overlay(
     frame.render_widget(Clear, area);
     frame.render_widget(block, area);
     let mut query_height = 0;
-    if !overlay.query.is_empty() {
+    if shows_query {
         query_height = 1;
         frame.render_widget(
             Paragraph::new(Line::from(vec![
@@ -3314,7 +3317,11 @@ fn confirmation_overlay_area(area: Rect, overlay: &OverlaySnapshot) -> Rect {
         .message
         .as_deref()
         .map_or(1, |message| wrapped_text_rows(message, inner_width));
-    let height = u16::try_from(message_rows.saturating_add(2))
+    let input_rows = usize::from(
+        overlay.kind == OverlayKind::Confirmation
+            && overlay.input == crate::snapshot::OverlayInput::Text,
+    );
+    let height = u16::try_from(message_rows.saturating_add(input_rows).saturating_add(2))
         .unwrap_or(u16::MAX)
         .clamp(3.min(area.height), area.height);
 

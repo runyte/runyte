@@ -10,8 +10,8 @@ use super::{
     COMMAND_PATH_HINT_LIMIT, COMMANDS, Capabilities, Change, ColonCommand, CommandArguments,
     CommandAvailability, CommandExecutionContext, CommandId, CommandInvocation, CommandMatch,
     CommandOutcome, CommandOutcomeHint, CommandState, CommandUnavailable, CompletionSource,
-    ContentAlignment, DEFAULT_MACRO_REGISTER, DeletionMode, DelimiterPair, DiffScope,
-    EditorCommand, EditorIntent, EntryKind, FilePicker, FinderMode, FsOperation,
+    ContentAlignment, DEFAULT_MACRO_REGISTER, DeletionAuthorization, DeletionMode, DelimiterPair,
+    DiffScope, EditorCommand, EditorIntent, EntryKind, FilePicker, FinderMode, FsOperation,
     GeneratedViewIdentity, GrammarContext, GrammarNotice, GrammarOutput, HOVER_PEEK_ROWS, HashSet,
     HelpInvocation, InputEvent, InputGrammar, Instant, InvocationParameters, KeyCode, KeySequence,
     KeyStroke, Keymap, LineDirection, ListPicker, LspCommand, MaximizedView, Mode, Modifiers,
@@ -889,6 +889,20 @@ impl App {
 
     fn handle_text(&mut self, text: &str) -> Result<()> {
         if text.is_empty() {
+            return Ok(());
+        }
+        if let Some(confirmation) = self.git_branch_deletion.as_mut() {
+            if confirmation.typed() {
+                insert_confirmation_text(&mut confirmation.input, &mut confirmation.cursor, text);
+                self.confirmation_revision = self.confirmation_revision.wrapping_add(1);
+            }
+            return Ok(());
+        }
+        if let Some(confirmation) = self.git_worktree_removal.as_mut() {
+            if confirmation.typed() {
+                insert_confirmation_text(&mut confirmation.input, &mut confirmation.cursor, text);
+                self.confirmation_revision = self.confirmation_revision.wrapping_add(1);
+            }
             return Ok(());
         }
         if self.fs_confirmation.is_some()
@@ -1931,12 +1945,34 @@ impl App {
                 self.status("delete cancelled; the branch is still there");
             }
             (KeyCode::Enter, _) => {
+                let valid = self
+                    .git_branch_deletion
+                    .as_ref()
+                    .is_some_and(|confirmation| {
+                        !confirmation.typed() || confirmation.input == confirmation.plan.branch
+                    });
+                if !valid {
+                    self.error("type the exact branch name before deleting it");
+                    return Ok(());
+                }
                 let Some(confirmation) = self.git_branch_deletion.take() else {
                     return Ok(());
                 };
-                self.apply_branch_deletion(confirmation.branch, confirmation.force);
+                let authorization = if confirmation.typed() {
+                    DeletionAuthorization::Typed
+                } else {
+                    DeletionAuthorization::Enter
+                };
+                self.apply_branch_deletion(confirmation.plan, authorization);
             }
-            _ => {}
+            _ => {
+                if let Some(confirmation) = self.git_branch_deletion.as_mut()
+                    && confirmation.typed()
+                {
+                    edit_confirmation_text(&mut confirmation.input, &mut confirmation.cursor, key);
+                    self.confirmation_revision = self.confirmation_revision.wrapping_add(1);
+                }
+            }
         }
         Ok(())
     }
@@ -1972,7 +2008,7 @@ impl App {
                 };
                 self.status(format!(
                     "remove cancelled; worktree {} was kept and no branch was deleted",
-                    crate::git::display_path(&confirmation.path)
+                    crate::git::display_path(&confirmation.plan.path)
                 ));
             }
             (KeyCode::Char('c'), modifiers) if modifiers.contains(Modifiers::CONTROL) => {
@@ -1981,16 +2017,38 @@ impl App {
                 };
                 self.status(format!(
                     "remove cancelled; worktree {} was kept and no branch was deleted",
-                    crate::git::display_path(&confirmation.path)
+                    crate::git::display_path(&confirmation.plan.path)
                 ));
             }
             (KeyCode::Enter, _) => {
+                let valid = self
+                    .git_worktree_removal
+                    .as_ref()
+                    .is_some_and(|confirmation| {
+                        !confirmation.typed() || confirmation.input == confirmation.expected()
+                    });
+                if !valid {
+                    self.error("type the exact branch name or worktree path before removing it");
+                    return Ok(());
+                }
                 let Some(confirmation) = self.git_worktree_removal.take() else {
                     return Ok(());
                 };
-                self.apply_worktree_removal(confirmation.path);
+                let authorization = if confirmation.typed() {
+                    DeletionAuthorization::Typed
+                } else {
+                    DeletionAuthorization::Enter
+                };
+                self.apply_worktree_removal(confirmation.plan, authorization);
             }
-            _ => {}
+            _ => {
+                if let Some(confirmation) = self.git_worktree_removal.as_mut()
+                    && confirmation.typed()
+                {
+                    edit_confirmation_text(&mut confirmation.input, &mut confirmation.cursor, key);
+                    self.confirmation_revision = self.confirmation_revision.wrapping_add(1);
+                }
+            }
         }
         Ok(())
     }
@@ -4338,4 +4396,36 @@ impl App {
         self.command_cursor = self.command.chars().count();
         self.command_selection = 0;
     }
+}
+
+fn edit_confirmation_text(input: &mut String, cursor: &mut usize, key: KeyStroke) {
+    let mut characters = input.chars().collect::<Vec<_>>();
+    *cursor = (*cursor).min(characters.len());
+    match (key.code, key.modifiers) {
+        (KeyCode::Char(character), modifiers)
+            if !modifiers.intersects(Modifiers::CONTROL | Modifiers::ALT) =>
+        {
+            characters.insert(*cursor, character);
+            *cursor += 1;
+        }
+        (KeyCode::Backspace, _) if *cursor > 0 => {
+            *cursor -= 1;
+            characters.remove(*cursor);
+        }
+        (KeyCode::Delete, _) if *cursor < characters.len() => {
+            characters.remove(*cursor);
+        }
+        (KeyCode::Left, _) => *cursor = cursor.saturating_sub(1),
+        (KeyCode::Right, _) => *cursor = (*cursor + 1).min(characters.len()),
+        (KeyCode::Home, _) => *cursor = 0,
+        (KeyCode::End, _) => *cursor = characters.len(),
+        _ => return,
+    }
+    *input = characters.into_iter().collect();
+}
+
+fn insert_confirmation_text(input: &mut String, cursor: &mut usize, text: &str) {
+    *cursor = (*cursor).min(input.chars().count());
+    input.insert_str(char_to_byte(input, *cursor), text);
+    *cursor += text.chars().count();
 }

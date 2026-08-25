@@ -24,12 +24,13 @@ use std::{
 };
 
 use super::{
-    BaseContent, BlameLine, BlameRequest, Branch, CommitDetail, CommitSearchResult, DiffScope,
-    Divergence, FileComparison, GitError, GitProvider, Head, LogCursor, LogPage, LogRequest,
-    MAX_BLAME_INPUT_BYTES, MAX_BLAME_LINES, MAX_COMMIT_SEARCH_RESULTS, MAX_LOG_PAGE_SIZE,
-    MAX_PATCH_BYTES, PartialStageRequest, PartialStageSelection, Repository, RepositoryFingerprint,
-    RepositoryStatus, Result, StashEntry, StashMutation, StashScope, StatusStats, Upstream,
-    Worktree, WorktreeCreate, count_new_lines, history::valid_object_id, parse_blame,
+    BaseContent, BlameLine, BlameRequest, Branch, BranchDeletionPlan, CommitDetail,
+    CommitSearchResult, DeletionAuthorization, DiffScope, Divergence, FileComparison, GitError,
+    GitProvider, Head, LogCursor, LogPage, LogRequest, MAX_BLAME_INPUT_BYTES, MAX_BLAME_LINES,
+    MAX_COMMIT_SEARCH_RESULTS, MAX_LOG_PAGE_SIZE, MAX_PATCH_BYTES, PartialStageRequest,
+    PartialStageSelection, Repository, RepositoryFingerprint, RepositoryStatus, Result, StashEntry,
+    StashMutation, StashScope, StatusStats, Upstream, Worktree, WorktreeCreate,
+    WorktreeRemovalPlan, count_new_lines, history::valid_object_id, parse_blame,
     parse_commit_search, parse_log, parse_numstat, parse_stashes, parse_worktree_porcelain,
     patch::valid_fingerprint, stats::LineStats, status,
 };
@@ -1173,6 +1174,124 @@ impl GitProvider for GitCliProvider {
         .map(|_| ())
     }
 
+    fn prepare_worktree_removal(
+        &self,
+        repository: &Repository,
+        path: &Path,
+    ) -> Result<WorktreeRemovalPlan> {
+        let worktree = self
+            .worktrees(repository)?
+            .into_iter()
+            .find(|worktree| worktree.path == path)
+            .ok_or_else(|| GitError::Failed {
+                command: "git worktree list".to_owned(),
+                code: None,
+                stderr: format!("{} is no longer a registered worktree", path.display()),
+            })?;
+        let target_repository =
+            Repository::with_common_dir(&worktree.path, repository.common_dir());
+        let status = self.status(&target_repository)?;
+        if !status.files.is_empty() {
+            return Err(GitError::Failed {
+                command: "git worktree remove".to_owned(),
+                code: None,
+                stderr: format!(
+                    "worktree {} has uncommitted changes ({} file{}); commit, stash, or discard them first",
+                    worktree.path.display(),
+                    status.files.len(),
+                    if status.files.len() == 1 { "" } else { "s" }
+                ),
+            });
+        }
+        let branch = worktree.branch.as_deref().map(|branch| {
+            branch
+                .strip_prefix("refs/heads/")
+                .unwrap_or(branch)
+                .to_owned()
+        });
+        let upstream = if let Some(name) = branch.as_deref() {
+            self.branches(repository)?
+                .into_iter()
+                .find(|candidate| candidate.name == name)
+                .ok_or_else(|| GitError::Failed {
+                    command: "git branch --format".to_owned(),
+                    code: None,
+                    stderr: format!(
+                        "worktree {} names branch {name}, but that branch could not be inspected",
+                        worktree.path.display()
+                    ),
+                })?
+                .upstream
+        } else {
+            None
+        };
+        let detached_retained = if branch.is_none() {
+            match worktree.head.as_deref() {
+                Some(head) => !self
+                    .run_text(
+                        repository.workdir(),
+                        &[
+                            "for-each-ref",
+                            "--format=%(refname)",
+                            &format!("--contains={head}"),
+                            "refs/heads",
+                            "refs/remotes",
+                        ],
+                    )?
+                    .trim()
+                    .is_empty(),
+                None => true,
+            }
+        } else {
+            false
+        };
+        let tracked_unpublished = upstream.as_ref().is_some_and(|upstream| {
+            upstream
+                .divergence
+                .is_none_or(|divergence| divergence.ahead > 0)
+        });
+        let required_authorization =
+            if tracked_unpublished || (branch.is_none() && !detached_retained) {
+                DeletionAuthorization::Typed
+            } else {
+                DeletionAuthorization::Enter
+            };
+        Ok(WorktreeRemovalPlan {
+            path: worktree.path,
+            head: worktree.head,
+            branch,
+            upstream,
+            detached_retained,
+            required_authorization,
+        })
+    }
+
+    fn remove_worktree_guarded(
+        &self,
+        repository: &Repository,
+        plan: &WorktreeRemovalPlan,
+        authorization: DeletionAuthorization,
+    ) -> Result<()> {
+        let current = self.prepare_worktree_removal(repository, &plan.path)?;
+        if current != *plan {
+            return Err(GitError::Failed {
+                command: "git worktree remove".to_owned(),
+                code: None,
+                stderr: "the worktree changed after it was reviewed; review the removal again"
+                    .to_owned(),
+            });
+        }
+        if authorization < current.required_authorization {
+            return Err(GitError::Failed {
+                command: "git worktree remove".to_owned(),
+                code: None,
+                stderr: "this worktree has unpublished history and needs typed confirmation"
+                    .to_owned(),
+            });
+        }
+        self.remove_worktree(repository, &plan.path)
+    }
+
     fn log_page(&self, repository: &Repository, request: &LogRequest) -> Result<LogPage> {
         if request.limit == 0 || request.limit > MAX_LOG_PAGE_SIZE {
             return Err(GitError::Failed {
@@ -1735,6 +1854,101 @@ impl GitProvider for GitCliProvider {
                 OsStr::new(if force { "-D" } else { "-d" }),
                 OsStr::new("--"),
                 OsStr::new(branch),
+            ],
+        )
+        .map(|_| ())
+    }
+
+    fn prepare_branch_deletion(
+        &self,
+        repository: &Repository,
+        branch: &str,
+    ) -> Result<BranchDeletionPlan> {
+        let branches = self.branches(repository)?;
+        let target = branches
+            .iter()
+            .find(|candidate| candidate.name == branch)
+            .ok_or_else(|| GitError::Failed {
+                command: "git branch".to_owned(),
+                code: None,
+                stderr: format!("`{branch}` is not a local branch"),
+            })?;
+        if target.current || !target.checkouts.is_empty() {
+            return Err(GitError::Failed {
+                command: "git branch".to_owned(),
+                code: None,
+                stderr: format!("`{branch}` is checked out in a worktree"),
+            });
+        }
+        let reference = format!("refs/heads/{branch}");
+        let tip = self.run_text(
+            repository.workdir(),
+            &["rev-parse", "--verify", reference.as_str()],
+        )?;
+        let tip = tip.trim().to_owned();
+        let containing = self.run_text(
+            repository.workdir(),
+            &[
+                "for-each-ref",
+                "--format=%(refname:short)",
+                &format!("--contains={tip}"),
+                "refs/heads",
+            ],
+        )?;
+        let mut retaining_branches = containing
+            .lines()
+            .filter(|candidate| *candidate != branch)
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        retaining_branches.sort();
+        let upstream_retains = target.upstream.as_ref().is_some_and(|upstream| {
+            upstream
+                .divergence
+                .is_some_and(|divergence| divergence.ahead == 0)
+        });
+        Ok(BranchDeletionPlan {
+            branch: branch.to_owned(),
+            tip,
+            upstream: target.upstream.clone(),
+            required_authorization: if upstream_retains || !retaining_branches.is_empty() {
+                DeletionAuthorization::Enter
+            } else {
+                DeletionAuthorization::Typed
+            },
+            retaining_branches,
+        })
+    }
+
+    fn delete_branch_guarded(
+        &self,
+        repository: &Repository,
+        plan: &BranchDeletionPlan,
+        authorization: DeletionAuthorization,
+    ) -> Result<()> {
+        let current = self.prepare_branch_deletion(repository, &plan.branch)?;
+        if current != *plan {
+            return Err(GitError::Failed {
+                command: "git branch".to_owned(),
+                code: None,
+                stderr: "the branch changed after it was reviewed; review the deletion again"
+                    .to_owned(),
+            });
+        }
+        if authorization < current.required_authorization {
+            return Err(GitError::Failed {
+                command: "git branch".to_owned(),
+                code: None,
+                stderr: "this branch has unpublished history and needs typed confirmation"
+                    .to_owned(),
+            });
+        }
+        self.run(
+            repository.workdir(),
+            &[
+                OsStr::new("branch"),
+                OsStr::new("-D"),
+                OsStr::new("--"),
+                OsStr::new(&plan.branch),
             ],
         )
         .map(|_| ())

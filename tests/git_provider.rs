@@ -15,10 +15,11 @@ use std::{
 };
 
 use runyte::git::{
-    BaseContent, BlameRequest, DiffScope, Divergence, FileComparison, FileState, GitCliProvider,
-    GitError, GitMutation, GitOperation, GitProvider, GitResponse, GitService, GitServiceEvent,
-    GitServiceHandle, Head, LineStats, LogRequest, MAX_BLAME_INPUT_BYTES, PartialStageSelection,
-    RefreshSpec, Repository, StashMutation, StashScope, WorktreeCreate,
+    BaseContent, BlameRequest, DeletionAuthorization, DiffScope, Divergence, FileComparison,
+    FileState, GitCliProvider, GitError, GitMutation, GitOperation, GitProvider, GitResponse,
+    GitService, GitServiceEvent, GitServiceHandle, Head, LineStats, LogRequest,
+    MAX_BLAME_INPUT_BYTES, PartialStageSelection, RefreshSpec, Repository, StashMutation,
+    StashScope, WorktreeCreate,
 };
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -502,6 +503,161 @@ fn removing_a_dirty_or_locked_worktree_never_forces_it() {
 }
 
 #[test]
+fn worktree_preflight_refuses_dirty_files_and_requires_typing_for_unpushed_commits() {
+    let clone = TempClone::new("worktree-delete-preflight");
+    clone.git(&["checkout", "-q", "-b", "feature"]);
+    clone.git(&["branch", "--set-upstream-to", "origin/main"]);
+    clone.write("feature.rs", "local only\n");
+    clone.commit("local feature");
+    clone.git(&["checkout", "-q", "main"]);
+    let provider = provider();
+    let repository = clone.repository();
+    let destination = clone.path().parent().unwrap().join("linked-feature");
+    provider
+        .create_worktree(
+            &repository,
+            &WorktreeCreate {
+                destination: destination.clone(),
+                start: "feature".to_owned(),
+                new_branch: None,
+            },
+        )
+        .unwrap();
+
+    let plan = provider
+        .prepare_worktree_removal(&repository, &destination)
+        .unwrap();
+    assert_eq!(plan.branch.as_deref(), Some("feature"));
+    assert_eq!(plan.required_authorization, DeletionAuthorization::Typed);
+    let error = provider
+        .remove_worktree_guarded(&repository, &plan, DeletionAuthorization::Enter)
+        .unwrap_err();
+    assert!(error.to_string().contains("typed confirmation"), "{error}");
+
+    fs::write(destination.join("untracked.txt"), "do not remove\n").unwrap();
+    let error = provider
+        .prepare_worktree_removal(&repository, &destination)
+        .unwrap_err();
+    assert!(error.to_string().contains("uncommitted changes"), "{error}");
+    assert!(destination.join("untracked.txt").exists());
+
+    fs::remove_file(destination.join("untracked.txt")).unwrap();
+    fs::write(destination.join("source.rs"), "unstaged change\n").unwrap();
+    let error = provider
+        .prepare_worktree_removal(&repository, &destination)
+        .unwrap_err();
+    assert!(error.to_string().contains("uncommitted changes"), "{error}");
+    run_in(&destination, &["add", "source.rs"]);
+    let error = provider
+        .prepare_worktree_removal(&repository, &destination)
+        .unwrap_err();
+    assert!(error.to_string().contains("uncommitted changes"), "{error}");
+
+    run_in(
+        &destination,
+        &["commit", "-qm", "move reviewed worktree tip"],
+    );
+    let error = provider
+        .remove_worktree_guarded(&repository, &plan, DeletionAuthorization::Typed)
+        .unwrap_err();
+    assert!(
+        error.to_string().contains("changed after it was reviewed"),
+        "{error}"
+    );
+    assert!(destination.exists());
+}
+
+#[test]
+fn detached_worktree_preflight_distinguishes_retained_and_unretained_commits() {
+    let repository = TempRepository::new("detached-worktree-retention");
+    repository.write("source.rs", "base\n");
+    repository.commit("base");
+    let current = git_output(&repository, &["branch", "--show-current"])
+        .trim()
+        .to_owned();
+    let retained = repository.path().join("detached-retained");
+    repository.git(&[
+        "worktree",
+        "add",
+        "-q",
+        "--detach",
+        retained.to_str().unwrap(),
+        "HEAD",
+    ]);
+    let provider = provider();
+    let git_repository = repository.repository();
+    let retained_plan = provider
+        .prepare_worktree_removal(&git_repository, &retained)
+        .unwrap();
+    assert!(retained_plan.branch.is_none());
+    assert!(retained_plan.detached_retained);
+    assert_eq!(
+        retained_plan.required_authorization,
+        DeletionAuthorization::Enter
+    );
+
+    repository.git(&["checkout", "-q", "-b", "temporary-history"]);
+    repository.write("unique.rs", "unretained\n");
+    repository.commit("unretained detached tip");
+    let unretained_tip = git_output(&repository, &["rev-parse", "HEAD"])
+        .trim()
+        .to_owned();
+    repository.git(&["checkout", "-q", &current]);
+    repository.git(&["branch", "-D", "temporary-history"]);
+    let unretained = repository.path().join("detached-unretained");
+    repository.git(&[
+        "worktree",
+        "add",
+        "-q",
+        "--detach",
+        unretained.to_str().unwrap(),
+        &unretained_tip,
+    ]);
+    let unretained_plan = provider
+        .prepare_worktree_removal(&git_repository, &unretained)
+        .unwrap();
+    assert!(unretained_plan.branch.is_none());
+    assert!(!unretained_plan.detached_retained);
+    assert_eq!(
+        unretained_plan.required_authorization,
+        DeletionAuthorization::Typed
+    );
+}
+
+#[test]
+fn worktree_preflight_fails_closed_when_its_attached_branch_cannot_be_inspected() {
+    let repository = TempRepository::new("worktree-missing-attached-branch");
+    repository.git(&["commit", "--allow-empty", "-qm", "base"]);
+    repository.git(&["branch", "feature"]);
+    let provider = provider();
+    let git_repository = repository.repository();
+    let destination = repository.path().join("linked-missing-branch");
+    provider
+        .create_worktree(
+            &git_repository,
+            &WorktreeCreate {
+                destination: destination.clone(),
+                start: "feature".to_owned(),
+                new_branch: None,
+            },
+        )
+        .unwrap();
+    // `update-ref` can leave a linked worktree's symbolic HEAD naming a ref
+    // which no longer exists. That must be an inspection failure, not an
+    // untracked worktree eligible for the weaker Enter-only path.
+    repository.git(&["update-ref", "-d", "refs/heads/feature"]);
+
+    let error = provider
+        .prepare_worktree_removal(&git_repository, &destination)
+        .unwrap_err();
+    assert!(
+        error.to_string().contains("could not be inspected"),
+        "{error}"
+    );
+    assert!(destination.exists());
+}
+
+#[test]
 fn async_worktree_removal_reconciles_worktrees_and_branches() {
     let repository = TempRepository::new("worktree-remove-async");
     repository.write("source.rs", "base\n");
@@ -519,11 +675,17 @@ fn async_worktree_removal_reconciles_worktrees_and_branches() {
             },
         )
         .unwrap();
+    let plan = provider
+        .prepare_worktree_removal(&git_repository, &destination)
+        .unwrap();
     let (service, mut events) = GitService::spawn(provider);
     let id = service
         .try_submit(GitOperation::Mutate {
             repository: git_repository,
-            mutation: GitMutation::RemoveWorktree(destination.clone()),
+            mutation: GitMutation::RemoveWorktree {
+                plan: Box::new(plan),
+                authorization: DeletionAuthorization::Enter,
+            },
             refresh: RefreshSpec {
                 branches: true,
                 worktrees: true,
@@ -1710,6 +1872,55 @@ fn deleting_a_branch_needs_force_only_when_its_commits_are_not_merged() {
         .map(|branch| branch.name)
         .collect::<Vec<_>>();
     assert_eq!(names, vec![current]);
+}
+
+#[test]
+fn guarded_branch_deletion_distinguishes_local_retention_and_rejects_a_moved_tip() {
+    let repository = TempRepository::new("guarded-delete-branch");
+    repository.write("source.rs", "base\n");
+    repository.commit("base");
+    let current = git_output(&repository, &["branch", "--show-current"])
+        .trim()
+        .to_owned();
+    repository.git(&["checkout", "-q", "-b", "feature"]);
+    repository.write("feature.rs", "unique\n");
+    repository.commit("feature");
+    repository.git(&["branch", "keeper"]);
+    repository.git(&["checkout", "-q", &current]);
+    let provider = provider();
+    let git_repository = repository.repository();
+
+    let retained = provider
+        .prepare_branch_deletion(&git_repository, "feature")
+        .unwrap();
+    assert_eq!(retained.retaining_branches, vec!["keeper"]);
+    assert_eq!(
+        retained.required_authorization,
+        DeletionAuthorization::Enter
+    );
+
+    repository.git(&["branch", "-D", "keeper"]);
+    let unpublished = provider
+        .prepare_branch_deletion(&git_repository, "feature")
+        .unwrap();
+    assert!(unpublished.retaining_branches.is_empty());
+    assert_eq!(
+        unpublished.required_authorization,
+        DeletionAuthorization::Typed
+    );
+    let error = provider
+        .delete_branch_guarded(&git_repository, &unpublished, DeletionAuthorization::Enter)
+        .unwrap_err();
+    assert!(error.to_string().contains("typed confirmation"), "{error}");
+
+    repository.git(&["branch", "-f", "feature", &current]);
+    let error = provider
+        .delete_branch_guarded(&git_repository, &unpublished, DeletionAuthorization::Typed)
+        .unwrap_err();
+    assert!(
+        error.to_string().contains("changed after it was reviewed"),
+        "{error}"
+    );
 }
 
 /// The provider must refuse output it cannot hold rather than grow to fit it.

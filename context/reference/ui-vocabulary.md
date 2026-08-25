@@ -71,7 +71,10 @@ them, regardless of which extensibility direction is chosen.
   or scrolling behavior.
 - **Confirmation overlay** — a pending prepared operation that must be fully
   inspectable before it can be accepted. It names the accept and cancel actions
-  and cancellation changes nothing.
+  and cancellation changes nothing. Ordinary decisions accept Enter; a
+  destructive operation whose target lacks another durable reference may own
+  one exact-text input row and accept Enter only when that row matches the
+  target-specific acknowledgment it names.
 - **Interaction-line prompt** — ownership of the interaction line for one
   short scalar value until Enter accepts or Escape cancels it.
 - **Input overlay** — a bounded input surface used when editing a value needs

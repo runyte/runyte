@@ -2092,19 +2092,31 @@ fn shift_d_deletes_a_branch_only_after_a_confirmation() {
     // Escape on another branch keeps it.
     press(&mut app, 'k');
     context_action(&mut app, 'D');
-    assert!(app.status.starts_with("Press Enter to delete feature"));
-    assert!(app.status.contains("reflog"), "{}", app.status);
+    assert!(app.status.starts_with("Delete branch feature"));
+    assert!(
+        app.status.contains("type feature exactly"),
+        "{}",
+        app.status
+    );
     let overlay = confirmation_snapshot(&app);
     assert_eq!(overlay.title, "Delete branch");
-    assert_eq!(overlay.actions[0].label, "delete branch");
+    assert_eq!(overlay.actions[0].label, "confirm exact text");
+    assert_eq!(overlay.input, crate::snapshot::OverlayInput::Text);
+    assert_eq!(overlay.query, "");
     let message = overlay.message.unwrap();
     assert!(message.contains("feature"), "{message}");
-    assert!(message.contains("reflog"), "{message}");
+    assert!(message.contains("type feature exactly"), "{message}");
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert!(app.git_branch_deletion.is_some());
+    assert!(provider.deletions().is_empty());
+    assert!(app.status_error);
     key(&mut app, KeyCode::Escape, Modifiers::NONE);
     assert!(provider.deletions().is_empty());
     assert_eq!(app.status, "delete cancelled; the branch is still there");
 
     context_action(&mut app, 'D');
+    let transported: InputEvent = crate::protocol::InputEvent::Text("feature".to_owned()).into();
+    app.handle_input(transported).unwrap();
     key(&mut app, KeyCode::Enter, Modifiers::NONE);
 
     assert_eq!(provider.deletions(), vec![("feature".to_owned(), true)]);
@@ -2117,8 +2129,82 @@ fn shift_d_deletes_a_branch_only_after_a_confirmation() {
     fs::remove_dir_all(root).unwrap();
 }
 
-/// A branch that is fully merged is deleted without being forced, and the
-/// confirmation has no reflog warning to give.
+#[test]
+fn stale_async_branch_deletion_preflights_never_open_a_confirmation() {
+    use crate::{
+        app::git_workflows::DeletionPreflight,
+        git::{MemoryGitProvider, Repository},
+    };
+
+    let root = temporary("git-branch-delete-stale-preflight");
+    fs::create_dir_all(&root).unwrap();
+    let root = root.canonicalize().unwrap();
+    let repository = Repository::new(&root);
+    let mut ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    ports.replace_git(Box::new(
+        MemoryGitProvider::new(repository.clone()).with_branches(&["feature", "main"], "main"),
+    ));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    app.execute_command("git-branches").unwrap();
+    press(&mut app, 'k');
+    let source_buffer = app.active().buffer;
+    let old_id = GitRequestId::from_raw(41);
+    let latest_id = GitRequestId::from_raw(42);
+    app.git_state.branch_deletion_request = Some(DeletionPreflight {
+        id: latest_id,
+        source_buffer,
+        interaction_generation: app.next_action_id,
+        target: "feature".to_owned(),
+    });
+    let operation = || GitOperation::PrepareBranchDeletion {
+        repository: repository.clone(),
+        branch: "feature".to_owned(),
+    };
+    let response = || {
+        Box::new(Ok(GitResponse::PreparedBranchDeletion(
+            BranchDeletionPlan {
+                branch: "feature".to_owned(),
+                tip: "1".repeat(40),
+                upstream: None,
+                retaining_branches: vec!["main".to_owned()],
+                required_authorization: DeletionAuthorization::Enter,
+            },
+        )))
+    };
+
+    app.apply_git_service_event(GitServiceEvent::Completed {
+        id: old_id,
+        operation: operation(),
+        result: response(),
+        state: GitServiceState::Completed,
+        coalesced: false,
+    });
+    assert!(app.git_branch_deletion.is_none());
+    assert_eq!(
+        app.git_state
+            .branch_deletion_request
+            .as_ref()
+            .map(|pending| pending.id),
+        Some(latest_id)
+    );
+
+    app.open_file(root.join("elsewhere.txt")).unwrap();
+    app.apply_git_service_event(GitServiceEvent::Completed {
+        id: latest_id,
+        operation: operation(),
+        result: response(),
+        state: GitServiceState::Completed,
+        coalesced: false,
+    });
+    assert!(app.git_branch_deletion.is_none());
+    assert!(app.git_state.branch_deletion_request.is_none());
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// A branch retained by another local branch needs only the ordinary
+/// confirmation, even though the guarded mutation uses `-D` after revalidation.
 #[test]
 fn deleting_a_merged_branch_is_not_forced() {
     use crate::git::{MemoryGitProvider, Repository};
@@ -2142,11 +2228,11 @@ fn deleting_a_merged_branch_is_not_forced() {
     context_action(&mut app, 'D');
     assert_eq!(
         app.status,
-        "Press Enter to delete feature.\nEscape keeps it."
+        "Delete branch feature.\nIts commits are retained by local branch main.\nPress Enter to continue.\nEscape keeps it."
     );
     key(&mut app, KeyCode::Enter, Modifiers::NONE);
 
-    assert_eq!(provider.deletions(), vec![("feature".to_owned(), false)]);
+    assert_eq!(provider.deletions(), vec![("feature".to_owned(), true)]);
 
     fs::remove_dir_all(root).unwrap();
 }
