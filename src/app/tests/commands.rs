@@ -1415,6 +1415,32 @@ fn space_r_reloads_files_and_refreshes_directories() {
 }
 
 #[test]
+fn reload_dispatch_matches_the_file_explorer_and_git_list_contract() {
+    use super::super::file_workflows::{ReloadDispatch, reload_dispatch};
+
+    assert_eq!(
+        reload_dispatch(&BufferKind::Directory),
+        ReloadDispatch::Directory
+    );
+    for (kind, expected) in [
+        (BufferKind::GitStatus, ReloadDispatch::GitStatus),
+        (BufferKind::GitBranches, ReloadDispatch::GitBranches),
+        (BufferKind::GitWorktrees, ReloadDispatch::GitWorktrees),
+        (BufferKind::GitLog, ReloadDispatch::GitLog),
+        (BufferKind::GitStash, ReloadDispatch::GitStash),
+    ] {
+        assert_eq!(reload_dispatch(&kind), expected);
+    }
+
+    assert_eq!(
+        reload_dispatch(&BufferKind::GitBlame),
+        ReloadDispatch::File,
+        "Git blame is a generated attribution view, not a refreshable Git list"
+    );
+    assert_eq!(reload_dispatch(&BufferKind::File), ReloadDispatch::File);
+}
+
+#[test]
 fn save_key_colon_and_direct_paths_are_equivalent() {
     let directory = temporary("command-save-equivalence");
     fs::create_dir_all(&directory).unwrap();
@@ -1725,6 +1751,9 @@ fn command_prompt_filters_and_completes_commands() {
     app.handle_key(KeyStroke::new(KeyCode::Char(':'), Modifiers::NONE))
         .unwrap();
     assert_eq!(app.matching_commands().len(), COMMANDS.len());
+    assert!(app.matching_commands().iter().any(|matched| {
+        matched.name == "path" && matched.spec.id == CommandId::Colon(ColonCommand::Path)
+    }));
 
     for ch in "the".chars() {
         app.handle_key(KeyStroke::new(KeyCode::Char(ch), Modifiers::NONE))
@@ -2977,6 +3006,11 @@ fn completed_key_bindings_report_the_typed_sequence_and_action() {
     press(&mut app, 'f');
     press(&mut app, 'l');
     assert_eq!(app.displayed_status_message(), "f l (Find next character)");
+
+    set_cursor(&mut app, 0, 0);
+    press(&mut app, '3');
+    press(&mut app, 'l');
+    assert_eq!(app.displayed_status_message(), "3 l (Move right)");
 }
 
 #[test]
@@ -3012,12 +3046,13 @@ fn counted_colon_binding_echoes_failure_and_retains_its_error_notification() {
     assert!(app.status_error);
     assert_eq!(
         app.status,
-        "Discard changes and reload the active file from disk does not support a count"
+        "Reload the active file or refresh the active explorer or Git list does not support a count"
     );
     assert_eq!(
         app.displayed_status_message(),
-        "Space r (Discard changes and reload the active file from disk · failed: Discard \
-             changes and reload the active file from disk does not support a count)"
+        "2 Space r (Reload the active file or refresh the active explorer or Git list · failed: \
+             Reload the active file or refresh the active explorer or Git list does not support a \
+             count)"
     );
     assert!(app.displayed_status_message_is_error());
     assert_eq!(app.unread_notification_counts().errors, 1);

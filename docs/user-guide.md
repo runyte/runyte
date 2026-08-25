@@ -1312,7 +1312,7 @@ cancellation keys.
 | `Space b c` | Close the active buffer safely (`:close`, `:c`) without changing the pane layout |
 | `Space b n` | Open a new scratch buffer in the current pane (`:buffer-new`, `:new`) |
 | `Space / /` | Search the workspace with a regular expression; see [Search](#search) |
-| `Space r` | Reload the active text file or refresh the directory explorer |
+| `Space r` | Reload the active text file or refresh the active explorer or supported Git list |
 | `Enter` in a directory | Open the selected file or directory |
 | `-` or Backspace in a directory | Open the parent directory and select the child just left |
 | `.` in a directory | Show or hide dotfiles in the explorer |
@@ -1328,7 +1328,7 @@ cancellation keys.
 | `Ctrl-s`, `:write`, or `:save` | Save |
 | `:diff-this` (`:difft`, `:dt`) | Mark this buffer, or compare it with the one marked before it |
 | `:diff-off` (`:do`) | Close the comparison this buffer is part of |
-| `:reload` | Discard unsaved changes and reload the active file, or refresh the explorer |
+| `:reload` | Discard unsaved changes and reload the active file, or refresh the active explorer or supported Git list |
 | `:path` | Show the active buffer's absolute path in a wrapped popup; `Tab` opens a menu to copy it to the system clipboard (`s`) or the unnamed Runyte register (`r`) |
 | `:resize-right +/- N` | Grow or shrink the active pane at its right edge by `N` terminal cells |
 | `:resize-left +/- N` | Grow or shrink the active pane at its left edge by `N` terminal cells |
@@ -2095,7 +2095,7 @@ are enabled.
 :quit-all!              discard buffer changes and quit, without ending terminals (alias: qa!)
 :quit-here              quit and return the shell to the active directory (alias: qh)
 :quit-here!             discard changes, quit, and return there (alias: qh!)
-:reload                 reload the active file or refresh the explorer
+:reload                 reload the active file or refresh the active explorer or supported Git list
 :resize-right +/- N     grow or shrink the pane at its right edge by N cells
 :resize-left +/- N      grow or shrink the pane at its left edge by N cells
 :resize-top +/- N       grow or shrink the pane at its top edge by N cells

@@ -280,6 +280,7 @@ pub trait InputGrammar {
 pub struct RunyteGrammar {
     pending: KeySequence,
     count: Option<usize>,
+    count_keys: KeySequence,
     awaiting_character: Option<(EditorCommand, usize)>,
     awaiting_binding: Option<(KeySequence, BindingTarget)>,
 }
@@ -778,6 +779,23 @@ const fn runyte_repeats_for_count(command: EditorCommand) -> bool {
 }
 
 impl RunyteGrammar {
+    /// Restores the grammar-owned count prefix to the registry sequence that
+    /// resolved. The keymap owns the binding itself, while the grammar owns
+    /// the decimal keys typed before it; completed-command feedback needs
+    /// both to describe the actual gesture.
+    fn resolved_sequence(count_keys: &KeySequence, binding: &KeySequence) -> KeySequence {
+        if count_keys.is_empty() {
+            return binding.clone();
+        }
+        KeySequence::new(
+            count_keys
+                .as_slice()
+                .iter()
+                .copied()
+                .chain(binding.as_slice().iter().copied()),
+        )
+    }
+
     fn editor_binding_intent(
         &mut self,
         command: EditorCommand,
@@ -990,6 +1008,7 @@ impl RunyteGrammar {
         if key.code == KeyCode::Escape && !self.pending.is_empty() {
             self.pending.clear();
             self.count = None;
+            self.count_keys.clear();
             return Ok(GrammarOutput::one(EditorIntent::Notice(
                 GrammarNotice::SequenceCancelled,
             )));
@@ -1018,6 +1037,7 @@ impl RunyteGrammar {
                 .saturating_add(digit)
                 .min(999_999);
             self.count = Some(count);
+            self.count_keys.push(key);
             return Ok(GrammarOutput::one(EditorIntent::Notice(
                 GrammarNotice::Count(count),
             )));
@@ -1032,6 +1052,7 @@ impl RunyteGrammar {
             Lookup::NoMatch => {
                 self.pending.clear();
                 self.count = None;
+                self.count_keys.clear();
                 Ok(GrammarOutput::one(EditorIntent::Notice(
                     GrammarNotice::NoBinding(candidate),
                 )))
@@ -1045,6 +1066,8 @@ impl RunyteGrammar {
             Lookup::Exact(binding) => {
                 let target = binding.target;
                 let availability = binding.availability;
+                let count_keys = std::mem::take(&mut self.count_keys);
+                let resolved_sequence = Self::resolved_sequence(&count_keys, &candidate);
                 let sticky = candidate
                     .as_slice()
                     .first()
@@ -1052,7 +1075,7 @@ impl RunyteGrammar {
                 self.pending.clear();
                 let intent = self.binding_intent(target, availability)?;
                 if self.awaiting_character.is_some() {
-                    self.awaiting_binding = Some((candidate.clone(), target));
+                    self.awaiting_binding = Some((resolved_sequence.clone(), target));
                 }
                 Ok(GrammarOutput {
                     intents: vec![intent],
@@ -1065,7 +1088,7 @@ impl RunyteGrammar {
                     resolved_binding: self
                         .awaiting_character
                         .is_none()
-                        .then_some((candidate, target)),
+                        .then_some((resolved_sequence, target)),
                 })
             }
         }
@@ -1111,6 +1134,7 @@ impl InputGrammar for RunyteGrammar {
     fn reset(&mut self) {
         self.pending.clear();
         self.count = None;
+        self.count_keys.clear();
         self.awaiting_character = None;
         self.awaiting_binding = None;
     }
@@ -2414,6 +2438,81 @@ mod tests {
             CommandId::Editor(EditorCommand::MoveWordForward)
         );
         assert_eq!(invocation.execution().count(), Some(3));
+    }
+
+    #[test]
+    fn resolved_binding_spelling_keeps_the_typed_count_prefix() {
+        let mut grammar = RunyteGrammar::default();
+        translate_key(
+            &mut grammar,
+            Mode::Normal,
+            BindingScope::Global,
+            Key::char('3'),
+        );
+        let counted_motion = translate_key(
+            &mut grammar,
+            Mode::Normal,
+            BindingScope::Global,
+            Key::char('w'),
+        );
+        assert_eq!(
+            counted_motion
+                .resolved_binding
+                .as_ref()
+                .map(|(sequence, _)| sequence.to_string()),
+            Some("3 w".to_owned())
+        );
+
+        translate_key(
+            &mut grammar,
+            Mode::Normal,
+            BindingScope::Global,
+            Key::char('2'),
+        );
+        let awaiting = translate_key(
+            &mut grammar,
+            Mode::Normal,
+            BindingScope::Global,
+            Key::char('f'),
+        );
+        assert!(awaiting.resolved_binding.is_none());
+        let counted_character = translate_key(
+            &mut grammar,
+            Mode::Normal,
+            BindingScope::Global,
+            Key::char('x'),
+        );
+        assert_eq!(
+            counted_character
+                .resolved_binding
+                .as_ref()
+                .map(|(sequence, _)| sequence.to_string()),
+            Some("2 f x".to_owned())
+        );
+
+        let mut saturated = RunyteGrammar::default();
+        for _ in 0..7 {
+            translate_key(
+                &mut saturated,
+                Mode::Normal,
+                BindingScope::Global,
+                Key::char('9'),
+            );
+        }
+        assert_eq!(saturated.pending_count(), Some(999_999));
+        let resolved = translate_key(
+            &mut saturated,
+            Mode::Normal,
+            BindingScope::Global,
+            Key::char('l'),
+        );
+        assert_eq!(
+            resolved
+                .resolved_binding
+                .as_ref()
+                .map(|(sequence, _)| sequence.to_string()),
+            Some("9 9 9 9 9 9 9 l".to_owned())
+        );
     }
 
     #[test]

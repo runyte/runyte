@@ -241,6 +241,7 @@ impl ColonCommand {
         Self::LspStatus,
         Self::Notifications,
         Self::Open,
+        Self::Path,
         Self::Detach,
         Self::Quit,
         Self::ForceQuit,
@@ -1809,7 +1810,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "reload",
         [],
         "reload",
-        "Discard changes and reload the active file from disk",
+        "Reload the active file or refresh the active explorer or Git list",
         NoArguments
     ),
     spec!(
@@ -2796,6 +2797,41 @@ mod tests {
             let metadata = command.metadata();
             assert!(!metadata.description.is_empty());
             assert!(names.insert(metadata.name));
+        }
+    }
+
+    /// `ColonCommand::ALL` is the identity inventory used by exhaustive
+    /// audits. A live palette command omitted here can evade every future
+    /// check that begins from the enum rather than from the presentation
+    /// table, so the two sets must stay identical.
+    #[test]
+    fn colon_command_inventory_matches_the_palette_registry() {
+        let identities = ColonCommand::ALL.iter().copied().collect::<HashSet<_>>();
+        assert_eq!(identities.len(), ColonCommand::ALL.len());
+
+        let registered_commands = COMMANDS
+            .iter()
+            .filter_map(|spec| match spec.id {
+                CommandId::Colon(command) => Some(command),
+                CommandId::Editor(_) => None,
+            })
+            .collect::<Vec<_>>();
+        let registered = registered_commands.iter().copied().collect::<HashSet<_>>();
+        assert_eq!(registered.len(), registered_commands.len());
+        assert_eq!(identities, registered);
+        assert!(identities.contains(&ColonCommand::Path));
+    }
+
+    #[test]
+    fn command_palette_spellings_are_globally_unique() {
+        let mut spellings = HashSet::new();
+        for spec in COMMANDS {
+            for spelling in spec.names() {
+                assert!(
+                    spellings.insert(spelling),
+                    "duplicate command-palette spelling: {spelling}"
+                );
+            }
         }
     }
 

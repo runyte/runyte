@@ -13,6 +13,29 @@ use super::{
     resolved_operation_path, trailing_whitespace_changes,
 };
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum ReloadDispatch {
+    Directory,
+    GitStatus,
+    GitBranches,
+    GitWorktrees,
+    GitLog,
+    GitStash,
+    File,
+}
+
+pub(super) fn reload_dispatch(kind: &BufferKind) -> ReloadDispatch {
+    match kind {
+        BufferKind::Directory => ReloadDispatch::Directory,
+        BufferKind::GitStatus => ReloadDispatch::GitStatus,
+        BufferKind::GitBranches => ReloadDispatch::GitBranches,
+        BufferKind::GitWorktrees => ReloadDispatch::GitWorktrees,
+        BufferKind::GitLog => ReloadDispatch::GitLog,
+        BufferKind::GitStash => ReloadDispatch::GitStash,
+        _ => ReloadDispatch::File,
+    }
+}
+
 impl App {
     pub(super) fn open_explorer(&mut self, requested: Option<PathBuf>) -> Result<()> {
         let root = if let Some(path) = requested {
@@ -1108,29 +1131,29 @@ impl App {
     }
 
     pub(super) fn reload_active(&mut self) -> Result<()> {
-        match self.active_buffer().kind.clone() {
-            BufferKind::Directory => self.refresh_directory(),
-            BufferKind::GitStatus => {
+        match reload_dispatch(&self.active_buffer().kind) {
+            ReloadDispatch::Directory => self.refresh_directory(),
+            ReloadDispatch::GitStatus => {
                 self.refresh_git();
                 Ok(())
             }
-            BufferKind::GitBranches => {
+            ReloadDispatch::GitBranches => {
                 self.open_git_branches();
                 Ok(())
             }
-            BufferKind::GitWorktrees => {
+            ReloadDispatch::GitWorktrees => {
                 self.open_git_worktrees();
                 Ok(())
             }
-            BufferKind::GitLog => {
+            ReloadDispatch::GitLog => {
                 self.open_git_log();
                 Ok(())
             }
-            BufferKind::GitStash => {
+            ReloadDispatch::GitStash => {
                 self.open_git_stashes();
                 Ok(())
             }
-            _ => self.reload_file(),
+            ReloadDispatch::File => self.reload_file(),
         }
     }
 

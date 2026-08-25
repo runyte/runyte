@@ -208,7 +208,7 @@ fn unavailable_git_namespace_is_dimmed_but_navigable() {
     );
 
     let buffer = render_buffer(160, 30, &mut app, &hints);
-    let cell = first_cell_of(&buffer, "Git");
+    let cell = first_cell_of(&buffer, "Git ›");
     assert!(buffer[cell].modifier.contains(Modifier::DIM));
 
     hints.observe(

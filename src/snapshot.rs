@@ -1615,7 +1615,7 @@ mod tests {
         let snapshot = prepared_snapshot(&mut app, 80, 8);
         assert_eq!(
             snapshot.status.interaction_line,
-            "w (Move to next word start)"
+            "3 w (Move to next word start)"
         );
         assert_eq!(app.active().cursor(&app.buffers[0]).col, 17);
     }

@@ -455,6 +455,22 @@ mod tests {
     }
 
     #[test]
+    fn reload_hint_describes_every_view_the_dispatcher_refreshes() {
+        let mut hints = KeyHintState::default();
+        hints.observe(event(' '), Mode::Normal, default_keymap());
+
+        let reload = hints
+            .rows(default_keymap(), Mode::Normal)
+            .into_iter()
+            .find(|row| row.target == Some(BindingTarget::Colon(ColonCommand::Reload)))
+            .expect("the Space namespace lists reload");
+        assert_eq!(
+            reload.description,
+            "Reload the active file or refresh the active explorer or Git list"
+        );
+    }
+
+    #[test]
     fn nested_space_namespaces_collapse_then_reveal_registry_leaves() {
         let mut hints = KeyHintState::default();
         hints.observe(event(' '), Mode::Normal, default_keymap());

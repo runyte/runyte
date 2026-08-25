@@ -2243,6 +2243,13 @@ pub fn keymap_for(fast_pane_keys: bool) -> &'static Keymap {
 mod tests {
     use super::*;
 
+    fn built_in_keymaps() -> [(&'static str, &'static Keymap); 2] {
+        [
+            ("default", keymap_for(false)),
+            ("fast pane", keymap_for(true)),
+        ]
+    }
+
     /// Help renders one document per buffer type rather than one per mode,
     /// which is only honest while the two modal modes bind the same keys to
     /// the same commands. A Normal-only or Select-only binding would be
@@ -2250,31 +2257,32 @@ mod tests {
     /// add the mode back to `help::render` before making this pass again.
     #[test]
     fn normal_and_select_bind_the_same_sequences() {
-        let keymap = default_keymap();
-        for scope in [
-            BindingScope::Global,
-            BindingScope::Directory,
-            BindingScope::Settings,
-            BindingScope::GitStatus,
-            BindingScope::GitBranches,
-            BindingScope::GitWorktrees,
-            BindingScope::GitLog,
-            BindingScope::GitBlame,
-            BindingScope::Help,
-        ] {
-            let named = |mode| {
-                let mut rows = keymap
-                    .bindings_for_scope(mode, scope)
-                    .map(|binding| (binding.sequence.to_string(), binding.target.name()))
-                    .collect::<Vec<_>>();
-                rows.sort();
-                rows
-            };
-            assert_eq!(
-                named(Mode::Normal),
-                named(Mode::Select),
-                "{scope:?} no longer binds the same keys in both modal modes"
-            );
+        for (keymap_name, keymap) in built_in_keymaps() {
+            for &scope in BindingScope::ALL {
+                let semantics = |mode| {
+                    let mut rows = keymap
+                        .bindings_for_scope(mode, scope)
+                        .map(|binding| {
+                            (
+                                binding.sequence.to_string(),
+                                binding.target,
+                                binding.description,
+                                binding.availability,
+                                binding.role,
+                                binding.alias.clone(),
+                                binding.alias_modes,
+                            )
+                        })
+                        .collect::<Vec<_>>();
+                    rows.sort_by(|left, right| left.0.cmp(&right.0));
+                    rows
+                };
+                assert_eq!(
+                    semantics(Mode::Normal),
+                    semantics(Mode::Select),
+                    "{keymap_name} keymap {scope:?} no longer exposes the same bindings in both modal modes"
+                );
+            }
         }
     }
 
@@ -2283,23 +2291,16 @@ mod tests {
     /// entry points exist to close.
     #[test]
     fn every_entry_point_can_name_itself() {
-        for mode in [Mode::Normal, Mode::Select] {
-            for scope in [
-                BindingScope::Global,
-                BindingScope::Directory,
-                BindingScope::Settings,
-                BindingScope::GitStatus,
-                BindingScope::GitBranches,
-                BindingScope::GitWorktrees,
-                BindingScope::GitLog,
-                BindingScope::GitBlame,
-            ] {
-                for entry in default_keymap().entry_points(mode, scope) {
-                    assert!(
-                        !entry.description.is_empty(),
-                        "{scope:?} {mode:?} entry point {} has no description",
-                        entry.key.label()
-                    );
+        for (keymap_name, keymap) in built_in_keymaps() {
+            for mode in [Mode::Normal, Mode::Select] {
+                for &scope in BindingScope::ALL {
+                    for entry in keymap.entry_points(mode, scope) {
+                        assert!(
+                            !entry.description.is_empty(),
+                            "{keymap_name} keymap {scope:?} {mode:?} entry point {} has no description",
+                            entry.key.label()
+                        );
+                    }
                 }
             }
         }
@@ -2336,13 +2337,65 @@ mod tests {
     /// Tab menu and therefore do not participate in this check.
     #[test]
     fn no_scoped_binding_shadows_a_global_binding() {
-        for &scope in BindingScope::ALL {
-            assert!(
-                default_keymap()
-                    .shadowed_bindings(Mode::Normal, scope)
-                    .is_empty(),
-                "{scope:?} shadows a global binding"
-            );
+        for (keymap_name, keymap) in built_in_keymaps() {
+            for mode in [Mode::Normal, Mode::Select] {
+                for &scope in BindingScope::ALL {
+                    assert!(
+                        keymap.shadowed_bindings(mode, scope).is_empty(),
+                        "{keymap_name} keymap {scope:?} shadows a global binding in {mode:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// A namespace is presentation data for a real registry prefix, not an
+    /// independent hint tree. Pin uniqueness, reachability, and the absence
+    /// of exact-prefix ambiguity so discovery can neither invent a dead row
+    /// nor hide an executable command behind one.
+    #[test]
+    fn every_namespace_is_unique_reachable_and_not_an_exact_binding() {
+        for (keymap_name, keymap) in built_in_keymaps() {
+            let mut seen = std::collections::HashSet::new();
+            for namespace in keymap.namespaces() {
+                assert!(!namespace.sequence.is_empty());
+                for mode in namespace.modes {
+                    assert!(
+                        seen.insert((*mode, namespace.scope, namespace.sequence.clone())),
+                        "duplicate {keymap_name} keymap {mode:?} {:?} namespace {}",
+                        namespace.scope,
+                        namespace.sequence
+                    );
+                    assert!(
+                        matches!(
+                            keymap.lookup_in(*mode, namespace.scope, &namespace.sequence),
+                            Lookup::Prefix(ref bindings) if !bindings.is_empty()
+                        ),
+                        "dead or executable {keymap_name} keymap namespace {} in {mode:?} {:?}",
+                        namespace.sequence,
+                        namespace.scope
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn built_in_bindings_have_no_exact_prefix_ambiguity() {
+        for (keymap_name, keymap) in built_in_keymaps() {
+            for binding in keymap.bindings() {
+                for mode in binding.modes {
+                    assert!(
+                        !matches!(
+                            keymap.lookup_in(*mode, binding.scope, &binding.sequence),
+                            Lookup::ExactAndPrefix { .. }
+                        ),
+                        "{keymap_name} keymap {} is both executable and a prefix in {mode:?} {:?}",
+                        binding.sequence,
+                        binding.scope
+                    );
+                }
+            }
         }
     }
 
