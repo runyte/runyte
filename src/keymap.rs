@@ -1034,6 +1034,12 @@ fn built_in_bindings() -> Vec<Binding> {
         modal([Key::char('g'), Key::char('t')], Command::GotoWindowTop),
         modal([Key::char('g'), Key::char('c')], Command::GotoWindowCenter),
         modal([Key::char('g'), Key::char('b')], Command::GotoWindowBottom),
+        // Vim's names for the same three positions. They cost nothing here
+        // because Helix leaves H, M, and L unbound, and they read as motions
+        // rather than as the z-family's view scrolling.
+        modal(Key::char('H'), Command::GotoWindowTop),
+        modal(Key::char('M'), Command::GotoWindowCenter),
+        modal(Key::char('L'), Command::GotoWindowBottom),
         modal([Key::char('g'), Key::char('p')], Command::GotoNextParagraph),
         modal(
             [Key::char('g'), Key::char('P')],
@@ -2559,6 +2565,47 @@ mod tests {
                     binding.sequence,
                     mode.label()
                 );
+            }
+        }
+    }
+
+    /// Vim's `H`, `M`, and `L` move the cursor within the viewport; the
+    /// `z` family scrolls the viewport under a stationary cursor. Binding the
+    /// former to the latter would be the easy mistake, so this pins each to
+    /// the goto command its `g` sequence already runs.
+    #[test]
+    fn vim_window_letters_alias_the_goto_window_motions() {
+        let keymap = default_keymap();
+        let cases = [
+            (Key::char('H'), Key::char('t'), EditorCommand::GotoWindowTop),
+            (
+                Key::char('M'),
+                Key::char('c'),
+                EditorCommand::GotoWindowCenter,
+            ),
+            (
+                Key::char('L'),
+                Key::char('b'),
+                EditorCommand::GotoWindowBottom,
+            ),
+        ];
+        for mode in [Mode::Normal, Mode::Select] {
+            for (letter, suffix, command) in cases {
+                let goto = KeySequence::from([Key::char('g'), suffix]);
+                for sequence in [KeySequence::from(letter), goto] {
+                    let resolved = match keymap.lookup_in(mode, BindingScope::Global, &sequence) {
+                        Lookup::Exact(found) | Lookup::ExactAndPrefix { exact: found, .. } => {
+                            found.target
+                        }
+                        _ => panic!("{sequence} runs nothing in {}", mode.label()),
+                    };
+                    assert_eq!(
+                        resolved,
+                        BindingTarget::from(command),
+                        "{sequence} runs a different command in {}",
+                        mode.label()
+                    );
+                }
             }
         }
     }

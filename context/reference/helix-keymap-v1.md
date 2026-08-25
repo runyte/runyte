@@ -28,11 +28,11 @@ carry a row below justifying itself as `Added`. Everything else takes a
 namespace path, optionally advertising a short alias on its namespace row the
 way `Space / f` advertises `Space f`.
 
-Audited 2026-08-13, the editable-buffer surface holds to this: every active
+Audited 2026-08-25, the editable-buffer surface holds to this: every active
 single letter is standard in one or both editors, except the deviations `0`,
 `$`, `X`, and `s` — which take standard letters and change their meaning
-rather than claiming new ones — and two genuine additions, `V` and `Y`. `Y` is
-not a Helix binding but is Vim's, with Vim's meaning.
+rather than claiming new ones — and one genuine addition, `V`. `Y`, `H`, `M`,
+and `L` are not Helix bindings but are Vim's, each with Vim's meaning.
 
 A read-only buffer is marked `[RO]` in the pane title and the status line, and
 `· Read-only` in its help title, so the three surfaces cannot disagree about
@@ -178,6 +178,7 @@ Backspace/Delete, Ctrl-u, and Ctrl-k. Prompts are labelled by flavour —
 | `gh`, `gl` | line start/end | matching line motions | Implemented | Extends in Select mode. |
 | `gs` | first non-whitespace | matching motion | Implemented | Local text operation. |
 | `gt`, `gc`, `gb` | view top/center/bottom | matching view motions | Implemented | Uses the active pane viewport. |
+| `H`, `M`, `L` | not Helix bindings | `goto-window-top` / `-center` / `-bottom` | Added | Vim's letters for the three positions `gt`, `gc`, and `gb` already reach, with Vim's meaning. Helix leaves all three unbound, so they claim no key another binding wanted. Kept distinct from the `z` family on purpose: these move the cursor within a stationary viewport, while `zt`/`zz`/`zb` scroll the viewport under a stationary cursor. Extends in Select mode, and works in terminal review, because it is the same command the `g` sequence runs; like that sequence it is not a counted motion. |
 | `gp`, `gP` | next/previous paragraph | matching paragraph motions | Implemented | Paragraphs are runs of non-empty lines. Extends in Select mode and accepts counts. |
 | `gw` | `goto_word` | `goto-word` | Deviation | Dims the active pane and assigns prefix-free labels to eligible visible words by projected distance from the cursor: nearby targets use one red key and farther targets use two neon-cyan keys of one hue. A two-key prefix narrows to red suffixes at the target cells. Labels never cross a wrap or viewport edge. Extends in Select mode and records a jumplist entry. |
 | `gd`, `gD`, `gy`, `gr`, `gi` | LSP goto operations | matching command identities | Implemented | One result moves the selection; several open the shared result picker. |
