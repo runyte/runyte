@@ -42,6 +42,16 @@ Tests covering the preserved boundaries are
 is distributed across the modules in `src/app/tests/`; `cargo test` exercises
 those tests together with every integration-test binary.
 
+A follow-up review found that three source-level regression guards still
+treated `src/app.rs` as the complete application source.
+The incremental-parse fixture now includes every direct workflow module, the
+frontend-input boundary walks the application tree, and the two internal
+source-boundary tests discover production modules recursively while excluding
+their test tree. This keeps each guard's original subject complete as new
+workflow files are added. The follow-up also restored the Git branch-row and
+log-pagination invariants that had been shortened while moving their fields
+into `GitWorkflowState`.
+
 ## Report
 
 `src/app.rs` had grown to about 40,000 lines. Roughly 23,000 lines were

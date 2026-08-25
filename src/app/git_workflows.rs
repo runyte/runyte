@@ -47,15 +47,18 @@ pub(super) struct GitWorkflowState {
     /// that have been rewritten would paint the wrong characters.
     status_counts: Vec<Option<crate::git::CountColumns>>,
     /// The projected branch list, indexed by document row: the branch each row
-    /// acts on and the columns its Git annotations occupy.
+    /// acts on and the columns its Git annotations occupy. Replaced whenever
+    /// the list's text is.
     branch_rows: Vec<crate::git::BranchRow>,
     worktree_rows: Vec<GeneralWorktreeRow>,
     /// Commits on the page currently displayed, not the whole loaded history.
     log_rows: Vec<CommitSummary>,
     log_next: Option<LogCursor>,
     /// The cursor that produced each visited page, indexed by page number.
-    /// Page zero is the tip of the branch and has no cursor.
+    /// Page zero is the tip of the branch and has no cursor, so going back is
+    /// a re-request rather than a cache of every commit ever loaded.
     log_cursors: Vec<Option<LogCursor>>,
+    /// Zero-based index of the displayed page within `log_cursors`.
     log_page: usize,
     log_requests: HashMap<GitRequestId, LogViewRequest>,
     blame_rows: Vec<BlameLine>,

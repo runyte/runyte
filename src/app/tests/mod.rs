@@ -89,29 +89,37 @@ fn launch_position(line: usize, column: Option<usize>) -> LaunchPosition {
 
 /// All production source that implements the application coordinator.
 fn production_source() -> String {
-    let app = include_str!("../../app.rs")
+    fn collect_modules(directory: &std::path::Path, sources: &mut Vec<std::path::PathBuf>) {
+        for entry in fs::read_dir(directory).expect("application source directory") {
+            let path = entry.expect("application source entry").path();
+            if path.is_dir() {
+                if path.file_name().is_some_and(|name| name != "tests") {
+                    collect_modules(&path, sources);
+                }
+            } else if path.extension().is_some_and(|extension| extension == "rs") {
+                sources.push(path);
+            }
+        }
+    }
+
+    let source_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let app = fs::read_to_string(source_root.join("app.rs"))
+        .expect("application coordinator source")
         .split("\n#[cfg(test)]\nmod tests")
         .next()
-        .unwrap();
-    [
-        app,
-        include_str!("../completion_support.rs"),
-        include_str!("../editing.rs"),
-        include_str!("../file_workflows.rs"),
-        include_str!("../git_workflows.rs"),
-        include_str!("../input.rs"),
-        include_str!("../language_workflows.rs"),
-        include_str!("../movement.rs"),
-        include_str!("../picker_workflows.rs"),
-        include_str!("../presentation.rs"),
-        include_str!("../prompt_editing.rs"),
-        include_str!("../search_history.rs"),
-        include_str!("../settings_workflows.rs"),
-        include_str!("../syntax_workflows.rs"),
-        include_str!("../terminal_workflows.rs"),
-        include_str!("../workspace_workflows.rs"),
-    ]
-    .join("\n")
+        .unwrap()
+        .to_owned();
+    let mut paths = Vec::new();
+    collect_modules(&source_root.join("app"), &mut paths);
+    paths.sort();
+
+    std::iter::once(app)
+        .chain(paths.into_iter().map(|path| {
+            fs::read_to_string(&path)
+                .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()))
+        }))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 mod commands;

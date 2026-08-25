@@ -7,6 +7,7 @@
 //! usable grammar.
 
 use std::{
+    fs,
     path::Path,
     time::{Duration, Instant},
 };
@@ -3102,16 +3103,31 @@ fn multibyte_source_produces_character_offsets_not_byte_offsets() {
 /// them only a handful of times. A fixture of small files repeated 60x measures
 /// the degenerate corner instead of the property under test.
 fn realistic_source() -> String {
-    let sample = concat!(
-        include_str!("../src/app.rs"),
-        "\n",
-        include_str!("../src/ui.rs"),
-        "\n",
-        include_str!("../src/keymap.rs"),
-    );
+    let source_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut paths = vec![
+        source_root.join("app.rs"),
+        source_root.join("ui.rs"),
+        source_root.join("keymap.rs"),
+    ];
+    let mut app_modules = fs::read_dir(source_root.join("app"))
+        .expect("application module directory")
+        .map(|entry| entry.expect("application module entry").path())
+        .filter(|path| path.extension().is_some_and(|extension| extension == "rs"))
+        .collect::<Vec<_>>();
+    app_modules.sort();
+    paths.extend(app_modules);
+
+    let sample = paths
+        .iter()
+        .map(|path| {
+            fs::read_to_string(path)
+                .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()))
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
     let mut source = String::new();
     while source.len() < 1_000_000 {
-        source.push_str(sample);
+        source.push_str(&sample);
         source.push('\n');
     }
     source

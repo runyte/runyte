@@ -36,15 +36,25 @@ fn crossterm_is_confined_to_terminal_acquisition_and_the_tui_adapter() {
 
 #[test]
 fn core_input_consumers_do_not_name_frontend_key_events() {
-    for (name, contents) in [
-        ("app", include_str!("../src/app.rs")),
-        ("keymap", include_str!("../src/keymap.rs")),
-        ("key hints", include_str!("../src/key_hints.rs")),
-    ] {
-        assert!(!contents.contains("KeyEvent"), "{name} names KeyEvent");
+    let source_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut sources = vec![
+        source_root.join("app.rs"),
+        source_root.join("keymap.rs"),
+        source_root.join("key_hints.rs"),
+    ];
+    rust_sources_below(&source_root.join("app"), &mut sources);
+
+    for source in sources {
+        let contents = fs::read_to_string(&source).unwrap();
+        assert!(
+            !contents.contains("KeyEvent"),
+            "{} names KeyEvent",
+            source.display()
+        );
         assert!(
             !contents.contains("KeyModifiers"),
-            "{name} names KeyModifiers"
+            "{} names KeyModifiers",
+            source.display()
         );
     }
 }
