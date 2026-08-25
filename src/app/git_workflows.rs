@@ -43,6 +43,10 @@ pub(super) struct GitWorkflowState {
     diff_buffers: HashMap<usize, (PathBuf, DiffScope)>,
     index_buffer: Option<usize>,
     index_open_requests: HashSet<GitRequestId>,
+    /// The newest refresh whose successful snapshot should open a commit
+    /// message. Commit availability comes from the refreshed index, never the
+    /// status cache that happened to exist when the command was entered.
+    commit_open_request: Option<GitRequestId>,
     /// Which file each row of the changed-file list stands for, indexed by
     /// document row. Replaced whenever the list's text is.
     status_entries: Vec<Option<crate::git::StatusEntry>>,
@@ -88,6 +92,7 @@ impl Default for GitWorkflowState {
             diff_buffers: HashMap::new(),
             index_buffer: None,
             index_open_requests: HashSet::new(),
+            commit_open_request: None,
             status_entries: Vec::new(),
             status_counts: Vec::new(),
             branch_rows: Vec::new(),
@@ -120,6 +125,12 @@ pub(super) struct DeletionPreflight<T> {
     pub(super) source_buffer: usize,
     pub(super) interaction_generation: u64,
     pub(super) target: T,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub(super) struct RequestedGitViews {
+    index: bool,
+    commit: bool,
 }
 
 impl GitWorkflowState {
@@ -438,11 +449,32 @@ impl App {
                 operation,
                 result,
                 state,
-                ..
+                coalesced,
             } => {
                 self.git_state.progress.remove(&id);
                 let action = self.git_state.action_origins.remove(&id);
-                let explicit_index_open = self.git_state.index_open_requests.remove(&id);
+                let mut requested_views = RequestedGitViews {
+                    index: self.git_state.index_open_requests.remove(&id),
+                    commit: self.git_state.commit_open_request == Some(id),
+                };
+                let retry_commit_open = requested_views.commit
+                    && coalesced
+                    && state == GitServiceState::Completed
+                    && matches!(result.as_ref(), Ok(GitResponse::Snapshot(_)));
+                if requested_views.commit {
+                    self.git_state.commit_open_request = None;
+                    if coalesced {
+                        // The command joined a refresh which had already
+                        // started, so that snapshot is allowed to describe an
+                        // index from before the command was pressed. Treat its
+                        // completion as the freshness barrier and read once
+                        // more before deciding whether a commit can open.
+                        requested_views.commit = false;
+                    }
+                }
+                if retry_commit_open {
+                    let _ = self.request_commit_open_refresh();
+                }
                 let log_view_request = self.git_state.log_requests.remove(&id);
                 if !self.accept_deletion_preflight(id, &operation, result.as_ref().as_ref().ok()) {
                     return;
@@ -460,7 +492,7 @@ impl App {
                             operation,
                             response,
                             state,
-                            explicit_index_open,
+                            requested_views,
                             log_view_request,
                             action,
                         );
@@ -540,7 +572,7 @@ impl App {
         operation: GitOperation,
         response: GitResponse,
         state: GitServiceState,
-        explicit_index_open: bool,
+        requested_views: RequestedGitViews,
         log_view_request: Option<LogViewRequest>,
         action: Option<u64>,
     ) {
@@ -646,7 +678,10 @@ impl App {
             GitResponse::CommitDetail(detail) => self.open_git_commit_detail_result(detail),
             GitResponse::Blame { source, lines } => self.open_git_blame_result(source, lines),
             GitResponse::Snapshot(snapshot) => {
-                self.apply_repository_snapshot(*snapshot, true, explicit_index_open);
+                self.apply_repository_snapshot(*snapshot, true, requested_views.index);
+                if requested_views.commit {
+                    self.open_commit_message_from_current_status();
+                }
             }
             GitResponse::Mutation {
                 mutation,
@@ -659,6 +694,11 @@ impl App {
                     self.apply_repository_snapshot(snapshot, false, false);
                 } else {
                     self.git_state.snapshot_stale = true;
+                    // The mutation may already have changed the repository.
+                    // A failed bundled snapshot must not leave every
+                    // projection waiting for the periodic timer before it
+                    // gets another chance to converge.
+                    let _ = self.request_git_refresh();
                 }
                 self.apply_git_mutation_result(
                     mutation,
@@ -830,10 +870,10 @@ impl App {
             .filter(|summary| !summary.is_empty())
             .map(str::to_owned)
             .unwrap_or_else(|| match mutation {
-                GitMutation::Stage(_) => format!("staged {} file(s)", applied_paths.len()),
-                GitMutation::Unstage(_) => format!("unstaged {} file(s)", applied_paths.len()),
+                GitMutation::Stage(_) => format!("staged {} path(s)", applied_paths.len()),
+                GitMutation::Unstage(_) => format!("unstaged {} path(s)", applied_paths.len()),
                 GitMutation::Discard(_) => {
-                    format!("discarded changes to {} file(s)", applied_paths.len())
+                    format!("discarded changes to {} path(s)", applied_paths.len())
                 }
                 GitMutation::Checkout { branch } => format!("checked out {branch}"),
                 GitMutation::CreateBranch { branch, start } => {
@@ -921,6 +961,15 @@ impl App {
                     "Git changed {} on disk, but its unsaved buffer was kept; reload or save it explicitly",
                     path.display()
                 ));
+                continue;
+            }
+            if !path.exists() {
+                // Discarding a staged addition, or the destination side of a
+                // rename, legitimately removes the file. A clean buffer for
+                // content the reader explicitly discarded must not remain as
+                // a stale file owner that can recreate it on the next save.
+                let _ = self.buffers[buffer].discard_changes_to("");
+                self.close_buffer(buffer);
                 continue;
             }
             let language = buffer_language(&self.buffers[buffer], &self.registry);
@@ -3801,8 +3850,10 @@ impl App {
                 let Some(Some(entry)) = self.git_state.status_entries.get(row) else {
                     continue;
                 };
-                if !paths.contains(&entry.path) {
-                    paths.push(entry.path.clone());
+                for path in entry.mutation_paths() {
+                    if !paths.contains(path) {
+                        paths.push(path.clone());
+                    }
                 }
             }
         }
@@ -3844,8 +3895,12 @@ impl App {
     pub(super) fn stage_all_changed_files(&mut self) {
         let mut paths = Vec::new();
         for entry in self.git_state.status_entries.iter().flatten() {
-            if entry.side == StatusSide::Unstaged && !paths.contains(&entry.path) {
-                paths.push(entry.path.clone());
+            if entry.side == StatusSide::Unstaged {
+                for path in entry.mutation_paths() {
+                    if !paths.contains(path) {
+                        paths.push(path.clone());
+                    }
+                }
             }
         }
         if paths.is_empty() {
@@ -3916,7 +3971,7 @@ impl App {
         if staged == 1 {
             self.status(format!("{verb} {}", paths[0].display()));
         } else {
-            self.status(format!("{verb} {staged} files"));
+            self.status(format!("{verb} {staged} paths"));
         }
     }
 
@@ -3993,8 +4048,8 @@ impl App {
             return Some((repository, paths));
         }
         let (repository, path) = self.git_target()?;
-        let relative = repository.relative(&path)?.to_path_buf();
-        Some((repository, vec![relative]))
+        let paths = self.active_file_discard_paths(&repository, &path);
+        Some((repository, paths))
     }
 
     /// Restores each path to what `HEAD` holds and reopens what was showing it.
@@ -4034,23 +4089,14 @@ impl App {
             return Ok(());
         }
 
-        // Reopening is required rather than tidy: the file changed underneath
-        // its buffer, so the guard that refuses to save over an unexpected
-        // disk state would otherwise refuse the next write.
+        // A restored tracked path must be reloaded so its disk guard follows
+        // the replacement. A staged addition is removed instead, and then its
+        // clean buffer must close rather than remain able to recreate it.
+        self.reload_git_paths(&discarded);
         for absolute in &discarded {
-            let open = self.buffers.iter().enumerate().find_map(|(index, buffer)| {
-                (!self.closed_buffers.contains(&index)
-                    && !buffer.is_directory()
-                    && buffer.path.as_deref() == Some(absolute.as_path()))
-                .then_some(index)
-            });
-            let Some(buffer) = open else {
-                continue;
-            };
-            let language_before = buffer_language(&self.buffers[buffer], &self.registry);
-            self.buffers[buffer].reload()?;
-            self.resync_replaced_buffer(buffer, language_before);
-            self.track_in_git(absolute);
+            if absolute.exists() {
+                self.track_in_git(absolute);
+            }
         }
         self.refresh_git_status();
         self.refresh_git_status_buffer();
@@ -4063,7 +4109,7 @@ impl App {
                     .unwrap_or(only.as_path())
                     .display()
             ),
-            many => format!("discarded changes to {} files", many.len()),
+            many => format!("discarded changes to {} paths", many.len()),
         });
         Ok(())
     }
@@ -4080,11 +4126,36 @@ impl App {
             self.error("no `git` executable was found");
             return;
         }
+        if self.git.repository().is_none() {
+            self.error("this project is not in a Git repository");
+            return;
+        }
+        if self.ports.git_service.is_some() {
+            let _ = self.request_commit_open_refresh();
+            return;
+        }
+        self.refresh_git_status();
+        self.open_commit_message_from_current_status();
+    }
+
+    fn request_commit_open_refresh(&mut self) -> bool {
+        let Some(repository) = self.git.repository().cloned() else {
+            return false;
+        };
+        let spec = self.git_refresh_spec(&repository);
+        let Some(id) = self.request_git(GitOperation::Refresh { repository, spec }) else {
+            return false;
+        };
+        self.git_state.commit_open_request = Some(id);
+        self.status("checking what is staged for commit…");
+        true
+    }
+
+    fn open_commit_message_from_current_status(&mut self) {
         let Some(repository) = self.git.repository().cloned() else {
             self.error("this project is not in a Git repository");
             return;
         };
-        self.refresh_git_status();
         let staged = self.git.status().map_or_else(Vec::new, |status| {
             status
                 .files
@@ -4274,12 +4345,13 @@ impl App {
         let Some((repository, path)) = self.git_target() else {
             return;
         };
+        let paths = self.active_file_mutation_paths(&repository, &path, stage);
         if self.ports.git_service.is_some() {
             let refresh = self.git_refresh_spec(&repository);
             let mutation = if stage {
-                GitMutation::Stage(vec![path])
+                GitMutation::Stage(paths)
             } else {
-                GitMutation::Unstage(vec![path])
+                GitMutation::Unstage(paths)
             };
             let _ = self.request_git(GitOperation::Mutate {
                 repository,
@@ -4291,19 +4363,30 @@ impl App {
         let Some(provider) = self.ports.git.as_deref() else {
             return;
         };
-        let outcome = if stage {
-            provider.stage(&repository, &path)
-        } else {
-            provider.unstage(&repository, &path)
-        };
-        if let Err(error) = outcome {
-            self.error(error.to_string());
-            return;
+        let mut applied = Vec::new();
+        let mut failure = None;
+        for target in &paths {
+            let outcome = if stage {
+                provider.stage(&repository, target)
+            } else {
+                provider.unstage(&repository, target)
+            };
+            if let Err(error) = outcome {
+                failure = Some(error);
+                break;
+            }
+            applied.push(target.clone());
         }
         // The index moved, so both the base every mark is measured against and
         // the counts in the status line are now stale.
-        self.track_in_git(&path);
+        for target in &applied {
+            self.track_in_git(target);
+        }
         self.refresh_git_status();
+        if let Some(error) = failure {
+            self.error(error.to_string());
+            return;
+        }
 
         let relative = repository
             .relative(&path)
@@ -4318,6 +4401,59 @@ impl App {
         } else {
             self.status(format!("{verb} {relative}"));
         }
+    }
+
+    /// Absolute index endpoints for an active-file stage or unstage.
+    ///
+    /// A rename row names its destination, but its source index entry is the
+    /// other half of the same move. Copy sources are deliberately excluded:
+    /// they remain independent files and must never be changed as a side
+    /// effect of acting on the copy.
+    fn active_file_mutation_paths(
+        &self,
+        repository: &Repository,
+        path: &Path,
+        stage: bool,
+    ) -> Vec<PathBuf> {
+        let relative = repository.relative(path);
+        let source = relative.and_then(|relative| {
+            self.git.status()?.files.iter().find_map(|file| {
+                let state = if stage { file.worktree } else { file.index };
+                (file.path == relative && state == crate::git::FileState::Renamed)
+                    .then_some(file.original_path.as_ref())
+                    .flatten()
+            })
+        });
+        source
+            .into_iter()
+            .map(|source| repository.workdir().join(source))
+            .chain(std::iter::once(path.to_path_buf()))
+            .collect()
+    }
+
+    /// Repository-relative endpoints needed to discard the active file.
+    ///
+    /// Discard restores both sides of the index, so either an index rename or
+    /// a worktree rename owns its source endpoint. Copy sources stay outside
+    /// the action for the same reason as staging: a copy did not move them.
+    fn active_file_discard_paths(&self, repository: &Repository, path: &Path) -> Vec<PathBuf> {
+        let Some(relative) = repository.relative(path) else {
+            return Vec::new();
+        };
+        let source = self.git.status().and_then(|status| {
+            status.files.iter().find_map(|file| {
+                (file.path == relative
+                    && (file.index == crate::git::FileState::Renamed
+                        || file.worktree == crate::git::FileState::Renamed))
+                    .then_some(file.original_path.as_ref())
+                    .flatten()
+            })
+        });
+        source
+            .into_iter()
+            .cloned()
+            .chain(std::iter::once(relative.to_path_buf()))
+            .collect()
     }
 
     /// Brings every mark and count back in line with Git.

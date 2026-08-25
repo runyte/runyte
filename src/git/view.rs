@@ -59,7 +59,18 @@ impl StatusSide {
 pub struct StatusEntry {
     /// Repository-relative, exactly as Git spelled it.
     pub path: PathBuf,
+    /// The source of a rename, when Git reported one. Actions that move the
+    /// index must include both endpoints even though opening and diffing the
+    /// row follow `path`, where the file now lives.
+    pub original_path: Option<PathBuf>,
     pub side: StatusSide,
+}
+
+impl StatusEntry {
+    /// Every repository-relative path whose index entry belongs to this row.
+    pub fn mutation_paths(&self) -> impl Iterator<Item = &PathBuf> {
+        self.original_path.iter().chain(std::iter::once(&self.path))
+    }
 }
 
 /// Where a row's two counts sit inside its text, as character ranges.
@@ -140,6 +151,13 @@ impl FileRow {
             stats: stats.get(side.scope(), &file.path),
             entry: StatusEntry {
                 path: file.path.clone(),
+                // Porcelain type-2 records use the same source field for
+                // renames and copies. Only a rename moves both endpoints;
+                // mutating a copy's source would reach beyond this row.
+                original_path: (file.index == FileState::Renamed
+                    || file.worktree == FileState::Renamed)
+                    .then(|| file.original_path.clone())
+                    .flatten(),
                 side,
             },
         }
@@ -589,6 +607,54 @@ mod tests {
             rows[3].entry.as_ref().unwrap().path,
             PathBuf::from("after.rs")
         );
+        assert_eq!(
+            rows[3]
+                .entry
+                .as_ref()
+                .unwrap()
+                .mutation_paths()
+                .cloned()
+                .collect::<Vec<_>>(),
+            vec![PathBuf::from("before.rs"), PathBuf::from("after.rs")]
+        );
+    }
+
+    #[test]
+    fn a_copy_displays_its_source_but_only_acts_on_the_copy() {
+        let mut copied = file("copy.rs", FileState::Copied, FileState::Unmodified);
+        copied.original_path = Some(PathBuf::from("source.rs"));
+        let rows = status_rows(&status(vec![copied]));
+
+        assert_eq!(rows[3].text, "  C source.rs → copy.rs");
+        assert_eq!(
+            rows[3]
+                .entry
+                .as_ref()
+                .unwrap()
+                .mutation_paths()
+                .cloned()
+                .collect::<Vec<_>>(),
+            vec![PathBuf::from("copy.rs")]
+        );
+    }
+
+    #[test]
+    fn both_rows_of_a_renamed_then_modified_file_keep_both_endpoints() {
+        let mut renamed = file("after.rs", FileState::Renamed, FileState::Modified);
+        renamed.original_path = Some(PathBuf::from("before.rs"));
+        let rows = status_rows(&status(vec![renamed]));
+
+        let entries = rows
+            .iter()
+            .filter_map(|row| row.entry.as_ref())
+            .collect::<Vec<_>>();
+        assert_eq!(entries.len(), 2);
+        for entry in entries {
+            assert_eq!(
+                entry.mutation_paths().cloned().collect::<Vec<_>>(),
+                vec![PathBuf::from("before.rs"), PathBuf::from("after.rs")]
+            );
+        }
     }
 
     #[test]

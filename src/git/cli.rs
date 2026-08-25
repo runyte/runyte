@@ -2226,17 +2226,83 @@ impl GitProvider for GitCliProvider {
     }
 
     fn discard(&self, repository: &Repository, path: &Path) -> Result<()> {
-        // `checkout HEAD --` rather than `restore --source=HEAD --staged
-        // --worktree`: it means the same thing for one path, and it works on
-        // the Git versions that predate `restore`, matching the choice made
-        // for unstaging.
         let relative = self.relative(repository, path)?;
+        let entries = self.run(
+            repository.workdir(),
+            &[
+                OsStr::new("--literal-pathspecs"),
+                OsStr::new("ls-files"),
+                OsStr::new("--stage"),
+                OsStr::new("-z"),
+                OsStr::new("--"),
+                relative.as_os_str(),
+            ],
+        )?;
+        if staged_mode(&entries) == Some("160000") {
+            return Err(GitError::Failed {
+                command: format!("discard {}", relative.display()),
+                code: None,
+                stderr: "the path is a submodule; refusing to remove files below it".to_owned(),
+            });
+        }
+        match std::fs::symlink_metadata(path) {
+            Ok(metadata) if metadata.file_type().is_dir() => {
+                return Err(GitError::Failed {
+                    command: format!("discard {}", relative.display()),
+                    code: None,
+                    stderr: "the path is a directory; refusing to remove files below it".to_owned(),
+                });
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(GitError::Io {
+                    action: "inspect",
+                    path: path.to_path_buf(),
+                    detail: error.to_string(),
+                });
+            }
+        }
+        let comparison = self.file_comparison(repository, DiffScope::Staged, path)?;
+        if comparison.previous != BaseContent::Absent {
+            // `checkout HEAD --` predates `git restore` and resets both the
+            // index and worktree for a path which HEAD owns.
+            return self
+                .run(
+                    repository.workdir(),
+                    &[
+                        OsStr::new("--literal-pathspecs"),
+                        OsStr::new("checkout"),
+                        OsStr::new("HEAD"),
+                        OsStr::new("--"),
+                        relative.as_os_str(),
+                    ],
+                )
+                .map(|_| ());
+        }
+        if comparison.current == BaseContent::Absent {
+            // A path absent from both HEAD and the index is merely untracked.
+            // Discard never crosses into `git clean` for one the caller did
+            // not first stage and explicitly confirm.
+            return Err(GitError::Failed {
+                command: format!("discard {}", relative.display()),
+                code: None,
+                stderr: "the path is untracked and has no committed version to restore".to_owned(),
+            });
+        }
+
+        // A staged addition (including the destination half of a rename) has
+        // no HEAD path for checkout to restore. `git rm` removes that one
+        // indexed endpoint and its worktree file as a single operation. It
+        // also refuses when the file has been replaced by a directory, so
+        // discard cannot cross into unrelated untracked children. This keeps
+        // the provider's pre-2.23 Git compatibility without using `clean`.
         self.run(
             repository.workdir(),
             &[
                 OsStr::new("--literal-pathspecs"),
-                OsStr::new("checkout"),
-                OsStr::new("HEAD"),
+                OsStr::new("rm"),
+                OsStr::new("-f"),
                 OsStr::new("--"),
                 relative.as_os_str(),
             ],
@@ -2602,6 +2668,19 @@ fn staged_object(entries: &[u8]) -> Option<String> {
             let _mode = fields.next()?;
             let object = fields.next()?;
             (fields.next()? == "0").then(|| object.to_owned())
+        })
+}
+
+fn staged_mode(entries: &[u8]) -> Option<&str> {
+    entries
+        .split(|byte| *byte == 0)
+        .filter(|entry| !entry.is_empty())
+        .find_map(|entry| {
+            let head = entry.split(|byte| *byte == b'\t').next()?;
+            let mut fields = std::str::from_utf8(head).ok()?.split_whitespace();
+            let mode = fields.next()?;
+            let _object = fields.next()?;
+            (fields.next()? == "0").then_some(mode)
         })
 }
 

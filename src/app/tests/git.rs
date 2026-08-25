@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 use super::*;
+use crate::app::git_workflows::RequestedGitViews;
 
 #[test]
 fn saving_an_external_file_does_not_ask_git_about_it() {
@@ -3189,7 +3190,7 @@ fn a_selection_over_the_changed_file_list_stages_every_file_it_covers() {
 
     app.execute_command("git-stage").unwrap();
 
-    assert_eq!(app.status, "staged 2 files");
+    assert_eq!(app.status, "staged 2 paths");
     assert!(!app.status_error);
     // The list rewrote itself, so the two are now on the other side.
     assert_eq!(
@@ -3233,7 +3234,7 @@ fn stage_all_action_stages_every_unstaged_row_not_just_the_selection() {
 
     context_action(&mut app, 'S');
 
-    assert_eq!(app.status, "staged 2 files");
+    assert_eq!(app.status, "staged 2 paths");
     let text = app.active_buffer().to_string();
     assert!(text.contains("# main · 2 staged"), "{text}");
     assert!(!text.contains("Not staged"), "{text}");
@@ -4307,6 +4308,51 @@ fn discarding_restores_the_file_and_reloads_its_buffer() {
     fs::remove_dir_all(root).unwrap();
 }
 
+#[test]
+fn synchronous_discard_closes_a_removed_staged_addition_buffer() {
+    let root = temporary("discard-added-buffer");
+    fs::create_dir_all(&root).unwrap();
+    let run = |arguments: &[&str]| {
+        let output = std::process::Command::new("git")
+            .args(arguments)
+            .current_dir(&root)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git {arguments:?} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+    run(&["init", "-q"]);
+    run(&["config", "user.name", "Runyte Test"]);
+    run(&["config", "user.email", "runyte@example.invalid"]);
+    fs::write(root.join("base.rs"), "base\n").unwrap();
+    run(&["add", "base.rs"]);
+    run(&["commit", "-qm", "base"]);
+    let added = root.join("added.rs");
+    fs::write(&added, "added\n").unwrap();
+    run(&["add", "added.rs"]);
+
+    let mut ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    ports.replace_git(Box::new(crate::git::GitCliProvider::new("git")));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    app.open_file(added.clone()).unwrap();
+    let buffer = app.active().buffer;
+
+    app.execute_command("git-discard").unwrap();
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+
+    assert!(!added.exists(), "discard kept the staged addition on disk");
+    assert!(
+        app.closed_buffers.contains(&buffer),
+        "the removed file kept an open buffer which could recreate it"
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
 /// Escape must leave every file exactly as it was.
 #[test]
 fn cancelling_a_discard_changes_nothing() {
@@ -4429,6 +4475,491 @@ fn async_refresh_keeps_staged_bases_for_hidden_open_files() {
     assert!(
         !spec.staged_paths.contains(&root),
         "a directory buffer became an empty Git pathspec"
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn rename_rows_submit_both_index_endpoints() {
+    use crate::git::{Divergence, FileState, FileStatus, Head, RepositoryStatus};
+
+    let root = temporary("rename-action-correspondence");
+    fs::create_dir_all(&root).unwrap();
+    let root = root.canonicalize().unwrap();
+    let repository = Repository::new(&root);
+    let mut app = App::new_in_isolated_project(
+        &root,
+        HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+            String::new(),
+        ))))),
+    )
+    .unwrap();
+    app.git.attach(Some(repository.clone()));
+    app.git.apply_status(RepositoryStatus {
+        head: Head::Branch("main".to_owned()),
+        upstream: None,
+        divergence: Divergence::default(),
+        files: vec![FileStatus {
+            path: PathBuf::from("after.rs"),
+            original_path: Some(PathBuf::from("before.rs")),
+            index: FileState::Renamed,
+            worktree: FileState::Modified,
+        }],
+    });
+    let (service, operations) = GitServiceHandle::recording_for_test();
+    app.attach_git_service(service);
+    assert!(matches!(
+        operations
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .unwrap(),
+        GitOperation::Discover { .. }
+    ));
+    app.open_git_status();
+    assert!(matches!(
+        operations
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .unwrap(),
+        GitOperation::Refresh { .. }
+    ));
+    let status = app.active_buffer().to_string();
+    let row = status
+        .lines()
+        .position(|line| line.starts_with("  M "))
+        .expect("mixed rename did not have an unstaged destination row");
+    let offset = app.active_buffer().line_to_offset(row);
+    app.active_mut().replace_selection(Selection::point(offset));
+
+    app.discard_git_changes();
+    assert_eq!(
+        app.git_discard_confirmation.take().unwrap().paths,
+        vec![PathBuf::from("before.rs"), PathBuf::from("after.rs")]
+    );
+
+    app.stage_files(false);
+
+    let GitOperation::Mutate {
+        mutation: GitMutation::Unstage(paths),
+        ..
+    } = operations
+        .recv_timeout(std::time::Duration::from_secs(1))
+        .unwrap()
+    else {
+        panic!("rename did not submit an unstage mutation")
+    };
+    assert_eq!(paths, vec![root.join("before.rs"), root.join("after.rs")]);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn a_copy_row_does_not_unstage_its_independently_changed_source() {
+    let root = temporary("copy-action-correspondence");
+    fs::create_dir_all(&root).unwrap();
+    let git = |arguments: &[&str]| {
+        let output = std::process::Command::new("git")
+            .args(arguments)
+            .current_dir(&root)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git {arguments:?} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout).unwrap()
+    };
+    git(&["init", "-q"]);
+    git(&["config", "user.name", "Runyte Test"]);
+    git(&["config", "user.email", "runyte@example.invalid"]);
+    git(&["config", "status.renames", "copies"]);
+    fs::write(root.join("source.rs"), "one\ntwo\nthree\n").unwrap();
+    git(&["add", "source.rs"]);
+    git(&["commit", "-qm", "base"]);
+    fs::copy(root.join("source.rs"), root.join("copy.rs")).unwrap();
+    fs::write(root.join("source.rs"), "one\ntwo\nthree\nsource changed\n").unwrap();
+    fs::write(root.join("copy.rs"), "one\ntwo\nthree\ncopy changed\n").unwrap();
+    git(&["add", "source.rs", "copy.rs"]);
+
+    let mut ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    ports.replace_git(Box::new(crate::git::GitCliProvider::new("git")));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    app.execute_command("git-status").unwrap();
+    let buffer = app.active().buffer;
+    let row = app.buffers[buffer]
+        .to_string()
+        .lines()
+        .position(|line| line.contains("source.rs → copy.rs"))
+        .expect("Git did not report the configured copy row");
+    let offset = app.buffers[buffer].line_to_offset(row);
+    app.active_mut().replace_selection(Selection::point(offset));
+
+    app.execute_command("git-unstage").unwrap();
+
+    let staged = git(&["diff", "--cached", "--name-only"]);
+    assert_eq!(staged, "source.rs\n");
+    assert_eq!(
+        fs::read_to_string(root.join("source.rs")).unwrap(),
+        "one\ntwo\nthree\nsource changed\n"
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn active_rename_actions_submit_both_index_endpoints() {
+    use crate::git::{Divergence, FileState, FileStatus, Head, RepositoryStatus};
+
+    let root = temporary("active-rename-action-correspondence");
+    fs::create_dir_all(&root).unwrap();
+    let root = root.canonicalize().unwrap();
+    let after = root.join("after.rs");
+    fs::write(&after, "renamed\n").unwrap();
+    let repository = Repository::new(&root);
+    let mut app = App::new_in_isolated_project(
+        &root,
+        HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+            String::new(),
+        ))))),
+    )
+    .unwrap();
+    app.git.attach(Some(repository.clone()));
+    app.git.apply_status(RepositoryStatus {
+        head: Head::Branch("main".to_owned()),
+        upstream: None,
+        divergence: Divergence::default(),
+        files: vec![FileStatus {
+            path: PathBuf::from("after.rs"),
+            original_path: Some(PathBuf::from("before.rs")),
+            index: FileState::Renamed,
+            worktree: FileState::Unmodified,
+        }],
+    });
+    app.open_file(after.clone()).unwrap();
+    let (service, operations) = GitServiceHandle::recording_for_test();
+    app.attach_git_service(service);
+    assert!(matches!(
+        operations
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .unwrap(),
+        GitOperation::Discover { .. }
+    ));
+
+    app.stage_files(false);
+
+    let GitOperation::Mutate {
+        mutation: GitMutation::Unstage(paths),
+        ..
+    } = operations
+        .recv_timeout(std::time::Duration::from_secs(1))
+        .unwrap()
+    else {
+        panic!("active rename did not submit an unstage mutation")
+    };
+    assert_eq!(paths, vec![root.join("before.rs"), after]);
+
+    app.discard_git_changes();
+    assert_eq!(
+        app.git_discard_confirmation.unwrap().paths,
+        vec![PathBuf::from("before.rs"), PathBuf::from("after.rs")]
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn synchronous_active_rename_staging_refreshes_both_endpoint_bases() {
+    use crate::git::{
+        Divergence, FileState, FileStatus, Head, MemoryGitProvider, RepositoryStatus,
+    };
+
+    let root = temporary("active-rename-cache-convergence");
+    fs::create_dir_all(&root).unwrap();
+    let before = root.join("before.rs");
+    let after = root.join("after.rs");
+    fs::write(&before, "before\n").unwrap();
+    fs::write(&after, "after\n").unwrap();
+    let repository = Repository::new(&root);
+    let provider = MemoryGitProvider::new(repository)
+        .with_status(RepositoryStatus {
+            head: Head::Branch("main".to_owned()),
+            upstream: None,
+            divergence: Divergence::default(),
+            files: vec![FileStatus {
+                path: PathBuf::from("after.rs"),
+                original_path: Some(PathBuf::from("before.rs")),
+                index: FileState::Unmodified,
+                worktree: FileState::Renamed,
+            }],
+        })
+        .with_staged("before.rs", "before\n")
+        .with_working("after.rs", "after\n");
+    let mut ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    ports.replace_git(Box::new(provider));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    app.open_file(before.clone()).unwrap();
+    assert!(app.git.tracks(&before));
+    app.open_file(after.clone()).unwrap();
+    assert!(!app.git.tracks(&after));
+
+    app.stage_files(true);
+
+    assert!(
+        !app.git.tracks(&before),
+        "the removed source kept its pre-stage index base"
+    );
+    assert!(app.git.tracks(&after));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn a_failed_mutation_snapshot_schedules_immediate_reconciliation() {
+    let root = temporary("mutation-snapshot-retry");
+    fs::create_dir_all(&root).unwrap();
+    let root = root.canonicalize().unwrap();
+    let repository = Repository::new(&root);
+    let mut app = App::new_in_isolated_project(
+        &root,
+        HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+            String::new(),
+        ))))),
+    )
+    .unwrap();
+    let (service, operations) = GitServiceHandle::recording_for_test();
+    app.attach_git_service(service);
+    assert!(matches!(
+        operations
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .unwrap(),
+        GitOperation::Discover { .. }
+    ));
+    app.git.attach(Some(repository.clone()));
+
+    app.apply_git_response(
+        GitOperation::Mutate {
+            repository: repository.clone(),
+            mutation: GitMutation::Stage(vec![root.join("source.rs")]),
+            refresh: RefreshSpec::default(),
+        },
+        GitResponse::Mutation {
+            mutation: GitMutation::Stage(vec![root.join("source.rs")]),
+            applied_paths: vec![root.join("source.rs")],
+            summary: None,
+            failure: None,
+            snapshot: Box::new(Err(crate::git::GitError::Failed {
+                command: "git status".to_owned(),
+                code: Some(1),
+                stderr: "transient refresh failure".to_owned(),
+            })),
+        },
+        GitServiceState::Completed,
+        RequestedGitViews::default(),
+        None,
+        None,
+    );
+
+    assert!(app.git_state.snapshot_stale());
+    assert!(matches!(
+        operations
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .unwrap(),
+        GitOperation::Refresh {
+            repository: retried,
+            ..
+        } if retried == repository
+    ));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn commit_open_waits_for_the_refreshed_index() {
+    use crate::git::{Divergence, FileState, FileStatus, Head, RepositoryStatus, StatusStats};
+
+    let root = temporary("commit-open-refresh");
+    fs::create_dir_all(&root).unwrap();
+    let root = root.canonicalize().unwrap();
+    let repository = Repository::new(&root);
+    let mut app = App::new_in_isolated_project(
+        &root,
+        HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+            String::new(),
+        ))))),
+    )
+    .unwrap();
+    app.git.attach(Some(repository.clone()));
+    app.git.apply_status(RepositoryStatus {
+        head: Head::Branch("main".to_owned()),
+        upstream: None,
+        divergence: Divergence::default(),
+        files: Vec::new(),
+    });
+    let (service, operations) = GitServiceHandle::recording_for_test();
+    app.attach_git_service(service);
+    operations
+        .recv_timeout(std::time::Duration::from_secs(1))
+        .unwrap();
+
+    app.open_commit_message();
+
+    let operation = operations
+        .recv_timeout(std::time::Duration::from_secs(1))
+        .unwrap();
+    assert!(matches!(operation, GitOperation::Refresh { .. }));
+    assert!(!app.active_buffer().is_commit_message());
+    assert!(app.status.contains("checking what is staged"));
+
+    let stale_status = RepositoryStatus {
+        head: Head::Branch("main".to_owned()),
+        upstream: None,
+        divergence: Divergence::default(),
+        files: Vec::new(),
+    };
+    app.apply_git_service_event(GitServiceEvent::Completed {
+        id: GitRequestId::from_raw(2),
+        operation,
+        result: Box::new(Ok(GitResponse::Snapshot(Box::new(RepositorySnapshot {
+            repository: repository.clone(),
+            generation: RepositoryGeneration::default(),
+            status: stale_status,
+            stats: StatusStats::default(),
+            head_oid: Some("a".repeat(40)),
+            staged: Vec::new(),
+            branches: None,
+            staged_diff: None,
+            file_diffs: Vec::new(),
+            worktrees: None,
+            log: None,
+            requested_log_anchors: Vec::new(),
+            reachable_log_anchors: Vec::new(),
+            stashes: None,
+        })))),
+        state: GitServiceState::Completed,
+        coalesced: true,
+    });
+
+    assert!(!app.active_buffer().is_commit_message());
+    let retry = operations
+        .recv_timeout(std::time::Duration::from_secs(1))
+        .expect("coalesced refresh did not schedule a fresh index read");
+    assert!(matches!(retry, GitOperation::Refresh { .. }));
+
+    let status = RepositoryStatus {
+        head: Head::Branch("main".to_owned()),
+        upstream: None,
+        divergence: Divergence::default(),
+        files: vec![FileStatus {
+            path: PathBuf::from("external.rs"),
+            original_path: None,
+            index: FileState::Added,
+            worktree: FileState::Unmodified,
+        }],
+    };
+    app.apply_git_service_event(GitServiceEvent::Completed {
+        id: GitRequestId::from_raw(3),
+        operation: retry,
+        result: Box::new(Ok(GitResponse::Snapshot(Box::new(RepositorySnapshot {
+            repository,
+            generation: RepositoryGeneration::default(),
+            status,
+            stats: StatusStats::default(),
+            head_oid: Some("a".repeat(40)),
+            staged: Vec::new(),
+            branches: None,
+            staged_diff: None,
+            file_diffs: Vec::new(),
+            worktrees: None,
+            log: None,
+            requested_log_anchors: Vec::new(),
+            reachable_log_anchors: Vec::new(),
+            stashes: None,
+        })))),
+        state: GitServiceState::Completed,
+        coalesced: false,
+    });
+
+    assert!(app.active_buffer().is_commit_message());
+    assert!(app.active_buffer().to_string().contains("A external.rs"));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn cancelling_a_coalesced_commit_check_does_not_reopen_the_intent() {
+    use crate::git::{Divergence, FileState, FileStatus, Head, RepositoryStatus, StatusStats};
+
+    let root = temporary("commit-open-cancelled-coalesced");
+    fs::create_dir_all(&root).unwrap();
+    let root = root.canonicalize().unwrap();
+    let repository = Repository::new(&root);
+    let mut app = App::new_in_isolated_project(
+        &root,
+        HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+            String::new(),
+        ))))),
+    )
+    .unwrap();
+    app.git.attach(Some(repository));
+    let (service, operations) = GitServiceHandle::recording_for_test();
+    app.attach_git_service(service);
+    operations
+        .recv_timeout(std::time::Duration::from_secs(1))
+        .unwrap();
+    app.open_commit_message();
+    let operation = operations
+        .recv_timeout(std::time::Duration::from_secs(1))
+        .unwrap();
+
+    app.apply_git_service_event(GitServiceEvent::Completed {
+        id: GitRequestId::from_raw(2),
+        operation,
+        result: Box::new(Err(crate::git::GitError::Failed {
+            command: "refresh Git".to_owned(),
+            code: None,
+            stderr: "cancelled; the read result was discarded".to_owned(),
+        })),
+        state: GitServiceState::Cancelled,
+        coalesced: true,
+    });
+
+    assert!(!app.active_buffer().is_commit_message());
+    let reconciliation = operations
+        .recv_timeout(std::time::Duration::from_secs(1))
+        .unwrap();
+    assert!(matches!(reconciliation, GitOperation::Refresh { .. }));
+    app.apply_git_service_event(GitServiceEvent::Completed {
+        id: GitRequestId::from_raw(3),
+        operation: reconciliation,
+        result: Box::new(Ok(GitResponse::Snapshot(Box::new(RepositorySnapshot {
+            repository: Repository::new(&root),
+            generation: RepositoryGeneration::default(),
+            status: RepositoryStatus {
+                head: Head::Branch("main".to_owned()),
+                upstream: None,
+                divergence: Divergence::default(),
+                files: vec![FileStatus {
+                    path: PathBuf::from("staged.rs"),
+                    original_path: None,
+                    index: FileState::Added,
+                    worktree: FileState::Unmodified,
+                }],
+            },
+            stats: StatusStats::default(),
+            head_oid: Some("a".repeat(40)),
+            staged: Vec::new(),
+            branches: None,
+            staged_diff: None,
+            file_diffs: Vec::new(),
+            worktrees: None,
+            log: None,
+            requested_log_anchors: Vec::new(),
+            reachable_log_anchors: Vec::new(),
+            stashes: None,
+        })))),
+        state: GitServiceState::Completed,
+        coalesced: false,
+    });
+    assert!(
+        !app.active_buffer().is_commit_message(),
+        "ambient reconciliation revived the cancelled commit intent"
     );
     fs::remove_dir_all(root).unwrap();
 }
@@ -4814,7 +5345,7 @@ fn prepared_hunk_is_discarded_if_its_source_became_dirty_while_git_worked() {
             patch: Vec::new(),
         })),
         GitServiceState::Completed,
-        false,
+        RequestedGitViews::default(),
         None,
         None,
     );

@@ -1816,10 +1816,15 @@ advanced history work.
 unsaved changes an ERROR notification says so rather than leaving you to wonder which
 text went in. Staging moves the base the gutter is measured against, so the
 marks for the lines you staged disappear as soon as they are recorded.
+For a rename, the displayed destination remains the file opened or diffed,
+while staging and unstaging act on both the original and destination paths so
+the move cannot be split across the index boundary.
 
 `Tab c` opens a commit message buffer holding the template Git would hand
 an external editor: an empty first line, then commented instructions and the
-files that will be recorded. Write the buffer with `:w` or `:wq` to commit;
+files that will be recorded. Runyte refreshes the index before deciding whether
+there is anything to commit, so staging done outside the editor is included.
+Write the buffer with `:w` or `:wq` to commit;
 `:wq` does not exit Runyte from this special buffer. Use `:c` for an unchanged
 message or `:c!` for an edited one to cancel — nothing is committed and the
 index is left exactly as it was. Comment lines are not part of the message, which is also why a
@@ -1837,7 +1842,9 @@ cannot be undone: the discarded content was never a commit, so no reflog will
 produce it again. It therefore asks first and names what it will take. A
 selected file with unwritten buffer edits is refused so Git never overwrites
 text that exists only in the editor; successful discards reload clean buffers
-afterwards.
+afterwards. Discarding a staged addition removes its clean open buffer along
+with the file; discarding a rename restores the original path and removes the
+destination.
 
 Untracked files are refused rather than deleted. Discarding one could only mean
 removing it, which Git keeps behind `clean` and Runyte keeps in the explorer,

@@ -2426,6 +2426,116 @@ fn discarding_an_untracked_path_is_refused_by_git() {
 }
 
 #[test]
+fn discarding_a_staged_addition_removes_it_from_both_trees() {
+    let repository = TempRepository::new("discard-added");
+    repository.write("base.rs", "base\n");
+    repository.commit("base");
+    repository.write("added.rs", "never committed\n");
+    repository.git(&["add", "added.rs"]);
+    let path = repository.path().join("added.rs");
+
+    provider().discard(&repository.repository(), &path).unwrap();
+
+    assert!(!path.exists(), "the added worktree file survived discard");
+    assert!(
+        provider()
+            .status(&repository.repository())
+            .unwrap()
+            .files
+            .is_empty(),
+        "the added index entry survived discard"
+    );
+}
+
+#[test]
+fn discarding_a_staged_file_refuses_a_replacement_directory_and_keeps_its_children() {
+    let repository = TempRepository::new("discard-added-directory");
+    repository.write("base.rs", "base\n");
+    repository.commit("base");
+    repository.write("added", "staged file\n");
+    repository.git(&["add", "added"]);
+    fs::remove_file(repository.path().join("added")).unwrap();
+    repository.write("added/private.txt", "never staged\n");
+    let path = repository.path().join("added");
+
+    let error = provider()
+        .discard(&repository.repository(), &path)
+        .unwrap_err();
+
+    assert!(matches!(error, GitError::Failed { .. }), "{error}");
+    assert_eq!(
+        fs::read_to_string(path.join("private.txt")).unwrap(),
+        "never staged\n",
+        "discard crossed into an untracked replacement directory"
+    );
+    assert_eq!(
+        provider()
+            .staged_content(&repository.repository(), &path)
+            .unwrap(),
+        BaseContent::Text("staged file\n".to_owned()),
+        "a refused discard partially removed the index entry"
+    );
+}
+
+#[test]
+fn discarding_a_staged_gitlink_refuses_to_remove_untracked_submodule_content() {
+    let repository = TempRepository::new("discard-gitlink-directory");
+    repository.write("base.rs", "base\n");
+    repository.commit("base");
+    let head = git_output(&repository, &["rev-parse", "HEAD"]);
+    let cacheinfo = format!("160000,{},sub", head.trim());
+    repository.git(&["update-index", "--add", "--cacheinfo", &cacheinfo]);
+    repository.write("sub/private.txt", "never staged\n");
+    let path = repository.path().join("sub");
+
+    let error = provider()
+        .discard(&repository.repository(), &path)
+        .unwrap_err();
+
+    assert!(matches!(error, GitError::Failed { .. }), "{error}");
+    assert!(error.to_string().contains("submodule"), "{error}");
+    assert_eq!(
+        fs::read_to_string(path.join("private.txt")).unwrap(),
+        "never staged\n",
+        "discard recursed into untracked submodule content"
+    );
+    let index = git_output(&repository, &["ls-files", "--stage", "--", "sub"]);
+    assert!(
+        index.starts_with("160000 "),
+        "a refused discard removed the staged gitlink: {index}"
+    );
+}
+
+#[test]
+fn discarding_both_rename_endpoints_restores_the_original_path() {
+    let repository = TempRepository::new("discard-rename");
+    repository.write("before.rs", "committed\n");
+    repository.commit("base");
+    repository.git(&["mv", "before.rs", "after.rs"]);
+    let provider = provider();
+
+    for path in ["before.rs", "after.rs"] {
+        provider
+            .discard(&repository.repository(), &repository.path().join(path))
+            .unwrap();
+    }
+
+    assert_eq!(
+        fs::read_to_string(repository.path().join("before.rs")).unwrap(),
+        "committed\n"
+    );
+    assert!(!repository.path().join("after.rs").exists());
+    assert!(
+        provider
+            .status(&repository.repository())
+            .unwrap()
+            .files
+            .is_empty(),
+        "the rename survived on one side"
+    );
+}
+
+#[test]
 fn history_pages_continue_by_object_identity_and_details_are_bounded_values() {
     let repository = TempRepository::new("history-pages");
     for (index, subject) in ["first", "second λ", "third\tfield"]

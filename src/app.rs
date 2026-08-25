@@ -939,7 +939,7 @@ impl GitDiscardConfirmation {
     fn message(&self) -> String {
         let what = match self.paths.as_slice() {
             [only] => only.display().to_string(),
-            many => format!("{} files", many.len()),
+            many => format!("{} paths", many.len()),
         };
         let mut sentences = vec![format!("Press Enter to discard changes to {what}.")];
         if self.skipped_untracked > 0 {
