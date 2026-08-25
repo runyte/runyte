@@ -3209,15 +3209,26 @@ fn every_key_the_changed_file_list_advertises_does_what_it_says() {
             .collect::<Vec<_>>(),
         ["s", "u", "D", "o", "S", "c", "i", "p", "P"]
     );
-    assert!(
-        overlay.rows[..4]
+    // Each row's detail is three columns padded to the widest entry in the
+    // menu, so the action word, the context and the sentence all line up
+    // however long the neighbouring words are.
+    assert_eq!(
+        overlay
+            .rows
             .iter()
-            .all(|row| row.detail.starts_with("row ·"))
-    );
-    assert!(
-        overlay.rows[4..]
-            .iter()
-            .all(|row| row.detail.starts_with("buffer ·"))
+            .map(|row| row.detail.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "stage    row     Stage every file the selection covers",
+            "unstage  row     Unstage every file the selection covers",
+            "discard  row     Discard every selected file's changes, after a confirmation",
+            "open     row     Open the file on this line",
+            "stage    buffer  Stage every changed file",
+            "commit   buffer  Write a message and commit what is staged",
+            "index    buffer  Review everything staged for the next commit",
+            "pull     buffer  Fast-forward the current branch onto what it tracks",
+            "push     buffer  Publish this branch to what it tracks",
+        ]
     );
 
     // Shift-Tab moves upward with wraparound, and Tab toggles the menu

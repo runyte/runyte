@@ -125,6 +125,17 @@ dimming while it is selected, which has to be written out where the row's
 colours are chosen, because the selection ground no longer repaints it back
 to legibility on its own.
 
+The contextual action menu reads across four columns, padded to the widest
+entry in the open menu so they line up down it: the mnemonic, one lower-case
+word naming the action, the scope it acts on (`row` or `buffer`), and the
+sentence explaining it. The mnemonic is the row label, drawn in the
+foreground colour; the other three are the muted detail. Only the widths
+follow the actions on offer. The scope column is drawn even where every
+action in a menu shares one scope, because the four columns have to mean the
+same thing in every view that opens the menu. And because a truncated column
+has stopped lining up with anything, the menu takes the width its widest row
+needs rather than a fixed share of the editor area.
+
 Caret-anchored context overlays — completion, signature, hover — are the one
 deliberate exception, and they omit only the marker. They are narrow by
 design and sit against the source text they describe, where two borrowed

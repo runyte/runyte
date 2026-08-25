@@ -14,6 +14,7 @@ use super::{
     move_projected_start_backward, project_aligned_rows, project_visible_rows,
     selection_for_launch_position,
 };
+use crate::keymap::{ActionContext, ContextAction};
 
 impl App {
     pub fn active(&self) -> &Pane {
@@ -1133,20 +1134,7 @@ impl App {
                 OverlayKind::BufferActions,
                 format!("Actions · {}", self.active_buffer().display_name()),
                 "",
-                menu.actions
-                    .iter()
-                    .map(|action| {
-                        let context = match action.context {
-                            crate::keymap::ActionContext::Row => "row",
-                            crate::keymap::ActionContext::Buffer => "buffer",
-                        };
-                        row(
-                            action.mnemonic.label(),
-                            action.mnemonic.label(),
-                            format!("{context} · {}", action.description),
-                        )
-                    })
-                    .collect(),
+                context_action_rows(&menu.actions),
                 Some(menu.selected),
                 None,
             );
@@ -1493,4 +1481,54 @@ impl App {
         }
         overlays
     }
+}
+
+/// The action menu's rows, laid out as four columns that line up down the
+/// menu: the mnemonic, the word for the action, how much of the buffer it
+/// acts on, and the sentence explaining it.
+///
+/// The widths come from the actions actually on offer rather than from a
+/// fixed table, so a scope whose actions are all one context does not pay for
+/// a column the reader never sees vary. The mnemonic stays the row label,
+/// which is what carries the accent, and the remaining three columns are the
+/// detail.
+fn context_action_rows(actions: &[ContextAction]) -> Vec<crate::snapshot::OverlayRow> {
+    use crate::snapshot::OverlayRow;
+
+    fn context_label(action: &ContextAction) -> &'static str {
+        match action.context {
+            ActionContext::Row => "row",
+            ActionContext::Buffer => "buffer",
+        }
+    }
+
+    let name_width = actions
+        .iter()
+        .map(|action| action.name.chars().count())
+        .max()
+        .unwrap_or_default();
+    let context_width = actions
+        .iter()
+        .map(|action| context_label(action).chars().count())
+        .max()
+        .unwrap_or_default();
+    actions
+        .iter()
+        .map(|action| {
+            let name = action.name;
+            let context = context_label(action);
+            OverlayRow {
+                identity: action.mnemonic.label().into(),
+                label: action.mnemonic.label(),
+                detail: format!(
+                    "{name:name_width$}  {context:context_width$}  {}",
+                    action.description
+                ),
+                available: true,
+                dimmed: false,
+                muted: Vec::new(),
+                emphasis: Vec::new(),
+            }
+        })
+        .collect()
 }

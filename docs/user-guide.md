@@ -975,10 +975,13 @@ only report a refusal are left out entirely.
 In Normal and Select modes, `Tab` asks what can be done with the thing under
 the cursor. Git views open a contextual action menu: use arrows or `j`/`k` to
 move, Enter to run the selected action, its displayed mnemonic to run it
-directly, and Escape to cancel. The mnemonics belong only to the open menu, so
-`s`, `n`, `p`, and the rest keep their normal meanings in every buffer. In an
-ordinary language-server buffer, `Tab` requests code actions and opens the
-existing code-action picker, or reports that none are available.
+directly, and Escape to cancel. Each row reads across four aligned columns:
+the mnemonic, one word naming the action, whether it acts on the row under
+the cursor or on the whole buffer, and a sentence explaining it. The
+mnemonics belong only to the open menu, so `s`, `n`, `p`, and the rest keep
+their normal meanings in every buffer. In an ordinary language-server buffer,
+`Tab` requests code actions and opens the existing code-action picker, or
+reports that none are available.
 
 ### Editing
 

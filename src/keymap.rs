@@ -395,23 +395,39 @@ pub struct BindingNamespace {
 pub struct ContextAction {
     pub scope: BindingScope,
     pub mnemonic: Key,
+    /// One lower-case word naming what the action does, distinct from the
+    /// sentence that explains it. The menu reads down this column, so two
+    /// actions in a scope only share a word when they really do the same
+    /// thing to different amounts of the buffer.
+    pub name: &'static str,
     pub target: BindingTarget,
     pub description: &'static str,
     pub context: ActionContext,
 }
 
 impl ContextAction {
-    pub fn row(scope: BindingScope, mnemonic: Key, target: impl Into<BindingTarget>) -> Self {
-        Self::new(scope, mnemonic, target, ActionContext::Row)
+    pub fn row(
+        scope: BindingScope,
+        mnemonic: Key,
+        name: &'static str,
+        target: impl Into<BindingTarget>,
+    ) -> Self {
+        Self::new(scope, mnemonic, name, target, ActionContext::Row)
     }
 
-    pub fn buffer(scope: BindingScope, mnemonic: Key, target: impl Into<BindingTarget>) -> Self {
-        Self::new(scope, mnemonic, target, ActionContext::Buffer)
+    pub fn buffer(
+        scope: BindingScope,
+        mnemonic: Key,
+        name: &'static str,
+        target: impl Into<BindingTarget>,
+    ) -> Self {
+        Self::new(scope, mnemonic, name, target, ActionContext::Buffer)
     }
 
     fn new(
         scope: BindingScope,
         mnemonic: Key,
+        name: &'static str,
         target: impl Into<BindingTarget>,
         context: ActionContext,
     ) -> Self {
@@ -419,6 +435,7 @@ impl ContextAction {
         Self {
             scope,
             mnemonic,
+            name,
             target,
             description: target.description(),
             context,
@@ -2066,104 +2083,124 @@ fn build_keymap(bindings: Vec<Binding>) -> Keymap {
         ContextAction::row(
             BindingScope::GitStatus,
             Key::char('s'),
+            "stage",
             ColonCommand::GitStage,
         )
         .with_description("Stage every file the selection covers"),
         ContextAction::row(
             BindingScope::GitStatus,
             Key::char('u'),
+            "unstage",
             ColonCommand::GitUnstage,
         )
         .with_description("Unstage every file the selection covers"),
         ContextAction::row(
             BindingScope::GitStatus,
             Key::char('D'),
+            "discard",
             ColonCommand::GitDiscard,
         )
         .with_description("Discard every selected file's changes, after a confirmation"),
         ContextAction::row(
             BindingScope::GitStatus,
             Key::char('o'),
+            "open",
             EditorCommand::OpenChangedFile,
         ),
         ContextAction::buffer(
             BindingScope::GitStatus,
             Key::char('S'),
+            "stage",
             EditorCommand::StageAllChangedFiles,
         ),
         ContextAction::buffer(
             BindingScope::GitStatus,
             Key::char('c'),
+            "commit",
             ColonCommand::GitCommit,
         ),
         ContextAction::buffer(
             BindingScope::GitStatus,
             Key::char('i'),
+            "index",
             ColonCommand::GitIndex,
         ),
         ContextAction::buffer(
             BindingScope::GitStatus,
             Key::char('p'),
+            "pull",
             EditorCommand::PullBranch,
         ),
         ContextAction::buffer(
             BindingScope::GitStatus,
             Key::char('P'),
+            "push",
             EditorCommand::PushBranch,
         ),
         ContextAction::row(
             BindingScope::GitBranches,
             Key::char('n'),
+            "create",
             EditorCommand::CreateBranch,
         ),
         ContextAction::row(
             BindingScope::GitBranches,
             Key::char('D'),
+            "delete",
             EditorCommand::DeleteBranch,
         ),
         ContextAction::buffer(
             BindingScope::GitBranches,
             Key::char('p'),
+            "pull",
             EditorCommand::PullBranch,
         ),
         ContextAction::row(
             BindingScope::GitBranches,
             Key::char('P'),
+            "push",
             EditorCommand::PushBranch,
         ),
         ContextAction::row(
             BindingScope::GitWorktrees,
             Key::char('n'),
+            "create",
             EditorCommand::CreateWorktree,
         ),
         ContextAction::row(
             BindingScope::GitWorktrees,
             Key::char('N'),
+            "branch",
             EditorCommand::CreateNewWorktree,
         ),
         ContextAction::row(
             BindingScope::GitWorktrees,
             Key::char('D'),
+            "remove",
             EditorCommand::RemoveWorktree,
         ),
         ContextAction::row(
             BindingScope::GitStash,
             Key::char('a'),
+            "apply",
             ColonCommand::GitStashApply,
         ),
         ContextAction::row(
             BindingScope::GitStash,
             Key::char('D'),
+            "drop",
             ColonCommand::GitStashDrop,
         ),
         ContextAction::row(
             BindingScope::Diff,
             Key::char('s'),
+            "stage",
             ColonCommand::GitStageHunk,
         ),
         ContextAction::row(
             BindingScope::Diff,
             Key::char('u'),
+            "unstage",
             ColonCommand::GitUnstageHunk,
         ),
     ];
@@ -2355,6 +2392,67 @@ mod tests {
         assert_eq!(branch_pull.context, ActionContext::Buffer);
     }
 
+    /// The menu's second column is data, not a derivation: it is written per
+    /// action so the word can distinguish two actions the command names do
+    /// not. Pinning it keeps the columns from drifting into a sentence, and
+    /// keeps a scope from ending up with one word standing for two different
+    /// actions.
+    #[test]
+    fn every_contextual_action_names_itself_in_one_word() {
+        for scope in [
+            BindingScope::GitStatus,
+            BindingScope::GitBranches,
+            BindingScope::GitWorktrees,
+            BindingScope::GitStash,
+            BindingScope::Diff,
+        ] {
+            for action in default_keymap().context_actions(scope) {
+                assert!(
+                    !action.name.is_empty()
+                        && action
+                            .name
+                            .chars()
+                            .all(|character| character.is_ascii_lowercase()),
+                    "{scope:?} {} names itself {:?}",
+                    action.mnemonic.label(),
+                    action.name
+                );
+            }
+        }
+
+        let named = |scope| {
+            default_keymap()
+                .context_actions(scope)
+                .map(|action| (action.mnemonic.label(), action.name))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            named(BindingScope::GitBranches),
+            vec![
+                ("n".to_owned(), "create"),
+                ("D".to_owned(), "delete"),
+                ("p".to_owned(), "pull"),
+                ("P".to_owned(), "push"),
+            ]
+        );
+        assert_eq!(
+            named(BindingScope::GitWorktrees),
+            vec![
+                ("n".to_owned(), "create"),
+                ("N".to_owned(), "branch"),
+                ("D".to_owned(), "remove"),
+            ]
+        );
+        assert_eq!(
+            named(BindingScope::GitStash),
+            vec![("a".to_owned(), "apply"), ("D".to_owned(), "drop")]
+        );
+        assert_eq!(
+            named(BindingScope::Diff),
+            vec![("s".to_owned(), "stage"), ("u".to_owned(), "unstage")]
+        );
+    }
+
     #[test]
     fn contextual_action_mnemonics_cannot_take_menu_controls() {
         for mnemonic in [
@@ -2369,6 +2467,7 @@ mod tests {
                     .with_context_actions(vec![ContextAction::row(
                         BindingScope::Global,
                         mnemonic,
+                        "move",
                         EditorCommand::MoveLeft,
                     )])
             });

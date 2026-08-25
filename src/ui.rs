@@ -542,6 +542,7 @@ fn draw_snapshot_overlay(
                 to_tui_rect(confirmation_overlay_area(editor_area, overlay))
             }
             OverlayKind::FilePicker => to_tui_rect(centered(editor_area, 90, 85, 28, 8)),
+            OverlayKind::BufferActions => to_tui_rect(action_menu_area(editor_area, overlay)),
             OverlayKind::KeyHints => {
                 let height = (overlay.rows.len() as u16 + 3).clamp(3, editor_area.height.min(16));
                 to_tui_rect(Rect {
@@ -3272,6 +3273,52 @@ fn centered(area: Rect, width_percent: u16, height_percent: u16, min_w: u16, min
     }
 }
 
+/// The cells one snapshot overlay row occupies, counted the way
+/// `draw_snapshot_overlay` assembles it: the selection gutter every row of a
+/// marker-using list pays for, the label, and the two-column separator that
+/// precedes a non-empty detail.
+fn snapshot_row_width(kind: OverlayKind, row: &crate::snapshot::OverlayRow) -> u16 {
+    let gutter = if uses_selection_marker(kind) {
+        UnicodeWidthStr::width(SELECTION_GUTTER)
+    } else {
+        0
+    };
+    let detail = if row.detail.is_empty() {
+        0
+    } else {
+        2 + UnicodeWidthStr::width(row.detail.as_str())
+    };
+    let total = gutter + UnicodeWidthStr::width(row.label.as_str()) + detail;
+    total.min(usize::from(u16::MAX)) as u16
+}
+
+/// The action menu's geometry, sized to the rows it actually holds.
+///
+/// Its rows are columns, and a truncated row has stopped being columns: the
+/// sentence in the last one is what gets cut, and on the destructive actions
+/// that sentence carries the confirmation clause. So the menu takes the width
+/// its widest row needs — never narrower than the shared list geometry, so a
+/// two-row menu of short labels still reads as a window rather than a sliver,
+/// and never wider than the editor area it is centred in.
+fn action_menu_area(editor_area: Rect, overlay: &OverlaySnapshot) -> Rect {
+    let base = centered(editor_area, 80, 75, 28, 7);
+    let content = overlay
+        .rows
+        .iter()
+        .map(|row| snapshot_row_width(overlay.kind, row))
+        .max()
+        .unwrap_or_default();
+    let width = base
+        .width
+        .max(content.saturating_add(2))
+        .min(editor_area.width);
+    Rect {
+        x: editor_area.x + editor_area.width.saturating_sub(width) / 2,
+        width,
+        ..base
+    }
+}
+
 fn overlay_action_hints(overlay: &OverlaySnapshot) -> String {
     overlay
         .actions
@@ -5194,6 +5241,52 @@ mod tests {
                 "column {x} of an unselected row should keep the overlay ground"
             );
         }
+    }
+
+    /// The reported behavior: the action menu took a fixed 80% of the editor
+    /// area, which four columns no longer fit. At an ordinary hundred-column
+    /// terminal the longest Git-status row was cut mid-word, and it is the
+    /// destructive action whose "after a confirmation" clause got eaten. The
+    /// menu now takes the width its widest row needs.
+    #[test]
+    fn the_action_menu_widens_to_the_row_that_needs_it() {
+        let mut app = App::new(Config::default(), None).unwrap();
+        let theme = TuiTheme::new(&app.theme);
+        let widest = "discard  row     Discard every selected file's changes, after a confirmation";
+        let overlay = action_menu_overlay(
+            &mut app,
+            vec![
+                (
+                    "s",
+                    "stage    row     Stage every file the selection covers",
+                ),
+                ("D", widest),
+            ],
+            0,
+        );
+        let buffer = draw_overlay_alone(&mut app, &theme, &overlay);
+
+        find_text(&buffer, widest).expect("the widest row should be drawn whole");
+    }
+
+    /// Widening stops at the editor area. A row longer than the terminal is
+    /// still truncated, but the window around it stays on screen and stays
+    /// centred rather than growing off the right edge.
+    #[test]
+    fn the_action_menu_never_outgrows_the_editor_area() {
+        let mut app = App::new(Config::default(), None).unwrap();
+        let overlay =
+            action_menu_overlay(&mut app, vec![("s", &"very long detail ".repeat(20))], 0);
+        let editor_area = Rect {
+            x: 3,
+            y: 1,
+            width: 40,
+            height: 20,
+        };
+        let area = action_menu_area(editor_area, &overlay);
+
+        assert_eq!(area.width, editor_area.width);
+        assert_eq!(area.x, editor_area.x);
     }
 
     /// The marker is charged to every row of the list, not only the selected
