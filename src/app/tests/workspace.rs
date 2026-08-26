@@ -1325,7 +1325,13 @@ fn worktree_control_path_is_one_safe_row_and_confirmation_with_typed_identity() 
     let current = root.join("current");
     fs::create_dir_all(&current).unwrap();
     let current = current.canonicalize().unwrap();
-    let linked = root.join(OsString::from_vec(b"linked-\n-\t-\\-\x1b-\xff".to_vec()));
+    let mut linked_name = b"linked-\n-\t-\\-\x1b".to_vec();
+    // macOS rejects non-UTF-8 path components with EILSEQ. It still covers
+    // every control-character escape here; Linux additionally covers the
+    // lossy rendering of an otherwise valid raw filename byte.
+    #[cfg(not(target_os = "macos"))]
+    linked_name.extend_from_slice(b"-\xff");
+    let linked = root.join(OsString::from_vec(linked_name));
     fs::create_dir_all(&linked).unwrap();
     let linked = linked.canonicalize().unwrap();
     let row = |path: PathBuf, branch: &str| Worktree {
@@ -1350,10 +1356,11 @@ fn worktree_control_path_is_one_safe_row_and_confirmation_with_typed_identity() 
     app.open_git_worktrees_result(rows, true);
     let text = app.active_buffer().to_string();
     let display = crate::git::display_path(&linked);
-    assert!(
-        display.ends_with("linked-\\n-\\t-\\-\\u{1b}-�"),
-        "{display:?}"
-    );
+    #[cfg(target_os = "macos")]
+    let expected_suffix = "linked-\\n-\\t-\\-\\u{1b}";
+    #[cfg(not(target_os = "macos"))]
+    let expected_suffix = "linked-\\n-\\t-\\-\\u{1b}-�";
+    assert!(display.ends_with(expected_suffix), "{display:?}");
     assert_eq!(text.lines().count(), 2, "{text:?}");
     assert!(text.contains("\\n"), "{text:?}");
     assert!(text.contains("\\t"), "{text:?}");

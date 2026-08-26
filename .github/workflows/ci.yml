@@ -49,6 +49,12 @@ jobs:
     name: Tests (macos-latest)
     runs-on: macos-latest
     timeout-minutes: 45
+    env:
+      # The default macOS temp directory is a long `/var/folders/...` path
+      # whose canonical spelling starts with `/private`. Tests create many
+      # path fixtures and Unix sockets below it, so use the short canonical
+      # system temp directory to keep identities stable and socket paths valid.
+      TMPDIR: /private/tmp
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

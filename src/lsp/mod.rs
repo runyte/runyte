@@ -251,13 +251,12 @@ pub fn uri_to_path(uri: &Uri) -> Option<PathBuf> {
     let rest = text.strip_prefix("file://")?;
     let rest = if rest.starts_with('/') {
         rest
-    } else if let Some(rest) = rest.strip_prefix("localhost/") {
+    } else {
+        let rest = rest.strip_prefix("localhost/")?;
         // Preserve the leading slash consumed with the authority separator.
         // `file://localhost/etc` and `file:///etc` name the same local file.
         // Any other authority is a remote resource, not a local pathname.
         return uri_path(&format!("/{rest}"));
-    } else {
-        return None;
     };
     uri_path(rest)
 }

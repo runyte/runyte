@@ -630,8 +630,8 @@ impl App {
                 // to query and falls back to its exact leading prefix.
                 let newline_offset = existing_terminator.map(|(_, offset)| offset);
                 let add_level = list_indent.is_none()
-                    && newline_offset
-                        .and_then(|newline_offset| syntax.map(|syntax| (syntax, newline_offset)))
+                    && syntax
+                        .zip(newline_offset)
                         .and_then(|(syntax, newline_offset)| {
                             syntax
                                 .newline_indent(buffer.text(), &self.registry, newline_offset)
