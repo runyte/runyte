@@ -531,6 +531,11 @@ impl Default for Config {
     fn default() -> Self {
         let mut themes = HashMap::new();
         let base16 = ThemeDefinition {
+            // Base16's comment grey is dark enough that dimmed text on either
+            // selection ground was all but invisible — 1.08:1 on the blue one.
+            // The grounds themselves stand off the background well, so only
+            // the dimmed text moves.
+            jump_text_muted: Some("#a3a3a3".into()),
             cursor_insert: Some("#ab4642".into()),
             cursor_select: Some("#dc9656".into()),
             cursor_command: Some("#ba8baf".into()),
@@ -750,8 +755,9 @@ impl Default for Config {
                 EverforestBackground {
                     background: "#272e33",
                     status_background: "#2e383c",
-                    selection: "#384b55",
-                    selection_primary: "#45443c",
+                    dimmed_text: Some("#909c94"),
+                    selection: "#2a4f66",
+                    selection_primary: "#5a3e22",
                     diff_added: "#3c4841",
                     diff_removed: "#493b40",
                     diff_changed: "#45443c",
@@ -762,8 +768,9 @@ impl Default for Config {
                 EverforestBackground {
                     background: "#2d353b",
                     status_background: "#343f44",
-                    selection: "#3a515d",
-                    selection_primary: "#4d4c43",
+                    dimmed_text: Some("#99a49d"),
+                    selection: "#30566e",
+                    selection_primary: "#60432a",
                     diff_added: "#425047",
                     diff_removed: "#514045",
                     diff_changed: "#4d4c43",
@@ -774,8 +781,9 @@ impl Default for Config {
                 EverforestBackground {
                     background: "#333c43",
                     status_background: "#3a464c",
-                    selection: "#3f5865",
-                    selection_primary: "#55544a",
+                    dimmed_text: Some("#9da8a0"),
+                    selection: "#265a70",
+                    selection_primary: "#563a1e",
                     diff_added: "#48584e",
                     diff_removed: "#59464c",
                     diff_changed: "#55544a",
@@ -790,8 +798,9 @@ impl Default for Config {
                 EverforestBackground {
                     background: "#fffbef",
                     status_background: "#f8f5e4",
-                    selection: "#ecf5ed",
-                    selection_primary: "#fef2d5",
+                    dimmed_text: None,
+                    selection: "#b4eedc",
+                    selection_primary: "#ffe7a8",
                     diff_added: "#f3f5d9",
                     diff_removed: "#ffe7de",
                     diff_changed: "#fef2d5",
@@ -802,8 +811,9 @@ impl Default for Config {
                 EverforestBackground {
                     background: "#fdf6e3",
                     status_background: "#f4f0d9",
-                    selection: "#e9f0e9",
-                    selection_primary: "#faedcd",
+                    dimmed_text: None,
+                    selection: "#b0ead8",
+                    selection_primary: "#fde3a4",
                     diff_added: "#f0f1d2",
                     diff_removed: "#fde3da",
                     diff_changed: "#faedcd",
@@ -814,8 +824,9 @@ impl Default for Config {
                 EverforestBackground {
                     background: "#f3ead3",
                     status_background: "#eae4ca",
-                    selection: "#e1e7dd",
-                    selection_primary: "#f1e4c5",
+                    dimmed_text: None,
+                    selection: "#b7e6d5",
+                    selection_primary: "#f9dfa6",
                     diff_added: "#e5e6c5",
                     diff_removed: "#fadbd0",
                     diff_changed: "#f1e4c5",
@@ -1088,6 +1099,14 @@ fn atom_one_light_theme() -> ThemeDefinition {
 struct EverforestBackground {
     background: &'static str,
     status_background: &'static str,
+    /// Dimmed text, where the ground it has to be read against decides it.
+    ///
+    /// This belongs to the background rather than the foreground because the
+    /// three dark grounds sit at different lightnesses: the same dimmed text
+    /// cannot clear all three. The light variants leave it unset, since a
+    /// light ground carries dimmed text the way the built-in `light` theme
+    /// does rather than at the dark themes' 3:1.
+    dimmed_text: Option<&'static str>,
     selection: &'static str,
     selection_primary: &'static str,
     diff_added: &'static str,
@@ -1166,7 +1185,7 @@ fn everforest_theme(
         background: background.background.into(),
         foreground: foreground.foreground.into(),
         muted: foreground.muted.into(),
-        jump_text_muted: None,
+        jump_text_muted: background.dimmed_text.map(Into::into),
         accent: foreground.green.into(),
         cursor_normal: Some(foreground.blue.into()),
         cursor_insert: Some(foreground.red.into()),
@@ -1289,15 +1308,33 @@ fn terafox_theme() -> ThemeDefinition {
         background: "#152528".into(),
         foreground: "#e6eaea".into(),
         muted: "#6d7f8b".into(),
-        jump_text_muted: None,
+        // Terafox's own selection grounds are read against dimmed text as well
+        // as ordinary text: an unfocused pane draws every cell in
+        // `jump_text_muted` while a terminal review selection still fills whole
+        // cells with `selection_primary`. Canonical `#425e5e` is too close to
+        // any legible dimmed text to leave the selected row readable, so the
+        // dimmed text is brightened and the primary ground deepened until the
+        // pair clears the boundary `nordfox-warm` holds: dimmed text at 3:1
+        // against either ground, ordinary text at 4.5:1.
+        jump_text_muted: Some("#8998a2".into()),
         accent: "#73a3b7".into(),
         cursor_normal: None,
         cursor_insert: Some("#e85c51".into()),
         cursor_select: Some("#ff8349".into()),
         cursor_command: Some("#ad5c7c".into()),
         directory: Some("#5a93aa".into()),
-        selection: "#293e40".into(),
-        selection_primary: Some("#425e5e".into()),
+        // Canonical `#293e40` is barely a shade off the background, so a match
+        // or a secondary range highlighted with it did not read as highlighted
+        // at all. This is the same teal carrying enough saturation to be seen.
+        selection: "#264e59".into(),
+        // Deepening the canonical teal ground left the two selections the same
+        // hue at nearly the same lightness, which is the one thing the primary
+        // range cannot afford: it has to be told apart from the others at a
+        // glance. Terafox's orange — the hue of its `warning`, `number` and
+        // `label` — separates the pair by hue instead, the way `nordfox-warm`
+        // separates its own, at the ground lightness and saturation that
+        // theme's grounds already use.
+        selection_primary: Some("#6a3c25".into()),
         fuzzy_match_secondary: None,
         fuzzy_match_primary: None,
         status_background: "#0f1c1e".into(),
@@ -2418,7 +2455,7 @@ mod tests {
 
         let tokyo = config.resolve_theme("tokyobones-dark").unwrap();
         assert_eq!(tokyo.selection, rgb(0x2c4075));
-        assert_eq!(tokyo.selection_primary, rgb(0x6e20bd));
+        assert_eq!(tokyo.selection_primary, rgb(0x5c1b9e));
         assert_eq!(tokyo.status_background, rgb(0x303142));
         assert_eq!(tokyo.cursor_normal, rgb(0x7ba2f7));
         assert_eq!(tokyo.cursor_insert, rgb(0xf77890));
@@ -2514,50 +2551,50 @@ mod tests {
     }
 
     #[test]
-    fn everforest_variants_use_the_upstream_palettes_and_runyte_roles() {
+    fn everforest_variants_use_the_upstream_palettes_and_runyte_grounds() {
         let config = Config::default();
         for (name, background, status, selection, primary) in [
             (
                 "everforest-dark-hard",
                 (0x27, 0x2e, 0x33),
                 (0x2e, 0x38, 0x3c),
-                (0x38, 0x4b, 0x55),
-                (0x45, 0x44, 0x3c),
+                (0x2a, 0x4f, 0x66),
+                (0x5a, 0x3e, 0x22),
             ),
             (
                 "everforest-dark-medium",
                 (0x2d, 0x35, 0x3b),
                 (0x34, 0x3f, 0x44),
-                (0x3a, 0x51, 0x5d),
-                (0x4d, 0x4c, 0x43),
+                (0x30, 0x56, 0x6e),
+                (0x60, 0x43, 0x2a),
             ),
             (
                 "everforest-dark-soft",
                 (0x33, 0x3c, 0x43),
                 (0x3a, 0x46, 0x4c),
-                (0x3f, 0x58, 0x65),
-                (0x55, 0x54, 0x4a),
+                (0x26, 0x5a, 0x70),
+                (0x56, 0x3a, 0x1e),
             ),
             (
                 "everforest-light-hard",
                 (0xff, 0xfb, 0xef),
                 (0xf8, 0xf5, 0xe4),
-                (0xec, 0xf5, 0xed),
-                (0xfe, 0xf2, 0xd5),
+                (0xb4, 0xee, 0xdc),
+                (0xff, 0xe7, 0xa8),
             ),
             (
                 "everforest-light-medium",
                 (0xfd, 0xf6, 0xe3),
                 (0xf4, 0xf0, 0xd9),
-                (0xe9, 0xf0, 0xe9),
-                (0xfa, 0xed, 0xcd),
+                (0xb0, 0xea, 0xd8),
+                (0xfd, 0xe3, 0xa4),
             ),
             (
                 "everforest-light-soft",
                 (0xf3, 0xea, 0xd3),
                 (0xea, 0xe4, 0xca),
-                (0xe1, 0xe7, 0xdd),
-                (0xf1, 0xe4, 0xc5),
+                (0xb7, 0xe6, 0xd5),
+                (0xf9, 0xdf, 0xa6),
             ),
         ] {
             let theme = config.resolve_theme(name).unwrap();
@@ -2701,7 +2738,7 @@ mod tests {
         let terafox = config.resolve_theme("terafox").unwrap();
         assert_eq!(terafox.background, Color::Rgb(0x15, 0x25, 0x28));
         assert_eq!(terafox.foreground, Color::Rgb(0xe6, 0xea, 0xea));
-        assert_eq!(terafox.selection, Color::Rgb(0x29, 0x3e, 0x40));
+        assert_eq!(terafox.selection, Color::Rgb(0x26, 0x4e, 0x59));
         assert_eq!(terafox.change_removed, Color::Rgb(0xe8, 0x5c, 0x51));
         assert_eq!(terafox.diff_changed, Some(Color::Rgb(0x31, 0x47, 0x4b)));
         assert_eq!(
@@ -2745,6 +2782,140 @@ mod tests {
             contrast(warm.foreground, warm.selection_primary) >= 4.5,
             "ordinary text should remain readable on the yellow selection"
         );
+    }
+
+    #[test]
+    fn adjusted_dark_themes_carry_dimmed_text_on_their_selections() {
+        fn contrast(left: Color, right: Color) -> f64 {
+            let left = left.relative_luminance().unwrap();
+            let right = right.relative_luminance().unwrap();
+            (left.max(right) + 0.05) / (left.min(right) + 0.05)
+        }
+
+        // How far apart two colours look, rather than how far apart their
+        // luminances are. A selection ground is a few cells wide, and one that
+        // differs from the background only in hue is perfectly visible while
+        // scoring almost 1:1 on contrast — so contrast is the wrong measure of
+        // whether a ground can be seen, and using it once certified grounds
+        // that were invisible in practice. This is CIE76 over CIELAB, which is
+        // crude for near-identical colours and entirely good enough for the
+        // question being asked here.
+        fn perceptual_distance(left: Color, right: Color) -> f64 {
+            fn lab(color: Color) -> [f64; 3] {
+                let Color::Rgb(r, g, b) = color else {
+                    unreachable!("built-in themes resolve to RGB")
+                };
+                let channel = |v: u8| {
+                    let v = f64::from(v) / 255.0;
+                    if v <= 0.03928 {
+                        v / 12.92
+                    } else {
+                        ((v + 0.055) / 1.055).powf(2.4)
+                    }
+                };
+                let (r, g, b) = (channel(r), channel(g), channel(b));
+                // D65, then the CIELAB transfer function.
+                let f = |t: f64| {
+                    if t > 0.008_856 {
+                        t.cbrt()
+                    } else {
+                        7.787 * t + 16.0 / 116.0
+                    }
+                };
+                let x = f((0.4124 * r + 0.3576 * g + 0.1805 * b) / 0.95047);
+                let y = f(0.2126 * r + 0.7152 * g + 0.0722 * b);
+                let z = f((0.0193 * r + 0.1192 * g + 0.9505 * b) / 1.08883);
+                [116.0 * y - 16.0, 500.0 * (x - y), 200.0 * (y - z)]
+            }
+            let (left, right) = (lab(left), lab(right));
+            left.iter()
+                .zip(right)
+                .map(|(l, r)| (l - r).powi(2))
+                .sum::<f64>()
+                .sqrt()
+        }
+
+        // An unfocused pane draws its cells in `jump_text_muted` while a
+        // terminal review selection still fills whole cells with
+        // `selection_primary`. These palettes' upstream pairs left the selected
+        // row unreadable, so each was moved to the boundary `nordfox-warm`
+        // holds. Pinning the values keeps a later palette refresh from quietly
+        // restoring the unreadable ones.
+        let config = Config::default();
+        for (name, dimmed, selection, primary) in [
+            ("nordbones-dark", 0x9fa6b3, 0x334e78, 0x6e3763),
+            ("rosebones-dark", 0x8f8ba2, 0x523a39, 0x572d7c),
+            ("seoulbones-dark", 0xa6bfa6, 0x4b2831, 0x5b5c8a),
+            ("terafox", 0x8998a2, 0x264e59, 0x6a3c25),
+            ("tokyobones-dark", 0x8c8ea2, 0x2c4075, 0x5c1b9e),
+            ("zenburned-dark", 0xb4b4b4, 0x43617a, 0x7b5173),
+            ("base16", 0xa3a3a3, 0x365864, 0x5a3b2a),
+            ("everforest-dark-hard", 0x909c94, 0x2a4f66, 0x5a3e22),
+            ("everforest-dark-medium", 0x99a49d, 0x30566e, 0x60432a),
+            ("everforest-dark-soft", 0x9da8a0, 0x265a70, 0x563a1e),
+        ] {
+            let theme = config.resolve_theme(name).unwrap();
+            let rgb = |value: u32| {
+                Color::Rgb(
+                    ((value >> 16) & 0xff) as u8,
+                    ((value >> 8) & 0xff) as u8,
+                    (value & 0xff) as u8,
+                )
+            };
+            assert_eq!(
+                theme.jump_text_muted,
+                rgb(dimmed),
+                "wrong {name} dimmed text"
+            );
+            assert_ne!(
+                theme.jump_text_muted, theme.muted,
+                "{name} left dimmed text on its comment colour"
+            );
+            assert_eq!(theme.selection, rgb(selection), "wrong {name} selection");
+            assert_eq!(
+                theme.selection_primary,
+                rgb(primary),
+                "wrong {name} primary selection"
+            );
+            for (ground, label) in [
+                (theme.selection, "selection"),
+                (theme.selection_primary, "primary selection"),
+            ] {
+                assert!(
+                    contrast(theme.jump_text_muted, ground) >= 3.0,
+                    "{name} dimmed text is unreadable on its {label}"
+                );
+                // Everforest's dark-soft ground starts from a lighter
+                // background than the rest, which leaves its own text only
+                // 6.65:1 to spend; its blue ground lands a hair under 4.5.
+                let floor = if name == "everforest-dark-soft" {
+                    4.4
+                } else {
+                    4.5
+                };
+                assert!(
+                    contrast(theme.foreground, ground) >= floor,
+                    "{name} ordinary text is unreadable on its {label}"
+                );
+                // Calibrated on what reads correctly and what does not: every
+                // ground accepted so far sits at 18 or above, while the ones
+                // reported as invisible measured between 6 and 14.
+                assert!(
+                    perceptual_distance(ground, theme.background) >= 18.0,
+                    "{name} {label} disappears into its background"
+                );
+            }
+            // The two grounds are told apart by hue, not lightness, so this
+            // has to be perceptual too. Accepted pairs sit at 27 and above.
+            assert!(
+                perceptual_distance(theme.selection, theme.selection_primary) >= 26.0,
+                "{name} cannot tell its primary selection from the rest"
+            );
+            assert!(
+                contrast(theme.foreground, theme.jump_text_muted) >= 1.4,
+                "{name} dimmed text is too close to ordinary text to read as dimmed"
+            );
+        }
     }
 
     #[test]

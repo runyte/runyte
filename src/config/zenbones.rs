@@ -215,6 +215,45 @@ const PALETTES: &[Palette] = &[
     ),
 ];
 
+/// Runyte's dimmed text and selection grounds for palettes whose upstream
+/// grounds cannot carry it.
+///
+/// An unfocused pane draws every cell in `jump_text_muted` while a terminal
+/// review selection still fills whole cells with `selection_primary`. In these
+/// palettes the upstream ground sits so close to the dimmed text that the
+/// selected row is the one row of the pane that cannot be read. Each entry
+/// brightens the dimmed text and deepens both grounds until the pair clears
+/// the same boundary `nordfox-warm` holds: dimmed text at 3:1 against either
+/// ground and ordinary text at 4.5:1.
+///
+/// The grounds therefore no longer differ in lightness, so what separates the
+/// primary range from the rest is hue, the way `nordfox-warm` separates its
+/// own pair. A ground keeps the palette's hue where deepening already left
+/// the two far enough apart, and takes another hue from the same palette
+/// where it did not.
+fn dimmed_contrast(name: &str) -> Option<(&'static str, &'static str, &'static str)> {
+    // (jump_text_muted, selection, selection_primary)
+    Some(match name {
+        // Nordbones' deepened grounds kept the palette's hues but almost none
+        // of their chroma, which left both of them reading as the background
+        // wherever a highlight was only a few cells wide. These are the same
+        // two hues carrying enough saturation to be seen at that size.
+        "nordbones-dark" => ("#9FA6B3", "#334E78", "#6E3763"),
+        "rosebones-dark" => ("#8F8BA2", "#523A39", "#572D7C"),
+        // Seoulbones grounds a mid-grey background, so the upstream grey
+        // secondary was invisible on it whatever its lightness. It takes the
+        // palette's rose instead — its `error` hue — which the blue-violet
+        // primary is already far from.
+        "seoulbones-dark" => ("#A6BFA6", "#4B2831", "#5B5C8A"),
+        "tokyobones-dark" => ("#8C8EA2", "#2C4075", "#5C1B9E"),
+        // Zenburned deepens to two warm grounds a shade apart, so its
+        // secondary takes the palette's own blue — the hue of `info` and of
+        // its changed-diff row — to keep the pair told apart by hue.
+        "zenburned-dark" => ("#B4B4B4", "#43617A", "#7B5173"),
+        _ => return None,
+    })
+}
+
 pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
     PALETTES
         .iter()
@@ -278,6 +317,11 @@ impl Palette {
         // softer against its background.
         let jump_label_immediate = if self.light { "#A8334C" } else { "#FFA0A8" };
 
+        let (jump_text_muted, selection, selection_primary) = match dimmed_contrast(self.name) {
+            Some((dimmed, selection, primary)) => (Some(dimmed.into()), selection, primary),
+            None => (None, self.selection, self.selection_primary),
+        };
+
         // Command mode is the one editor mode Zenbones has no upstream colour
         // for: these palettes name a blue, a red and an orange for the other
         // three and stop there. Like the jump labels above, the purple is
@@ -291,15 +335,15 @@ impl Palette {
             background: self.background.into(),
             foreground: self.foreground.into(),
             muted: self.muted.into(),
-            jump_text_muted: None,
+            jump_text_muted,
             accent: self.info.into(),
             cursor_normal: Some(self.info.into()),
             cursor_insert: Some(self.error.into()),
             cursor_select: Some(self.warning.into()),
             cursor_command: Some(cursor_command.into()),
             directory: Some(self.info.into()),
-            selection: self.selection.into(),
-            selection_primary: Some(self.selection_primary.into()),
+            selection: selection.into(),
+            selection_primary: Some(selection_primary.into()),
             fuzzy_match_secondary: None,
             fuzzy_match_primary: None,
             status_background: self.status_background.into(),
