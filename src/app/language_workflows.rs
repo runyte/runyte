@@ -56,12 +56,11 @@ impl App {
         if !self.ports.has_lsp() || self.closed_buffers.contains(&buffer_id) {
             return;
         }
-        let desired = self.language_of(buffer_id).and_then(|language| {
-            self.buffers[buffer_id]
-                .path
-                .clone()
-                .map(|path| (language, path))
-        });
+        let desired = self.language_of(buffer_id).zip(
+            self.buffers
+                .get(buffer_id)
+                .and_then(|buffer| buffer.path.clone()),
+        );
         let current_matches = self.lsp_documents.get(&buffer_id).is_some_and(|document| {
             desired.as_ref().is_some_and(|(language, path)| {
                 document.language == *language && document.path == *path

@@ -862,7 +862,7 @@ fn status_reports_the_branch_and_both_sides_of_each_change() {
         status
             .files
             .iter()
-            .find(|file| file.path == PathBuf::from(name))
+            .find(|file| file.path == Path::new(name))
             .unwrap_or_else(|| panic!("{name} is missing from the status"))
     };
     assert_eq!(by_path("edited.rs").worktree, FileState::Modified);
@@ -873,7 +873,7 @@ fn status_reports_the_branch_and_both_sides_of_each_change() {
         !status
             .files
             .iter()
-            .any(|file| file.path == PathBuf::from("kept.rs"))
+            .any(|file| file.path == Path::new("kept.rs"))
     );
 
     let counts = status.counts();

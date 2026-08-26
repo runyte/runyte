@@ -830,10 +830,8 @@ fn scope_for_capture(capture: &str) -> Option<Scope> {
         if let Some(index) = SCOPES.iter().position(|scope| *scope == candidate) {
             return Some(Scope(index as u32));
         }
-        match candidate.rfind('.') {
-            Some(dot) => candidate = &candidate[..dot],
-            None => return None,
-        }
+        let dot = candidate.rfind('.')?;
+        candidate = &candidate[..dot];
     }
 }
 

@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: MPL-2.0
+
+# Pinning the toolchain in the repository keeps the AGENTS.md gates meaning the
+# same thing everywhere. `cargo clippy -- -D warnings` is only a usable gate if
+# every machine runs the same clippy: a newer one adds lints and turns a green
+# branch red with no change to the code. rustup reads this file locally and on
+# CI alike, so the gates move when this line moves and not before.
+#
+# The MSRV job overrides it with `cargo +1.88`, which is the version
+# `rust-version` in Cargo.toml promises.
+[toolchain]
+channel = "1.97.1"
+components = ["rustfmt", "clippy"]

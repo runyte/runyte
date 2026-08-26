@@ -350,6 +350,7 @@ fn heading(
 mod tests {
     use super::*;
     use crate::git::Head;
+    use std::path::Path;
 
     fn status(files: Vec<FileStatus>) -> RepositoryStatus {
         RepositoryStatus {
@@ -567,7 +568,7 @@ mod tests {
         assert!(
             entries
                 .iter()
-                .all(|entry| entry.path == PathBuf::from("both.rs"))
+                .all(|entry| entry.path == Path::new("both.rs"))
         );
     }
 

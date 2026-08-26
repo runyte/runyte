@@ -158,7 +158,7 @@ impl DiagnosticStore {
             .iter()
             .filter(|diagnostic| diagnostic.row() == row)
             .collect();
-        matching.sort_by(|left, right| right.severity.cmp(&left.severity));
+        matching.sort_by_key(|diagnostic| std::cmp::Reverse(diagnostic.severity));
         matching
     }
 
