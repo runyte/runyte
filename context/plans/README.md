@@ -26,8 +26,10 @@ The retained completed records cover:
 - `PLAN_COHERENT_UI_SURFACES.md`: the buffer, list, picker, prompt, and overlay
   contracts;
 - `PLAN_INTEGRATED_TERMINAL.md`: host-owned terminal sessions and their
-  process-lifetime persistence boundary; and
+  process-lifetime persistence boundary;
 - `PLAN_PERSISTENT_SESSION_TERMINOLOGY.md`: the distinction between workspace
-  scope and persistent-session lifecycle commands.
+  scope and persistent-session lifecycle commands; and
+- `PLAN_THEME_CONSTRUCTION.md`: uniform family registration behind the shared
+  theme-definition and resolution contract.
 
 Read only the plans relevant to the part of the editor being changed.

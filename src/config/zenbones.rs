@@ -264,9 +264,9 @@ fn dimmed_contrast(name: &str) -> Option<(&'static str, &'static str, &'static s
 /// sits next to in the list — and changes nothing else. The background, the
 /// accents, the selection grounds and the diff rows are all Nordbones'.
 ///
-/// Only the roles that *were* the foreground move with it: the status line's
-/// text, the identifier colour Nordbones sets to its foreground, and the
-/// Markdown groups that follow it. The dimmed text steps down by the same
+/// Only the roles that *were* the foreground move with it: ordinary text, the
+/// identifier colour Nordbones sets to its foreground, and the Markdown groups
+/// that follow it. The dimmed text steps down by the same
 /// amount so it still reads as dimmed against the new foreground, and 7:1 is
 /// the point where it can do that while staying 3:1 above both grounds — any
 /// softer and the grounds would have to move too, which is what would stop

@@ -3450,6 +3450,64 @@ mod tests {
     };
 
     #[test]
+    fn resolved_theme_roles_reach_the_frontend_adapter() {
+        let source = Config::default().resolve_theme("mocha").unwrap();
+        let theme = TuiTheme::new(&source);
+
+        macro_rules! assert_role {
+            ($field:ident) => {
+                assert_eq!(
+                    theme.$field,
+                    to_tui_color(source.$field),
+                    stringify!($field)
+                );
+            };
+        }
+        assert_role!(background);
+        assert_role!(foreground);
+        assert_role!(muted);
+        assert_role!(jump_text_muted);
+        assert_role!(accent);
+        assert_role!(cursor_normal);
+        assert_role!(cursor_insert);
+        assert_role!(cursor_select);
+        assert_role!(cursor_command);
+        assert_role!(directory);
+        assert_role!(selection);
+        assert_role!(selection_primary);
+        assert_role!(fuzzy_match_secondary);
+        assert_role!(fuzzy_match_primary);
+        assert_role!(error);
+        assert_role!(warning);
+        assert_role!(info);
+        assert_role!(jump_label_immediate);
+        assert_role!(jump_label_primary);
+        assert_role!(jump_label_secondary);
+        assert_role!(change_added);
+        assert_role!(change_modified);
+        assert_role!(change_removed);
+        assert_eq!(theme.diff_added, source.diff_added.map(to_tui_color));
+        assert_eq!(theme.diff_removed, source.diff_removed.map(to_tui_color));
+        assert_eq!(theme.diff_changed, source.diff_changed.map(to_tui_color));
+        assert_eq!(
+            theme.syntax,
+            source
+                .syntax
+                .iter()
+                .map(|color| color.map(to_tui_color))
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            theme.inactive_background,
+            to_tui_color(source.inactive_background())
+        );
+        assert_eq!(
+            theme.overlay_background,
+            to_tui_color(source.overlay_background())
+        );
+    }
+
+    #[test]
     fn long_running_action_uses_a_right_anchored_rotating_bar() {
         let app = App::new(Config::default(), None).unwrap();
         let theme = TuiTheme::new(&app.theme);
