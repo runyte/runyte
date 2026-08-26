@@ -847,10 +847,12 @@ pub(super) fn registered_hosts_in(roots: &[PathBuf]) -> Result<Vec<RegisteredHos
             };
             let live_metadata = match endpoint.verify_for_connect() {
                 Ok(metadata) => metadata,
-                Err(error) if is_stale_endpoint_error(&error) => {
-                    remove_registration_if_pid_matches(&path, metadata.pid)?;
-                    continue;
-                }
+                // Publication writes the registry row before endpoint metadata
+                // because the latter is the readiness marker. The process was
+                // confirmed alive above, so a missing endpoint here can be the
+                // intentional publication window rather than a dead row. Keep
+                // it for the next scan; dead processes were already reaped.
+                Err(error) if is_stale_endpoint_error(&error) => continue,
                 Err(_) => continue,
             };
             if live_metadata.protocol != metadata.protocol
@@ -2413,6 +2415,48 @@ mod tests {
         fs::remove_dir_all(runtime).unwrap();
         fs::remove_dir_all(first_root).unwrap();
         fs::remove_dir_all(second_root).unwrap();
+    }
+
+    #[test]
+    fn registry_scan_keeps_a_live_row_before_endpoint_readiness() {
+        let (root, fallback) = endpoint("registry-publication-window");
+        let runtime = temporary_root();
+        fs::create_dir(&runtime).unwrap();
+        fs::set_permissions(&runtime, fs::Permissions::from_mode(0o700)).unwrap();
+        let endpoint = LocalEndpoint::discover_with_runtime(
+            fallback.directory.parent().unwrap(),
+            &root,
+            Some(&runtime),
+        )
+        .unwrap();
+        endpoint.prepare_directory().unwrap();
+
+        let registry = runtime.join("runyte/hosts");
+        prepare_private_directory(&registry).unwrap();
+        let registration = registry.join(format!("{}.json", endpoint.id()));
+        let metadata = EndpointMetadata {
+            protocol: PROTOCOL_VERSION,
+            pid: std::process::id(),
+            id: endpoint.id().to_owned(),
+            name: None,
+            project_root_bytes: encode_path(&root),
+            socket_bytes: encode_path(endpoint.socket()),
+        };
+        write_json_atomic(&registration, &metadata).unwrap();
+        assert!(!endpoint.metadata().exists());
+
+        assert!(
+            registered_hosts_in(std::slice::from_ref(&registry))
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            registration.exists(),
+            "a concurrent scan deleted the live host's early registry row"
+        );
+
+        fs::remove_dir_all(runtime).unwrap();
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[tokio::test]

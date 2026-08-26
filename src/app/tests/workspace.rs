@@ -1325,12 +1325,14 @@ fn worktree_control_path_is_one_safe_row_and_confirmation_with_typed_identity() 
     let current = root.join("current");
     fs::create_dir_all(&current).unwrap();
     let current = current.canonicalize().unwrap();
-    let mut linked_name = b"linked-\n-\t-\\-\x1b".to_vec();
     // macOS rejects non-UTF-8 path components with EILSEQ. It still covers
     // every control-character escape here; Linux additionally covers the
     // lossy rendering of an otherwise valid raw filename byte.
-    #[cfg(not(target_os = "macos"))]
-    linked_name.extend_from_slice(b"-\xff");
+    let linked_name = if cfg!(target_os = "macos") {
+        b"linked-\n-\t-\\-\x1b".to_vec()
+    } else {
+        b"linked-\n-\t-\\-\x1b-\xff".to_vec()
+    };
     let linked = root.join(OsString::from_vec(linked_name));
     fs::create_dir_all(&linked).unwrap();
     let linked = linked.canonicalize().unwrap();

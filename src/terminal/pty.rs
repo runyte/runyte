@@ -375,10 +375,16 @@ mod tests {
 
     #[test]
     fn a_child_writes_to_the_pty_and_then_exits() {
-        let running = collect("/bin/echo", &["hello"]);
+        // Keep the slave open until the reader has observed the output. Under
+        // a saturated macOS runner an immediate child exit can surface the PTY
+        // hangup before the background reader is scheduled, making the fixture
+        // lose the bytes it was meant to test. One input line releases this
+        // finite child, so the test still covers output followed by exit.
+        let running = collect("/bin/sh", &["-c", "printf 'hello\\n'; read reply"]);
         assert!(wait_until(Duration::from_secs(5), || {
             String::from_utf8_lossy(&running.output.lock().unwrap()).contains("hello")
         }));
+        assert!(running.pty.write(b"continue\n".to_vec()));
         assert!(wait_until(Duration::from_secs(5), || *running
             .exited
             .lock()

@@ -53,6 +53,14 @@ last. An early registry scan remains safe because discovery already withholds a
 row whose endpoint metadata is absent; once endpoint readiness is observable,
 the host is also discoverable.
 
+A subsequent concurrent scan exposed a second side of that ordering window.
+`registered_hosts_in` withheld an early registry row while endpoint metadata
+was absent, but also deleted the row as stale even though its recorded process
+was still alive. The host then published its readiness marker with no registry
+row left for later listings. Discovery now retains inconclusive endpoint
+errors for a live registered process; dead processes are still removed before
+endpoint inspection, and a conclusively refused socket is still reaped.
+
 Coverage in `src/workspace/catalog.rs` is provided by
 `refresh_merge_preserves_a_workspace_recorded_after_its_snapshot`,
 `refresh_merge_preserves_a_concurrently_changed_existing_name`,
@@ -63,7 +71,9 @@ is covered by `unusable_optional_recents_are_omitted_from_catalog_refresh` in
 the same file, while `usable_optional_recents_resolve_inside_the_cache_root`
 keeps the ordinary storage path exact. Runtime-registry behavior is covered by
 `an_unusable_cache_registry_falls_back_to_the_runtime_registry` in
-`tests/persistent_host.rs`.
+`tests/persistent_host.rs`, and the publication window is pinned by
+`registry_scan_keeps_a_live_row_before_endpoint_readiness` in
+`src/workspace/transport.rs`.
 
 Known limitation: `flock` is advisory, so serialization depends on every
 writer using the catalog update path; an older or external writer that ignores

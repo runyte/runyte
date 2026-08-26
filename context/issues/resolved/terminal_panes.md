@@ -255,6 +255,14 @@ queries, review, titles, scrollback, and generated output operate on a genuinely
 live terminal. The tests that exercise process exit still use finite children
 and drain through the real lifecycle boundary.
 
+A later saturated macOS run exposed the same scheduling sensitivity in the
+low-level finite-child fixture itself: `/bin/echo` could close the slave before
+the background PTY reader received a timeslice. The fixture now uses a finite
+shell that writes the same output and waits for one input line. The test sends
+that line only after observing the output, then verifies the exit event. This
+keeps the output-and-exit contract without depending on the reader winning an
+immediate-exit scheduling race.
+
 These later fixes are covered by
 `empty_osc_fields_are_counted_toward_the_sequence_limit`,
 `csi_subparameters_are_counted_toward_the_sequence_limit`, and
