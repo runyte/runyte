@@ -476,7 +476,9 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
                 match input.transpose()? {
                     // Fall through to the draw at the bottom of the loop
                     // rather than taking the lifecycle `continue` below.
-                    Some(event) if is_redraw_only_event(&event) => {}
+                    Some(event) if is_redraw_only_event(&event) => {
+                        key_repeat_detector.observe(None, None, Instant::now());
+                    }
                     Some(event) => {
                         let key_kind = terminal_key_kind(&event);
                         let Some(input) = convert_event(event)? else {
@@ -488,6 +490,18 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
                             Some(&input),
                             Instant::now(),
                         );
+                        if let Some(message) = rejected_text_input(&input) {
+                            app.report_host_error(message);
+                            terminal.draw(|frame| {
+                                let geometry = ui::frame_geometry(frame.area());
+                                let snapshot = app.prepare_frame_with_hints(
+                                    geometry,
+                                    Some(&key_hints),
+                                );
+                                ui::render(frame, app.app(), &snapshot.editor, &key_hints);
+                            })?;
+                            continue;
+                        }
                         #[cfg(debug_assertions)]
                         trace_input(
                             input_trace.as_mut(),
@@ -1957,6 +1971,7 @@ async fn run_attached(
                     break;
                 };
                 if let CrosstermEvent::Resize(width, height) = event {
+                    key_repeat_detector.observe(None, None, Instant::now());
                     if let Some(batch) = pointer_batcher.take() {
                         client.send(&batch.request()).await?;
                     }
@@ -1974,6 +1989,13 @@ async fn run_attached(
                     continue;
                 };
                 let repeated = key_repeat_detector.observe(key_kind, Some(&input), Instant::now());
+                if let Some(message) = rejected_text_input(&input) {
+                    if let Some(batch) = pointer_batcher.take() {
+                        client.send(&batch.request()).await?;
+                    }
+                    client.send(&ClientRequest::Notify { message }).await?;
+                    continue;
+                }
                 if is_passive_pointer(&input) {
                     continue;
                 }
@@ -2598,6 +2620,18 @@ fn terminal_key_kind(event: &CrosstermEvent) -> Option<KeyEventKind> {
     }
 }
 
+fn rejected_text_input(input: &InputEvent) -> Option<String> {
+    let InputEvent::Text(text) = input else {
+        return None;
+    };
+    (text.len() > runyte::input::MAX_TEXT_INPUT_BYTES).then(|| {
+        format!(
+            "text input exceeds the {} byte limit",
+            runyte::input::MAX_TEXT_INPUT_BYTES
+        )
+    })
+}
+
 const MAX_LEGACY_REPEAT_INTERVAL: Duration = Duration::from_millis(250);
 const MIN_LEGACY_INITIAL_DELAY: Duration = Duration::from_millis(180);
 
@@ -2636,7 +2670,10 @@ impl KeyRepeatDetector {
                 };
                 self.observe_legacy_press(*key, now)
             }
-            None => false,
+            None => {
+                self.reset();
+                false
+            }
         }
     }
 
@@ -2910,9 +2947,9 @@ mod tests {
     };
     use super::{
         KeyRepeatDetector, is_passive_pointer, is_redraw_only_event, motion_repeat_dispatches,
-        observe_key_or_text_hint, resolve_attached_directory, resolve_cwd_file_path,
-        resolve_requested_project_root, starts_on_about, uses_automatic_persistent_mode,
-        write_cwd_file,
+        observe_key_or_text_hint, rejected_text_input, resolve_attached_directory,
+        resolve_cwd_file_path, resolve_requested_project_root, starts_on_about,
+        uses_automatic_persistent_mode, write_cwd_file,
     };
     use runyte::launch::LaunchArguments;
     use runyte::{
@@ -3278,6 +3315,43 @@ mod tests {
             None,
             start + Duration::from_millis(533),
         ));
+    }
+
+    #[test]
+    fn non_key_input_resets_legacy_repeat_history() {
+        let key = InputEvent::Key(KeyStroke::char('j'));
+        let text = InputEvent::Text("paste".to_owned());
+        let start = Instant::now();
+        let mut detector = KeyRepeatDetector::default();
+
+        assert!(!detector.observe(Some(KeyEventKind::Press), Some(&key), start));
+        assert!(!detector.observe(None, Some(&text), start + Duration::from_millis(200)));
+        assert!(!detector.observe(
+            Some(KeyEventKind::Press),
+            Some(&key),
+            start + Duration::from_millis(210),
+        ));
+        assert!(!detector.observe(
+            Some(KeyEventKind::Press),
+            Some(&key),
+            start + Duration::from_millis(220),
+        ));
+    }
+
+    #[test]
+    fn text_input_limit_is_shared_before_standalone_or_attached_dispatch() {
+        let exact = InputEvent::Text("x".repeat(runyte::input::MAX_TEXT_INPUT_BYTES));
+        let oversized = InputEvent::Text("x".repeat(runyte::input::MAX_TEXT_INPUT_BYTES + 1));
+
+        assert_eq!(rejected_text_input(&exact), None);
+        assert_eq!(
+            rejected_text_input(&oversized).as_deref(),
+            Some("text input exceeds the 1048576 byte limit")
+        );
+        assert_eq!(
+            rejected_text_input(&InputEvent::Key(KeyStroke::char('x'))),
+            None
+        );
     }
 
     #[test]

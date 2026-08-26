@@ -9,6 +9,12 @@
 
 use std::{fmt, ops};
 
+/// Maximum literal text accepted as one frontend input event.
+///
+/// This bounds both standalone acquisition and the bundled local protocol so
+/// changing workspace mode cannot change whether one paste is accepted.
+pub const MAX_TEXT_INPUT_BYTES: usize = 1024 * 1024;
+
 /// One input delivered to an editing grammar.
 #[derive(Clone, Eq, PartialEq)]
 pub enum InputEvent {
