@@ -2,9 +2,12 @@
 
 //! Background syntax reparsing and the deliberately narrow stale-tree view.
 
-use std::sync::Arc;
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+};
 
-use tokio::sync::watch;
+use tokio::sync::mpsc;
 
 use super::{DocumentSyntax, Registry, Span, SyntaxRevision};
 use crate::text::{Assoc, Offset, Text, Transaction};
@@ -85,6 +88,9 @@ impl StaleSyntax {
     ) -> TranslatedSpans {
         let from = from.min(current.len_chars());
         let to = to.min(current.len_chars());
+        if from >= to {
+            return TranslatedSpans { spans: Vec::new() };
+        }
         let (mut stale_from, mut stale_to) = (from.min(to), from.max(to));
         for edit in self.edits.iter().rev() {
             stale_from = edit.backward.map_offset(stale_from, Assoc::Before);
@@ -146,42 +152,52 @@ pub struct SyntaxEvent {
 /// Non-blocking editor handle for the coalescing parse worker.
 #[derive(Clone, Debug)]
 pub struct SyntaxHandle {
-    requests: watch::Sender<Option<ParseRequest>>,
+    pending: Arc<Mutex<HashMap<usize, ParseRequest>>>,
+    ready: mpsc::UnboundedSender<usize>,
 }
 
 impl SyntaxHandle {
     pub(crate) fn send(&self, request: ParseRequest) {
-        self.requests.send_replace(Some(request));
+        let buffer = request.buffer;
+        let mut pending = self
+            .pending
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let newly_ready = pending.insert(buffer, request).is_none();
+        drop(pending);
+        if newly_ready {
+            let _ = self.ready.send(buffer);
+        }
     }
 }
 
-/// Receiver for completed parses. Only the newest undrained result is kept.
+/// Receiver for completed parses.
 #[derive(Debug)]
 pub struct SyntaxEvents {
-    events: watch::Receiver<Option<SyntaxEvent>>,
+    events: mpsc::UnboundedReceiver<SyntaxEvent>,
 }
 
 impl SyntaxEvents {
     pub async fn recv(&mut self) -> Option<SyntaxEvent> {
-        loop {
-            if self.events.changed().await.is_err() {
-                return None;
-            }
-            if let Some(event) = self.events.borrow_and_update().clone() {
-                return Some(event);
-            }
-        }
+        self.events.recv().await
     }
 }
 
 /// Starts one parser worker. Must be called inside a Tokio runtime.
 pub fn spawn_background(registry: Arc<Registry>) -> (SyntaxHandle, SyntaxEvents) {
-    let (request_tx, request_rx) = watch::channel(None);
-    let (event_tx, event_rx) = watch::channel(None);
-    tokio::spawn(run_worker(registry, request_rx, event_tx));
+    let pending = Arc::new(Mutex::new(HashMap::new()));
+    let (ready_tx, ready_rx) = mpsc::unbounded_channel();
+    let (event_tx, event_rx) = mpsc::unbounded_channel();
+    tokio::spawn(run_worker(
+        registry,
+        Arc::clone(&pending),
+        ready_rx,
+        event_tx,
+    ));
     (
         SyntaxHandle {
-            requests: request_tx,
+            pending,
+            ready: ready_tx,
         },
         SyntaxEvents { events: event_rx },
     )
@@ -189,40 +205,29 @@ pub fn spawn_background(registry: Arc<Registry>) -> (SyntaxHandle, SyntaxEvents)
 
 async fn run_worker(
     registry: Arc<Registry>,
-    mut requests: watch::Receiver<Option<ParseRequest>>,
-    events: watch::Sender<Option<SyntaxEvent>>,
+    pending: Arc<Mutex<HashMap<usize, ParseRequest>>>,
+    mut ready: mpsc::UnboundedReceiver<usize>,
+    events: mpsc::UnboundedSender<SyntaxEvent>,
 ) {
-    let mut next = None;
-    loop {
-        let request = match next.take() {
-            Some(request) => request,
-            None => {
-                if requests.changed().await.is_err() {
-                    return;
-                }
-                let Some(request) = requests.borrow_and_update().clone() else {
-                    continue;
-                };
-                request
-            }
+    while let Some(buffer) = ready.recv().await {
+        let request = {
+            let mut pending = pending.lock().unwrap_or_else(|error| error.into_inner());
+            pending.remove(&buffer)
+        };
+        let Some(request) = request else {
+            continue;
         };
         let parser_registry = Arc::clone(&registry);
-        let mut task = tokio::task::spawn_blocking(move || parse(request, &parser_registry));
-        loop {
-            tokio::select! {
-                changed = requests.changed() => {
-                    if changed.is_err() {
-                        return;
-                    }
-                    next = requests.borrow_and_update().clone();
-                }
-                result = &mut task => {
-                    if next.is_none() && let Ok(event) = result {
-                        events.send_replace(Some(event));
-                    }
-                    break;
-                }
-            }
+        let result = tokio::task::spawn_blocking(move || parse(request, &parser_registry)).await;
+        let Ok(event) = result else {
+            continue;
+        };
+        let has_newer = pending
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .contains_key(&buffer);
+        if !has_newer && events.send(event).is_err() {
+            return;
         }
     }
 }
@@ -244,5 +249,57 @@ fn parse(request: ParseRequest, registry: &Registry) -> SyntaxEvent {
         base_revision,
         text_revision,
         syntax: parsed.then_some(syntax),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pending_request(registry: &Registry, buffer: usize, source: &str) -> ParseRequest {
+        let language = registry.language_for_name("rust").unwrap();
+        let before = Text::from_str(source);
+        let syntax = DocumentSyntax::new(&before, language, registry).unwrap();
+        let transaction = Transaction::insert(0, "// changed\n");
+        let mut current = before.clone();
+        current.apply(&transaction);
+        StaleSyntax::new(syntax, &before, &current, &transaction).request(buffer)
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn distinct_buffer_requests_are_not_coalesced_away() {
+        let registry = Arc::new(Registry::new());
+        let (worker, mut events) = spawn_background(Arc::clone(&registry));
+
+        worker.send(pending_request(&registry, 3, "fn first() {}\n"));
+        worker.send(pending_request(&registry, 7, "fn second() {}\n"));
+
+        let first = events.recv().await.unwrap().buffer;
+        let second = events.recv().await.unwrap().buffer;
+        assert_eq!(
+            [first, second]
+                .into_iter()
+                .collect::<std::collections::HashSet<_>>(),
+            [3, 7].into_iter().collect()
+        );
+    }
+
+    #[test]
+    fn reversed_stale_highlight_ranges_are_empty() {
+        let registry = Registry::new();
+        let language = registry.language_for_name("rust").unwrap();
+        let before = Text::from_str("fn main() {}\n");
+        let syntax = DocumentSyntax::new(&before, language, &registry).unwrap();
+        let transaction = Transaction::insert(0, "// changed\n");
+        let mut current = before.clone();
+        current.apply(&transaction);
+        let stale = StaleSyntax::new(syntax, &before, &current, &transaction);
+
+        assert!(
+            stale
+                .translated_spans(&current, &registry, 8, 2)
+                .into_spans()
+                .is_empty()
+        );
     }
 }

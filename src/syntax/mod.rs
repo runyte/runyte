@@ -1672,6 +1672,22 @@ impl DocumentSyntax {
         transaction: &Transaction,
         registry: &Registry,
     ) -> bool {
+        let Some(parser_language) =
+            registry.language_for_size(self.language, text.rope().len_bytes())
+        else {
+            return false;
+        };
+        let current_language = self.syntax.layer(self.syntax.root()).language;
+        if parser_language != current_language {
+            let Ok(syntax) =
+                Syntax::new(rope_slice(text), parser_language, PARSE_TIMEOUT, registry)
+            else {
+                return false;
+            };
+            self.syntax = syntax;
+            self.revision.advance();
+            return true;
+        }
         let Ok(edits) = input_edits(before, transaction) else {
             return false;
         };
@@ -4817,5 +4833,38 @@ mod tests {
         assert!(syntax.update(&before, &text, &transaction, &registry));
         assert_eq!(syntax.revision().get(), 1);
         assert_eq!(syntax.language(), language);
+    }
+
+    #[test]
+    fn updates_switch_parser_variants_across_the_injection_limit() {
+        let registry = Registry::new();
+        let language = registry.language_for_name("rust").unwrap();
+        let canonical = registry.language_for_size(language, 1).unwrap();
+        let plain = registry
+            .language_for_size(language, INJECTION_LIMIT_BYTES + 1)
+            .unwrap();
+        let mut text = Text::from_str("fn main() {}\n");
+        let mut syntax = DocumentSyntax::new(&text, language, &registry).unwrap();
+        assert_eq!(
+            syntax.syntax.layer(syntax.syntax.root()).language,
+            canonical
+        );
+
+        let before = text.clone();
+        let padding = " ".repeat(INJECTION_LIMIT_BYTES + 1);
+        let grow = Transaction::insert(text.len_chars(), padding);
+        text.apply(&grow);
+        assert!(syntax.update(&before, &text, &grow, &registry));
+        assert_eq!(syntax.syntax.layer(syntax.syntax.root()).language, plain);
+
+        let before = text.clone();
+        let shrink = Transaction::delete("fn main() {}\n".chars().count(), text.len_chars());
+        text.apply(&shrink);
+        assert!(syntax.update(&before, &text, &shrink, &registry));
+        assert_eq!(
+            syntax.syntax.layer(syntax.syntax.root()).language,
+            canonical
+        );
+        assert_eq!(syntax.revision().get(), 2);
     }
 }
