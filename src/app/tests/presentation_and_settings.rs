@@ -354,6 +354,256 @@ fn a_pointer_drag_selects_through_the_character_it_ends_on() {
     assert_eq!(app.mode, Mode::Normal);
 }
 
+#[test]
+fn right_click_on_any_selection_yanks_all_selections_to_the_system_clipboard() {
+    let mut config = Config::default();
+    config.editor.line_numbers = false;
+    let shared = Arc::new(Mutex::new(String::new()));
+    let mut app = App::new(config, None).unwrap();
+    app.set_system_clipboard(Box::new(super::editing_and_buffers::MemoryClipboard(
+        shared.clone(),
+    )));
+    seed(&mut app, "alpha beta gamma");
+    let selection = Selection::new([Range::new(0, 4), Range::new(11, 15)].to_vec(), 1);
+    app.active_mut().replace_selection(selection.clone());
+    app.mode = Mode::Select;
+
+    let geometry = FrameGeometry {
+        screen: Rect {
+            width: 40,
+            height: 6,
+            ..Rect::default()
+        },
+        editor: Rect {
+            width: 40,
+            height: 4,
+            ..Rect::default()
+        },
+        status: Rect::default(),
+        message: Rect::default(),
+    };
+    let view = app.prepare_view(geometry);
+    let body = view.pane(0).unwrap().body;
+
+    app.handle_pointer(
+        PointerEvent {
+            kind: PointerEventKind::Down(PointerButton::Right),
+            column: body.x + 13,
+            row: body.y,
+            modifiers: Modifiers::NONE,
+        },
+        &view,
+    )
+    .unwrap();
+
+    assert_eq!(&*shared.lock().unwrap(), "alpha\ngamma");
+    assert_eq!(app.active().selection, selection);
+    assert_eq!(app.mode, Mode::Select);
+    assert_eq!(app.status, "yanked to system clipboard");
+
+    *shared.lock().unwrap() = "unchanged".to_owned();
+    app.handle_pointer(
+        PointerEvent {
+            kind: PointerEventKind::Down(PointerButton::Right),
+            column: body.x + 7,
+            row: body.y,
+            modifiers: Modifiers::NONE,
+        },
+        &view,
+    )
+    .unwrap();
+    assert_eq!(&*shared.lock().unwrap(), "unchanged");
+}
+
+#[test]
+fn right_click_does_not_clamp_gutter_or_trailing_cells_onto_a_selection() {
+    let shared = Arc::new(Mutex::new("unchanged".to_owned()));
+    let mut app = App::new(Config::default(), None).unwrap();
+    app.set_system_clipboard(Box::new(super::editing_and_buffers::MemoryClipboard(
+        shared.clone(),
+    )));
+    seed(&mut app, "alpha");
+    app.active_mut()
+        .replace_selection(Selection::single(Range::new(0, 4)));
+    app.mode = Mode::Select;
+
+    let geometry = FrameGeometry {
+        screen: Rect {
+            width: 40,
+            height: 6,
+            ..Rect::default()
+        },
+        editor: Rect {
+            width: 40,
+            height: 4,
+            ..Rect::default()
+        },
+        status: Rect::default(),
+        message: Rect::default(),
+    };
+    let view = app.prepare_view(geometry);
+    let pane = view.pane(0).unwrap();
+    assert!(pane.gutter_width > 0);
+
+    for column in [pane.body.x, pane.body.x + pane.body.width - 1] {
+        app.handle_pointer(
+            PointerEvent {
+                kind: PointerEventKind::Down(PointerButton::Right),
+                column,
+                row: pane.body.y,
+                modifiers: Modifiers::NONE,
+            },
+            &view,
+        )
+        .unwrap();
+        assert_eq!(&*shared.lock().unwrap(), "unchanged");
+    }
+}
+
+#[test]
+fn right_click_yanks_the_visible_caret_on_an_empty_row() {
+    let shared = Arc::new(Mutex::new(String::new()));
+    let mut app = App::new(Config::default(), None).unwrap();
+    app.set_system_clipboard(Box::new(super::editing_and_buffers::MemoryClipboard(
+        shared.clone(),
+    )));
+    seed(&mut app, "one\n\nthree");
+    app.active_mut().replace_selection(Selection::point(4));
+
+    let geometry = FrameGeometry {
+        screen: Rect {
+            width: 40,
+            height: 6,
+            ..Rect::default()
+        },
+        editor: Rect {
+            width: 40,
+            height: 4,
+            ..Rect::default()
+        },
+        status: Rect::default(),
+        message: Rect::default(),
+    };
+    let view = app.prepare_view(geometry);
+    let pane = view.pane(0).unwrap();
+    let text_x = pane.body.x + pane.gutter_width as u16;
+    let empty_screen_row = pane
+        .rows
+        .iter()
+        .position(|row| row.document_row == Some(1))
+        .unwrap() as u16;
+    app.handle_pointer(
+        PointerEvent {
+            kind: PointerEventKind::Down(PointerButton::Right),
+            column: text_x,
+            row: pane.body.y + empty_screen_row,
+            modifiers: Modifiers::NONE,
+        },
+        &view,
+    )
+    .unwrap();
+
+    assert_eq!(&*shared.lock().unwrap(), "\n");
+}
+
+#[test]
+fn right_click_uses_viewport_relative_tab_stops_after_horizontal_scroll() {
+    let mut config = Config::default();
+    config.editor.line_numbers = false;
+    config.editor.tab_width = 4;
+    let shared = Arc::new(Mutex::new(String::new()));
+    let mut app = App::new(config, None).unwrap();
+    app.set_system_clipboard(Box::new(super::editing_and_buffers::MemoryClipboard(
+        shared.clone(),
+    )));
+    seed(&mut app, "ab\tz");
+    app.active_mut().replace_selection(Selection::point(2));
+    app.active_mut().scroll_col = 2;
+    app.active_mut().preserve_scroll = true;
+
+    let geometry = FrameGeometry {
+        screen: Rect {
+            width: 10,
+            height: 6,
+            ..Rect::default()
+        },
+        editor: Rect {
+            width: 10,
+            height: 4,
+            ..Rect::default()
+        },
+        status: Rect::default(),
+        message: Rect::default(),
+    };
+    let view = app.prepare_view(geometry);
+    let pane = view.pane(0).unwrap();
+    assert_eq!(pane.scroll_col, 2);
+    app.handle_pointer(
+        PointerEvent {
+            kind: PointerEventKind::Down(PointerButton::Right),
+            column: pane.body.x + 3,
+            row: pane.body.y,
+            modifiers: Modifiers::NONE,
+        },
+        &view,
+    )
+    .unwrap();
+
+    assert_eq!(&*shared.lock().unwrap(), "\t");
+}
+
+#[cfg(unix)]
+#[test]
+fn right_click_yanks_a_wide_terminal_review_caret_from_its_second_cell() {
+    let shared = Arc::new(Mutex::new(String::new()));
+    let mut app = App::new(Config::default(), None).unwrap();
+    app.set_system_clipboard(Box::new(super::editing_and_buffers::MemoryClipboard(
+        shared.clone(),
+    )));
+    app.open_terminal(Some("/bin/cat".to_owned()));
+    let terminal = app.active_terminal().unwrap();
+    app.apply_terminal_output(TerminalOutput::Bytes {
+        id: terminal,
+        bytes: "界\r\n".as_bytes().to_vec(),
+    });
+    app.terminals.get_mut(terminal).unwrap().begin_review();
+    app.mode = Mode::Normal;
+
+    let geometry = FrameGeometry {
+        screen: Rect {
+            width: 40,
+            height: 6,
+            ..Rect::default()
+        },
+        editor: Rect {
+            width: 40,
+            height: 4,
+            ..Rect::default()
+        },
+        status: Rect::default(),
+        message: Rect::default(),
+    };
+    let view = app.prepare_view(geometry);
+    let body = view.pane(0).unwrap().body;
+    app.handle_pointer(
+        PointerEvent {
+            kind: PointerEventKind::Down(PointerButton::Right),
+            column: body.x + 1,
+            row: body.y,
+            modifiers: Modifiers::NONE,
+        },
+        &view,
+    )
+    .unwrap();
+
+    assert_eq!(&*shared.lock().unwrap(), "界");
+    assert_eq!(app.mode, Mode::Normal);
+    assert_eq!(
+        app.status,
+        "terminal review selection yanked to system clipboard"
+    );
+}
+
 /// Presses at a cell column on `row` of the pane body and releases there.
 fn press_at(app: &mut App, view: &PreparedView, column: u16, row: u16) {
     let body = view.pane(0).unwrap().body;

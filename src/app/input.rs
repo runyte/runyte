@@ -24,10 +24,10 @@ use super::{
     VimTextObject, buffer_language, char_to_byte, display_path, enclosing_area, expand_home_path,
     external_open, hint_is_not_before, hover_content_rows, is_path_separator,
     is_path_token_boundary, is_terminal_normal_key, is_word, keymap_for, mapped_applied_path,
-    parse_colon_command, persistent_session_availability, pointer_pane, pointer_resize_pair,
-    prompt_backspace, prompt_delete, prompt_delete_range, prompt_insert, prompt_word_backward,
-    prompt_word_forward, quote_path_hint, rect_contains, resolve_command, resolved_operation_path,
-    row_characters, unclosed_or_complete_quoted_path,
+    operative_span, parse_colon_command, persistent_session_availability, pointer_pane,
+    pointer_resize_pair, prompt_backspace, prompt_delete, prompt_delete_range, prompt_insert,
+    prompt_word_backward, prompt_word_forward, quote_path_hint, rect_contains, resolve_command,
+    resolved_operation_path, row_characters, unclosed_or_complete_quoted_path,
 };
 
 impl App {
@@ -691,11 +691,164 @@ impl App {
                     candidate.preserve_scroll = true;
                 }
             }
-            PointerEventKind::Down(PointerButton::Middle | PointerButton::Right)
+            PointerEventKind::Down(PointerButton::Right) => {
+                self.pointer_drag = None;
+                if !self.pointer_over_active_selection(view, event.column, event.row) {
+                    return Ok(PointerOutcome::Changed);
+                }
+                self.jump = None;
+                self.grammar.reset();
+                self.execute_editor_command(EditorCommand::ClipboardYank)?;
+            }
+            PointerEventKind::Down(PointerButton::Middle)
             | PointerEventKind::Drag(PointerButton::Middle | PointerButton::Right)
             | PointerEventKind::Moved => {}
         }
         Ok(PointerOutcome::Changed)
+    }
+
+    /// Whether a pointer cell belongs to text the active surface would copy.
+    ///
+    /// Document selections retain their own inclusive or half-open semantics,
+    /// while terminal review exposes the exact cell spans it highlights. A
+    /// secondary press only invokes clipboard yank when it lands on one of
+    /// those spans, so it never moves the selection it is about to copy.
+    fn pointer_over_active_selection(&self, view: &PreparedView, column: u16, row: u16) -> bool {
+        let Some(prepared) = view.pane(self.active_pane) else {
+            return false;
+        };
+        if !rect_contains(prepared.body, column, row) {
+            return false;
+        }
+        if let Some(id) = self.terminal_of_pane(self.active_pane) {
+            let Some(session) = self.terminals.get(id).filter(|session| session.reviewing()) else {
+                return false;
+            };
+            let terminal = session.view(usize::from(prepared.body.height));
+            let pointer_row = usize::from(row - prepared.body.y);
+            let pointer_column = usize::from(column - prepared.body.x);
+            let highlighted = terminal.highlights.iter().any(|highlight| {
+                matches!(
+                    highlight.kind,
+                    crate::terminal::TerminalHighlightKind::Selection
+                        | crate::terminal::TerminalHighlightKind::ActiveMatch
+                ) && highlight.row == pointer_row
+                    && pointer_column >= highlight.start_column
+                    && pointer_column < highlight.end_column
+            });
+            let caret = terminal.cursor.is_some_and(|(caret_row, caret_column)| {
+                let width = terminal
+                    .rows
+                    .get(caret_row)
+                    .and_then(|cells| cells.get(caret_column))
+                    .map_or(1, |cell| usize::from(cell.width.max(1)));
+                caret_row == pointer_row
+                    && pointer_column >= caret_column
+                    && pointer_column < caret_column.saturating_add(width)
+            });
+            return highlighted || caret;
+        }
+
+        let Some(offset) = self.pointer_text_offset(view, self.active_pane, column, row) else {
+            return false;
+        };
+        let pane = self.active();
+        let buffer = self.active_buffer();
+        let half_open = matches!(
+            pane.selection_semantics(),
+            SelectionSemantics::HalfOpen | SelectionSemantics::VimLinewise
+        );
+        pane.selection.ranges().iter().any(|range| {
+            let (from, to) = if half_open {
+                (range.from(), range.to())
+            } else {
+                operative_span(buffer, range)
+            };
+            offset >= from && offset < to
+        })
+    }
+
+    /// The buffer offset of the exact text cell under the pointer.
+    ///
+    /// Caret placement deliberately clamps the gutter, content margin, and
+    /// blank cells after a row onto the nearest character. Selection hit
+    /// testing must not: those cells carry no selection highlight and a
+    /// secondary press on them is not a press on selected text.
+    fn pointer_text_offset(
+        &self,
+        view: &PreparedView,
+        pane_id: usize,
+        column: u16,
+        row: u16,
+    ) -> Option<Offset> {
+        let pane = view.pane(pane_id)?;
+        if !pane.drawable || !rect_contains(pane.body, column, row) {
+            return None;
+        }
+        let live_pane = self.panes.get(&pane_id)?;
+        if live_pane.buffer != pane.buffer_id {
+            return None;
+        }
+        let projected = pane.rows.get(usize::from(row - pane.body.y))?;
+        let document_row = projected.document_row?;
+        let buffer = self.buffers.get(pane.buffer_id)?;
+        let line = buffer.line_string(document_row);
+        let text_x = pane
+            .body
+            .x
+            .saturating_add((pane.gutter_width + pane.content_indent) as u16);
+        let screen_cell = usize::from(column.checked_sub(text_x)?);
+        let segment = projected.segment;
+        let (start, end, cells) = segment.map_or_else(
+            || {
+                let start = pane.scroll_col.min(buffer.line_len(document_row));
+                let end = buffer.line_len(document_row);
+                let cells =
+                    crate::wrap::cells_from_column(&line, start, end, self.config.editor.tab_width);
+                (start, end, cells)
+            },
+            |segment| {
+                (
+                    segment.start,
+                    segment.end,
+                    segment.end_cell.saturating_sub(segment.start_cell),
+                )
+            },
+        );
+        if screen_cell == cells {
+            let offset = buffer.line_to_offset(document_row) + end;
+            let final_segment =
+                segment.is_none_or(|segment| segment.end == buffer.line_len(document_row));
+            let caret_drawn = pane_id == self.active_pane
+                && final_segment
+                && cells < pane.text_width
+                && live_pane
+                    .selection
+                    .ranges()
+                    .iter()
+                    .any(|range| range.head == offset);
+            return caret_drawn.then_some(offset);
+        }
+        if screen_cell > cells {
+            return None;
+        }
+        let character = if segment.is_some() {
+            crate::wrap::column_for_cell_from(
+                &line,
+                start,
+                screen_cell,
+                self.config.editor.tab_width,
+            )
+        } else {
+            crate::wrap::column_for_scrolled_cell(
+                &line,
+                start,
+                screen_cell,
+                self.config.editor.tab_width,
+            )
+        }
+        .min(end);
+        Some(buffer.line_to_offset(document_row) + character)
     }
 
     fn forward_terminal_pointer(
