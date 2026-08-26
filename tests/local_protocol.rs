@@ -5,6 +5,7 @@
 use std::os::unix::ffi::OsStringExt;
 use std::{
     fs::{self, File},
+    io::Read,
     os::fd::{AsRawFd, FromRawFd},
     os::unix::process::CommandExt,
     path::{Path, PathBuf},
@@ -75,6 +76,11 @@ impl Drop for ChildGuard {
 }
 
 fn spawn_in_pty(command: &mut Command) -> (Child, File) {
+    let (child, master, _) = spawn_in_pty_with_initial_termios(command);
+    (child, master)
+}
+
+fn spawn_in_pty_with_initial_termios(command: &mut Command) -> (Child, File, libc::termios) {
     let mut master = -1;
     let mut slave = -1;
     // `openpty` takes `*mut` for both of the trailing arguments on Apple
@@ -114,6 +120,7 @@ fn spawn_in_pty(command: &mut Command) -> (Child, File) {
     );
     // SAFETY: successful `openpty` returned fresh descriptors owned here.
     let slave = unsafe { File::from_raw_fd(slave) };
+    let initial = terminal_attributes(slave.as_raw_fd());
     // SAFETY: this runs in the child between fork and exec, calls only
     // async-signal-safe libc operations, and makes the PTY slave controlling
     // terminal so closing the master exercises a real terminal hangup.
@@ -134,7 +141,19 @@ fn spawn_in_pty(command: &mut Command) -> (Child, File) {
         .stderr(Stdio::from(slave))
         .spawn()
         .unwrap();
-    (child, master)
+    (child, master, initial)
+}
+
+fn terminal_attributes(descriptor: std::os::fd::RawFd) -> libc::termios {
+    let mut attributes = std::mem::MaybeUninit::uninit();
+    // SAFETY: `attributes` points to writable storage for one termios value,
+    // and callers pass a live PTY descriptor.
+    assert_eq!(
+        unsafe { libc::tcgetattr(descriptor, attributes.as_mut_ptr()) },
+        0
+    );
+    // SAFETY: successful `tcgetattr` initialized the complete value.
+    unsafe { attributes.assume_init() }
 }
 
 fn spawn_wait_in_pty(root: &Path, target: &str) -> (Child, File) {
@@ -262,6 +281,76 @@ async fn wait_child(child: &mut Child) -> ExitStatus {
     })
     .await
     .expect("child process timed out")
+}
+
+#[test]
+fn termination_signal_restores_the_terminal_and_preserves_its_exit_status() {
+    let root = project();
+    let config = default_config(&root);
+    let (mut child, master, initial) = spawn_in_pty_with_initial_termios(
+        Command::new(env!("CARGO_BIN_EXE_runyte"))
+            .args(["--standalone", "--config"])
+            .arg(config)
+            .arg("note.txt")
+            .current_dir(&root)
+            .env("XDG_RUNTIME_DIR", test_runtime_dir())
+            .env("XDG_CACHE_HOME", test_cache_dir()),
+    );
+    let mut output = master.try_clone().unwrap();
+    let _output_drain = std::thread::spawn(move || {
+        let mut buffer = [0_u8; 4096];
+        while output.read(&mut buffer).is_ok_and(|read| read != 0) {}
+    });
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        let current = terminal_attributes(master.as_raw_fd());
+        if current.c_lflag & (libc::ICANON | libc::ECHO) == 0 {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "editor did not enter terminal raw mode"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    // SAFETY: `child.id()` names this test's live child process.
+    assert_eq!(
+        unsafe { libc::kill(child.id() as libc::pid_t, libc::SIGTERM) },
+        0
+    );
+    let exit_deadline = std::time::Instant::now() + Duration::from_secs(5);
+    let status = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break status;
+        }
+        if std::time::Instant::now() >= exit_deadline {
+            let current = terminal_attributes(master.as_raw_fd());
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!(
+                "editor did not exit after SIGTERM; terminal lflag was {:#x}, initial {:#x}",
+                current.c_lflag, initial.c_lflag
+            );
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    assert_eq!(status.code(), Some(128 + libc::SIGTERM));
+
+    let restored = terminal_attributes(master.as_raw_fd());
+    assert_eq!(restored.c_iflag, initial.c_iflag);
+    assert_eq!(restored.c_oflag, initial.c_oflag);
+    assert_eq!(restored.c_cflag, initial.c_cflag);
+    assert_eq!(restored.c_lflag, initial.c_lflag);
+    assert_eq!(restored.c_cc, initial.c_cc);
+    // SAFETY: both pointers refer to initialized termios values.
+    assert_eq!(unsafe { libc::cfgetispeed(&restored) }, unsafe {
+        libc::cfgetispeed(&initial)
+    });
+    // SAFETY: both pointers refer to initialized termios values.
+    assert_eq!(unsafe { libc::cfgetospeed(&restored) }, unsafe {
+        libc::cfgetospeed(&initial)
+    });
+    fs::remove_dir_all(root).unwrap();
 }
 
 async fn connect_control(endpoint: &LocalEndpoint) -> LocalClient {
@@ -1867,6 +1956,79 @@ async fn wait_without_a_host_starts_one_and_attaches_the_invoking_terminal() {
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
     assert!(!endpoint.metadata().exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn signalling_a_wait_client_cancels_its_durable_request() {
+    let root = project();
+    let endpoint = LocalEndpoint::discover_with_runtime(
+        &root.join(".runyte"),
+        &root,
+        Some(test_runtime_dir()),
+    )
+    .unwrap();
+    let Some(mut host) = start_host(&root, &endpoint).await else {
+        fs::remove_dir_all(root).unwrap();
+        return;
+    };
+    let (mut waiter, mut terminal) = spawn_wait_in_pty(&root, "note.txt");
+    let _output_drain = std::thread::spawn(move || {
+        let mut chunk = [0_u8; 4096];
+        while terminal.read(&mut chunk).is_ok_and(|read| read != 0) {}
+    });
+    let mut control = connect_control(&endpoint).await;
+    let mut pending = false;
+    for _ in 0..100 {
+        control.send(&ClientRequest::Health).await.unwrap();
+        pending = matches!(
+            response(&mut control).await,
+            HostResponse::Health {
+                interactive_attached: true,
+                pending_wait_requests: 1,
+                ..
+            }
+        );
+        if pending {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    assert!(pending, "wait request did not become durable and attached");
+
+    // SAFETY: `waiter.id()` names this test's live child process.
+    assert_eq!(
+        unsafe { libc::kill(waiter.id() as libc::pid_t, libc::SIGTERM) },
+        0
+    );
+    assert_eq!(
+        wait_child(&mut waiter).await.code(),
+        Some(128 + libc::SIGTERM)
+    );
+
+    let mut cancelled = false;
+    for _ in 0..100 {
+        control.send(&ClientRequest::Health).await.unwrap();
+        cancelled = matches!(
+            response(&mut control).await,
+            HostResponse::Health {
+                interactive_attached: false,
+                pending_wait_requests: 0,
+                ..
+            }
+        );
+        if cancelled {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    assert!(
+        cancelled,
+        "signalled wait request remained protected host state"
+    );
+
+    shutdown(&mut control).await;
+    assert!(host.0.take().unwrap().wait().unwrap().success());
     fs::remove_dir_all(root).unwrap();
 }
 

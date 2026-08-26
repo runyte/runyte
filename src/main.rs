@@ -1,10 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 
-#[cfg(debug_assertions)]
-use std::io::Write;
 use std::{
     fs,
-    io::{self, stdout},
+    io::{self, Write, stdout},
     path::{Path, PathBuf},
     sync::Arc,
     time::{Duration, Instant},
@@ -71,11 +69,113 @@ use runyte::workspace::{
 
 fn main() -> Result<()> {
     let mut startup = StartupTrace::new();
-    tokio::runtime::Builder::new_multi_thread()
+    let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
-        .context("failed to start the async runtime")?
-        .block_on(run(&mut startup))
+        .context("failed to start the async runtime")?;
+    let result = runtime.block_on(run(&mut startup));
+    drop(runtime);
+    #[cfg(unix)]
+    if let Err(error) = &result
+        && let Some(signal) = error.downcast_ref::<TerminatedBySignal>()
+    {
+        std::process::exit(128 + signal.0);
+    }
+    result
+}
+
+#[derive(Debug)]
+struct TerminatedBySignal(i32);
+
+impl std::fmt::Display for TerminatedBySignal {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "terminated by signal {}", self.0)
+    }
+}
+
+impl std::error::Error for TerminatedBySignal {}
+
+#[cfg(unix)]
+struct TerminationSignals {
+    poll: tokio::time::Interval,
+}
+
+#[cfg(unix)]
+impl TerminationSignals {
+    fn new() -> Result<Self> {
+        install_termination_handlers()?;
+        let mut poll = tokio::time::interval(Duration::from_millis(25));
+        poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        Ok(Self { poll })
+    }
+
+    async fn recv(&mut self) -> i32 {
+        loop {
+            if let Some(signal) = self.received() {
+                return signal;
+            }
+            self.poll.tick().await;
+        }
+    }
+
+    fn received(&self) -> Option<i32> {
+        let signal = RECEIVED_TERMINATION.swap(0, std::sync::atomic::Ordering::Relaxed);
+        (signal != 0).then_some(signal)
+    }
+}
+
+#[cfg(unix)]
+static RECEIVED_TERMINATION: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+
+#[cfg(unix)]
+extern "C" fn record_termination(signal: libc::c_int) {
+    RECEIVED_TERMINATION.store(signal, std::sync::atomic::Ordering::Relaxed);
+}
+
+#[cfg(unix)]
+fn install_termination_handlers() -> Result<()> {
+    static INSTALLED: std::sync::OnceLock<std::result::Result<(), i32>> =
+        std::sync::OnceLock::new();
+    let result = INSTALLED.get_or_init(|| {
+        // SAFETY: a zeroed sigaction is a valid starting point; the handler
+        // only performs an atomic store, which is async-signal-safe on the
+        // supported lock-free Unix targets. Each call supplies a live action
+        // and does not request the previous disposition.
+        let mut action: libc::sigaction = unsafe { std::mem::zeroed() };
+        action.sa_sigaction = record_termination as *const () as usize;
+        action.sa_flags = 0;
+        // SAFETY: `sa_mask` is owned writable storage in `action`.
+        if unsafe { libc::sigemptyset(&mut action.sa_mask) } == -1 {
+            return Err(std::io::Error::last_os_error().raw_os_error().unwrap_or(0));
+        }
+        for signal in [libc::SIGINT, libc::SIGHUP, libc::SIGTERM] {
+            // SAFETY: `action` remains initialized for the duration of each
+            // call, and a null final argument discards the old disposition.
+            if unsafe { libc::sigaction(signal, &action, std::ptr::null_mut()) } == -1 {
+                return Err(std::io::Error::last_os_error().raw_os_error().unwrap_or(0));
+            }
+        }
+        Ok(())
+    });
+    result.map_err(|code| std::io::Error::from_raw_os_error(code).into())
+}
+
+fn terminated(signal: i32) -> anyhow::Error {
+    TerminatedBySignal(signal).into()
+}
+
+#[cfg(not(unix))]
+struct TerminationSignals;
+
+#[cfg(not(unix))]
+impl TerminationSignals {
+    fn new() -> Result<Self> {
+        Ok(Self)
+    }
+
+    async fn recv(&mut self) -> i32 {
+        std::future::pending().await
+    }
 }
 
 async fn run(startup: &mut StartupTrace) -> Result<()> {
@@ -423,6 +523,10 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
         anyhow::bail!("persistent mode is not yet supported on this platform");
     }
 
+    // Register before entering raw mode so no startup interval can leave the
+    // terminal modified while signals still have their default disposition.
+    let mut termination = TerminationSignals::new()?;
+    let mut received_signal = None;
     let _terminal = TerminalGuard::enter(mouse_enabled)?;
     let backend = CrosstermBackend::new(stdout());
     let mut terminal = Terminal::new(backend)?;
@@ -616,6 +720,10 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
             _ = tokio::time::sleep(hint_timeout.unwrap_or_default()), if hint_timeout.is_some() => {
                 key_hints.expire_at(Instant::now());
             }
+            signal = termination.recv() => {
+                received_signal = Some(signal);
+                break;
+            }
         }
         terminal.draw(|frame| {
             let geometry = ui::frame_geometry(frame.area());
@@ -628,6 +736,9 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
     let cwd_file = arguments.cwd_file;
     if let (Some(cwd_file), Some(directory)) = (cwd_file.as_deref(), quit_directory) {
         write_cwd_file(cwd_file, &directory)?;
+    }
+    if let Some(signal) = received_signal {
+        return Err(terminated(signal));
     }
     Ok(())
 }
@@ -749,6 +860,7 @@ async fn run_host_server(
     startup: &mut StartupTrace,
     config_path: Option<&Path>,
 ) -> Result<()> {
+    let mut termination = TerminationSignals::new()?;
     host.enable_persistent_session();
     let mut server = LocalServer::bind(&endpoint).await?;
     let mut services = start_host_services(&mut host, startup, config_path)?;
@@ -767,6 +879,7 @@ async fn run_host_server(
     let mut terminal_frame_pending = false;
     let mut key_hints = KeyHintState::default();
     let mut shutting_down = false;
+    let mut received_signal = None;
     while !shutting_down {
         key_hints.expire_at(Instant::now());
         let mut changed = false;
@@ -1110,6 +1223,10 @@ async fn run_host_server(
                 key_hints.expire_at(Instant::now());
                 changed = true;
             }
+            signal = termination.recv() => {
+                received_signal = Some(signal);
+                shutting_down = true;
+            }
         }
         // Lifecycle requests may be completed by a background service rather
         // than by the input event that started them. In particular, worktree
@@ -1140,6 +1257,9 @@ async fn run_host_server(
     host.cancel_all_waits("workspace host shut down");
     services.language_servers.send(LspCommand::Shutdown);
     endpoint.cleanup()?;
+    if let Some(signal) = received_signal {
+        return Err(terminated(signal));
+    }
     Ok(())
 }
 
@@ -1635,6 +1755,7 @@ async fn run_workspace_switcher(
     config: &Config,
     config_path: Option<&Path>,
 ) -> Result<()> {
+    let mut termination = TerminationSignals::new()?;
     let _terminal = TerminalGuard::enter(mouse_enabled)?;
     let mut terminal = Terminal::new(CrosstermBackend::new(stdout()))?;
     // Probe the terminal before the event stream exists. Where `TIOCGWINSZ` is
@@ -1651,16 +1772,18 @@ async fn run_workspace_switcher(
         // never restarts this process, so recording only at launch would leave
         // the history frozen at whichever workspace the session began in.
         let _ = record_recent_workspace(current.project_root());
-        let attachment = run_attached(
-            &current,
-            &mut terminal,
-            &mut terminal_events,
-            &mut geometry,
-            None,
-            cwd_file,
-            notice.take(),
-        )
-        .await;
+        let attachment = tokio::select! {
+            attachment = run_attached(
+                &current,
+                &mut terminal,
+                &mut terminal_events,
+                &mut geometry,
+                None,
+                cwd_file,
+                notice.take(),
+            ) => attachment,
+            signal = termination.recv() => return Err(terminated(signal)),
+        };
         let Some(outcome) =
             recover_switched_attachment(attachment, &mut current, &mut previous, &mut notice)?
         else {
@@ -1784,21 +1907,24 @@ async fn attach_for_wait(
     mouse_enabled: bool,
     token: WaitToken,
     control: &mut LocalClient,
+    termination: &mut TerminationSignals,
 ) -> Result<()> {
     let _terminal = TerminalGuard::enter(mouse_enabled)?;
     let mut terminal = Terminal::new(CrosstermBackend::new(stdout()))?;
     let mut geometry = current_frame_geometry()?;
     let mut terminal_events = EventStream::new();
-    let attachment = run_attached(
-        endpoint,
-        &mut terminal,
-        &mut terminal_events,
-        &mut geometry,
-        Some(token),
-        None,
-        None,
-    )
-    .await;
+    let attachment = tokio::select! {
+        attachment = run_attached(
+            endpoint,
+            &mut terminal,
+            &mut terminal_events,
+            &mut geometry,
+            Some(token),
+            None,
+            None,
+        ) => attachment,
+        signal = termination.recv() => return Err(terminated(signal)),
+    };
     match attachment {
         Err(attachment_error) => {
             // Completing a wait closes its interactive attachment after
@@ -2123,6 +2249,10 @@ async fn run_wait(
     config_path: Option<std::path::PathBuf>,
     mouse_enabled: bool,
 ) -> Result<()> {
+    // Install before the durable request is created. A signal received while
+    // its response is in flight is retained until the token is known, then
+    // follows the same explicit cancellation path as every other error.
+    let mut termination = TerminationSignals::new()?;
     let caller_directory = std::env::current_dir()?;
     let paths = targets
         .into_iter()
@@ -2172,10 +2302,26 @@ async fn run_wait(
         None => anyhow::bail!("workspace host disconnected while creating wait request"),
     };
 
-    let outcome = if interactive_attached {
-        wait_for_completion(&mut control, &endpoint, mouse_enabled, token).await
+    let outcome = if let Some(signal) = termination.received() {
+        Err(terminated(signal))
+    } else if interactive_attached {
+        wait_for_completion(
+            &mut control,
+            &endpoint,
+            mouse_enabled,
+            token,
+            &mut termination,
+        )
+        .await
     } else {
-        attach_for_wait(&endpoint, mouse_enabled, token, &mut control).await
+        attach_for_wait(
+            &endpoint,
+            mouse_enabled,
+            token,
+            &mut control,
+            &mut termination,
+        )
+        .await
     };
     if outcome.is_err() {
         let _ = control.send(&ClientRequest::CancelWait { token }).await;
@@ -2411,10 +2557,15 @@ async fn wait_for_completion(
     endpoint: &LocalEndpoint,
     mouse_enabled: bool,
     token: WaitToken,
+    termination: &mut TerminationSignals,
 ) -> Result<()> {
     loop {
         client.send(&ClientRequest::WaitStatus { token }).await?;
-        match client.recv().await? {
+        let response = tokio::select! {
+            response = client.recv() => response?,
+            signal = termination.recv() => return Err(terminated(signal)),
+        };
+        match response {
             Some(HostResponse::WaitState {
                 token: response_token,
                 status,
@@ -2423,7 +2574,8 @@ async fn wait_for_completion(
                 WaitStatus::Completed => return Ok(()),
                 WaitStatus::Cancelled { reason } => anyhow::bail!(reason),
                 WaitStatus::Pending { .. } if !interactive_attached => {
-                    return attach_for_wait(endpoint, mouse_enabled, token, client).await;
+                    return attach_for_wait(endpoint, mouse_enabled, token, client, termination)
+                        .await;
                 }
                 WaitStatus::Pending { .. } => {}
             },
@@ -2433,7 +2585,10 @@ async fn wait_for_completion(
             Some(_) => {}
             None => anyhow::bail!("workspace host stopped before wait request completed"),
         }
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        tokio::select! {
+            _ = tokio::time::sleep(Duration::from_millis(100)) => {}
+            signal = termination.recv() => return Err(terminated(signal)),
+        }
     }
 }
 
@@ -2520,8 +2675,66 @@ fn write_cwd_file(path: &Path, directory: &Path) -> Result<()> {
     let mut contents = directory.as_os_str().as_encoded_bytes().to_vec();
     #[cfg(unix)]
     contents.push(0);
-    fs::write(path, contents)
+    atomic_write_cwd_file(path, &contents)
         .with_context(|| format!("failed to write cwd file {}", path.display()))
+}
+
+#[cfg(unix)]
+fn atomic_write_cwd_file(path: &Path, contents: &[u8]) -> io::Result<()> {
+    static NEXT_TEMP: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    atomic_write_cwd_file_with(path, contents, || {
+        NEXT_TEMP.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    })
+}
+
+#[cfg(unix)]
+fn atomic_write_cwd_file_with(
+    path: &Path,
+    contents: &[u8],
+    mut next_sequence: impl FnMut() -> u64,
+) -> io::Result<()> {
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    path.file_name()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "cwd file has no name"))?;
+    for _ in 0..128 {
+        let sequence = next_sequence();
+        let temporary = parent.join(format!(".runyte-cwd-{}-{sequence}.tmp", std::process::id()));
+        let mut file = match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&temporary)
+        {
+            Ok(file) => file,
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error),
+        };
+        let result = (|| {
+            file.set_permissions(fs::Permissions::from_mode(0o600))?;
+            file.write_all(contents)?;
+            file.sync_all()?;
+            drop(file);
+            fs::rename(&temporary, path)
+        })();
+        if result.is_err() {
+            let _ = fs::remove_file(&temporary);
+        }
+        return result;
+    }
+    Err(io::Error::new(
+        io::ErrorKind::AlreadyExists,
+        "could not reserve a temporary cwd handoff file",
+    ))
+}
+
+#[cfg(not(unix))]
+fn atomic_write_cwd_file(path: &Path, contents: &[u8]) -> io::Result<()> {
+    fs::write(path, contents)
 }
 
 fn is_passive_pointer(input: &InputEvent) -> bool {
@@ -2942,8 +3155,8 @@ mod tests {
     #[cfg(unix)]
     use super::{
         AttachedClient, HostResponse, PointerBatcher, WaitStatus, WaitToken,
-        dispatch_host_key_or_text, recover_switched_attachment, send_active_response,
-        workspace_response_publishes_frame,
+        atomic_write_cwd_file_with, dispatch_host_key_or_text, recover_switched_attachment,
+        send_active_response, workspace_response_publishes_frame,
     };
     use super::{
         KeyRepeatDetector, is_passive_pointer, is_redraw_only_event, motion_repeat_dispatches,
@@ -3682,12 +3895,68 @@ mod tests {
         let output = root.join("cwd");
         let directory = root.join("directory with spaces");
 
+        fs::write(&output, b"stale").unwrap();
         write_cwd_file(&output, &directory).unwrap();
         let mut expected = directory.as_os_str().as_encoded_bytes().to_vec();
         #[cfg(unix)]
         expected.push(0);
         assert_eq!(fs::read(&output).unwrap(), expected);
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(
+            fs::metadata(&output).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        assert_eq!(fs::read_dir(&root).unwrap().count(), 1);
 
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cwd_file_retry_preserves_colliding_temporary_file() {
+        let root = std::env::temp_dir().join(format!(
+            "runyte-cwd-collision-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let collision = root.join(format!(".runyte-cwd-{}-41.tmp", std::process::id()));
+        fs::write(&collision, b"sentinel").unwrap();
+        let target = root.join("cwd");
+        let mut sequences = [41, 42].into_iter();
+
+        atomic_write_cwd_file_with(&target, b"replacement", || sequences.next().unwrap()).unwrap();
+
+        assert_eq!(fs::read(&target).unwrap(), b"replacement");
+        assert_eq!(fs::read(&collision).unwrap(), b"sentinel");
+        assert!(
+            !root
+                .join(format!(".runyte-cwd-{}-42.tmp", std::process::id()))
+                .exists()
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cwd_file_supports_a_near_name_max_target() {
+        let root = std::env::temp_dir().join(format!(
+            "runyte-cwd-long-name-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let target = root.join("x".repeat(250));
+
+        write_cwd_file(&target, Path::new("/tmp/destination")).unwrap();
+
+        assert!(target.is_file());
         fs::remove_dir_all(root).unwrap();
     }
 }

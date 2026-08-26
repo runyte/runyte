@@ -27,6 +27,8 @@ use std::{
 };
 
 use anyhow::{Context, Result, bail};
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
 
 const MAX_HELPER_STDERR_BYTES: usize = 1_024;
 const MAX_CLIPBOARD_TEXT_BYTES: usize = 64 * 1024 * 1024;
@@ -256,86 +258,104 @@ fn run_helper(
             Stdio::null()
         })
         .stderr(Stdio::piped());
+    #[cfg(unix)]
+    command.process_group(0);
     let mut child = command.spawn()?;
     let deadline = Instant::now() + timeout;
+    let outcome = (|| -> io::Result<BoundedCommandOutput> {
+        let written = match (stdin_text, child.stdin.take()) {
+            (Some(text), Some(mut stdin)) => {
+                let text = text.to_owned();
+                // The pipe closes when the thread drops it, which is what tells the
+                // helper the clipboard value is complete.
+                Some(detached(move || stdin.write_all(text.as_bytes())))
+            }
+            (Some(_), None) => {
+                return Err(io::Error::other("clipboard helper stdin is unavailable"));
+            }
+            (None, _) => None,
+        };
+        let captured = match (stdout_limit, child.stdout.take()) {
+            (Some(limit), Some(stdout)) => Some(detached(move || read_bounded(stdout, limit))),
+            (Some(_), None) => {
+                return Err(io::Error::other("clipboard helper stdout is unavailable"));
+            }
+            (None, _) => None,
+        };
+        let diagnostics = child.stderr.take().map(|stderr| {
+            detached(move || read_and_discard_after_limit(stderr, MAX_HELPER_STDERR_BYTES))
+        });
 
-    let written = match (stdin_text, child.stdin.take()) {
-        (Some(text), Some(mut stdin)) => {
-            let text = text.to_owned();
-            // The pipe closes when the thread drops it, which is what tells the
-            // helper the clipboard value is complete.
-            Some(detached(move || stdin.write_all(text.as_bytes())))
-        }
-        (Some(_), None) => {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(io::Error::other("clipboard helper stdin is unavailable"));
-        }
-        (None, _) => None,
-    };
-    let captured = match (stdout_limit, child.stdout.take()) {
-        (Some(limit), Some(stdout)) => Some(detached(move || read_bounded(stdout, limit))),
-        (Some(_), None) => {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(io::Error::other("clipboard helper stdout is unavailable"));
-        }
-        (None, _) => None,
-    };
-    let diagnostics = child.stderr.take().map(|stderr| {
-        detached(move || read_and_discard_after_limit(stderr, MAX_HELPER_STDERR_BYTES))
-    });
-
-    let Some(status) = wait_until(&mut child, deadline)? else {
-        let _ = child.kill();
-        let _ = child.wait();
-        return Err(io::Error::new(
-            io::ErrorKind::TimedOut,
-            format!(
-                "{program} did not exit within {} second(s)",
-                timeout.as_secs_f32()
-            ),
-        ));
-    };
-
-    if let Some(written) = written
-        && let Err(error) = collect(written, deadline)
-        && status.success()
-    {
-        // A helper that took less than the whole value yet reported success
-        // would otherwise leave a silently truncated clipboard behind. When it
-        // reported failure, its own diagnostics explain more than this does.
-        return Err(error);
-    }
-
-    let grace = deadline.max(Instant::now() + HELPER_PIPE_GRACE);
-    let stdout = match captured {
-        Some(captured) => collect(captured, grace)?.ok_or_else(|| {
-            io::Error::new(
+        let Some(status) = wait_until(&mut child, deadline)? else {
+            return Err(io::Error::new(
                 io::ErrorKind::TimedOut,
-                format!("{program} output was still open after it exited"),
-            )
-        })?,
-        None => Vec::new(),
-    };
+                format!(
+                    "{program} did not exit within {} second(s)",
+                    timeout.as_secs_f32()
+                ),
+            ));
+        };
 
-    // Diagnostics are only worth waiting for when there is a failure to
-    // explain, and even then only briefly: on the success path the pipe belongs
-    // to a selection owner that outlives this call by design.
-    let stderr = if status.success() {
-        Vec::new()
-    } else {
-        diagnostics
-            .and_then(|diagnostics| collect(diagnostics, grace).ok().flatten())
-            .unwrap_or_default()
-    };
+        if let Some(written) = written
+            && let Err(error) = collect(written, deadline)
+            && status.success()
+        {
+            // A helper that took less than the whole value yet reported success
+            // would otherwise leave a silently truncated clipboard behind. When it
+            // reported failure, its own diagnostics explain more than this does.
+            return Err(error);
+        }
 
-    Ok(BoundedCommandOutput {
-        success: status.success(),
-        code: status.code(),
-        stdout,
-        stderr,
-    })
+        let grace = deadline.max(Instant::now() + HELPER_PIPE_GRACE);
+        let stdout = match captured {
+            Some(captured) => collect(captured, grace)?.ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    format!("{program} output was still open after it exited"),
+                )
+            })?,
+            None => Vec::new(),
+        };
+
+        // Diagnostics are only worth waiting for when there is a failure to
+        // explain, and even then only briefly: on the success path the pipe belongs
+        // to a selection owner that outlives this call by design.
+        let stderr = if status.success() {
+            Vec::new()
+        } else {
+            diagnostics
+                .and_then(|diagnostics| collect(diagnostics, grace).ok().flatten())
+                .unwrap_or_default()
+        };
+
+        Ok(BoundedCommandOutput {
+            success: status.success(),
+            code: status.code(),
+            stdout,
+            stderr,
+        })
+    })();
+    if !matches!(&outcome, Ok(output) if output.success) {
+        terminate_helper(&mut child);
+    }
+    outcome
+}
+
+fn terminate_helper(child: &mut Child) {
+    #[cfg(unix)]
+    {
+        // Helpers get a private process group before spawn. Killing the group
+        // on timeout also retires descendants that inherited the helper's
+        // pipes; killing only the direct child can leave those descendants
+        // running and their reader threads parked indefinitely.
+        let process_group = -(child.id() as libc::pid_t);
+        // SAFETY: a negative PID addresses exactly the process group created
+        // for this child, and SIGKILL requires no userspace signal handler.
+        let _ = unsafe { libc::kill(process_group, libc::SIGKILL) };
+    }
+    #[cfg(not(unix))]
+    let _ = child.kill();
+    let _ = child.wait();
 }
 
 /// Runs `work` on its own thread and hands back a receiver for its result.
@@ -413,6 +433,7 @@ fn read_and_discard_after_limit(mut reader: impl Read, limit: usize) -> io::Resu
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     #[test]
     fn a_silent_failure_is_reported_with_its_exit_status() {
@@ -472,6 +493,64 @@ mod tests {
         .unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::TimedOut);
         assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn timing_out_a_helper_also_kills_its_descendants() {
+        let root = std::env::temp_dir().join(format!(
+            "runyte-clipboard-descendants-{}-{:?}",
+            std::process::id(),
+            Instant::now()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let marker = root.join("leaked");
+        let error = run_helper(
+            "sh",
+            &[
+                "-c".into(),
+                "(sleep 0.4; printf leaked > \"$1\") & wait".into(),
+                "sh".into(),
+                marker.as_os_str().to_owned(),
+            ],
+            None,
+            Some(64),
+            Duration::from_millis(100),
+        )
+        .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+        std::thread::sleep(Duration::from_millis(500));
+        assert!(!marker.exists(), "a timed-out helper descendant survived");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_successful_parent_with_stuck_output_cleans_up_its_descendant() {
+        let root = std::env::temp_dir().join(format!(
+            "runyte-clipboard-stuck-output-{}-{:?}",
+            std::process::id(),
+            Instant::now()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let marker = root.join("leaked");
+        let error = run_helper(
+            "sh",
+            &[
+                "-c".into(),
+                "(sleep 0.5; printf leaked > \"$1\") & exit 0".into(),
+                "sh".into(),
+                marker.as_os_str().to_owned(),
+            ],
+            None,
+            Some(64),
+            Duration::from_millis(100),
+        )
+        .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+        std::thread::sleep(Duration::from_millis(600));
+        assert!(!marker.exists(), "a stuck output descendant survived");
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[cfg(unix)]

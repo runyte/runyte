@@ -20,6 +20,8 @@ use std::{
 };
 
 use anyhow::{Context, Result};
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
 
 /// How much of a file is examined before calling it text.
 ///
@@ -332,12 +334,16 @@ pub fn launch(program: &str, path: &Path) -> Result<()> {
     let program = launch_program_for(program, OpenPlatform::CURRENT)?;
     let mut words = program.split_whitespace();
     let executable = words.next().context("no program was given")?;
-    let child = Command::new(executable)
+    let mut command = Command::new(executable);
+    command
         .args(words)
         .arg(path)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(Stdio::null());
+    #[cfg(unix)]
+    command.process_group(0);
+    let child = command
         .spawn()
         .with_context(|| format!("failed to run {executable}"))?;
     // Reaped on a thread of its own. Nothing waits on the exit status — the
@@ -563,5 +569,61 @@ mod tests {
         let mut cache = ProgramCache::load(None);
         cache.remember("feh").unwrap();
         assert_eq!(cache.programs(), ["feh"]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn launched_program_has_a_process_group_separate_from_the_editor() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = std::env::temp_dir().join(format!(
+            "runyte-detached-open-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let helper = root.join("record-group");
+        let output = root.join("group");
+        fs::write(
+            &helper,
+            "#!/bin/sh\nps -o pgid= -p $$ > \"$1.tmp\"\nmv \"$1.tmp\" \"$1\"\n",
+        )
+        .unwrap();
+        fs::set_permissions(&helper, fs::Permissions::from_mode(0o700)).unwrap();
+
+        launch(helper.to_str().unwrap(), &output).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let child_group = loop {
+            if let Ok(group) = fs::read_to_string(&output)
+                && let Ok(group) = group.trim().parse::<libc::pid_t>()
+            {
+                break group;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "detached helper did not report its process group"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        };
+        // SAFETY: `getpgrp` has no preconditions.
+        assert_ne!(child_group, unsafe { libc::getpgrp() });
+        loop {
+            // SAFETY: signal zero only probes whether the private process
+            // group still exists and cannot change child state.
+            if unsafe { libc::kill(-child_group, 0) } == -1
+                && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+            {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "detached helper was not reaped"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        fs::remove_dir_all(root).unwrap();
     }
 }
