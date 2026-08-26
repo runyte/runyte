@@ -952,6 +952,7 @@ impl Default for Config {
         themes.insert("nordfox".into(), nordfox_theme());
         themes.insert("nordfox-warm".into(), nordfox_warm_theme());
         themes.insert("terafox".into(), terafox_theme());
+        themes.insert("terafox-soft".into(), terafox_soft_theme());
         themes.extend(zenbones::themes());
         Self {
             editor: EditorConfig::default(),
@@ -1370,6 +1371,61 @@ fn terafox_theme() -> ThemeDefinition {
             ("variable", "#ebebeb"),
         ]),
     }
+}
+
+/// Terafox with the glare taken off its text.
+///
+/// Terafox's text is the brightest thing in the palette by a wide margin: its
+/// foreground reads at 13.1:1 against the background, its identifiers at
+/// 13.3:1, and its operators and punctuation at 10.9:1, where every hued colour
+/// the theme draws with sits between 3.5 and 10.0. Long stretches of ordinary
+/// text are therefore near-white on a dark teal ground. This variant brings
+/// that band down and changes nothing else — the background, the hued syntax
+/// colours, the accents, the selection grounds and the diff rows are all
+/// Terafox's.
+///
+/// The step is the one `nordbones-dark-soft` takes: 15 points of CIELAB
+/// lightness off each of the three neutral text values, which puts ordinary
+/// text at 8.6:1. Moving all three keeps Terafox's own ordering intact, so
+/// punctuation does not end up brighter than the identifiers it separates and
+/// the status line does not end up brighter than the buffer above it. The
+/// dimmed text stays where Terafox already pins it: it is at the boundary its
+/// selection grounds allow, and 8.6:1 is comfortably far enough above it to
+/// still read as ordinary text next to dimmed.
+///
+/// Terafox's pale cyans — `constructor` and `namespace` — are left brighter
+/// than the softened text. They are hued accents on sparse constructs rather
+/// than running text, and repainting them would be repainting Terafox.
+fn terafox_soft_theme() -> ThemeDefinition {
+    /// Terafox's three neutral text values and the softened value each takes.
+    const SOFTENED: [(&str, &str); 3] = [
+        // Ordinary buffer text.
+        ("#e6eaea", "#bcc0c0"),
+        // Identifiers, which Terafox paints a shade brighter still.
+        ("#ebebeb", "#c1c1c1"),
+        // Operators, punctuation, and the status line, which share one value.
+        ("#cbd9d8", "#a6b1b0"),
+    ];
+
+    fn soften(color: &str) -> Option<String> {
+        SOFTENED
+            .iter()
+            .find(|(from, _)| color.eq_ignore_ascii_case(from))
+            .map(|(_, to)| (*to).to_owned())
+    }
+
+    let mut theme = terafox_theme();
+    for color in theme.syntax.values_mut() {
+        if let Some(softened) = soften(color) {
+            *color = softened;
+        }
+    }
+    for role in [&mut theme.foreground, &mut theme.status_foreground] {
+        if let Some(softened) = soften(role) {
+            *role = softened;
+        }
+    }
+    theme
 }
 
 impl Default for GitConfig {
@@ -2226,6 +2282,7 @@ mod tests {
             "nordfox",
             "nordfox-warm",
             "terafox",
+            "terafox-soft",
         ];
         let light = ["latte", "paper"];
         for name in config.theme_names() {
@@ -2398,6 +2455,7 @@ mod tests {
                 "seoulbones-dark",
                 "seoulbones-light",
                 "terafox",
+                "terafox-soft",
                 "tokyobones-dark",
                 "tokyobones-light",
                 "vimbones-light",
@@ -2844,6 +2902,113 @@ mod tests {
         // Softer text drags the readable band down with it: the dimmed text
         // has to stay below the foreground and above both grounds at once,
         // which is the constraint that fixes the foreground at 7:1.
+        assert!(
+            contrast(soft.foreground, soft.jump_text_muted) >= 1.4,
+            "dimmed text is too close to ordinary text to read as dimmed"
+        );
+        for ground in [soft.selection, soft.selection_primary] {
+            assert!(
+                contrast(soft.jump_text_muted, ground) >= 3.0,
+                "dimmed text is unreadable on a selection ground"
+            );
+            assert!(
+                contrast(soft.foreground, ground) >= 4.5,
+                "ordinary text is unreadable on a selection ground"
+            );
+        }
+    }
+
+    #[test]
+    fn terafox_soft_is_terafox_with_softer_text() {
+        fn contrast(left: Color, right: Color) -> f64 {
+            let left = left.relative_luminance().unwrap();
+            let right = right.relative_luminance().unwrap();
+            (left.max(right) + 0.05) / (left.min(right) + 0.05)
+        }
+
+        let config = Config::default();
+        let base = config.resolve_theme("terafox").unwrap();
+        let soft = config.resolve_theme("terafox-soft").unwrap();
+
+        // The point of the variant is the text and nothing else, so everything
+        // that gives Terafox its identity has to survive untouched.
+        assert_eq!(soft.background, base.background);
+        assert_eq!(soft.muted, base.muted);
+        assert_eq!(soft.jump_text_muted, base.jump_text_muted);
+        assert_eq!(soft.selection, base.selection);
+        assert_eq!(soft.selection_primary, base.selection_primary);
+        assert_eq!(soft.accent, base.accent);
+        assert_eq!(soft.status_background, base.status_background);
+        assert_eq!(soft.diff_added, base.diff_added);
+        assert_eq!(soft.diff_removed, base.diff_removed);
+        assert_eq!(soft.diff_changed, base.diff_changed);
+
+        assert_eq!(soft.foreground, Color::Rgb(0xbc, 0xc0, 0xc0));
+        assert_eq!(soft.status_foreground, Color::Rgb(0xa6, 0xb1, 0xb0));
+        // All three of Terafox's neutral text values move together, so the
+        // palette's own ordering survives: identifiers stay a shade above
+        // ordinary text, and the operators and punctuation between them stay a
+        // shade below rather than becoming the brightest thing on the line.
+        assert_eq!(
+            soft.syntax_color(crate::syntax::Scope::named("variable").unwrap()),
+            Some(Color::Rgb(0xc1, 0xc1, 0xc1))
+        );
+        for scope in ["operator", "punctuation"] {
+            let scope = crate::syntax::Scope::named(scope).unwrap();
+            assert_eq!(
+                soft.syntax_color(scope),
+                Some(soft.status_foreground),
+                "{scope:?} did not follow the softened neutral text"
+            );
+        }
+        let identifiers = soft
+            .syntax_color(crate::syntax::Scope::named("variable").unwrap())
+            .unwrap();
+        let punctuation = soft
+            .syntax_color(crate::syntax::Scope::named("punctuation").unwrap())
+            .unwrap();
+        assert!(
+            contrast(identifiers, soft.background) > contrast(soft.foreground, soft.background),
+            "identifiers should stay above ordinary text, as in Terafox"
+        );
+        assert!(
+            contrast(punctuation, soft.background) < contrast(soft.foreground, soft.background),
+            "punctuation should stay below ordinary text, as in Terafox"
+        );
+        // Every hued colour Terafox draws code with is unchanged, including the
+        // pale cyans the softened text now sits below.
+        for scope in [
+            "keyword",
+            "string",
+            "type",
+            "function",
+            "comment",
+            "number",
+            "constructor",
+            "namespace",
+            "property",
+            "tag",
+        ] {
+            let scope = crate::syntax::Scope::named(scope).unwrap();
+            assert_eq!(
+                soft.syntax_color(scope),
+                base.syntax_color(scope),
+                "{scope:?} should be Terafox' own colour"
+            );
+        }
+
+        let text = contrast(soft.foreground, soft.background);
+        assert!(
+            (8.4..=8.8).contains(&text),
+            "softened text should sit near 8.6:1, not {text}"
+        );
+        assert!(
+            text < contrast(base.foreground, base.background) / 1.4,
+            "the variant has to be a visible step down from Terafox"
+        );
+        // Terafox already pins its dimmed text at the boundary its selection
+        // grounds allow, so the softening has to stop while ordinary text is
+        // still far enough above that fixed value to read as ordinary.
         assert!(
             contrast(soft.foreground, soft.jump_text_muted) >= 1.4,
             "dimmed text is too close to ordinary text to read as dimmed"

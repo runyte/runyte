@@ -2347,12 +2347,19 @@ Built-in themes are `dark`, `light`, `base16`, `paper`, `gruvbox`,
 Catppuccin flavours (`latte`, `frappe`, `macchiato`, and `mocha`), and the six
 Everforest variants (`everforest-dark-hard`, `everforest-dark-medium`,
 `everforest-dark-soft`, `everforest-light-hard`, `everforest-light-medium`,
-and `everforest-light-soft`), plus `nordfox`, `nordfox-warm`, and `terafox`.
+and `everforest-light-soft`), plus `nordfox`, `nordfox-warm`, `terafox`, and
+`terafox-soft`.
 The Fox themes use the canonical palettes from
 [Nightfox](https://github.com/EdenEast/nightfox.nvim): `nordfox` is a cool
 Nord-derived dark theme, `nordfox-warm` keeps that base while using brighter
 dimmed text with pink secondary and yellow primary selections, and `terafox`
-uses deep blue-green backgrounds and warm accents. `atom-one-light` follows
+uses deep blue-green backgrounds and warm accents. `terafox-soft` is Runyte's
+own variant rather than an upstream palette: it is `terafox` with the ordinary
+text brought down from 13.1:1 against the background to 8.6:1, for reading at
+length without the glare. Its identifiers, operators and punctuation move by the
+same amount so Terafox's own ordering survives, and everything else — the
+background, the hued syntax colours, the accents, the selections, and the diff
+rows — is Terafox unchanged. `atom-one-light` follows
 Atom's official
 [One Light UI](https://github.com/atom/one-light-ui) and companion
 [One Light syntax](https://github.com/atom/one-light-syntax) palettes.

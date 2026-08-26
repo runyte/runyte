@@ -1336,6 +1336,7 @@ mod tests {
                 "seoulbones-dark",
                 "seoulbones-light",
                 "terafox",
+                "terafox-soft",
                 "tokyobones-dark",
                 "tokyobones-light",
                 "vimbones-light",
