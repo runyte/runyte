@@ -22,6 +22,7 @@ readme = "README.md"
 # bare `README.md` would also match a nested development-context README.
 include = [
     "/src/**",
+    "!/src/app/tests/**",
     "/docs/**",
     "/licenses/**",
     "/logo/ascii/logo.txt",

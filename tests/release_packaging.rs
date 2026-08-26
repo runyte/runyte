@@ -1,6 +1,22 @@
 // SPDX-License-Identifier: MPL-2.0
 
-use std::{fs, path::Path, process::Command};
+use std::{collections::HashSet, fs, path::Path, process::Command};
+
+fn repository_files_below(root: &Path, directory: &Path, files: &mut Vec<String>) {
+    for entry in fs::read_dir(directory).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            repository_files_below(root, &path, files);
+        } else {
+            files.push(
+                path.strip_prefix(root)
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/"),
+            );
+        }
+    }
+}
 
 #[test]
 fn cargo_metadata_declares_the_editor_binary() {
@@ -37,6 +53,88 @@ fn cargo_metadata_declares_the_editor_binary() {
         .collect::<Vec<_>>();
     binaries.sort_unstable();
     assert_eq!(binaries, ["runyte"]);
+}
+
+#[test]
+fn published_crate_contains_the_runtime_inputs_and_not_repository_context() {
+    let output = Command::new(env!("CARGO"))
+        .args(["package", "--list", "--locked", "--allow-dirty"])
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let files = String::from_utf8(output.stdout).unwrap();
+    let files = files.lines().collect::<HashSet<_>>();
+    for required in [
+        "Cargo.lock",
+        "Cargo.toml",
+        "LICENSE",
+        "NOTICE",
+        "README.md",
+        "THIRD_PARTY_NOTICES.md",
+        "config.example.yaml",
+        "logo/ascii/logo.txt",
+    ] {
+        assert!(files.contains(required), "crate omits {required}");
+    }
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut runtime_sources = Vec::new();
+    repository_files_below(root, &root.join("src"), &mut runtime_sources);
+    runtime_sources.retain(|path| !path.starts_with("src/app/tests/"));
+    repository_files_below(root, &root.join("docs"), &mut runtime_sources);
+    repository_files_below(root, &root.join("licenses"), &mut runtime_sources);
+    for required in runtime_sources {
+        assert!(files.contains(required.as_str()), "crate omits {required}");
+    }
+    assert!(
+        files.iter().all(|path| !path.starts_with("context/")),
+        "development context leaked into the crate: {files:?}"
+    );
+    assert!(
+        files.iter().all(|path| !path.starts_with("tests/")),
+        "repository-only tests leaked into the crate: {files:?}"
+    );
+    assert!(
+        files.iter().all(|path| !path.starts_with("src/app/tests/")),
+        "in-source repository tests leaked into the crate: {files:?}"
+    );
+}
+
+#[test]
+fn ci_enforces_the_committed_dependency_graph() {
+    let workflow =
+        fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join(".github/workflows/ci.yml"))
+            .unwrap();
+    let workflow: serde_yaml::Value = serde_yaml::from_str(&workflow).unwrap();
+    let jobs = workflow["jobs"].as_mapping().unwrap();
+    for (job, command) in [
+        (
+            "gates",
+            "cargo clippy --all-targets --locked -- -D warnings",
+        ),
+        ("gates", "cargo test --locked"),
+        ("macos", "cargo test --locked"),
+        (
+            "performance",
+            "cargo test --release --locked --test performance -- --ignored --test-threads=1",
+        ),
+        ("floor", "cargo build --release --locked"),
+        ("msrv", "cargo +1.88 check --all-targets --locked"),
+    ] {
+        let steps = jobs[serde_yaml::Value::from(job)]["steps"]
+            .as_sequence()
+            .unwrap();
+        assert!(
+            steps
+                .iter()
+                .any(|step| step["run"].as_str() == Some(command)),
+            "CI job {job} omits locked command: {command}"
+        );
+    }
 }
 
 #[test]
