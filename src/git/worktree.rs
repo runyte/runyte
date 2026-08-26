@@ -126,6 +126,7 @@ fn decode_path(value: &[u8]) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
 
     #[test]
     fn parses_linked_detached_locked_prunable_bare_and_non_utf8_paths() {
@@ -152,7 +153,7 @@ mod tests {
         assert!(
             worktrees
                 .iter()
-                .all(|worktree| worktree.common_dir == PathBuf::from("/common"))
+                .all(|worktree| worktree.common_dir == Path::new("/common"))
         );
     }
 

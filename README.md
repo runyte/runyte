@@ -1,22 +1,26 @@
 # Runyte
 
-Runyte is a fast, feature-rich modal terminal editor written in Rust. It brings
-together workflows that usually live in four separate tools:
+Runyte is an editor-first, agent-ready terminal workspace for software
+development. It combines modal text editing, file management, terminal
+multiplexing, a Git interface with worktree support, and persistent sessions
+with detachable clients.
 
-- a modal text editor such as Neovim, Helix, or Emacs;
-- a terminal file manager such as nnn or Yazi;
-- a terminal multiplexer such as tmux or Zellij; and
-- a Git interface such as Lazygit.
+At its core is a modal text editor written in Rust, with a selection-first
+editing model inspired by Helix. Extended selection is explicit: `v` enters
+Select mode, where movement extends the selection. Common motions also have
+Vim-style aliases.
 
-Runyte does not aim to beat each specialized tool at everything it does. It is
-for people who would rather edit files, reshape directories, run interactive
-programs, and work with Git inside one coherent interface—with one keybinding
-language, one clipboard model, and one theme.
+Agent-ready does not mean agent-dependent. Terminal-based coding agents run in
+ordinary integrated terminal sessions, Git worktrees provide isolated
+workspaces for parallel tasks, and persistent mode keeps unsaved buffers,
+editor state, language servers, and terminal processes alive while its TUI
+client is detached. Runyte does not bundle an AI agent or require one.
 
-Its editing model is selection-first and inspired by Helix: move to select,
-then act. The keymap deliberately differs where Runyte has chosen another
-workflow, especially for search and macros. Common motions also have Vim-style
-aliases.
+These workflows would normally be divided among tools such as Helix, Yazi,
+Zellij, and Lazygit. Runyte brings them together in one coherent interface—with
+one keybinding language, one clipboard model, and one theme. It does not aim to
+beat every specialized tool at everything it does; its distinction is how the
+parts work together. Use the entire workspace, or simply use the editor.
 
 ## What Runyte brings together
 

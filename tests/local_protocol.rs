@@ -76,7 +76,11 @@ impl Drop for ChildGuard {
 fn spawn_in_pty(command: &mut Command) -> (Child, File) {
     let mut master = -1;
     let mut slave = -1;
-    let size = libc::winsize {
+    // `openpty` takes `*mut` for both of the trailing arguments on Apple
+    // platforms and `*const` on Linux. Raw `*mut` pointers coerce to either,
+    // so one spelling compiles on both. Taking `&size` instead builds only on
+    // Linux, and clippy will suggest exactly that if given a reference here.
+    let mut size = libc::winsize {
         ws_row: 24,
         ws_col: 80,
         ws_xpixel: 0,
@@ -89,8 +93,8 @@ fn spawn_in_pty(command: &mut Command) -> (Child, File) {
             &mut master,
             &mut slave,
             std::ptr::null_mut(),
-            std::ptr::null(),
-            &size,
+            std::ptr::null_mut(),
+            &raw mut size,
         )
     };
     assert_eq!(
