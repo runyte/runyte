@@ -1144,9 +1144,7 @@ mod tests {
         let encoded = serde_json::to_string(&wire_theme).unwrap();
         let decoded: frame::Theme = serde_json::from_str(&encoded).unwrap();
         let round_trip: crate::config::Theme = decoded.into();
-        assert_eq!(round_trip.error, theme.error);
-        assert_eq!(round_trip.warning, theme.warning);
-        assert_eq!(round_trip.info, theme.info);
+        assert_eq!(round_trip, theme);
 
         let geometry = crate::app::FrameGeometry {
             screen: crate::layout::Rect {

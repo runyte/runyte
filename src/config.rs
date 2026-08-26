@@ -12,6 +12,11 @@ use serde::{Deserialize, Serialize};
 use crate::command::GrammarKind;
 use crate::notification::DEFAULT_HISTORY_LIMIT;
 
+mod catppuccin;
+mod core_themes;
+mod everforest;
+mod nightfox;
+mod one_off;
 mod zenbones;
 
 #[derive(Clone, Debug, Deserialize)]
@@ -169,7 +174,7 @@ pub struct EditorConfig {
     pub command_mode_dim: bool,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 #[serde(default)]
 pub struct ThemeDefinition {
     pub background: String,
@@ -205,7 +210,12 @@ pub struct ThemeDefinition {
     /// `selection_primary`, so existing themes agree with the primary search
     /// selection.
     pub fuzzy_match_primary: Option<String>,
+    /// Compatibility-only status ground. Both bundled frontends deliberately
+    /// render the global status line on `background`, but this public field is
+    /// retained for downstream Rust and serialized-theme compatibility.
     pub status_background: String,
+    /// Compatibility-only status text colour. Both bundled frontends use
+    /// `foreground` outside the mode label; see `status_background`.
     pub status_foreground: String,
     pub error: String,
     /// Warning notifications. Older themes fall back to `change_modified`.
@@ -368,7 +378,11 @@ pub struct Theme {
     pub selection_primary: Color,
     pub fuzzy_match_secondary: Color,
     pub fuzzy_match_primary: Color,
+    /// Compatibility-only resolved status ground; bundled frontends do not
+    /// render with this field.
     pub status_background: Color,
+    /// Compatibility-only resolved status text colour; bundled frontends do
+    /// not render with this field.
     pub status_foreground: Color,
     pub error: Color,
     pub warning: Color,
@@ -444,516 +458,25 @@ impl Theme {
     }
 }
 
-/// Catppuccin's shared palette roles, adapted to Runyte's presentation roles.
-///
-/// The four flavours intentionally share this mapping so a syntax or editor
-/// role does not change meaning when someone moves between them. Selection and
-/// diff backgrounds are palette-local tints because Runyte fills whole cells
-/// for those roles, while Catppuccin's accent colours are designed as text.
-struct CatppuccinPalette {
-    base: &'static str,
-    mantle: &'static str,
-    text: &'static str,
-    overlay0: &'static str,
-    overlay2: &'static str,
-    blue: &'static str,
-    sapphire: &'static str,
-    sky: &'static str,
-    teal: &'static str,
-    green: &'static str,
-    yellow: &'static str,
-    peach: &'static str,
-    red: &'static str,
-    mauve: &'static str,
-    lavender: &'static str,
-    jump_label_primary: &'static str,
-    jump_label_secondary: &'static str,
-    cursor_select: &'static str,
-    selection: &'static str,
-    selection_primary: &'static str,
-    diff_added: &'static str,
-    diff_removed: &'static str,
-    diff_changed: &'static str,
-}
-
-fn catppuccin_theme(palette: CatppuccinPalette) -> ThemeDefinition {
-    ThemeDefinition {
-        background: palette.base.into(),
-        foreground: palette.text.into(),
-        muted: palette.overlay0.into(),
-        jump_text_muted: None,
-        accent: palette.blue.into(),
-        cursor_normal: Some(palette.blue.into()),
-        cursor_insert: Some(palette.red.into()),
-        cursor_select: Some(palette.cursor_select.into()),
-        cursor_command: Some(palette.mauve.into()),
-        directory: Some(palette.blue.into()),
-        selection: palette.selection.into(),
-        selection_primary: Some(palette.selection_primary.into()),
-        fuzzy_match_secondary: None,
-        fuzzy_match_primary: None,
-        status_background: palette.mantle.into(),
-        status_foreground: palette.text.into(),
-        error: palette.red.into(),
-        warning: Some(palette.peach.into()),
-        info: Some(palette.green.into()),
-        jump_label_immediate: Some(palette.red.into()),
-        jump_label_primary: palette.jump_label_primary.into(),
-        jump_label_secondary: palette.jump_label_secondary.into(),
-        change_added: Some(palette.green.into()),
-        change_modified: Some(palette.yellow.into()),
-        change_removed: Some(palette.red.into()),
-        diff_added: Some(palette.diff_added.into()),
-        diff_removed: Some(palette.diff_removed.into()),
-        diff_changed: Some(palette.diff_changed.into()),
-        syntax: syntax_theme(&[
-            ("attribute", palette.yellow),
-            ("comment", palette.overlay0),
-            ("constant", palette.peach),
-            ("constructor", palette.sapphire),
-            ("function", palette.blue),
-            ("keyword", palette.mauve),
-            ("label", palette.sapphire),
-            ("namespace", palette.teal),
-            ("number", palette.peach),
-            ("operator", palette.sky),
-            ("property", palette.lavender),
-            ("punctuation", palette.overlay2),
-            ("string", palette.green),
-            ("tag", palette.mauve),
-            ("type", palette.yellow),
-            ("variable", palette.text),
-        ]),
+fn built_in_themes() -> HashMap<String, ThemeDefinition> {
+    let mut themes = HashMap::new();
+    let registered = core_themes::themes()
+        .chain(catppuccin::themes())
+        .chain(everforest::themes())
+        .chain(one_off::themes())
+        .chain(nightfox::themes())
+        .chain(zenbones::themes());
+    for (name, theme) in registered {
+        assert!(
+            themes.insert(name.clone(), theme).is_none(),
+            "built-in theme '{name}' is registered by more than one family"
+        );
     }
+    themes
 }
 
 impl Default for Config {
     fn default() -> Self {
-        let mut themes = HashMap::new();
-        let base16 = ThemeDefinition {
-            // Base16's comment grey is dark enough that dimmed text on either
-            // selection ground was all but invisible — 1.08:1 on the blue one.
-            // The grounds themselves stand off the background well, so only
-            // the dimmed text moves.
-            jump_text_muted: Some("#a3a3a3".into()),
-            cursor_insert: Some("#ab4642".into()),
-            cursor_select: Some("#dc9656".into()),
-            cursor_command: Some("#ba8baf".into()),
-            directory: Some("#7cafc2".into()),
-            selection: "#365864".into(),
-            selection_primary: Some("#5a3b2a".into()),
-            jump_label_immediate: Some("#e65c57".into()),
-            ..ThemeDefinition::default()
-        };
-        themes.insert("base16".into(), base16);
-        // `dark` and `light` are the two themes people reach for by name, so
-        // they are neutral by design: no palette identity of their own, just a
-        // legible pair that reads correctly on a dark and on a light terminal.
-        themes.insert(
-            "dark".into(),
-            ThemeDefinition {
-                background: "#16181d".into(),
-                foreground: "#d6dae0".into(),
-                muted: "#6b7280".into(),
-                jump_text_muted: None,
-                accent: "#6cb6ff".into(),
-                cursor_normal: None,
-                cursor_insert: Some("#f87171".into()),
-                cursor_select: Some("#f0a868".into()),
-                cursor_command: Some("#d2a8ff".into()),
-                directory: Some("#6cb6ff".into()),
-                selection: "#34506a".into(),
-                selection_primary: Some("#5a3f2b".into()),
-                fuzzy_match_secondary: None,
-                fuzzy_match_primary: None,
-                status_background: "#21242b".into(),
-                status_foreground: "#d6dae0".into(),
-                error: "#f87171".into(),
-                warning: Some("#f0a868".into()),
-                info: Some("#8ddb8c".into()),
-                jump_label_immediate: Some("#f87171".into()),
-                jump_label_primary: JUMP_LABEL_DARK_PRIMARY.into(),
-                jump_label_secondary: JUMP_LABEL_DARK_SECONDARY.into(),
-                change_added: Some("#8ddb8c".into()),
-                change_modified: Some("#f0a868".into()),
-                change_removed: Some("#f87171".into()),
-                diff_added: Some("#16281c".into()),
-                diff_removed: Some("#2b1a1e".into()),
-                diff_changed: Some("#2a2318".into()),
-                syntax: syntax_theme(&[
-                    ("attribute", "#d2a8ff"),
-                    ("comment", "#6b7280"),
-                    ("constant", "#f0a868"),
-                    ("constructor", "#6cb6ff"),
-                    ("function", "#6cb6ff"),
-                    ("keyword", "#d2a8ff"),
-                    ("label", "#f0a868"),
-                    ("namespace", "#7ee0c0"),
-                    ("number", "#f0a868"),
-                    ("operator", "#d6dae0"),
-                    ("punctuation", "#9aa3af"),
-                    ("string", "#8ddb8c"),
-                    ("tag", "#f87171"),
-                    ("type", "#7ee0c0"),
-                    ("variable", "#d6dae0"),
-                ]),
-            },
-        );
-        themes.insert(
-            "light".into(),
-            ThemeDefinition {
-                background: "#fbfbfa".into(),
-                foreground: "#24292f".into(),
-                muted: "#6e7781".into(),
-                jump_text_muted: Some("#a8adb2".into()),
-                accent: "#0550ae".into(),
-                cursor_normal: Some("#0550ae".into()),
-                cursor_insert: Some("#cf222e".into()),
-                cursor_select: Some("#953800".into()),
-                cursor_command: Some("#8250df".into()),
-                directory: Some("#0550ae".into()),
-                selection: "#cfe3ff".into(),
-                selection_primary: Some("#ffe2c2".into()),
-                fuzzy_match_secondary: None,
-                fuzzy_match_primary: None,
-                status_background: "#e8eaed".into(),
-                status_foreground: "#24292f".into(),
-                error: "#b3261e".into(),
-                warning: Some("#953800".into()),
-                info: Some("#0a6b26".into()),
-                jump_label_immediate: Some("#b3261e".into()),
-                jump_label_primary: JUMP_LABEL_LIGHT_PRIMARY.into(),
-                jump_label_secondary: JUMP_LABEL_LIGHT_SECONDARY.into(),
-                change_added: Some("#0a6b26".into()),
-                change_modified: Some("#953800".into()),
-                change_removed: Some("#b3261e".into()),
-                diff_added: Some("#e3f5e6".into()),
-                diff_removed: Some("#fce4e4".into()),
-                diff_changed: Some("#fdf0dc".into()),
-                syntax: syntax_theme(&[
-                    ("attribute", "#8250df"),
-                    ("comment", "#6e7781"),
-                    ("constant", "#953800"),
-                    ("constructor", "#0550ae"),
-                    ("function", "#0550ae"),
-                    ("keyword", "#8250df"),
-                    ("label", "#953800"),
-                    ("namespace", "#0f6b5c"),
-                    ("number", "#953800"),
-                    ("operator", "#24292f"),
-                    ("punctuation", "#57606a"),
-                    ("string", "#0a6b26"),
-                    ("tag", "#b3261e"),
-                    ("type", "#0f6b5c"),
-                    ("variable", "#24292f"),
-                ]),
-            },
-        );
-        themes.insert(
-            "paper".into(),
-            ThemeDefinition {
-                background: "#eeeeee".into(),
-                foreground: "#303030".into(),
-                muted: "#808080".into(),
-                jump_text_muted: Some("#aaaaaa".into()),
-                accent: "#005faf".into(),
-                cursor_normal: Some("#005faf".into()),
-                cursor_insert: Some("#af0000".into()),
-                cursor_select: Some("#d75f00".into()),
-                cursor_command: Some("#8700af".into()),
-                directory: Some("#005faf".into()),
-                selection: "#afd7ff".into(),
-                selection_primary: Some("#ffd7af".into()),
-                fuzzy_match_secondary: None,
-                fuzzy_match_primary: None,
-                status_background: "#d0d0d0".into(),
-                status_foreground: "#202020".into(),
-                error: "#af0000".into(),
-                warning: Some("#d75f00".into()),
-                info: Some("#005f00".into()),
-                jump_label_immediate: Some("#af0000".into()),
-                jump_label_primary: JUMP_LABEL_LIGHT_PRIMARY.into(),
-                jump_label_secondary: JUMP_LABEL_LIGHT_SECONDARY.into(),
-                change_added: Some("#005f00".into()),
-                change_modified: Some("#d75f00".into()),
-                change_removed: Some("#af0000".into()),
-                diff_added: Some("#dcecdc".into()),
-                diff_removed: Some("#f2dcdc".into()),
-                diff_changed: Some("#f0e6d2".into()),
-                syntax: syntax_theme(&[
-                    ("attribute", "#8700af"),
-                    ("comment", "#808080"),
-                    ("constant", "#d75f00"),
-                    ("constructor", "#005faf"),
-                    ("function", "#005faf"),
-                    ("keyword", "#8700af"),
-                    ("label", "#d75f00"),
-                    ("namespace", "#875f00"),
-                    ("number", "#d75f00"),
-                    ("operator", "#303030"),
-                    ("punctuation", "#606060"),
-                    ("string", "#005f00"),
-                    ("tag", "#af0000"),
-                    ("type", "#875f00"),
-                    ("variable", "#303030"),
-                ]),
-            },
-        );
-        themes.insert(
-            "gruvbox".into(),
-            ThemeDefinition {
-                background: "#282828".into(),
-                foreground: "#ebdbb2".into(),
-                muted: "#928374".into(),
-                jump_text_muted: None,
-                accent: "#fabd2f".into(),
-                cursor_normal: None,
-                cursor_insert: Some("#fb4934".into()),
-                cursor_select: Some("#fe8019".into()),
-                cursor_command: Some("#d3869b".into()),
-                directory: Some("#83a598".into()),
-                selection: "#3c5154".into(),
-                selection_primary: Some("#66502f".into()),
-                fuzzy_match_secondary: None,
-                fuzzy_match_primary: None,
-                status_background: "#3c3836".into(),
-                status_foreground: "#ebdbb2".into(),
-                error: "#fb4934".into(),
-                warning: Some("#fe8019".into()),
-                info: Some("#b8bb26".into()),
-                jump_label_immediate: Some("#ff7b6b".into()),
-                jump_label_primary: JUMP_LABEL_DARK_PRIMARY.into(),
-                jump_label_secondary: JUMP_LABEL_DARK_SECONDARY.into(),
-                change_added: Some("#b8bb26".into()),
-                change_modified: Some("#fabd2f".into()),
-                change_removed: Some("#fb4934".into()),
-                diff_added: Some("#26301f".into()),
-                diff_removed: Some("#3a2424".into()),
-                diff_changed: Some("#38301c".into()),
-                syntax: syntax_theme(&[
-                    ("attribute", "#fabd2f"),
-                    ("comment", "#928374"),
-                    ("constant", "#d3869b"),
-                    ("constructor", "#8ec07c"),
-                    ("function", "#b8bb26"),
-                    ("keyword", "#fb4934"),
-                    ("label", "#fe8019"),
-                    ("namespace", "#fabd2f"),
-                    ("number", "#d3869b"),
-                    ("operator", "#ebdbb2"),
-                    ("punctuation", "#a89984"),
-                    ("string", "#b8bb26"),
-                    ("tag", "#fb4934"),
-                    ("type", "#fabd2f"),
-                    ("variable", "#ebdbb2"),
-                ]),
-            },
-        );
-        for (name, palette) in [
-            (
-                "everforest-dark-hard",
-                EverforestBackground {
-                    background: "#272e33",
-                    status_background: "#2e383c",
-                    dimmed_text: Some("#909c94"),
-                    selection: "#2a4f66",
-                    selection_primary: "#5a3e22",
-                    diff_added: "#3c4841",
-                    diff_removed: "#493b40",
-                    diff_changed: "#45443c",
-                },
-            ),
-            (
-                "everforest-dark-medium",
-                EverforestBackground {
-                    background: "#2d353b",
-                    status_background: "#343f44",
-                    dimmed_text: Some("#99a49d"),
-                    selection: "#30566e",
-                    selection_primary: "#60432a",
-                    diff_added: "#425047",
-                    diff_removed: "#514045",
-                    diff_changed: "#4d4c43",
-                },
-            ),
-            (
-                "everforest-dark-soft",
-                EverforestBackground {
-                    background: "#333c43",
-                    status_background: "#3a464c",
-                    dimmed_text: Some("#9da8a0"),
-                    selection: "#265a70",
-                    selection_primary: "#563a1e",
-                    diff_added: "#48584e",
-                    diff_removed: "#59464c",
-                    diff_changed: "#55544a",
-                },
-            ),
-        ] {
-            themes.insert(name.into(), everforest_dark(palette));
-        }
-        for (name, palette) in [
-            (
-                "everforest-light-hard",
-                EverforestBackground {
-                    background: "#fffbef",
-                    status_background: "#f8f5e4",
-                    dimmed_text: None,
-                    selection: "#b4eedc",
-                    selection_primary: "#ffe7a8",
-                    diff_added: "#f3f5d9",
-                    diff_removed: "#ffe7de",
-                    diff_changed: "#fef2d5",
-                },
-            ),
-            (
-                "everforest-light-medium",
-                EverforestBackground {
-                    background: "#fdf6e3",
-                    status_background: "#f4f0d9",
-                    dimmed_text: None,
-                    selection: "#b0ead8",
-                    selection_primary: "#fde3a4",
-                    diff_added: "#f0f1d2",
-                    diff_removed: "#fde3da",
-                    diff_changed: "#faedcd",
-                },
-            ),
-            (
-                "everforest-light-soft",
-                EverforestBackground {
-                    background: "#f3ead3",
-                    status_background: "#eae4ca",
-                    dimmed_text: None,
-                    selection: "#b7e6d5",
-                    selection_primary: "#f9dfa6",
-                    diff_added: "#e5e6c5",
-                    diff_removed: "#fadbd0",
-                    diff_changed: "#f1e4c5",
-                },
-            ),
-        ] {
-            themes.insert(name.into(), everforest_light(palette));
-        }
-        themes.insert(
-            "latte".into(),
-            catppuccin_theme(CatppuccinPalette {
-                base: "#eff1f5",
-                mantle: "#e6e9ef",
-                text: "#4c4f69",
-                overlay0: "#9ca0b0",
-                overlay2: "#7c7f93",
-                blue: "#1e66f5",
-                sapphire: "#209fb5",
-                sky: "#04a5e5",
-                teal: "#179299",
-                green: "#40a02b",
-                yellow: "#df8e1d",
-                peach: "#fe640b",
-                red: "#d20f39",
-                mauve: "#8839ef",
-                lavender: "#7287fd",
-                jump_label_primary: JUMP_LABEL_LIGHT_PRIMARY,
-                jump_label_secondary: JUMP_LABEL_LIGHT_SECONDARY,
-                cursor_select: "#c45500",
-                selection: "#c3d4f3",
-                selection_primary: "#f6d3bd",
-                diff_added: "#e3eed8",
-                diff_removed: "#f4d9df",
-                diff_changed: "#f5e3cf",
-            }),
-        );
-        themes.insert(
-            "frappe".into(),
-            catppuccin_theme(CatppuccinPalette {
-                base: "#303446",
-                mantle: "#292c3c",
-                text: "#c6d0f5",
-                overlay0: "#737994",
-                overlay2: "#949cbb",
-                blue: "#8caaee",
-                sapphire: "#85c1dc",
-                sky: "#99d1db",
-                teal: "#81c8be",
-                green: "#a6d189",
-                yellow: "#e5c890",
-                peach: "#ef9f76",
-                red: "#e78284",
-                mauve: "#ca9ee6",
-                lavender: "#babbf1",
-                jump_label_primary: JUMP_LABEL_DARK_PRIMARY,
-                jump_label_secondary: JUMP_LABEL_DARK_SECONDARY,
-                cursor_select: "#ef9f76",
-                selection: "#414c66",
-                selection_primary: "#59473e",
-                diff_added: "#35463d",
-                diff_removed: "#4b373d",
-                diff_changed: "#4a4038",
-            }),
-        );
-        themes.insert(
-            "macchiato".into(),
-            catppuccin_theme(CatppuccinPalette {
-                base: "#24273a",
-                mantle: "#1e2030",
-                text: "#cad3f5",
-                overlay0: "#6e738d",
-                overlay2: "#939ab7",
-                blue: "#8aadf4",
-                sapphire: "#7dc4e4",
-                sky: "#91d7e3",
-                teal: "#8bd5ca",
-                green: "#a6da95",
-                yellow: "#eed49f",
-                peach: "#f5a97f",
-                red: "#ed8796",
-                mauve: "#c6a0f6",
-                lavender: "#b7bdf8",
-                jump_label_primary: JUMP_LABEL_DARK_PRIMARY,
-                jump_label_secondary: JUMP_LABEL_DARK_SECONDARY,
-                cursor_select: "#f5a97f",
-                selection: "#35405b",
-                selection_primary: "#504036",
-                diff_added: "#293d35",
-                diff_removed: "#402e36",
-                diff_changed: "#40372f",
-            }),
-        );
-        themes.insert(
-            "mocha".into(),
-            catppuccin_theme(CatppuccinPalette {
-                base: "#1e1e2e",
-                mantle: "#181825",
-                text: "#cdd6f4",
-                overlay0: "#6c7086",
-                overlay2: "#9399b2",
-                blue: "#89b4fa",
-                sapphire: "#74c7ec",
-                sky: "#89dceb",
-                teal: "#94e2d5",
-                green: "#a6e3a1",
-                yellow: "#f9e2af",
-                peach: "#fab387",
-                red: "#f38ba8",
-                mauve: "#cba6f7",
-                lavender: "#b4befe",
-                jump_label_primary: JUMP_LABEL_DARK_PRIMARY,
-                jump_label_secondary: JUMP_LABEL_DARK_SECONDARY,
-                cursor_select: "#fab387",
-                selection: "#2e3d59",
-                selection_primary: "#49392f",
-                diff_added: "#23362d",
-                diff_removed: "#38272f",
-                diff_changed: "#382f28",
-            }),
-        );
-        themes.insert("atom-one-light".into(), atom_one_light_theme());
-        themes.insert("github-light".into(), github_light_theme());
-        themes.insert("nordfox".into(), nordfox_theme());
-        themes.insert("nordfox-warm".into(), nordfox_warm_theme());
-        themes.insert("terafox".into(), terafox_theme());
-        themes.insert("terafox-soft".into(), terafox_soft_theme());
-        themes.extend(zenbones::themes());
         Self {
             editor: EditorConfig::default(),
             workspace: WorkspaceConfig::default(),
@@ -961,471 +484,9 @@ impl Default for Config {
             git: GitConfig::default(),
             notifications: NotificationsConfig::default(),
             theme: None,
-            themes,
+            themes: built_in_themes(),
         }
     }
-}
-
-/// Runyte roles mapped onto projekt0n's GitHub Light palettes and syntax spec.
-///
-/// Source:
-/// <https://github.com/projekt0n/github-nvim-theme/blob/c106c9472154d6b2c74b74565616b877ae8ed31d/lua/github-theme/palette/github_light.lua>
-fn github_light_theme() -> ThemeDefinition {
-    ThemeDefinition {
-        background: "#ffffff".into(),
-        foreground: "#1f2328".into(),
-        muted: "#6e7781".into(),
-        jump_text_muted: Some("#afb8c1".into()),
-        accent: "#0969da".into(),
-        cursor_normal: Some("#0969da".into()),
-        cursor_insert: Some("#d1242f".into()),
-        cursor_select: Some("#bc4c00".into()),
-        cursor_command: Some("#6639ba".into()),
-        directory: Some("#6639ba".into()),
-        selection: "#dae9f9".into(),
-        selection_primary: Some("#e1d1b3".into()),
-        fuzzy_match_secondary: Some("#c2e2ff".into()),
-        fuzzy_match_primary: Some("#e1d1b3".into()),
-        status_background: "#5094e4".into(),
-        status_foreground: "#f6f8fa".into(),
-        error: "#d1242f".into(),
-        warning: Some("#9a6700".into()),
-        info: Some("#0969da".into()),
-        jump_label_immediate: Some("#d1242f".into()),
-        jump_label_primary: JUMP_LABEL_LIGHT_PRIMARY.into(),
-        jump_label_secondary: JUMP_LABEL_LIGHT_SECONDARY.into(),
-        change_added: Some("#1a7f37".into()),
-        change_modified: Some("#9a6700".into()),
-        change_removed: Some("#d1242f".into()),
-        diff_added: Some("#b8d0bb".into()),
-        diff_removed: Some("#e4b7be".into()),
-        diff_changed: Some("#d8cab3".into()),
-        syntax: syntax_theme(&[
-            ("attribute", "#0550ae"),
-            ("comment", "#57606a"),
-            ("constant", "#0550ae"),
-            ("constructor", "#953800"),
-            ("function", "#6639ba"),
-            ("keyword", "#cf222e"),
-            ("label", "#cf222e"),
-            ("namespace", "#953800"),
-            ("number", "#0550ae"),
-            ("operator", "#0550ae"),
-            ("property", "#0550ae"),
-            ("punctuation", "#1f2328"),
-            ("string", "#0a3069"),
-            ("tag", "#116329"),
-            ("type", "#953800"),
-            ("variable", "#1f2328"),
-        ]),
-    }
-}
-
-/// Runyte roles mapped onto Atom's official One Light UI and syntax palettes.
-///
-/// Sources:
-/// - <https://github.com/atom/one-light-ui/blob/master/styles/ui-variables.less>
-/// - <https://github.com/atom/one-light-syntax/blob/master/styles/colors.less>
-fn atom_one_light_theme() -> ThemeDefinition {
-    let mut syntax = syntax_theme(&[
-        ("attribute", "#986801"),
-        ("comment", "#a0a1a7"),
-        ("constant", "#986801"),
-        ("constructor", "#c18401"),
-        ("function", "#4078f2"),
-        ("keyword", "#a626a4"),
-        ("label", "#0184bc"),
-        ("namespace", "#a626a4"),
-        ("number", "#986801"),
-        ("operator", "#383a42"),
-        ("property", "#383a42"),
-        ("punctuation", "#696c77"),
-        ("string", "#50a14f"),
-        ("tag", "#e45649"),
-        ("type", "#c18401"),
-        ("variable", "#e45649"),
-    ]);
-    // The shared bundled-theme derivation is a useful fallback, but Atom's
-    // GFM stylesheet gives these roles explicit colours of its own.
-    for (scope, color) in [
-        ("markup.bold", "#986801"),
-        ("markup.heading", "#e45649"),
-        ("markup.italic", "#a626a4"),
-        ("markup.link.text", "#0184bc"),
-        ("markup.link.url", "#0184bc"),
-        ("markup.list", "#a626a4"),
-        ("markup.quote", "#986801"),
-        ("markup.raw", "#50a14f"),
-    ] {
-        syntax.insert(scope.into(), color.into());
-    }
-
-    ThemeDefinition {
-        background: "#fafafa".into(),
-        foreground: "#383a42".into(),
-        muted: "#a0a1a7".into(),
-        jump_text_muted: Some("#b8b9bd".into()),
-        accent: "#4078f2".into(),
-        cursor_normal: Some("#526fff".into()),
-        cursor_insert: Some("#e45649".into()),
-        cursor_select: Some("#986801".into()),
-        cursor_command: Some("#a626a4".into()),
-        directory: Some("#4078f2".into()),
-        // Atom has one neutral selection colour. Runyte distinguishes primary
-        // and secondary selections, so these are light tints of Atom blue and
-        // orange while preserving the palette's source-text contrast.
-        selection: "#dce6fc".into(),
-        selection_primary: Some("#f3e5c7".into()),
-        fuzzy_match_secondary: None,
-        fuzzy_match_primary: None,
-        status_background: "#eaeaeb".into(),
-        status_foreground: "#424243".into(),
-        error: "#f42a2a".into(),
-        warning: Some("#d5880b".into()),
-        info: Some("#2db448".into()),
-        jump_label_immediate: Some("#ca1243".into()),
-        jump_label_primary: JUMP_LABEL_LIGHT_PRIMARY.into(),
-        jump_label_secondary: JUMP_LABEL_LIGHT_SECONDARY.into(),
-        change_added: Some("#2db448".into()),
-        change_modified: Some("#f2a60d".into()),
-        change_removed: Some("#ff1414".into()),
-        diff_added: Some("#e5f5e8".into()),
-        diff_removed: Some("#fde6e6".into()),
-        diff_changed: Some("#f8eed8".into()),
-        syntax,
-    }
-}
-
-#[derive(Clone, Copy)]
-struct EverforestBackground {
-    background: &'static str,
-    status_background: &'static str,
-    /// Dimmed text, where the ground it has to be read against decides it.
-    ///
-    /// This belongs to the background rather than the foreground because the
-    /// three dark grounds sit at different lightnesses: the same dimmed text
-    /// cannot clear all three. The light variants leave it unset, since a
-    /// light ground carries dimmed text the way the built-in `light` theme
-    /// does rather than at the dark themes' 3:1.
-    dimmed_text: Option<&'static str>,
-    selection: &'static str,
-    selection_primary: &'static str,
-    diff_added: &'static str,
-    diff_removed: &'static str,
-    diff_changed: &'static str,
-}
-
-fn everforest_dark(background: EverforestBackground) -> ThemeDefinition {
-    everforest_theme(
-        background,
-        EverforestForeground {
-            foreground: "#d3c6aa",
-            muted: "#859289",
-            red: "#e67e80",
-            orange: "#e69875",
-            yellow: "#dbbc7f",
-            green: "#a7c080",
-            aqua: "#83c092",
-            blue: "#7fbbb3",
-            purple: "#d699b6",
-            command: "#d699b6",
-            jump_label_immediate: "#ff9b9d",
-            jump_label_primary: JUMP_LABEL_DARK_PRIMARY,
-            jump_label_secondary: JUMP_LABEL_DARK_SECONDARY,
-        },
-    )
-}
-
-fn everforest_light(background: EverforestBackground) -> ThemeDefinition {
-    everforest_theme(
-        background,
-        EverforestForeground {
-            foreground: "#5c6a72",
-            muted: "#939f91",
-            red: "#f85552",
-            orange: "#f57d26",
-            yellow: "#dfa000",
-            green: "#8da101",
-            aqua: "#35a77c",
-            blue: "#3a94c5",
-            purple: "#df69ba",
-            command: "#bf4d9a",
-            jump_label_immediate: "#b92f2c",
-            jump_label_primary: JUMP_LABEL_LIGHT_PRIMARY,
-            jump_label_secondary: JUMP_LABEL_LIGHT_SECONDARY,
-        },
-    )
-}
-
-#[derive(Clone, Copy)]
-struct EverforestForeground {
-    foreground: &'static str,
-    muted: &'static str,
-    red: &'static str,
-    orange: &'static str,
-    yellow: &'static str,
-    green: &'static str,
-    aqua: &'static str,
-    blue: &'static str,
-    purple: &'static str,
-    /// The Command caret. Dark grounds use the palette's own purple; the light
-    /// ones need it a few steps darker, the same accommodation the jump labels
-    /// already make, because Everforest's light purple is a pale magenta that
-    /// disappears behind a caret glyph painted in the background.
-    command: &'static str,
-    jump_label_immediate: &'static str,
-    jump_label_primary: &'static str,
-    jump_label_secondary: &'static str,
-}
-
-fn everforest_theme(
-    background: EverforestBackground,
-    foreground: EverforestForeground,
-) -> ThemeDefinition {
-    ThemeDefinition {
-        background: background.background.into(),
-        foreground: foreground.foreground.into(),
-        muted: foreground.muted.into(),
-        jump_text_muted: background.dimmed_text.map(Into::into),
-        accent: foreground.green.into(),
-        cursor_normal: Some(foreground.blue.into()),
-        cursor_insert: Some(foreground.red.into()),
-        cursor_select: Some(foreground.orange.into()),
-        cursor_command: Some(foreground.command.into()),
-        directory: Some(foreground.blue.into()),
-        selection: background.selection.into(),
-        selection_primary: Some(background.selection_primary.into()),
-        fuzzy_match_secondary: None,
-        fuzzy_match_primary: None,
-        status_background: background.status_background.into(),
-        status_foreground: foreground.foreground.into(),
-        error: foreground.red.into(),
-        warning: Some(foreground.orange.into()),
-        info: Some(foreground.green.into()),
-        jump_label_immediate: Some(foreground.jump_label_immediate.into()),
-        jump_label_primary: foreground.jump_label_primary.into(),
-        jump_label_secondary: foreground.jump_label_secondary.into(),
-        change_added: Some(foreground.green.into()),
-        change_modified: Some(foreground.yellow.into()),
-        change_removed: Some(foreground.red.into()),
-        diff_added: Some(background.diff_added.into()),
-        diff_removed: Some(background.diff_removed.into()),
-        diff_changed: Some(background.diff_changed.into()),
-        syntax: syntax_theme(&[
-            ("attribute", foreground.purple),
-            ("comment", foreground.muted),
-            ("constant", foreground.aqua),
-            ("constructor", foreground.green),
-            ("function", foreground.green),
-            ("keyword", foreground.red),
-            ("label", foreground.orange),
-            ("namespace", foreground.yellow),
-            ("number", foreground.purple),
-            ("operator", foreground.orange),
-            ("property", foreground.blue),
-            ("punctuation", foreground.muted),
-            ("string", foreground.aqua),
-            ("tag", foreground.orange),
-            ("type", foreground.yellow),
-            ("variable", foreground.foreground),
-        ]),
-    }
-}
-
-/// Runyte roles mapped onto Nightfox's canonical Nordfox palette and spec.
-///
-/// Source: <https://github.com/EdenEast/nightfox.nvim/blob/main/lua/nightfox/palette/nordfox.lua>
-fn nordfox_theme() -> ThemeDefinition {
-    ThemeDefinition {
-        background: "#2e3440".into(),
-        foreground: "#cdcecf".into(),
-        muted: "#60728a".into(),
-        jump_text_muted: None,
-        accent: "#8cafd2".into(),
-        cursor_normal: None,
-        cursor_insert: Some("#bf616a".into()),
-        cursor_select: Some("#c9826b".into()),
-        cursor_command: Some("#b48ead".into()),
-        directory: Some("#81a1c1".into()),
-        selection: "#3e4a5b".into(),
-        selection_primary: Some("#4f6074".into()),
-        fuzzy_match_secondary: None,
-        fuzzy_match_primary: None,
-        status_background: "#232831".into(),
-        status_foreground: "#abb1bb".into(),
-        error: "#bf616a".into(),
-        warning: Some("#c9826b".into()),
-        info: Some("#a3be8c".into()),
-        jump_label_immediate: Some("#f08a92".into()),
-        jump_label_primary: JUMP_LABEL_DARK_PRIMARY.into(),
-        jump_label_secondary: JUMP_LABEL_DARK_SECONDARY.into(),
-        change_added: Some("#a3be8c".into()),
-        change_modified: Some("#ebcb8b".into()),
-        change_removed: Some("#bf616a".into()),
-        diff_added: Some("#3c4548".into()),
-        diff_removed: Some("#403843".into()),
-        diff_changed: Some("#364150".into()),
-        syntax: syntax_theme(&[
-            ("attribute", "#d092ce"),
-            ("comment", "#60728a"),
-            ("constant", "#d89079"),
-            ("constructor", "#93ccdc"),
-            ("function", "#8cafd2"),
-            ("keyword", "#b48ead"),
-            ("label", "#c9826b"),
-            ("namespace", "#88c0d0"),
-            ("number", "#c9826b"),
-            ("operator", "#abb1bb"),
-            ("property", "#81a1c1"),
-            ("punctuation", "#abb1bb"),
-            ("string", "#a3be8c"),
-            ("tag", "#bf616a"),
-            ("type", "#ebcb8b"),
-            ("variable", "#e5e9f0"),
-        ]),
-    }
-}
-
-/// Nordfox with brighter dimmed text and warm selection grounds.
-///
-/// The base and syntax palette stay canonical Nordfox. The selection grounds
-/// are deliberately dark tints rather than Nightfox text accents: Runyte fills
-/// whole cells with them, including terminal-review selections whose text is
-/// using `jump_text_muted` at the same time.
-fn nordfox_warm_theme() -> ThemeDefinition {
-    let mut theme = nordfox_theme();
-    theme.muted = "#71839a".into();
-    theme.jump_text_muted = Some("#929fae".into());
-    theme.selection = "#603f54".into();
-    theme.selection_primary = Some("#5c4e27".into());
-    theme
-}
-
-/// Runyte roles mapped onto Nightfox's canonical Terafox palette and spec.
-///
-/// Source: <https://github.com/EdenEast/nightfox.nvim/blob/main/lua/nightfox/palette/terafox.lua>
-fn terafox_theme() -> ThemeDefinition {
-    ThemeDefinition {
-        background: "#152528".into(),
-        foreground: "#e6eaea".into(),
-        muted: "#6d7f8b".into(),
-        // Terafox's own selection grounds are read against dimmed text as well
-        // as ordinary text: an unfocused pane draws every cell in
-        // `jump_text_muted` while a terminal review selection still fills whole
-        // cells with `selection_primary`. Canonical `#425e5e` is too close to
-        // any legible dimmed text to leave the selected row readable, so the
-        // dimmed text is brightened and the primary ground deepened until the
-        // pair clears the boundary `nordfox-warm` holds: dimmed text at 3:1
-        // against either ground, ordinary text at 4.5:1.
-        jump_text_muted: Some("#8998a2".into()),
-        accent: "#73a3b7".into(),
-        cursor_normal: None,
-        cursor_insert: Some("#e85c51".into()),
-        cursor_select: Some("#ff8349".into()),
-        cursor_command: Some("#ad5c7c".into()),
-        directory: Some("#5a93aa".into()),
-        // Canonical `#293e40` is barely a shade off the background, so a match
-        // or a secondary range highlighted with it did not read as highlighted
-        // at all. This is the same teal carrying enough saturation to be seen.
-        selection: "#264e59".into(),
-        // Deepening the canonical teal ground left the two selections the same
-        // hue at nearly the same lightness, which is the one thing the primary
-        // range cannot afford: it has to be told apart from the others at a
-        // glance. Terafox's orange — the hue of its `warning`, `number` and
-        // `label` — separates the pair by hue instead, the way `nordfox-warm`
-        // separates its own, at the ground lightness and saturation that
-        // theme's grounds already use.
-        selection_primary: Some("#6a3c25".into()),
-        fuzzy_match_secondary: None,
-        fuzzy_match_primary: None,
-        status_background: "#0f1c1e".into(),
-        status_foreground: "#cbd9d8".into(),
-        error: "#e85c51".into(),
-        warning: Some("#ff8349".into()),
-        info: Some("#7aa4a1".into()),
-        jump_label_immediate: Some("#e85c51".into()),
-        jump_label_primary: JUMP_LABEL_DARK_PRIMARY.into(),
-        jump_label_secondary: JUMP_LABEL_DARK_SECONDARY.into(),
-        change_added: Some("#7aa4a1".into()),
-        change_modified: Some("#fda47f".into()),
-        change_removed: Some("#e85c51".into()),
-        diff_added: Some("#293e40".into()),
-        diff_removed: Some("#4a3332".into()),
-        diff_changed: Some("#31474b".into()),
-        syntax: syntax_theme(&[
-            ("attribute", "#d38d97"),
-            ("comment", "#6d7f8b"),
-            ("constant", "#ff9664"),
-            ("constructor", "#afd4de"),
-            ("function", "#73a3b7"),
-            ("keyword", "#ad5c7c"),
-            ("label", "#ff8349"),
-            ("namespace", "#a1cdd8"),
-            ("number", "#ff8349"),
-            ("operator", "#cbd9d8"),
-            ("property", "#5a93aa"),
-            ("punctuation", "#cbd9d8"),
-            ("string", "#7aa4a1"),
-            ("tag", "#e85c51"),
-            ("type", "#fda47f"),
-            ("variable", "#ebebeb"),
-        ]),
-    }
-}
-
-/// Terafox with the glare taken off its text.
-///
-/// Terafox's text is the brightest thing in the palette by a wide margin: its
-/// foreground reads at 13.1:1 against the background, its identifiers at
-/// 13.3:1, and its operators and punctuation at 10.9:1, where every hued colour
-/// the theme draws with sits between 3.5 and 10.0. Long stretches of ordinary
-/// text are therefore near-white on a dark teal ground. This variant brings
-/// that band down and changes nothing else — the background, the hued syntax
-/// colours, the accents, the selection grounds and the diff rows are all
-/// Terafox's.
-///
-/// The step is the one `nordbones-dark-soft` takes: 15 points of CIELAB
-/// lightness off each of the three neutral text values, which puts ordinary
-/// text at 8.6:1. Moving all three keeps Terafox's own ordering intact, so
-/// punctuation does not end up brighter than the identifiers it separates and
-/// the status line does not end up brighter than the buffer above it. The
-/// dimmed text stays where Terafox already pins it: it is at the boundary its
-/// selection grounds allow, and 8.6:1 is comfortably far enough above it to
-/// still read as ordinary text next to dimmed.
-///
-/// Terafox's pale cyans — `constructor` and `namespace` — are left brighter
-/// than the softened text. They are hued accents on sparse constructs rather
-/// than running text, and repainting them would be repainting Terafox.
-fn terafox_soft_theme() -> ThemeDefinition {
-    /// Terafox's three neutral text values and the softened value each takes.
-    const SOFTENED: [(&str, &str); 3] = [
-        // Ordinary buffer text.
-        ("#e6eaea", "#bcc0c0"),
-        // Identifiers, which Terafox paints a shade brighter still.
-        ("#ebebeb", "#c1c1c1"),
-        // Operators, punctuation, and the status line, which share one value.
-        ("#cbd9d8", "#a6b1b0"),
-    ];
-
-    fn soften(color: &str) -> Option<String> {
-        SOFTENED
-            .iter()
-            .find(|(from, _)| color.eq_ignore_ascii_case(from))
-            .map(|(_, to)| (*to).to_owned())
-    }
-
-    let mut theme = terafox_theme();
-    for color in theme.syntax.values_mut() {
-        if let Some(softened) = soften(color) {
-            *color = softened;
-        }
-    }
-    for role in [&mut theme.foreground, &mut theme.status_foreground] {
-        if let Some(softened) = soften(role) {
-            *role = softened;
-        }
-    }
-    theme
 }
 
 impl Default for GitConfig {
@@ -2244,6 +1305,18 @@ mod tests {
     }
 
     #[test]
+    fn compatibility_status_theme_keys_remain_resolved() {
+        let config: Config = serde_yaml::from_str(
+            "themes:\n  legacy:\n    status_background: '#123456'\n    status_foreground: '#abcdef'\n",
+        )
+        .unwrap();
+
+        let legacy = config.resolve_theme("legacy").unwrap();
+        assert_eq!(legacy.status_background, Color::Rgb(0x12, 0x34, 0x56));
+        assert_eq!(legacy.status_foreground, Color::Rgb(0xab, 0xcd, 0xef));
+    }
+
+    #[test]
     fn a_configured_theme_is_used_and_an_unknown_one_falls_back() {
         let config = Config::default();
         assert_eq!(config.startup_theme().unwrap().0, DEFAULT_THEME);
@@ -2473,6 +1546,29 @@ mod tests {
         let light = config.resolve_theme("light").unwrap();
         assert_ne!(dark.background, light.background);
         assert_ne!(dark.foreground, light.foreground);
+    }
+
+    #[test]
+    fn family_registrations_are_disjoint_and_cover_the_built_in_inventory() {
+        let families = [
+            ("core", core_themes::themes().collect::<Vec<_>>()),
+            ("catppuccin", catppuccin::themes().collect()),
+            ("everforest", everforest::themes().collect()),
+            ("one-off", one_off::themes().collect()),
+            ("nightfox", nightfox::themes().collect()),
+            ("zenbones", zenbones::themes().collect()),
+        ];
+        let mut registered = HashMap::new();
+        for (family, themes) in families {
+            for (name, theme) in themes {
+                assert!(
+                    registered.insert(name.clone(), theme).is_none(),
+                    "theme {name} is registered by more than one family (latest: {family})"
+                );
+            }
+        }
+
+        assert_eq!(registered, Config::default().themes);
     }
 
     #[test]
@@ -2752,24 +1848,14 @@ mod tests {
     }
 
     #[test]
-    fn bundled_themes_color_every_semantic_markdown_scope() {
+    fn bundled_themes_color_every_semantic_syntax_scope() {
         let config = Config::default();
-        let markdown_scopes = [
-            "markup.bold",
-            "markup.heading",
-            "markup.italic",
-            "markup.link.text",
-            "markup.link.url",
-            "markup.list",
-            "markup.quote",
-            "markup.raw",
-        ];
 
         for name in config.themes.keys() {
             let theme = config
                 .resolve_theme(name)
                 .unwrap_or_else(|error| panic!("bundled theme {name} failed: {error}"));
-            for scope in markdown_scopes {
+            for scope in crate::syntax::SCOPES {
                 let scope = crate::syntax::Scope::named(scope).unwrap();
                 assert!(
                     theme.syntax_color(scope).is_some(),
