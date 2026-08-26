@@ -1231,8 +1231,7 @@ fn visible_character_end(
     let tab_width = tab_width.max(1);
     let mut column = start_column;
     let mut cells = 0_usize;
-    let mut scanned = 0_usize;
-    for character in characters {
+    for (scanned, character) in characters.enumerate() {
         if scanned >= cell_limit.saturating_add(ZERO_WIDTH_SCAN_LIMIT) {
             break;
         }
@@ -1245,7 +1244,6 @@ fn visible_character_end(
             break;
         }
         column += 1;
-        scanned += 1;
         cells = cells.saturating_add(width);
     }
     column

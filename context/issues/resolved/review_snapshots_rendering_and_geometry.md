@@ -28,6 +28,8 @@ Coverage lives in `src/content_alignment.rs` in
 `src/snapshot.rs` in `combining_marks_do_not_clip_the_last_visible_cell`,
 `zero_width_only_rows_have_a_bounded_scan`, and
 `soft_wrapped_zero_width_only_rows_have_a_bounded_snapshot`.
+The bounded iterator uses its enumerated position directly so this hot-path
+backstop also remains clean under the repository's required Clippy lints.
 
 ## Report
 
