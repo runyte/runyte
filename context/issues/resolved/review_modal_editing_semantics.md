@@ -47,16 +47,12 @@ Regression coverage is in these tests:
   `hard_wrap_uses_word_boundaries_and_preserves_existing_newlines` and
   `reflow_preserves_consistent_crlf_line_endings`.
 
-Known limitations: two confirmed jumplist defects remain unchanged because
-their correction would alter traversal observed through `Ctrl-o`, `Ctrl-i`,
-`Alt-o`, and `Alt-i`, and the user did not approve that behavior change.
-First, `JumpList::backward` appends the current location without reapplying the
-30-entry limit, so beginning backward traversal from a full list temporarily
-retains 31 entries. Second, `JumpList::forget` and
-`JumpList::retire_buffer` clamp `current` after removing entries but do not
-subtract entries removed before it, so retirement during mid-history traversal
-can skip or revisit the wrong neighboring destination. The jumplist source and
-bindings were deliberately left untouched.
+Known limitation: `JumpList::forget` and `JumpList::retire_buffer` clamp
+`current` after removing entries but do not subtract entries removed before it,
+so retirement during mid-history traversal can skip or revisit the wrong
+neighboring destination. The jumplist source and bindings were deliberately
+left untouched; follow-up work is tracked in
+`context/issues/jumplist_cursor_rebasing.md`.
 
 ## Report
 
@@ -105,10 +101,11 @@ table behavior, visual-line movement, macro replay and registers, and Unicode.
 No additional safely scoped defect was confirmed in those areas. Structural,
 table, macro, register, and unchanged jumplist baseline suites remain green.
 
-Jumplist inspection confirmed two separate boundary problems. Starting
-backward traversal records the current location, but does not enforce the
-documented 30-entry cap when the list is already full. Removing a buffer while
-the traversal cursor is inside history removes matching entries without
-rebasing the cursor by the number removed before it. Correcting either problem
-changes which destination the existing jump keys visit, so both remain held
-pending explicit approval.
+Jumplist inspection found two separate boundary behaviors. Starting backward
+traversal records the current location even when the list already contains 30
+entries, temporarily retaining 31 so forward traversal can return to its exact
+origin. That behavior is deliberate and remains unchanged. Removing a buffer
+while the traversal cursor is inside history removes matching entries without
+rebasing the cursor by the number removed before it. That confirmed defect is
+tracked separately in `context/issues/jumplist_cursor_rebasing.md`; it was not
+changed as part of this review.
