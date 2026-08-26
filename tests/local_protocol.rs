@@ -1645,13 +1645,21 @@ async fn creating_a_worktree_starts_and_attaches_its_persistent_session() {
             )
             .unwrap();
             if let Ok(mut client) = try_connect_control(&endpoint).await {
-                client.send(&ClientRequest::Health).await.unwrap();
+                let health = if client.send(&ClientRequest::Health).await.is_ok() {
+                    tokio::time::timeout(Duration::from_secs(1), client.recv())
+                        .await
+                        .ok()
+                        .and_then(Result::ok)
+                        .flatten()
+                } else {
+                    None
+                };
                 if matches!(
-                    response(&mut client).await,
-                    HostResponse::Health {
+                    health,
+                    Some(HostResponse::Health {
                         interactive_attached: true,
                         ..
-                    }
+                    })
                 ) {
                     destination = Some(client);
                     break;

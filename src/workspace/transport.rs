@@ -2061,6 +2061,7 @@ mod tests {
     use std::{
         fs,
         os::unix::fs::{MetadataExt, PermissionsExt},
+        sync::atomic::{AtomicU64, Ordering},
         time::{SystemTime, UNIX_EPOCH},
     };
 
@@ -2068,15 +2069,29 @@ mod tests {
     use crate::{app::App, config::Config, workspace::WorkspaceHost};
     use tokio::io::AsyncReadExt;
 
-    fn endpoint(name: &str) -> (PathBuf, LocalEndpoint) {
+    fn temporary_root() -> PathBuf {
+        static NEXT_ROOT: AtomicU64 = AtomicU64::new(0);
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "runyte-transport-{name}-{}-{unique}",
+            .as_nanos()
+            % 1_000_000_007;
+        let sequence = NEXT_ROOT.fetch_add(1, Ordering::Relaxed);
+        // macOS's ordinary per-user temp directory is already close to the
+        // Unix-socket path limit. `/tmp` is available on supported Unix
+        // platforms; canonicalizing it also avoids `/tmp` versus
+        // `/private/tmp` identity differences on macOS.
+        let base = Path::new("/tmp")
+            .canonicalize()
+            .unwrap_or_else(|_| std::env::temp_dir());
+        base.join(format!(
+            "ryt-{}-{unique:x}-{sequence:x}",
             std::process::id()
-        ));
+        ))
+    }
+
+    fn endpoint(_name: &str) -> (PathBuf, LocalEndpoint) {
+        let root = temporary_root();
         fs::create_dir_all(&root).unwrap();
         let endpoint = LocalEndpoint::new(&root.join(".runyte"), &root).unwrap();
         (root, endpoint)
@@ -2084,14 +2099,7 @@ mod tests {
 
     #[test]
     fn constructing_endpoint_is_side_effect_free() {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "runyte-transport-standalone-{}-{unique}",
-            std::process::id()
-        ));
+        let root = temporary_root();
         let workspace = root.join(".runyte");
         let _endpoint = LocalEndpoint::new(&workspace, &root).unwrap();
         assert!(!workspace.exists());
@@ -2099,12 +2107,7 @@ mod tests {
 
     #[test]
     fn a_shared_secondary_registry_serializes_different_primary_roots() {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let root =
-            std::env::temp_dir().join(format!("runyte-lock-roots-{}-{unique}", std::process::id()));
+        let root = temporary_root();
         let first = root.join("cache-a");
         let second = root.join("cache-b");
         let shared = root.join("runtime");
@@ -2175,11 +2178,7 @@ mod tests {
     #[test]
     fn discovery_prefers_only_a_private_user_runtime_directory() {
         let (root, fallback) = endpoint("runtime-discovery");
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let runtime = std::env::temp_dir().join(format!("ryt-{}-{unique}", std::process::id()));
+        let runtime = temporary_root();
         fs::create_dir(&runtime).unwrap();
         fs::set_permissions(&runtime, fs::Permissions::from_mode(0o700)).unwrap();
         let preferred = LocalEndpoint::discover_with_runtime(
@@ -2320,12 +2319,7 @@ mod tests {
     async fn registry_lists_names_rejects_duplicates_and_preserves_a_name_across_restart() {
         let (first_root, first_fallback) = endpoint("registry-first");
         let (second_root, second_fallback) = endpoint("registry-second");
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let runtime =
-            std::env::temp_dir().join(format!("ryt-registry-{}-{unique}", std::process::id()));
+        let runtime = temporary_root();
         fs::create_dir(&runtime).unwrap();
         fs::set_permissions(&runtime, fs::Permissions::from_mode(0o700)).unwrap();
         let first = LocalEndpoint::discover_with_runtime(
@@ -2394,12 +2388,7 @@ mod tests {
     #[tokio::test]
     async fn malformed_registry_rows_do_not_hide_valid_hosts() {
         let (root, fallback) = endpoint("malformed-registry");
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-            % 1_000_000_007;
-        let runtime = std::env::temp_dir().join(format!("ryt-mr-{}-{unique}", std::process::id()));
+        let runtime = temporary_root();
         fs::create_dir(&runtime).unwrap();
         fs::set_permissions(&runtime, fs::Permissions::from_mode(0o700)).unwrap();
         let endpoint = LocalEndpoint::discover_with_runtime(
@@ -2435,12 +2424,7 @@ mod tests {
     async fn concurrent_hosts_cannot_claim_the_same_name() {
         let (first_root, first_fallback) = endpoint("name-race-first");
         let (second_root, second_fallback) = endpoint("name-race-second");
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-            % 1_000_000_007;
-        let runtime = std::env::temp_dir().join(format!("ryt-nr-{}-{unique}", std::process::id()));
+        let runtime = temporary_root();
         fs::create_dir(&runtime).unwrap();
         fs::set_permissions(&runtime, fs::Permissions::from_mode(0o700)).unwrap();
         let first = LocalEndpoint::discover_with_runtime(
@@ -2508,12 +2492,7 @@ mod tests {
     #[tokio::test]
     async fn old_cleanup_cannot_remove_a_replacement_hosts_registration() {
         let (root, fallback) = endpoint("cleanup-race");
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-            % 1_000_000_007;
-        let runtime = std::env::temp_dir().join(format!("ryt-cr-{}-{unique}", std::process::id()));
+        let runtime = temporary_root();
         fs::create_dir(&runtime).unwrap();
         fs::set_permissions(&runtime, fs::Permissions::from_mode(0o700)).unwrap();
         let registry = runtime.join("registry");
@@ -2557,12 +2536,7 @@ mod tests {
     #[tokio::test]
     async fn dead_registry_entries_are_removed_while_listing() {
         let (root, fallback) = endpoint("dead-registry");
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let runtime =
-            std::env::temp_dir().join(format!("ryt-dead-{}-{unique}", std::process::id()));
+        let runtime = temporary_root();
         fs::create_dir(&runtime).unwrap();
         fs::set_permissions(&runtime, fs::Permissions::from_mode(0o700)).unwrap();
         let endpoint = LocalEndpoint::discover_with_runtime(
