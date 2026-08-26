@@ -2389,6 +2389,7 @@ mod tests {
                 "neobones-dark",
                 "neobones-light",
                 "nordbones-dark",
+                "nordbones-dark-soft",
                 "nordfox",
                 "nordfox-warm",
                 "paper",
@@ -2782,6 +2783,81 @@ mod tests {
             contrast(warm.foreground, warm.selection_primary) >= 4.5,
             "ordinary text should remain readable on the yellow selection"
         );
+    }
+
+    #[test]
+    fn nordbones_dark_soft_is_nordbones_with_softer_text() {
+        fn contrast(left: Color, right: Color) -> f64 {
+            let left = left.relative_luminance().unwrap();
+            let right = right.relative_luminance().unwrap();
+            (left.max(right) + 0.05) / (left.min(right) + 0.05)
+        }
+
+        let config = Config::default();
+        let base = config.resolve_theme("nordbones-dark").unwrap();
+        let soft = config.resolve_theme("nordbones-dark-soft").unwrap();
+
+        // The point of the variant is the text and nothing else, so everything
+        // that gives Nordbones its identity has to survive untouched.
+        assert_eq!(soft.background, base.background);
+        assert_eq!(soft.muted, base.muted);
+        assert_eq!(soft.selection, base.selection);
+        assert_eq!(soft.selection_primary, base.selection_primary);
+        assert_eq!(soft.accent, base.accent);
+        assert_eq!(soft.status_background, base.status_background);
+        assert_eq!(soft.diff_added, base.diff_added);
+        assert_eq!(soft.diff_removed, base.diff_removed);
+        assert_eq!(soft.diff_changed, base.diff_changed);
+
+        assert_eq!(soft.foreground, Color::Rgb(0xba, 0xc4, 0xd5));
+        assert_eq!(soft.status_foreground, soft.foreground);
+        // Nordbones paints identifiers in its foreground, so they move with it
+        // rather than staying the brightest thing left on screen.
+        for scope in ["variable", "property", "markup.heading"] {
+            let scope = crate::syntax::Scope::named(scope).unwrap();
+            assert_eq!(
+                soft.syntax_color(scope),
+                Some(soft.foreground),
+                "{scope:?} did not follow the softened foreground"
+            );
+            assert_eq!(base.syntax_color(scope), Some(base.foreground));
+        }
+        // Every colour Nordbones draws code with is unchanged.
+        for scope in ["keyword", "string", "type", "function", "comment", "number"] {
+            let scope = crate::syntax::Scope::named(scope).unwrap();
+            assert_eq!(
+                soft.syntax_color(scope),
+                base.syntax_color(scope),
+                "{scope:?} should be Nordbones' own colour"
+            );
+        }
+
+        let text = contrast(soft.foreground, soft.background);
+        assert!(
+            (6.8..=7.2).contains(&text),
+            "softened text should sit near 7:1, not {text}"
+        );
+        assert!(
+            text < contrast(base.foreground, base.background) / 1.4,
+            "the variant has to be a visible step down from Nordbones"
+        );
+        // Softer text drags the readable band down with it: the dimmed text
+        // has to stay below the foreground and above both grounds at once,
+        // which is the constraint that fixes the foreground at 7:1.
+        assert!(
+            contrast(soft.foreground, soft.jump_text_muted) >= 1.4,
+            "dimmed text is too close to ordinary text to read as dimmed"
+        );
+        for ground in [soft.selection, soft.selection_primary] {
+            assert!(
+                contrast(soft.jump_text_muted, ground) >= 3.0,
+                "dimmed text is unreadable on a selection ground"
+            );
+            assert!(
+                contrast(soft.foreground, ground) >= 4.5,
+                "ordinary text is unreadable on a selection ground"
+            );
+        }
     }
 
     #[test]

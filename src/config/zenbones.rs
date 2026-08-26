@@ -254,10 +254,51 @@ fn dimmed_contrast(name: &str) -> Option<(&'static str, &'static str, &'static s
     })
 }
 
+/// Nordbones with the glare taken off its text.
+///
+/// Nordbones' foreground is the one colour in the palette far brighter than
+/// the rest: it reads at 10.6:1 against the background where every syntax
+/// colour the theme draws with sits between 3.0 and 6.3. Long stretches of
+/// ordinary text are therefore the brightest thing on screen by a wide margin.
+/// This variant brings that text to 7:1 — a shade below the `nordfox-warm` it
+/// sits next to in the list — and changes nothing else. The background, the
+/// accents, the selection grounds and the diff rows are all Nordbones'.
+///
+/// Only the roles that *were* the foreground move with it: the status line's
+/// text, the identifier colour Nordbones sets to its foreground, and the
+/// Markdown groups that follow it. The dimmed text steps down by the same
+/// amount so it still reads as dimmed against the new foreground, and 7:1 is
+/// the point where it can do that while staying 3:1 above both grounds — any
+/// softer and the grounds would have to move too, which is what would stop
+/// this being the same theme.
+fn nordbones_dark_soft() -> ThemeDefinition {
+    const FOREGROUND: &str = "#BAC4D5";
+    const DIMMED: &str = "#9BA2B0";
+
+    let base = PALETTES
+        .iter()
+        .find(|palette| palette.name == "nordbones-dark")
+        .expect("nordbones-dark is one of the palettes above");
+    let mut theme = base.theme();
+    for color in theme.syntax.values_mut() {
+        if color.eq_ignore_ascii_case(base.foreground) {
+            FOREGROUND.clone_into(color);
+        }
+    }
+    theme.foreground = FOREGROUND.into();
+    theme.status_foreground = FOREGROUND.into();
+    theme.jump_text_muted = Some(DIMMED.into());
+    theme
+}
+
 pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
     PALETTES
         .iter()
         .map(|palette| (palette.name.to_owned(), palette.theme()))
+        .chain(std::iter::once((
+            "nordbones-dark-soft".to_owned(),
+            nordbones_dark_soft(),
+        )))
 }
 
 impl Palette {

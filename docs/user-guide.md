@@ -2365,6 +2365,11 @@ The Zenbones collection contributes `zenbones`, `zenwritten`, `neobones`,
 and generated highlight colors from
 [Zenbones](https://github.com/zenbones-theme/zenbones.nvim). Its dynamic
 `randombones` selector is intentionally not a Runyte theme.
+`nordbones-dark-soft` is Runyte's own variant rather than an upstream palette:
+it is `nordbones-dark` with the ordinary text brought down from 10.6:1 against
+the background to 7:1, for reading at length without the glare. Everything
+else — the background, the accents, the selections, and the diff rows — is
+Nordbones unchanged.
 `dark` and `light` are the neutral pair: no palette identity of
 their own, just a legible default for each kind of terminal. Switch directly
 with a command such as `:theme atom-one-light`, `:theme mocha`, or

@@ -1327,6 +1327,7 @@ mod tests {
                 "neobones-dark",
                 "neobones-light",
                 "nordbones-dark",
+                "nordbones-dark-soft",
                 "nordfox",
                 "nordfox-warm",
                 "paper",
