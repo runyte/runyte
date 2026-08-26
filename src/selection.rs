@@ -153,6 +153,14 @@ impl Selection {
             match merged.last_mut() {
                 Some(previous) if previous.overlaps(&range) => {
                     *previous = previous.merge(&range);
+                    if original == primary {
+                        let (from, to) = (previous.from(), previous.to());
+                        *previous = if range.anchor <= range.head {
+                            Range::new(from, to)
+                        } else {
+                            Range::new(to, from)
+                        };
+                    }
                 }
                 _ => merged.push(range),
             }
@@ -378,6 +386,37 @@ mod tests {
         let range = selection.ranges()[0];
         assert_eq!((range.from(), range.to()), (2, 8));
         assert!(range.anchor > range.head, "reversed direction is kept");
+    }
+
+    #[test]
+    fn an_absorbed_primary_range_keeps_its_reverse_direction() {
+        let selection = Selection::new(vec![Range::new(0, 10), Range::new(15, 5)], 1);
+
+        assert_eq!(selection.primary(), Range::new(15, 0));
+    }
+
+    #[test]
+    fn a_nested_primary_range_orients_the_merged_outer_span() {
+        let selection = Selection::new(vec![Range::new(0, 20), Range::new(12, 8)], 1);
+
+        assert_eq!(selection.primary(), Range::new(20, 0));
+    }
+
+    #[test]
+    fn a_primary_range_merged_first_keeps_its_direction() {
+        let selection = Selection::new(vec![Range::new(10, 0), Range::new(5, 15)], 0);
+
+        assert_eq!(selection.primary(), Range::new(15, 0));
+    }
+
+    #[test]
+    fn an_absorbed_forward_primary_reorients_and_keeps_the_chained_union() {
+        let selection = Selection::new(
+            vec![Range::new(10, 0), Range::new(5, 15), Range::new(20, 12)],
+            1,
+        );
+
+        assert_eq!(selection.primary(), Range::new(0, 20));
     }
 
     #[test]
