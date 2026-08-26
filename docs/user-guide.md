@@ -1322,6 +1322,7 @@ cancellation keys.
 | `:w` or `:write` in a directory | Review a filesystem plan before applying edits |
 | `Space w v/s` or compatibility `Ctrl-w v/s` | Vertical/horizontal splits |
 | `Space w…` or compatibility `Ctrl-w…` | Window focus, close, next, and only-window operations |
+| `Space w =` | Equalize pane widths, then pane heights within each column |
 | `Space w f` / `Space w z`, or compatibility `Ctrl-w f` / `Ctrl-w z` | Toggle the full-screen pane / the centred Zen viewport |
 | `Ctrl-h/j/k/l` | Move between panes without a prefix, when `editor.fast_pane_keys` is on |
 | `Space o o` | Open the typed settings menu |
@@ -1352,6 +1353,13 @@ Insert-mode editing, and takes all four away from a terminal's child, where
 `Ctrl-h` is backspace and `Ctrl-l` clears the screen. Both prefixed spellings
 keep working, and help and the key-hint popup describe whichever set is
 actually in force.
+
+`Space w =` levels the splits again after the `:resize-*` commands or a
+dragged border have skewed them. It gives every pane the same width and then
+gives every pane sharing a column the same height, moving only the boundaries
+between panes: which pane sits beside or above which is exactly what it was. A
+pane that spans the full width of the editor above a row of others therefore
+keeps spanning it, and the row below it is what gets levelled.
 
 Closing an explorer retires its buffer and keeps every pane. Each pane that was
 showing it returns to its own most recently used live buffer, then any live
