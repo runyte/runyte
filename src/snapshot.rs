@@ -2276,7 +2276,7 @@ mod tests {
     #[test]
     fn zero_width_only_rows_have_a_bounded_scan() {
         assert_eq!(
-            visible_character_end(std::iter::repeat('\u{301}').take(1_000), 0, 2, 4),
+            visible_character_end(std::iter::repeat_n('\u{301}', 1_000), 0, 2, 4),
             258
         );
     }

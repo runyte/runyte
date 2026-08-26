@@ -29,7 +29,9 @@ Coverage lives in `src/content_alignment.rs` in
 `zero_width_only_rows_have_a_bounded_scan`, and
 `soft_wrapped_zero_width_only_rows_have_a_bounded_snapshot`.
 The bounded iterator uses its enumerated position directly so this hot-path
-backstop also remains clean under the repository's required Clippy lints.
+backstop also remains clean under the repository's required Clippy lints. Its
+regression fixture uses `std::iter::repeat_n`, matching the current toolchain's
+canonical fixed-length iterator form.
 
 ## Report
 
