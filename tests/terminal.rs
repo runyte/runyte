@@ -784,6 +784,19 @@ fn normal_mode_has_a_movable_caret_and_selects_and_copies_terminal_text() {
 }
 
 #[test]
+fn percent_selects_all_terminal_review_text() {
+    let mut session = Session::start(r#"/bin/sh -c 'printf "alpha\r\nbeta"; sleep 30'"#);
+    assert!(session.settle(|app| terminal_text(app).contains("beta")));
+    session.leave_input();
+    let id = session.app.active_terminal().unwrap();
+
+    session.press(KeyCode::Char('%'));
+
+    assert_eq!(session.app.mode, Mode::Select);
+    assert_eq!(review_selection(&mut session.app, id), "alpha\nbeta");
+}
+
+#[test]
 fn terminal_p_and_uppercase_p_send_the_runyte_register_and_enter_input() {
     let mut session = Session::start(
         r#"/bin/sh -c 'printf "copyme\r\n"; IFS= read -r first; printf "first:%s\r\n" "$first"; IFS= read -r second; printf "second:%s\r\n" "$second"; sleep 30'"#,

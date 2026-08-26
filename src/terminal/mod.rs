@@ -615,6 +615,29 @@ impl TerminalSession {
         self.ensure_review();
     }
 
+    /// Selects every meaningful character in the retained review snapshot.
+    ///
+    /// The synthetic newline after the last terminal row is not child output,
+    /// so the range ends at the final occupied cell just as a file selection
+    /// ends at its last row's text boundary.
+    pub fn select_all_review(&mut self) {
+        let review = self.ensure_review();
+        let end = review
+            .lines
+            .iter()
+            .rev()
+            .find(|line| line.text_start < line.text_end)
+            .map_or(0, |line| line.text_end);
+        review.selection = if end == 0 {
+            Selection::point(0)
+        } else {
+            Selection::single(Range::new(0, end))
+        };
+        review.matches.clear();
+        review.active_match = None;
+        self.revision = self.revision.wrapping_add(1);
+    }
+
     pub fn collapse_review_selection(&mut self) {
         if let Some(review) = self.review.as_mut() {
             review.selection = review.selection.collapse();
@@ -695,13 +718,19 @@ impl TerminalSession {
     pub fn review_selection_text(&mut self) -> String {
         let review = self.ensure_review();
         let text = review.text.chars().collect::<Vec<_>>();
+        let textless = review
+            .lines
+            .iter()
+            .all(|line| line.text_start == line.text_end);
         review
             .selection
             .ranges()
             .iter()
             .map(|range| {
                 let from = range.from();
-                let to = if range.is_empty() {
+                let to = if range.is_empty() && textless {
+                    from
+                } else if range.is_empty() {
                     (from + 1).min(text.len())
                 } else {
                     range.to()
@@ -2660,6 +2689,22 @@ mod tests {
         assert_eq!(session.review_selection_text(), "th");
         assert!(session.move_review(ReviewMotion::Up, false));
         assert_eq!(session.review_selection_text(), "o");
+    }
+
+    #[test]
+    fn selecting_all_textless_review_does_not_copy_its_synthetic_newline() {
+        for rows in [1, 3] {
+            for output in [b"".as_slice(), b"   ".as_slice()] {
+                let mut session = session(12, rows);
+                session.feed(output);
+
+                session.select_all_review();
+
+                assert_eq!(session.review_selection_text(), "");
+                assert_eq!(session.cursor_row(), 0);
+                assert!(session.view(rows).cursor.is_some());
+            }
+        }
     }
 
     #[test]

@@ -475,7 +475,7 @@ editor_commands! {
     EnterSelectMode => ("enter-select-mode", "Toggle select mode"),
     SelectLine => ("select-line", "Select the current line, then extend downward"),
     SelectLineUp => ("select-line-up", "Select the current line, then extend upward"),
-    SelectAll => ("select-all", "Select the entire file"),
+    SelectAll => ("select-all", "Select all text"),
     CollapseSelection => ("collapse-selection", "Collapse selection to the cursor"),
     FlipSelection => ("flip-selection", "Flip the selection anchor and cursor"),
     ExpandSyntaxSelection => ("expand-syntax-selection", "Expand to the enclosing syntax node"),

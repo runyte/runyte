@@ -524,7 +524,8 @@ review caret and keep it inside the configured viewport margin; `v` enters
 Select mode, where those motions extend the selection, and `Escape` cancels a
 selection made either way. `f`/`F`/`t`/`T` find
 characters in the snapshot, and `gw` labels its visible words and jumps to the
-chosen one. `s` searches it case-insensitively, `/` searches it with a regular
+chosen one. `%` selects all retained review text. `s` searches it
+case-insensitively, `/` searches it with a regular
 expression, and `n`/`N` or `)`/`(` move through stable highlighted matches. `y` copies the caret
 character or review selection to the unnamed Runyte register and `Space c y`
 copies it to the system clipboard. `p` or `P` discards review, sends text from
@@ -1582,6 +1583,7 @@ message without affecting the internal registers.
 | `Ctrl-\` in a terminal | First leave INSERT for live NORMAL, then enter review on the second press. Reported as `Ctrl-4` by terminals without the enhanced keyboard protocol, and both work |
 | `i` / `a` in a terminal | Type again, returning to the live screen first |
 | `h` / `j` / `k` / `l`, word, line, paragraph, and character-find motions | Move the terminal review caret; after `v`, extend the selection |
+| `%` in terminal review | Select all retained review text |
 | `x` / `X` in terminal review | Select the current line, then extend the moving edge down / up on repeated presses |
 | `C` / `Alt-C` in terminal review | Add carets below / above at the same occupied terminal-cell column, skipping short rows |
 | `Ctrl-u` / `Ctrl-d`, `Ctrl-b` / `Ctrl-f` | Move the review caret by half / full pages, keeping it visible |

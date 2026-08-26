@@ -624,6 +624,14 @@ impl App {
                 self.terminals.enforce_memory_budget();
                 true
             }
+            Command::SelectAll => {
+                session.select_all_review();
+                session.focus_review_selection(page, scroll_offset);
+                self.mode = Mode::Select;
+                let _ = session;
+                self.terminals.enforce_memory_budget();
+                true
+            }
             Command::CollapseSelection => {
                 session.collapse_review_selection();
                 session.focus_review_selection(page, scroll_offset);
