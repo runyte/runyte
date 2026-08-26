@@ -550,21 +550,14 @@ impl App {
                 let extend = event.modifiers.contains(Modifiers::SHIFT);
                 let previous_mode = self.mode;
                 let anchor = if extend {
-                    self.panes[&pane_id].selection.primary().anchor
+                    self.pointer_anchor(pane_id)
                 } else {
                     offset
                 };
+                let (selection, semantics) = self.pointer_selection(anchor, offset);
                 let pane = self.panes.get_mut(&pane_id).unwrap();
-                pane.replace_selection(Selection::single(Range::new(anchor, offset)));
-                pane.mark_selection_semantics(
-                    if anchor == offset
-                        && self.grammar.kind() == crate::command::GrammarKind::Runyte
-                    {
-                        SelectionSemantics::Runyte
-                    } else {
-                        SelectionSemantics::HalfOpen
-                    },
-                );
+                pane.replace_selection(selection);
+                pane.mark_selection_semantics(semantics);
                 self.pointer_drag = Some(PointerDrag::Selection {
                     pane: pane_id,
                     buffer: pane.buffer,
@@ -600,17 +593,10 @@ impl App {
                         return Ok(PointerOutcome::Changed);
                     };
                     self.activate_pane(pane);
+                    let (selection, semantics) = self.pointer_selection(anchor, offset);
                     let candidate = self.panes.get_mut(&pane).unwrap();
-                    candidate.replace_selection(Selection::single(Range::new(anchor, offset)));
-                    candidate.mark_selection_semantics(
-                        if anchor == offset
-                            && self.grammar.kind() == crate::command::GrammarKind::Runyte
-                        {
-                            SelectionSemantics::Runyte
-                        } else {
-                            SelectionSemantics::HalfOpen
-                        },
-                    );
+                    candidate.replace_selection(selection);
+                    candidate.mark_selection_semantics(semantics);
                     self.mode = if anchor == offset {
                         Mode::Normal
                     } else {
@@ -739,6 +725,48 @@ impl App {
         // Once the child requests pointer reports, every event inside its body
         // belongs to it even when its bounded input queue is momentarily full.
         true
+    }
+
+    /// The selection a pointer press or drag installs, given the character
+    /// cell it was anchored on and the one it is over now.
+    ///
+    /// A pointer names a character, not a boundary between two of them, so a
+    /// drag covers the pressed cell and the cell under the pointer and
+    /// everything between. That is Runyte's own inclusive range model, which
+    /// is why a pointer selection carries Runyte semantics rather than the
+    /// half-open ones a syntax range or a Vim operator produces. The Vim
+    /// grammar writes the same span down with its leading end one past the
+    /// last covered character, so it is converted rather than reshaped.
+    fn pointer_selection(&self, anchor: Offset, head: Offset) -> (Selection, SelectionSemantics) {
+        let selection = Selection::single(Range::new(anchor, head));
+        if self.grammar.kind() == crate::command::GrammarKind::Runyte {
+            return (selection, SelectionSemantics::Runyte);
+        }
+        // A bare Vim caret is an empty half-open range: Normal mode there
+        // draws over a character without selecting it.
+        if anchor == head {
+            return (selection, SelectionSemantics::HalfOpen);
+        }
+        (
+            self.vim_inclusive_to_half_open(selection, true),
+            SelectionSemantics::HalfOpen,
+        )
+    }
+
+    /// The character cell a Shift-click extends from.
+    ///
+    /// An inclusive range is anchored on a character it covers whichever way
+    /// it runs, so its anchor is already a cell. A half-open one — a Vim
+    /// selection, or a delimiter text object under either grammar — keeps its
+    /// anchor one past the covered character when it runs backward.
+    fn pointer_anchor(&self, pane: usize) -> Offset {
+        let pane = &self.panes[&pane];
+        if pane.selection_semantics() == SelectionSemantics::Runyte {
+            return pane.selection.primary().anchor;
+        }
+        self.vim_half_open_to_inclusive(pane.selection.clone())
+            .primary()
+            .anchor
     }
 
     fn pointer_offset(

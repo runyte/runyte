@@ -285,6 +285,112 @@ fn pointer_click_drag_wheel_and_resize_use_the_prepared_projection() {
     assert_eq!(after.pane(0).unwrap().area.width, left.width + 4);
 }
 
+/// Presses at `from` and drags to `to`, both as cell columns on the first row
+/// of the pane body, and releases there.
+fn drag_across(app: &mut App, view: &PreparedView, from: u16, to: u16) {
+    let body = view.pane(0).unwrap().body;
+    for (kind, column) in [
+        (PointerEventKind::Down(PointerButton::Left), from),
+        (PointerEventKind::Drag(PointerButton::Left), to),
+        (PointerEventKind::Up(PointerButton::Left), to),
+    ] {
+        app.handle_pointer(
+            PointerEvent {
+                kind,
+                column: body.x + column,
+                row: body.y,
+                modifiers: Modifiers::NONE,
+            },
+            view,
+        )
+        .unwrap();
+    }
+}
+
+#[test]
+fn a_pointer_drag_selects_through_the_character_it_ends_on() {
+    let mut config = Config::default();
+    config.editor.line_numbers = false;
+    let mut app = App::new(config, None).unwrap();
+    seed(&mut app, "Testtest rest");
+    let geometry = FrameGeometry {
+        screen: Rect {
+            width: 40,
+            height: 6,
+            ..Rect::default()
+        },
+        editor: Rect {
+            width: 40,
+            height: 4,
+            ..Rect::default()
+        },
+        status: Rect::default(),
+        message: Rect::default(),
+    };
+    let view = app.prepare_view(geometry);
+
+    // The pointer names a character, not the boundary before it, so the word
+    // is covered by pressing on its first letter and releasing on its last.
+    drag_across(&mut app, &view, 0, 7);
+    assert_eq!(app.active().selection.primary(), Range::new(0, 7));
+    assert_eq!(app.mode, Mode::Select);
+    press(&mut app, 'y');
+    assert_eq!(app.registers[&'"'].text, "Testtest");
+
+    // Dragging the other way covers the same word: the pressed cell is the
+    // one the selection ends on rather than the one it starts before.
+    drag_across(&mut app, &view, 7, 0);
+    assert_eq!(app.active().selection.primary(), Range::new(7, 0));
+    assert_eq!(app.mode, Mode::Select);
+    press(&mut app, 'y');
+    assert_eq!(app.registers[&'"'].text, "Testtest");
+
+    // A press that goes nowhere is still a caret rather than a selection.
+    drag_across(&mut app, &view, 4, 4);
+    assert_eq!(app.active().selection.primary(), Range::new(4, 4));
+    assert_eq!(app.mode, Mode::Normal);
+}
+
+#[test]
+fn a_pointer_drag_under_the_vim_grammar_covers_the_same_characters() {
+    let mut config = Config::default();
+    config.editor.line_numbers = false;
+    config.editor.grammar = GrammarKind::Vim;
+    let mut app = App::new(config, None).unwrap();
+    seed(&mut app, "Testtest rest");
+    let geometry = FrameGeometry {
+        screen: Rect {
+            width: 40,
+            height: 6,
+            ..Rect::default()
+        },
+        editor: Rect {
+            width: 40,
+            height: 4,
+            ..Rect::default()
+        },
+        status: Rect::default(),
+        message: Rect::default(),
+    };
+    let view = app.prepare_view(geometry);
+
+    // Vim writes the same span down with its leading end one past the last
+    // covered character, which is what its half-open semantics mean.
+    drag_across(&mut app, &view, 0, 7);
+    assert_eq!(app.active().selection.primary(), Range::new(0, 8));
+    assert_eq!(
+        app.active().selection_semantics(),
+        SelectionSemantics::HalfOpen
+    );
+    press(&mut app, 'y');
+    assert_eq!(app.registers[&'"'].text, "Testtest");
+
+    drag_across(&mut app, &view, 7, 0);
+    assert_eq!(app.active().selection.primary(), Range::new(8, 0));
+    press(&mut app, 'y');
+    assert_eq!(app.registers[&'"'].text, "Testtest");
+}
+
 #[cfg(unix)]
 #[test]
 fn a_reported_terminal_click_enters_input_before_forwarding() {
