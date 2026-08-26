@@ -329,6 +329,7 @@ fn a_language_server_jump_is_reachable_by_going_back() {
         response: Response::Locations(vec![crate::lsp::Location {
             path,
             range: LspRange::new(LspPosition::new(2, 3), LspPosition::new(2, 8)),
+            encoding: Encoding::Utf8,
         }]),
     });
     assert_eq!(cursor(&app).row, 2);

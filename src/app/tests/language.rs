@@ -51,11 +51,32 @@ pub(super) fn ready_language_with_capabilities(
     encoding: Encoding,
     capabilities: Capabilities,
 ) {
+    ready_language_with_sync(
+        app,
+        language,
+        encoding,
+        capabilities,
+        DocumentSync {
+            open_close: true,
+            change: ChangeSync::Incremental,
+            save: Some(true),
+        },
+    );
+}
+
+fn ready_language_with_sync(
+    app: &mut App,
+    language: &str,
+    encoding: Encoding,
+    capabilities: Capabilities,
+    sync: DocumentSync,
+) {
     app.apply_lsp_event(LspEvent::Ready {
         language: language.to_owned(),
+        generation: 1,
         name: format!("mock-{language}-server"),
         encoding,
-        incremental: true,
+        sync,
         capabilities,
     });
 }
@@ -95,6 +116,32 @@ fn active_document_lsp_availability_tracks_server_lifecycle() {
         app.command_capabilities().lsp_document.reason(),
         Some("the rust language server is not ready")
     );
+}
+
+#[test]
+fn restarting_a_live_server_retires_editor_state_before_reopening() {
+    let (mut app, path, mut queue) = rust_app("fn main() {}\n");
+    ready(&mut app, Encoding::Utf8);
+    drain(&mut queue);
+    app.apply_lsp_event(LspEvent::Diagnostics {
+        language: "rust".to_owned(),
+        path: path.clone(),
+        version: Some(1),
+        diagnostics: vec![diagnostic(0, 0, 2, "old")],
+    });
+
+    app.apply_lsp_event(LspEvent::Restarted {
+        language: "rust".to_owned(),
+    });
+    assert!(!app.lsp_servers.contains_key("rust"));
+    assert!(app.lsp_documents.is_empty());
+    assert!(app.diagnostics.for_path(&path).is_empty());
+
+    app.lsp_touch(0);
+    assert!(matches!(
+        drain(&mut queue).as_slice(),
+        [LspCommand::Ensure { language }] if language == "rust"
+    ));
 }
 
 #[test]
@@ -204,6 +251,7 @@ fn extensionless_shebang_edits_switch_syntax_and_lsp_without_cross_language_chan
     app.apply_lsp_event(LspEvent::Diagnostics {
         language: "bash".to_owned(),
         path: path.clone(),
+        version: None,
         diagnostics: vec![diagnostic(0, 0, 2, "old bash diagnostic")],
     });
     app.lsp_requests
@@ -313,6 +361,7 @@ fn closing_a_buffer_closes_its_language_server_document() {
     app.apply_lsp_event(LspEvent::Diagnostics {
         language: "rust".to_owned(),
         path: path.clone(),
+        version: None,
         diagnostics: vec![diagnostic(0, 0, 2, "stale diagnostic")],
     });
     assert!(!app.diagnostics.for_path(&path).is_empty());
@@ -655,6 +704,7 @@ fn diagnostics_render_as_signs_spans_and_an_inline_message() {
     app.apply_lsp_event(LspEvent::Diagnostics {
         language: "rust".to_owned(),
         path: path.clone(),
+        version: None,
         diagnostics: vec![diagnostic(1, 4, 5, "unused variable")],
     });
 
@@ -670,12 +720,129 @@ fn diagnostics_render_as_signs_spans_and_an_inline_message() {
 }
 
 #[test]
+fn diagnostics_picker_uses_the_publishing_servers_encoding() {
+    let (mut app, path, _queue) = rust_app("aéx\n");
+    ready(&mut app, Encoding::Utf8);
+    app.apply_lsp_event(LspEvent::Diagnostics {
+        language: "rust".to_owned(),
+        path,
+        version: Some(app.lsp_documents[&0].version),
+        diagnostics: vec![diagnostic(0, 3, 4, "utf-8 location")],
+    });
+    app.open_diagnostics_picker();
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert_eq!(cursor(&app), Position::new(0, 2));
+}
+
+#[test]
+fn stale_or_unowned_diagnostic_publications_are_ignored() {
+    let (mut app, path, mut queue) = rust_app("fn main() {}\n");
+    ready(&mut app, Encoding::Utf8);
+    drain(&mut queue);
+    let version = app.lsp_documents[&0].version;
+
+    app.apply_lsp_event(LspEvent::Diagnostics {
+        language: "rust".to_owned(),
+        path: path.clone(),
+        version: Some(version),
+        diagnostics: vec![diagnostic(0, 0, 2, "current")],
+    });
+    assert_eq!(app.diagnostics.for_path(&path)[0].message, "current");
+
+    app.apply_lsp_event(LspEvent::Diagnostics {
+        language: "rust".to_owned(),
+        path: path.clone(),
+        version: Some(version - 1),
+        diagnostics: vec![diagnostic(0, 0, 2, "stale")],
+    });
+    assert_eq!(app.diagnostics.for_path(&path)[0].message, "current");
+
+    let outside = temporary("unowned.rs");
+    app.apply_lsp_event(LspEvent::Diagnostics {
+        language: "rust".to_owned(),
+        path: outside.clone(),
+        version: None,
+        diagnostics: vec![diagnostic(0, 0, 2, "unowned")],
+    });
+    assert!(app.diagnostics.for_path(&outside).is_empty());
+}
+
+#[test]
+fn no_change_sync_still_advances_the_local_document_version() {
+    let (mut app, path, mut queue) = rust_app("fn main() {}\n");
+    ready_language_with_sync(
+        &mut app,
+        "rust",
+        Encoding::Utf8,
+        Capabilities::everything_for_test(),
+        DocumentSync::default(),
+    );
+    drain(&mut queue);
+    let old_version = app.lsp_documents[&0].version;
+    let before = app.buffers[0].text().clone();
+    let transaction = Transaction::insert(0, "// local\n");
+    app.buffers[0].apply(&transaction);
+    app.lsp_change(0, &before, &transaction);
+
+    assert_eq!(app.lsp_documents[&0].version, old_version + 1);
+    assert!(drain(&mut queue).is_empty());
+    app.apply_lsp_event(LspEvent::Diagnostics {
+        language: "rust".to_owned(),
+        path: path.clone(),
+        version: Some(old_version),
+        diagnostics: vec![diagnostic(0, 0, 2, "stale")],
+    });
+    assert!(app.diagnostics.for_path(&path).is_empty());
+}
+
+#[test]
+fn a_rejected_change_forces_full_resync_before_the_next_request() {
+    let (mut app, path, mut queue) = rust_app("fn main() {}\n");
+    ready(&mut app, Encoding::Utf8);
+    drain(&mut queue);
+    for _ in 0..crate::lsp::COMMAND_CAPACITY {
+        assert!(app.lsp_send(LspCommand::Status));
+    }
+    let old_version = app.lsp_documents[&0].version;
+    let before = app.buffers[0].text().clone();
+    let transaction = Transaction::insert(0, "// local\n");
+    app.buffers[0].apply(&transaction);
+    app.lsp_change(0, &before, &transaction);
+    assert!(app.lsp_documents[&0].desynced);
+    assert_eq!(app.lsp_documents[&0].version, old_version + 1);
+
+    app.apply_lsp_event(LspEvent::Diagnostics {
+        language: "rust".to_owned(),
+        path: path.clone(),
+        version: None,
+        diagnostics: vec![diagnostic(0, 0, 2, "untrusted while desynced")],
+    });
+    assert!(app.diagnostics.for_path(&path).is_empty());
+    drain(&mut queue);
+
+    app.lsp_hover();
+    let commands = drain(&mut queue);
+    assert!(matches!(
+        commands.first(),
+        Some(LspCommand::Change { changes, version, .. })
+            if *version == old_version + 1
+                && matches!(changes.as_slice(), [TextDocumentContentChangeEvent { range: None, .. }])
+    ));
+    assert!(commands.iter().any(|command| matches!(
+        command,
+        LspCommand::Request { kind, .. } if matches!(kind.as_ref(), RequestKind::Hover(_))
+    )));
+    assert!(!app.lsp_documents[&0].desynced);
+}
+
+#[test]
 fn a_stopped_server_drops_its_diagnostics_without_touching_the_buffer() {
     let (mut app, path, _queue) = rust_app("let x = 1;\n");
     ready(&mut app, Encoding::Utf8);
     app.apply_lsp_event(LspEvent::Diagnostics {
         language: "rust".to_owned(),
         path: path.clone(),
+        version: None,
         diagnostics: vec![diagnostic(0, 4, 5, "unused variable")],
     });
     let before = text(&app);
@@ -926,6 +1093,7 @@ fn a_single_goto_result_moves_the_caret_and_several_open_a_picker() {
         response: Response::Locations(vec![crate::lsp::Location {
             path: path.clone(),
             range: LspRange::new(LspPosition::new(1, 1), LspPosition::new(1, 3)),
+            encoding: Encoding::Utf8,
         }]),
     });
     assert!(app.list.is_none());
@@ -952,10 +1120,12 @@ fn a_single_goto_result_moves_the_caret_and_several_open_a_picker() {
             crate::lsp::Location {
                 path: path.clone(),
                 range: LspRange::new(LspPosition::new(0, 0), LspPosition::new(0, 3)),
+                encoding: Encoding::Utf8,
             },
             crate::lsp::Location {
                 path: path.clone(),
                 range: LspRange::new(LspPosition::new(2, 0), LspPosition::new(2, 5)),
+                encoding: Encoding::Utf8,
             },
         ]),
     });
@@ -967,6 +1137,110 @@ fn a_single_goto_result_moves_the_caret_and_several_open_a_picker() {
     key(&mut app, KeyCode::Enter, Modifiers::NONE);
     assert!(app.list.is_none());
     assert_eq!(cursor(&app).row, 2);
+}
+
+#[test]
+fn a_cross_language_location_uses_the_sending_servers_encoding() {
+    let (mut app, _source, _queue) = rust_app("fn main() {}\n");
+    ready(&mut app, Encoding::Utf8);
+    let target = temporary("target.py");
+    fs::write(&target, "aéx\n").unwrap();
+    app.lsp_requests.insert(
+        101,
+        tracked(
+            &app,
+            PendingRequest::Goto {
+                label: "definition",
+            },
+        ),
+    );
+    app.apply_lsp_event(LspEvent::Response {
+        token: 101,
+        response: Response::Locations(vec![crate::lsp::Location {
+            path: target.clone(),
+            range: LspRange::new(LspPosition::new(0, 3), LspPosition::new(0, 4)),
+            encoding: Encoding::Utf8,
+        }]),
+    });
+
+    assert_eq!(app.active_buffer().path.as_deref(), Some(target.as_path()));
+    assert_eq!(cursor(&app), Position::new(0, 2));
+    fs::remove_file(target).unwrap();
+}
+
+#[test]
+fn delayed_document_navigation_is_rejected_after_the_source_changes() {
+    let (mut app, path, _queue) = rust_app("fn main() {}\n");
+    ready(&mut app, Encoding::Utf8);
+    for (token, pending, response) in [
+        (
+            102,
+            PendingRequest::Goto {
+                label: "definition",
+            },
+            Response::Locations(vec![crate::lsp::Location {
+                path: path.clone(),
+                range: LspRange::default(),
+                encoding: Encoding::Utf8,
+            }]),
+        ),
+        (
+            103,
+            PendingRequest::Symbols {
+                title: "Document symbols",
+                path: path.clone(),
+            },
+            Response::Symbols(Vec::new()),
+        ),
+    ] {
+        let revision = app.buffers[0].revision();
+        app.lsp_requests
+            .insert(token, TrackedRequest::new(0, revision, pending));
+        assert!(app.apply_to_buffer(0, &Transaction::insert(0, "// changed\n")));
+        app.apply_lsp_event(LspEvent::Response { token, response });
+        assert!(app.status.contains("stale language-server response"));
+    }
+}
+
+#[test]
+fn buffer_switch_cancels_delayed_hover_and_signature_ui() {
+    for signature in [false, true] {
+        let (mut app, _path, mut queue) = rust_app("fn main() {}\n");
+        ready(&mut app, Encoding::Utf8);
+        drain(&mut queue);
+        if signature {
+            app.lsp_signature(SignatureContext::default());
+        } else {
+            app.lsp_hover();
+        }
+        let token = drain(&mut queue)
+            .into_iter()
+            .find_map(|command| match command {
+                LspCommand::Request { token, .. } => Some(token),
+                _ => None,
+            })
+            .unwrap();
+        app.buffers.push(Buffer::scratch());
+        app.syntax.push(None);
+        app.switch_buffer(1);
+        assert!(drain(&mut queue).iter().any(
+            |command| matches!(command, LspCommand::Cancel { token: cancelled } if *cancelled == token)
+        ));
+        app.apply_lsp_event(LspEvent::Response {
+            token,
+            response: if signature {
+                Response::Signatures(vec![SignatureLine {
+                    label: "fn()".to_owned(),
+                    documentation: String::new(),
+                    active_parameter: None,
+                }])
+            } else {
+                Response::Hover("docs".to_owned())
+            },
+        });
+        assert!(app.hover.is_none());
+        assert!(app.signature.is_none());
+    }
 }
 
 #[test]
@@ -1001,6 +1275,7 @@ fn a_rename_across_files_is_one_undo_step_per_file() {
                 },
             ],
             skipped: 0,
+            encoding: Encoding::Utf8,
         },
     });
 
@@ -1034,6 +1309,8 @@ fn a_server_edit_outside_the_project_is_refused() {
 
     app.apply_lsp_event(LspEvent::ApplyEdit {
         language: "rust".into(),
+        generation: 1,
+        encoding: Encoding::Utf8,
         id: serde_json::json!(9),
         edits: vec![DocumentEdit {
             path: outside.clone(),
@@ -1056,6 +1333,8 @@ fn a_server_edit_outside_the_project_is_refused() {
     // A file inside the project is still edited normally.
     app.apply_lsp_event(LspEvent::ApplyEdit {
         language: "rust".into(),
+        generation: 1,
+        encoding: Encoding::Utf8,
         id: serde_json::json!(10),
         edits: vec![DocumentEdit {
             path: inside.clone(),
@@ -1101,6 +1380,7 @@ fn skipped_file_operations_are_reported_rather_than_performed() {
                 edits: vec![edit(0, 0, 1, "y")],
             }],
             skipped: 2,
+            encoding: Encoding::Utf8,
         },
     });
     assert!(
@@ -1134,6 +1414,7 @@ fn a_formatting_response_lands_on_the_document_that_was_asked_about() {
                 edits: vec![edit(0, 0, 12, "fn main() {}")],
             }],
             skipped: 0,
+            encoding: Encoding::Utf8,
         },
     });
     assert_eq!(text(&app), "fn main() {}\n");
@@ -1168,12 +1449,123 @@ fn delayed_format_and_rename_responses_do_not_edit_a_newer_buffer_revision() {
                     edits: vec![edit(0, 0, 12, "fn main() {}")],
                 }],
                 skipped: 0,
+                encoding: Encoding::Utf8,
             },
         });
 
         assert_eq!(text(&app), newer);
         assert!(app.status_error);
         assert!(app.status.contains("stale language-server response"));
+    }
+}
+
+#[test]
+fn a_multi_document_response_is_atomic_when_another_open_target_changed() {
+    let (mut app, path, mut queue) = rust_app("let source = 1;\n");
+    ready(&mut app, Encoding::Utf8);
+    drain(&mut queue);
+    let second = temporary("guarded-target.rs");
+    fs::write(&second, "let target = 2;\n").unwrap();
+    app.open_file(second.clone()).unwrap();
+    let target = app.active().buffer;
+    drain(&mut queue);
+    app.switch_buffer(0);
+
+    let guards = app.lsp_document_guards();
+    app.lsp_requests.insert(
+        811,
+        TrackedRequest::new(
+            0,
+            app.buffers[0].revision(),
+            PendingRequest::Edits {
+                label: "renamed",
+                path: path.clone(),
+            },
+        )
+        .with_documents(guards),
+    );
+    assert!(app.apply_to_buffer(target, &Transaction::insert(0, "// local\n")));
+    let source_before = app.buffers[0].to_string();
+    let target_before = app.buffers[target].to_string();
+
+    app.apply_lsp_event(LspEvent::Response {
+        token: 811,
+        response: Response::Edits {
+            edits: vec![
+                DocumentEdit {
+                    path,
+                    version: None,
+                    edits: vec![edit(0, 4, 10, "changed")],
+                },
+                DocumentEdit {
+                    path: second.clone(),
+                    version: None,
+                    edits: vec![edit(0, 4, 10, "changed")],
+                },
+            ],
+            skipped: 0,
+            encoding: Encoding::Utf8,
+        },
+    });
+
+    assert_eq!(app.buffers[0].to_string(), source_before);
+    assert_eq!(app.buffers[target].to_string(), target_before);
+    assert!(app.status.contains("another document changed"));
+    fs::remove_file(second).unwrap();
+}
+
+#[test]
+fn a_multi_document_response_is_atomic_when_another_target_closed_or_moved() {
+    for moved in [false, true] {
+        let (mut app, path, mut queue) = rust_app("let source = 1;\n");
+        ready(&mut app, Encoding::Utf8);
+        drain(&mut queue);
+        let second = temporary(if moved {
+            "moved-target.rs"
+        } else {
+            "closed-target.rs"
+        });
+        fs::write(&second, "let target = 2;\n").unwrap();
+        app.open_file(second.clone()).unwrap();
+        let target = app.active().buffer;
+        drain(&mut queue);
+        app.switch_buffer(0);
+        let guards = app.lsp_document_guards();
+        app.lsp_requests.insert(
+            812,
+            TrackedRequest::new(
+                0,
+                app.buffers[0].revision(),
+                PendingRequest::Edits {
+                    label: "renamed",
+                    path: path.clone(),
+                },
+            )
+            .with_documents(guards),
+        );
+        if moved {
+            app.buffers[target].path = Some(second.with_file_name("renamed.rs"));
+        } else {
+            app.close_buffer(target);
+        }
+        let before = app.buffers[0].to_string();
+
+        app.apply_lsp_event(LspEvent::Response {
+            token: 812,
+            response: Response::Edits {
+                edits: vec![DocumentEdit {
+                    path,
+                    version: None,
+                    edits: vec![edit(0, 4, 10, "changed")],
+                }],
+                skipped: 0,
+                encoding: Encoding::Utf8,
+            },
+        });
+
+        assert_eq!(app.buffers[0].to_string(), before);
+        assert!(app.status.contains("another document changed"));
+        fs::remove_file(second).unwrap();
     }
 }
 
@@ -1203,6 +1595,30 @@ fn delayed_code_actions_are_not_offered_for_a_newer_buffer_revision() {
 }
 
 #[test]
+fn server_lifecycle_does_not_close_a_picker_that_replaced_code_actions() {
+    let (mut app, _path, _queue) = rust_app("fn main() {}\n");
+    ready(&mut app, Encoding::Utf8);
+    app.open_action_picker(
+        vec![ActionEntry::unresolved_for_test("resolve")],
+        0,
+        app.buffers[0].revision(),
+        app.lsp_document_guards(),
+    );
+    app.open_buffer_picker();
+    let title = app.list.as_ref().unwrap().title.clone();
+
+    app.apply_lsp_event(LspEvent::Restarted {
+        language: "rust".to_owned(),
+    });
+
+    assert_eq!(
+        app.list.as_ref().map(|list| list.title.as_str()),
+        Some(title.as_str())
+    );
+    assert!(app.lsp_action_source.is_none());
+}
+
+#[test]
 fn tab_requests_code_actions_in_an_ordinary_language_buffer() {
     let (mut app, _path, mut queue) = rust_app("fn main() {}\n");
     ready(&mut app, Encoding::Utf8);
@@ -1229,10 +1645,12 @@ fn resolved_code_action_keeps_its_source_across_an_active_buffer_switch() {
     drain(&mut queue);
     let source = app.active().buffer;
     let source_revision = app.buffers[source].revision();
+    let documents = app.lsp_document_guards();
     app.open_action_picker(
         vec![ActionEntry::unresolved_for_test("resolve me")],
         source,
         source_revision,
+        documents,
     );
     app.buffers.push(Buffer::scratch());
     app.syntax.push(None);
@@ -1269,12 +1687,278 @@ fn resolved_code_action_keeps_its_source_across_an_active_buffer_switch() {
                 edits: vec![edit(0, 0, 2, "// server")],
             }],
             skipped: 0,
+            encoding: Encoding::Utf8,
         },
     });
 
     assert_eq!(app.buffers[source].to_string(), newer);
     assert!(app.status_error);
     assert!(app.status.contains("stale language-server response"));
+}
+
+#[test]
+fn resolved_code_action_command_keeps_server_provenance_and_is_preflighted() {
+    for (command_name, skipped, accepted) in [
+        ("mock.command", 0, true),
+        ("not.advertised", 0, false),
+        ("mock.command", 1, false),
+    ] {
+        let (mut app, path, mut queue) = rust_app("original\n");
+        ready(&mut app, Encoding::Utf8);
+        drain(&mut queue);
+        let documents = app.lsp_document_guards();
+        app.lsp_requests.insert(
+            104,
+            TrackedRequest::new(
+                0,
+                app.buffers[0].revision(),
+                PendingRequest::Edits {
+                    label: "applied",
+                    path: PathBuf::new(),
+                },
+            )
+            .with_documents(documents)
+            .with_server("rust".to_owned(), 1),
+        );
+        app.apply_lsp_event(LspEvent::Response {
+            token: 104,
+            response: Response::ActionEdits {
+                edits: vec![DocumentEdit {
+                    path,
+                    version: None,
+                    edits: vec![edit(0, 0, 8, "changed")],
+                }],
+                skipped,
+                encoding: Encoding::Utf8,
+                command: Some(lsp_types::Command {
+                    title: "finish".to_owned(),
+                    command: command_name.to_owned(),
+                    arguments: None,
+                }),
+            },
+        });
+
+        if accepted {
+            assert_eq!(text(&app), "changed\n");
+            assert!(drain(&mut queue).iter().any(|command| matches!(
+                command,
+                LspCommand::Request { language, kind, .. }
+                    if language == "rust"
+                        && matches!(kind.as_ref(), RequestKind::ExecuteCommand(command) if command.command == "mock.command")
+            )));
+        } else {
+            assert_eq!(text(&app), "original\n");
+            assert!(drain(&mut queue).is_empty());
+        }
+    }
+}
+
+#[test]
+fn code_action_command_is_suppressed_when_an_edit_cannot_be_synchronized() {
+    let (mut app, path, mut queue) = rust_app("original\n");
+    ready(&mut app, Encoding::Utf8);
+    drain(&mut queue);
+    let documents = app.lsp_document_guards();
+    app.lsp_requests.insert(
+        105,
+        TrackedRequest::new(
+            0,
+            app.buffers[0].revision(),
+            PendingRequest::Edits {
+                label: "applied",
+                path: PathBuf::new(),
+            },
+        )
+        .with_documents(documents)
+        .with_server("rust".to_owned(), 1),
+    );
+    for _ in 0..crate::lsp::COMMAND_CAPACITY {
+        assert!(app.lsp_send(LspCommand::Status));
+    }
+
+    app.apply_lsp_event(LspEvent::Response {
+        token: 105,
+        response: Response::ActionEdits {
+            edits: vec![DocumentEdit {
+                path,
+                version: None,
+                edits: vec![edit(0, 0, 8, "changed")],
+            }],
+            skipped: 0,
+            encoding: Encoding::Utf8,
+            command: Some(lsp_types::Command {
+                title: "finish".to_owned(),
+                command: "mock.command".to_owned(),
+                arguments: None,
+            }),
+        },
+    });
+
+    assert_eq!(text(&app), "changed\n");
+    assert!(app.lsp_documents.get(&0).unwrap().desynced);
+    assert!(app.status_error);
+    assert!(app.status.contains("command not sent"));
+    assert!(drain(&mut queue).iter().all(|command| {
+        !matches!(
+            command,
+            LspCommand::Request { kind, .. }
+                if matches!(kind.as_ref(), RequestKind::ExecuteCommand(_))
+        )
+    }));
+}
+
+#[test]
+fn code_action_command_is_suppressed_when_a_new_target_cannot_be_opened() {
+    let (mut app, _path, mut queue) = rust_app("original\n");
+    ready(&mut app, Encoding::Utf8);
+    drain(&mut queue);
+    let target = temporary("new-target.rs");
+    fs::write(&target, "before\n").unwrap();
+    let documents = app.lsp_document_guards();
+    app.lsp_requests.insert(
+        106,
+        TrackedRequest::new(
+            0,
+            app.buffers[0].revision(),
+            PendingRequest::Edits {
+                label: "applied",
+                path: PathBuf::new(),
+            },
+        )
+        .with_documents(documents)
+        .with_server("rust".to_owned(), 1),
+    );
+    for _ in 0..crate::lsp::COMMAND_CAPACITY {
+        assert!(app.lsp_send(LspCommand::Status));
+    }
+
+    app.apply_lsp_event(LspEvent::Response {
+        token: 106,
+        response: Response::ActionEdits {
+            edits: vec![DocumentEdit {
+                path: target.clone(),
+                version: None,
+                edits: vec![edit(0, 0, 6, "changed")],
+            }],
+            skipped: 0,
+            encoding: Encoding::Utf8,
+            command: Some(lsp_types::Command {
+                title: "finish".to_owned(),
+                command: "mock.command".to_owned(),
+                arguments: None,
+            }),
+        },
+    });
+
+    let target_buffer = app
+        .buffers
+        .iter()
+        .position(|buffer| buffer.path.as_deref() == Some(target.as_path()))
+        .unwrap();
+    assert_eq!(app.buffers[target_buffer].to_string(), "changed\n");
+    assert!(!app.lsp_documents.contains_key(&target_buffer));
+    assert!(app.status.contains("command not sent"));
+    assert!(drain(&mut queue).iter().all(|command| {
+        !matches!(
+            command,
+            LspCommand::Request { kind, .. }
+                if matches!(kind.as_ref(), RequestKind::ExecuteCommand(_))
+        )
+    }));
+    fs::remove_file(target).unwrap();
+}
+
+#[test]
+fn code_action_command_is_suppressed_for_a_target_owned_by_another_server() {
+    let (mut app, _path, mut queue) = rust_app("original\n");
+    ready(&mut app, Encoding::Utf8);
+    drain(&mut queue);
+    let target = temporary("other.py");
+    fs::write(&target, "before\n").unwrap();
+    app.open_file(target.clone()).unwrap();
+    ready_language(&mut app, "python", Encoding::Utf8);
+    drain(&mut queue);
+    let documents = app.lsp_document_guards();
+    app.lsp_requests.insert(
+        107,
+        TrackedRequest::new(
+            0,
+            app.buffers[0].revision(),
+            PendingRequest::Edits {
+                label: "applied",
+                path: PathBuf::new(),
+            },
+        )
+        .with_documents(documents)
+        .with_server("rust".to_owned(), 1),
+    );
+
+    app.apply_lsp_event(LspEvent::Response {
+        token: 107,
+        response: Response::ActionEdits {
+            edits: vec![DocumentEdit {
+                path: target.clone(),
+                version: None,
+                edits: vec![edit(0, 0, 6, "changed")],
+            }],
+            skipped: 0,
+            encoding: Encoding::Utf8,
+            command: Some(lsp_types::Command {
+                title: "finish".to_owned(),
+                command: "mock.command".to_owned(),
+                arguments: None,
+            }),
+        },
+    });
+
+    assert_eq!(text(&app), "changed\n");
+    assert!(app.status.contains("command not sent"));
+    let commands = drain(&mut queue);
+    assert!(commands.iter().any(
+        |command| matches!(command, LspCommand::Change { language, .. } if language == "python")
+    ));
+    assert!(commands.iter().all(|command| {
+        !matches!(
+            command,
+            LspCommand::Request { kind, .. }
+                if matches!(kind.as_ref(), RequestKind::ExecuteCommand(_))
+        )
+    }));
+    fs::remove_file(target).unwrap();
+}
+
+#[test]
+fn workspace_edit_acknowledgement_retries_after_manager_backpressure() {
+    let (mut app, path, mut queue) = rust_app("original\n");
+    ready(&mut app, Encoding::Utf8);
+    drain(&mut queue);
+    for _ in 0..crate::lsp::COMMAND_CAPACITY {
+        assert!(app.lsp_send(LspCommand::Status));
+    }
+
+    app.apply_lsp_event(LspEvent::ApplyEdit {
+        language: "rust".into(),
+        generation: 1,
+        encoding: Encoding::Utf8,
+        id: serde_json::json!(900),
+        edits: vec![DocumentEdit {
+            path,
+            version: None,
+            edits: vec![edit(0, 0, 8, "changed")],
+        }],
+        skipped: 0,
+    });
+    assert_eq!(text(&app), "changed\n");
+    assert_eq!(app.pending_lsp_replies.len(), 1);
+
+    drain(&mut queue);
+    app.flush_lsp_replies();
+    assert!(matches!(
+        drain(&mut queue).as_slice(),
+        [LspCommand::EditApplied { id, applied: true, .. }]
+            if id == &serde_json::json!(900)
+    ));
+    assert!(app.pending_lsp_replies.is_empty());
 }
 
 #[test]
@@ -1288,6 +1972,8 @@ fn versioned_workspace_edit_is_rejected_after_the_document_advances() {
     drain(&mut queue);
     app.apply_lsp_event(LspEvent::ApplyEdit {
         language: "rust".into(),
+        generation: 1,
+        encoding: Encoding::Utf8,
         id: serde_json::json!(84),
         edits: vec![DocumentEdit {
             path,
@@ -1317,6 +2003,8 @@ fn a_later_invalid_document_rejects_a_workspace_edit_atomically() {
 
     app.apply_lsp_event(LspEvent::ApplyEdit {
         language: "rust".into(),
+        generation: 1,
+        encoding: Encoding::Utf8,
         id: serde_json::json!(841),
         edits: vec![
             DocumentEdit {
@@ -1355,6 +2043,8 @@ fn duplicate_workspace_edit_documents_form_one_transaction() {
 
     app.apply_lsp_event(LspEvent::ApplyEdit {
         language: "rust".into(),
+        generation: 1,
+        encoding: Encoding::Utf8,
         id: serde_json::json!(842),
         edits: vec![
             DocumentEdit {
@@ -1384,6 +2074,8 @@ fn overlapping_duplicate_workspace_edits_are_rejected_atomically() {
 
     app.apply_lsp_event(LspEvent::ApplyEdit {
         language: "rust".into(),
+        generation: 1,
+        encoding: Encoding::Utf8,
         id: serde_json::json!(843),
         edits: vec![
             DocumentEdit {
@@ -1409,6 +2101,60 @@ fn overlapping_duplicate_workspace_edits_are_rejected_atomically() {
     ));
 }
 
+#[test]
+fn malformed_workspace_edit_ranges_are_rejected_atomically() {
+    for invalid in [
+        edit(9, 0, 0, "outside"),
+        crate::lsp::TextEdit {
+            range: LspRange::new(LspPosition::new(0, 8), LspPosition::new(0, 1)),
+            new_text: "reversed".to_owned(),
+        },
+    ] {
+        let (mut app, path, mut queue) = rust_app("original\n");
+        ready(&mut app, Encoding::Utf8);
+        drain(&mut queue);
+        app.apply_lsp_event(LspEvent::ApplyEdit {
+            language: "rust".into(),
+            generation: 1,
+            encoding: Encoding::Utf8,
+            id: serde_json::json!(845),
+            edits: vec![DocumentEdit {
+                path,
+                version: None,
+                edits: vec![invalid],
+            }],
+            skipped: 0,
+        });
+        assert_eq!(text(&app), "original\n");
+        assert!(app.status.contains("invalid language-server edit range"));
+        assert!(matches!(
+            drain(&mut queue).as_slice(),
+            [LspCommand::EditApplied { applied: false, .. }]
+        ));
+    }
+}
+
+#[test]
+fn a_workspace_edit_cannot_split_an_encoded_character() {
+    let (mut app, path, mut queue) = rust_app("a🦀b\n");
+    ready(&mut app, Encoding::Utf8);
+    drain(&mut queue);
+    app.apply_lsp_event(LspEvent::ApplyEdit {
+        language: "rust".into(),
+        generation: 1,
+        encoding: Encoding::Utf8,
+        id: serde_json::json!(846),
+        edits: vec![DocumentEdit {
+            path,
+            version: None,
+            edits: vec![edit(0, 2, 2, "x")],
+        }],
+        skipped: 0,
+    });
+    assert_eq!(text(&app), "a🦀b\n");
+    assert!(app.status.contains("invalid language-server edit range"));
+}
+
 #[cfg(unix)]
 #[test]
 fn a_versioned_workspace_edit_reuses_an_open_symlink_alias() {
@@ -1429,6 +2175,8 @@ fn a_versioned_workspace_edit_reuses_an_open_symlink_alias() {
 
     app.apply_lsp_event(LspEvent::ApplyEdit {
         language: "rust".into(),
+        generation: 1,
+        encoding: Encoding::Utf8,
         id: serde_json::json!(844),
         edits: vec![DocumentEdit {
             path: link,
@@ -1464,6 +2212,8 @@ fn numeric_workspace_version_cannot_be_satisfied_by_opening_a_closed_file() {
 
     app.apply_lsp_event(LspEvent::ApplyEdit {
         language: "rust".into(),
+        generation: 1,
+        encoding: Encoding::Utf8,
         id: serde_json::json!(85),
         edits: vec![DocumentEdit {
             path: closed.clone(),
@@ -1518,6 +2268,7 @@ fn closing_a_buffer_ignores_its_delayed_edit_response() {
                 edits: vec![edit(0, 0, 12, "fn main() {}")],
             }],
             skipped: 0,
+            encoding: Encoding::Utf8,
         },
     });
 
@@ -2618,6 +3369,99 @@ fn language_completion_enters_insert_mode_and_requests_candidates() {
 }
 
 #[test]
+fn a_new_transient_request_cancels_the_superseded_one() {
+    let (mut app, _path, mut queue) = rust_app("value\n");
+    ready(&mut app, Encoding::Utf8);
+    drain(&mut queue);
+
+    app.lsp_hover();
+    let first = drain(&mut queue);
+    let token = first
+        .iter()
+        .find_map(|command| match command {
+            LspCommand::Request { token, .. } => Some(*token),
+            _ => None,
+        })
+        .unwrap();
+    app.lsp_hover();
+    let second = drain(&mut queue);
+    assert!(second.iter().any(
+        |command| matches!(command, LspCommand::Cancel { token: cancelled } if *cancelled == token)
+    ));
+    assert_eq!(app.lsp_requests.len(), 1);
+}
+
+#[test]
+fn malformed_or_overlapping_completion_edits_change_nothing() {
+    for (primary, additional) in [
+        (edit(0, 1, 1, "x"), vec![edit(7, 0, 0, "outside")]),
+        (edit(0, 0, 2, "x"), vec![edit(0, 1, 3, "overlap")]),
+    ] {
+        let (mut app, _path, mut queue) = rust_app("abc\n");
+        ready(&mut app, Encoding::Utf8);
+        drain(&mut queue);
+        set_cursor(&mut app, 0, 1);
+        press(&mut app, 'i');
+        let anchor = app.active().head();
+        app.completion = Some(CompletionState {
+            items: vec![crate::lsp::Completion {
+                label: "candidate".to_owned(),
+                filter_text: None,
+                sort_text: None,
+                detail: String::new(),
+                kind: "value",
+                insert: "candidate".to_owned(),
+                edit: Some((primary.range, primary.new_text)),
+                additional,
+            }],
+            selected: 0,
+            buffer: 0,
+            anchor,
+            filter: String::new(),
+            source: CompletionSource::Language,
+            explicit_session: None,
+        });
+        key(&mut app, KeyCode::Tab, Modifiers::NONE);
+        assert_eq!(text(&app), "abc\n");
+        assert!(app.status_error);
+    }
+}
+
+#[test]
+fn completion_caret_follows_the_primary_edit_not_a_later_additional_edit() {
+    let (mut app, _path, mut queue) = rust_app("abc\n");
+    ready(&mut app, Encoding::Utf8);
+    drain(&mut queue);
+    press(&mut app, 'i');
+    app.completion = Some(CompletionState {
+        items: vec![crate::lsp::Completion {
+            label: "primary".to_owned(),
+            filter_text: None,
+            sort_text: None,
+            detail: String::new(),
+            kind: "value",
+            insert: "primary".to_owned(),
+            edit: Some((
+                LspRange::new(LspPosition::new(0, 0), LspPosition::new(0, 1)),
+                "primary".to_owned(),
+            )),
+            additional: vec![edit(0, 3, 3, "!")],
+        }],
+        selected: 0,
+        buffer: 0,
+        anchor: 0,
+        filter: String::new(),
+        source: CompletionSource::Language,
+        explicit_session: None,
+    });
+
+    key(&mut app, KeyCode::Tab, Modifiers::NONE);
+
+    assert_eq!(text(&app), "primarybc!\n");
+    assert_eq!(app.active().head(), "primary".chars().count());
+}
+
+#[test]
 fn a_response_nothing_is_waiting_for_is_ignored() {
     let (mut app, _, _queue) = rust_app("abc\n");
     app.apply_lsp_event(LspEvent::Response {
@@ -2713,6 +3557,7 @@ fn a_document_symbol_picker_filters_and_jumps() {
                 location: crate::lsp::Location {
                     path: PathBuf::new(),
                     range: LspRange::new(LspPosition::new(0, 3), LspPosition::new(0, 8)),
+                    encoding: Encoding::Utf8,
                 },
             },
             crate::lsp::SymbolEntry {
@@ -2722,6 +3567,7 @@ fn a_document_symbol_picker_filters_and_jumps() {
                 location: crate::lsp::Location {
                     path: PathBuf::new(),
                     range: LspRange::new(LspPosition::new(1, 3), LspPosition::new(1, 7)),
+                    encoding: Encoding::Utf8,
                 },
             },
         ]),

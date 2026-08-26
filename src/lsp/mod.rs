@@ -16,9 +16,10 @@ pub mod diagnostics;
 pub mod transport;
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     path::{Path, PathBuf},
     str::FromStr,
+    time::Duration,
 };
 
 use lsp_types::{
@@ -27,7 +28,8 @@ use lsp_types::{
     GotoDefinitionResponse, HoverContents, HoverProviderCapability,
     ImplementationProviderCapability, InitializeResult, MarkedString, OneOf, PositionEncodingKind,
     Range, ServerCapabilities, SymbolInformation, TextDocumentSyncCapability, TextDocumentSyncKind,
-    TypeDefinitionProviderCapability, Uri, WorkspaceEdit, WorkspaceSymbolResponse,
+    TextDocumentSyncSaveOptions, TypeDefinitionProviderCapability, Uri, WorkspaceEdit,
+    WorkspaceSymbolResponse,
 };
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
@@ -49,7 +51,7 @@ pub use lsp_types::{
 
 /// Splits a workspace edit carried inline by a code action into per-file text
 /// edits, alongside the count of file operations that are not performed.
-pub fn flatten_edit(edit: WorkspaceEdit) -> (Vec<DocumentEdit>, usize) {
+pub fn flatten_edit(edit: WorkspaceEdit) -> Result<(Vec<DocumentEdit>, usize), String> {
     flatten_workspace_edit(edit)
 }
 
@@ -57,7 +59,20 @@ pub fn flatten_edit(edit: WorkspaceEdit) -> (Vec<DocumentEdit>, usize) {
 /// wedged. Generous: a burst is one keystroke's worth of document sync.
 pub const COMMAND_CAPACITY: usize = 256;
 /// How many events may queue for the editor between frames.
-pub const EVENT_CAPACITY: usize = 256;
+pub const EVENT_CAPACITY: usize = 32;
+/// Maximum unanswered requests retained for one server.
+pub const PENDING_CAPACITY: usize = transport::OUTGOING_CAPACITY / 2;
+/// Across all servers, bounds request correlation and reserves cancellation
+/// control capacity independently of ordinary editor work.
+const GLOBAL_PENDING_CAPACITY: usize = 128;
+/// Maximum server-initiated requests retained while editor answers are pending.
+const INCOMING_REQUEST_CAPACITY: usize = 128;
+/// Across all servers, never emit more reply-requiring events than the
+/// editor's reserved retry queue can retain.
+const GLOBAL_INCOMING_REQUEST_CAPACITY: usize = EVENT_CAPACITY;
+/// Leaves room in the transport queue for `initialized` and the initial
+/// configuration notification before buffered document updates are flushed.
+const PRE_READY_CAPACITY: usize = transport::OUTGOING_CAPACITY - 2;
 
 // -- Coordinates -----------------------------------------------------------
 
@@ -73,12 +88,40 @@ pub enum Encoding {
     Utf32,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ChangeSync {
+    None,
+    Full,
+    Incremental,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DocumentSync {
+    pub open_close: bool,
+    pub change: ChangeSync,
+    /// `None` means no save notification; `Some` says whether text is included.
+    pub save: Option<bool>,
+}
+
+impl Default for DocumentSync {
+    fn default() -> Self {
+        Self {
+            open_close: false,
+            change: ChangeSync::None,
+            save: None,
+        }
+    }
+}
+
 impl Encoding {
-    fn from_kind(kind: Option<&PositionEncodingKind>) -> Self {
+    fn from_kind(kind: Option<&PositionEncodingKind>) -> Result<Self, String> {
         match kind.map(PositionEncodingKind::as_str) {
-            Some("utf-8") => Self::Utf8,
-            Some("utf-32") => Self::Utf32,
-            _ => Self::Utf16,
+            Some("utf-8") => Ok(Self::Utf8),
+            Some("utf-16") | None => Ok(Self::Utf16),
+            Some("utf-32") => Ok(Self::Utf32),
+            Some(other) => Err(format!(
+                "server selected unsupported position encoding {other}"
+            )),
         }
     }
 
@@ -132,6 +175,50 @@ pub fn from_lsp_range(text: &Text, range: Range, encoding: Encoding) -> (Offset,
     if from <= to { (from, to) } else { (to, from) }
 }
 
+/// Converts a server position used for a mutation, rejecting rather than
+/// clamping malformed coordinates.
+///
+/// Navigation and diagnostics are presentation data and may be clamped when
+/// they race a newer document. A text edit is different: moving an invalid
+/// endpoint to the edge of the live document can change unrelated text.
+pub fn checked_lsp_position(
+    text: &Text,
+    position: lsp_types::Position,
+    encoding: Encoding,
+) -> Option<Offset> {
+    let row = usize::try_from(position.line).ok()?;
+    if row >= text.len_lines() {
+        return None;
+    }
+    let start = text.line_to_offset(row);
+    let line = text.line_string(row);
+    let mut units = 0u32;
+    for (index, character) in line.chars().enumerate() {
+        if units == position.character {
+            return Some(start + index);
+        }
+        units = units.checked_add(encoding.units(character))?;
+        if units > position.character {
+            // The position points into a UTF-8 sequence or UTF-16 surrogate
+            // pair rather than at a character boundary.
+            return None;
+        }
+    }
+    (units == position.character).then_some(start + line.chars().count())
+}
+
+/// Converts a mutation range only when both endpoints are exact character
+/// boundaries and retain the server's forward ordering.
+pub fn checked_lsp_range(
+    text: &Text,
+    range: Range,
+    encoding: Encoding,
+) -> Option<(Offset, Offset)> {
+    let from = checked_lsp_position(text, range.start, encoding)?;
+    let to = checked_lsp_position(text, range.end, encoding)?;
+    (from <= to).then_some((from, to))
+}
+
 // -- URIs ------------------------------------------------------------------
 
 /// Percent-encodes an absolute path into a `file:` URI.
@@ -140,6 +227,9 @@ pub fn from_lsp_range(text: &Text, range: Range, encoding: Encoding) -> (Offset,
 /// matters is an absolute local path, and the encoding rules for that case are
 /// short enough that a dependency would cost more than it saves.
 pub fn path_to_uri(path: &Path) -> Option<Uri> {
+    if !path.is_absolute() {
+        return None;
+    }
     let text = path.to_str()?;
     let mut encoded = String::from("file://");
     for byte in text.bytes() {
@@ -158,9 +248,21 @@ pub fn path_to_uri(path: &Path) -> Option<Uri> {
 /// open.
 pub fn uri_to_path(uri: &Uri) -> Option<PathBuf> {
     let text = uri.as_str();
-    let rest = text
-        .strip_prefix("file://")
-        .map(|rest| rest.strip_prefix("localhost").unwrap_or(rest))?;
+    let rest = text.strip_prefix("file://")?;
+    let rest = if rest.starts_with('/') {
+        rest
+    } else if let Some(rest) = rest.strip_prefix("localhost/") {
+        // Preserve the leading slash consumed with the authority separator.
+        // `file://localhost/etc` and `file:///etc` name the same local file.
+        // Any other authority is a remote resource, not a local pathname.
+        return uri_path(&format!("/{rest}"));
+    } else {
+        return None;
+    };
+    uri_path(rest)
+}
+
+fn uri_path(rest: &str) -> Option<PathBuf> {
     let mut bytes = Vec::with_capacity(rest.len());
     let mut characters = rest.bytes();
     while let Some(byte) = characters.next() {
@@ -174,8 +276,8 @@ pub fn uri_to_path(uri: &Uri) -> Option<PathBuf> {
             bytes.push(byte);
         }
     }
-    let path = String::from_utf8(bytes).ok()?;
-    (!path.is_empty()).then(|| PathBuf::from(path))
+    let path = PathBuf::from(String::from_utf8(bytes).ok()?);
+    path.is_absolute().then_some(path)
 }
 
 // -- The editor-facing protocol -------------------------------------------
@@ -196,6 +298,9 @@ pub struct DocumentEdit {
 pub struct Location {
     pub path: PathBuf,
     pub range: Range,
+    /// Coordinates are always interpreted using the server that produced the
+    /// location, even when the target file belongs to another language.
+    pub encoding: Encoding,
 }
 
 /// A completion candidate, flattened into what the editor needs to display and
@@ -383,7 +488,7 @@ pub struct Capabilities {
     pub(crate) rename: bool,
     pub(crate) code_actions: bool,
     pub(crate) code_action_resolve: bool,
-    pub(crate) execute_command: bool,
+    pub(crate) execute_commands: HashSet<String>,
     pub(crate) format: bool,
     /// Characters that ask for completion as they are typed. Empty when the
     /// server does not advertise `completionProvider` at all.
@@ -431,7 +536,12 @@ impl Capabilities {
             code_actions: code_action_supported(capabilities.code_action_provider.as_ref()),
             code_action_resolve: code_action_options
                 .is_some_and(|options| options.resolve_provider == Some(true)),
-            execute_command: capabilities.execute_command_provider.is_some(),
+            execute_commands: capabilities
+                .execute_command_provider
+                .as_ref()
+                .map_or_else(HashSet::new, |options| {
+                    options.commands.iter().cloned().collect()
+                }),
             format: one_of_bool_supported(capabilities.document_formatting_provider.as_ref()),
             completion_triggers: capabilities.completion_provider.as_ref().map_or_else(
                 Vec::new,
@@ -478,7 +588,9 @@ impl Capabilities {
             RequestKind::Rename { .. } => self.rename,
             RequestKind::CodeActions { .. } => self.code_actions,
             RequestKind::ResolveCodeAction(_) => self.code_action_resolve,
-            RequestKind::ExecuteCommand(_) => self.execute_command,
+            RequestKind::ExecuteCommand(command) => {
+                self.execute_commands.contains(&command.command)
+            }
             RequestKind::Format { .. } => self.format,
         }
     }
@@ -521,7 +633,7 @@ impl Capabilities {
             rename: true,
             code_actions: true,
             code_action_resolve: true,
-            execute_command: true,
+            execute_commands: HashSet::from(["mock.command".to_owned()]),
             format: true,
             completion_triggers: DEFAULT_COMPLETION_TRIGGERS.to_vec(),
             signature_triggers: DEFAULT_SIGNATURE_TRIGGERS.to_vec(),
@@ -625,6 +737,18 @@ pub enum Response {
     Edits {
         edits: Vec<DocumentEdit>,
         skipped: usize,
+        /// Every position in a workspace edit uses the encoding negotiated
+        /// with the server that returned it, including edits to files whose
+        /// own language would attach to another server.
+        encoding: Encoding,
+    },
+    /// A resolved code action whose edit must be applied before its command
+    /// is executed.
+    ActionEdits {
+        edits: Vec<DocumentEdit>,
+        skipped: usize,
+        encoding: Encoding,
+        command: Option<Command>,
     },
     /// The request succeeded and the server had nothing to offer.
     Empty,
@@ -671,9 +795,15 @@ pub enum LspCommand {
         path: PathBuf,
         kind: Box<RequestKind>,
     },
+    /// Stops retaining a request the editor no longer has a consumer for and
+    /// asks the server to stop its work as a best effort.
+    Cancel {
+        token: u64,
+    },
     /// The editor's answer to a server-initiated `workspace/applyEdit`.
     EditApplied {
         language: String,
+        generation: u64,
         id: Value,
         applied: bool,
     },
@@ -693,14 +823,18 @@ pub enum LspEvent {
     /// capability it never claimed is never asked for.
     Ready {
         language: String,
+        generation: u64,
         name: String,
         encoding: Encoding,
-        incremental: bool,
+        sync: DocumentSync,
         capabilities: Capabilities,
     },
     Diagnostics {
         language: String,
         path: PathBuf,
+        /// The document version the publication describes, when the server
+        /// supplied one. The editor drops it if that open document advanced.
+        version: Option<i32>,
         diagnostics: Vec<Diagnostic>,
     },
     Response {
@@ -711,6 +845,8 @@ pub enum LspEvent {
     /// with [`LspCommand::EditApplied`] and the same `id`.
     ApplyEdit {
         language: String,
+        generation: u64,
+        encoding: Encoding,
         id: Value,
         edits: Vec<DocumentEdit>,
         skipped: usize,
@@ -718,6 +854,11 @@ pub enum LspEvent {
     Status {
         message: String,
         error: bool,
+    },
+    /// An explicit restart retired a live process. This clears editor-side
+    /// capability, document, and diagnostic state without reporting a crash.
+    Restarted {
+        language: String,
     },
     /// A server exited, crashed, or failed to start. The editor drops its
     /// diagnostics and keeps working without it.
@@ -731,6 +872,9 @@ pub enum LspEvent {
 #[derive(Clone, Debug)]
 pub struct LspHandle {
     commands: mpsc::Sender<LspCommand>,
+    /// Reserved for workspace-edit acknowledgements, so ordinary request and
+    /// notification bursts cannot starve protocol replies.
+    controls: Option<mpsc::Sender<LspCommand>>,
 }
 
 impl LspHandle {
@@ -738,6 +882,13 @@ impl LspHandle {
     /// queue is full; callers surface that as a status message rather than
     /// waiting, because waiting is the one thing the render path may not do.
     pub fn send(&self, command: LspCommand) -> bool {
+        if matches!(
+            command,
+            LspCommand::EditApplied { .. } | LspCommand::Cancel { .. }
+        ) && let Some(controls) = &self.controls
+        {
+            return controls.try_send(command).is_ok();
+        }
         self.commands.try_send(command).is_ok()
     }
 }
@@ -750,17 +901,19 @@ impl LspHandle {
 pub type Launch = Box<
     dyn FnMut(
             &str,
+            u64,
             &LanguageServerConfig,
             &Path,
-            mpsc::Sender<(String, Incoming)>,
+            mpsc::Sender<(String, u64, Incoming)>,
         ) -> Result<Connection, String>
         + Send,
 >;
 
 fn process_launcher() -> Launch {
-    Box::new(|language, settings, root, inbox| {
+    Box::new(|language, generation, settings, root, inbox| {
         transport::spawn(
             language.to_owned(),
+            generation,
             &settings.command,
             &settings.args,
             root,
@@ -781,7 +934,13 @@ pub fn spawn(config: LspConfig, root: PathBuf) -> (LspHandle, mpsc::Receiver<Lsp
 /// editor would send to a language server without starting one.
 pub fn command_channel() -> (LspHandle, mpsc::Receiver<LspCommand>) {
     let (commands, queue) = mpsc::channel(COMMAND_CAPACITY);
-    (LspHandle { commands }, queue)
+    (
+        LspHandle {
+            commands,
+            controls: None,
+        },
+        queue,
+    )
 }
 
 /// Starts the manager against a caller-supplied way of reaching servers.
@@ -791,11 +950,17 @@ pub fn spawn_with(
     launch: Launch,
 ) -> (LspHandle, mpsc::Receiver<LspEvent>) {
     let (command_tx, command_rx) = mpsc::channel(COMMAND_CAPACITY);
+    let (control_tx, control_rx) = mpsc::channel(
+        COMMAND_CAPACITY + GLOBAL_INCOMING_REQUEST_CAPACITY + GLOBAL_PENDING_CAPACITY,
+    );
     let (event_tx, event_rx) = mpsc::channel(EVENT_CAPACITY);
-    tokio::spawn(run_manager(config, root, launch, command_rx, event_tx));
+    tokio::spawn(run_manager(
+        config, root, launch, command_rx, control_rx, event_tx,
+    ));
     (
         LspHandle {
             commands: command_tx,
+            controls: Some(control_tx),
         },
         event_rx,
     )
@@ -829,18 +994,22 @@ struct Pending {
 /// Everything the manager knows about one language's server.
 struct Server {
     language: String,
+    generation: u64,
     name: String,
     connection: Connection,
     next_id: i64,
     pending: HashMap<i64, Pending>,
     encoding: Encoding,
-    incremental: bool,
+    sync: DocumentSync,
     capabilities: Capabilities,
     ready: bool,
     /// Notifications recorded before the handshake completed. The
     /// specification forbids sending them earlier, and the editor should not
     /// have to care.
     queued: Vec<Value>,
+    /// Canonical JSON encodings of server request IDs awaiting an editor
+    /// answer. A server may not reuse one while its request is outstanding.
+    incoming_requests: HashSet<String>,
 }
 
 impl Server {
@@ -852,8 +1021,23 @@ impl Server {
         shape: Shape,
         label: &'static str,
     ) -> bool {
+        if self.pending.len() >= PENDING_CAPACITY {
+            return false;
+        }
         let id = self.next_id;
-        self.next_id += 1;
+        let Some(next_id) = self.next_id.checked_add(1) else {
+            return false;
+        };
+        let message = json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": method,
+            "params": params,
+        });
+        if !self.connection.send(message) {
+            return false;
+        }
+        self.next_id = next_id;
         self.pending.insert(
             id,
             Pending {
@@ -862,12 +1046,7 @@ impl Server {
                 label,
             },
         );
-        self.connection.send(json!({
-            "jsonrpc": "2.0",
-            "id": id,
-            "method": method,
-            "params": params,
-        }))
+        true
     }
 
     fn notify(&mut self, method: &str, params: Value) -> bool {
@@ -877,24 +1056,46 @@ impl Server {
             "params": params,
         });
         if !self.ready {
+            if self.queued.len() >= PRE_READY_CAPACITY {
+                return false;
+            }
             self.queued.push(message);
             return true;
         }
         self.connection.send(message)
     }
 
-    fn flush(&mut self) {
-        for message in std::mem::take(&mut self.queued) {
-            self.connection.send(message);
+    fn flush(&mut self) -> bool {
+        for mut message in std::mem::take(&mut self.queued) {
+            let method = message.get("method").and_then(Value::as_str);
+            let supported = match method {
+                Some("textDocument/didOpen" | "textDocument/didClose") => self.sync.open_close,
+                Some("textDocument/didChange") => self.sync.change != ChangeSync::None,
+                Some("textDocument/didSave") => self.sync.save.is_some(),
+                _ => true,
+            };
+            if !supported {
+                continue;
+            }
+            if method == Some("textDocument/didSave")
+                && self.sync.save == Some(false)
+                && let Some(params) = message.get_mut("params").and_then(Value::as_object_mut)
+            {
+                params.remove("text");
+            }
+            if !self.connection.send(message) {
+                return false;
+            }
         }
+        true
     }
 
-    fn respond(&mut self, id: Value, result: Value) {
+    fn respond(&mut self, id: Value, result: Value) -> bool {
         self.connection.send(json!({
             "jsonrpc": "2.0",
             "id": id,
             "result": result,
-        }));
+        }))
     }
 }
 
@@ -903,16 +1104,38 @@ async fn run_manager(
     root: PathBuf,
     mut launch: Launch,
     mut commands: mpsc::Receiver<LspCommand>,
+    mut controls: mpsc::Receiver<LspCommand>,
     events: mpsc::Sender<LspEvent>,
 ) {
-    let (inbox_tx, mut inbox) = mpsc::channel::<(String, Incoming)>(EVENT_CAPACITY);
+    let (inbox_tx, mut inbox) = mpsc::channel::<(String, u64, Incoming)>(EVENT_CAPACITY);
     let mut servers: HashMap<String, Server> = HashMap::new();
+    let mut next_generation = 1u64;
     // Languages whose server failed. Recorded so a failure is reported once
     // and never retried in a loop; `:lsp-restart` clears it.
     let mut failed: HashMap<String, String> = HashMap::new();
+    let mut early_cancels = HashSet::new();
+    let mut max_request_token = None;
 
     loop {
         tokio::select! {
+            biased;
+            Some(command) = controls.recv() => {
+                handle_command(
+                    command,
+                    &config,
+                    &root,
+                    &mut launch,
+                    &mut servers,
+                    &mut failed,
+                    &mut next_generation,
+                    &inbox_tx,
+                    &mut inbox,
+                    &mut early_cancels,
+                    &mut max_request_token,
+                    &events,
+                )
+                .await;
+            }
             command = commands.recv() => {
                 let Some(command) = command else { break };
                 if matches!(command, LspCommand::Shutdown) {
@@ -925,15 +1148,20 @@ async fn run_manager(
                     &mut launch,
                     &mut servers,
                     &mut failed,
+                    &mut next_generation,
                     &inbox_tx,
+                    &mut inbox,
+                    &mut early_cancels,
+                    &mut max_request_token,
                     &events,
                 )
                 .await;
             }
             message = inbox.recv() => {
-                let Some((language, incoming)) = message else { continue };
+                let Some((language, generation, incoming)) = message else { continue };
                 handle_incoming(
                     &language,
+                    generation,
                     incoming,
                     &mut servers,
                     &mut failed,
@@ -944,13 +1172,85 @@ async fn run_manager(
         }
     }
 
-    for (_, server) in servers.drain() {
-        server.connection.send(json!({
+    let languages = servers.keys().cloned().collect::<Vec<_>>();
+    for language in languages {
+        graceful_stop_server(&language, &mut servers, &mut failed, &mut inbox, &events).await;
+    }
+}
+
+/// Performs the LSP shutdown handshake without ever involving the editor
+/// thread. A wedged server gets a short grace period, then is force-stopped;
+/// other servers' traffic is still drained while that response is pending.
+async fn graceful_stop_server(
+    language: &str,
+    servers: &mut HashMap<String, Server>,
+    failed: &mut HashMap<String, String>,
+    inbox: &mut mpsc::Receiver<(String, u64, Incoming)>,
+    events: &mpsc::Sender<LspEvent>,
+) {
+    let Some(server) = servers.get_mut(language) else {
+        return;
+    };
+    let generation = server.generation;
+    let shutdown_id = server.next_id;
+    let sent = server.next_id.checked_add(1).is_some_and(|next_id| {
+        if server.connection.send(json!({
             "jsonrpc": "2.0",
-            "id": server.next_id,
+            "id": shutdown_id,
             "method": "shutdown",
             "params": null,
-        }));
+        })) {
+            server.next_id = next_id;
+            true
+        } else {
+            false
+        }
+    });
+    if sent {
+        let deadline = tokio::time::Instant::now() + Duration::from_millis(500);
+        loop {
+            let Ok(Some((incoming_language, incoming_generation, message))) =
+                tokio::time::timeout_at(deadline, inbox.recv()).await
+            else {
+                break;
+            };
+            let is_shutdown_response = incoming_language == language
+                && incoming_generation == generation
+                && matches!(
+                    &message,
+                    Incoming::Message(message)
+                        if message.get("jsonrpc").and_then(Value::as_str) == Some("2.0")
+                            && message.get("id") == Some(&json!(shutdown_id))
+                            && (message.get("result").is_some()
+                                ^ message.get("error").is_some())
+                );
+            if is_shutdown_response {
+                break;
+            }
+            if incoming_language == language
+                && incoming_generation == generation
+                && matches!(message, Incoming::Closed { .. })
+            {
+                servers.remove(language);
+                return;
+            }
+            if incoming_language == language && incoming_generation == generation {
+                // Once retirement begins, no new request or notification from
+                // this generation is allowed back into editor state.
+                continue;
+            }
+            handle_incoming(
+                &incoming_language,
+                incoming_generation,
+                message,
+                servers,
+                failed,
+                events,
+            )
+            .await;
+        }
+    }
+    if let Some(server) = servers.remove(language) {
         server.connection.send(json!({
             "jsonrpc": "2.0",
             "method": "exit",
@@ -968,14 +1268,26 @@ async fn handle_command(
     launch: &mut Launch,
     servers: &mut HashMap<String, Server>,
     failed: &mut HashMap<String, String>,
-    inbox: &mpsc::Sender<(String, Incoming)>,
+    next_generation: &mut u64,
+    inbox: &mpsc::Sender<(String, u64, Incoming)>,
+    incoming: &mut mpsc::Receiver<(String, u64, Incoming)>,
+    early_cancels: &mut HashSet<u64>,
+    max_request_token: &mut Option<u64>,
     events: &mpsc::Sender<LspEvent>,
 ) {
     match command {
         LspCommand::Shutdown => {}
         LspCommand::Ensure { language } => {
             ensure_server(
-                &language, config, root, launch, servers, failed, inbox, events,
+                &language,
+                config,
+                root,
+                launch,
+                servers,
+                failed,
+                next_generation,
+                inbox,
+                events,
             )
             .await;
         }
@@ -986,8 +1298,29 @@ async fn handle_command(
             };
             for language in languages {
                 failed.remove(&language);
-                if let Some(server) = servers.remove(&language) {
-                    server.connection.stop().await;
+                if let Some(server) = servers.get_mut(&language) {
+                    let pending = std::mem::take(&mut server.pending);
+                    let name = server.name.clone();
+                    for (_, pending) in pending {
+                        if pending.shape != Shape::Initialize {
+                            emit(
+                                events,
+                                LspEvent::Response {
+                                    token: pending.token,
+                                    response: Response::Failed(format!("{} was restarted", name)),
+                                },
+                            )
+                            .await;
+                        }
+                    }
+                    graceful_stop_server(&language, servers, failed, incoming, events).await;
+                    emit(
+                        events,
+                        LspEvent::Restarted {
+                            language: language.clone(),
+                        },
+                    )
+                    .await;
                 }
                 emit(
                     events,
@@ -1031,20 +1364,50 @@ async fn handle_command(
             )
             .await;
         }
+        LspCommand::Cancel { token } => {
+            let mut found = false;
+            for server in servers.values_mut() {
+                let pending = server.pending.iter().find_map(|(id, pending)| {
+                    (pending.token == token && pending.shape != Shape::Initialize).then_some(*id)
+                });
+                if let Some(id) = pending {
+                    found = true;
+                    server.pending.remove(&id);
+                    server.notify("$/cancelRequest", json!({ "id": id }));
+                    break;
+                }
+            }
+            if !found
+                && max_request_token.is_none_or(|seen| token > seen)
+                && early_cancels.len() < COMMAND_CAPACITY
+            {
+                early_cancels.insert(token);
+            }
+        }
         LspCommand::Open {
             language,
             path,
             version,
             text,
         } => {
-            if ensure_server(
-                &language, config, root, launch, servers, failed, inbox, events,
+            let ready = ensure_server(
+                &language,
+                config,
+                root,
+                launch,
+                servers,
+                failed,
+                next_generation,
+                inbox,
+                events,
             )
-            .await
+            .await;
+            let refused = if ready
                 && let Some(server) = servers.get_mut(&language)
+                && (!server.ready || server.sync.open_close)
                 && let Some(uri) = path_to_uri(&path)
             {
-                server.notify(
+                (!server.notify(
                     "textDocument/didOpen",
                     json!({
                         "textDocument": {
@@ -1054,7 +1417,13 @@ async fn handle_command(
                             "text": text,
                         }
                     }),
-                );
+                ))
+                .then(|| format!("{} is not accepting document updates", server.name))
+            } else {
+                None
+            };
+            if let Some(message) = refused {
+                stop_server(&language, message, servers, failed, events).await;
             }
         }
         LspCommand::Change {
@@ -1063,16 +1432,23 @@ async fn handle_command(
             version,
             changes,
         } => {
-            if let Some(server) = servers.get_mut(&language)
+            let refused = if let Some(server) = servers.get_mut(&language)
+                && (!server.ready || server.sync.change != ChangeSync::None)
                 && let Some(uri) = path_to_uri(&path)
             {
-                server.notify(
+                (!server.notify(
                     "textDocument/didChange",
                     json!({
                         "textDocument": { "uri": uri, "version": version },
                         "contentChanges": changes,
                     }),
-                );
+                ))
+                .then(|| format!("{} is not accepting document updates", server.name))
+            } else {
+                None
+            };
+            if let Some(message) = refused {
+                stop_server(&language, message, servers, failed, events).await;
             }
         }
         LspCommand::Save {
@@ -1080,32 +1456,72 @@ async fn handle_command(
             path,
             text,
         } => {
-            if let Some(server) = servers.get_mut(&language)
+            let refused = if let Some(server) = servers.get_mut(&language)
+                && let Some(include_text) = if server.ready {
+                    server.sync.save
+                } else {
+                    // Queue a complete save before initialization. `flush`
+                    // drops it when save notifications were not negotiated;
+                    // otherwise a server that wants text receives it.
+                    Some(true)
+                }
                 && let Some(uri) = path_to_uri(&path)
             {
-                server.notify(
+                (!server.notify(
                     "textDocument/didSave",
-                    json!({ "textDocument": { "uri": uri }, "text": text }),
-                );
+                    if include_text {
+                        json!({ "textDocument": { "uri": uri }, "text": text })
+                    } else {
+                        json!({ "textDocument": { "uri": uri } })
+                    },
+                ))
+                .then(|| format!("{} is not accepting document updates", server.name))
+            } else {
+                None
+            };
+            if let Some(message) = refused {
+                stop_server(&language, message, servers, failed, events).await;
             }
         }
         LspCommand::Close { language, path } => {
-            if let Some(server) = servers.get_mut(&language)
+            let refused = if let Some(server) = servers.get_mut(&language)
+                && (!server.ready || server.sync.open_close)
                 && let Some(uri) = path_to_uri(&path)
             {
-                server.notify(
+                (!server.notify(
                     "textDocument/didClose",
                     json!({ "textDocument": { "uri": uri } }),
-                );
+                ))
+                .then(|| format!("{} is not accepting document updates", server.name))
+            } else {
+                None
+            };
+            if let Some(message) = refused {
+                stop_server(&language, message, servers, failed, events).await;
             }
         }
         LspCommand::EditApplied {
             language,
+            generation,
             id,
             applied,
         } => {
-            if let Some(server) = servers.get_mut(&language) {
-                server.respond(id, json!({ "applied": applied }));
+            let refused = if let Some(server) = servers.get_mut(&language)
+                && server.generation == generation
+                && let Ok(key) = serde_json::to_string(&id)
+                && server.incoming_requests.contains(&key)
+            {
+                if server.respond(id, json!({ "applied": applied })) {
+                    server.incoming_requests.remove(&key);
+                    None
+                } else {
+                    Some(format!("{} is not accepting protocol replies", server.name))
+                }
+            } else {
+                None
+            };
+            if let Some(message) = refused {
+                stop_server(&language, message, servers, failed, events).await;
             }
         }
         LspCommand::Request {
@@ -1114,6 +1530,28 @@ async fn handle_command(
             path,
             kind,
         } => {
+            *max_request_token = Some(max_request_token.map_or(token, |seen| seen.max(token)));
+            if early_cancels.remove(&token) {
+                return;
+            }
+            let globally_full = servers
+                .values()
+                .map(|server| server.pending.len())
+                .sum::<usize>()
+                >= GLOBAL_PENDING_CAPACITY;
+            if globally_full {
+                emit(
+                    events,
+                    LspEvent::Response {
+                        token,
+                        response: Response::Failed(
+                            "language servers have too many outstanding requests".to_owned(),
+                        ),
+                    },
+                )
+                .await;
+                return;
+            }
             let Some(server) = servers.get_mut(&language) else {
                 let reason = failed
                     .get(&language)
@@ -1180,7 +1618,8 @@ async fn ensure_server(
     launch: &mut Launch,
     servers: &mut HashMap<String, Server>,
     failed: &mut HashMap<String, String>,
-    inbox: &mpsc::Sender<(String, Incoming)>,
+    next_generation: &mut u64,
+    inbox: &mpsc::Sender<(String, u64, Incoming)>,
     events: &mpsc::Sender<LspEvent>,
 ) -> bool {
     if servers.contains_key(language) {
@@ -1200,7 +1639,12 @@ async fn ensure_server(
         || settings.command.display().to_string(),
         |name| name.to_string_lossy().into_owned(),
     );
-    let connection = match launch(language, settings, root, inbox.clone()) {
+    let generation = *next_generation;
+    let Some(after_generation) = generation.checked_add(1) else {
+        return false;
+    };
+    *next_generation = after_generation;
+    let connection = match launch(language, generation, settings, root, inbox.clone()) {
         Ok(connection) => connection,
         Err(error) => {
             let reason = format!("cannot start {name}: {error}");
@@ -1219,18 +1663,33 @@ async fn ensure_server(
 
     let mut server = Server {
         language: language.to_owned(),
+        generation,
         name,
         connection,
         next_id: 1,
         pending: HashMap::new(),
         encoding: Encoding::default(),
-        incremental: true,
+        sync: DocumentSync::default(),
         capabilities: Capabilities::default(),
         ready: false,
         queued: Vec::new(),
+        incoming_requests: HashSet::new(),
     };
     let params = initialize_params(root, settings);
-    server.request("initialize", params, 0, Shape::Initialize, "initialize");
+    if !server.request("initialize", params, 0, Shape::Initialize, "initialize") {
+        let reason = format!("{} is not accepting initialization", server.name);
+        server.connection.stop().await;
+        failed.insert(language.to_owned(), reason.clone());
+        emit(
+            events,
+            LspEvent::Stopped {
+                language: language.to_owned(),
+                message: reason,
+            },
+        )
+        .await;
+        return false;
+    }
     servers.insert(language.to_owned(), server);
     true
 }
@@ -1450,11 +1909,18 @@ fn request_payload(kind: &RequestKind, uri: &Uri, root: &Path) -> (&'static str,
 
 async fn handle_incoming(
     language: &str,
+    generation: u64,
     incoming: Incoming,
     servers: &mut HashMap<String, Server>,
     failed: &mut HashMap<String, String>,
     events: &mpsc::Sender<LspEvent>,
 ) {
+    if servers
+        .get(language)
+        .is_none_or(|server| server.generation != generation)
+    {
+        return;
+    }
     match incoming {
         Incoming::Malformed(detail) => {
             let name = servers
@@ -1471,7 +1937,7 @@ async fn handle_incoming(
             .await;
         }
         Incoming::Closed { reason } => {
-            let Some(server) = servers.remove(language) else {
+            let Some(server) = servers.get(language) else {
                 return;
             };
             let tail = server.connection.stderr_tail();
@@ -1482,50 +1948,96 @@ async fn handle_incoming(
                 (false, false) => format!("{reason}: {tail}"),
             };
             let message = format!("{} stopped: {detail}", server.name);
-            // Every request the server will now never answer is failed
-            // explicitly, so nothing in the editor waits forever.
-            for (_, pending) in server.pending {
-                emit(
-                    events,
-                    LspEvent::Response {
-                        token: pending.token,
-                        response: Response::Failed(message.clone()),
-                    },
-                )
-                .await;
-            }
-            server.connection.stop().await;
-            failed.insert(language.to_owned(), message.clone());
+            stop_server(language, message, servers, failed, events).await;
+        }
+        Incoming::Message(message) => {
+            handle_message(language, *message, servers, failed, events).await;
+        }
+    }
+}
+
+async fn stop_server(
+    language: &str,
+    message: String,
+    servers: &mut HashMap<String, Server>,
+    failed: &mut HashMap<String, String>,
+    events: &mpsc::Sender<LspEvent>,
+) {
+    let Some(server) = servers.remove(language) else {
+        return;
+    };
+    // Every ordinary request the server will now never answer is failed
+    // explicitly, so nothing in the editor waits forever. Initialization is
+    // manager-owned and has no editor token waiting for it.
+    for (_, pending) in server.pending {
+        if pending.shape != Shape::Initialize {
             emit(
                 events,
-                LspEvent::Stopped {
-                    language: language.to_owned(),
-                    message,
+                LspEvent::Response {
+                    token: pending.token,
+                    response: Response::Failed(message.clone()),
                 },
             )
             .await;
         }
-        Incoming::Message(message) => {
-            handle_message(language, *message, servers, events).await;
-        }
     }
+    server.connection.stop().await;
+    failed.insert(language.to_owned(), message.clone());
+    emit(
+        events,
+        LspEvent::Stopped {
+            language: language.to_owned(),
+            message,
+        },
+    )
+    .await;
 }
 
 async fn handle_message(
     language: &str,
     message: Value,
     servers: &mut HashMap<String, Server>,
+    failed: &mut HashMap<String, String>,
     events: &mpsc::Sender<LspEvent>,
 ) {
-    let has_method = message.get("method").is_some();
+    let method = message.get("method");
     let id = message.get("id").cloned();
-    match (has_method, id) {
+    if method.is_some()
+        && (message.get("jsonrpc").and_then(Value::as_str) != Some("2.0")
+            || method.and_then(Value::as_str).is_none())
+    {
+        let refused = if let Some(id) = id
+            && let Some(server) = servers.get_mut(language)
+        {
+            (!server.connection.send(json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "error": { "code": -32600, "message": "invalid JSON-RPC request" },
+            })))
+            .then(|| format!("{} is not accepting protocol replies", server.name))
+        } else {
+            None
+        };
+        if let Some(message) = refused {
+            stop_server(language, message, servers, failed, events).await;
+        }
+        return;
+    }
+    match (method.is_some(), id) {
         // A request from the server.
-        (true, Some(id)) => handle_server_request(language, &message, id, servers, events).await,
+        (true, Some(id)) => {
+            if let Err(message) =
+                handle_server_request(language, &message, id, servers, events).await
+            {
+                stop_server(language, message, servers, failed, events).await;
+            }
+        }
         // A notification from the server.
         (true, None) => handle_notification(language, &message, events).await,
         // A response to one of ours.
-        (false, Some(id)) => handle_response(language, &message, &id, servers, events).await,
+        (false, Some(id)) => {
+            handle_response(language, &message, &id, servers, failed, events).await
+        }
         (false, None) => {}
     }
 }
@@ -1536,49 +2048,137 @@ async fn handle_server_request(
     id: Value,
     servers: &mut HashMap<String, Server>,
     events: &mpsc::Sender<LspEvent>,
-) {
+) -> Result<(), String> {
     let method = message.get("method").and_then(Value::as_str).unwrap_or("");
     let params = message.get("params").cloned().unwrap_or(Value::Null);
+    let valid_id = id.is_string() || id.is_number();
+    let key = valid_id.then(|| serde_json::to_string(&id).ok()).flatten();
+    let duplicate = key.as_ref().is_some_and(|key| {
+        servers
+            .get(language)
+            .is_some_and(|server| server.incoming_requests.contains(key))
+    });
+    if key.is_none() || duplicate {
+        if let Some(server) = servers.get_mut(language)
+            && !server.connection.send(json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "error": {
+                    "code": -32600,
+                    "message": if duplicate {
+                        "duplicate outstanding request id"
+                    } else {
+                        "invalid request id"
+                    },
+                },
+            }))
+        {
+            return Err(format!("{} is not accepting protocol replies", server.name));
+        }
+        return Ok(());
+    }
     match method {
         "workspace/applyEdit" => {
+            if servers.get(language).is_none_or(|server| !server.ready) {
+                if let Some(server) = servers.get_mut(language)
+                    && !server.respond(id, json!({ "applied": false }))
+                {
+                    return Err(format!("{} is not accepting protocol replies", server.name));
+                }
+                return Ok(());
+            }
             let edit = params
                 .get("edit")
                 .cloned()
                 .and_then(|edit| serde_json::from_value::<WorkspaceEdit>(edit).ok());
             match edit {
                 Some(edit) => {
-                    let (edits, skipped) = flatten_workspace_edit(edit);
+                    let globally_full = servers
+                        .values()
+                        .map(|server| server.incoming_requests.len())
+                        .sum::<usize>()
+                        >= GLOBAL_INCOMING_REQUEST_CAPACITY;
+                    if globally_full
+                        || servers.get(language).is_some_and(|server| {
+                            server.incoming_requests.len() >= INCOMING_REQUEST_CAPACITY
+                        })
+                    {
+                        if let Some(server) = servers.get_mut(language)
+                            && !server.connection.send(json!({
+                                "jsonrpc": "2.0",
+                                "id": id,
+                                "error": {
+                                    "code": -32000,
+                                    "message": "too many outstanding workspace edit requests",
+                                },
+                            }))
+                        {
+                            return Err(format!(
+                                "{} is not accepting protocol replies",
+                                server.name
+                            ));
+                        }
+                        return Ok(());
+                    }
+                    let Ok((edits, skipped)) = flatten_workspace_edit(edit) else {
+                        if let Some(server) = servers.get_mut(language)
+                            && !server.respond(id, json!({ "applied": false }))
+                        {
+                            return Err(format!(
+                                "{} is not accepting protocol replies",
+                                server.name
+                            ));
+                        }
+                        return Ok(());
+                    };
+                    let generation = if let Some(server) = servers.get_mut(language) {
+                        server.incoming_requests.insert(key.unwrap());
+                        server.generation
+                    } else {
+                        return Ok(());
+                    };
                     emit(
                         events,
                         LspEvent::ApplyEdit {
                             language: language.to_owned(),
+                            generation,
+                            encoding: servers
+                                .get(language)
+                                .map_or(Encoding::default(), |server| server.encoding),
                             id,
                             edits,
                             skipped,
                         },
                     )
                     .await;
+                    Ok(())
                 }
                 None => {
-                    if let Some(server) = servers.get_mut(language) {
-                        server.respond(id, json!({ "applied": false }));
+                    if let Some(server) = servers.get_mut(language)
+                        && !server.respond(id, json!({ "applied": false }))
+                    {
+                        return Err(format!("{} is not accepting protocol replies", server.name));
                     }
+                    Ok(())
                 }
             }
         }
         // Anything else is answered rather than ignored: a server that blocks
         // on an unanswered request would otherwise appear to hang.
         _ => {
-            if let Some(server) = servers.get_mut(language) {
-                server.connection.send(json!({
+            if let Some(server) = servers.get_mut(language)
+                && !server.connection.send(json!({
                     "jsonrpc": "2.0",
                     "id": id,
                     "error": {
                         "code": -32601,
                         "message": format!("runyte does not implement {method}"),
                     },
-                }));
+                }))
+            {
+                return Err(format!("{} is not accepting protocol replies", server.name));
             }
+            Ok(())
         }
     }
 }
@@ -1601,6 +2201,7 @@ async fn handle_notification(language: &str, message: &Value, events: &mpsc::Sen
                 LspEvent::Diagnostics {
                     language: language.to_owned(),
                     path,
+                    version: published.version,
                     diagnostics: published
                         .diagnostics
                         .into_iter()
@@ -1639,6 +2240,7 @@ async fn handle_response(
     message: &Value,
     id: &Value,
     servers: &mut HashMap<String, Server>,
+    failed: &mut HashMap<String, String>,
     events: &mpsc::Sender<LspEvent>,
 ) {
     let Some(id) = id.as_i64() else { return };
@@ -1649,6 +2251,27 @@ async fn handle_response(
         return;
     };
 
+    let valid_version = message.get("jsonrpc").and_then(Value::as_str) == Some("2.0");
+    let has_result = message.get("result").is_some();
+    let has_error = message.get("error").is_some();
+    if !valid_version || has_result == has_error {
+        let detail = "invalid JSON-RPC response";
+        if pending.shape == Shape::Initialize {
+            let message = format!("{} failed to initialize: {detail}", server.name);
+            stop_server(language, message, servers, failed, events).await;
+        } else {
+            emit(
+                events,
+                LspEvent::Response {
+                    token: pending.token,
+                    response: Response::Failed(format!("{}: {detail}", pending.label)),
+                },
+            )
+            .await;
+        }
+        return;
+    }
+
     if let Some(error) = message.get("error") {
         let detail = error
             .get("message")
@@ -1656,14 +2279,7 @@ async fn handle_response(
             .unwrap_or("request failed");
         if pending.shape == Shape::Initialize {
             let message = format!("{} failed to initialize: {detail}", server.name);
-            emit(
-                events,
-                LspEvent::Stopped {
-                    language: language.to_owned(),
-                    message,
-                },
-            )
-            .await;
+            stop_server(language, message, servers, failed, events).await;
             return;
         }
         emit(
@@ -1679,11 +2295,30 @@ async fn handle_response(
 
     let result = message.get("result").cloned().unwrap_or(Value::Null);
     if pending.shape == Shape::Initialize {
-        finish_initialize(language, result, server, events).await;
+        if let Err(detail) = finish_initialize(language, result, server, events).await {
+            let message = format!("{} failed to initialize: {detail}", server.name);
+            stop_server(language, message, servers, failed, events).await;
+        }
         return;
     }
 
-    let response = decode(pending.shape, result, pending.label);
+    let mut response = decode(pending.shape, result, pending.label);
+    match &mut response {
+        Response::Locations(locations) => {
+            for location in locations {
+                location.encoding = server.encoding;
+            }
+        }
+        Response::Symbols(symbols) => {
+            for symbol in symbols {
+                symbol.location.encoding = server.encoding;
+            }
+        }
+        Response::Edits { encoding, .. } | Response::ActionEdits { encoding, .. } => {
+            *encoding = server.encoding;
+        }
+        _ => {}
+    }
     emit(
         events,
         LspEvent::Response {
@@ -1699,50 +2334,87 @@ async fn finish_initialize(
     result: Value,
     server: &mut Server,
     events: &mpsc::Sender<LspEvent>,
-) {
-    let initialized: InitializeResult = serde_json::from_value(result).unwrap_or_default();
-    server.encoding = Encoding::from_kind(initialized.capabilities.position_encoding.as_ref());
-    server.incremental = matches!(
-        initialized.capabilities.text_document_sync,
-        None | Some(TextDocumentSyncCapability::Kind(
-            TextDocumentSyncKind::INCREMENTAL
-        )) | Some(TextDocumentSyncCapability::Options(
-            lsp_types::TextDocumentSyncOptions {
-                change: None | Some(TextDocumentSyncKind::INCREMENTAL),
-                ..
-            }
-        ))
-    );
+) -> Result<(), String> {
+    let initialized: InitializeResult =
+        serde_json::from_value(result).map_err(|error| error.to_string())?;
+    server.encoding = Encoding::from_kind(initialized.capabilities.position_encoding.as_ref())?;
+    server.sync = document_sync(initialized.capabilities.text_document_sync.as_ref())?;
     server.capabilities = Capabilities::from_server(&initialized.capabilities);
     if let Some(info) = initialized.server_info {
         server.name = info.name;
     }
-    server.ready = true;
-    server.connection.send(json!({
+    if !server.connection.send(json!({
         "jsonrpc": "2.0",
         "method": "initialized",
         "params": {},
-    }));
+    })) {
+        return Err("server stopped accepting initialized notifications".to_owned());
+    }
     // An empty initial configuration means "use your defaults". Some
     // servers, notably Pyright, do not start project analysis (and therefore
     // do not answer document requests) until they receive this notification.
-    server.connection.send(json!({
+    if !server.connection.send(json!({
         "jsonrpc": "2.0",
         "method": "workspace/didChangeConfiguration",
         "params": { "settings": {} },
-    }));
-    server.flush();
+    })) || !server.flush()
+    {
+        return Err("server stopped accepting queued document updates".to_owned());
+    }
+    server.ready = true;
     emit(
         events,
         LspEvent::Ready {
             language: language.to_owned(),
+            generation: server.generation,
             name: server.name.clone(),
             encoding: server.encoding,
-            incremental: server.incremental,
+            sync: server.sync,
             capabilities: server.capabilities.clone(),
         },
     )
     .await;
+    Ok(())
+}
+
+fn document_sync(capability: Option<&TextDocumentSyncCapability>) -> Result<DocumentSync, String> {
+    match capability {
+        None => Ok(DocumentSync::default()),
+        Some(TextDocumentSyncCapability::Kind(kind)) => Ok(DocumentSync {
+            open_close: *kind != TextDocumentSyncKind::NONE,
+            change: change_sync(*kind)?,
+            save: None,
+        }),
+        Some(TextDocumentSyncCapability::Options(options)) => Ok(DocumentSync {
+            open_close: options.open_close == Some(true),
+            change: options
+                .change
+                .map(change_sync)
+                .transpose()?
+                .unwrap_or(ChangeSync::None),
+            save: match options.save.as_ref() {
+                Some(TextDocumentSyncSaveOptions::Supported(true)) => Some(false),
+                Some(TextDocumentSyncSaveOptions::SaveOptions(options)) => {
+                    Some(options.include_text == Some(true))
+                }
+                None | Some(TextDocumentSyncSaveOptions::Supported(false)) => None,
+            },
+        }),
+    }
+}
+
+fn change_sync(kind: TextDocumentSyncKind) -> Result<ChangeSync, String> {
+    if kind == TextDocumentSyncKind::INCREMENTAL {
+        Ok(ChangeSync::Incremental)
+    } else if kind == TextDocumentSyncKind::FULL {
+        Ok(ChangeSync::Full)
+    } else if kind == TextDocumentSyncKind::NONE {
+        Ok(ChangeSync::None)
+    } else {
+        Err(format!(
+            "server selected unsupported text document sync kind {kind:?}"
+        ))
+    }
 }
 
 fn decode(shape: Shape, result: Value, label: &'static str) -> Response {
@@ -1806,10 +2478,12 @@ fn decode(shape: Shape, result: Value, label: &'static str) -> Response {
                                 lsp_types::OneOf::Left(location) => Location {
                                     path: uri_to_path(&location.uri)?,
                                     range: location.range,
+                                    encoding: Encoding::default(),
                                 },
                                 lsp_types::OneOf::Right(workspace) => Location {
                                     path: uri_to_path(&workspace.uri)?,
                                     range: Range::default(),
+                                    encoding: Encoding::default(),
                                 },
                             };
                             Some(SymbolEntry {
@@ -1825,14 +2499,20 @@ fn decode(shape: Shape, result: Value, label: &'static str) -> Response {
             }
         }
         Shape::Edit => match serde_json::from_value::<WorkspaceEdit>(result) {
-            Ok(edit) => {
-                let (edits, skipped) = flatten_workspace_edit(edit);
-                if edits.is_empty() && skipped == 0 {
-                    Response::Empty
-                } else {
-                    Response::Edits { edits, skipped }
+            Ok(edit) => match flatten_workspace_edit(edit) {
+                Ok((edits, skipped)) => {
+                    if edits.is_empty() && skipped == 0 {
+                        Response::Empty
+                    } else {
+                        Response::Edits {
+                            edits,
+                            skipped,
+                            encoding: Encoding::default(),
+                        }
+                    }
                 }
-            }
+                Err(error) => Response::Failed(format!("{label}: {error}")),
+            },
             Err(error) => Response::Failed(format!("{label}: {error}")),
         },
         Shape::Format => match serde_json::from_value::<Vec<TextEdit>>(result) {
@@ -1846,6 +2526,7 @@ fn decode(shape: Shape, result: Value, label: &'static str) -> Response {
                     edits,
                 }],
                 skipped: 0,
+                encoding: Encoding::default(),
             },
             Err(error) => Response::Failed(format!("{label}: {error}")),
         },
@@ -1854,6 +2535,9 @@ fn decode(shape: Shape, result: Value, label: &'static str) -> Response {
             Ok(actions) => Response::Actions(
                 actions
                     .into_iter()
+                    .filter(|action| {
+                        !matches!(action, CodeActionOrCommand::CodeAction(action) if action.disabled.is_some())
+                    })
                     .map(|action| ActionEntry {
                         title: match &action {
                             CodeActionOrCommand::CodeAction(action) => action.title.clone(),
@@ -1866,16 +2550,27 @@ fn decode(shape: Shape, result: Value, label: &'static str) -> Response {
             Err(error) => Response::Failed(format!("{label}: {error}")),
         },
         Shape::ResolvedAction => match serde_json::from_value::<CodeAction>(result) {
+            Ok(action) if action.disabled.is_some() => Response::Failed(format!(
+                "{label}: {}",
+                action.disabled.unwrap().reason
+            )),
             Ok(action) => match action.edit {
-                Some(edit) => {
-                    let (edits, skipped) = flatten_workspace_edit(edit);
-                    Response::Edits { edits, skipped }
-                }
+                Some(edit) => match flatten_workspace_edit(edit) {
+                    Ok((edits, skipped)) => Response::ActionEdits {
+                        edits,
+                        skipped,
+                        encoding: Encoding::default(),
+                        command: action.command,
+                    },
+                    Err(error) => Response::Failed(format!("{label}: {error}")),
+                },
                 None => match action.command {
-                    Some(command) => Response::Actions(vec![ActionEntry {
-                        title: command.title.clone(),
-                        action: Box::new(CodeActionOrCommand::Command(command)),
-                    }]),
+                    Some(command) => Response::ActionEdits {
+                        edits: Vec::new(),
+                        skipped: 0,
+                        encoding: Encoding::default(),
+                        command: Some(command),
+                    },
                     None => Response::Empty,
                 },
             },
@@ -1901,6 +2596,7 @@ fn flatten_locations(response: GotoDefinitionResponse) -> Vec<Location> {
             Some(Location {
                 path: uri_to_path(&uri)?,
                 range,
+                encoding: Encoding::default(),
             })
         })
         .collect()
@@ -1908,15 +2604,22 @@ fn flatten_locations(response: GotoDefinitionResponse) -> Vec<Location> {
 
 /// Splits a workspace edit into per-file text edits, counting the file
 /// creations, renames, and deletions that are deliberately not performed.
-fn flatten_workspace_edit(edit: WorkspaceEdit) -> (Vec<DocumentEdit>, usize) {
+fn flatten_workspace_edit(edit: WorkspaceEdit) -> Result<(Vec<DocumentEdit>, usize), String> {
+    if edit.changes.is_some() && edit.document_changes.is_some() {
+        return Err("workspace edit contains both changes and documentChanges".to_owned());
+    }
     let mut documents: Vec<DocumentEdit> = Vec::new();
     let mut skipped = 0;
 
     if let Some(changes) = edit.changes {
         let mut entries: Vec<(PathBuf, Vec<TextEdit>)> = changes
             .into_iter()
-            .filter_map(|(uri, edits)| Some((uri_to_path(&uri)?, edits)))
-            .collect();
+            .map(|(uri, edits)| {
+                uri_to_path(&uri).map(|path| (path, edits)).ok_or_else(|| {
+                    format!("workspace edit contains non-local URI {}", uri.as_str())
+                })
+            })
+            .collect::<Result<_, _>>()?;
         entries.sort_by(|left, right| left.0.cmp(&right.0));
         documents.extend(entries.into_iter().map(|(path, edits)| DocumentEdit {
             path,
@@ -1928,26 +2631,34 @@ fn flatten_workspace_edit(edit: WorkspaceEdit) -> (Vec<DocumentEdit>, usize) {
     match edit.document_changes {
         Some(lsp_types::DocumentChanges::Edits(edits)) => {
             for edit in edits {
-                if let Some(path) = uri_to_path(&edit.text_document.uri) {
-                    documents.push(DocumentEdit {
-                        path,
-                        version: edit.text_document.version,
-                        edits: edit.edits.into_iter().map(annotated).collect(),
-                    });
-                }
+                let path = uri_to_path(&edit.text_document.uri).ok_or_else(|| {
+                    format!(
+                        "workspace edit contains non-local URI {}",
+                        edit.text_document.uri.as_str()
+                    )
+                })?;
+                documents.push(DocumentEdit {
+                    path,
+                    version: edit.text_document.version,
+                    edits: plain_text_edits(edit.edits)?,
+                });
             }
         }
         Some(lsp_types::DocumentChanges::Operations(operations)) => {
             for operation in operations {
                 match operation {
                     lsp_types::DocumentChangeOperation::Edit(edit) => {
-                        if let Some(path) = uri_to_path(&edit.text_document.uri) {
-                            documents.push(DocumentEdit {
-                                path,
-                                version: edit.text_document.version,
-                                edits: edit.edits.into_iter().map(annotated).collect(),
-                            });
-                        }
+                        let path = uri_to_path(&edit.text_document.uri).ok_or_else(|| {
+                            format!(
+                                "workspace edit contains non-local URI {}",
+                                edit.text_document.uri.as_str()
+                            )
+                        })?;
+                        documents.push(DocumentEdit {
+                            path,
+                            version: edit.text_document.version,
+                            edits: plain_text_edits(edit.edits)?,
+                        });
                     }
                     lsp_types::DocumentChangeOperation::Op(_) => skipped += 1,
                 }
@@ -1955,14 +2666,22 @@ fn flatten_workspace_edit(edit: WorkspaceEdit) -> (Vec<DocumentEdit>, usize) {
         }
         None => {}
     }
-    (documents, skipped)
+    Ok((documents, skipped))
 }
 
-fn annotated(edit: lsp_types::OneOf<TextEdit, lsp_types::AnnotatedTextEdit>) -> TextEdit {
-    match edit {
-        lsp_types::OneOf::Left(edit) => edit,
-        lsp_types::OneOf::Right(annotated) => annotated.text_edit,
-    }
+fn plain_text_edits(
+    edits: Vec<lsp_types::OneOf<TextEdit, lsp_types::AnnotatedTextEdit>>,
+) -> Result<Vec<TextEdit>, String> {
+    edits
+        .into_iter()
+        .map(|edit| match edit {
+            lsp_types::OneOf::Left(edit) => Ok(edit),
+            lsp_types::OneOf::Right(_) => Err(
+                "workspace edit contains an annotated text edit, which Runyte cannot confirm"
+                    .to_owned(),
+            ),
+        })
+        .collect()
 }
 
 fn render_hover(contents: HoverContents) -> String {
@@ -2098,6 +2817,7 @@ fn flat_symbol(symbol: SymbolInformation) -> Option<SymbolEntry> {
         location: Location {
             path: uri_to_path(&symbol.location.uri)?,
             range: symbol.location.range,
+            encoding: Encoding::default(),
         },
     })
 }
@@ -2114,6 +2834,7 @@ fn push_nested_symbol(symbol: &DocumentSymbol, container: &str, into: &mut Vec<S
             // document, and the caller fills the path in.
             path: PathBuf::new(),
             range: symbol.selection_range,
+            encoding: Encoding::default(),
         },
     });
     let nested = if container.is_empty() {
@@ -2264,6 +2985,39 @@ mod tests {
     }
 
     #[test]
+    fn mutation_positions_must_be_exact_character_boundaries() {
+        let text = Text::from_str("a🦀b\n");
+        assert_eq!(
+            checked_lsp_position(&text, lsp_types::Position::new(0, 5), Encoding::Utf8),
+            Some(2)
+        );
+        for position in [
+            lsp_types::Position::new(9, 0),
+            lsp_types::Position::new(0, 2),
+            lsp_types::Position::new(0, 99),
+        ] {
+            assert_eq!(checked_lsp_position(&text, position, Encoding::Utf8), None);
+        }
+        assert_eq!(
+            checked_lsp_position(&text, lsp_types::Position::new(0, 2), Encoding::Utf16),
+            None,
+            "a UTF-16 position may not split a surrogate pair"
+        );
+        assert_eq!(
+            checked_lsp_range(
+                &text,
+                Range::new(
+                    lsp_types::Position::new(0, 5),
+                    lsp_types::Position::new(0, 1),
+                ),
+                Encoding::Utf8,
+            ),
+            None,
+            "a reversed mutation range must not be normalized"
+        );
+    }
+
+    #[test]
     fn paths_round_trip_through_file_uris() {
         for path in [
             "/tmp/plain.rs",
@@ -2280,6 +3034,22 @@ mod tests {
     fn a_non_file_uri_has_no_path() {
         let uri = Uri::from_str("https://example.com/x").unwrap();
         assert_eq!(uri_to_path(&uri), None);
+    }
+
+    #[test]
+    fn file_uris_accept_only_absolute_local_paths() {
+        assert!(path_to_uri(Path::new("relative.rs")).is_none());
+        for uri in [
+            "file://server/etc/passwd",
+            "file://localhostevil/etc/passwd",
+            "file://relative.rs",
+        ] {
+            assert_eq!(uri_to_path(&Uri::from_str(uri).unwrap()), None, "{uri}");
+        }
+        assert_eq!(
+            uri_to_path(&Uri::from_str("file://localhost/tmp/a.rs").unwrap()).as_deref(),
+            Some(Path::new("/tmp/a.rs"))
+        );
     }
 
     #[test]
@@ -2335,11 +3105,152 @@ mod tests {
             ],
         }))
         .unwrap();
-        let (edits, skipped) = flatten_workspace_edit(edit);
+        let (edits, skipped) = flatten_workspace_edit(edit).unwrap();
         assert_eq!(skipped, 1);
         assert_eq!(edits.len(), 1);
         assert_eq!(edits[0].path, PathBuf::from("/tmp/a.rs"));
         assert_eq!(edits[0].version, Some(1));
+    }
+
+    #[test]
+    fn malformed_workspace_edits_are_rejected_as_a_whole() {
+        let both: WorkspaceEdit = serde_json::from_value(json!({
+            "changes": {"file:///tmp/a.rs": []},
+            "documentChanges": [],
+        }))
+        .unwrap();
+        assert!(flatten_workspace_edit(both).is_err());
+
+        let remote: WorkspaceEdit = serde_json::from_value(json!({
+            "changes": {
+                "file://server/tmp/a.rs": [{
+                    "range": {
+                        "start": {"line": 0, "character": 0},
+                        "end": {"line": 0, "character": 0}
+                    },
+                    "newText": "x"
+                }]
+            }
+        }))
+        .unwrap();
+        assert!(flatten_workspace_edit(remote).is_err());
+
+        let annotated = WorkspaceEdit {
+            changes: None,
+            document_changes: Some(lsp_types::DocumentChanges::Edits(vec![
+                lsp_types::TextDocumentEdit {
+                    text_document: lsp_types::OptionalVersionedTextDocumentIdentifier {
+                        uri: Uri::from_str("file:///tmp/a.rs").unwrap(),
+                        version: Some(1),
+                    },
+                    edits: vec![lsp_types::OneOf::Right(lsp_types::AnnotatedTextEdit {
+                        text_edit: TextEdit {
+                            range: Range::new(
+                                lsp_types::Position::new(0, 0),
+                                lsp_types::Position::new(0, 0),
+                            ),
+                            new_text: "x".to_owned(),
+                        },
+                        annotation_id: "confirm".to_owned(),
+                    })],
+                },
+            ])),
+            change_annotations: None,
+        };
+        assert!(flatten_workspace_edit(annotated).is_err());
+    }
+
+    #[test]
+    fn text_document_sync_options_gate_each_notification() {
+        let capabilities: ServerCapabilities = serde_json::from_value(json!({
+            "textDocumentSync": {
+                "openClose": false,
+                "change": 0,
+                "save": false
+            }
+        }))
+        .unwrap();
+        assert_eq!(
+            document_sync(capabilities.text_document_sync.as_ref()).unwrap(),
+            DocumentSync::default()
+        );
+
+        let capabilities: ServerCapabilities = serde_json::from_value(json!({
+            "textDocumentSync": {
+                "openClose": true,
+                "change": 1,
+                "save": {"includeText": false}
+            }
+        }))
+        .unwrap();
+        assert_eq!(
+            document_sync(capabilities.text_document_sync.as_ref()).unwrap(),
+            DocumentSync {
+                open_close: true,
+                change: ChangeSync::Full,
+                save: Some(false),
+            }
+        );
+    }
+
+    #[test]
+    fn execute_command_requires_the_exact_advertised_name() {
+        let capabilities = advertised(json!({
+            "executeCommandProvider": {"commands": ["rust.applyFix"]}
+        }));
+        let command = |name: &str| {
+            RequestKind::ExecuteCommand(Box::new(Command {
+                title: "fix".to_owned(),
+                command: name.to_owned(),
+                arguments: None,
+            }))
+        };
+        assert!(capabilities.supports(&command("rust.applyFix")));
+        assert!(!capabilities.supports(&command("rust.unadvertised")));
+        assert!(!Capabilities::default().supports(&command("rust.applyFix")));
+    }
+
+    #[test]
+    fn resolved_command_only_actions_keep_their_execution_step() {
+        let response = decode(
+            Shape::ResolvedAction,
+            json!({
+                "title": "finish fix",
+                "command": {"title": "finish", "command": "rust.applyFix"}
+            }),
+            "code actions",
+        );
+        assert!(matches!(
+            response,
+            Response::ActionEdits { edits, command: Some(command), .. }
+                if edits.is_empty() && command.command == "rust.applyFix"
+        ));
+    }
+
+    #[test]
+    fn cancellation_and_edit_replies_use_reserved_control_capacity() {
+        let (commands, _ordinary) = mpsc::channel(1);
+        let (controls, mut reserved) = mpsc::channel(2);
+        let handle = LspHandle {
+            commands,
+            controls: Some(controls),
+        };
+        assert!(handle.send(LspCommand::Status));
+        assert!(handle.send(LspCommand::Cancel { token: 7 }));
+        assert!(handle.send(LspCommand::EditApplied {
+            language: "rust".to_owned(),
+            generation: 1,
+            id: json!(9),
+            applied: true,
+        }));
+        assert!(matches!(
+            reserved.try_recv(),
+            Ok(LspCommand::Cancel { token: 7 })
+        ));
+        assert!(matches!(
+            reserved.try_recv(),
+            Ok(LspCommand::EditApplied { .. })
+        ));
     }
 
     #[test]

@@ -3,7 +3,7 @@
 use std::{
     cell::RefCell,
     cmp::Ordering,
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet, VecDeque},
     ffi::{OsStr, OsString},
     fs,
     path::{Component, Path, PathBuf},
@@ -68,9 +68,10 @@ use crate::{
     launch::{LaunchPosition, LaunchTarget},
     layout::{Axis, Layout, Rect},
     lsp::{
-        ActionEntry, Capabilities, Completion, DiagnosticStore, DocumentEdit, Encoding, LspCommand,
-        LspEvent, LspHandle, LspRange, RequestKind, Response, SignatureContext, SignatureLine,
-        TextDocumentContentChangeEvent, from_lsp_position, from_lsp_range, to_lsp_position,
+        ActionEntry, Capabilities, ChangeSync, Completion, DiagnosticStore, DocumentEdit,
+        DocumentSync, Encoding, LspCommand, LspEvent, LspHandle, LspRange, RequestKind, Response,
+        SignatureContext, SignatureLine, TextDocumentContentChangeEvent, checked_lsp_range,
+        from_lsp_position, from_lsp_range, to_lsp_position,
     },
     notification::{
         NotificationCenter, NotificationCounts, NotificationDraft, NotificationSeverity,
@@ -100,7 +101,7 @@ use crate::{
         DefaultColors, SentTextUndo, TerminalId, TerminalOutput, TerminalRequest, TerminalSession,
         TerminalSessions,
     },
-    text::{Change, Offset, Text, Transaction},
+    text::{Assoc, Change, Offset, Text, Transaction},
     word_index::WordIndexHandle,
 };
 
@@ -1655,8 +1656,9 @@ fn hover_content_rows(editor_height: u16) -> usize {
 #[derive(Clone, Debug)]
 struct ServerState {
     name: String,
+    generation: u64,
     encoding: Encoding,
-    incremental: bool,
+    sync: DocumentSync,
     capabilities: Capabilities,
 }
 
@@ -1666,6 +1668,9 @@ struct DocumentState {
     language: String,
     path: PathBuf,
     version: i32,
+    /// A manager-queue refusal means the server did not see the previous
+    /// change. The next accepted update must therefore carry the whole file.
+    desynced: bool,
 }
 
 /// What the editor intends to do with a response it is waiting for.
@@ -1695,6 +1700,32 @@ enum PendingRequest {
     },
 }
 
+impl PendingRequest {
+    /// Requests tied to one transient source position. A newer request in the
+    /// same group makes an older response unusable and should cancel it at the
+    /// protocol boundary instead of retaining server work indefinitely.
+    fn transient_group(&self) -> Option<u8> {
+        match self {
+            Self::Hover => Some(0),
+            Self::Completion { .. } => Some(1),
+            Self::Signature => Some(2),
+            _ => None,
+        }
+    }
+
+    fn source_revision_must_match(&self) -> bool {
+        matches!(
+            self,
+            Self::Goto { .. }
+                | Self::Hover
+                | Self::Completion { .. }
+                | Self::Signature
+                | Self::Edits { .. }
+                | Self::CodeActions
+        ) || matches!(self, Self::Symbols { path, .. } if !path.as_os_str().is_empty())
+    }
+}
+
 /// A request together with the buffer that originated it.
 ///
 /// The origin survives even for protocol responses that carry no document
@@ -1704,7 +1735,19 @@ enum PendingRequest {
 struct TrackedRequest {
     buffer: usize,
     revision: u64,
+    documents: HashMap<PathBuf, (usize, u64)>,
     pending: PendingRequest,
+    cancelled: bool,
+    server: Option<(String, u64)>,
+}
+
+#[derive(Clone, Debug)]
+struct ActionSource {
+    buffer: usize,
+    revision: u64,
+    documents: HashMap<PathBuf, (usize, u64)>,
+    language: String,
+    generation: u64,
 }
 
 impl TrackedRequest {
@@ -1712,8 +1755,21 @@ impl TrackedRequest {
         Self {
             buffer,
             revision,
+            documents: HashMap::new(),
             pending,
+            cancelled: false,
+            server: None,
         }
+    }
+
+    fn with_documents(mut self, documents: HashMap<PathBuf, (usize, u64)>) -> Self {
+        self.documents = documents;
+        self
+    }
+
+    fn with_server(mut self, language: String, generation: u64) -> Self {
+        self.server = Some((language, generation));
+        self
     }
 }
 
@@ -2259,6 +2315,9 @@ pub struct App {
     lsp_servers: HashMap<String, ServerState>,
     lsp_documents: HashMap<usize, DocumentState>,
     lsp_requests: HashMap<u64, TrackedRequest>,
+    /// Protocol replies that must not be lost when the manager queue is
+    /// briefly full. Retried from the frame lifecycle and before new work.
+    pending_lsp_replies: VecDeque<LspCommand>,
     /// What each row of `list` stands for, indexed by `PickerItem::index`.
     list_actions: Vec<ListAction>,
     /// Which registry-backed settings surface owns the shared list picker.
@@ -2268,7 +2327,7 @@ pub struct App {
     lsp_actions: Vec<ActionEntry>,
     /// The buffer revision against which the visible code actions were
     /// computed. A chosen action must not edit text that has since changed.
-    lsp_action_source: Option<(usize, u64)>,
+    lsp_action_source: Option<ActionSource>,
     next_lsp_token: u64,
     next_completion_session: u64,
 }
@@ -2554,6 +2613,7 @@ impl App {
             lsp_servers: HashMap::new(),
             lsp_documents: HashMap::new(),
             lsp_requests: HashMap::new(),
+            pending_lsp_replies: VecDeque::new(),
             list_actions: Vec::new(),
             settings_view: None,
             pointer_drag: None,
@@ -3078,13 +3138,17 @@ fn response_name(response: &Response) -> &'static str {
         Response::Signatures(_) => "signature",
         Response::Symbols(_) => "symbol",
         Response::Actions(_) => "code action",
-        Response::Edits { .. } => "edit",
+        Response::Edits { .. } | Response::ActionEdits { .. } => "edit",
         Response::Empty => "empty",
         Response::Failed(_) => "failed",
     }
 }
 
-fn edit_summary(label: &str, (files, edits): (usize, usize), skipped: usize) -> String {
+fn edit_summary(
+    label: &str,
+    (files, edits, _synchronized): (usize, usize, bool),
+    skipped: usize,
+) -> String {
     let mut message = format!(
         "{label} {edits} change{} in {files} file{}",
         if edits == 1 { "" } else { "s" },

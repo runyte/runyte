@@ -25,7 +25,7 @@ pub const OUTGOING_CAPACITY: usize = 128;
 
 /// Largest frame accepted from a server. Real responses from a large project
 /// can be megabytes; anything past this is a desynchronized stream.
-const MAX_MESSAGE_BYTES: usize = 128 * 1024 * 1024;
+const MAX_MESSAGE_BYTES: usize = 8 * 1024 * 1024;
 /// The longest a single frame header line may be.
 ///
 /// `Content-Length: <digits>` and `Content-Type: ...` are the only headers the
@@ -100,17 +100,23 @@ impl Connection {
 /// a single inbox.
 pub fn connect<R, W>(
     key: String,
+    generation: u64,
     reader: R,
     writer: W,
-    inbox: mpsc::Sender<(String, Incoming)>,
+    inbox: mpsc::Sender<(String, u64, Incoming)>,
 ) -> Connection
 where
     R: AsyncRead + Unpin + Send + 'static,
     W: AsyncWrite + Unpin + Send + 'static,
 {
     let (outgoing, queue) = mpsc::channel(OUTGOING_CAPACITY);
-    tokio::spawn(read_loop(key, tokio::io::BufReader::new(reader), inbox));
-    tokio::spawn(write_loop(writer, queue));
+    tokio::spawn(read_loop(
+        key.clone(),
+        generation,
+        tokio::io::BufReader::new(reader),
+        inbox.clone(),
+    ));
+    tokio::spawn(write_loop(key, generation, writer, queue, inbox));
     Connection {
         outgoing,
         stderr: Arc::new(Mutex::new(String::new())),
@@ -121,10 +127,11 @@ where
 /// Launches a language server and wires up its stdio.
 pub fn spawn(
     key: String,
+    generation: u64,
     command: &Path,
     arguments: &[String],
     root: &Path,
-    inbox: mpsc::Sender<(String, Incoming)>,
+    inbox: mpsc::Sender<(String, u64, Incoming)>,
 ) -> std::io::Result<Connection> {
     let mut child = Command::new(command)
         .args(arguments)
@@ -138,7 +145,7 @@ pub fn spawn(
     let stdout = child.stdout.take().ok_or_else(missing_pipe)?;
     let stderr = child.stderr.take().ok_or_else(missing_pipe)?;
 
-    let mut connection = connect(key, stdout, stdin, inbox);
+    let mut connection = connect(key, generation, stdout, stdin, inbox);
     let tail = Arc::clone(&connection.stderr);
     tokio::spawn(drain_stderr(stderr, tail));
     connection.child = Some(child);
@@ -149,14 +156,19 @@ fn missing_pipe() -> std::io::Error {
     std::io::Error::other("language server stdio was not piped")
 }
 
-async fn drain_stderr(stderr: tokio::process::ChildStderr, tail: Arc<Mutex<String>>) {
-    let mut lines = tokio::io::BufReader::new(stderr).lines();
-    while let Ok(Some(line)) = lines.next_line().await {
+async fn drain_stderr<R: AsyncRead + Unpin>(mut stderr: R, tail: Arc<Mutex<String>>) {
+    let mut chunk = [0u8; 4096];
+    loop {
+        let Ok(read) = stderr.read(&mut chunk).await else {
+            return;
+        };
+        if read == 0 {
+            return;
+        }
         let Ok(mut tail) = tail.lock() else {
             return;
         };
-        tail.push_str(&line);
-        tail.push('\n');
+        tail.push_str(&String::from_utf8_lossy(&chunk[..read]));
         if tail.len() > STDERR_TAIL_BYTES {
             let excess = tail.len() - STDERR_TAIL_BYTES;
             let boundary = tail
@@ -170,15 +182,16 @@ async fn drain_stderr(stderr: tokio::process::ChildStderr, tail: Arc<Mutex<Strin
 
 async fn read_loop<R: AsyncBufRead + Unpin>(
     key: String,
+    generation: u64,
     mut reader: R,
-    inbox: mpsc::Sender<(String, Incoming)>,
+    inbox: mpsc::Sender<(String, u64, Incoming)>,
 ) {
     let mut reason = String::new();
     loop {
         match read_message(&mut reader).await {
             Ok(Some(value)) => {
                 if inbox
-                    .send((key.clone(), Incoming::Message(Box::new(value))))
+                    .send((key.clone(), generation, Incoming::Message(Box::new(value))))
                     .await
                     .is_err()
                 {
@@ -188,7 +201,7 @@ async fn read_loop<R: AsyncBufRead + Unpin>(
             Ok(None) => break,
             Err(FrameError::Malformed(detail)) => {
                 if inbox
-                    .send((key.clone(), Incoming::Malformed(detail)))
+                    .send((key.clone(), generation, Incoming::Malformed(detail)))
                     .await
                     .is_err()
                 {
@@ -201,7 +214,9 @@ async fn read_loop<R: AsyncBufRead + Unpin>(
             }
         }
     }
-    let _ = inbox.send((key, Incoming::Closed { reason })).await;
+    let _ = inbox
+        .send((key, generation, Incoming::Closed { reason }))
+        .await;
 }
 
 enum FrameError {
@@ -268,7 +283,13 @@ async fn read_message<R: AsyncBufRead + Unpin>(
         .map_err(|error| FrameError::Malformed(error.to_string()))
 }
 
-async fn write_loop<W: AsyncWrite + Unpin>(mut writer: W, mut queue: mpsc::Receiver<Value>) {
+async fn write_loop<W: AsyncWrite + Unpin>(
+    key: String,
+    generation: u64,
+    mut writer: W,
+    mut queue: mpsc::Receiver<Value>,
+    inbox: mpsc::Sender<(String, u64, Incoming)>,
+) {
     while let Some(message) = queue.recv().await {
         let Ok(body) = serde_json::to_vec(&message) else {
             continue;
@@ -278,6 +299,15 @@ async fn write_loop<W: AsyncWrite + Unpin>(mut writer: W, mut queue: mpsc::Recei
             || writer.write_all(&body).await.is_err()
             || writer.flush().await.is_err()
         {
+            let _ = inbox
+                .send((
+                    key,
+                    generation,
+                    Incoming::Closed {
+                        reason: "cannot write to language server".to_owned(),
+                    },
+                ))
+                .await;
             break;
         }
     }
@@ -305,6 +335,7 @@ pub async fn read_framed<R: AsyncBufRead + Unpin>(reader: &mut R) -> Option<Valu
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::time::Duration;
 
     #[tokio::test]
     async fn frames_round_trip_through_the_reader() {
@@ -373,5 +404,50 @@ mod tests {
             read_message(&mut reader).await,
             Err(FrameError::Fatal(_))
         ));
+    }
+
+    #[tokio::test]
+    async fn an_announced_oversized_frame_is_rejected_before_allocation() {
+        let header = format!("Content-Length: {}\r\n\r\n", MAX_MESSAGE_BYTES + 1);
+        let mut reader = tokio::io::BufReader::new(header.as_bytes());
+        assert!(matches!(
+            read_message(&mut reader).await,
+            Err(FrameError::Fatal(message)) if message.contains("implausible")
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_writer_failure_closes_the_manager_generation() {
+        let (client_reader, server_writer) = tokio::io::duplex(1024);
+        let (server_reader, client_writer) = tokio::io::duplex(1024);
+        drop(server_reader);
+        let (inbox, mut events) = mpsc::channel(4);
+        let connection = connect("rust".to_owned(), 7, client_reader, client_writer, inbox);
+        assert!(connection.send(json!({"jsonrpc": "2.0", "method": "test"})));
+        let event = tokio::time::timeout(Duration::from_secs(1), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(matches!(
+            event,
+            (language, 7, Incoming::Closed { reason })
+                if language == "rust" && reason.contains("cannot write")
+        ));
+        drop(server_writer);
+    }
+
+    #[tokio::test]
+    async fn newline_free_stderr_is_drained_with_bounded_retention() {
+        let (mut writer, reader) = tokio::io::duplex(STDERR_TAIL_BYTES * 4);
+        let tail = Arc::new(Mutex::new(String::new()));
+        let retained = Arc::clone(&tail);
+        let task = tokio::spawn(async move { drain_stderr(reader, retained).await });
+        writer
+            .write_all(&vec![b'x'; STDERR_TAIL_BYTES * 3])
+            .await
+            .unwrap();
+        drop(writer);
+        task.await.unwrap();
+        assert_eq!(tail.lock().unwrap().len(), STDERR_TAIL_BYTES);
     }
 }

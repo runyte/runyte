@@ -634,9 +634,19 @@ fn lsp_edit_of_an_offscreen_broken_language_merges_failure_with_outer_success() 
     let path = directory.join("offscreen.rs");
     fs::write(&path, "fn target() {}\n").unwrap();
     let mut app = app_with_broken_rust_registry();
+    app.apply_lsp_event(LspEvent::Ready {
+        language: "rust".into(),
+        generation: 1,
+        name: "mock-rust-server".into(),
+        encoding: Encoding::Utf8,
+        sync: DocumentSync::default(),
+        capabilities: Capabilities::everything_for_test(),
+    });
 
     app.apply_lsp_event(LspEvent::ApplyEdit {
         language: "rust".into(),
+        generation: 1,
+        encoding: Encoding::Utf8,
         id: serde_json::json!(7),
         edits: vec![DocumentEdit {
             path: path.clone(),

@@ -173,6 +173,7 @@ impl App {
     /// This is the only frame lifecycle step allowed to mutate view state.
     /// Rendering consumes the returned owned values and an immutable `App`.
     pub fn prepare_view(&mut self, geometry: FrameGeometry) -> PreparedView {
+        self.flush_lsp_replies();
         self.sync_word_index();
         let pane_ids_to_reveal = self.panes.keys().copied().collect::<Vec<_>>();
         for pane_id in pane_ids_to_reveal {

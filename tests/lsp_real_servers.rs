@@ -603,7 +603,7 @@ async fn exercise_extended(
                 new_name: probe.rename_to.to_owned(),
             },
             |response| match response {
-                Response::Edits { edits, skipped }
+                Response::Edits { edits, skipped, .. }
                     if edits.iter().any(|document| {
                         document
                             .edits

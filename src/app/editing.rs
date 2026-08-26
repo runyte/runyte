@@ -457,25 +457,29 @@ impl App {
         language_before: Option<LanguageId>,
         before: Option<&crate::text::Text>,
         transaction: &Transaction,
-    ) {
+    ) -> bool {
         self.invalidate_partial_guards(buffer_id);
         if !self.buffers[buffer_id].is_read_only() {
             self.word_index_notify_update(buffer_id);
         }
         let language_after = buffer_language(&self.buffers[buffer_id], &self.registry);
         self.clear_syntax_history(buffer_id);
-        if language_before == language_after {
+        let synchronized = if language_before == language_after {
             self.reparse(buffer_id, before, transaction);
             if let Some(before) = before {
-                self.lsp_change(buffer_id, before, transaction);
+                self.lsp_change(buffer_id, before, transaction)
+            } else {
+                true
             }
         } else {
             self.stale_syntax.remove(&buffer_id);
             self.syntax[buffer_id] = parse_buffer(&self.buffers[buffer_id], &self.registry);
             self.retire_lsp_buffer(buffer_id);
             self.lsp_touch(buffer_id);
-        }
+            true
+        };
         self.map_transaction_views(buffer_id, std::slice::from_ref(transaction));
+        synchronized
     }
 
     /// The half-open span a user-facing operation acts on. This includes the

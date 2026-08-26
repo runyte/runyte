@@ -3,10 +3,10 @@
 //! Diagnostics published by language servers.
 //!
 //! Diagnostics are kept in the server's own coordinates and converted to buffer
-//! offsets only where they are rendered or navigated to. Publishing is
-//! asynchronous and unsolicited, so a diagnostic can outlive the text it
-//! described; converting late means a stale one is clamped into the current
-//! document rather than pointing off the end of it.
+//! offsets only where they are rendered or navigated to. Versioned
+//! publications are accepted only for the matching open-document version;
+//! unversioned publications are converted late, so an asynchronous range is
+//! clamped into the current document rather than pointing past its end.
 
 use std::{
     collections::BTreeMap,

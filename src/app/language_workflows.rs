@@ -4,21 +4,21 @@
 
 // Application-module dependencies:
 use super::{
-    ActionEntry, App, BTreeMap, Buffer, BufferAction, BufferActionMenu, BufferKind, Change,
-    Completion, CompletionSource, CompletionState, ContextAction, ContextActionMenu, DocumentEdit,
-    DocumentState, DocumentSyntax, Encoding, GLOBAL_SEARCH_RESULT_LIMIT, HashMap, HashSet,
-    HoverState, InputGrammar, KeyCode, KeyStroke, ListAction, ListPicker, ListPurpose, LspCommand,
-    LspEvent, LspHandle, LspRange, Mode, Modifiers, Offset, PATH_COMPLETION_ITEM_LIMIT_PER_ROOT,
-    Path, PathActionMenu, PathBuf, PathClipboardTarget, PathPopup, PendingRequest, PickerItem,
-    PromptKind, Range, Register, RequestKind, Response, Result, SPECIAL_BUFFER_RETENTION_LIMIT,
-    SearchMode, Selection, SelectionSemantics, ServerState, SignatureContext, SignatureState,
-    TerminalAction, TerminalActionMenu, TerminalSession, Text, TextDocumentContentChangeEvent,
-    TrackedRequest, Transaction, WORD_COMPLETION_ITEM_LIMIT, WorkspaceSearchTarget,
-    buffer_language, buffer_picker_columns, buffer_preview, display_path, edit_summary,
-    from_lsp_position, from_lsp_range, language_completion_prefix_start, matches_in_text,
-    open_or_new, operative_span, parse_buffer, path_token_before, push_matching_words,
-    response_name, row_is_not_before, to_lsp_position, word_bounds, word_token_before,
-    workspace_edit_path_identity, workspace_matches,
+    ActionEntry, App, Assoc, BTreeMap, Buffer, BufferAction, BufferActionMenu, BufferKind, Change,
+    ChangeSync, Completion, CompletionSource, CompletionState, ContextAction, ContextActionMenu,
+    DocumentEdit, DocumentState, DocumentSyntax, Encoding, GLOBAL_SEARCH_RESULT_LIMIT, HashMap,
+    HashSet, HoverState, InputGrammar, KeyCode, KeyStroke, ListAction, ListPicker, ListPurpose,
+    LspCommand, LspEvent, LspHandle, LspRange, Mode, Modifiers, Offset,
+    PATH_COMPLETION_ITEM_LIMIT_PER_ROOT, Path, PathActionMenu, PathBuf, PathClipboardTarget,
+    PathPopup, PendingRequest, PickerItem, PromptKind, Range, Register, RequestKind, Response,
+    Result, SPECIAL_BUFFER_RETENTION_LIMIT, SearchMode, Selection, SelectionSemantics, ServerState,
+    SignatureContext, SignatureState, TerminalAction, TerminalActionMenu, TerminalSession, Text,
+    TextDocumentContentChangeEvent, TrackedRequest, Transaction, WORD_COMPLETION_ITEM_LIMIT,
+    WorkspaceSearchTarget, buffer_language, buffer_picker_columns, buffer_preview,
+    checked_lsp_range, display_path, edit_summary, from_lsp_position, from_lsp_range,
+    language_completion_prefix_start, matches_in_text, open_or_new, operative_span, parse_buffer,
+    path_token_before, push_matching_words, response_name, row_is_not_before, to_lsp_position,
+    word_bounds, word_token_before, workspace_edit_path_identity, workspace_matches,
 };
 #[cfg(unix)]
 use super::{SessionAction, SessionActionMenu};
@@ -52,9 +52,9 @@ impl App {
 
     /// Makes sure a buffer's server is starting, and opens the document once
     /// the handshake has settled.
-    pub(super) fn lsp_touch(&mut self, buffer_id: usize) {
+    pub(super) fn lsp_touch(&mut self, buffer_id: usize) -> bool {
         if !self.ports.has_lsp() || self.closed_buffers.contains(&buffer_id) {
-            return;
+            return false;
         }
         let desired = self.language_of(buffer_id).and_then(|language| {
             self.buffers[buffer_id]
@@ -71,30 +71,56 @@ impl App {
             self.retire_lsp_buffer(buffer_id);
         }
         let Some((language, path)) = desired else {
-            return;
+            return false;
         };
         if !self.lsp_servers.contains_key(&language) {
             self.lsp_send(LspCommand::Ensure { language });
-            return;
+            return false;
         }
         if current_matches {
-            return;
+            if self.lsp_documents[&buffer_id].desynced {
+                let document = self.lsp_documents[&buffer_id].clone();
+                if self.lsp_servers[&document.language].sync.change != ChangeSync::None {
+                    let accepted = self.lsp_send(LspCommand::Change {
+                        language: document.language,
+                        path: document.path,
+                        version: document.version,
+                        changes: vec![TextDocumentContentChangeEvent {
+                            range: None,
+                            range_length: None,
+                            text: self.buffers[buffer_id].to_string(),
+                        }],
+                    });
+                    if accepted {
+                        self.lsp_documents.get_mut(&buffer_id).unwrap().desynced = false;
+                    }
+                }
+            }
+            return self
+                .lsp_documents
+                .get(&buffer_id)
+                .is_some_and(|document| !document.desynced);
         }
-        let text = self.buffers[buffer_id].to_string();
-        self.lsp_documents.insert(
-            buffer_id,
-            DocumentState {
+        let sync = self.lsp_servers[&language].sync;
+        let opened = !sync.open_close
+            || self.lsp_send(LspCommand::Open {
                 language: language.clone(),
                 path: path.clone(),
                 version: 1,
-            },
-        );
-        self.lsp_send(LspCommand::Open {
-            language,
-            path,
-            version: 1,
-            text,
-        });
+                text: self.buffers[buffer_id].to_string(),
+            });
+        if opened {
+            self.lsp_documents.insert(
+                buffer_id,
+                DocumentState {
+                    language,
+                    path,
+                    version: 1,
+                    desynced: false,
+                },
+            );
+        }
+        opened
     }
 
     /// Closes one server-owned document and invalidates everything derived
@@ -114,8 +140,14 @@ impl App {
         {
             self.diagnostics.clear_path(path);
         }
-        self.lsp_requests
-            .retain(|_, request| request.buffer != buffer_id);
+        let retired: Vec<u64> = self
+            .lsp_requests
+            .iter()
+            .filter_map(|(token, request)| (request.buffer == buffer_id).then_some(*token))
+            .collect();
+        for token in retired {
+            self.cancel_lsp_request(token);
+        }
         if self
             .completion
             .as_ref()
@@ -130,6 +162,7 @@ impl App {
     }
 
     pub(super) fn lsp_send(&mut self, command: LspCommand) -> bool {
+        self.flush_lsp_replies();
         match self.ports.send_lsp(command) {
             Some(true) => true,
             Some(false) => {
@@ -138,6 +171,43 @@ impl App {
                 false
             }
             None => false,
+        }
+    }
+
+    pub(super) fn flush_lsp_replies(&mut self) {
+        while let Some(command) = self.pending_lsp_replies.front().cloned() {
+            match self.ports.send_lsp(command) {
+                Some(true) => {
+                    self.pending_lsp_replies.pop_front();
+                }
+                Some(false) => break,
+                None => {
+                    self.pending_lsp_replies.clear();
+                    break;
+                }
+            }
+        }
+    }
+
+    fn lsp_reply(&mut self, command: LspCommand) {
+        self.flush_lsp_replies();
+        if self.ports.send_lsp(command.clone()) == Some(true) {
+            return;
+        }
+        if self.pending_lsp_replies.len() < crate::lsp::EVENT_CAPACITY {
+            self.pending_lsp_replies.push_back(command);
+        } else {
+            self.error("language server reply queue is full");
+        }
+    }
+
+    fn cancel_lsp_request(&mut self, token: u64) {
+        let Some(request) = self.lsp_requests.get_mut(&token) else {
+            return;
+        };
+        request.cancelled = true;
+        if self.lsp_send(LspCommand::Cancel { token }) {
+            self.lsp_requests.remove(&token);
         }
     }
 
@@ -150,24 +220,31 @@ impl App {
         buffer_id: usize,
         before: &Text,
         transaction: &Transaction,
-    ) {
+    ) -> bool {
         let Some(document) = self.lsp_documents.get(&buffer_id) else {
-            return;
+            return true;
         };
         let language = document.language.clone();
         let Some(server) = self.lsp_servers.get(&language) else {
-            return;
+            return false;
         };
-        let (encoding, incremental) = (server.encoding, server.incremental);
+        let (encoding, change_sync) = (server.encoding, server.sync.change);
         let Some(path) = self.buffers[buffer_id].path.clone() else {
-            return;
+            return false;
         };
-        let version = {
+        let (version, desynced) = {
             let document = self.lsp_documents.get_mut(&buffer_id).unwrap();
-            document.version += 1;
-            document.version
+            let Some(version) = document.version.checked_add(1) else {
+                document.desynced = true;
+                return false;
+            };
+            document.version = version;
+            (version, document.desynced)
         };
-        let changes = if incremental {
+        if change_sync == ChangeSync::None {
+            return false;
+        }
+        let changes = if change_sync == ChangeSync::Incremental && !desynced {
             // Descending order, so each range still describes the document the
             // transaction was built against: the server applies content
             // changes in sequence, and an earlier one would shift a later one.
@@ -191,12 +268,15 @@ impl App {
                 text: self.buffers[buffer_id].to_string(),
             }]
         };
-        self.lsp_send(LspCommand::Change {
+        let accepted = self.lsp_send(LspCommand::Change {
             language,
             path,
             version,
             changes,
         });
+        let document = self.lsp_documents.get_mut(&buffer_id).unwrap();
+        document.desynced = !accepted;
+        accepted
     }
 
     /// Resynchronizes a whole document.
@@ -205,17 +285,27 @@ impl App {
     /// hand onwards, so the server is given the new text outright rather than
     /// a delta it could not be derived from.
     pub(super) fn lsp_resync(&mut self, buffer_id: usize) {
-        let Some(document) = self.lsp_documents.get_mut(&buffer_id) else {
+        let Some(document) = self.lsp_documents.get(&buffer_id) else {
             return;
         };
-        document.version += 1;
-        let version = document.version;
         let language = document.language.clone();
+        let change_sync = self
+            .lsp_servers
+            .get(&language)
+            .map_or(ChangeSync::None, |server| server.sync.change);
+        let Some(version) = document.version.checked_add(1) else {
+            self.lsp_documents.get_mut(&buffer_id).unwrap().desynced = true;
+            return;
+        };
+        self.lsp_documents.get_mut(&buffer_id).unwrap().version = version;
+        if change_sync == ChangeSync::None {
+            return;
+        }
         let Some(path) = self.buffers[buffer_id].path.clone() else {
             return;
         };
         let text = self.buffers[buffer_id].to_string();
-        self.lsp_send(LspCommand::Change {
+        let accepted = self.lsp_send(LspCommand::Change {
             language,
             path,
             version,
@@ -225,10 +315,14 @@ impl App {
                 text,
             }],
         });
+        let document = self.lsp_documents.get_mut(&buffer_id).unwrap();
+        document.desynced = !accepted;
     }
 
     pub(super) fn lsp_save(&mut self, buffer_id: usize) {
-        self.lsp_touch(buffer_id);
+        if !self.lsp_touch(buffer_id) {
+            return;
+        }
         let Some(document) = self.lsp_documents.get(&buffer_id) else {
             return;
         };
@@ -248,6 +342,31 @@ impl App {
         self.lsp_servers
             .get(language)
             .map_or(Encoding::default(), |server| server.encoding)
+    }
+
+    pub(super) fn lsp_document_guards(&self) -> HashMap<PathBuf, (usize, u64)> {
+        self.lsp_documents
+            .keys()
+            .filter_map(|buffer_id| {
+                let buffer = self.buffers.get(*buffer_id)?;
+                let path = buffer.path.as_deref()?;
+                let identity = workspace_edit_path_identity(path).ok()?;
+                Some((identity, (*buffer_id, buffer.revision())))
+            })
+            .collect()
+    }
+
+    fn lsp_document_guards_are_current(&self, guards: &HashMap<PathBuf, (usize, u64)>) -> bool {
+        guards.iter().all(|(identity, (buffer_id, revision))| {
+            !self.closed_buffers.contains(buffer_id)
+                && self.buffers.get(*buffer_id).is_some_and(|buffer| {
+                    buffer.revision() == *revision
+                        && buffer.path.as_deref().is_some_and(|path| {
+                            workspace_edit_path_identity(path)
+                                .is_ok_and(|current| current == *identity)
+                        })
+                })
+        })
     }
 
     /// Queues a request about the active buffer.
@@ -298,10 +417,10 @@ impl App {
             self.error(format!("{label} needs a saved file"));
             return false;
         };
-        let Some(supported) = self
+        let Some((supported, generation)) = self
             .lsp_servers
             .get(&language)
-            .map(|server| server.capabilities.supports(&kind))
+            .map(|server| (server.capabilities.supports(&kind), server.generation))
         else {
             self.lsp_send(LspCommand::Ensure {
                 language: language.clone(),
@@ -320,21 +439,116 @@ impl App {
             ));
             return false;
         }
-        self.lsp_touch(buffer_id);
+        if !self.lsp_touch(buffer_id) {
+            self.error(format!("{label} needs a synchronized document"));
+            return false;
+        }
+        let documents = matches!(
+            &pending,
+            PendingRequest::Edits { .. } | PendingRequest::CodeActions
+        )
+        .then(|| self.lsp_document_guards())
+        .unwrap_or_default();
+        if let Some(group) = pending.transient_group() {
+            let superseded: Vec<u64> = self
+                .lsp_requests
+                .iter()
+                .filter_map(|(token, request)| {
+                    (request.buffer == buffer_id
+                        && request.pending.transient_group() == Some(group))
+                    .then_some(*token)
+                })
+                .collect();
+            for token in superseded {
+                self.cancel_lsp_request(token);
+            }
+        }
         let token = self.next_lsp_token;
+        let Some(next_token) = token.checked_add(1) else {
+            self.error("language-server request identity space is exhausted");
+            return false;
+        };
         let command = LspCommand::Request {
             token,
-            language,
+            language: language.clone(),
             path,
             kind: Box::new(kind),
         };
         if self.lsp_send(command) {
-            self.next_lsp_token += 1;
-            self.lsp_requests
-                .insert(token, TrackedRequest::new(buffer_id, revision, pending));
+            self.next_lsp_token = next_token;
+            self.lsp_requests.insert(
+                token,
+                TrackedRequest::new(buffer_id, revision, pending)
+                    .with_documents(documents)
+                    .with_server(language, generation),
+            );
             true
         } else {
             false
+        }
+    }
+
+    fn action_command_supported(
+        &self,
+        language: &str,
+        generation: u64,
+        command: &lsp_types::Command,
+    ) -> bool {
+        self.lsp_servers.get(language).is_some_and(|server| {
+            server.generation == generation
+                && server
+                    .capabilities
+                    .supports(&RequestKind::ExecuteCommand(Box::new(command.clone())))
+        })
+    }
+
+    fn send_action_command(
+        &mut self,
+        buffer: usize,
+        language: String,
+        generation: u64,
+        command: lsp_types::Command,
+    ) {
+        if !self.action_command_supported(&language, generation, &command) {
+            self.mark_unsupported(format!(
+                "the {language} language server did not advertise command {}",
+                command.command
+            ));
+            return;
+        }
+        let Some(path) = self
+            .buffers
+            .get(buffer)
+            .and_then(|buffer| buffer.path.clone())
+        else {
+            self.error("command needs a saved file");
+            return;
+        };
+        let token = self.next_lsp_token;
+        let Some(next_token) = token.checked_add(1) else {
+            self.error("language-server request identity space is exhausted");
+            return;
+        };
+        if self.lsp_send(LspCommand::Request {
+            token,
+            language: language.clone(),
+            path,
+            kind: Box::new(RequestKind::ExecuteCommand(Box::new(command))),
+        }) {
+            self.next_lsp_token = next_token;
+            self.lsp_requests.insert(
+                token,
+                TrackedRequest::new(
+                    buffer,
+                    self.buffers[buffer].revision(),
+                    PendingRequest::Edits {
+                        label: "ran",
+                        path: PathBuf::new(),
+                    },
+                )
+                .with_documents(self.lsp_document_guards())
+                .with_server(language, generation),
+            );
         }
     }
 
@@ -736,6 +950,12 @@ impl App {
         let mut items = Vec::with_capacity(entries.len());
         let mut actions = Vec::with_capacity(entries.len());
         for (index, (path, diagnostic)) in entries.into_iter().enumerate() {
+            let encoding = self
+                .lsp_documents
+                .values()
+                .find(|document| document.path == path)
+                .map(|document| self.encoding_for(&document.language))
+                .unwrap_or_default();
             items.push(PickerItem::new(
                 format!("{}:{}", display_path(&path), diagnostic.row() + 1),
                 diagnostic.label(),
@@ -744,6 +964,7 @@ impl App {
             actions.push(ListAction::Jump(crate::lsp::Location {
                 path,
                 range: diagnostic.range,
+                encoding,
             }));
         }
         self.list_actions = actions;
@@ -962,17 +1183,19 @@ impl App {
         match event {
             LspEvent::Ready {
                 language,
+                generation,
                 name,
                 encoding,
-                incremental,
+                sync,
                 capabilities,
             } => {
                 self.lsp_servers.insert(
                     language.clone(),
                     ServerState {
                         name: name.clone(),
+                        generation,
                         encoding,
-                        incremental,
+                        sync,
                         capabilities,
                     },
                 );
@@ -994,9 +1217,28 @@ impl App {
             LspEvent::Diagnostics {
                 language,
                 path,
+                version,
                 diagnostics,
             } => {
-                self.diagnostics.set(&language, path, diagnostics);
+                let resolved = self.resolve_working_path(path.clone());
+                let contained =
+                    crate::path_safety::ensure_within_root(&self.project_root, &resolved).is_ok();
+                let identity = contained
+                    .then(|| workspace_edit_path_identity(&resolved).ok())
+                    .flatten();
+                let live = identity.as_ref().and_then(|identity| {
+                    self.lsp_documents.values().find(|document| {
+                        document.language == language
+                            && workspace_edit_path_identity(&document.path)
+                                .is_ok_and(|candidate| candidate == *identity)
+                    })
+                });
+                if let Some(live) = live.filter(|document| {
+                    !document.desynced && version.is_none_or(|version| version == document.version)
+                }) {
+                    self.diagnostics
+                        .set(&language, live.path.clone(), diagnostics);
+                }
             }
             LspEvent::Status { message, error } => {
                 if error {
@@ -1009,6 +1251,9 @@ impl App {
                 // Diagnostics with no server behind them are claims about the
                 // code that nothing will ever correct, so they go with it.
                 self.lsp_servers.remove(&language);
+                self.pending_lsp_replies.retain(|command| {
+                    !matches!(command, LspCommand::EditApplied { language: pending, .. } if pending == &language)
+                });
                 self.lsp_documents
                     .retain(|_, document| document.language != language);
                 self.diagnostics.clear_language(&language);
@@ -1017,28 +1262,90 @@ impl App {
                 }) {
                     self.completion = None;
                 }
+                if self.language_of(self.active().buffer).as_deref() == Some(language.as_str()) {
+                    self.signature = None;
+                    self.hover = None;
+                }
+                if self.lsp_action_source.as_ref().is_some_and(|source| {
+                    self.language_of(source.buffer).as_deref() == Some(language.as_str())
+                }) {
+                    let action_list_visible = self
+                        .list_actions
+                        .iter()
+                        .any(|action| matches!(action, ListAction::CodeAction(_)));
+                    self.lsp_action_source = None;
+                    self.lsp_actions.clear();
+                    if action_list_visible {
+                        self.list = None;
+                        self.list_actions.clear();
+                    }
+                }
                 self.error_from("LSP", "Language server stopped", message);
+            }
+            LspEvent::Restarted { language } => {
+                self.lsp_servers.remove(&language);
+                self.pending_lsp_replies.retain(|command| {
+                    !matches!(command, LspCommand::EditApplied { language: pending, .. } if pending == &language)
+                });
+                self.lsp_documents
+                    .retain(|_, document| document.language != language);
+                self.diagnostics.clear_language(&language);
+                if self.completion.as_ref().is_some_and(|completion| {
+                    self.language_of(completion.buffer).as_deref() == Some(language.as_str())
+                }) {
+                    self.completion = None;
+                }
+                if self.language_of(self.active().buffer).as_deref() == Some(language.as_str()) {
+                    self.signature = None;
+                    self.hover = None;
+                }
+                if self.lsp_action_source.as_ref().is_some_and(|source| {
+                    self.language_of(source.buffer).as_deref() == Some(language.as_str())
+                }) {
+                    let action_list_visible = self
+                        .list_actions
+                        .iter()
+                        .any(|action| matches!(action, ListAction::CodeAction(_)));
+                    self.lsp_action_source = None;
+                    self.lsp_actions.clear();
+                    if action_list_visible {
+                        self.list = None;
+                        self.list_actions.clear();
+                    }
+                }
             }
             LspEvent::ApplyEdit {
                 language,
+                generation,
+                encoding,
                 id,
                 edits,
                 skipped,
             } => {
-                let outcome = self.apply_document_edits(edits, None);
+                if self
+                    .lsp_servers
+                    .get(&language)
+                    .is_none_or(|server| server.generation != generation)
+                {
+                    return;
+                }
+                let guards = self.lsp_document_guards();
+                let outcome = self.apply_document_edits(edits, None, Some(&guards), encoding, None);
                 match outcome {
                     Ok(summary) => {
                         self.status(edit_summary("applied", summary, skipped));
-                        self.lsp_send(LspCommand::EditApplied {
+                        self.lsp_reply(LspCommand::EditApplied {
                             language,
+                            generation,
                             id,
                             applied: true,
                         });
                     }
                     Err(error) => {
                         self.error_from("LSP", "Workspace edit failed", error);
-                        self.lsp_send(LspCommand::EditApplied {
+                        self.lsp_reply(LspCommand::EditApplied {
                             language,
+                            generation,
                             id,
                             applied: false,
                         });
@@ -1052,6 +1359,9 @@ impl App {
                     // such as a completion the person typed past.
                     return;
                 };
+                if tracked.cancelled {
+                    return;
+                }
                 self.apply_lsp_response(tracked, response);
             }
         }
@@ -1070,21 +1380,35 @@ impl App {
             self.error(reason);
             return;
         }
+        if tracked.pending.source_revision_must_match()
+            && self
+                .buffers
+                .get(tracked.buffer)
+                .is_none_or(|buffer| buffer.revision() != tracked.revision)
+        {
+            self.error("stale language-server response; the originating buffer changed");
+            return;
+        }
+        if tracked.pending.transient_group().is_some() && self.active().buffer != tracked.buffer {
+            return;
+        }
         if matches!(
             tracked.pending,
             PendingRequest::Edits { .. } | PendingRequest::CodeActions
-        ) && self
-            .buffers
-            .get(tracked.buffer)
-            .is_none_or(|buffer| buffer.revision() != tracked.revision)
+        ) && !self.lsp_document_guards_are_current(&tracked.documents)
         {
-            self.error("stale language-server response; the originating buffer changed");
+            self.error(
+                "stale language-server response; another document changed, closed, or moved",
+            );
             return;
         }
         let TrackedRequest {
             buffer,
             revision,
+            documents,
             pending,
+            cancelled: _,
+            server,
         } = tracked;
         match (pending, response) {
             (PendingRequest::Goto { label }, Response::Locations(locations)) => {
@@ -1156,15 +1480,67 @@ impl App {
                 self.status(format!("{title}: none"));
             }
             (PendingRequest::CodeActions, Response::Actions(actions)) => {
-                self.open_action_picker(actions, buffer, revision);
+                self.open_action_picker(actions, buffer, revision, documents);
             }
             (PendingRequest::CodeActions, Response::Empty) => {
                 self.status("no code actions here");
             }
-            (PendingRequest::Edits { label, path }, Response::Edits { edits, skipped }) => {
+            (
+                PendingRequest::Edits { label, path },
+                Response::Edits {
+                    edits,
+                    skipped,
+                    encoding,
+                },
+            ) => {
                 let fallback = (!path.as_os_str().is_empty()).then_some(path);
-                match self.apply_document_edits(edits, fallback) {
+                match self.apply_document_edits(edits, fallback, Some(&documents), encoding, None) {
                     Ok(summary) => self.status(edit_summary(label, summary, skipped)),
+                    Err(error) => self.error(error),
+                }
+                self.report_new_registry_errors();
+            }
+            (
+                PendingRequest::Edits { label, path },
+                Response::ActionEdits {
+                    edits,
+                    skipped,
+                    encoding,
+                    command,
+                },
+            ) => {
+                let Some((language, generation)) = server else {
+                    self.error("resolved code action lost its server provenance");
+                    return;
+                };
+                if command.as_ref().is_some_and(|command| {
+                    skipped > 0 || !self.action_command_supported(&language, generation, command)
+                }) {
+                    self.error(
+                        "resolved code action command is unsupported or depends on file operations",
+                    );
+                    return;
+                }
+                let fallback = (!path.as_os_str().is_empty()).then_some(path);
+                match self.apply_document_edits(
+                    edits,
+                    fallback,
+                    Some(&documents),
+                    encoding,
+                    command.as_ref().map(|_| (language.as_str(), generation)),
+                ) {
+                    Ok(summary) => {
+                        self.status(edit_summary(label, summary, skipped));
+                        if let Some(command) = command {
+                            if summary.2 {
+                                self.send_action_command(buffer, language, generation, command);
+                            } else {
+                                self.error(
+                                    "code action command not sent because its edits did not reach every language server",
+                                );
+                            }
+                        }
+                    }
                     Err(error) => self.error(error),
                 }
                 self.report_new_registry_errors();
@@ -1324,6 +1700,7 @@ impl App {
         actions: Vec<ActionEntry>,
         buffer: usize,
         revision: u64,
+        documents: HashMap<PathBuf, (usize, u64)>,
     ) {
         if actions.is_empty() {
             self.status("no code actions here");
@@ -1336,7 +1713,18 @@ impl App {
             .collect();
         self.list_actions = (0..actions.len()).map(ListAction::CodeAction).collect();
         self.lsp_actions = actions;
-        self.lsp_action_source = Some((buffer, revision));
+        let language = self.language_of(buffer).unwrap_or_default();
+        let generation = self
+            .lsp_servers
+            .get(&language)
+            .map_or(0, |server| server.generation);
+        self.lsp_action_source = Some(super::ActionSource {
+            buffer,
+            revision,
+            documents,
+            language,
+            generation,
+        });
         self.list = Some(ListPicker::new("Code actions", items).with_primary_action("apply"));
     }
 
@@ -1346,10 +1734,15 @@ impl App {
     /// trip first, or be a command the server runs itself and then asks the
     /// editor to apply. All three paths end at `apply_document_edits`.
     pub(super) fn run_code_action(&mut self, index: usize) {
-        let Some((source_buffer, source_revision)) = self.lsp_action_source else {
+        let Some(source) = self.lsp_action_source.clone() else {
             self.error("stale code action; the originating buffer changed");
             return;
         };
+        let source_buffer = source.buffer;
+        let source_revision = source.revision;
+        let documents = source.documents;
+        let language = source.language;
+        let generation = source.generation;
         if self
             .buffers
             .get(source_buffer)
@@ -1362,40 +1755,102 @@ impl App {
             self.error("stale code action; the originating buffer changed");
             return;
         }
+        let current_generation = self
+            .lsp_servers
+            .get(&language)
+            .map(|server| server.generation);
+        if current_generation != Some(generation) {
+            self.error("stale code action; the language server restarted");
+            return;
+        }
+        if self
+            .lsp_documents
+            .get(&source_buffer)
+            .is_none_or(|document| document.language != language)
+        {
+            self.error("stale code action; the document changed language ownership");
+            return;
+        }
+        if !self.lsp_document_guards_are_current(&documents) {
+            self.error("stale code action; another language-server document changed");
+            return;
+        }
         let Some(entry) = self.lsp_actions.get(index).cloned() else {
             return;
         };
+        let encoding = self.encoding_for(&language);
         match entry.action().clone() {
             crate::lsp::CodeActionOrCommand::Command(command) => {
-                self.lsp_request_from(
-                    source_buffer,
-                    source_revision,
-                    RequestKind::ExecuteCommand(Box::new(command)),
-                    PendingRequest::Edits {
-                        label: "ran",
-                        path: PathBuf::new(),
-                    },
-                );
+                self.send_action_command(source_buffer, language, generation, command);
             }
-            crate::lsp::CodeActionOrCommand::CodeAction(action) => match action.edit.clone() {
-                Some(edit) => {
-                    let (edits, skipped) = crate::lsp::flatten_edit(edit);
-                    match self.apply_document_edits(edits, None) {
-                        Ok(summary) => self.status(edit_summary("applied", summary, skipped)),
-                        Err(error) => self.error(error),
-                    }
-                    self.report_new_registry_errors();
+            crate::lsp::CodeActionOrCommand::CodeAction(action) if action.disabled.is_some() => {
+                self.error(format!(
+                    "code action is disabled: {}",
+                    action.disabled.unwrap().reason
+                ));
+            }
+            crate::lsp::CodeActionOrCommand::CodeAction(action) => {
+                let command = action.command.clone();
+                if command.as_ref().is_some_and(|command| {
+                    !self.action_command_supported(&language, generation, command)
+                }) {
+                    self.error("code action contains an unadvertised command");
+                    return;
                 }
-                None => self.lsp_request_from(
-                    source_buffer,
-                    source_revision,
-                    RequestKind::ResolveCodeAction(Box::new(action)),
-                    PendingRequest::Edits {
-                        label: "applied",
-                        path: PathBuf::new(),
+                match action.edit.clone() {
+                    Some(edit) => {
+                        match crate::lsp::flatten_edit(edit) {
+                            Ok((_, skipped)) if command.is_some() && skipped > 0 => {
+                                self.error(
+                                    "code action command depends on unsupported file operations",
+                                );
+                            }
+                            Ok((edits, skipped)) => match self.apply_document_edits(
+                                edits,
+                                None,
+                                Some(&documents),
+                                encoding,
+                                command.as_ref().map(|_| (language.as_str(), generation)),
+                            ) {
+                                Ok(summary) => {
+                                    self.status(edit_summary("applied", summary, skipped));
+                                    if let Some(command) = command {
+                                        if summary.2 {
+                                            self.send_action_command(
+                                                source_buffer,
+                                                language,
+                                                generation,
+                                                command,
+                                            );
+                                        } else {
+                                            self.error(
+                                                "code action command not sent because its edits did not reach every language server",
+                                            );
+                                        }
+                                    }
+                                }
+                                Err(error) => self.error(error),
+                            },
+                            Err(error) => self.error(error),
+                        }
+                        self.report_new_registry_errors();
+                    }
+                    None => match command {
+                        Some(command) => {
+                            self.send_action_command(source_buffer, language, generation, command)
+                        }
+                        None => self.lsp_request_from(
+                            source_buffer,
+                            source_revision,
+                            RequestKind::ResolveCodeAction(Box::new(action)),
+                            PendingRequest::Edits {
+                                label: "applied",
+                                path: PathBuf::new(),
+                            },
+                        ),
                     },
-                ),
-            },
+                }
+            }
         }
     }
 
@@ -1409,7 +1864,10 @@ impl App {
         &mut self,
         edits: Vec<DocumentEdit>,
         fallback: Option<PathBuf>,
-    ) -> Result<(usize, usize), String> {
+        guards: Option<&HashMap<PathBuf, (usize, u64)>>,
+        encoding: Encoding,
+        command_server: Option<(&str, u64)>,
+    ) -> Result<(usize, usize, bool), String> {
         struct PlannedEdit {
             target: PlannedTarget,
             transaction: Transaction,
@@ -1501,6 +1959,30 @@ impl App {
                     }))
                 .then_some(index)
             });
+            if let Some(guards) = guards.filter(|guards| !guards.is_empty()) {
+                match (guards.get(&document.identity), existing) {
+                    (Some((guarded_buffer, guarded_revision)), Some(buffer_id))
+                        if *guarded_buffer == buffer_id
+                            && self.buffers[buffer_id].revision() == *guarded_revision
+                            && self.buffers[buffer_id].path.as_deref().is_some_and(|path| {
+                                workspace_edit_path_identity(path)
+                                    .is_ok_and(|current| current == document.identity)
+                            }) => {}
+                    (Some(_), _) => {
+                        return Err(format!(
+                            "{} changed, closed, or moved since the language-server request",
+                            display_path(&path)
+                        ));
+                    }
+                    (None, Some(_)) => {
+                        return Err(format!(
+                            "{} opened since the language-server request",
+                            display_path(&path)
+                        ));
+                    }
+                    (None, None) => {}
+                }
+            }
             let buffer_id = if let Some(expected) = document.version {
                 let Some(buffer_id) = existing.filter(|buffer_id| {
                     self.lsp_documents.get(buffer_id).is_some_and(|state| {
@@ -1526,20 +2008,27 @@ impl App {
             if staged.is_read_only() {
                 return Err(format!("{} is read-only", display_path(&path)));
             }
-            let language = buffer_language(&staged, &self.registry);
-            let encoding = language
-                .map(|language| self.registry.language_name(language))
-                .map_or(Encoding::default(), |language| self.encoding_for(language));
             let mut changes = document
                 .edits
                 .iter()
                 .map(|edit| {
-                    let (from, to) = from_lsp_range(staged.text(), edit.range, encoding);
-                    Change::new(from, to, edit.new_text.clone())
+                    let (from, to) = checked_lsp_range(staged.text(), edit.range, encoding)
+                        .ok_or_else(|| {
+                            format!(
+                                "{} has an invalid language-server edit range",
+                                display_path(&path)
+                            )
+                        })?;
+                    Ok(Change::new(from, to, edit.new_text.clone()))
                 })
-                .collect::<Vec<_>>();
+                .collect::<Result<Vec<_>, String>>()?;
             changes.sort_by_key(|change| (change.from, change.to));
-            if changes.windows(2).any(|pair| pair[1].from < pair[0].to) {
+            if changes.windows(2).any(|pair| {
+                pair[1].from < pair[0].to
+                    || (pair[0].from == pair[0].to
+                        && pair[1].from == pair[1].to
+                        && pair[0].from == pair[1].from)
+            }) {
                 return Err(format!(
                     "{} has overlapping language-server edits",
                     display_path(&path)
@@ -1565,6 +2054,7 @@ impl App {
 
         let changed_files = planned.len();
         let changed_edits = planned.iter().map(|edit| edit.edit_count).sum();
+        let mut synchronized = true;
         for edit in planned {
             match edit.target {
                 PlannedTarget::Existing { buffer_id, staged } => {
@@ -1573,21 +2063,41 @@ impl App {
                         || self.lsp_documents.contains_key(&buffer_id);
                     let before = watched.then(|| self.buffers[buffer_id].text().clone());
                     self.buffers[buffer_id] = staged;
-                    self.reconcile_applied_transaction(
+                    let delivered = self.reconcile_applied_transaction(
                         buffer_id,
                         language_before,
                         before.as_ref(),
                         &edit.transaction,
                     );
+                    if let Some((language, generation)) = command_server {
+                        synchronized &= delivered
+                            && self.lsp_documents.get(&buffer_id).is_some_and(|document| {
+                                document.language == language && !document.desynced
+                            })
+                            && self.lsp_servers.get(language).is_some_and(|server| {
+                                server.generation == generation
+                                    && server.sync.change != ChangeSync::None
+                            });
+                    }
                 }
                 PlannedTarget::New { staged, syntax } => {
                     self.buffers.push(staged);
                     self.syntax.push(syntax);
-                    self.lsp_touch(self.buffers.len() - 1);
+                    let buffer_id = self.buffers.len() - 1;
+                    let opened = self.lsp_touch(buffer_id);
+                    if let Some((language, generation)) = command_server {
+                        synchronized &= opened
+                            && self.lsp_documents.get(&buffer_id).is_some_and(|document| {
+                                document.language == language && !document.desynced
+                            })
+                            && self.lsp_servers.get(language).is_some_and(|server| {
+                                server.generation == generation && server.sync.open_close
+                            });
+                    }
                 }
             }
         }
-        Ok((changed_files, changed_edits))
+        Ok((changed_files, changed_edits, synchronized))
     }
 
     /// The buffer holding `path`, opening it if necessary without stealing the
@@ -1596,12 +2106,9 @@ impl App {
     fn jump_to(&mut self, location: &crate::lsp::Location) -> Result<()> {
         self.open_file(location.path.clone())?;
         let buffer_id = self.active().buffer;
-        let encoding = self
-            .language_of(buffer_id)
-            .map_or(Encoding::default(), |language| self.encoding_for(&language));
         let text = self.buffers[buffer_id].text();
-        let from = from_lsp_position(text, location.range.start, encoding);
-        let to = from_lsp_position(text, location.range.end, encoding);
+        let from = from_lsp_position(text, location.range.start, location.encoding);
+        let to = from_lsp_position(text, location.range.end, location.encoding);
         let pane = self.active_mut();
         let selection = if to > from {
             Selection::single(Range::new(from, to.saturating_sub(1)))
@@ -1717,35 +2224,46 @@ impl App {
             .language_of(buffer_id)
             .map_or(Encoding::default(), |language| self.encoding_for(&language));
         let head = self.active().head();
-        let mut changes: Vec<Change> = item
-            .additional
-            .iter()
-            .map(|edit| {
-                let (from, to) =
-                    from_lsp_range(self.buffers[buffer_id].text(), edit.range, encoding);
-                Change::new(from, to, edit.new_text.clone())
-            })
-            .collect();
+        let mut changes = Vec::with_capacity(item.additional.len() + 1);
+        for edit in &item.additional {
+            let Some((from, to)) =
+                checked_lsp_range(self.buffers[buffer_id].text(), edit.range, encoding)
+            else {
+                self.error("completion has an invalid language-server edit range");
+                return;
+            };
+            changes.push(Change::new(from, to, edit.new_text.clone()));
+        }
         // A server-supplied range is authoritative: only the server knows how
         // much of what was typed it means to replace.
         let primary = match &item.edit {
             Some((range, text)) => {
-                let (from, to) = from_lsp_range(self.buffers[buffer_id].text(), *range, encoding);
+                let Some((from, to)) =
+                    checked_lsp_range(self.buffers[buffer_id].text(), *range, encoding)
+                else {
+                    self.error("completion has an invalid language-server edit range");
+                    return;
+                };
                 Change::new(from, to.max(head), text.clone())
             }
             None => Change::new(state.anchor.min(head), head, item.insert.clone()),
         };
+        let primary_end = primary.to;
         changes.push(primary);
+        changes.sort_by_key(|change| (change.from, change.to));
+        if changes.windows(2).any(|pair| {
+            pair[1].from < pair[0].to
+                || (pair[0].from == pair[0].to
+                    && pair[1].from == pair[1].to
+                    && pair[0].from == pair[1].from)
+        }) {
+            self.error("completion has overlapping language-server edits");
+            return;
+        }
         let transaction = Transaction::new(changes);
         // Carets follow the inserted text rather than sitting before it.
-        let end = transaction
-            .changes()
-            .iter()
-            .map(|change| change.from + change.text.chars().count())
-            .max();
-        if self.apply_to_buffer(buffer_id, &transaction)
-            && let Some(end) = end
-        {
+        let end = transaction.map_offset(primary_end, Assoc::After);
+        if self.apply_to_buffer(buffer_id, &transaction) {
             let clamped = self.buffers[buffer_id].clamp_offset(end, true);
             self.active_mut()
                 .replace_selection(Selection::point(clamped));
@@ -2890,5 +3408,17 @@ impl App {
         self.completion = None;
         self.signature = None;
         self.hover = None;
+        let buffer = self.active().buffer;
+        let cancelled: Vec<u64> = self
+            .lsp_requests
+            .iter()
+            .filter_map(|(token, request)| {
+                (request.buffer == buffer && request.pending.transient_group().is_some())
+                    .then_some(*token)
+            })
+            .collect();
+        for token in cancelled {
+            self.cancel_lsp_request(token);
+        }
     }
 }

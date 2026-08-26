@@ -9,7 +9,7 @@
 //! Tests that need a real server are `#[ignore]`d and opt-in.
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     path::PathBuf,
     sync::{Arc, Mutex},
     time::Duration,
@@ -18,8 +18,8 @@ use std::{
 use runyte::{
     config::{LanguageServerConfig, LspConfig},
     lsp::{
-        Encoding, Launch, LspCommand, LspEvent, LspHandle, RequestKind, Response, Severity,
-        path_to_uri, spawn_with,
+        ChangeSync, DocumentSync, Encoding, Launch, LspCommand, LspEvent, LspHandle,
+        PENDING_CAPACITY, RequestKind, Response, Severity, path_to_uri, spawn_with,
         transport::{self, Incoming},
     },
 };
@@ -37,8 +37,16 @@ type Reply = Box<dyn Fn(&Value) -> Value + Send + Sync>;
 #[derive(Default)]
 struct Script {
     replies: HashMap<String, Reply>,
+    initialize_result: Option<Value>,
+    ignore_initialize: bool,
+    ignored: HashSet<String>,
     /// Frames pushed verbatim, before any reply, once `initialize` is answered.
     on_initialized: Vec<Value>,
+    /// Frames pushed before the initialize response, while the client must
+    /// still reject server requests that require ready editor state.
+    before_initialize: Vec<Value>,
+    /// Frames sent after shutdown begins but before its response.
+    on_shutdown: Vec<Value>,
     /// Raw bytes written instead of a framed reply, to simulate a broken server.
     raw_after_initialize: Option<Vec<u8>>,
     /// Close the connection instead of answering this method.
@@ -64,6 +72,16 @@ impl Script {
         self
     }
 
+    fn push_before_initialize(mut self, message: Value) -> Self {
+        self.before_initialize.push(message);
+        self
+    }
+
+    fn push_on_shutdown(mut self, message: Value) -> Self {
+        self.on_shutdown.push(message);
+        self
+    }
+
     fn die_on(mut self, method: &str) -> Self {
         self.die_on = Some(method.to_owned());
         self
@@ -71,6 +89,21 @@ impl Script {
 
     fn raw_after_initialize(mut self, bytes: &[u8]) -> Self {
         self.raw_after_initialize = Some(bytes.to_vec());
+        self
+    }
+
+    fn initialize_result(mut self, result: Value) -> Self {
+        self.initialize_result = Some(result);
+        self
+    }
+
+    fn ignore_initialize(mut self) -> Self {
+        self.ignore_initialize = true;
+        self
+    }
+
+    fn ignore(mut self, method: &str) -> Self {
+        self.ignored.insert(method.to_owned());
         self
     }
 }
@@ -166,16 +199,17 @@ fn harness(script: Script) -> Harness {
     let sent = Arc::new(Mutex::new(Vec::new()));
     let recorded = Arc::clone(&sent);
     let script = Arc::new(script);
-    let launch: Launch = Box::new(move |language, _settings, _root, inbox| {
+    let launch: Launch = Box::new(move |language, generation, _settings, _root, inbox| {
         // Two pipes: one per direction, so the client and the mock never read
         // their own writes.
         let (client_reader, server_writer) = tokio::io::duplex(PIPE);
         let (server_reader, client_writer) = tokio::io::duplex(PIPE);
         let connection = transport::connect(
             language.to_owned(),
+            generation,
             client_reader,
             client_writer,
-            inbox as mpsc::Sender<(String, Incoming)>,
+            inbox as mpsc::Sender<(String, u64, Incoming)>,
         );
         tokio::spawn(mock_server(
             Arc::clone(&script),
@@ -216,15 +250,23 @@ async fn mock_server(
         };
 
         if method == "initialize" {
+            if script.ignore_initialize {
+                continue;
+            }
+            for message in &script.before_initialize {
+                let _ = transport::write_message(&mut writer, message).await;
+            }
             respond(
                 &mut writer,
                 id,
-                json!({
-                    "capabilities": {
-                        "positionEncoding": "utf-8",
-                        "textDocumentSync": 2,
-                    },
-                    "serverInfo": { "name": "mock-analyzer", "version": "1" },
+                script.initialize_result.clone().unwrap_or_else(|| {
+                    json!({
+                        "capabilities": {
+                            "positionEncoding": "utf-8",
+                            "textDocumentSync": 2,
+                        },
+                        "serverInfo": { "name": "mock-analyzer", "version": "1" },
+                    })
                 }),
             )
             .await;
@@ -240,6 +282,14 @@ async fn mock_server(
         }
 
         let params = message.get("params").cloned().unwrap_or(Value::Null);
+        if method == "shutdown" {
+            for message in &script.on_shutdown {
+                let _ = transport::write_message(&mut writer, message).await;
+            }
+        }
+        if script.ignored.contains(&method) {
+            continue;
+        }
         match script.replies.get(&method) {
             Some(reply) => respond(&mut writer, id, reply(&params)).await,
             None => respond(&mut writer, id, Value::Null).await,
@@ -317,6 +367,250 @@ async fn the_handshake_negotiates_an_encoding_and_gates_document_notifications()
 }
 
 #[tokio::test]
+async fn a_malformed_initialize_result_stops_and_records_the_server() {
+    let mut harness = harness(Script::default().initialize_result(json!({"not": "initialize"})));
+    assert!(harness.handle.send(LspCommand::Ensure {
+        language: "rust".to_owned()
+    }));
+    let stopped = harness
+        .next_matching(|event| match event {
+            LspEvent::Stopped { message, .. } => Some(message.clone()),
+            _ => None,
+        })
+        .await;
+    assert!(stopped.contains("failed to initialize"), "{stopped}");
+
+    assert!(harness.handle.send(LspCommand::Status));
+    let status = harness
+        .next_matching(|event| match event {
+            LspEvent::Status { message, .. } => Some(message.clone()),
+            _ => None,
+        })
+        .await;
+    assert!(status.contains("stopped"), "{status}");
+}
+
+#[tokio::test]
+async fn an_unknown_position_encoding_stops_the_server() {
+    let mut harness = harness(Script::default().initialize_result(json!({
+        "capabilities": {"positionEncoding": "utf-7"}
+    })));
+    assert!(harness.handle.send(LspCommand::Ensure {
+        language: "rust".to_owned()
+    }));
+    let message = harness
+        .next_matching(|event| match event {
+            LspEvent::Stopped { message, .. } => Some(message.clone()),
+            _ => None,
+        })
+        .await;
+    assert!(
+        message.contains("unsupported position encoding"),
+        "{message}"
+    );
+}
+
+#[tokio::test]
+async fn an_unknown_text_sync_kind_stops_the_server() {
+    let mut harness = harness(Script::default().initialize_result(json!({
+        "capabilities": {"textDocumentSync": 99}
+    })));
+    assert!(harness.handle.send(LspCommand::Ensure {
+        language: "rust".to_owned()
+    }));
+    let message = harness
+        .next_matching(|event| match event {
+            LspEvent::Stopped { message, .. } => Some(message.clone()),
+            _ => None,
+        })
+        .await;
+    assert!(
+        message.contains("unsupported text document sync kind"),
+        "{message}"
+    );
+}
+
+#[tokio::test]
+async fn unsupported_document_notifications_are_not_sent() {
+    let mut harness = harness(Script::default().initialize_result(json!({
+        "capabilities": {
+            "positionEncoding": "utf-8",
+            "textDocumentSync": {"openClose": false, "change": 0, "save": false}
+        }
+    })));
+    assert!(harness.handle.send(LspCommand::Ensure {
+        language: "rust".to_owned()
+    }));
+    let sync = harness
+        .next_matching(|event| match event {
+            LspEvent::Ready { sync, .. } => Some(*sync),
+            _ => None,
+        })
+        .await;
+    assert_eq!(sync, DocumentSync::default());
+    open(&harness.handle);
+    assert!(harness.handle.send(LspCommand::Change {
+        language: "rust".to_owned(),
+        path: PathBuf::from("/tmp/runyte-lsp/a.rs"),
+        version: 2,
+        changes: vec![],
+    }));
+    assert!(harness.handle.send(LspCommand::Save {
+        language: "rust".to_owned(),
+        path: PathBuf::from("/tmp/runyte-lsp/a.rs"),
+        text: "changed".to_owned(),
+    }));
+    assert!(harness.handle.send(LspCommand::Close {
+        language: "rust".to_owned(),
+        path: PathBuf::from("/tmp/runyte-lsp/a.rs"),
+    }));
+    harness.settle().await;
+    for method in [
+        "textDocument/didOpen",
+        "textDocument/didChange",
+        "textDocument/didSave",
+        "textDocument/didClose",
+    ] {
+        assert!(harness.sent_with(method).is_empty(), "unexpected {method}");
+    }
+}
+
+#[tokio::test]
+async fn save_text_is_omitted_when_the_server_did_not_request_it() {
+    let mut harness = harness(Script::default().initialize_result(json!({
+        "capabilities": {
+            "positionEncoding": "utf-8",
+            "textDocumentSync": {
+                "openClose": true,
+                "change": 1,
+                "save": {"includeText": false}
+            }
+        }
+    })));
+    assert!(harness.handle.send(LspCommand::Ensure {
+        language: "rust".to_owned()
+    }));
+    let sync = harness
+        .next_matching(|event| match event {
+            LspEvent::Ready { sync, .. } => Some(*sync),
+            _ => None,
+        })
+        .await;
+    assert_eq!(sync.change, ChangeSync::Full);
+    assert_eq!(sync.save, Some(false));
+    assert!(harness.handle.send(LspCommand::Save {
+        language: "rust".to_owned(),
+        path: PathBuf::from("/tmp/runyte-lsp/a.rs"),
+        text: "secret text".to_owned(),
+    }));
+    harness.settle().await;
+    let saves = harness.sent_with("textDocument/didSave");
+    assert_eq!(saves.len(), 1);
+    assert!(saves[0]["params"].get("text").is_none());
+}
+
+#[tokio::test]
+async fn pre_handshake_document_updates_are_bounded_and_stop_a_wedged_server() {
+    let mut harness = harness(Script::default().ignore_initialize());
+    assert!(harness.handle.send(LspCommand::Ensure {
+        language: "rust".to_owned()
+    }));
+    for version in 1..=(transport::OUTGOING_CAPACITY as i32 + 1) {
+        assert!(harness.handle.send(LspCommand::Open {
+            language: "rust".to_owned(),
+            path: PathBuf::from(format!("/tmp/runyte-lsp/{version}.rs")),
+            version,
+            text: String::new(),
+        }));
+    }
+    let stopped = harness
+        .next_matching(|event| match event {
+            LspEvent::Stopped { message, .. } => Some(message.clone()),
+            _ => None,
+        })
+        .await;
+    assert!(
+        stopped.contains("not accepting document updates"),
+        "{stopped}"
+    );
+}
+
+#[tokio::test]
+async fn cancelling_releases_protocol_correlation_and_notifies_the_server() {
+    let mut harness = harness(Script::default().ignore("textDocument/hover"));
+    assert!(harness.handle.send(LspCommand::Ensure {
+        language: "rust".to_owned()
+    }));
+    harness.ready().await;
+    assert!(harness.handle.send(LspCommand::Request {
+        token: 77,
+        language: "rust".to_owned(),
+        path: PathBuf::from("/tmp/runyte-lsp/a.rs"),
+        kind: Box::new(RequestKind::Hover(runyte::lsp::LspPosition::new(0, 0))),
+    }));
+    harness.settle().await;
+    assert!(harness.handle.send(LspCommand::Cancel { token: 77 }));
+    harness.settle().await;
+
+    let cancelled = harness.sent_with("$/cancelRequest");
+    assert_eq!(cancelled.len(), 1);
+    assert!(cancelled[0]["params"]["id"].is_i64());
+}
+
+#[tokio::test]
+async fn cancellation_that_overtakes_its_request_drops_the_request() {
+    let mut harness = harness(Script::default().ignore("textDocument/hover"));
+    assert!(harness.handle.send(LspCommand::Ensure {
+        language: "rust".to_owned()
+    }));
+    harness.ready().await;
+    assert!(harness.handle.send(LspCommand::Request {
+        token: 78,
+        language: "rust".to_owned(),
+        path: PathBuf::from("/tmp/runyte-lsp/a.rs"),
+        kind: Box::new(RequestKind::Hover(runyte::lsp::LspPosition::new(0, 0))),
+    }));
+    assert!(harness.handle.send(LspCommand::Cancel { token: 78 }));
+    harness.settle().await;
+
+    assert!(harness.sent_with("textDocument/hover").is_empty());
+    assert!(harness.sent_with("$/cancelRequest").is_empty());
+}
+
+#[tokio::test]
+async fn unanswered_requests_are_bounded_per_server() {
+    let mut harness = harness(Script::default().ignore("textDocument/hover"));
+    assert!(harness.handle.send(LspCommand::Ensure {
+        language: "rust".to_owned()
+    }));
+    harness.ready().await;
+
+    for index in 0..=PENDING_CAPACITY {
+        let command = LspCommand::Request {
+            token: 10_000 + index as u64,
+            language: "rust".to_owned(),
+            path: PathBuf::from("/tmp/runyte-lsp/a.rs"),
+            kind: Box::new(RequestKind::Hover(runyte::lsp::LspPosition::new(0, 0))),
+        };
+        while !harness.handle.send(command.clone()) {
+            tokio::task::yield_now().await;
+        }
+    }
+
+    let (token, reason) = harness
+        .next_matching(|event| match event {
+            LspEvent::Response {
+                token,
+                response: Response::Failed(reason),
+            } => Some((*token, reason.clone())),
+            _ => None,
+        })
+        .await;
+    assert_eq!(token, 10_000 + PENDING_CAPACITY as u64);
+    assert!(reason.contains("not responding"), "{reason}");
+}
+
+#[tokio::test]
 async fn incremental_changes_are_sent_in_the_order_a_server_can_apply() {
     let mut harness = harness(Script::default());
     assert!(harness.handle.send(LspCommand::Ensure {
@@ -362,6 +656,21 @@ async fn incremental_changes_are_sent_in_the_order_a_server_can_apply() {
         "later positions must be sent first so earlier edits cannot shift them"
     );
     assert_eq!(changes[0]["params"]["textDocument"]["version"], 2);
+}
+
+#[tokio::test]
+async fn navigation_results_keep_the_sending_servers_encoding() {
+    let mut harness =
+        harness(Script::default().result("textDocument/definition", json!([location(0)])));
+    assert!(harness.handle.send(LspCommand::Ensure {
+        language: "rust".to_owned()
+    }));
+    assert_eq!(harness.ready().await, Encoding::Utf8);
+    harness.request(RequestKind::Definition(runyte::lsp::LspPosition::new(0, 0)));
+    let Response::Locations(locations) = harness.response().await else {
+        panic!("expected locations");
+    };
+    assert_eq!(locations[0].encoding, Encoding::Utf8);
 }
 
 #[tokio::test]
@@ -572,6 +881,68 @@ async fn restarting_clears_a_failure_so_the_next_edit_starts_a_server_again() {
 }
 
 #[tokio::test]
+async fn a_retired_connection_cannot_stop_its_replacement() {
+    let mut harness = harness(Script::default());
+    assert!(harness.handle.send(LspCommand::Ensure {
+        language: "rust".to_owned()
+    }));
+    harness.ready().await;
+    assert!(
+        harness
+            .handle
+            .send(LspCommand::Restart(Some("rust".to_owned())))
+    );
+    harness
+        .next_matching(|event| match event {
+            LspEvent::Status { message, .. } if message.contains("restart") => Some(()),
+            _ => None,
+        })
+        .await;
+    assert!(harness.handle.send(LspCommand::Ensure {
+        language: "rust".to_owned()
+    }));
+    harness.ready().await;
+    harness.settle().await;
+
+    assert!(harness.handle.send(LspCommand::Status));
+    let status = harness
+        .next_matching(|event| match event {
+            LspEvent::Status { message, .. } => Some(message.clone()),
+            _ => None,
+        })
+        .await;
+    assert!(status.contains("ready"), "{status}");
+    assert!(!status.contains("stopped"), "{status}");
+}
+
+#[tokio::test]
+async fn a_retiring_server_cannot_apply_an_edit_during_shutdown() {
+    let request = json!({
+        "jsonrpc": "2.0",
+        "id": 903,
+        "method": "workspace/applyEdit",
+        "params": {"edit": {"changes": {}}},
+    });
+    let mut harness = harness(Script::default().push_on_shutdown(request));
+    assert!(harness.handle.send(LspCommand::Ensure {
+        language: "rust".to_owned()
+    }));
+    harness.ready().await;
+    assert!(
+        harness
+            .handle
+            .send(LspCommand::Restart(Some("rust".to_owned())))
+    );
+    harness
+        .next_matching(|event| matches!(event, LspEvent::Restarted { .. }).then_some(()))
+        .await;
+    harness.settle().await;
+    while let Ok(event) = harness.events.try_recv() {
+        assert!(!matches!(event, LspEvent::ApplyEdit { .. }), "{event:?}");
+    }
+}
+
+#[tokio::test]
 async fn an_unknown_server_request_is_answered_rather_than_ignored() {
     // A server that blocks on an unanswered request would look like a hang.
     let script = Script::default().push(json!({
@@ -594,6 +965,47 @@ async fn an_unknown_server_request_is_answered_rather_than_ignored() {
         .iter()
         .any(|message| message.get("id") == Some(&json!(900)));
     assert!(answered, "the server request went unanswered");
+}
+
+#[tokio::test]
+async fn invalid_json_rpc_requests_are_rejected_before_dispatch() {
+    let invalid = json!({
+        "id": 901,
+        "method": "workspace/applyEdit",
+        "params": {"edit": {"changes": {}}},
+    });
+    let mut harness = harness(Script::default().push(invalid));
+    assert!(harness.handle.send(LspCommand::Ensure {
+        language: "rust".to_owned()
+    }));
+    harness.ready().await;
+    harness.settle().await;
+
+    let rejected = harness.sent.lock().unwrap().iter().any(|message| {
+        message.get("id") == Some(&json!(901)) && message["error"]["code"] == json!(-32600)
+    });
+    assert!(rejected, "invalid request was not rejected");
+}
+
+#[tokio::test]
+async fn apply_edit_before_initialization_is_answered_without_editor_state() {
+    let request = json!({
+        "jsonrpc": "2.0",
+        "id": 902,
+        "method": "workspace/applyEdit",
+        "params": {"edit": {"changes": {}}},
+    });
+    let mut harness = harness(Script::default().push_before_initialize(request));
+    assert!(harness.handle.send(LspCommand::Ensure {
+        language: "rust".to_owned()
+    }));
+    harness.ready().await;
+    harness.settle().await;
+
+    let refused = harness.sent.lock().unwrap().iter().any(|message| {
+        message.get("id") == Some(&json!(902)) && message["result"]["applied"] == Value::Bool(false)
+    });
+    assert!(refused, "pre-ready workspace edit was left unanswered");
 }
 
 #[tokio::test]
@@ -622,9 +1034,14 @@ async fn apply_edit_reaches_the_editor_and_is_acknowledged() {
     }));
     harness.ready().await;
 
-    let (id, edits) = harness
+    let (generation, id, edits) = harness
         .next_matching(|event| match event {
-            LspEvent::ApplyEdit { id, edits, .. } => Some((id.clone(), edits.clone())),
+            LspEvent::ApplyEdit {
+                generation,
+                id,
+                edits,
+                ..
+            } => Some((*generation, id.clone(), edits.clone())),
             _ => None,
         })
         .await;
@@ -634,6 +1051,7 @@ async fn apply_edit_reaches_the_editor_and_is_acknowledged() {
 
     assert!(harness.handle.send(LspCommand::EditApplied {
         language: "rust".to_owned(),
+        generation,
         id: json!(42),
         applied: true,
     }));
@@ -648,13 +1066,48 @@ async fn apply_edit_reaches_the_editor_and_is_acknowledged() {
 }
 
 #[tokio::test]
-async fn shutdown_stops_the_manager() {
-    let harness = harness(Script::default());
+async fn a_duplicate_outstanding_server_request_id_is_rejected() {
+    let request = json!({
+        "jsonrpc": "2.0",
+        "id": 55,
+        "method": "workspace/applyEdit",
+        "params": {"edit": {"changes": {}}},
+    });
+    let mut harness = harness(Script::default().push(request.clone()).push(request));
     assert!(harness.handle.send(LspCommand::Ensure {
         language: "rust".to_owned()
     }));
+    harness.ready().await;
+    let _ = harness
+        .next_matching(|event| matches!(event, LspEvent::ApplyEdit { .. }).then_some(()))
+        .await;
+    harness.settle().await;
+
+    let rejected = harness.sent.lock().unwrap().iter().any(|message| {
+        message.get("id") == Some(&json!(55)) && message["error"]["code"] == json!(-32600)
+    });
+    assert!(rejected, "the duplicate server request was not rejected");
+}
+
+#[tokio::test]
+async fn shutdown_stops_the_manager() {
+    let mut harness = harness(Script::default());
+    assert!(harness.handle.send(LspCommand::Ensure {
+        language: "rust".to_owned()
+    }));
+    harness.ready().await;
     assert!(harness.handle.send(LspCommand::Shutdown));
     harness.settle().await;
+    let sent = harness.sent.lock().unwrap().clone();
+    let shutdown = sent
+        .iter()
+        .position(|message| message.get("method") == Some(&json!("shutdown")))
+        .expect("shutdown request");
+    let exit = sent
+        .iter()
+        .position(|message| message.get("method") == Some(&json!("exit")))
+        .expect("exit notification");
+    assert!(shutdown < exit, "exit must follow the shutdown response");
     // The manager has stopped, so its command queue no longer accepts work.
     // Sending must fail rather than block.
     let mut refused = false;

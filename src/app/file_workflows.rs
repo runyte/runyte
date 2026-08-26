@@ -813,6 +813,7 @@ impl App {
             }
             return;
         }
+        self.dismiss_popups();
         self.push_jump();
         // A pane must not walk away still reserving the explorer it left, or
         // no pane could ever display or adopt that buffer again. Switching to

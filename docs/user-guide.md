@@ -2048,6 +2048,12 @@ its muted `… N lines` suffix reports how many complete rows are hidden.
 Language servers may not create, rename, or delete files. A workspace edit
 that asks for one has those operations reported and skipped, and files a
 rename touches are opened as buffers rather than written behind your back.
+Text edits must name absolute local files inside the project and exact,
+forward-ordered character boundaries; malformed, remote, out-of-range, and
+overlapping edits reject the complete multi-file change. Open target buffers
+are guarded at the revisions from which a request was made, including targets
+other than the command's source buffer. Versioned diagnostic publications are
+likewise ignored after their open document advances.
 
 ### Commands
 

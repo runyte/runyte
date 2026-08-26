@@ -6256,14 +6256,23 @@ mod tests {
         path
     }
 
+    fn publish_diagnostic(
+        app: &mut App,
+        path: std::path::PathBuf,
+        diagnostic: lsp_types::Diagnostic,
+    ) {
+        app.diagnostics
+            .set("rust", path, vec![crate::lsp::Diagnostic::new(diagnostic)]);
+    }
+
     #[test]
     fn diagnostics_render_a_sign_column_and_an_inline_message() {
         let mut app = App::new(Config::default(), None).unwrap();
         let path = rust_buffer(&mut app, "let x = 1;\nlet y = 2;\n");
-        app.apply_lsp_event(crate::lsp::LspEvent::Diagnostics {
-            language: "rust".to_owned(),
+        publish_diagnostic(
+            &mut app,
             path,
-            diagnostics: vec![crate::lsp::Diagnostic::new(lsp_types::Diagnostic {
+            lsp_types::Diagnostic {
                 range: crate::lsp::LspRange::new(
                     crate::lsp::LspPosition::new(0, 4),
                     crate::lsp::LspPosition::new(0, 5),
@@ -6271,8 +6280,8 @@ mod tests {
                 severity: Some(lsp_types::DiagnosticSeverity::ERROR),
                 message: "unused variable".to_owned(),
                 ..Default::default()
-            })],
-        });
+            },
+        );
 
         let prepared = app.prepare_view(frame_geometry(TuiRect::new(0, 0, 100, 24)));
         let pane = prepared.pane(0).unwrap();
@@ -6315,10 +6324,10 @@ mod tests {
     fn long_inline_diagnostics_are_bounded_to_remaining_viewport_cells() {
         let mut app = App::new(Config::default(), None).unwrap();
         let path = rust_buffer(&mut app, "x\n");
-        app.apply_lsp_event(crate::lsp::LspEvent::Diagnostics {
-            language: "rust".to_owned(),
+        publish_diagnostic(
+            &mut app,
             path,
-            diagnostics: vec![crate::lsp::Diagnostic::new(lsp_types::Diagnostic {
+            lsp_types::Diagnostic {
                 range: crate::lsp::LspRange::new(
                     crate::lsp::LspPosition::new(0, 0),
                     crate::lsp::LspPosition::new(0, 1),
@@ -6326,8 +6335,8 @@ mod tests {
                 severity: Some(lsp_types::DiagnosticSeverity::ERROR),
                 message: "界".repeat(10_000),
                 ..Default::default()
-            })],
-        });
+            },
+        );
         let prepared = app.prepare_view(frame_geometry(TuiRect::new(0, 0, 20, 8)));
         let text_width = prepared.pane(0).unwrap().text_width;
         let snapshot = app.snapshot(&prepared);
@@ -6362,10 +6371,10 @@ mod tests {
         let mut app = App::new(config, None).unwrap();
         let path = rust_buffer(&mut app, "abcdefgh");
         app.panes.get_mut(&0).unwrap().selection = Selection::point(8);
-        app.apply_lsp_event(crate::lsp::LspEvent::Diagnostics {
-            language: "rust".to_owned(),
+        publish_diagnostic(
+            &mut app,
             path,
-            diagnostics: vec![crate::lsp::Diagnostic::new(lsp_types::Diagnostic {
+            lsp_types::Diagnostic {
                 range: crate::lsp::LspRange::new(
                     crate::lsp::LspPosition::new(0, 0),
                     crate::lsp::LspPosition::new(0, 1),
@@ -6373,8 +6382,8 @@ mod tests {
                 severity: Some(lsp_types::DiagnosticSeverity::ERROR),
                 message: "at eof".to_owned(),
                 ..Default::default()
-            })],
-        });
+            },
+        );
         let prepared = app.prepare_view(frame_geometry(TuiRect::new(0, 0, 8, 8)));
         assert_eq!(prepared.pane(0).unwrap().text_width, 5);
         let snapshot = app.snapshot(&prepared);
