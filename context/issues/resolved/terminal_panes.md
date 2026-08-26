@@ -243,6 +243,18 @@ contract to open both endpoints with the initial size on the slave before the
 child makes it controlling stdin, stdout, and stderr. Resizes after startup
 continue through the master.
 
+A later macOS CI run exposed a portability error in the real-PTY test fixtures,
+not in the terminal event ordering. Several tests launched `echo`, `printf`, or
+a finite shell as the child, waited for its output, and then continued testing
+live terminal behavior. Runyte correctly removes a terminal as soon as its exit
+event is applied, while the output queue correctly keeps retained bytes ahead
+of that event. The tests therefore depended on their assertion running in the
+narrow interval between those two events. Their deterministic child programs
+now print the same prelude and continue on `cat`, so tests for drawing, colour
+queries, review, titles, scrollback, and generated output operate on a genuinely
+live terminal. The tests that exercise process exit still use finite children
+and drain through the real lifecycle boundary.
+
 These later fixes are covered by
 `empty_osc_fields_are_counted_toward_the_sequence_limit`,
 `csi_subparameters_are_counted_toward_the_sequence_limit`, and

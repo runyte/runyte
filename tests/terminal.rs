@@ -197,14 +197,14 @@ fn terminal_text_by_id(app: &App, id: runyte::terminal::TerminalId) -> String {
 
 #[test]
 fn a_child_runs_in_the_pane_and_its_output_is_drawn() {
-    let mut session = Session::start("/bin/echo terminal pane works");
+    let mut session = Session::start(r#"/bin/sh -c 'printf "terminal pane works\r\n"; cat'"#);
     assert!(session.settle(|app| terminal_text(app).contains("terminal pane works")));
     assert!(session.screen(60, 12).contains("terminal pane works"));
 }
 
 #[test]
 fn a_child_can_discover_the_effective_default_background() {
-    let command = r#"/bin/sh -c 'stty raw -echo; printf "\033]11;?\033\\"; answer=$(dd bs=1 count=25 2>/dev/null); expected=$(printf "\033]11;rgb:fbfb/fbfb/fafa\033\\"); if [ "$answer" = "$expected" ]; then printf default-background-ok; else printf default-background-wrong; fi'"#;
+    let command = r#"/bin/sh -c 'stty raw -echo; printf "\033]11;?\033\\"; answer=$(dd bs=1 count=25 2>/dev/null); expected=$(printf "\033]11;rgb:fbfb/fbfb/fafa\033\\"); if [ "$answer" = "$expected" ]; then printf default-background-ok; else printf default-background-wrong; fi; cat'"#;
     let mut session = Session::start(command);
 
     assert!(session.settle(|app| terminal_text(app).contains("default-background-ok")));
@@ -594,7 +594,7 @@ fn a_terminal_pane_refuses_commands_that_would_edit_the_buffer_behind_it() {
 #[test]
 fn normal_mode_scrolls_the_scrollback_and_returns_to_the_live_screen() {
     let mut session =
-        Session::start("/bin/sh -c 'for i in 1 2 3 4 5 6 7 8 9; do echo line $i; done'");
+        Session::start("/bin/sh -c 'for i in 1 2 3 4 5 6 7 8 9; do echo line $i; done; cat'");
     assert!(session.settle(|app| terminal_text(app).contains("line 9")));
     session
         .app
@@ -1035,7 +1035,7 @@ fn terminal_review_comma_and_semicolon_manage_copied_selections() {
 
 #[test]
 fn the_pane_is_named_by_the_title_the_child_sets() {
-    let mut session = Session::start("/bin/printf '\\033]0;agent\\007'");
+    let mut session = Session::start(r#"/bin/sh -c 'printf "\033]0;agent\007"; cat'"#);
     assert!(session.settle(|app| {
         app.active_terminal()
             .and_then(|id| app.terminals.get(id))
@@ -1303,7 +1303,7 @@ fn closing_a_terminal_ends_its_child_and_forgets_it() {
 
 #[test]
 fn copying_a_terminals_output_opens_it_as_an_ordinary_buffer() {
-    let mut session = Session::start("/bin/echo copied text");
+    let mut session = Session::start(r#"/bin/sh -c 'printf "copied text\r\n"; cat'"#);
     assert!(session.settle(|app| terminal_text(app).contains("copied text")));
     session.colon("terminal-output");
     // The pane now shows a document, so the terminal is no longer what it
@@ -1320,7 +1320,7 @@ fn copying_a_terminals_output_opens_it_as_an_ordinary_buffer() {
 
 #[test]
 fn terminal_review_repeats_regex_matches_with_n_uppercase_n_and_parentheses() {
-    let mut session = Session::start("/bin/printf 'one two one'");
+    let mut session = Session::start(r#"/bin/sh -c 'printf "one two one"; cat'"#);
     assert!(session.settle(|app| terminal_text(app).contains("one two one")));
     session.leave_input();
     session.press(KeyCode::Char('/'));
@@ -1382,7 +1382,7 @@ fn terminal_review_repeats_regex_matches_with_n_uppercase_n_and_parentheses() {
 
 #[test]
 fn terminal_output_remains_jumpable_after_its_pane_returns_to_the_terminal() {
-    let mut session = Session::start("/bin/echo jumpable");
+    let mut session = Session::start(r#"/bin/sh -c 'printf "jumpable\r\n"; cat'"#);
     assert!(session.settle(|app| terminal_text(app).contains("jumpable")));
     let id = session.app.active_terminal().unwrap();
     session.colon("terminal-output");
