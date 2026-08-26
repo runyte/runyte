@@ -66,13 +66,29 @@ four busy-loop processes running concurrently to approximate load), plus
 three full `cargo test` runs with the target test passing in each. `cargo fmt
 --check` and `cargo clippy --all-targets -- -D warnings` both pass.
 
+A 2026-08-26 follow-up found that the remaining broken-pipe failure happened
+after the commit buffer had been saved correctly and `:wq` had completed. The
+host queues the terminal `WaitState` and closes the interactive attachment;
+the attached client's periodic `WaitStatus` poll could race that close, fail
+its write with `BrokenPipe`, and exit non-zero before reading the queued
+completion. `attach_for_wait` now resolves an attachment error against the
+same durable wait token over the independent control connection. A completed
+request therefore remains successful, while a pending or cancelled request
+still reports the attachment failure or cancellation. The existing
+`git_commit_wait_tui_completes_through_write_quit` regression in
+`tests/local_protocol.rs` passed 50 consecutive isolated runs after that
+change, followed by three complete `cargo test` runs.
+
 Known limitation: the escape-to-command-line transition still relies on a
 fixed delay rather than an observed signal, because the protocol has no way
 to report editor mode to a control client. Sustained scheduling delay past
 150 ms between the escape and `:wq\r` writes could in principle still
 reproduce the same misinterpretation; the sanity check after it will catch
 such corruption and fail with a clear message rather than a confusing
-downstream Git exit code, but it does not eliminate the underlying race.
+downstream Git exit code, but it does not eliminate the underlying input race.
+The later wait-status recovery applies only after the host has actually
+completed the request; it cannot turn a mistyped, still-pending request into a
+success.
 
 ## Report
 

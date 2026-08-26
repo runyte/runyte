@@ -116,11 +116,16 @@ async fn late_tree_is_rejected_and_the_latest_coalesced_revision_applies() {
             .unwrap();
     }
 
-    let latest = tokio::time::timeout(Duration::from_secs(5), events.recv())
-        .await
-        .expect("coalesced parse timed out")
-        .expect("background worker stopped");
-    assert!(editor.apply_syntax_event(latest));
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let event = events.recv().await.expect("background worker stopped");
+            if editor.apply_syntax_event(event) {
+                break;
+            }
+        }
+    })
+    .await
+    .expect("coalesced parse timed out");
     assert!(!editor.has_pending_syntax());
     assert!(highlighted(&mut editor));
     assert_eq!(

@@ -1764,12 +1764,13 @@ async fn attach_for_wait(
     endpoint: &LocalEndpoint,
     mouse_enabled: bool,
     token: WaitToken,
+    control: &mut LocalClient,
 ) -> Result<()> {
     let _terminal = TerminalGuard::enter(mouse_enabled)?;
     let mut terminal = Terminal::new(CrosstermBackend::new(stdout()))?;
     let mut geometry = current_frame_geometry()?;
     let mut terminal_events = EventStream::new();
-    match run_attached(
+    let attachment = run_attached(
         endpoint,
         &mut terminal,
         &mut terminal_events,
@@ -1778,11 +1779,45 @@ async fn attach_for_wait(
         None,
         None,
     )
-    .await?
-    {
-        AttachOutcome::Detached => Ok(()),
-        AttachOutcome::Switch { .. } => anyhow::bail!("wait request cannot switch workspaces"),
-        AttachOutcome::Refused(message) => anyhow::bail!(message),
+    .await;
+    match attachment {
+        Err(attachment_error) => {
+            // Completing a wait closes its interactive attachment after
+            // queuing the terminal state. A periodic status poll can race that
+            // close and see BrokenPipe before the queued completion reaches
+            // the reader. The wait request is durable host state, so resolve
+            // that race through the independent control connection instead of
+            // turning a successful edit into a failed caller process.
+            control.send(&ClientRequest::WaitStatus { token }).await?;
+            match control.recv().await? {
+                Some(HostResponse::WaitState {
+                    token: response_token,
+                    status: WaitStatus::Completed,
+                    ..
+                }) if response_token == token => Ok(()),
+                Some(HostResponse::WaitState {
+                    token: response_token,
+                    status: WaitStatus::Cancelled { reason },
+                    ..
+                }) if response_token == token => anyhow::bail!(reason),
+                Some(HostResponse::WaitState {
+                    token: response_token,
+                    status: WaitStatus::Pending { .. },
+                    ..
+                }) if response_token == token => Err(attachment_error
+                    .context("wait attachment failed while the request remained pending")),
+                Some(response) => Err(attachment_error.context(format!(
+                    "wait attachment failed and status recovery returned {response:?}"
+                ))),
+                None => Err(attachment_error
+                    .context("wait attachment failed and its host disconnected during recovery")),
+            }
+        }
+        Ok(AttachOutcome::Detached) => Ok(()),
+        Ok(AttachOutcome::Switch { .. }) => {
+            anyhow::bail!("wait request cannot switch workspaces")
+        }
+        Ok(AttachOutcome::Refused(message)) => anyhow::bail!(message),
     }
 }
 
@@ -2113,7 +2148,7 @@ async fn run_wait(
     let outcome = if interactive_attached {
         wait_for_completion(&mut control, &endpoint, mouse_enabled, token).await
     } else {
-        attach_for_wait(&endpoint, mouse_enabled, token).await
+        attach_for_wait(&endpoint, mouse_enabled, token, &mut control).await
     };
     if outcome.is_err() {
         let _ = control.send(&ClientRequest::CancelWait { token }).await;
@@ -2361,7 +2396,7 @@ async fn wait_for_completion(
                 WaitStatus::Completed => return Ok(()),
                 WaitStatus::Cancelled { reason } => anyhow::bail!(reason),
                 WaitStatus::Pending { .. } if !interactive_attached => {
-                    return attach_for_wait(endpoint, mouse_enabled, token).await;
+                    return attach_for_wait(endpoint, mouse_enabled, token, client).await;
                 }
                 WaitStatus::Pending { .. } => {}
             },

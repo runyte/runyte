@@ -67,6 +67,25 @@ jobs:
       - name: Test
         run: cargo test
 
+  performance:
+    name: Performance (ubuntu-latest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: performance
+
+      # Wall-clock budgets cannot distinguish a regression from sibling tests
+      # taking the runner's CPU. Release mode is the user-facing build, and one
+      # test thread gives every budget the machine rather than a noisy share.
+      - name: Test serialized release budgets
+        run: cargo test --release --locked --test performance -- --ignored --test-threads=1
+
   floor:
     name: Release build floor (ubuntu-22.04)
     runs-on: ubuntu-22.04

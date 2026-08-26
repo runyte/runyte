@@ -49,6 +49,18 @@ Tests covering the behavior are:
   `syntax_highlighting_continues_past_the_old_line_limit` in
   `tests/performance.rs`.
 
+A 2026-08-26 follow-up aligned those tests with the asynchronous contract.
+The coalescing worker may finish an intermediate revision before it receives
+the end of a typing burst, so `late_tree_is_rejected_and_the_latest_coalesced_revision_applies`
+and the performance helper now discard stale completions until the current
+revision applies, as the production event loop does. The heavyweight
+wall-clock cases in `tests/performance.rs` now run only through the serialized
+release command recorded at the top of that file and in `.github/workflows/ci.yml`;
+ordinary debug tests still compile the target but no longer make timing
+assertions while its cases compete for a CI runner. The syntax-dispatch budget
+also renders the minified fixture unwrapped, leaving its deliberately wider
+soft-wrap redraw ceiling to the separate wrapping tests.
+
 Known limitation: language injections are still dropped above
 `INJECTION_LIMIT_BYTES` (128 KB), and `PARSE_TIMEOUT` remains five seconds.
 Both policies were deliberately left for separate follow-up work.

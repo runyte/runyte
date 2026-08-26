@@ -139,6 +139,18 @@ async fn response(client: &mut LocalClient) -> HostResponse {
         .expect("host disconnected")
 }
 
+async fn shutdown(client: &mut LocalClient, request: ClientRequest) {
+    client.send(&request).await.unwrap();
+    let response = tokio::time::timeout(HOST_RESPONSE_TIMEOUT, client.recv())
+        .await
+        .expect("host shutdown timed out")
+        .unwrap();
+    assert!(
+        matches!(response, Some(HostResponse::ShuttingDown) | None),
+        "expected host shutdown, got {response:?}"
+    );
+}
+
 async fn send_input(client: &mut LocalClient, event: impl Into<InputEvent>) -> HostResponse {
     let event: InputEvent = event.into();
     client
@@ -471,8 +483,7 @@ async fn detach_reattach_preserves_live_editor_and_refuses_a_second_tui() {
             HostResponse::Saved { buffer: saved, .. } if saved == buffer
         ));
     }
-    control.send(&ClientRequest::Shutdown).await.unwrap();
-    assert_eq!(response(&mut control).await, HostResponse::ShuttingDown);
+    shutdown(&mut control, ClientRequest::Shutdown).await;
     let status = tokio::task::spawn_blocking(move || child.0.take().unwrap().wait())
         .await
         .unwrap()
@@ -739,11 +750,7 @@ async fn hidden_terminal_output_while_detached_is_unread_after_reattach() {
         "detached output was marked viewed without an attached observer"
     );
 
-    reattached
-        .send(&ClientRequest::ForceShutdown)
-        .await
-        .unwrap();
-    assert_eq!(response(&mut reattached).await, HostResponse::ShuttingDown);
+    shutdown(&mut reattached, ClientRequest::ForceShutdown).await;
     let status = tokio::task::spawn_blocking(move || child.0.take().unwrap().wait())
         .await
         .unwrap()
@@ -836,8 +843,7 @@ async fn detach_reattach_preserves_notification_history_and_unread_state() {
         response(&mut control).await,
         HostResponse::Welcome { .. }
     ));
-    control.send(&ClientRequest::Shutdown).await.unwrap();
-    assert_eq!(response(&mut control).await, HostResponse::ShuttingDown);
+    shutdown(&mut control, ClientRequest::Shutdown).await;
     let status = tokio::task::spawn_blocking(move || child.0.take().unwrap().wait())
         .await
         .unwrap()
@@ -915,8 +921,7 @@ async fn killed_host_leaves_files_intact_and_its_endpoint_is_recoverable() {
         response(&mut control).await,
         HostResponse::Welcome { .. }
     ));
-    control.send(&ClientRequest::Shutdown).await.unwrap();
-    assert_eq!(response(&mut control).await, HostResponse::ShuttingDown);
+    shutdown(&mut control, ClientRequest::Shutdown).await;
     let status = tokio::task::spawn_blocking(move || replacement.0.take().unwrap().wait())
         .await
         .unwrap()

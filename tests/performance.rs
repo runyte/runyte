@@ -13,6 +13,11 @@
 //! that works from the start of a line. Both are checked with soft wrap on and
 //! off, since wrapping is measured per logical line and is the part most
 //! easily made quadratic.
+//!
+//! Wall-clock budgets are meaningful only when these heavyweight cases do not
+//! compete with one another. They are ignored by the ordinary debug suite and
+//! run serially in release mode by CI. The equivalent local command is:
+//! `cargo test --release --test performance -- --ignored --test-threads=1`.
 
 use std::{
     fs,
@@ -258,6 +263,7 @@ fn slowest_frame(editor: &mut HeadlessEditor) -> Duration {
 /// linear implementation finishes this in single-digit milliseconds, and a
 /// quadratic one takes minutes, so nothing in between needs deciding.
 #[test]
+#[ignore = "run serially in the release performance job"]
 fn wrapping_a_very_long_line_is_linear_in_its_length() {
     let line: String = "abcdefghij ".repeat(200_000);
     assert!(line.chars().count() > 2_000_000);
@@ -273,6 +279,7 @@ fn wrapping_a_very_long_line_is_linear_in_its_length() {
 }
 
 #[test]
+#[ignore = "run serially in the release performance job"]
 fn a_million_row_file_opens_and_redraws_within_budget() {
     let path = million_rows();
     for soft_wrap in [false, true] {
@@ -296,6 +303,7 @@ fn a_million_row_file_opens_and_redraws_within_budget() {
 /// Measuring the visual gap between the viewport and the caret means wrapping
 /// every line in between, so the count is taken only as far as one screen.
 #[test]
+#[ignore = "run serially in the release performance job"]
 fn a_caret_far_from_the_viewport_redraws_within_budget() {
     let path = million_rows();
     let text_len = fs::read_to_string(&path).unwrap().chars().count();
@@ -313,6 +321,7 @@ fn a_caret_far_from_the_viewport_redraws_within_budget() {
 
 /// Highlighting has to be paid for the rows on screen, not for the document.
 #[test]
+#[ignore = "run serially in the release performance job"]
 fn a_large_highlighted_file_opens_and_redraws_within_budget() {
     let path = highlighted_rows();
     for soft_wrap in [false, true] {
@@ -337,6 +346,7 @@ fn a_large_highlighted_file_opens_and_redraws_within_budget() {
 /// meet the promise the line limit makes — see [`WRAPPED_FRAME_CEILING`] — and
 /// it is a long way inside it, at roughly 17ms.
 #[test]
+#[ignore = "run serially in the release performance job"]
 fn a_minified_single_line_file_opens_and_redraws_within_budget() {
     let path = minified_json();
     assert!(fs::metadata(&path).unwrap().len() > 1_500_000);
@@ -377,16 +387,25 @@ fn slowest_keystroke(editor: &mut HeadlessEditor, at: usize) -> Duration {
 }
 
 async fn apply_finished_syntax(editor: &mut HeadlessEditor, events: &mut SyntaxEvents) {
-    let event = tokio::time::timeout(Duration::from_secs(10), events.recv())
-        .await
-        .expect("background syntax parse timed out")
-        .expect("background syntax worker stopped");
-    assert!(editor.apply_syntax_event(event));
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let event = events
+                .recv()
+                .await
+                .expect("background syntax worker stopped");
+            if editor.apply_syntax_event(event) {
+                break;
+            }
+        }
+    })
+    .await
+    .expect("background syntax parse timed out");
 }
 
 /// Typing into a document with no grammar behind it costs the edit, not the
 /// document, however large it is.
 #[test]
+#[ignore = "run serially in the release performance job"]
 fn typing_into_a_large_plain_file_stays_within_budget() {
     let mut editor = editor_at(&million_rows(), true);
     editor.snapshot(120, 40);
@@ -410,6 +429,7 @@ fn typing_into_a_large_plain_file_stays_within_budget() {
 /// The retained tree translates viewport spans through the pending edits, so
 /// the document remains coloured for the whole burst.
 #[tokio::test(flavor = "multi_thread")]
+#[ignore = "run serially in the release performance job"]
 async fn typing_into_a_large_highlighted_file_keeps_colours_during_reparse() {
     let path = highlighted_rows();
     let mut editor = editor_at(&path, true);
@@ -460,6 +480,7 @@ async fn typing_into_a_large_highlighted_file_keeps_colours_during_reparse() {
 /// one-line fixture verifies both the asynchronous edit path and removal of
 /// the former byte refusal.
 #[tokio::test(flavor = "multi_thread")]
+#[ignore = "run serially in the release performance job"]
 async fn minified_documents_reparse_in_background_past_the_old_byte_limit() {
     let path = minified_json();
     assert_eq!(
@@ -504,14 +525,19 @@ async fn minified_documents_reparse_in_background_past_the_old_byte_limit() {
 }
 
 /// A discrete edit only queues parser work and stays inside one frame.
+///
+/// This isolates syntax dispatch from wrapping. A multi-megabyte logical line
+/// has its own deliberate wrapped-frame ceiling above; charging that redraw to
+/// this assertion would test the wrapping policy rather than parser latency.
 #[tokio::test(flavor = "multi_thread")]
+#[ignore = "run serially in the release performance job"]
 async fn a_discrete_edit_in_a_large_highlighted_file_stays_under_its_ceiling() {
     const REPARSE_CEILING: Duration = FRAME;
     for (label, path) in [
         ("a large highlighted file", highlighted_rows()),
         ("a minified file", minified_json()),
     ] {
-        let mut editor = editor_at(&path, true);
+        let mut editor = editor_at(&path, false);
         editor.snapshot(120, 40);
         let _events = editor.enable_background_syntax();
         let middle = fs::metadata(&path).unwrap().len() as usize / 2;
@@ -529,6 +555,7 @@ async fn a_discrete_edit_in_a_large_highlighted_file_stays_under_its_ceiling() {
 
 /// Wrapping stays on, and stays fast, for the documents it is meant for.
 #[test]
+#[ignore = "run serially in the release performance job"]
 fn a_large_wrapped_prose_file_redraws_within_budget() {
     let mut editor = editor_at(&wrapping_prose(), true);
     let snapshot = editor.snapshot(120, 40);
@@ -550,6 +577,7 @@ fn a_large_wrapped_prose_file_redraws_within_budget() {
 /// file's size or name, so a large file made of ordinary lines is unaffected,
 /// and so is a minified file of a few megabytes.
 #[test]
+#[ignore = "run serially in the release performance job"]
 fn soft_wrap_is_withheld_only_from_a_line_that_takes_about_a_second() {
     let mut prose = editor_at(&wrapping_prose(), true);
     assert!(
@@ -581,6 +609,7 @@ fn soft_wrap_is_withheld_only_from_a_line_that_takes_about_a_second() {
 /// A document past the former line refusal is highlighted and its edits stay
 /// responsive because reparsing is background work.
 #[tokio::test(flavor = "multi_thread")]
+#[ignore = "run serially in the release performance job"]
 async fn syntax_highlighting_continues_past_the_old_line_limit() {
     let mut highlighted = editor_at(&highlighted_rows(), false);
     assert!(
@@ -681,6 +710,7 @@ const GREP_SCAN_CEILING: Duration = Duration::from_millis(1_500);
 /// stop early, and that is the state the picker leaves as soon as anything is
 /// typed.
 #[test]
+#[ignore = "run serially in the release performance job"]
 fn a_content_scan_finds_a_match_anywhere_in_a_large_project() {
     let root = large_project();
     let state_root = root.join(".runyte");
@@ -738,6 +768,7 @@ fn a_content_scan_finds_a_match_anywhere_in_a_large_project() {
 /// itself is not measured: it runs on its own thread and cannot stall a
 /// redraw.
 #[test]
+#[ignore = "run serially in the release performance job"]
 fn ranking_a_full_content_budget_stays_within_a_frame() {
     let root = large_project();
     let (entries, _, limited) =
@@ -823,6 +854,7 @@ fn type_text(app: &mut App, text: &str) {
 /// entries and nothing can make it free — but every keystroke after it is
 /// held to a frame, which is what the kept listing buys.
 #[test]
+#[ignore = "run serially in the release performance job"]
 fn completing_a_path_in_a_wide_directory_stays_within_budget() {
     let root = wide_directory();
     let mut app = editor_in(root);
@@ -864,6 +896,7 @@ fn completing_a_path_in_a_wide_directory_stays_within_budget() {
 /// covers the widest case: an argument ending in a separator, where every
 /// name in the directory is a candidate row.
 #[test]
+#[ignore = "run serially in the release performance job"]
 fn palette_path_rows_redraw_within_budget() {
     let root = wide_directory();
     let mut app = editor_in(root);
