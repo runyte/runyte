@@ -4,14 +4,12 @@ name: CI
 
 on:
   push:
-    # `fix/ci` is temporary: it lets this workflow be exercised on its own
-    # branch before it merges. Remove it once CI is on `dev`.
-    branches: [main, dev, fix/ci]
+    branches: [main, dev]
   pull_request:
     branches: [main, dev]
 
-# Read-only by default. No job here needs to write to the repository; the
-# release workflow is the only place that raises this.
+# No job here needs to write to the repository. Declaring the floor once means
+# any future workflow that does need write access has to say so deliberately.
 permissions:
   contents: read
 
