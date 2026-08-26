@@ -183,6 +183,15 @@ mod tests {
     }
 
     #[test]
+    fn combining_marks_do_not_widen_centered_content() {
+        let combined = ContentLayout::measured(ContentAlignment::CENTERED, "e\u{301}\n");
+        let plain = ContentLayout::measured(ContentAlignment::CENTERED, "e\n");
+
+        assert_eq!(combined.indent(9), plain.indent(9));
+        assert_eq!(combined.width(9), plain.width(9));
+    }
+
+    #[test]
     fn an_unaligned_buffer_is_never_padded() {
         let layout = ContentLayout::default();
 

@@ -28,6 +28,8 @@ use crate::{
     wrap::Segment,
 };
 
+const ZERO_WIDTH_SCAN_LIMIT: usize = 256;
+
 /// Everything needed to draw the normal editor panes and status surface.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EditorSnapshot {
@@ -683,12 +685,28 @@ impl App {
                 .segment
                 .map_or(prepared.scroll_col, |segment| segment.start)
                 .min(line_len);
-            // A drawn column is at least one cell wide, so the viewport can
-            // never reach past this many of them.
             let end_col = row
                 .segment
-                .map_or(line_len, |segment| segment.end)
-                .min(start_col.saturating_add(prepared.text_width))
+                .map_or_else(
+                    || {
+                        visible_character_end(
+                            buffer
+                                .text()
+                                .line(document_row)
+                                .chars()
+                                .skip(start_col)
+                                .take(line_len.saturating_sub(start_col)),
+                            start_col,
+                            prepared.text_width,
+                            self.config.editor.tab_width,
+                        )
+                    },
+                    |segment| {
+                        segment.end.min(segment.start.saturating_add(
+                            prepared.text_width.saturating_add(ZERO_WIDTH_SCAN_LIMIT),
+                        ))
+                    },
+                )
                 .min(line_len);
             if previous == Some((document_row, start_col, end_col)) {
                 continue;
@@ -980,7 +998,6 @@ impl App {
         let mut current_count = None;
         let segment = context.segment;
         let start_col = segment.map_or(prepared.scroll_col, |segment| segment.start);
-        let end_col = segment.map_or(usize::MAX, |segment| segment.end);
         let mut visual_col = segment.map_or(0, |segment| segment.start_cell);
         let initial_cell = visual_col;
         let visible_end = initial_cell.saturating_add(context.text_width);
@@ -989,6 +1006,28 @@ impl App {
         // full `line_string` allocation here made merely paging onto such a
         // row block the input loop.
         let line_len = buffer.line_len(context.row);
+        let end_col = segment.map_or_else(
+            || {
+                visible_character_end(
+                    buffer
+                        .text()
+                        .line(context.row)
+                        .chars()
+                        .skip(start_col)
+                        .take(line_len.saturating_sub(start_col)),
+                    start_col,
+                    context.text_width,
+                    self.config.editor.tab_width,
+                )
+            },
+            |segment| {
+                segment.end.min(
+                    segment
+                        .start
+                        .saturating_add(context.text_width.saturating_add(ZERO_WIDTH_SCAN_LIMIT)),
+                )
+            },
+        );
         let directory = if buffer.is_directory() {
             let line = buffer.line_string(context.row);
             buffer.directory_line_is_directory(context.row, &line)
@@ -1010,10 +1049,10 @@ impl App {
             .take(end_col.saturating_sub(start_col))
         {
             let remaining = visible_end.saturating_sub(visual_col);
-            if remaining == 0 {
-                break;
-            }
             if let Some((label, part)) = label_at(row_start + col) {
+                if remaining == 0 {
+                    break;
+                }
                 push_text_run(
                     &mut runs,
                     &mut current,
@@ -1058,20 +1097,20 @@ impl App {
             current_diagnostic = diagnostic;
             current_count = count;
             if character == '\t' {
+                if remaining == 0 {
+                    break;
+                }
                 let tab_width = self.config.editor.tab_width.max(1);
                 let width = (tab_width - (visual_col % tab_width)).min(remaining);
                 current.push_str(&" ".repeat(width));
                 visual_col += width;
             } else {
-                let width = UnicodeWidthChar::width(character).unwrap_or(0).max(1);
+                let width = UnicodeWidthChar::width(character).unwrap_or(0);
                 if width > remaining {
                     break;
                 }
                 current.push(character);
                 visual_col += width;
-            }
-            if visual_col >= visible_end {
-                break;
             }
         }
         push_text_run(
@@ -1176,7 +1215,40 @@ fn display_cells(text: &str) -> usize {
 }
 
 fn character_cells(character: char) -> usize {
-    UnicodeWidthChar::width(character).unwrap_or(0).max(1)
+    UnicodeWidthChar::width(character).unwrap_or(0)
+}
+
+/// Finds the bounded character boundary that occupies `cell_limit` cells.
+///
+/// Zero-width marks must accompany their base character, but a hostile line
+/// containing only marks must not turn one frame into an unbounded scan.
+fn visible_character_end(
+    characters: impl Iterator<Item = char>,
+    start_column: usize,
+    cell_limit: usize,
+    tab_width: usize,
+) -> usize {
+    let tab_width = tab_width.max(1);
+    let mut column = start_column;
+    let mut cells = 0_usize;
+    let mut scanned = 0_usize;
+    for character in characters {
+        if scanned >= cell_limit.saturating_add(ZERO_WIDTH_SCAN_LIMIT) {
+            break;
+        }
+        let width = if character == '\t' {
+            tab_width - cells % tab_width
+        } else {
+            character_cells(character)
+        };
+        if width > 0 && cells.saturating_add(width) > cell_limit {
+            break;
+        }
+        column += 1;
+        scanned += 1;
+        cells = cells.saturating_add(width);
+    }
+    column
 }
 
 fn clip_fragments_to_cells<'a>(
@@ -2161,6 +2233,77 @@ mod tests {
 
         assert_eq!(snapshot.status.interaction_line, "/界a");
         assert_eq!(snapshot.status.prompt_cursor_column, Some(3));
+
+        app.prompt_kind = crate::app::PromptKind::Command;
+        app.command = "e\u{301}".to_owned();
+        app.command_cursor = 2;
+        let snapshot = prepared_snapshot(&mut app, 40, 8);
+        assert_eq!(snapshot.status.prompt_cursor_column, Some(2));
+    }
+
+    #[test]
+    fn combining_marks_do_not_clip_the_last_visible_cell() {
+        let mut config = Config::default();
+        config.editor.line_numbers = false;
+        let mut app = App::new(config, None).unwrap();
+        app.buffers[0].apply(&Transaction::insert(0, "e\u{301}x"));
+
+        let snapshot = prepared_snapshot(&mut app, 4, 6);
+        let pane = snapshot.pane(0).unwrap();
+        assert_eq!(pane.text_width, 2);
+        let SnapshotRow::Text(row) = &pane.rows[0] else {
+            panic!("first row is text");
+        };
+        let text = row
+            .runs
+            .iter()
+            .map(|run| run.text.as_str())
+            .collect::<String>();
+        assert_eq!(text, "e\u{301}x");
+
+        app.buffers[0].apply(&Transaction::change(0, 3, "xe\u{301}"));
+        let snapshot = prepared_snapshot(&mut app, 4, 6);
+        let pane = snapshot.pane(0).unwrap();
+        let SnapshotRow::Text(row) = &pane.rows[0] else {
+            panic!("first row is text");
+        };
+        let text = row
+            .runs
+            .iter()
+            .map(|run| run.text.as_str())
+            .collect::<String>();
+        assert_eq!(text, "xe\u{301}");
+    }
+
+    #[test]
+    fn zero_width_only_rows_have_a_bounded_scan() {
+        assert_eq!(
+            visible_character_end(std::iter::repeat('\u{301}').take(1_000), 0, 2, 4),
+            258
+        );
+    }
+
+    #[test]
+    fn soft_wrapped_zero_width_only_rows_have_a_bounded_snapshot() {
+        let mut config = Config::default();
+        config.editor.line_numbers = false;
+        config.editor.soft_wrap = true;
+        let mut app = App::new(config, None).unwrap();
+        app.buffers[0].apply(&Transaction::insert(0, "\u{301}".repeat(1_000)));
+
+        let snapshot = prepared_snapshot(&mut app, 4, 6);
+        let pane = snapshot.pane(0).unwrap();
+        let SnapshotRow::Text(row) = &pane.rows[0] else {
+            panic!("first row is text");
+        };
+        let copied = row
+            .runs
+            .iter()
+            .map(|run| run.text.chars().count())
+            .sum::<usize>();
+
+        assert_eq!(pane.text_width, 2);
+        assert_eq!(copied, pane.text_width + ZERO_WIDTH_SCAN_LIMIT);
     }
 
     #[test]

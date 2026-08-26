@@ -111,6 +111,7 @@ impl RowHints {
         }
         let mut rendered = " ".repeat(padding);
         let mut width = padding;
+        let mut visible_hint = false;
         for character in text.chars() {
             let cells = display_cells_of(character);
             if width + cells > remaining_cells {
@@ -118,8 +119,9 @@ impl RowHints {
             }
             rendered.push(character);
             width += cells;
+            visible_hint |= cells > 0;
         }
-        Some(rendered)
+        visible_hint.then_some(rendered)
     }
 }
 
@@ -129,7 +131,7 @@ pub fn display_cells(text: &str) -> usize {
 }
 
 fn display_cells_of(character: char) -> usize {
-    UnicodeWidthChar::width(character).unwrap_or(0).max(1)
+    UnicodeWidthChar::width(character).unwrap_or(0)
 }
 
 #[cfg(test)]
@@ -215,5 +217,14 @@ mod tests {
         // A wide glyph is never split across the edge of the viewport.
         assert_eq!(hints.rendered(0, 2, 7).as_deref(), Some("  → あ"));
         assert_eq!(hints.rendered(0, 2, 8).as_deref(), Some("  → あい"));
+    }
+
+    #[test]
+    fn combining_marks_are_zero_width_and_padding_without_a_hint_is_omitted() {
+        assert_eq!(display_cells("e\u{301}"), 1);
+        let hints = RowHints::aligned([(0, 2, "界".to_owned())]);
+
+        assert_eq!(hints.rendered(0, 2, 3), None);
+        assert_eq!(hints.rendered(0, 2, 4).as_deref(), Some("  界"));
     }
 }

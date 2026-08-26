@@ -880,7 +880,7 @@ fn cell_width(character: char, cell: usize, tab_width: usize) -> usize {
     if character == '\t' {
         tab_width - cell % tab_width
     } else {
-        UnicodeWidthChar::width(character).unwrap_or(0).max(1)
+        UnicodeWidthChar::width(character).unwrap_or(0)
     }
 }
 
@@ -911,6 +911,20 @@ mod tests {
         assert_eq!(segments("a\tb", 4, 4).len(), 2);
         assert_eq!(segments("\t", 4, 0).len(), 1);
         assert_eq!(column_for_cell_from("\t", 0, 1, 0), 1);
+    }
+
+    #[test]
+    fn combining_marks_do_not_consume_cells_or_force_wrap() {
+        assert_eq!(
+            segments("e\u{301}x", 2, 4),
+            vec![Segment {
+                start: 0,
+                end: 3,
+                start_cell: 0,
+                end_cell: 2,
+            }]
+        );
+        assert_eq!(display_column("e\u{301}x", 2, 4), 1);
     }
 
     #[test]
