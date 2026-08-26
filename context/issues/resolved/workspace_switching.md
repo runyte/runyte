@@ -51,6 +51,14 @@ and `empty_injected_registry_refreshes_without_touching_user_state` in
 plus `switching_back_and_forth_keeps_one_client_process` in
 `tests/local_protocol.rs`.
 
+A 2026-08-26 test-portability follow-up replaced delays that guessed when the
+asynchronous Git projection had settled with a control-protocol barrier on the
+populated `[git worktrees]` buffer. The tests observe initial TUI output before
+sending a command and retain the bounded terminal-input settle interval, then
+send navigation only after the generated view contains the destination path.
+Slower runners therefore exercise the same state transition instead of racing
+the projection.
+
 Known limitation: a switch does not forward file targets from the original
 command line, and a running destination host keeps the configuration it loaded
 at startup until it is restarted or retires.

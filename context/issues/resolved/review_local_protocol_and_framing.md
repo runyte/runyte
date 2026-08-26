@@ -50,6 +50,13 @@ Regression coverage is in these tests:
   including revision-safe buffer changes, `--wait`, attachment, host failure,
   and persistent-session switching.
 
+A 2026-08-26 test-portability follow-up made that integration boundary
+observable rather than timing-dependent. Real-TUI cases continuously drain
+their PTYs and observe rendered output before sending input, asynchronous
+generated views are awaited through buffer reads, and read-only wait responses
+are checked at the synchronous response-to-frame classification boundary,
+where an older queued visual frame cannot be misattributed to the poll.
+
 Known limitation: Serde ignores extra object members on fieldless request
 variants such as `Health`. The explicit `type` still selects the complete
 operation, those members cannot alter it, and unknown message kinds remain

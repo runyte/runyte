@@ -280,6 +280,57 @@ async fn try_connect_control(endpoint: &LocalEndpoint) -> anyhow::Result<LocalCl
     Ok(client)
 }
 
+async fn wait_for_buffer_text(client: &mut LocalClient, name: &str, needle: &str) {
+    let mut last_text = None;
+    for _ in 0..400 {
+        client.send(&ClientRequest::ListBuffers).await.unwrap();
+        let buffer = match response(client).await {
+            HostResponse::Buffers { buffers } => buffers
+                .into_iter()
+                .find(|buffer| !buffer.closed && buffer.name == name),
+            response => panic!("expected buffers while waiting for {name:?}, got {response:?}"),
+        };
+        if let Some(buffer) = buffer {
+            client
+                .send(&ClientRequest::ReadBuffer { buffer: buffer.id })
+                .await
+                .unwrap();
+            match response(client).await {
+                HostResponse::Buffer { buffer } => {
+                    if buffer.text.contains(needle) {
+                        return;
+                    }
+                    last_text = Some(buffer.text);
+                }
+                response => {
+                    panic!("expected {name:?} contents while waiting, got {response:?}")
+                }
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    panic!(
+        "buffer {name:?} did not contain {needle:?}; last contents: {:?}",
+        last_text.as_deref().unwrap_or("<buffer was not opened>")
+    );
+}
+
+async fn wait_for_terminal_output(
+    output: &std::sync::Arc<std::sync::Mutex<Vec<u8>>>,
+    needle: &str,
+) {
+    for _ in 0..400 {
+        if String::from_utf8_lossy(&output.lock().unwrap()).contains(needle) {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    panic!(
+        "terminal output did not contain {needle:?}: {}",
+        String::from_utf8_lossy(&output.lock().unwrap())
+    );
+}
+
 async fn start_host(root: &Path, endpoint: &LocalEndpoint) -> Option<ChildGuard> {
     start_host_opening(root, endpoint, Some("other.txt")).await
 }
@@ -1077,101 +1128,6 @@ async fn wait_paths_are_resolved_in_the_callers_directory_without_utf8_loss() {
 }
 
 #[tokio::test]
-async fn read_only_wait_polling_does_not_publish_interactive_frames() {
-    let root = project();
-    fs::remove_dir_all(root.join(".git")).unwrap();
-    fs::create_dir(root.join(".runyte")).unwrap();
-    let endpoint = LocalEndpoint::discover_with_runtime(
-        &root.join(".runyte"),
-        &root,
-        Some(test_runtime_dir()),
-    )
-    .unwrap();
-    let Some(mut host) = start_host(&root, &endpoint).await else {
-        fs::remove_dir_all(root).unwrap();
-        return;
-    };
-    let mut interactive = LocalClient::connect(&endpoint, FrameGeometry::default(), true)
-        .await
-        .unwrap();
-    let _ = response(&mut interactive).await;
-    let _ = response(&mut interactive).await;
-    let mut control = connect_control(&endpoint).await;
-    control
-        .send(&ClientRequest::CreateWait {
-            paths: vec![runyte::protocol::encode_path(&root.join("note.txt"))],
-        })
-        .await
-        .unwrap();
-    let token = match response(&mut control).await {
-        HostResponse::WaitCreated { token, .. } => token,
-        response => panic!("expected wait token, got {response:?}"),
-    };
-    assert!(matches!(
-        response(&mut interactive).await,
-        HostResponse::Frame { .. }
-    ));
-    fs::write(root.join("race.txt"), "race\n").unwrap();
-    control
-        .send(&ClientRequest::OpenBuffers {
-            paths: vec![runyte::protocol::encode_path(&root.join("race.txt"))],
-            activate: false,
-        })
-        .await
-        .unwrap();
-    assert!(matches!(
-        response(&mut control).await,
-        HostResponse::Opened { .. }
-    ));
-    interactive
-        .send(&ClientRequest::AttachWait { token })
-        .await
-        .unwrap();
-    loop {
-        match response(&mut interactive).await {
-            HostResponse::Frame { .. } => {}
-            HostResponse::WaitState {
-                token: attached,
-                status: runyte::protocol::WaitStatus::Pending { .. },
-                ..
-            } if attached == token => break,
-            response => panic!("unexpected wait attachment response: {response:?}"),
-        }
-    }
-    // Visual frames occupy a replaceable slot and semantic replies have
-    // priority, so the mutating create may publish before or after its
-    // correlated attachment reply. Establish a quiet interval before
-    // attributing any later frame to read-only polling.
-    while tokio::time::timeout(Duration::from_millis(100), interactive.recv())
-        .await
-        .is_ok()
-    {}
-    control
-        .send(&ClientRequest::WaitStatus { token })
-        .await
-        .unwrap();
-    assert!(matches!(
-        response(&mut control).await,
-        HostResponse::WaitState { .. }
-    ));
-    let unsolicited = tokio::time::timeout(Duration::from_millis(100), interactive.recv()).await;
-    assert!(
-        unsolicited.is_err(),
-        "read-only wait status polling published an interactive response: {unsolicited:?}"
-    );
-    control
-        .send(&ClientRequest::CancelWait { token })
-        .await
-        .unwrap();
-    let _ = response(&mut control).await;
-    interactive.send(&ClientRequest::Detach).await.unwrap();
-    let _ = response_ignoring_frames(&mut interactive).await;
-    shutdown(&mut control).await;
-    assert!(host.0.take().unwrap().wait().unwrap().success());
-    fs::remove_dir_all(root).unwrap();
-}
-
-#[tokio::test]
 async fn persistent_worktree_switch_detaches_to_a_new_root_without_retargeting_the_host() {
     let root = project();
     git(&root, &["add", "note.txt", "other.txt"]);
@@ -1404,11 +1360,18 @@ async fn worktree_switch_reuses_the_destination_host_through_the_real_tui_launch
     // Nothing else reads this PTY, and two full-screen TUIs render into it
     // in sequence. Once the terminal buffer fills, the attached editor blocks
     // writing a frame and stops reading input, so later keys are never seen.
+    let output = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let captured = std::sync::Arc::clone(&output);
     let drain = terminal.try_clone().unwrap();
     std::thread::spawn(move || {
         let mut drain = drain;
         let mut sink = [0_u8; 4096];
-        while matches!(std::io::Read::read(&mut drain, &mut sink), Ok(count) if count > 0) {}
+        while let Ok(count) = std::io::Read::read(&mut drain, &mut sink) {
+            if count == 0 {
+                break;
+            }
+            captured.lock().unwrap().extend_from_slice(&sink[..count]);
+        }
     });
 
     for _ in 0..200 {
@@ -1424,20 +1387,17 @@ async fn worktree_switch_reuses_the_destination_host_through_the_real_tui_launch
         }
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
+    wait_for_terminal_output(&output, "other").await;
     tokio::time::sleep(Duration::from_millis(500)).await;
     terminal.write_all(b":git-worktrees\r").unwrap();
     terminal.flush().unwrap();
+    let linked_display = linked.to_string_lossy().into_owned();
+    wait_for_buffer_text(&mut source, "[git worktrees]", &linked_display).await;
+    terminal.write_all(b"j\r").unwrap();
+    terminal.flush().unwrap();
 
     let mut attached_to_destination = false;
-    for attempt in 0..200 {
-        // The worktree list is populated by an asynchronous Git read, so the
-        // selection keystroke is retried until the switch actually happens
-        // rather than after a fixed settle time. Repeats land on the last
-        // row, which is the linked worktree either way.
-        if attempt % 20 == 0 {
-            terminal.write_all(b"j\r").unwrap();
-            terminal.flush().unwrap();
-        }
+    for _ in 0..200 {
         destination.send(&ClientRequest::Health).await.unwrap();
         attached_to_destination = matches!(
             response(&mut destination).await,
@@ -1541,19 +1501,17 @@ async fn incompatible_worktree_host_returns_the_tui_to_its_source() {
         }
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
+    wait_for_terminal_output(&output, "other").await;
     tokio::time::sleep(Duration::from_millis(500)).await;
     terminal.write_all(b":git-worktrees\r").unwrap();
     terminal.flush().unwrap();
-    tokio::time::sleep(Duration::from_millis(500)).await;
-    terminal.write_all(b"j").unwrap();
+    let linked_display = linked.to_string_lossy().into_owned();
+    wait_for_buffer_text(&mut source, "[git worktrees]", &linked_display).await;
+    terminal.write_all(b"j\r").unwrap();
     terminal.flush().unwrap();
 
     let mut recovered = false;
-    for attempt in 0..200 {
-        if attempt % 20 == 0 {
-            terminal.write_all(b"\r").unwrap();
-            terminal.flush().unwrap();
-        }
+    for _ in 0..200 {
         source.send(&ClientRequest::Health).await.unwrap();
         let attached = matches!(
             response(&mut source).await,
@@ -1616,11 +1574,18 @@ async fn creating_a_worktree_starts_and_attaches_its_persistent_session() {
             .env("XDG_CACHE_HOME", test_cache_dir()),
     );
     let mut switcher = ChildGuard(Some(switcher));
+    let output = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let captured = std::sync::Arc::clone(&output);
     let drain = terminal.try_clone().unwrap();
     std::thread::spawn(move || {
         let mut drain = drain;
         let mut sink = [0_u8; 4096];
-        while matches!(std::io::Read::read(&mut drain, &mut sink), Ok(count) if count > 0) {}
+        while let Ok(count) = std::io::Read::read(&mut drain, &mut sink) {
+            if count == 0 {
+                break;
+            }
+            captured.lock().unwrap().extend_from_slice(&sink[..count]);
+        }
     });
 
     for _ in 0..200 {
@@ -1636,10 +1601,12 @@ async fn creating_a_worktree_starts_and_attaches_its_persistent_session() {
         }
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
+    wait_for_terminal_output(&output, "other").await;
     tokio::time::sleep(Duration::from_millis(500)).await;
     terminal.write_all(b":git-worktrees\r").unwrap();
     terminal.flush().unwrap();
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    let root_display = root.to_string_lossy().into_owned();
+    wait_for_buffer_text(&mut source, "[git worktrees]", &root_display).await;
     terminal
         .write_all(format!("\tNcreated-from-ui\r{}\r", created.to_string_lossy()).as_bytes())
         .unwrap();
@@ -1814,7 +1781,24 @@ async fn wait_without_a_host_starts_one_and_attaches_the_invoking_terminal() {
         Some(test_runtime_dir()),
     )
     .unwrap();
-    let (mut waiter, mut terminal) = spawn_wait_in_pty(&root, "note.txt");
+    let (mut waiter, terminal) = spawn_wait_in_pty(&root, "note.txt");
+    // The attached TUI renders full frames while the wait is pending. Keep
+    // draining its PTY so a platform's smaller PTY buffer cannot block the
+    // client before it observes completion from the host.
+    let terminal_output = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let captured = std::sync::Arc::clone(&terminal_output);
+    std::thread::spawn(move || {
+        use std::io::Read;
+
+        let mut terminal = terminal;
+        let mut chunk = [0_u8; 4096];
+        while let Ok(count) = terminal.read(&mut chunk) {
+            if count == 0 {
+                break;
+            }
+            captured.lock().unwrap().extend_from_slice(&chunk[..count]);
+        }
+    });
     let mut control = None;
     for _ in 0..200 {
         if let Ok(client) = try_connect_control(&endpoint).await {
@@ -1822,9 +1806,7 @@ async fn wait_without_a_host_starts_one_and_attaches_the_invoking_terminal() {
             break;
         }
         if let Some(status) = waiter.try_wait().unwrap() {
-            use std::io::Read;
-            let mut output = String::new();
-            let _ = terminal.read_to_string(&mut output);
+            let output = String::from_utf8_lossy(&terminal_output.lock().unwrap()).into_owned();
             if output.contains("Operation not permitted") {
                 fs::remove_dir_all(root).unwrap();
                 return;
@@ -2228,11 +2210,18 @@ async fn relative_workspace_attach_uses_editor_cwd_and_keeps_one_client_process(
     // Nothing else reads this PTY, and two full-screen TUIs render into it in
     // sequence. Once the terminal buffer fills, the attached editor blocks
     // writing a frame and stops reading input, so later keys are never seen.
+    let output = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let captured = std::sync::Arc::clone(&output);
     let drain = terminal.try_clone().unwrap();
     std::thread::spawn(move || {
         let mut drain = drain;
         let mut sink = [0_u8; 4096];
-        while matches!(std::io::Read::read(&mut drain, &mut sink), Ok(count) if count > 0) {}
+        while let Ok(count) = std::io::Read::read(&mut drain, &mut sink) {
+            if count == 0 {
+                break;
+            }
+            captured.lock().unwrap().extend_from_slice(&sink[..count]);
+        }
     });
 
     let mut attached_to_source = false;
@@ -2251,6 +2240,8 @@ async fn relative_workspace_attach_uses_editor_cwd_and_keeps_one_client_process(
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
     assert!(attached_to_source, "the source host never received the TUI");
+    let root_display = root.to_string_lossy().into_owned();
+    wait_for_terminal_output(&output, "other").await;
 
     // The client process stays at `root`, while `:cd` changes only the
     // editor-owned directory to `root/nested`. Resolving `../linked` against
@@ -2283,21 +2274,19 @@ async fn relative_workspace_attach_uses_editor_cwd_and_keeps_one_client_process(
         attached_to_destination,
         "the relative selector did not reach the destination host"
     );
+    wait_for_terminal_output(&output, "linked/other.txt").await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
 
     // Return through the worktree list to retain the original regression that
     // switching both ways stays inside one client process. The linked
     // worktree is the second row, so the main worktree is immediately above it.
-    tokio::time::sleep(Duration::from_millis(500)).await;
     terminal.write_all(b":git-worktrees\r").unwrap();
     terminal.flush().unwrap();
+    wait_for_buffer_text(&mut destination, "[git worktrees]", &root_display).await;
+    terminal.write_all(b"k\r").unwrap();
+    terminal.flush().unwrap();
     let mut returned_to_source = false;
-    for attempt in 0..200 {
-        if attempt % 20 == 0 {
-            // The worktree list is filled by an asynchronous Git read, so the
-            // selection keystroke is retried until the switch happens.
-            terminal.write_all(b"k\r").unwrap();
-            terminal.flush().unwrap();
-        }
+    for _ in 0..200 {
         source.send(&ClientRequest::Health).await.unwrap();
         returned_to_source = matches!(
             response(&mut source).await,

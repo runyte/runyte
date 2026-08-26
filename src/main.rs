@@ -1312,6 +1312,19 @@ struct WorkspaceReply {
 }
 
 #[cfg(unix)]
+fn workspace_response_publishes_frame(response: &HostResponse) -> bool {
+    matches!(
+        response,
+        HostResponse::CommandResult { .. }
+            | HostResponse::Opened { .. }
+            | HostResponse::TransactionApplied { .. }
+            | HostResponse::Saved { .. }
+            | HostResponse::Closed { .. }
+            | HostResponse::WaitCreated { .. }
+    )
+}
+
+#[cfg(unix)]
 fn handle_workspace_request(
     host: &mut WorkspaceHost,
     request: ClientRequest,
@@ -1469,15 +1482,7 @@ fn handle_workspace_request(
     let response = result.unwrap_or_else(|error| HostResponse::Error {
         message: error.to_string(),
     });
-    let publish_frame = matches!(
-        response,
-        HostResponse::CommandResult { .. }
-            | HostResponse::Opened { .. }
-            | HostResponse::TransactionApplied { .. }
-            | HostResponse::Saved { .. }
-            | HostResponse::Closed { .. }
-            | HostResponse::WaitCreated { .. }
-    );
+    let publish_frame = workspace_response_publishes_frame(&response);
     Some(WorkspaceReply {
         response,
         publish_frame,
@@ -2899,8 +2904,9 @@ mod tests {
     use super::keyboard_enhancement_flags_for;
     #[cfg(unix)]
     use super::{
-        AttachedClient, PointerBatcher, dispatch_host_key_or_text, recover_switched_attachment,
-        send_active_response,
+        AttachedClient, HostResponse, PointerBatcher, WaitStatus, WaitToken,
+        dispatch_host_key_or_text, recover_switched_attachment, send_active_response,
+        workspace_response_publishes_frame,
     };
     use super::{
         KeyRepeatDetector, is_passive_pointer, is_redraw_only_event, motion_repeat_dispatches,
@@ -2919,6 +2925,22 @@ mod tests {
         tui::input::convert_event,
         workspace::WorkspaceHost,
     };
+
+    #[cfg(unix)]
+    #[test]
+    fn read_only_wait_responses_do_not_publish_editor_frames() {
+        let token: WaitToken = serde_json::from_str("1").unwrap();
+        let response = HostResponse::WaitState {
+            token,
+            status: WaitStatus::Pending {
+                buffers: Vec::new(),
+                remaining: Vec::new(),
+            },
+            interactive_attached: true,
+        };
+
+        assert!(!workspace_response_publishes_frame(&response));
+    }
 
     #[cfg(unix)]
     #[test]
