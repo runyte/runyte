@@ -1,5 +1,10 @@
 // SPDX-License-Identifier: MPL-2.0
 
+//! Runyte is an editor-first, agent-ready terminal workspace for software
+//! development. It combines modal text editing, file management, terminal
+//! multiplexing, a Git interface with worktree support, and persistent sessions
+//! with detachable clients.
+
 pub mod about;
 pub mod app;
 pub mod buffer;
