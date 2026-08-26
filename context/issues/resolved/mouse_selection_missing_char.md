@@ -48,12 +48,26 @@ nowhere stays a Normal-mode caret; and by
 `a_pointer_drag_under_the_vim_grammar_covers_the_same_characters`, which
 checks the same span under the Vim grammar's half-open coordinates.
 
-Known limitation: a click past the end of a line still places the caret on the
-line's own end offset rather than its last character, which Normal-mode motion
-never does. Dragging there therefore covers the whole line's text and no
-further, since `operative_span` clamps to the row end, but the caret sits one
-place beyond where a keyboard motion would leave it. That predates this fix
-and is untouched by it.
+A later commit finished the same coordinate mismatch at the other end of a
+line. `App::pointer_offset` clamped a press to `line_len`, the offset of the
+row's line break, so clicking the blank area past a line left the caret one
+place beyond where any keyboard motion can put it — Runyte clamps a Normal
+caret to the last character of its row, and only an Insert caret may sit
+after it. It now takes an `insert` flag and finishes through
+`Buffer::clamp_offset`, the same clamp motion uses: a press carries the
+pane's own Insert state, and a Shift-click or a drag passes `false`, because
+both are building a selection whose head addresses a character whatever mode
+the pointer started in. Clicking past a line in Insert mode still appends to
+it.
+
+`pointer_click_drag_wheel_and_resize_use_the_prepared_projection` in
+`src/app/tests/presentation_and_settings.rs` changed with that commit: its
+drag ends past the end of the row, so its head is now the row's last
+character rather than the line break's offset. The yanked text was already
+the same either way, because `operative_span` clamps to the row end.
+`a_press_past_the_end_of_a_line_lands_where_that_mode_lets_a_caret_sit`, in
+the same file, covers the rule directly across a normal row, an empty row,
+and an Insert-mode press that appends.
 
 ## Report
 

@@ -542,12 +542,18 @@ impl App {
                     self.pointer_drag = None;
                     return Ok(PointerOutcome::Changed);
                 }
-                let Some(offset) = self.pointer_offset(view, pane_id, event.column, event.row)
+                // Focus has already settled, so this mode is the one the
+                // press leaves behind. A Shift-click is extending a selection
+                // rather than placing an Insert caret, so its head addresses a
+                // character even when the pane was in Insert mode.
+                let extend = event.modifiers.contains(Modifiers::SHIFT);
+                let insert = self.mode == Mode::Insert && !extend;
+                let Some(offset) =
+                    self.pointer_offset(view, pane_id, event.column, event.row, insert)
                 else {
                     self.pointer_drag = None;
                     return Ok(PointerOutcome::Changed);
                 };
-                let extend = event.modifiers.contains(Modifiers::SHIFT);
                 let previous_mode = self.mode;
                 let anchor = if extend {
                     self.pointer_anchor(pane_id)
@@ -588,7 +594,10 @@ impl App {
                         self.pointer_drag = None;
                         return Ok(PointerOutcome::Changed);
                     }
-                    let Some(offset) = self.pointer_offset(view, pane, event.column, event.row)
+                    // A drag builds a selection whatever mode it started in,
+                    // and a selection covers characters.
+                    let Some(offset) =
+                        self.pointer_offset(view, pane, event.column, event.row, false)
                     else {
                         return Ok(PointerOutcome::Changed);
                     };
@@ -769,12 +778,21 @@ impl App {
             .anchor
     }
 
+    /// The character a pointer at `column`, `row` names in `pane_id`.
+    ///
+    /// `insert` carries the one difference between the two caret models the
+    /// editor already has: an Insert caret may sit past the last character of
+    /// a row, so that clicking the blank area beyond a line appends to it,
+    /// while every other caret addresses a character and stops on the last
+    /// one. Keyboard motion has always clamped this way; the pointer is given
+    /// the same rule rather than a second one of its own.
     fn pointer_offset(
         &self,
         view: &PreparedView,
         pane_id: usize,
         column: u16,
         row: u16,
+        insert: bool,
     ) -> Option<Offset> {
         let pane = view.pane(pane_id)?;
         if !pane.drawable || !rect_contains(pane.body, column, row) {
@@ -814,7 +832,8 @@ impl App {
             character = character.min(segment.end);
         }
         character = character.min(self.buffers[pane.buffer_id].line_len(document_row));
-        Some(self.buffers[pane.buffer_id].line_to_offset(document_row) + character)
+        let offset = self.buffers[pane.buffer_id].line_to_offset(document_row) + character;
+        Some(self.buffers[pane.buffer_id].clamp_offset(offset, insert))
     }
 
     fn handle_key_stroke(&mut self, key: KeyStroke) -> Result<()> {

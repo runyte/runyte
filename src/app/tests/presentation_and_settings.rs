@@ -219,7 +219,10 @@ fn pointer_click_drag_wheel_and_resize_use_the_prepared_projection() {
         &view,
     )
     .unwrap();
-    assert_eq!(app.active().selection.primary(), Range::new(1, 3));
+    // The drag ends past the end of the row, and a selection addresses
+    // characters, so its head is the row's last one rather than the place
+    // after it that only an Insert caret may occupy.
+    assert_eq!(app.active().selection.primary(), Range::new(1, 2));
     assert_eq!(app.mode, Mode::Select);
     app.handle_pointer(
         PointerEvent {
@@ -349,6 +352,83 @@ fn a_pointer_drag_selects_through_the_character_it_ends_on() {
     drag_across(&mut app, &view, 4, 4);
     assert_eq!(app.active().selection.primary(), Range::new(4, 4));
     assert_eq!(app.mode, Mode::Normal);
+}
+
+/// Presses at a cell column on `row` of the pane body and releases there.
+fn press_at(app: &mut App, view: &PreparedView, column: u16, row: u16) {
+    let body = view.pane(0).unwrap().body;
+    for kind in [
+        PointerEventKind::Down(PointerButton::Left),
+        PointerEventKind::Up(PointerButton::Left),
+    ] {
+        app.handle_pointer(
+            PointerEvent {
+                kind,
+                column: body.x + column,
+                row: body.y + row,
+                modifiers: Modifiers::NONE,
+            },
+            view,
+        )
+        .unwrap();
+    }
+}
+
+#[test]
+fn a_press_past_the_end_of_a_line_lands_where_that_mode_lets_a_caret_sit() {
+    let mut config = Config::default();
+    config.editor.line_numbers = false;
+    let mut app = App::new(config, None).unwrap();
+    seed(
+        &mut app,
+        "abc
+
+longer line",
+    );
+    let geometry = FrameGeometry {
+        screen: Rect {
+            width: 40,
+            height: 6,
+            ..Rect::default()
+        },
+        editor: Rect {
+            width: 40,
+            height: 4,
+            ..Rect::default()
+        },
+        status: Rect::default(),
+        message: Rect::default(),
+    };
+    let view = app.prepare_view(geometry);
+
+    // A Normal caret addresses a character, so the blank area past a line
+    // names its last one rather than the place after it, exactly where `$`
+    // would leave the caret.
+    press_at(&mut app, &view, 9, 0);
+    assert_eq!(app.mode, Mode::Normal);
+    assert_eq!(app.active().head(), 2);
+    press(&mut app, 'y');
+    assert_eq!(app.registers[&'"'].text, "c");
+
+    // An empty row has no character to land on, so its own offset is where
+    // the caret belongs.
+    press_at(&mut app, &view, 5, 1);
+    assert_eq!(app.active().head(), 4);
+
+    // An Insert caret may sit past the last character, which is what makes
+    // clicking the blank area past a line append to it.
+    press(&mut app, 'i');
+    assert_eq!(app.mode, Mode::Insert);
+    press_at(&mut app, &view, 9, 0);
+    assert_eq!(app.mode, Mode::Insert);
+    assert_eq!(app.active().head(), 3);
+    press(&mut app, 'd');
+    assert_eq!(
+        text(&app),
+        "abcd
+
+longer line"
+    );
 }
 
 #[test]
