@@ -212,6 +212,9 @@ impl Layout {
     /// adjustment. Perpendicular splits give both children the full extent
     /// along `axis`, so both of them see the same change.
     fn preserve_boundaries(&mut self, axis: Axis, old_extent: u16, new_extent: u16, edge: Edge) {
+        if old_extent == new_extent {
+            return;
+        }
         let Self::Split {
             axis: split_axis,
             ratio,
@@ -242,8 +245,43 @@ impl Layout {
             second.minimum_extent(axis),
         );
         let new_first = split_extent(new_extent, *ratio);
-        first.preserve_boundaries(axis, old_first, new_first, edge);
-        second.preserve_boundaries(axis, old_second, new_extent - new_first, edge);
+        if old_first != new_first {
+            first.preserve_boundaries(axis, old_first, new_first, edge);
+        }
+        let new_second = new_extent - new_first;
+        if old_second != new_second {
+            second.preserve_boundaries(axis, old_second, new_second, edge);
+        }
+    }
+
+    /// Smallest extent this subtree can occupy when only `edge` moves and
+    /// every existing boundary inside it stays fixed.
+    fn minimum_preserved_extent(&self, axis: Axis, old_extent: u16, edge: Edge) -> u16 {
+        let Self::Split {
+            axis: split_axis,
+            ratio,
+            first,
+            second,
+        } = self
+        else {
+            return MIN_DRAWABLE_EXTENT;
+        };
+        if *split_axis != axis {
+            return first
+                .minimum_preserved_extent(axis, old_extent, edge)
+                .max(second.minimum_preserved_extent(axis, old_extent, edge));
+        }
+
+        let old_first = split_extent(old_extent, *ratio);
+        let old_second = old_extent - old_first;
+        match edge {
+            Edge::Start => {
+                old_second.saturating_add(first.minimum_preserved_extent(axis, old_first, edge))
+            }
+            Edge::End => {
+                old_first.saturating_add(second.minimum_preserved_extent(axis, old_second, edge))
+            }
+        }
     }
 
     fn minimum_extent(&self, axis: Axis) -> u16 {
@@ -335,8 +373,8 @@ fn move_boundary(
     *ratio = ratio_for_first_extent(
         total,
         i32::from(old_first) + delta,
-        first.minimum_extent(axis),
-        second.minimum_extent(axis),
+        first.minimum_preserved_extent(axis, old_first, Edge::End),
+        second.minimum_preserved_extent(axis, old_second, Edge::Start),
     );
     let new_first = split_extent(total, *ratio);
     // The first child's own start edge and the second child's own end edge
@@ -514,6 +552,59 @@ mod tests {
     }
 
     #[test]
+    fn resizing_a_stacked_boundary_stops_at_the_adjacent_pane_minimum() {
+        let mut layout = Layout::Pane(0);
+        assert!(layout.split(0, 1, Axis::Vertical));
+        assert!(layout.split(1, 2, Axis::Vertical));
+        let area = Rect {
+            width: 80,
+            height: 60,
+            ..Rect::default()
+        };
+        let mut before = HashMap::new();
+        layout.rectangles(area, &mut before);
+
+        assert!(layout.resize_between_cells(0, 1, area, i16::MAX));
+        let mut after = HashMap::new();
+        layout.rectangles(area, &mut after);
+
+        assert_eq!(after[&1].height, MIN_DRAWABLE_EXTENT);
+        assert_eq!(after[&2], before[&2]);
+        assert_eq!(after[&0].height, before[&2].y - MIN_DRAWABLE_EXTENT);
+    }
+
+    #[test]
+    fn preserving_boundaries_does_not_rewrite_an_unchanged_subtree() {
+        fn bottom_split_ratio(layout: &Layout) -> u16 {
+            let Layout::Split { second: lower, .. } = layout else {
+                panic!("expected the top split");
+            };
+            let Layout::Split { second: bottom, .. } = lower.as_ref() else {
+                panic!("expected the middle split");
+            };
+            let Layout::Split { ratio, .. } = bottom.as_ref() else {
+                panic!("expected the bottom split");
+            };
+            *ratio
+        }
+
+        let mut layout = Layout::Pane(0);
+        assert!(layout.split(0, 1, Axis::Vertical));
+        assert!(layout.split(1, 2, Axis::Vertical));
+        assert!(layout.split(2, 3, Axis::Vertical));
+        let area = Rect {
+            width: 80,
+            height: 60,
+            ..Rect::default()
+        };
+        let ratio_before = bottom_split_ratio(&layout);
+
+        assert!(layout.resize_between_cells(0, 1, area, 5));
+
+        assert_eq!(bottom_split_ratio(&layout), ratio_before);
+    }
+
+    #[test]
     fn resizing_a_side_by_side_boundary_leaves_the_other_boundaries_where_they_were() {
         let mut layout = Layout::Pane(0);
         assert!(layout.split(0, 1, Axis::Horizontal));
@@ -601,9 +692,9 @@ mod tests {
         assert!(layout.resize_between_cells(0, 1, area, i16::MIN));
         let mut areas = HashMap::new();
         layout.rectangles(area, &mut areas);
-        assert_eq!(areas[&0].width, 3);
+        assert_eq!(areas[&0].width, 7);
         assert_eq!(areas[&2].width, 3);
-        assert_eq!(areas[&1].width, 24);
+        assert_eq!(areas[&1].width, 20);
 
         assert!(layout.resize_between_cells(1, 0, area, i16::MIN));
         areas.clear();
