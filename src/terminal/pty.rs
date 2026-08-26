@@ -45,6 +45,45 @@ pub struct Pty {
     child: Child,
 }
 
+/// Owns a spawned child until every fallible PTY setup step has succeeded.
+///
+/// `Child` does not terminate or reap its process when dropped. Descriptor
+/// duplication and either background-thread spawn can still fail after the
+/// program exists, so ordinary `?` unwinding needs an owner that does both.
+struct SpawnedChild {
+    child: Option<Child>,
+}
+
+impl SpawnedChild {
+    fn new(child: Child) -> Self {
+        Self { child: Some(child) }
+    }
+
+    fn id(&self) -> u32 {
+        self.child.as_ref().expect("spawn guard is armed").id()
+    }
+
+    fn disarm(mut self) -> Child {
+        self.child.take().expect("spawn guard is armed")
+    }
+}
+
+impl Drop for SpawnedChild {
+    fn drop(&mut self) {
+        if let Some(child) = self.child.as_mut() {
+            terminate_child(child);
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SpawnCheckpoint {
+    ChildOwned,
+    ReaderDuplicated,
+    WriterDuplicated,
+    WriterStarted,
+}
+
 impl std::fmt::Debug for Pty {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
@@ -65,6 +104,26 @@ impl Pty {
         columns: u16,
         rows: u16,
         events: impl Fn(PtyEvent) + Send + 'static,
+    ) -> io::Result<Self> {
+        Self::spawn_with_checkpoints(
+            program,
+            arguments,
+            directory,
+            columns,
+            rows,
+            events,
+            |_, _| Ok(()),
+        )
+    }
+
+    fn spawn_with_checkpoints(
+        program: &OsStr,
+        arguments: &[String],
+        directory: &Path,
+        columns: u16,
+        rows: u16,
+        events: impl Fn(PtyEvent) + Send + 'static,
+        mut checkpoint: impl FnMut(SpawnCheckpoint, u32) -> io::Result<()>,
     ) -> io::Result<Self> {
         let (master, slave) = open_pair(columns, rows)?;
         let slave_descriptor = slave.as_raw_fd();
@@ -109,6 +168,8 @@ impl Pty {
             });
         }
         let child = command.spawn()?;
+        let child = SpawnedChild::new(child);
+        checkpoint(SpawnCheckpoint::ChildOwned, child.id())?;
         // The child has duplicated this endpoint onto stdin/stdout/stderr.
         // Closing the parent's copy is what lets the reader observe EOF when
         // the child and all of its descendants finally close theirs.
@@ -116,7 +177,9 @@ impl Pty {
 
         let (input, pending) = mpsc::sync_channel::<Vec<u8>>(INPUT_QUEUE);
         let reader = duplicate(master.as_raw_fd())?;
+        checkpoint(SpawnCheckpoint::ReaderDuplicated, child.id())?;
         let writer = duplicate(master.as_raw_fd())?;
+        checkpoint(SpawnCheckpoint::WriterDuplicated, child.id())?;
 
         // Writing on the caller's thread would let a child that has stopped
         // reading — a paused pager, a program waiting on something else —
@@ -134,6 +197,7 @@ impl Pty {
                     }
                 }
             })?;
+        checkpoint(SpawnCheckpoint::WriterStarted, child.id())?;
 
         thread::Builder::new()
             .name("runyte-pty-read".to_owned())
@@ -167,7 +231,7 @@ impl Pty {
         Ok(Self {
             master,
             input,
-            child,
+            child: child.disarm(),
         })
     }
 
@@ -192,12 +256,7 @@ impl Pty {
     /// shell knows how to act on; `SIGKILL` after, because a pane that has
     /// been closed must not leave a process holding the pty open.
     pub fn terminate(&mut self) {
-        let pid = self.child.id() as libc::pid_t;
-        unsafe {
-            libc::kill(-pid, libc::SIGHUP);
-            libc::kill(-pid, libc::SIGKILL);
-        }
-        let _ = self.child.wait();
+        terminate_child(&mut self.child);
     }
 
     /// Reports the child's status if it has already finished, without waiting.
@@ -208,6 +267,15 @@ impl Pty {
             Err(_) => Some(None),
         }
     }
+}
+
+fn terminate_child(child: &mut Child) {
+    let pid = child.id() as libc::pid_t;
+    unsafe {
+        libc::kill(-pid, libc::SIGHUP);
+        libc::kill(-pid, libc::SIGKILL);
+    }
+    let _ = child.wait();
 }
 
 impl Drop for Pty {
@@ -371,6 +439,53 @@ mod tests {
             thread::sleep(Duration::from_millis(5));
         }
         ready()
+    }
+
+    fn process_group_exists(pid: u32) -> bool {
+        let result = unsafe { libc::kill(-(pid as libc::pid_t), 0) };
+        result == 0 || io::Error::last_os_error().kind() == io::ErrorKind::PermissionDenied
+    }
+
+    #[test]
+    fn every_post_spawn_setup_failure_terminates_and_reaps_the_child() {
+        for failed_at in [
+            SpawnCheckpoint::ChildOwned,
+            SpawnCheckpoint::ReaderDuplicated,
+            SpawnCheckpoint::WriterDuplicated,
+            SpawnCheckpoint::WriterStarted,
+        ] {
+            let observed_pid = Arc::new(Mutex::new(None));
+            let captured_pid = Arc::clone(&observed_pid);
+            let arguments = vec!["-c".to_owned(), "while :; do sleep 1; done".to_owned()];
+            let error = Pty::spawn_with_checkpoints(
+                OsStr::new("/bin/sh"),
+                &arguments,
+                Path::new("/"),
+                40,
+                10,
+                |_| {},
+                move |checkpoint, pid| {
+                    if checkpoint == failed_at {
+                        *captured_pid.lock().unwrap() = Some(pid);
+                        return Err(io::Error::other(format!(
+                            "injected failure at {checkpoint:?}"
+                        )));
+                    }
+                    Ok(())
+                },
+            )
+            .expect_err("the selected setup checkpoint fails");
+
+            assert_eq!(error.kind(), io::ErrorKind::Other);
+            let pid = observed_pid
+                .lock()
+                .unwrap()
+                .expect("the spawned child identity was observed");
+            assert!(
+                wait_until(Duration::from_secs(1), || !process_group_exists(pid)),
+                "post-spawn failure at {failed_at:?} left process group {pid} alive"
+            );
+        }
     }
 
     #[test]
