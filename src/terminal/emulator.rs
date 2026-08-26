@@ -13,7 +13,6 @@ use super::{
     grid::{Attributes, Color, Grid, Pen},
     parser::{Action, Parser, parameter, raw_parameter},
 };
-
 /// Modes a child switches on and off, and that key encoding has to honour.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Modes {
@@ -61,8 +60,8 @@ pub struct Emulator {
     primary: Grid,
     alternate: Grid,
     alternate_active: bool,
+    alternate_saved_cursor: bool,
     pen: Pen,
-    saved_pen: Pen,
     pub modes: Modes,
     tab_stops: Vec<bool>,
     title: Option<String>,
@@ -84,8 +83,8 @@ impl Emulator {
             primary: Grid::new(columns, rows, true),
             alternate: Grid::new(columns, rows, false),
             alternate_active: false,
+            alternate_saved_cursor: false,
             pen: Pen::default(),
-            saved_pen: Pen::default(),
             modes: Modes::default(),
             tab_stops: default_tab_stops(columns),
             title: None,
@@ -190,10 +189,9 @@ impl Emulator {
     fn print(&mut self, character: char) {
         let pen = self.pen;
         let autowrap = self.modes.autowrap;
-        if self.modes.insert {
-            self.grid_mut().insert_characters(1, pen);
-        }
-        self.grid_mut().write(character, pen, autowrap);
+        let insert = self.modes.insert;
+        self.grid_mut()
+            .write_with_insert(character, pen, autowrap, insert);
     }
 
     fn execute(&mut self, byte: u8) {
@@ -242,7 +240,6 @@ impl Emulator {
         let pen = self.pen;
         match (intermediates.first().copied(), final_byte) {
             (None, b'7') => {
-                self.saved_pen = self.pen;
                 self.grid_mut().save_cursor(pen);
             }
             (None, b'8') => {
@@ -279,8 +276,8 @@ impl Emulator {
         self.primary = Grid::new(columns, rows, true);
         self.alternate = Grid::new(columns, rows, false);
         self.alternate_active = false;
+        self.alternate_saved_cursor = false;
         self.pen = Pen::default();
-        self.saved_pen = Pen::default();
         self.modes = Modes::default();
         self.tab_stops = default_tab_stops(columns);
         self.title = None;
@@ -348,7 +345,6 @@ impl Emulator {
                 self.grid_mut().move_to(row, 0);
             }
             (None, b's') => {
-                self.saved_pen = self.pen;
                 self.grid_mut().save_cursor(pen);
             }
             (None, b'u') => {
@@ -429,30 +425,47 @@ impl Emulator {
                 25 => self.modes.cursor_visible = enabled,
                 1000 | 1002 | 1003 => self.modes.mouse_reporting = enabled,
                 1006 => self.modes.mouse_sgr = enabled,
-                1049 | 1047 | 47 => self.set_alternate_screen(enabled, true),
+                47 => self.set_alternate_screen(enabled, false, false, false),
+                1047 => self.set_alternate_screen(enabled, false, true, false),
+                1049 => self.set_alternate_screen(enabled, true, false, true),
                 2004 => self.modes.bracketed_paste = enabled,
                 _ => {}
             }
         }
     }
 
-    fn set_alternate_screen(&mut self, enabled: bool, clear: bool) {
+    fn set_alternate_screen(
+        &mut self,
+        enabled: bool,
+        clear_on_enter: bool,
+        clear_on_exit: bool,
+        save_cursor: bool,
+    ) {
         if enabled == self.alternate_active {
             return;
         }
         let pen = self.pen;
         if enabled {
-            self.saved_pen = self.pen;
-            self.primary.save_cursor(pen);
-            if clear {
+            if save_cursor {
+                self.primary.save_cursor(pen);
+                self.alternate_saved_cursor = true;
+            }
+            if clear_on_enter {
                 self.alternate.move_to(0, 0);
                 self.alternate.erase_display(2, Pen::default());
             }
             self.alternate_active = true;
         } else {
+            if clear_on_exit {
+                self.alternate.erase_display(2, Pen::default());
+            }
             self.alternate_active = false;
-            self.pen = self.saved_pen;
-            self.primary.restore_cursor();
+            if self.alternate_saved_cursor {
+                if let Some(pen) = self.primary.restore_cursor() {
+                    self.pen = pen;
+                }
+                self.alternate_saved_cursor = false;
+            }
         }
     }
 
@@ -560,35 +573,56 @@ fn is_single_query(parameters: &[Vec<u8>]) -> bool {
 fn extended_color(parameters: &[Vec<u16>], index: usize, values: &[u16]) -> (Option<Color>, usize) {
     // Colon form: everything is inside this one parameter.
     if values.len() > 1 {
-        return match values[1] {
-            5 => (values.get(2).map(|&value| Color::Indexed(value as u8)), 0),
-            2 => {
+        return match values {
+            [_, 5, value] => (u8::try_from(*value).ok().map(Color::Indexed), 0),
+            [_, 2, ..] => {
                 // `38:2::r:g:b` carries an empty colour-space field, and
                 // `38:2:r:g:b` omits it. Take the last three either way.
-                let channels = &values[2..];
-                let start = channels.len().saturating_sub(3);
-                match channels[start..] {
-                    [red, green, blue] => (Some(Color::Rgb(red as u8, green as u8, blue as u8)), 0),
-                    _ => (None, 0),
-                }
+                let channels = match values {
+                    [_, 2, red, green, blue] => Some([*red, *green, *blue]),
+                    [_, 2, 0, red, green, blue] => Some([*red, *green, *blue]),
+                    _ => None,
+                };
+                let color = channels.and_then(|[red, green, blue]| {
+                    Some(Color::Rgb(
+                        u8::try_from(red).ok()?,
+                        u8::try_from(green).ok()?,
+                        u8::try_from(blue).ok()?,
+                    ))
+                });
+                (color, 0)
             }
             _ => (None, 0),
         };
     }
     // Semicolon form: the following parameters belong to this colour.
-    match raw_parameter(parameters, index + 1) {
-        5 => (
+    match parameters.get(index + 1).map(Vec::as_slice) {
+        Some([5]) => (
             parameters
                 .get(index + 2)
-                .and_then(|values| values.first())
-                .map(|&value| Color::Indexed(value as u8)),
+                .and_then(|values| match values.as_slice() {
+                    [value] => u8::try_from(*value).ok(),
+                    _ => None,
+                })
+                .map(Color::Indexed),
             2,
         ),
-        2 => {
-            let red = raw_parameter(parameters, index + 2) as u8;
-            let green = raw_parameter(parameters, index + 3) as u8;
-            let blue = raw_parameter(parameters, index + 4) as u8;
-            (Some(Color::Rgb(red, green, blue)), 4)
+        Some([2]) => {
+            let channels = (index + 2..=index + 4)
+                .map(|channel| {
+                    parameters
+                        .get(channel)
+                        .and_then(|values| match values.as_slice() {
+                            [value] => u8::try_from(*value).ok(),
+                            _ => None,
+                        })
+                })
+                .collect::<Option<Vec<_>>>();
+            let color = channels.and_then(|channels| match channels.as_slice() {
+                [red, green, blue] => Some(Color::Rgb(*red, *green, *blue)),
+                _ => None,
+            });
+            (color, 4)
         }
         _ => (None, 1),
     }
@@ -654,6 +688,16 @@ mod tests {
     }
 
     #[test]
+    fn invalid_extended_colours_do_not_wrap_or_fabricate_channels() {
+        let mut emulator = Emulator::new(12, 2);
+        emulator.feed(b"\x1b[31m\x1b[38;5;300ma\x1b[38;2;1;2mb\x1b[38:2:1:2:999mc\x1b[38:5:999md");
+
+        for cell in &emulator.grid().line(0).unwrap()[..4] {
+            assert_eq!(cell.foreground, Color::Indexed(1));
+        }
+    }
+
+    #[test]
     fn bright_colours_land_in_the_upper_half_of_the_palette() {
         let mut emulator = Emulator::new(4, 1);
         emulator.feed(b"\x1b[92ma");
@@ -675,6 +719,57 @@ mod tests {
         emulator.feed(b"\x1b[?1049l");
         assert!(!emulator.alternate_screen());
         assert_eq!(row(&emulator, 0), "kept");
+    }
+
+    #[test]
+    fn alternate_screen_modes_keep_their_distinct_clear_and_save_semantics() {
+        let mut emulator = Emulator::new(8, 2);
+        emulator.feed(b"\x1b[31mab\x1b[?47hkept\x1b[?47l\x1b[?47h");
+        assert_eq!(row(&emulator, 0), "kept");
+        emulator.feed(b"\x1b[?47l\x1b[?1047h");
+        assert_eq!(row(&emulator, 0), "kept");
+        emulator.feed(b"\x1b[?1047l\x1b[?47h");
+        assert_eq!(row(&emulator, 0), "");
+
+        emulator.feed(b"alt\x1b[?47l\x1b[?1049h\x1b[32m\x1b7moved\x1b[?1049lX");
+        assert!(!emulator.alternate_screen());
+        assert_eq!(row(&emulator, 0), "abX");
+        assert_eq!(
+            emulator.grid().line(0).unwrap()[2].foreground,
+            Color::Indexed(1),
+            "1049 restores the primary pen even after an alternate-screen save"
+        );
+    }
+
+    #[test]
+    fn insert_mode_shifts_by_the_printed_glyph_width() {
+        let mut emulator = Emulator::new(6, 1);
+        emulator.feed(b"abcd\x1b[1;2H\x1b[4h");
+        emulator.feed("界".as_bytes());
+
+        assert_eq!(row(&emulator, 0), "a界bcd");
+        assert_eq!(emulator.grid().line(0).unwrap()[1].width, 2);
+        assert_eq!(emulator.grid().line(0).unwrap()[2].width, 0);
+    }
+
+    #[test]
+    fn insert_mode_resolves_delayed_wrap_before_shifting() {
+        let mut emulator = Emulator::new(4, 2);
+        emulator.feed(b"\x1b[2;1Hxyz\x1b[1;1H1234\x1b[4ha");
+
+        assert_eq!(row(&emulator, 0), "1234");
+        assert_eq!(row(&emulator, 1), "axyz");
+    }
+
+    #[test]
+    fn insert_mode_resolves_wide_overflow_before_shifting() {
+        let mut emulator = Emulator::new(6, 2);
+        emulator.feed(b"\x1b[2;1Hxyz\x1b[1;6H\x1b[4h");
+        emulator.feed("界".as_bytes());
+
+        assert_eq!(row(&emulator, 1), "界xyz");
+        assert_eq!(emulator.grid().line(1).unwrap()[0].width, 2);
+        assert_eq!(emulator.grid().line(1).unwrap()[1].width, 0);
     }
 
     #[test]

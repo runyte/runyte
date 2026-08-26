@@ -431,7 +431,21 @@ impl Grid {
 
     /// Writes one character at the cursor, wrapping and scrolling as needed.
     pub fn write(&mut self, character: char, pen: Pen, autowrap: bool) {
-        let width = UnicodeWidthChar::width(character).unwrap_or(0);
+        self.write_with_insert(character, pen, autowrap, false);
+    }
+
+    /// Writes one character, applying IRM after its actual destination has
+    /// been resolved across delayed wrap and wide-glyph overflow.
+    pub(super) fn write_with_insert(
+        &mut self,
+        character: char,
+        pen: Pen,
+        autowrap: bool,
+        insert: bool,
+    ) {
+        let width = UnicodeWidthChar::width(character)
+            .unwrap_or(0)
+            .min(self.columns);
         if width == 0 {
             let mut column = if self.cursor.pending_wrap {
                 self.columns.saturating_sub(1)
@@ -463,6 +477,9 @@ impl Grid {
         }
         let row = self.cursor.row;
         let column = self.cursor.column;
+        if insert {
+            self.insert_characters(width, pen);
+        }
         // Overwriting half of a double-width character leaves the other half
         // orphaned; blank it so no stale glyph survives.
         self.clear_partner(row, column, pen);
@@ -484,7 +501,7 @@ impl Grid {
         let advanced = column + width;
         if advanced >= self.columns {
             self.cursor.column = self.columns - 1;
-            self.cursor.pending_wrap = true;
+            self.cursor.pending_wrap = autowrap;
         } else {
             self.cursor.column = advanced;
             self.cursor.pending_wrap = false;
@@ -564,7 +581,7 @@ impl Grid {
         self.cursor.pending_wrap = false;
     }
 
-    /// Erase in display: 0 below, 1 above, 2 all, 3 scrollback as well.
+    /// Erase in display: 0 below, 1 above, 2 all, 3 scrollback only.
     pub fn erase_display(&mut self, mode: u16, pen: Pen) {
         match mode {
             1 => {
@@ -580,9 +597,6 @@ impl Grid {
             }
             3 => {
                 self.scrollback.clear();
-                for row in 0..self.rows {
-                    self.lines[row] = self.blank_line(pen);
-                }
             }
             _ => {
                 self.erase_line(0, pen);
@@ -796,6 +810,28 @@ mod tests {
     }
 
     #[test]
+    fn a_one_column_grid_never_keeps_an_orphaned_wide_lead() {
+        let mut grid = Grid::new(1, 1, false);
+        write(&mut grid, "漢");
+
+        assert_eq!(grid.line(0).unwrap()[0].character, '漢');
+        assert_eq!(grid.line(0).unwrap()[0].width, 1);
+    }
+
+    #[test]
+    fn disabled_autowrap_overwrites_the_final_cell_without_pending_wrap() {
+        let mut grid = Grid::new(2, 1, false);
+        let pen = Pen::default();
+        grid.write('a', pen, false);
+        grid.write('b', pen, false);
+        assert!(!grid.cursor.pending_wrap);
+        grid.write('c', pen, false);
+
+        assert_eq!(row_text(&grid, 0), "ac");
+        assert!(!grid.cursor.pending_wrap);
+    }
+
+    #[test]
     fn scrolling_a_top_anchored_region_keeps_history_and_a_lower_region_does_not() {
         let mut grid = Grid::new(4, 3, true);
         write(&mut grid, "one");
@@ -935,5 +971,24 @@ mod tests {
         grid.carriage_return();
         write(&mut grid, "three");
         assert_eq!(grid.plain_text(), "one\ntwo\nthree\n");
+    }
+
+    #[test]
+    fn erase_display_three_clears_only_scrollback() {
+        let mut grid = Grid::new(8, 2, true);
+        write(&mut grid, "one");
+        grid.index(Pen::default());
+        grid.carriage_return();
+        write(&mut grid, "two");
+        grid.index(Pen::default());
+        grid.carriage_return();
+        write(&mut grid, "three");
+        assert_eq!(grid.scrollback_len(), 1);
+
+        grid.erase_display(3, Pen::default());
+
+        assert_eq!(grid.scrollback_len(), 0);
+        assert_eq!(row_text(&grid, 0), "two");
+        assert_eq!(row_text(&grid, 1), "three");
     }
 }
