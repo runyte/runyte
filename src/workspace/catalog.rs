@@ -1326,6 +1326,11 @@ mod tests {
                     ServerEvent::Disconnected { id } => {
                         clients.remove(&id);
                     }
+                    ServerEvent::ProtocolError { id, message } => {
+                        if let Some(responses) = clients.get(&id) {
+                            let _ = responses.send(HostResponse::Error { message }).await;
+                        }
+                    }
                     ServerEvent::Request { .. } => {}
                 }
             }

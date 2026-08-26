@@ -16,6 +16,7 @@ use crate::{
 };
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct Rect {
     pub x: u16,
     pub y: u16,
@@ -46,11 +47,53 @@ impl From<Rect> for CoreRect {
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct FrameGeometry {
     pub screen: Rect,
     pub editor: Rect,
     pub global_status_line: Rect,
     pub interaction_line: Rect,
+}
+
+impl FrameGeometry {
+    const MAX_DIMENSION: u16 = 4096;
+    /// Leaves enough of the 8 MiB frame budget for the rest of a host frame
+    /// even when every visible position is a worst-case styled terminal cell.
+    pub(super) const MAX_CELLS: usize = 32 * 1024;
+
+    pub(super) fn validate(self) -> Result<(), String> {
+        if self.screen.width > Self::MAX_DIMENSION
+            || self.screen.height > Self::MAX_DIMENSION
+            || usize::from(self.screen.width) * usize::from(self.screen.height) > Self::MAX_CELLS
+        {
+            return Err("frame geometry exceeds the protocol limit".to_owned());
+        }
+        if [self.editor, self.global_status_line, self.interaction_line]
+            .into_iter()
+            .all(|rect| rect.is_within(self.screen))
+        {
+            Ok(())
+        } else {
+            Err("frame geometry contains a rectangle outside the screen".to_owned())
+        }
+    }
+}
+
+impl Rect {
+    fn is_within(self, outer: Self) -> bool {
+        self.x >= outer.x
+            && self.y >= outer.y
+            && self
+                .x
+                .checked_add(self.width)
+                .zip(outer.x.checked_add(outer.width))
+                .is_some_and(|(right, outer_right)| right <= outer_right)
+            && self
+                .y
+                .checked_add(self.height)
+                .zip(outer.y.checked_add(outer.height))
+                .is_some_and(|(bottom, outer_bottom)| bottom <= outer_bottom)
+    }
 }
 
 impl From<CoreFrameGeometry> for FrameGeometry {
@@ -103,6 +146,7 @@ impl From<InputEvent> for CoreInputEvent {
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct PointerEvent {
     pub kind: PointerEventKind,
     pub column: u16,
@@ -203,6 +247,7 @@ impl From<PointerButton> for CorePointerButton {
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct KeyStroke {
     pub code: KeyCode,
     pub modifiers: u8,

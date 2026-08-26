@@ -122,8 +122,10 @@ pub const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const MAX_PATHS: usize = 32;
 pub const MAX_PATH_BYTES: usize = 32 * 1024;
 pub const MAX_COMMAND_BYTES: usize = 16 * 1024;
+pub const MAX_NOTIFICATION_BYTES: usize = 16 * 1024;
 pub const MAX_INPUT_TEXT_BYTES: usize = 1024 * 1024;
 pub const MAX_POINTER_REPETITIONS: u16 = 256;
+pub const MAX_FEATURE_GROUPS: usize = 16;
 pub const MAX_TRANSACTION_CHANGES: usize = 4096;
 pub const MAX_TRANSACTION_TEXT_BYTES: usize = 4 * 1024 * 1024;
 
@@ -361,6 +363,7 @@ impl From<CoreWaitStatus> for WaitStatus {
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
+#[serde(deny_unknown_fields)]
 pub enum ClientRequest {
     Hello {
         protocol: u32,
@@ -451,6 +454,7 @@ pub enum ClientRequest {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct CommandRequest {
     pub name: String,
     pub argument: Option<String>,
@@ -573,10 +577,11 @@ impl ClientRequest {
                 features,
                 project_root_bytes,
                 client_version,
+                geometry,
                 ..
             } => {
                 require(
-                    !features.is_empty() && features.len() <= 16,
+                    !features.is_empty() && features.len() <= MAX_FEATURE_GROUPS,
                     "invalid feature count",
                 )?;
                 require(
@@ -586,7 +591,8 @@ impl ClientRequest {
                 require(
                     !client_version.is_empty() && client_version.len() <= 128,
                     "invalid client version length",
-                )
+                )?;
+                geometry.validate()
             }
             Self::Input { event, .. } => match event {
                 InputEvent::Text(text) => require(
@@ -640,6 +646,10 @@ impl ClientRequest {
                     "command argument exceeds the protocol limit",
                 )
             }
+            Self::Notify { message } => require(
+                !message.is_empty() && message.len() <= MAX_NOTIFICATION_BYTES,
+                "client notification exceeds the protocol limit",
+            ),
             Self::OpenBuffers { paths, .. } | Self::CreateWait { paths } => {
                 require(
                     !paths.is_empty() && paths.len() <= MAX_PATHS,
@@ -680,6 +690,7 @@ impl ClientRequest {
                     && !name.chars().any(char::is_control),
                 "host name is invalid",
             ),
+            Self::Resize { geometry } => geometry.validate(),
             _ => Ok(()),
         }
     }
@@ -704,6 +715,7 @@ pub enum FeatureGroup {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct TransportChange {
     pub from: usize,
     pub to: usize,
@@ -897,6 +909,94 @@ mod tests {
         };
         assert!(oversized_transaction.validate().is_err());
         assert!(
+            ClientRequest::Notify {
+                message: "x".repeat(MAX_NOTIFICATION_BYTES + 1),
+            }
+            .validate()
+            .is_err()
+        );
+        assert!(
+            ClientRequest::Resize {
+                geometry: FrameGeometry {
+                    screen: Rect {
+                        width: 4096,
+                        height: 4096,
+                        ..Rect::default()
+                    },
+                    ..FrameGeometry::default()
+                },
+            }
+            .validate()
+            .is_err()
+        );
+        let overflowing = Rect {
+            x: u16::MAX,
+            width: 1,
+            ..Rect::default()
+        };
+        assert!(
+            ClientRequest::Resize {
+                geometry: FrameGeometry {
+                    screen: overflowing,
+                    editor: overflowing,
+                    global_status_line: overflowing,
+                    interaction_line: overflowing,
+                },
+            }
+            .validate()
+            .is_err()
+        );
+        let maximum = FrameGeometry {
+            screen: Rect {
+                width: 256,
+                height: 128,
+                ..Rect::default()
+            },
+            ..FrameGeometry::default()
+        };
+        assert_eq!(
+            usize::from(256_u16) * usize::from(128_u16),
+            input::FrameGeometry::MAX_CELLS
+        );
+        assert!(
+            ClientRequest::Resize { geometry: maximum }
+                .validate()
+                .is_ok()
+        );
+        assert!(
+            ClientRequest::Resize {
+                geometry: FrameGeometry {
+                    screen: Rect {
+                        width: 257,
+                        height: 128,
+                        ..Rect::default()
+                    },
+                    ..FrameGeometry::default()
+                },
+            }
+            .validate()
+            .is_err()
+        );
+        assert!(
+            ClientRequest::Resize {
+                geometry: FrameGeometry {
+                    screen: Rect {
+                        width: 80,
+                        height: 24,
+                        ..Rect::default()
+                    },
+                    editor: Rect {
+                        x: 79,
+                        width: 2,
+                        ..Rect::default()
+                    },
+                    ..FrameGeometry::default()
+                },
+            }
+            .validate()
+            .is_err()
+        );
+        assert!(
             ClientRequest::RenameHost {
                 name: " x".to_owned(),
             }
@@ -948,6 +1048,47 @@ mod tests {
             }
             .validate()
             .is_err()
+        );
+    }
+
+    #[test]
+    fn request_decoding_rejects_unknown_fields() {
+        let top_level = r#"{"type":"resize","geometry":{"screen":{"x":0,"y":0,"width":80,"height":24},"editor":{"x":0,"y":0,"width":80,"height":22},"global_status_line":{"x":0,"y":22,"width":80,"height":1},"interaction_line":{"x":0,"y":23,"width":80,"height":1}},"force":true}"#;
+        assert!(serde_json::from_str::<ClientRequest>(top_level).is_err());
+
+        let nested = r#"{"type":"resize","geometry":{"screen":{"x":0,"y":0,"width":80,"height":24,"depth":8},"editor":{"x":0,"y":0,"width":80,"height":22},"global_status_line":{"x":0,"y":22,"width":80,"height":1},"interaction_line":{"x":0,"y":23,"width":80,"height":1}}}"#;
+        assert!(serde_json::from_str::<ClientRequest>(nested).is_err());
+    }
+
+    #[test]
+    fn maximum_terminal_geometry_fits_the_wire_frame_budget() {
+        let cell = frame::TerminalCell {
+            character: '\u{10ffff}',
+            combining: vec!['\u{10ffff}'; 3],
+            width: 2,
+            foreground: frame::TerminalColor::Rgb(255, 255, 255),
+            background: frame::TerminalColor::Rgb(255, 255, 255),
+            attributes: u16::MAX,
+        };
+        let columns = 256;
+        let rows = input::FrameGeometry::MAX_CELLS / columns;
+        let terminal = frame::TerminalView {
+            revision: u64::MAX,
+            columns,
+            rows: vec![vec![cell; columns]; rows],
+            line_ids: vec![Some(u64::MAX); rows],
+            cursor: Some((rows - 1, columns - 1)),
+            scrollback: usize::MAX,
+            live: true,
+            review: true,
+            newer_output: true,
+            highlights: Vec::new(),
+        };
+        let bytes = serde_json::to_vec(&terminal).unwrap();
+        assert!(
+            bytes.len() < 8 * 1024 * 1024 - 256 * 1024,
+            "maximum terminal view encoded to {} bytes",
+            bytes.len()
         );
     }
 

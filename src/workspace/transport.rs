@@ -18,14 +18,14 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use tokio::{
     io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader},
     net::{UnixListener, UnixStream, unix::OwnedReadHalf, unix::OwnedWriteHalf},
-    sync::{mpsc, oneshot},
+    sync::{Semaphore, mpsc, oneshot},
 };
 
 use crate::app::FrameGeometry;
 
 pub use crate::protocol::{
     CLIENT_VERSION, ClientKind, ClientRequest, ClientRole, FeatureGroup, HostResponse,
-    TransportChange, decode_path, encode_path,
+    MAX_FEATURE_GROUPS, TransportChange, decode_path, encode_path,
 };
 
 pub const PROTOCOL_VERSION: u32 = crate::protocol::VERSION;
@@ -35,12 +35,16 @@ const MAX_MESSAGE_BYTES: usize = 8 * 1024 * 1024;
 /// Reaching this depth means the client has genuinely stopped reading.
 const RESPONSE_CAPACITY: usize = 64;
 const EVENT_CAPACITY: usize = 64;
+/// A local host normally has one interactive connection and a handful of
+/// short-lived control connections. Bounding accepted peers prevents a burst
+/// of incomplete handshakes from retaining one task and framing buffer each.
+const MAX_CONNECTIONS: usize = 16;
+/// A peer that has stopped reading must not retain its connection task or keep
+/// the host's interactive attachment occupied indefinitely.
+const CONNECTION_WRITE_TIMEOUT: Duration = Duration::from_secs(2);
 const HOST_ID_LENGTH: usize = 32;
 pub(crate) const MAX_HOST_NAME_BYTES: usize = 64;
 const MAX_REGISTERED_HOSTS: usize = 1024;
-/// Bounds an advertised feature list so a subset check cannot be handed an
-/// arbitrarily long vector to scan.
-const MAX_FEATURE_GROUPS: usize = 32;
 /// How long discovery waits for an endpoint to accept a probe connection. The
 /// same bound as registry discovery uses: long enough for a busy host, short
 /// enough that listing a directory of workspaces stays interactive.
@@ -1288,6 +1292,13 @@ pub enum ServerEvent {
         id: u64,
         request: ClientRequest,
     },
+    /// A decoded request that violates validation or role rules. This crosses
+    /// the same FIFO event boundary as valid requests so its error response
+    /// cannot overtake an earlier semantic response on an unnumbered stream.
+    ProtocolError {
+        id: u64,
+        message: String,
+    },
     Disconnected {
         id: u64,
     },
@@ -1434,6 +1445,7 @@ impl LocalServer {
         let (shutdown, mut shutdown_rx) = oneshot::channel();
         let task = tokio::spawn(async move {
             let mut next_id = 1_u64;
+            let connections = Arc::new(Semaphore::new(MAX_CONNECTIONS));
             loop {
                 let accepted = tokio::select! {
                     biased;
@@ -1455,11 +1467,15 @@ impl LocalServer {
                 let Ok((stream, _)) = accepted else {
                     break;
                 };
+                let Ok(permit) = connections.clone().try_acquire_owned() else {
+                    continue;
+                };
                 let id = next_id;
                 next_id = next_id.wrapping_add(1);
                 let events = events_tx.clone();
                 let project_root_bytes = project_root_bytes.clone();
                 tokio::spawn(async move {
+                    let _permit = permit;
                     let _ = serve_connection(id, stream, events, project_root_bytes).await;
                 });
             }
@@ -1504,7 +1520,7 @@ impl Drop for LocalServer {
 
 pub struct LocalClient {
     reader: MessageReader<OwnedReadHalf>,
-    writer: OwnedWriteHalf,
+    writer: Option<OwnedWriteHalf>,
 }
 
 impl LocalClient {
@@ -1532,7 +1548,7 @@ impl LocalClient {
         let (reader, writer) = stream.into_split();
         let mut client = Self {
             reader: MessageReader::new(reader),
-            writer,
+            writer: Some(writer),
         };
         client
             .send(&ClientRequest::Hello {
@@ -1571,7 +1587,7 @@ impl LocalClient {
     }
 
     pub async fn send(&mut self, request: &ClientRequest) -> Result<()> {
-        write_message(&mut self.writer, request).await
+        write_client_message(&mut self.writer, request).await
     }
 
     /// Cancellation-safe: a partially received response is retained by the
@@ -1593,7 +1609,21 @@ async fn serve_connection(
     let hello = tokio::time::timeout(Duration::from_secs(2), reader.read::<ClientRequest>())
         .await
         .context("workspace client handshake timed out")??;
-    let Some(ClientRequest::Hello {
+    let Some(hello) = hello else {
+        bail!("workspace client disconnected before its handshake")
+    };
+    if let Err(message) = hello.validate() {
+        let mut writer = writer;
+        write_message(
+            &mut writer,
+            &HostResponse::Refused {
+                message: format!("invalid client handshake: {message}"),
+            },
+        )
+        .await?;
+        return Ok(());
+    }
+    let ClientRequest::Hello {
         protocol,
         features,
         project_root_bytes,
@@ -1602,7 +1632,7 @@ async fn serve_connection(
         role,
         geometry,
         directory_handoff,
-    }) = hello
+    } = hello
     else {
         bail!("workspace client did not begin with a handshake")
     };
@@ -1683,34 +1713,78 @@ async fn serve_connection(
         .await
         .context("workspace host stopped")?;
     let mut writer = writer;
-    loop {
-        tokio::select! {
-            response = response_rx.recv() => {
-                let Some(response) = response else { break };
-                write_message(&mut writer, &response).await?;
-                response_rx.mark_delivered();
-            }
-            request = reader.read::<ClientRequest>() => {
-                match request? {
-                    Some(ClientRequest::Hello { .. }) => {
-                        write_message(&mut writer, &HostResponse::Error {
-                            message: "handshake is only valid once".to_owned(),
-                        }).await?;
-                    }
-                    Some(request) => {
-                        if let Err(message) = request.validate() {
-                            write_message(&mut writer, &HostResponse::Error { message }).await?;
-                        } else if events.send(ServerEvent::Request { id, request }).await.is_err() {
-                            break;
+    let result = async {
+        loop {
+            tokio::select! {
+                response = response_rx.recv() => {
+                    let Some(response) = response else { break };
+                    write_message(&mut writer, &response).await?;
+                    response_rx.mark_delivered();
+                }
+                request = reader.read::<ClientRequest>() => {
+                    match request? {
+                        Some(ClientRequest::Hello { .. }) => {
+                            if events.send(ServerEvent::ProtocolError {
+                                id,
+                                message: "handshake is only valid once".to_owned(),
+                            }).await.is_err() {
+                                break;
+                            }
                         }
+                        Some(request) => {
+                            let protocol_error = request
+                                .validate()
+                                .err()
+                                .or_else(|| (!request_allowed_for_role(&request, role)).then(|| {
+                                    "request is not valid for this connection role".to_owned()
+                                }));
+                            let event = protocol_error.map_or(
+                                ServerEvent::Request { id, request },
+                                |message| ServerEvent::ProtocolError { id, message },
+                            );
+                            if events.send(event).await.is_err() {
+                                break;
+                            }
+                        }
+                        None => break,
                     }
-                    None => break,
                 }
             }
         }
+        Ok(())
     }
+    .await;
     let _ = events.send(ServerEvent::Disconnected { id }).await;
-    Ok(())
+    result
+}
+
+fn request_allowed_for_role(request: &ClientRequest, role: ClientRole) -> bool {
+    match request {
+        ClientRequest::Hello { .. } => false,
+        ClientRequest::Input { .. }
+        | ClientRequest::Invoke { .. }
+        | ClientRequest::Notify { .. }
+        | ClientRequest::AttachWait { .. }
+        | ClientRequest::Pointer { .. }
+        | ClientRequest::Resize { .. }
+        | ClientRequest::Resynchronize
+        | ClientRequest::Detach => role == ClientRole::Interactive,
+        ClientRequest::RenameHost { .. } => role == ClientRole::Control,
+        ClientRequest::Health
+        | ClientRequest::SessionPreview
+        | ClientRequest::ListBuffers
+        | ClientRequest::ReadBuffer { .. }
+        | ClientRequest::OpenBuffers { .. }
+        | ClientRequest::ApplyTransaction { .. }
+        | ClientRequest::SaveBuffer { .. }
+        | ClientRequest::CloseBuffer { .. }
+        | ClientRequest::CreateWait { .. }
+        | ClientRequest::WaitStatus { .. }
+        | ClientRequest::CompleteWaitBuffer { .. }
+        | ClientRequest::CancelWait { .. }
+        | ClientRequest::Shutdown
+        | ClientRequest::ForceShutdown => true,
+    }
 }
 
 /// A framed reader that owns the bytes of a partially received message.
@@ -1770,14 +1844,45 @@ async fn write_message<W: AsyncWrite + Unpin, T: Serialize>(
     writer: &mut W,
     message: &T,
 ) -> Result<()> {
+    write_message_with_timeout(writer, message, CONNECTION_WRITE_TIMEOUT).await
+}
+
+async fn write_client_message<W: AsyncWrite + Unpin, T: Serialize>(
+    writer: &mut Option<W>,
+    message: &T,
+) -> Result<()> {
+    let mut live = writer
+        .take()
+        .context("workspace transport writer is closed")?;
+    match write_message(&mut live, message).await {
+        Ok(()) => {
+            *writer = Some(live);
+            Ok(())
+        }
+        Err(error) => {
+            let _ = live.shutdown().await;
+            Err(error)
+        }
+    }
+}
+
+async fn write_message_with_timeout<W: AsyncWrite + Unpin, T: Serialize>(
+    writer: &mut W,
+    message: &T,
+    timeout: Duration,
+) -> Result<()> {
     let bytes = serde_json::to_vec(message)?;
     ensure!(
         bytes.len() < MAX_MESSAGE_BYTES,
         "workspace transport message exceeds {MAX_MESSAGE_BYTES} bytes"
     );
-    writer.write_all(&bytes).await?;
-    writer.write_all(b"\n").await?;
-    writer.flush().await?;
+    tokio::time::timeout(timeout, async {
+        writer.write_all(&bytes).await?;
+        writer.write_all(b"\n").await?;
+        writer.flush().await
+    })
+    .await
+    .context("workspace transport write timed out")??;
     Ok(())
 }
 
@@ -1961,6 +2066,7 @@ mod tests {
 
     use super::*;
     use crate::{app::App, config::Config, workspace::WorkspaceHost};
+    use tokio::io::AsyncReadExt;
 
     fn endpoint(name: &str) -> (PathBuf, LocalEndpoint) {
         let unique = SystemTime::now()
@@ -2632,6 +2738,383 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn invalid_handshake_fields_are_refused_before_connection() {
+        let (root, endpoint) = endpoint("invalid-handshake");
+        let Some(mut server) = bind_or_skip(&endpoint).await else {
+            fs::remove_dir_all(root).unwrap();
+            return;
+        };
+        let stream = UnixStream::connect(endpoint.socket()).await.unwrap();
+        let (reader, mut writer) = stream.into_split();
+        write_message(
+            &mut writer,
+            &ClientRequest::Hello {
+                protocol: PROTOCOL_VERSION,
+                directory_handoff: false,
+                features: vec![
+                    FeatureGroup::Control,
+                    FeatureGroup::Buffers,
+                    FeatureGroup::Wait,
+                ],
+                project_root_bytes: encode_path(&endpoint.project_root),
+                client_kind: ClientKind::Control,
+                client_version: String::new(),
+                role: ClientRole::Control,
+                geometry: FrameGeometry::default().into(),
+            },
+        )
+        .await
+        .unwrap();
+        let response: HostResponse = MessageReader::new(reader).read().await.unwrap().unwrap();
+        assert!(matches!(
+            response,
+            HostResponse::Refused { message } if message.contains("version length")
+        ));
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), server.recv())
+                .await
+                .is_err(),
+            "an invalid handshake reached the workspace host"
+        );
+        endpoint.cleanup().unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn malformed_established_messages_always_disconnect_host_state() {
+        for (name, payload) in [
+            ("malformed-established", b"{not-json}\n".as_slice()),
+            ("truncated-established", b"{\"type\":\"health\"".as_slice()),
+        ] {
+            let (root, endpoint) = endpoint(name);
+            let Some(mut server) = bind_or_skip(&endpoint).await else {
+                fs::remove_dir_all(root).unwrap();
+                continue;
+            };
+            let stream = UnixStream::connect(endpoint.socket()).await.unwrap();
+            let (reader, mut writer) = stream.into_split();
+            write_message(
+                &mut writer,
+                &ClientRequest::Hello {
+                    protocol: PROTOCOL_VERSION,
+                    directory_handoff: false,
+                    features: vec![
+                        FeatureGroup::Control,
+                        FeatureGroup::Buffers,
+                        FeatureGroup::Wait,
+                    ],
+                    project_root_bytes: encode_path(&endpoint.project_root),
+                    client_kind: ClientKind::Control,
+                    client_version: CLIENT_VERSION.to_owned(),
+                    role: ClientRole::Control,
+                    geometry: FrameGeometry::default().into(),
+                },
+            )
+            .await
+            .unwrap();
+            let ServerEvent::Connected { id, responses, .. } = server.recv().await.unwrap() else {
+                panic!("expected connection");
+            };
+            responses
+                .send(HostResponse::Welcome {
+                    protocol: PROTOCOL_VERSION,
+                    pid: std::process::id(),
+                    features: vec![
+                        FeatureGroup::Control,
+                        FeatureGroup::Buffers,
+                        FeatureGroup::Wait,
+                    ],
+                    host_version: CLIENT_VERSION.to_owned(),
+                })
+                .await
+                .unwrap();
+            let mut reader = MessageReader::new(reader);
+            assert!(matches!(
+                reader.read::<HostResponse>().await.unwrap(),
+                Some(HostResponse::Welcome { .. })
+            ));
+            writer.write_all(payload).await.unwrap();
+            writer.shutdown().await.unwrap();
+            assert!(matches!(
+                tokio::time::timeout(Duration::from_secs(1), server.recv())
+                    .await
+                    .unwrap(),
+                Some(ServerEvent::Disconnected { id: disconnected }) if disconnected == id
+            ));
+            endpoint.cleanup().unwrap();
+            fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn requests_outside_the_connection_role_receive_an_error() {
+        assert!(!request_allowed_for_role(
+            &ClientRequest::Invoke {
+                command: crate::protocol::CommandRequest::at(
+                    "write",
+                    crate::protocol::FrameId::from_raw(1),
+                    crate::protocol::BufferId::from(crate::workspace::BufferId::from_raw(1)),
+                    crate::protocol::BufferRevision::from(
+                        crate::workspace::BufferRevision::from_raw(1),
+                    ),
+                ),
+            },
+            ClientRole::Control,
+        ));
+        assert!(!request_allowed_for_role(
+            &ClientRequest::RenameHost {
+                name: "renamed".to_owned(),
+            },
+            ClientRole::Interactive,
+        ));
+        assert!(request_allowed_for_role(
+            &ClientRequest::Health,
+            ClientRole::Interactive,
+        ));
+        assert!(request_allowed_for_role(
+            &ClientRequest::Health,
+            ClientRole::Control,
+        ));
+        let (root, endpoint) = endpoint("role-request");
+        let Some(mut server) = bind_or_skip(&endpoint).await else {
+            fs::remove_dir_all(root).unwrap();
+            return;
+        };
+        let mut client = LocalClient::connect(&endpoint, FrameGeometry::default(), false)
+            .await
+            .unwrap();
+        let ServerEvent::Connected { id, responses, .. } = server.recv().await.unwrap() else {
+            panic!("expected connection");
+        };
+        responses
+            .send(HostResponse::Welcome {
+                protocol: PROTOCOL_VERSION,
+                pid: std::process::id(),
+                features: vec![
+                    FeatureGroup::Control,
+                    FeatureGroup::Buffers,
+                    FeatureGroup::Wait,
+                ],
+                host_version: CLIENT_VERSION.to_owned(),
+            })
+            .await
+            .unwrap();
+        assert!(matches!(
+            client.recv().await.unwrap(),
+            Some(HostResponse::Welcome { .. })
+        ));
+        client.send(&ClientRequest::Health).await.unwrap();
+        client
+            .send(&ClientRequest::Input {
+                event: crate::protocol::InputEvent::Text("not control input".to_owned()),
+                repeated: false,
+            })
+            .await
+            .unwrap();
+        assert!(matches!(
+            server.recv().await,
+            Some(ServerEvent::Request {
+                id: request_id,
+                request: ClientRequest::Health,
+            }) if request_id == id
+        ));
+        responses
+            .send(HostResponse::Health {
+                protocol: PROTOCOL_VERSION,
+                pid: std::process::id(),
+                interactive_attached: false,
+                unsaved_buffers: 0,
+                pending_wait_requests: 0,
+                live_terminals: 0,
+                terminal_sessions: 0,
+            })
+            .await
+            .unwrap();
+        let Some(ServerEvent::ProtocolError {
+            id: rejected_id,
+            message,
+        }) = server.recv().await
+        else {
+            panic!("expected role rejection after health request");
+        };
+        assert_eq!(rejected_id, id);
+        assert!(message.contains("connection role"), "{message}");
+        responses
+            .send(HostResponse::Error { message })
+            .await
+            .unwrap();
+        assert!(matches!(
+            client.recv().await.unwrap(),
+            Some(HostResponse::Health { .. })
+        ));
+        assert!(matches!(
+            client.recv().await.unwrap(),
+            Some(HostResponse::Error { message }) if message.contains("connection role")
+        ));
+        endpoint.cleanup().unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn incomplete_handshakes_cannot_grow_connection_tasks_without_bound() {
+        let (root, endpoint) = endpoint("connection-bound");
+        let Some(mut server) = bind_or_skip(&endpoint).await else {
+            fs::remove_dir_all(root).unwrap();
+            return;
+        };
+        let mut held = Vec::new();
+        for _ in 0..MAX_CONNECTIONS {
+            let mut stream = UnixStream::connect(endpoint.socket()).await.unwrap();
+            stream.write_all(b"{").await.unwrap();
+            held.push(stream);
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        let mut excess = UnixStream::connect(endpoint.socket()).await.unwrap();
+        let mut byte = [0_u8; 1];
+        assert!(
+            tokio::time::timeout(Duration::from_millis(500), excess.read(&mut byte))
+                .await
+                .is_ok(),
+            "an excess connection retained another handshake task"
+        );
+        drop(held.pop());
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let client = tokio::time::timeout(
+            Duration::from_secs(1),
+            LocalClient::connect(&endpoint, FrameGeometry::default(), false),
+        )
+        .await
+        .expect("a handshake slot was not released")
+        .unwrap();
+        assert!(matches!(
+            tokio::time::timeout(Duration::from_secs(1), server.recv())
+                .await
+                .unwrap(),
+            Some(ServerEvent::Connected {
+                interactive: false,
+                ..
+            })
+        ));
+        drop(client);
+        drop(held);
+        endpoint.cleanup().unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_peer_that_stops_reading_cannot_hold_a_write_forever() {
+        let (mut writer, _reader) = tokio::io::duplex(1);
+        let error = write_message_with_timeout(
+            &mut writer,
+            &serde_json::json!({ "payload": "x".repeat(64 * 1024) }),
+            Duration::from_millis(20),
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("timed out"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn an_established_stalled_peer_disconnects_and_releases_its_slot() {
+        let (root, endpoint) = endpoint("write-timeout");
+        let Some(mut server) = bind_or_skip(&endpoint).await else {
+            fs::remove_dir_all(root).unwrap();
+            return;
+        };
+        let stream = UnixStream::connect(endpoint.socket()).await.unwrap();
+        let (reader, mut writer) = stream.into_split();
+        write_message(
+            &mut writer,
+            &ClientRequest::Hello {
+                protocol: PROTOCOL_VERSION,
+                directory_handoff: false,
+                features: vec![
+                    FeatureGroup::Control,
+                    FeatureGroup::Buffers,
+                    FeatureGroup::Wait,
+                ],
+                project_root_bytes: encode_path(&endpoint.project_root),
+                client_kind: ClientKind::Control,
+                client_version: CLIENT_VERSION.to_owned(),
+                role: ClientRole::Control,
+                geometry: FrameGeometry::default().into(),
+            },
+        )
+        .await
+        .unwrap();
+        let ServerEvent::Connected { id, responses, .. } = server.recv().await.unwrap() else {
+            panic!("expected connection");
+        };
+        responses
+            .send(HostResponse::Welcome {
+                protocol: PROTOCOL_VERSION,
+                pid: std::process::id(),
+                features: vec![
+                    FeatureGroup::Control,
+                    FeatureGroup::Buffers,
+                    FeatureGroup::Wait,
+                ],
+                host_version: CLIENT_VERSION.to_owned(),
+            })
+            .await
+            .unwrap();
+        let mut reader = MessageReader::new(reader);
+        assert!(matches!(
+            reader.read::<HostResponse>().await.unwrap(),
+            Some(HostResponse::Welcome { .. })
+        ));
+        responses
+            .send(HostResponse::Error {
+                message: "x".repeat(7 * 1024 * 1024),
+            })
+            .await
+            .unwrap();
+        assert!(matches!(
+            tokio::time::timeout(Duration::from_secs(3), server.recv())
+                .await
+                .expect("stalled write did not time out"),
+            Some(ServerEvent::Disconnected { id: disconnected }) if disconnected == id
+        ));
+        drop(reader);
+        drop(writer);
+        tokio::time::sleep(Duration::from_millis(20)).await;
+
+        let _replacement = LocalClient::connect(&endpoint, FrameGeometry::default(), false)
+            .await
+            .unwrap();
+        assert!(matches!(
+            tokio::time::timeout(Duration::from_secs(1), server.recv())
+                .await
+                .unwrap(),
+            Some(ServerEvent::Connected { .. })
+        ));
+        endpoint.cleanup().unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_timed_out_client_writer_is_poisoned() {
+        let (writer, _reader) = tokio::io::duplex(1);
+        let mut writer = Some(writer);
+        let error = write_client_message(
+            &mut writer,
+            &serde_json::json!({ "payload": "x".repeat(64 * 1024) }),
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("timed out"), "{error}");
+        assert!(writer.is_none());
+        let error = write_client_message(&mut writer, &serde_json::json!({ "next": true }))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("writer is closed"), "{error}");
+    }
+
+    #[tokio::test]
     async fn live_recorded_process_prevents_socket_unlink_and_transient_errors_are_not_stale() {
         let (root, endpoint) = endpoint("live-process");
         let Some(server) = bind_or_skip(&endpoint).await else {
@@ -2670,7 +3153,7 @@ mod tests {
             &ClientRequest::Hello {
                 protocol: PROTOCOL_VERSION,
                 directory_handoff: false,
-                features: Vec::new(),
+                features: vec![FeatureGroup::Snapshots],
                 project_root_bytes: encode_path(&endpoint.project_root),
                 client_kind: ClientKind::Tui,
                 client_version: CLIENT_VERSION.to_owned(),

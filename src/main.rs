@@ -993,6 +993,14 @@ async fn run_host_server(
                             }
                         }
                     }
+                    ServerEvent::ProtocolError { id, message } => {
+                        let response = HostResponse::Error { message };
+                        if active.as_ref().is_some_and(|client| client.id == id) {
+                            send_active_response(&mut active, response);
+                        } else {
+                            send_control_response(&mut controls, id, response);
+                        }
+                    }
                     ServerEvent::Disconnected { id } => {
                         controls.remove(&id);
                         if active.as_ref().is_some_and(|client| client.id == id) {
