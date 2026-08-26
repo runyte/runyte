@@ -74,6 +74,9 @@ Regression coverage is provided by:
 Existing isolated-repository coverage for option-shaped remotes, awkward shell
 characters, non-UTF-8 paths, output limits, cancellation, network deadlines,
 repository concurrency, and partial-stage staleness was run with these tests.
+The non-UTF-8 filesystem fixtures remain active on Unix filesystems that can
+represent arbitrary filename bytes and are ignored on macOS, which rejects
+their setup with `EILSEQ`.
 
 Known limitation: a descendant that starts a new session cannot be killed
 portably through Git's original process-group ID. Runyte now bounds its wait

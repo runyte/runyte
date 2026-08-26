@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: MPL-2.0
 #![cfg(unix)]
 
+#[cfg(not(target_os = "macos"))]
+use std::os::unix::ffi::OsStringExt;
 use std::{
     fs::{self, File},
     os::fd::{AsRawFd, FromRawFd},
-    os::unix::ffi::OsStringExt,
     os::unix::process::CommandExt,
     path::{Path, PathBuf},
     process::{Child, Command, ExitStatus, Stdio},
@@ -984,9 +985,22 @@ async fn wait_paths_are_resolved_in_the_callers_directory_without_utf8_loss() {
     let nested = root.join("nested");
     fs::create_dir(&nested).unwrap();
     fs::write(nested.join("note.txt"), "nested\n").unwrap();
-    let non_utf8_name = std::ffi::OsString::from_vec(b"odd-\xff.txt".to_vec());
-    let non_utf8_path = nested.join(&non_utf8_name);
-    fs::write(&non_utf8_path, "encoded\n").unwrap();
+    let wait_names = vec![std::ffi::OsString::from("note.txt")];
+    // macOS rejects non-UTF-8 path components with EILSEQ. It still covers
+    // caller-relative wait targets here; Unix filesystems that can represent
+    // arbitrary bytes additionally cover lossless path transport.
+    #[cfg(not(target_os = "macos"))]
+    let wait_names = {
+        let mut wait_names = wait_names;
+        let non_utf8_name = std::ffi::OsString::from_vec(b"odd-\xff.txt".to_vec());
+        fs::write(nested.join(&non_utf8_name), "encoded\n").unwrap();
+        wait_names.push(non_utf8_name);
+        wait_names
+    };
+    let expected_paths = wait_names
+        .iter()
+        .map(|name| nested.join(name))
+        .collect::<Vec<_>>();
     let endpoint = LocalEndpoint::discover_with_runtime(
         &root.join(".runyte"),
         &root,
@@ -1002,10 +1016,9 @@ async fn wait_paths_are_resolved_in_the_callers_directory_without_utf8_loss() {
         .unwrap();
     let _ = response(&mut interactive).await;
     let _ = response(&mut interactive).await;
-    let mut waiter = Command::new(env!("CARGO_BIN_EXE_runyte"))
-        .arg("--wait")
-        .arg("note.txt")
-        .arg(&non_utf8_name)
+    let mut wait_command = Command::new(env!("CARGO_BIN_EXE_runyte"));
+    wait_command.arg("--wait").args(&wait_names);
+    let mut waiter = wait_command
         .current_dir(&nested)
         .env("XDG_RUNTIME_DIR", test_runtime_dir())
         .env("XDG_CACHE_HOME", test_cache_dir())
@@ -1027,20 +1040,18 @@ async fn wait_paths_are_resolved_in_the_callers_directory_without_utf8_loss() {
                         .path_bytes
                         .clone()
                         .map(decode_path)
-                        .is_some_and(|path| {
-                            path == nested.join("note.txt") || path == non_utf8_path
-                        })
+                        .is_some_and(|path| expected_paths.contains(&path))
                 })
                 .collect();
         }
-        if requested.len() == 2 {
+        if requested.len() == expected_paths.len() {
             break;
         }
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
     assert_eq!(
         requested.len(),
-        2,
+        expected_paths.len(),
         "caller-relative wait targets were not opened"
     );
     for buffer in requested {

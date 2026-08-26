@@ -731,6 +731,10 @@ fn async_worktree_removal_reconciles_worktrees_and_branches() {
 
 #[cfg(unix)]
 #[test]
+#[cfg_attr(
+    target_os = "macos",
+    ignore = "macOS rejects non-UTF-8 filesystem path components with EILSEQ"
+)]
 fn worktree_discovery_keeps_a_non_utf8_destination_addressable() {
     use std::{ffi::OsString, os::unix::ffi::OsStringExt};
 
@@ -2786,6 +2790,10 @@ fn log_preserves_both_parents_of_a_merge_commit() {
 
 #[cfg(unix)]
 #[test]
+#[cfg_attr(
+    target_os = "macos",
+    ignore = "macOS rejects non-UTF-8 filesystem path components with EILSEQ"
+)]
 fn blame_keeps_a_non_utf8_path_addressable() {
     use std::{ffi::OsString, os::unix::ffi::OsStringExt};
 
