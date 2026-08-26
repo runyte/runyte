@@ -875,6 +875,31 @@ pub fn column_for_cell_from(
     line.chars().count()
 }
 
+/// Converts a display-cell offset after a hard horizontal scroll back to a
+/// character column.
+///
+/// Hard-scrolled rendering makes `start_column` cell zero, so a tab advances
+/// from the viewport edge rather than from its absolute column in the hidden
+/// prefix. This is the inverse of [`cells_from_column`] under that same
+/// relative origin.
+pub fn column_for_scrolled_cell(
+    line: &str,
+    start_column: usize,
+    screen_cell: usize,
+    tab_width: usize,
+) -> usize {
+    let start_column = start_column.min(line.chars().count());
+    let mut cell = 0usize;
+    for (column, character) in line.chars().enumerate().skip(start_column) {
+        let next = cell.saturating_add(cell_width(character, cell, tab_width.max(1)));
+        if screen_cell < next {
+            return column;
+        }
+        cell = next;
+    }
+    line.chars().count()
+}
+
 fn cell_width(character: char, cell: usize, tab_width: usize) -> usize {
     let tab_width = tab_width.max(1);
     if character == '\t' {
@@ -911,6 +936,8 @@ mod tests {
         assert_eq!(segments("a\tb", 4, 4).len(), 2);
         assert_eq!(segments("\t", 4, 0).len(), 1);
         assert_eq!(column_for_cell_from("\t", 0, 1, 0), 1);
+        assert_eq!(column_for_scrolled_cell("ab\tz", 2, 3, 4), 2);
+        assert_eq!(column_for_scrolled_cell("ab\tz", 2, 4, 4), 3);
     }
 
     #[test]

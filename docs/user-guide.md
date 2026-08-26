@@ -822,16 +822,18 @@ a terminal that cannot reliably distinguish file contents from input events.
 
 Terminals with mouse reporting support can click an editor body to focus it
 and place the caret, Shift-click to extend, drag to select, scroll the pane
-under the pointer, and drag a shared pane border to resize the split. Clicking
-a live terminal pane focuses it in Insert mode; clicking a reviewed terminal
-keeps it in Normal/review mode until a terminal insert key returns to the live
-screen. Clicking another pane focuses it in Normal mode. Dragging on from a
-document press still creates a selection and enters Select mode. The pointer
-names the character it sits over rather than the boundary before it, so a drag
-covers both the character it started on and the one it ended on, whichever
-way it ran. Pressing past the end of a line places the caret on that line's
-last character, or past it while Insert mode holds the pane, which is the same
-rule keyboard motion follows.
+under the pointer, and drag a shared pane border to resize the split.
+Right-clicking any current selection copies all current selections to the
+system clipboard, exactly like `Space c y`, without moving or replacing them.
+Clicking a live terminal pane focuses it in Insert mode; clicking a reviewed
+terminal keeps it in Normal/review mode until a terminal insert key returns to
+the live screen. Clicking another pane focuses it in Normal mode. Dragging on
+from a document press still creates a selection and enters Select mode. The
+pointer names the character it sits over rather than the boundary before it,
+so a drag covers both the character it started on and the one it ended on,
+whichever way it ran. Pressing past the end of a line places the caret on that
+line's last character, or past it while Insert mode holds the pane, which is
+the same rule keyboard motion follows.
 Pointer coordinates are resolved through the same fold- and wrap-aware
 prepared rows used for rendering, so collapsed lines and wide Unicode glyphs
 do not create a second coordinate model. Mouse capture is disabled again on
