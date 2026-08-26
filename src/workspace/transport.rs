@@ -50,6 +50,14 @@ const MAX_REGISTERED_HOSTS: usize = 1024;
 /// enough that listing a directory of workspaces stays interactive.
 const PUBLISHED_HOST_PROBE: Duration = Duration::from_millis(250);
 
+#[cfg(unix)]
+fn socket_path_capacity() -> usize {
+    // `sockaddr_un` is a plain C address struct; its all-zero representation
+    // is valid and lets this build read the target platform's `sun_path` size.
+    let address = unsafe { std::mem::zeroed::<libc::sockaddr_un>() };
+    address.sun_path.len().saturating_sub(1)
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct EndpointMetadata {
     pub protocol: u32,
@@ -222,7 +230,7 @@ impl LocalEndpoint {
         let id = workspace_id(project_root);
         #[cfg(unix)]
         ensure!(
-            socket.as_os_str().as_encoded_bytes().len() <= 100,
+            socket.as_os_str().as_encoded_bytes().len() <= socket_path_capacity(),
             "workspace host socket path is too long: {}; configure a shorter workspace.state path",
             socket.display()
         );
@@ -922,7 +930,7 @@ fn probe_unix_socket(path: &Path, timeout: Duration) -> Result<Option<bool>> {
     address.sun_family = libc::AF_UNIX as libc::sa_family_t;
     let bytes = path.as_os_str().as_bytes();
     ensure!(
-        bytes.len() < address.sun_path.len(),
+        bytes.len() <= socket_path_capacity(),
         "workspace host socket path is too long: {}",
         path.display()
     );
@@ -2103,6 +2111,23 @@ mod tests {
         let workspace = root.join(".runyte");
         let _endpoint = LocalEndpoint::new(&workspace, &root).unwrap();
         assert!(!workspace.exists());
+    }
+
+    #[test]
+    fn endpoint_path_limit_follows_the_platform_socket_capacity() {
+        const SUFFIX: &str = "/host/workspace.sock";
+
+        let state_root_for_socket_length = |length: usize| {
+            let component_length = length.checked_sub(1 + SUFFIX.len()).unwrap();
+            PathBuf::from(format!("/{}", "x".repeat(component_length)))
+        };
+        let capacity = socket_path_capacity();
+        let allowed = state_root_for_socket_length(capacity);
+        let oversized = state_root_for_socket_length(capacity + 1);
+
+        assert!(LocalEndpoint::new(&allowed, Path::new("/project")).is_ok());
+        let error = LocalEndpoint::new(&oversized, Path::new("/project")).unwrap_err();
+        assert!(error.to_string().contains("socket path is too long"));
     }
 
     #[test]

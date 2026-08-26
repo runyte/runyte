@@ -218,6 +218,18 @@ async fn response(client: &mut LocalClient) -> HostResponse {
         .expect("host disconnected")
 }
 
+async fn shutdown(client: &mut LocalClient) {
+    client.send(&ClientRequest::Shutdown).await.unwrap();
+    let response = tokio::time::timeout(Duration::from_secs(5), client.recv())
+        .await
+        .expect("host shutdown timed out")
+        .unwrap();
+    assert!(
+        matches!(response, Some(HostResponse::ShuttingDown) | None),
+        "expected host shutdown, got {response:?}"
+    );
+}
+
 async fn response_ignoring_frames(client: &mut LocalClient) -> HostResponse {
     loop {
         let response = response(client).await;
@@ -469,8 +481,7 @@ async fn revision_protocol_is_stale_safe_undoable_and_bounded() {
         }
     );
 
-    client.send(&ClientRequest::Shutdown).await.unwrap();
-    assert_eq!(response(&mut client).await, HostResponse::ShuttingDown);
+    shutdown(&mut client).await;
     let status = tokio::task::spawn_blocking(move || host.0.take().unwrap().wait())
         .await
         .unwrap()
@@ -534,8 +545,7 @@ async fn an_edited_scratchpad_leaves_a_workspace_clean_enough_to_stop() {
             ..
         }
     ));
-    client.send(&ClientRequest::Shutdown).await.unwrap();
-    assert_eq!(response(&mut client).await, HostResponse::ShuttingDown);
+    shutdown(&mut client).await;
     let status = tokio::task::spawn_blocking(move || host.0.take().unwrap().wait())
         .await
         .unwrap()
@@ -617,8 +627,7 @@ async fn wait_cli_completes_without_stopping_host_or_unrelated_buffers() {
     interactive.send(&ClientRequest::Detach).await.unwrap();
     let _ = response(&mut interactive).await;
     let mut control = connect_control(&endpoint).await;
-    control.send(&ClientRequest::Shutdown).await.unwrap();
-    let _ = response(&mut control).await;
+    shutdown(&mut control).await;
     let status = tokio::task::spawn_blocking(move || host.0.take().unwrap().wait())
         .await
         .unwrap()
@@ -776,8 +785,7 @@ async fn git_commit_wait_closes_its_buffer_without_detaching_an_existing_tui() {
     );
 
     let mut control = connect_control(&endpoint).await;
-    control.send(&ClientRequest::Shutdown).await.unwrap();
-    let _ = response(&mut control).await;
+    shutdown(&mut control).await;
     assert!(host.0.take().unwrap().wait().unwrap().success());
     fs::remove_dir_all(root).unwrap();
 }
@@ -965,8 +973,7 @@ async fn git_commit_wait_tui_completes_through_write_quit() {
         "PTY commit message"
     );
 
-    control.send(&ClientRequest::Shutdown).await.unwrap();
-    assert_eq!(response(&mut control).await, HostResponse::ShuttingDown);
+    shutdown(&mut control).await;
     assert!(host.0.take().unwrap().wait().unwrap().success());
     fs::remove_dir_all(root).unwrap();
 }
@@ -1053,8 +1060,7 @@ async fn wait_paths_are_resolved_in_the_callers_directory_without_utf8_loss() {
     interactive.send(&ClientRequest::Detach).await.unwrap();
     let _ = response_ignoring_frames(&mut interactive).await;
     let mut control = connect_control(&endpoint).await;
-    control.send(&ClientRequest::Shutdown).await.unwrap();
-    let _ = response(&mut control).await;
+    shutdown(&mut control).await;
     assert!(host.0.take().unwrap().wait().unwrap().success());
     fs::remove_dir_all(root).unwrap();
 }
@@ -1149,8 +1155,7 @@ async fn read_only_wait_polling_does_not_publish_interactive_frames() {
     let _ = response(&mut control).await;
     interactive.send(&ClientRequest::Detach).await.unwrap();
     let _ = response_ignoring_frames(&mut interactive).await;
-    control.send(&ClientRequest::Shutdown).await.unwrap();
-    let _ = response(&mut control).await;
+    shutdown(&mut control).await;
     assert!(host.0.take().unwrap().wait().unwrap().success());
     fs::remove_dir_all(root).unwrap();
 }
@@ -1335,8 +1340,7 @@ async fn persistent_worktree_switch_detaches_to_a_new_root_without_retargeting_t
         response(&mut control).await,
         HostResponse::Saved { buffer, .. } if buffer == dirty_buffer
     ));
-    control.send(&ClientRequest::Shutdown).await.unwrap();
-    let _ = response(&mut control).await;
+    shutdown(&mut control).await;
     assert!(host.0.take().unwrap().wait().unwrap().success());
     fs::remove_dir_all(root).unwrap();
 }
@@ -1371,8 +1375,7 @@ async fn worktree_switch_reuses_the_destination_host_through_the_real_tui_launch
     };
     let Some(mut linked_host) = start_host(&linked, &linked_endpoint).await else {
         let mut source = connect_control(&source_endpoint).await;
-        source.send(&ClientRequest::Shutdown).await.unwrap();
-        let _ = response(&mut source).await;
+        shutdown(&mut source).await;
         let _ = source_host.0.take().unwrap().wait();
         fs::remove_dir_all(root).unwrap();
         return;
@@ -1454,10 +1457,8 @@ async fn worktree_switch_reuses_the_destination_host_through_the_real_tui_launch
     terminal.flush().unwrap();
     assert!(wait_child(switcher.0.as_mut().unwrap()).await.success());
     let _ = switcher.0.take().unwrap().wait();
-    source.send(&ClientRequest::Shutdown).await.unwrap();
-    let _ = response(&mut source).await;
-    destination.send(&ClientRequest::Shutdown).await.unwrap();
-    let _ = response(&mut destination).await;
+    shutdown(&mut source).await;
+    shutdown(&mut destination).await;
     assert!(source_host.0.take().unwrap().wait().unwrap().success());
     assert!(linked_host.0.take().unwrap().wait().unwrap().success());
     fs::remove_dir_all(root).unwrap();
@@ -1570,8 +1571,7 @@ async fn incompatible_worktree_host_returns_the_tui_to_its_source() {
     terminal.flush().unwrap();
     assert!(wait_child(switcher.0.as_mut().unwrap()).await.success());
     let _ = switcher.0.take().unwrap().wait();
-    source.send(&ClientRequest::Shutdown).await.unwrap();
-    let _ = response(&mut source).await;
+    shutdown(&mut source).await;
     assert!(source_host.0.take().unwrap().wait().unwrap().success());
     drop(incompatible_listener);
     incompatible_endpoint.cleanup().unwrap();
@@ -1695,10 +1695,8 @@ async fn creating_a_worktree_starts_and_attaches_its_persistent_session() {
     terminal.flush().unwrap();
     assert!(wait_child(switcher.0.as_mut().unwrap()).await.success());
     let _ = switcher.0.take().unwrap().wait();
-    source.send(&ClientRequest::Shutdown).await.unwrap();
-    let _ = response(&mut source).await;
-    destination.send(&ClientRequest::Shutdown).await.unwrap();
-    let _ = response(&mut destination).await;
+    shutdown(&mut source).await;
+    shutdown(&mut destination).await;
     assert!(source_host.0.take().unwrap().wait().unwrap().success());
     fs::remove_dir_all(root).unwrap();
 }
@@ -1791,8 +1789,7 @@ async fn persistent_tui_opens_async_log_and_shared_commit_detail() {
     interactive.send(&ClientRequest::Detach).await.unwrap();
     let _ = response_ignoring_frames(&mut interactive).await;
     let mut control = connect_control(&endpoint).await;
-    control.send(&ClientRequest::Shutdown).await.unwrap();
-    let _ = response(&mut control).await;
+    shutdown(&mut control).await;
     assert!(host.0.take().unwrap().wait().unwrap().success());
     fs::remove_dir_all(root).unwrap();
 }
@@ -1869,8 +1866,7 @@ async fn wait_without_a_host_starts_one_and_attaches_the_invoking_terminal() {
     ));
     assert!(wait_child(&mut waiter).await.success());
 
-    control.send(&ClientRequest::Shutdown).await.unwrap();
-    assert_eq!(response(&mut control).await, HostResponse::ShuttingDown);
+    shutdown(&mut control).await;
     for _ in 0..100 {
         if !endpoint.metadata().exists() {
             break;
@@ -2202,8 +2198,7 @@ async fn relative_workspace_attach_uses_editor_cwd_and_keeps_one_client_process(
     };
     let Some(mut linked_host) = start_host(&linked, &linked_endpoint).await else {
         let mut source = connect_control(&source_endpoint).await;
-        source.send(&ClientRequest::Shutdown).await.unwrap();
-        let _ = response(&mut source).await;
+        shutdown(&mut source).await;
         let _ = source_host.0.take().unwrap().wait();
         fs::remove_dir_all(root).unwrap();
         return;
@@ -2335,10 +2330,8 @@ async fn relative_workspace_attach_uses_editor_cwd_and_keeps_one_client_process(
     terminal.flush().unwrap();
     assert!(wait_child(switcher.0.as_mut().unwrap()).await.success());
     let _ = switcher.0.take().unwrap().wait();
-    source.send(&ClientRequest::Shutdown).await.unwrap();
-    let _ = response(&mut source).await;
-    destination.send(&ClientRequest::Shutdown).await.unwrap();
-    let _ = response(&mut destination).await;
+    shutdown(&mut source).await;
+    shutdown(&mut destination).await;
     assert!(source_host.0.take().unwrap().wait().unwrap().success());
     assert!(linked_host.0.take().unwrap().wait().unwrap().success());
     fs::remove_dir_all(root).unwrap();
