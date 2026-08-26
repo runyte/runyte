@@ -43,6 +43,16 @@ registry to keep running hosts discoverable. This fallback applies only to an
 unusable cache root. Once the root is usable, a malformed `workspaces.json`
 still produces an error and is left unchanged.
 
+A later CI regression exposed a publication race in that fallback.
+`LocalEndpoint::publish_metadata` wrote the endpoint's `endpoint.json` before
+its registry rows, although startup and test clients treated that endpoint
+metadata as the host-readiness marker. A session listing started in between
+those writes had neither usable recents nor a registry row and briefly omitted
+the running host. Registry rows are now published first and endpoint metadata
+last. An early registry scan remains safe because discovery already withholds a
+row whose endpoint metadata is absent; once endpoint readiness is observable,
+the host is also discoverable.
+
 Coverage in `src/workspace/catalog.rs` is provided by
 `refresh_merge_preserves_a_workspace_recorded_after_its_snapshot`,
 `refresh_merge_preserves_a_concurrently_changed_existing_name`,

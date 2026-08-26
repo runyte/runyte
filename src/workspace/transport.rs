@@ -619,7 +619,6 @@ impl LocalEndpoint {
     }
 
     fn publish_metadata(&self, metadata: &EndpointMetadata) -> Result<()> {
-        write_json_atomic(&self.metadata, metadata)?;
         for registry in [self.registry.as_ref(), self.secondary_registry.as_ref()]
             .into_iter()
             .flatten()
@@ -627,6 +626,12 @@ impl LocalEndpoint {
             prepare_private_directory(registry)?;
             write_json_atomic(&registry.join(format!("{}.json", self.id)), metadata)?;
         }
+        // Endpoint metadata is the readiness marker used by startup and
+        // connection paths. Publish it only after every registry row so that
+        // observing a ready endpoint also means a concurrent session listing
+        // can discover it. A registry reader that arrives earlier is safe: it
+        // already rejects a row until this endpoint metadata exists.
+        write_json_atomic(&self.metadata, metadata)?;
         Ok(())
     }
 
