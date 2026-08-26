@@ -1122,6 +1122,55 @@ fn resize_commands_move_each_named_boundary_in_cells() {
 }
 
 #[test]
+fn equalizing_levels_pane_widths_and_then_each_column_of_heights() {
+    let geometry = FrameGeometry {
+        screen: Rect {
+            width: 90,
+            height: 32,
+            ..Rect::default()
+        },
+        editor: Rect {
+            width: 90,
+            height: 30,
+            ..Rect::default()
+        },
+        status: Rect::default(),
+        message: Rect::default(),
+    };
+
+    // Three columns, with the middle one stacking two panes.
+    let mut app = App::new(Config::default(), None).unwrap();
+    app.split(Axis::Horizontal, None).unwrap();
+    app.split(Axis::Horizontal, None).unwrap();
+    app.active_pane = 1;
+    app.split(Axis::Vertical, None).unwrap();
+
+    app.active_pane = 0;
+    app.execute(parse_colon_command("resize-right + 12").unwrap())
+        .unwrap();
+    app.active_pane = 1;
+    app.execute(parse_colon_command("resize-bottom + 6").unwrap())
+        .unwrap();
+
+    for ch in [' ', 'w', '='] {
+        app.handle_key(KeyStroke::new(KeyCode::Char(ch), Modifiers::NONE))
+            .unwrap();
+    }
+    assert!(app.pending_sequence().is_empty());
+
+    let view = app.prepare_view(geometry);
+    let areas = [0, 1, 2, 3].map(|pane| view.pane(pane).expect("every pane is drawn").area);
+    for (pane, area) in areas.iter().enumerate() {
+        assert_eq!(area.width, 30, "pane {pane} width");
+    }
+    assert_eq!(areas[0].height, 30, "a column of one keeps the full height");
+    assert_eq!(areas[2].height, 30, "a column of one keeps the full height");
+    assert_eq!(areas[1].height, 15, "a column of two splits its height");
+    assert_eq!(areas[3].height, 15, "a column of two splits its height");
+    assert_eq!(app.status, "equalized panes");
+}
+
+#[test]
 fn ambiguous_directional_focus_falls_back_to_most_recently_opened_pane() {
     let mut app = App::new(Config::default(), None).unwrap();
     app.panes.insert(1, Pane::new(0));
@@ -1215,7 +1264,7 @@ fn typed_colon_paths_preserve_spaces_and_remove_balanced_quotes() {
 #[test]
 fn command_inventory_classifies_every_command_and_current_binding() {
     let bindings = crate::keymap::default_keymap().bindings();
-    assert_eq!(bindings.len(), 337, "current binding inventory changed");
+    assert_eq!(bindings.len(), 338, "current binding inventory changed");
 
     let mut rows = HashSet::new();
     for binding in bindings {
@@ -1237,7 +1286,7 @@ fn command_inventory_classifies_every_command_and_current_binding() {
             );
         }
     }
-    assert_eq!(rows.len(), 632, "mode-expanded binding inventory changed");
+    assert_eq!(rows.len(), 634, "mode-expanded binding inventory changed");
 
     let shared_colon = COMMANDS
         .iter()

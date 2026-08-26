@@ -153,6 +153,48 @@ impl Layout {
         }
     }
 
+    /// Gives every pane the same width, and then every pane sharing a column
+    /// the same height, without moving a pane in the tree.
+    ///
+    /// Each boundary is placed by how many pane-wide slots lie on either side
+    /// of it along its own axis. A split along that axis needs as many slots
+    /// as its two children need together; a split across it needs as many as
+    /// its hungrier child, because both children occupy the same slots rather
+    /// than separate ones. One pane beside a stack of two therefore puts the
+    /// boundary a third of the way along, which is what leaves the three of
+    /// them equal.
+    ///
+    /// A ratio is a share of its parent's extent, so this needs no area: the
+    /// same tree equalizes to the same shape at every terminal size.
+    pub fn equalize(&mut self) {
+        let Self::Split {
+            axis,
+            ratio,
+            first,
+            second,
+        } = self
+        else {
+            return;
+        };
+        *ratio = ratio_for_equal_slots(first.slots(*axis), second.slots(*axis));
+        first.equalize();
+        second.equalize();
+    }
+
+    /// How many pane-wide slots this subtree occupies along `axis`.
+    fn slots(&self, axis: Axis) -> u32 {
+        match self {
+            Self::Pane(_) => 1,
+            Self::Split {
+                axis: split_axis,
+                first,
+                second,
+                ..
+            } if *split_axis == axis => first.slots(axis).saturating_add(second.slots(axis)),
+            Self::Split { first, second, .. } => first.slots(axis).max(second.slots(axis)),
+        }
+    }
+
     fn contains(&self, pane: usize) -> bool {
         match self {
             Self::Pane(candidate) => *candidate == pane,
@@ -322,6 +364,18 @@ fn ratio_for_first_extent(
     // maps back to the requested cell boundary.
     ((u32::from(desired) * u32::from(RATIO_SCALE)).div_ceil(u32::from(total)))
         .clamp(1, u32::from(RATIO_SCALE - 1)) as u16
+}
+
+/// The ratio that hands `first` its share of `first + second` equal slots.
+///
+/// Every subtree occupies at least one slot, so the total is never zero.
+fn ratio_for_equal_slots(first: u32, second: u32) -> u16 {
+    let total = u64::from(first) + u64::from(second);
+    // `split_extent` floors, so the ceiling here is what lands the boundary
+    // on the intended cell rather than one short of it.
+    (u64::from(first) * u64::from(RATIO_SCALE))
+        .div_ceil(total)
+        .clamp(1, u64::from(RATIO_SCALE - 1)) as u16
 }
 
 #[cfg(test)]
@@ -557,5 +611,109 @@ mod tests {
         assert!(areas[&0].width >= 3);
         assert!(areas[&2].width >= 3);
         assert_eq!(areas[&1].width, 3);
+    }
+
+    #[test]
+    fn equalizing_levels_a_row_of_columns() {
+        let mut layout = Layout::Pane(0);
+        assert!(layout.split(0, 1, Axis::Horizontal));
+        assert!(layout.split(1, 2, Axis::Horizontal));
+        let area = Rect {
+            width: 90,
+            height: 30,
+            ..Rect::default()
+        };
+        assert!(layout.resize_between_cells(0, 1, area, 20));
+
+        layout.equalize();
+        let mut areas = HashMap::new();
+        layout.rectangles(area, &mut areas);
+        for pane in [0, 1, 2] {
+            assert_eq!(areas[&pane].width, 30, "pane {pane}");
+            assert_eq!(areas[&pane].height, 30, "pane {pane}");
+        }
+    }
+
+    #[test]
+    fn equalizing_levels_each_column_against_its_own_rows() {
+        // One column on the left, two stacked panes in the middle column, and
+        // three stacked in the right one.
+        let mut layout = Layout::Pane(0);
+        assert!(layout.split(0, 1, Axis::Horizontal));
+        assert!(layout.split(1, 2, Axis::Horizontal));
+        assert!(layout.split(1, 3, Axis::Vertical));
+        assert!(layout.split(2, 4, Axis::Vertical));
+        assert!(layout.split(4, 5, Axis::Vertical));
+
+        layout.equalize();
+        let area = Rect {
+            width: 90,
+            height: 60,
+            ..Rect::default()
+        };
+        let mut areas = HashMap::new();
+        layout.rectangles(area, &mut areas);
+        for pane in 0..=5 {
+            assert_eq!(areas[&pane].width, 30, "pane {pane}");
+        }
+        assert_eq!(areas[&0].height, 60);
+        for pane in [1, 3] {
+            assert_eq!(areas[&pane].height, 30, "pane {pane}");
+        }
+        for pane in [2, 4, 5] {
+            assert_eq!(areas[&pane].height, 20, "pane {pane}");
+        }
+    }
+
+    #[test]
+    fn equalizing_keeps_a_pane_that_spans_the_full_width_spanning_it() {
+        let mut layout = Layout::Pane(0);
+        assert!(layout.split(0, 1, Axis::Vertical));
+        assert!(layout.split(1, 2, Axis::Horizontal));
+        let area = Rect {
+            width: 80,
+            height: 40,
+            ..Rect::default()
+        };
+        assert!(layout.resize_between_cells(1, 2, area, 15));
+
+        layout.equalize();
+        let mut areas = HashMap::new();
+        layout.rectangles(area, &mut areas);
+        assert_eq!(
+            areas[&0].width, 80,
+            "the arrangement into columns is unchanged"
+        );
+        assert_eq!(areas[&0].height, 20);
+        assert_eq!(areas[&1].width, 40);
+        assert_eq!(areas[&2].width, 40);
+        assert_eq!(areas[&1].height, 20);
+        assert_eq!(areas[&2].height, 20);
+    }
+
+    #[test]
+    fn equalizing_an_already_level_layout_changes_nothing() {
+        let mut layout = Layout::Pane(0);
+        assert!(layout.split(0, 1, Axis::Horizontal));
+        assert!(layout.split(1, 2, Axis::Vertical));
+        let area = Rect {
+            width: 100,
+            height: 40,
+            ..Rect::default()
+        };
+        let mut before = HashMap::new();
+        layout.rectangles(area, &mut before);
+
+        layout.equalize();
+        let mut after = HashMap::new();
+        layout.rectangles(area, &mut after);
+        assert_eq!(before, after);
+    }
+
+    #[test]
+    fn equalizing_a_single_pane_is_a_no_op() {
+        let mut layout = Layout::Pane(7);
+        layout.equalize();
+        assert!(matches!(layout, Layout::Pane(7)));
     }
 }

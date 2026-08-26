@@ -94,6 +94,27 @@ fn close_bindings_keep_panes_and_buffers_as_separate_decisions() {
 }
 
 #[test]
+fn equalizing_is_reached_from_the_window_namespace_alone() {
+    for mode in [Mode::Normal, Mode::Select] {
+        assert!(matches!(
+            default_keymap().lookup(mode, &sequence(" w=")),
+            Lookup::Exact(binding)
+                if binding.target == BindingTarget::Editor(EditorCommand::EqualizeWindows)
+        ));
+    }
+    assert_eq!(
+        default_keymap()
+            .bindings()
+            .iter()
+            .filter(
+                |binding| binding.target == BindingTarget::Editor(EditorCommand::EqualizeWindows)
+            )
+            .count(),
+        1
+    );
+}
+
+#[test]
 fn file_and_content_pickers_are_global_in_every_buffer_scope() {
     let cases = [
         (" /f", EditorCommand::OpenFilePicker),

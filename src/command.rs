@@ -688,6 +688,10 @@ editor_commands! {
     NextWindow => ("next-window", "Focus the next pane"),
     CloseWindow => ("close-window", "Close the active pane"),
     OnlyWindow => ("only-window", "Close every pane except the active pane"),
+    EqualizeWindows => (
+        "equalize-windows",
+        "Equalize pane widths, then pane heights within each column"
+    ),
 
     OpenTerminal => ("open-terminal", "Run a shell or command in this pane"),
     OpenTerminalFileDirectory => (
@@ -1051,7 +1055,8 @@ impl EditorCommand {
             | Self::FocusWindowRight
             | Self::NextWindow
             | Self::CloseWindow
-            | Self::OnlyWindow => CommandCategory::Window,
+            | Self::OnlyWindow
+            | Self::EqualizeWindows => CommandCategory::Window,
             Self::GotoDefinition
             | Self::GotoDeclaration
             | Self::GotoTypeDefinition

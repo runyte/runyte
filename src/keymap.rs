@@ -1822,6 +1822,12 @@ fn built_in_bindings() -> Vec<Binding> {
             [Key::char(' '), Key::char('w'), Key::char('o')],
             Command::OnlyWindow,
         ),
+        // `=` says level rather than naming a direction, the way Vim's
+        // `Ctrl-w =` does, and nothing else in the window namespace wants it.
+        modal(
+            [Key::char(' '), Key::char('w'), Key::char('=')],
+            Command::EqualizeWindows,
+        ),
         modal(
             [Key::char(' '), Key::char('w'), Key::char('f')],
             Command::ToggleFullscreen,

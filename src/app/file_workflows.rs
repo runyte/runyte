@@ -1454,6 +1454,22 @@ impl App {
         self.status("only window");
     }
 
+    /// Levels the split tree: every pane the same width, and then every pane
+    /// sharing a column the same height.
+    ///
+    /// The tree itself is untouched, so which pane sits beside or above which
+    /// is exactly what it was; only the boundaries between them move. A
+    /// maximized pane hides the tree rather than replacing it, so the levelled
+    /// layout is what the next toggle reveals.
+    pub(super) fn equalize_panes(&mut self) {
+        if matches!(self.layout, Layout::Pane(_)) {
+            self.status("only one pane");
+            return;
+        }
+        self.layout.equalize();
+        self.status("equalized panes");
+    }
+
     /// The maximized presentation the named pane is currently drawn with, if
     /// it is the one being maximized.
     pub(crate) fn maximized_view(&self, pane: usize) -> Option<MaximizedView> {

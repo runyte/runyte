@@ -3173,6 +3173,7 @@ impl App {
             Command::NextWindow => self.next_window_from_terminal_insert(),
             Command::CloseWindow => self.close_pane(),
             Command::OnlyWindow => self.only_window(),
+            Command::EqualizeWindows => self.equalize_panes(),
             Command::DeleteWordBackward => self.delete_word_backward(),
             Command::DeleteWordForward => self.delete_word_forward(),
             Command::DeleteToLineStart => self.delete_to_line_start(),
