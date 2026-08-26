@@ -177,8 +177,7 @@ impl JumpList {
 
     /// Drops every entry for a buffer, for callers that retire one.
     pub fn forget(&mut self, buffer: usize) {
-        self.entries.retain(|jump| jump.buffer != buffer);
-        self.current = self.current.min(self.entries.len());
+        self.retain_rebasing_current(|jump| jump.buffer != buffer);
     }
 
     /// Retires document positions while preserving terminal surface entries.
@@ -187,7 +186,7 @@ impl JumpList {
     /// exits, but the terminal identity remains valid after that buffer is
     /// closed. Ordinary positions into the closed document are simply gone.
     pub fn retire_buffer(&mut self, buffer: usize, replacement: usize) {
-        self.entries.retain_mut(|jump| {
+        self.retain_rebasing_current(|jump| {
             if jump.buffer != buffer {
                 return true;
             }
@@ -198,7 +197,25 @@ impl JumpList {
                 false
             }
         });
-        self.current = self.current.min(self.entries.len());
+    }
+
+    /// Retains entries while keeping the traversal cursor attached to the
+    /// same surviving position as the entries before it are compacted.
+    fn retain_rebasing_current(&mut self, mut keep: impl FnMut(&mut Jump) -> bool) {
+        let old_current = self.current;
+        let mut index = 0;
+        let mut removed_before_current = 0;
+        self.entries.retain_mut(|jump| {
+            let retained = keep(jump);
+            if !retained && index < old_current {
+                removed_before_current += 1;
+            }
+            index += 1;
+            retained
+        });
+        self.current = old_current
+            .saturating_sub(removed_before_current)
+            .min(self.entries.len());
     }
 }
 
@@ -393,6 +410,34 @@ mod tests {
     }
 
     #[test]
+    fn forgetting_an_earlier_entry_rebases_mid_history_traversal() {
+        let mut jumps = JumpList::default();
+        jumps.push(in_buffer(0, 1));
+        jumps.push(in_buffer(1, 2));
+        jumps.push(in_buffer(2, 3));
+
+        assert_eq!(
+            jumps.backward(in_buffer(3, 4)).unwrap(),
+            in_buffer(2, 3),
+            "backward traversal starts on C"
+        );
+        jumps.forget(0);
+
+        assert_eq!(
+            jumps.backward(in_buffer(2, 3)).unwrap(),
+            in_buffer(1, 2),
+            "removing A must not make backward traversal revisit C"
+        );
+        assert_eq!(jumps.forward().unwrap(), in_buffer(2, 3));
+        assert_eq!(
+            jumps.forward().unwrap(),
+            in_buffer(3, 4),
+            "forward traversal must still return to D"
+        );
+        assert!(jumps.forward().is_none());
+    }
+
+    #[test]
     fn retiring_a_buffer_preserves_terminal_surfaces_with_a_live_backing() {
         let mut jumps = JumpList::default();
         jumps.push(jump(1));
@@ -407,5 +452,33 @@ mod tests {
             SelectionSemantics::Runyte,
         ));
         assert_eq!(target.unwrap().buffer, 4);
+    }
+
+    #[test]
+    fn retiring_an_earlier_entry_rebases_mid_history_traversal() {
+        let mut jumps = JumpList::default();
+        jumps.push(in_buffer(0, 1));
+        jumps.push(in_buffer(1, 2));
+        jumps.push(in_buffer(2, 3));
+
+        assert_eq!(
+            jumps.backward(in_buffer(3, 4)).unwrap(),
+            in_buffer(2, 3),
+            "backward traversal starts on C"
+        );
+        jumps.retire_buffer(0, 9);
+
+        assert_eq!(
+            jumps.backward(in_buffer(2, 3)).unwrap(),
+            in_buffer(1, 2),
+            "retiring A must not make backward traversal revisit C"
+        );
+        assert_eq!(jumps.forward().unwrap(), in_buffer(2, 3));
+        assert_eq!(
+            jumps.forward().unwrap(),
+            in_buffer(3, 4),
+            "forward traversal must still return to D"
+        );
+        assert!(jumps.forward().is_none());
     }
 }
