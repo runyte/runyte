@@ -975,6 +975,47 @@ fn split_and_close_maintains_valid_focus() {
 }
 
 #[test]
+fn only_window_drops_views_without_retiring_their_buffers() {
+    let directory = temporary("only-window-content-ownership");
+    fs::create_dir_all(&directory).unwrap();
+    let paths = ["first.txt", "second.txt", "third.txt"].map(|name| directory.join(name));
+    for (index, path) in paths.iter().enumerate() {
+        fs::write(path, format!("content {index}")).unwrap();
+    }
+
+    let mut app = App::new(Config::default(), Some(paths[0].clone())).unwrap();
+    let first_pane = app.active_pane;
+    let first_buffer = app.active().buffer;
+    app.split(Axis::Horizontal, Some(paths[1].clone())).unwrap();
+    let second_pane = app.active_pane;
+    let second_buffer = app.active().buffer;
+    app.split(Axis::Vertical, Some(paths[2].clone())).unwrap();
+    let kept_pane = app.active_pane;
+    let kept_buffer = app.active().buffer;
+
+    app.only_window();
+
+    assert_eq!(app.panes.len(), 1);
+    assert_eq!(app.active_pane, kept_pane);
+    assert!(matches!(app.layout, Layout::Pane(pane) if pane == kept_pane));
+    assert!(!app.panes.contains_key(&first_pane));
+    assert!(!app.panes.contains_key(&second_pane));
+    assert_eq!(app.active().buffer, kept_buffer);
+    for (buffer, path) in [first_buffer, second_buffer, kept_buffer]
+        .into_iter()
+        .zip(paths.iter())
+    {
+        assert!(!app.closed_buffers.contains(&buffer));
+        assert_eq!(app.buffers[buffer].path.as_deref(), Some(path.as_path()));
+    }
+
+    app.switch_buffer(first_buffer);
+    assert_eq!(app.active_pane, kept_pane);
+    assert_eq!(app.active().buffer, first_buffer);
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
 fn directional_focus_follows_shared_edges_in_a_nested_pane_grid() {
     let mut app = App::new(Config::default(), None).unwrap();
     app.panes.insert(1, Pane::new(0));
