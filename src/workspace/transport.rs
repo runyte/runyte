@@ -4,7 +4,7 @@
 
 use std::{
     fs::{self, OpenOptions},
-    io,
+    io::{self, Read as _},
     path::{Path, PathBuf},
     sync::{
         Arc,
@@ -44,6 +44,9 @@ const MAX_CONNECTIONS: usize = 16;
 const CONNECTION_WRITE_TIMEOUT: Duration = Duration::from_secs(2);
 const HOST_ID_LENGTH: usize = 32;
 pub(crate) const MAX_HOST_NAME_BYTES: usize = 64;
+const MAX_METADATA_BYTES: usize = 64 * 1024;
+const MAX_STORED_NAME_BYTES: usize = 1024;
+pub(super) const MAX_PERSISTED_PATH_BYTES: usize = 4 * 1024;
 const MAX_REGISTERED_HOSTS: usize = 1024;
 /// How long discovery waits for an endpoint to accept a probe connection. The
 /// same bound as registry discovery uses: long enough for a busy host, short
@@ -136,6 +139,7 @@ pub struct RegisteredHost {
     pub id: String,
     pub name: Option<String>,
     pub pid: u32,
+    pub protocol: u32,
     pub project_root: PathBuf,
     endpoint: LocalEndpoint,
 }
@@ -147,6 +151,10 @@ impl RegisteredHost {
 
     pub fn endpoint(&self) -> &LocalEndpoint {
         &self.endpoint
+    }
+
+    pub fn speaks_current_protocol(&self) -> bool {
+        self.protocol == PROTOCOL_VERSION
     }
 }
 
@@ -526,10 +534,7 @@ impl LocalEndpoint {
             fs::symlink_metadata(&self.socket)?.file_type().is_socket(),
             "workspace host endpoint is not a Unix-domain socket"
         );
-        let bytes = fs::read(&self.metadata)
-            .with_context(|| format!("cannot read host metadata {}", self.metadata.display()))?;
-        let metadata: EndpointMetadata = serde_json::from_slice(&bytes)
-            .with_context(|| format!("malformed host metadata {}", self.metadata.display()))?;
+        let metadata = read_endpoint_metadata(&self.metadata, "host metadata")?;
         Ok(metadata)
     }
 
@@ -619,6 +624,8 @@ impl LocalEndpoint {
     }
 
     fn publish_metadata(&self, metadata: &EndpointMetadata) -> Result<()> {
+        validate_metadata_fields(metadata)?;
+        self.verify_metadata_identity(metadata)?;
         for registry in [self.registry.as_ref(), self.secondary_registry.as_ref()]
             .into_iter()
             .flatten()
@@ -636,13 +643,11 @@ impl LocalEndpoint {
     }
 
     fn endpoint_metadata_matches(&self, expected_pid: Option<u32>) -> Result<bool> {
-        let bytes = match fs::read(&self.metadata) {
-            Ok(bytes) => bytes,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
-            Err(error) => return Err(error.into()),
+        let metadata = match read_endpoint_metadata(&self.metadata, "host metadata") {
+            Ok(metadata) => metadata,
+            Err(error) if is_not_found(&error) => return Ok(false),
+            Err(error) => return Err(error),
         };
-        let metadata: EndpointMetadata = serde_json::from_slice(&bytes)
-            .with_context(|| format!("malformed host metadata {}", self.metadata.display()))?;
         Ok(self.metadata_matches(&metadata, expected_pid))
     }
 
@@ -652,13 +657,11 @@ impl LocalEndpoint {
             .flatten()
         {
             let path = registry.join(format!("{}.json", self.id));
-            let bytes = match fs::read(&path) {
-                Ok(bytes) => bytes,
-                Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
-                Err(error) => return Err(error.into()),
+            let metadata = match read_endpoint_metadata(&path, "host registry entry") {
+                Ok(metadata) => metadata,
+                Err(error) if is_not_found(&error) => continue,
+                Err(error) => return Err(error),
             };
-            let metadata: EndpointMetadata = serde_json::from_slice(&bytes)
-                .with_context(|| format!("malformed host registry entry {}", path.display()))?;
             if self.metadata_matches(&metadata, expected_pid) {
                 return Ok(true);
             }
@@ -672,13 +675,11 @@ impl LocalEndpoint {
             .flatten()
         {
             let path = registry.join(format!("{}.json", self.id));
-            let bytes = match fs::read(&path) {
-                Ok(bytes) => bytes,
-                Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
-                Err(error) => return Err(error.into()),
+            let metadata = match read_endpoint_metadata(&path, "host registry entry") {
+                Ok(metadata) => metadata,
+                Err(error) if is_not_found(&error) => continue,
+                Err(error) => return Err(error),
             };
-            let metadata: EndpointMetadata = serde_json::from_slice(&bytes)
-                .with_context(|| format!("malformed host registry entry {}", path.display()))?;
             if self.metadata_matches(&metadata, expected_pid) {
                 remove_if_exists(&path)?;
             }
@@ -731,8 +732,7 @@ impl LocalEndpoint {
             return Ok(None);
         }
         verify_private(path, false)?;
-        let bytes = fs::read(path)
-            .with_context(|| format!("cannot read stored session name {}", path.display()))?;
+        let bytes = read_bounded_file(path, MAX_STORED_NAME_BYTES, "stored session name")?;
         let name: String = serde_json::from_slice(&bytes)
             .with_context(|| format!("malformed stored session name {}", path.display()))?;
         validate_host_name(&name)?;
@@ -782,9 +782,7 @@ impl LocalEndpoint {
             return Ok(false);
         }
         verify_private(&self.metadata, false)?;
-        let bytes = fs::read(&self.metadata)?;
-        let metadata: EndpointMetadata = serde_json::from_slice(&bytes)
-            .with_context(|| format!("malformed host metadata {}", self.metadata.display()))?;
+        let metadata = read_endpoint_metadata(&self.metadata, "host metadata")?;
         process_is_alive(metadata.pid)
     }
 }
@@ -801,22 +799,27 @@ pub(super) fn registered_hosts_in(roots: &[PathBuf]) -> Result<Vec<RegisteredHos
             continue;
         }
         verify_private(registry, true)?;
-        let mut entries = fs::read_dir(registry)
-            .with_context(|| format!("cannot read host registry {}", registry.display()))?
-            .collect::<io::Result<Vec<_>>>()?;
-        entries.retain(|entry| {
-            entry
+        let directory = fs::read_dir(registry)
+            .with_context(|| format!("cannot read host registry {}", registry.display()))?;
+        let mut entries = Vec::new();
+        for entry in directory {
+            let entry = entry?;
+            if entry
                 .path()
                 .extension()
                 .and_then(|extension| extension.to_str())
-                == Some("json")
-        });
+                != Some("json")
+            {
+                continue;
+            }
+            ensure!(
+                entries.len() < MAX_REGISTERED_HOSTS,
+                "host registry {} contains more than {MAX_REGISTERED_HOSTS} entries",
+                registry.display()
+            );
+            entries.push(entry);
+        }
         entries.sort_by_key(|entry| entry.file_name());
-        ensure!(
-            entries.len() <= MAX_REGISTERED_HOSTS,
-            "host registry {} contains more than {MAX_REGISTERED_HOSTS} entries",
-            registry.display()
-        );
         for entry in entries {
             let path = entry.path();
             if verify_private(&path, false).is_err() {
@@ -825,15 +828,9 @@ pub(super) fn registered_hosts_in(roots: &[PathBuf]) -> Result<Vec<RegisteredHos
             if !entry.file_type().is_ok_and(|kind| kind.is_file()) {
                 continue;
             }
-            let bytes = match fs::read(&path) {
-                Ok(bytes) => bytes,
+            let metadata = match read_endpoint_metadata(&path, "host registry entry") {
+                Ok(metadata) => metadata,
                 Err(_) => continue,
-            };
-            if bytes.len() > 64 * 1024 {
-                continue;
-            }
-            let Ok(metadata) = serde_json::from_slice::<EndpointMetadata>(&bytes) else {
-                continue;
             };
             if validate_registered_metadata(&metadata, &path).is_err() {
                 continue;
@@ -880,6 +877,7 @@ pub(super) fn registered_hosts_in(roots: &[PathBuf]) -> Result<Vec<RegisteredHos
                 id: live_metadata.id,
                 name: live_metadata.name,
                 pid: live_metadata.pid,
+                protocol: live_metadata.protocol,
                 project_root: endpoint.project_root.clone(),
                 endpoint,
             });
@@ -1006,13 +1004,10 @@ fn probe_unix_socket(path: &Path, timeout: Duration) -> Result<Option<bool>> {
 /// inspected. A replacement host may publish the same workspace identity
 /// between the liveness check and cleanup.
 fn remove_registration_if_pid_matches(path: &Path, expected_pid: u32) -> Result<()> {
-    let bytes = match fs::read(path) {
-        Ok(bytes) => bytes,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => return Err(error.into()),
-    };
-    let Ok(metadata) = serde_json::from_slice::<EndpointMetadata>(&bytes) else {
-        return Ok(());
+    let metadata = match read_endpoint_metadata(path, "host registry entry") {
+        Ok(metadata) => metadata,
+        Err(error) if is_not_found(&error) => return Ok(()),
+        Err(error) => return Err(error),
     };
     if metadata.pid == expected_pid {
         remove_if_exists(path)?;
@@ -1021,27 +1016,13 @@ fn remove_registration_if_pid_matches(path: &Path, expected_pid: u32) -> Result<
 }
 
 fn validate_registered_metadata(metadata: &EndpointMetadata, path: &Path) -> Result<()> {
+    validate_metadata_fields(metadata)?;
     ensure!(
         metadata.id.len() == HOST_ID_LENGTH
             && metadata.id.bytes().all(|byte| byte.is_ascii_hexdigit()),
         "host registry entry has an invalid ID: {}",
         path.display()
     );
-    ensure!(
-        metadata.pid > 0 && metadata.pid <= libc::pid_t::MAX as u32,
-        "host registry entry has an invalid PID"
-    );
-    ensure!(
-        !metadata.project_root_bytes.is_empty(),
-        "host registry entry has an empty project directory"
-    );
-    ensure!(
-        !metadata.socket_bytes.is_empty(),
-        "host registry entry has an empty socket path"
-    );
-    if let Some(name) = metadata.name.as_deref() {
-        validate_host_name(name)?;
-    }
     let expected_file = format!("{}.json", metadata.id);
     ensure!(
         path.file_name()
@@ -1050,6 +1031,85 @@ fn validate_registered_metadata(metadata: &EndpointMetadata, path: &Path) -> Res
         path.display()
     );
     Ok(())
+}
+
+fn validate_metadata_fields(metadata: &EndpointMetadata) -> Result<()> {
+    ensure!(
+        metadata.pid > 0 && metadata.pid <= libc::pid_t::MAX as u32,
+        "host metadata has an invalid PID"
+    );
+    if !metadata.id.is_empty() {
+        ensure!(
+            metadata.id.len() == HOST_ID_LENGTH
+                && metadata.id.bytes().all(|byte| byte.is_ascii_hexdigit()),
+            "host metadata has an invalid ID"
+        );
+    }
+    validate_metadata_path(&metadata.project_root_bytes, "project directory")?;
+    validate_metadata_path(&metadata.socket_bytes, "socket path")?;
+    let project_root = decode_path(metadata.project_root_bytes.clone());
+    let socket = decode_path(metadata.socket_bytes.clone());
+    ensure!(
+        project_root.is_absolute(),
+        "host metadata project directory is not absolute"
+    );
+    ensure!(socket.is_absolute(), "host metadata socket is not absolute");
+    #[cfg(unix)]
+    ensure!(
+        metadata.socket_bytes.len() <= socket_path_capacity(),
+        "host metadata socket path is too long"
+    );
+    if let Some(name) = metadata.name.as_deref() {
+        validate_host_name(name)?;
+    }
+    Ok(())
+}
+
+fn validate_metadata_path(bytes: &[u8], description: &str) -> Result<()> {
+    ensure!(
+        !bytes.is_empty(),
+        "host metadata has an empty {description}"
+    );
+    ensure!(
+        bytes.len() <= MAX_PERSISTED_PATH_BYTES,
+        "host metadata {description} exceeds {MAX_PERSISTED_PATH_BYTES} bytes"
+    );
+    ensure!(
+        !bytes.contains(&0),
+        "host metadata {description} contains a null byte"
+    );
+    Ok(())
+}
+
+fn read_endpoint_metadata(path: &Path, description: &str) -> Result<EndpointMetadata> {
+    let bytes = read_bounded_file(path, MAX_METADATA_BYTES, description)?;
+    let metadata: EndpointMetadata = serde_json::from_slice(&bytes)
+        .with_context(|| format!("malformed {description} {}", path.display()))?;
+    validate_metadata_fields(&metadata)
+        .with_context(|| format!("invalid {description} {}", path.display()))?;
+    Ok(metadata)
+}
+
+fn read_bounded_file(path: &Path, maximum: usize, description: &str) -> Result<Vec<u8>> {
+    let file = fs::File::open(path)
+        .with_context(|| format!("cannot read {description} {}", path.display()))?;
+    let mut bytes = Vec::new();
+    file.take(maximum.saturating_add(1) as u64)
+        .read_to_end(&mut bytes)
+        .with_context(|| format!("cannot read {description} {}", path.display()))?;
+    ensure!(
+        bytes.len() <= maximum,
+        "{description} {} exceeds {maximum} bytes",
+        path.display()
+    );
+    Ok(bytes)
+}
+
+fn is_not_found(error: &anyhow::Error) -> bool {
+    error
+        .chain()
+        .filter_map(|cause| cause.downcast_ref::<io::Error>())
+        .any(|error| error.kind() == io::ErrorKind::NotFound)
 }
 
 pub(super) fn validate_host_name(name: &str) -> Result<()> {
@@ -1905,6 +1965,10 @@ fn write_json_atomic(path: &Path, value: &impl Serialize) -> Result<()> {
     use std::os::unix::fs::OpenOptionsExt;
     let temporary = path.with_extension(format!("tmp-{}", std::process::id()));
     let bytes = serde_json::to_vec_pretty(value)?;
+    ensure!(
+        bytes.len() <= MAX_METADATA_BYTES,
+        "host metadata exceeds {MAX_METADATA_BYTES} bytes"
+    );
     let mut file = OpenOptions::new()
         .create_new(true)
         .write(true)
@@ -2118,6 +2182,22 @@ mod tests {
         let workspace = root.join(".runyte");
         let _endpoint = LocalEndpoint::new(&workspace, &root).unwrap();
         assert!(!workspace.exists());
+    }
+
+    #[test]
+    fn registry_entry_count_is_bounded_while_the_directory_is_streamed() {
+        let root = temporary_root();
+        let registry = root.join("registry");
+        prepare_private_directory(&registry).unwrap();
+        fs::write(registry.join("ignored.txt"), b"not a registry row").unwrap();
+        for index in 0..=MAX_REGISTERED_HOSTS {
+            fs::write(registry.join(format!("{index:04}.json")), b"{}").unwrap();
+        }
+
+        let error = registered_hosts_in(std::slice::from_ref(&registry)).unwrap_err();
+        assert!(error.to_string().contains("more than"), "{error:#}");
+
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -2664,6 +2744,51 @@ mod tests {
         });
         drop(server);
         endpoint.cleanup().unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn endpoint_metadata_is_bounded_and_validated_before_acceptance() {
+        let (root, endpoint) = endpoint("bounded-metadata");
+        let Some(server) = bind_or_skip(&endpoint).await else {
+            fs::remove_dir_all(root).unwrap();
+            return;
+        };
+        let original = fs::read(endpoint.metadata()).unwrap();
+        let mut metadata: EndpointMetadata = serde_json::from_slice(&original).unwrap();
+
+        fs::write(endpoint.metadata(), vec![b' '; MAX_METADATA_BYTES + 1]).unwrap();
+        let error = endpoint.verify_for_connect().unwrap_err().to_string();
+        assert!(error.contains("exceeds"), "{error}");
+
+        metadata.project_root_bytes = vec![b'/'; MAX_PERSISTED_PATH_BYTES + 1];
+        fs::write(endpoint.metadata(), serde_json::to_vec(&metadata).unwrap()).unwrap();
+        let error = format!("{:#}", endpoint.verify_for_connect().unwrap_err());
+        assert!(error.contains("project directory exceeds"), "{error}");
+
+        metadata.project_root_bytes = encode_path(&root);
+        metadata.name = Some("x".repeat(MAX_HOST_NAME_BYTES + 1));
+        fs::write(endpoint.metadata(), serde_json::to_vec(&metadata).unwrap()).unwrap();
+        let error = format!("{:#}", endpoint.verify_for_connect().unwrap_err());
+        assert!(error.contains("session name cannot exceed"), "{error}");
+
+        fs::write(endpoint.metadata(), original).unwrap();
+        drop(server);
+        endpoint.cleanup().unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn stored_session_name_input_is_byte_bounded() {
+        let (root, endpoint) = endpoint("bounded-stored-name");
+        let name_file = endpoint.name_file.as_ref().unwrap();
+        prepare_private_directory(name_file.parent().unwrap()).unwrap();
+        fs::write(name_file, vec![b'x'; MAX_STORED_NAME_BYTES + 1]).unwrap();
+        fs::set_permissions(name_file, fs::Permissions::from_mode(0o600)).unwrap();
+
+        let error = endpoint.load_stored_name().unwrap_err().to_string();
+        assert!(error.contains("exceeds"), "{error}");
+
         fs::remove_dir_all(root).unwrap();
     }
 

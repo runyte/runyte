@@ -8,7 +8,7 @@
 
 use std::{
     fs::{self, OpenOptions},
-    io,
+    io::{self, Read as _},
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -24,12 +24,12 @@ use super::{
     SessionPreview,
     lifecycle::{
         HostStartup, connect_control, ensure_workspace_host, force_shutdown_host, rename_host,
-        resolve_registered_host_from, resolve_workspace_endpoint, shutdown_host,
-        terminate_incompatible_host,
+        resolve_registered_host_from, resolve_workspace_endpoint,
+        resolve_workspace_endpoint_with_runtime, shutdown_host, terminate_incompatible_host,
     },
     transport::{
-        LocalEndpoint, MAX_HOST_NAME_BYTES, RegisteredHost, decode_path, encode_path,
-        registered_hosts_in, registry_roots, validate_host_name, workspace_id,
+        LocalEndpoint, MAX_HOST_NAME_BYTES, MAX_PERSISTED_PATH_BYTES, RegisteredHost, decode_path,
+        encode_path, registered_hosts_in, registry_roots, validate_host_name, workspace_id,
     },
 };
 
@@ -37,6 +37,7 @@ const REQUEST_CAPACITY: usize = 16;
 const EVENT_CAPACITY: usize = 16;
 const CONTROL_TIMEOUT: Duration = Duration::from_millis(500);
 const RECENT_LIMIT: usize = 256;
+const MAX_RECENTS_BYTES: usize = 8 * 1024 * 1024;
 
 /// The number of workspace-ID characters a listing shows by default.
 ///
@@ -449,6 +450,7 @@ impl WorkspaceService {
                             &working_directory,
                             &state,
                             config.as_deref(),
+                            runtime.as_deref(),
                             force,
                         )
                         .await
@@ -883,6 +885,21 @@ fn published_endpoint(
 }
 
 async fn inspect_host(host: RegisteredHost) -> WorkspaceRow {
+    if !host.speaks_current_protocol() {
+        return WorkspaceRow {
+            id: host.id,
+            name: host.name,
+            number: None,
+            project_root: host.project_root,
+            running: true,
+            incompatible_protocol: Some(host.protocol),
+            unsaved_buffers: None,
+            pending_wait_requests: None,
+            live_terminals: None,
+            terminal_sessions: None,
+            interactive_attached: None,
+        };
+    }
     let inspection = inspect_endpoint(host.endpoint()).await;
     WorkspaceRow {
         id: host.id,
@@ -1029,6 +1046,7 @@ async fn stop(
     working_directory: &Path,
     state: &Path,
     config: Option<&Path>,
+    runtime: Option<&Path>,
     force: bool,
 ) -> Result<()> {
     let scan_roots = roots.to_vec();
@@ -1039,30 +1057,69 @@ async fn stop(
         resolve_registered_host_from(&owned_selector, Some(&owned_working_directory), hosts)
     })
     .await?;
-    let host = match host {
-        Ok(host) => host,
-        Err(error) => {
-            if force {
-                return stop_incompatible(selector, state, config)
-                    .await
-                    .map_err(|_| error);
+    enum StopTarget {
+        Current(LocalEndpoint),
+        Incompatible {
+            endpoint: LocalEndpoint,
+            protocol: u32,
+        },
+    }
+    let target = match host {
+        Ok(host) if host.speaks_current_protocol() => StopTarget::Current(host.endpoint().clone()),
+        Ok(host) => StopTarget::Incompatible {
+            endpoint: host.endpoint().clone(),
+            protocol: host.protocol,
+        },
+        Err(registry_error) => {
+            let requested = if selector.is_absolute() {
+                selector.to_path_buf()
+            } else {
+                working_directory.join(selector)
+            };
+            let endpoint = match resolve_workspace_endpoint_with_runtime(
+                &requested, state, config, runtime,
+            ) {
+                Ok(endpoint) => endpoint,
+                Err(_) => {
+                    anyhow::bail!(
+                        "{registry_error}; this host may own live terminals or unsaved buffers; choose Force close explicitly or use a compatible client"
+                    )
+                }
+            };
+            let published = endpoint
+                .published_host()?
+                .with_context(|| format!("no running session matches {}", selector.display()))?;
+            if published.speaks_current_protocol() {
+                StopTarget::Current(endpoint)
+            } else {
+                StopTarget::Incompatible {
+                    endpoint,
+                    protocol: published.protocol,
+                }
             }
-            anyhow::bail!(
-                "{error}; this host may own live terminals or unsaved buffers; choose Force close explicitly or use a compatible client"
-            );
         }
     };
-    let shutdown = async {
-        if force {
-            force_shutdown_host(host.endpoint()).await
-        } else {
-            shutdown_host(host.endpoint()).await
+    match target {
+        StopTarget::Current(endpoint) => {
+            tokio::time::timeout(CONTROL_TIMEOUT, async {
+                if force {
+                    force_shutdown_host(&endpoint).await
+                } else {
+                    shutdown_host(&endpoint).await
+                }
+            })
+            .await
+            .map_err(|_| anyhow::anyhow!("workspace host did not answer the stop request"))??;
+            Ok(())
         }
-    };
-    tokio::time::timeout(CONTROL_TIMEOUT, shutdown)
-        .await
-        .map_err(|_| anyhow::anyhow!("workspace host did not answer the stop request"))??;
-    Ok(())
+        StopTarget::Incompatible { endpoint, .. } if force => {
+            terminate_incompatible_host(&endpoint).await.map(drop)
+        }
+        StopTarget::Incompatible { protocol, .. } => anyhow::bail!(
+            "workspace host protocol {protocol} is incompatible with client protocol {}; this host may own live terminals or unsaved buffers; choose Force close explicitly or use a compatible client",
+            super::transport::PROTOCOL_VERSION
+        ),
+    }
 }
 
 /// Renames the currently known form of one workspace. A running host owns its
@@ -1118,15 +1175,6 @@ async fn number_workspace(
     let project_root = resolve_known_workspace_from_rows(&rows, selector, Some(working_directory))?
         .with_context(|| format!("no session matches {}", selector.display()))?;
     set_recent_workspace_number_in(recents, &project_root, number)
-}
-
-/// Stops the host a directory publishes when this build cannot speak to it.
-/// Only a directory selector can be resolved this way: an ID or a name is a
-/// registry lookup, and the registry is exactly what such a host is missing
-/// from.
-async fn stop_incompatible(selector: &Path, state: &Path, config: Option<&Path>) -> Result<()> {
-    let endpoint = resolve_workspace_endpoint(selector, state, config)?;
-    terminate_incompatible_host(&endpoint).await.map(|_| ())
 }
 
 #[cfg(test)]
@@ -1233,7 +1281,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn targeted_inspection_probes_a_live_host_absent_from_registry_and_recents() {
+    async fn targeted_directory_operations_reach_a_live_host_absent_from_the_registry() {
         use std::collections::HashMap;
 
         use crate::{
@@ -1323,6 +1371,15 @@ mod tests {
                                 .await;
                         }
                     }
+                    ServerEvent::Request {
+                        id,
+                        request: ClientRequest::Shutdown,
+                    } => {
+                        if let Some(responses) = clients.get(&id) {
+                            let _ = responses.send(HostResponse::ShuttingDown).await;
+                        }
+                        break;
+                    }
                     ServerEvent::Disconnected { id } => {
                         clients.remove(&id);
                     }
@@ -1357,8 +1414,153 @@ mod tests {
         let row = result.unwrap().expect("the unregistered host is running");
         assert!(row.running);
         assert_eq!(row.unsaved_buffers, Some(3));
-        host.abort();
-        let _ = host.await;
+        service
+            .try_stop(10, project.clone(), root.clone(), false)
+            .unwrap();
+        let Some(WorkspaceEvent::Stopped {
+            generation,
+            selector,
+            result,
+        }) = events.recv().await
+        else {
+            panic!("workspace service ended")
+        };
+        assert_eq!(generation, 10);
+        assert_eq!(selector, project);
+        result.expect("directory stop should reach the unregistered current host");
+        host.await.unwrap();
+        fs::remove_dir_all(runtime).unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_registered_incompatible_host_lists_without_a_handshake_and_requires_force_to_stop() {
+        use crate::workspace::transport::{EndpointMetadata, LocalServer, PROTOCOL_VERSION};
+
+        let root = unique_test_root("registered-incompatible-host");
+        let project = root.join("project");
+        let runtime = std::env::temp_dir().join(format!(
+            "ryt-ri-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(project.join(".runyte")).unwrap();
+        fs::create_dir_all(&runtime).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&runtime, fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let project = project.canonicalize().unwrap();
+        let endpoint = LocalEndpoint::discover_with_runtime(
+            &project.join(".runyte"),
+            &project,
+            Some(&runtime),
+        )
+        .unwrap();
+        let server = match LocalServer::bind(&endpoint).await {
+            Ok(server) => server,
+            Err(error)
+                if error.chain().any(|cause| {
+                    cause
+                        .downcast_ref::<io::Error>()
+                        .is_some_and(|error| error.raw_os_error() == Some(libc::EPERM))
+                }) =>
+            {
+                fs::remove_dir_all(runtime).unwrap();
+                fs::remove_dir_all(root).unwrap();
+                return;
+            }
+            Err(error) => panic!("cannot bind test transport: {error:#}"),
+        };
+
+        let child_ready = root.join("delayed-child-ready");
+        let mut child = std::process::Command::new("/bin/sh")
+            .env("RUNYTE_DELAY_READY", &child_ready)
+            .args([
+                "-c",
+                "trap 'sleep 0.7; exit 0' TERM; : > \"$RUNYTE_DELAY_READY\"; while :; do sleep 0.05; done",
+            ])
+            .spawn()
+            .unwrap();
+        let child_pid = child.id();
+        let reaper = std::thread::spawn(move || child.wait());
+        for _ in 0..100 {
+            if child_ready.exists() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(child_ready.exists(), "delayed child never became ready");
+        let older_protocol = PROTOCOL_VERSION.checked_sub(1).unwrap();
+        let mut metadata: EndpointMetadata =
+            serde_json::from_slice(&fs::read(endpoint.metadata()).unwrap()).unwrap();
+        metadata.protocol = older_protocol;
+        metadata.pid = child_pid;
+        let metadata_bytes = serde_json::to_vec_pretty(&metadata).unwrap();
+        fs::write(endpoint.metadata(), &metadata_bytes).unwrap();
+        let registry = runtime.join("runyte/hosts");
+        let registration = registry.join(format!("{}.json", endpoint.id()));
+        fs::write(&registration, metadata_bytes).unwrap();
+
+        let rows = refresh(
+            std::slice::from_ref(&registry),
+            None,
+            Path::new(".runyte"),
+            Some(&runtime),
+        )
+        .await
+        .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert!(rows[0].running);
+        assert_eq!(rows[0].project_root, project);
+        assert_eq!(rows[0].incompatible_protocol, Some(older_protocol));
+        assert_eq!(rows[0].unsaved_buffers, None);
+
+        let error = stop(
+            std::slice::from_ref(&registry),
+            &project,
+            &root,
+            Path::new(".runyte"),
+            None,
+            Some(&runtime),
+            false,
+        )
+        .await
+        .unwrap_err();
+        let message = format!("{error:#}");
+        assert!(message.contains("Force close"), "{message}");
+        assert!(
+            message.contains("live terminals or unsaved buffers"),
+            "{message}"
+        );
+        assert!(super::super::transport::process_is_alive(child_pid).unwrap());
+
+        let force_started = std::time::Instant::now();
+        stop(
+            std::slice::from_ref(&registry),
+            &project,
+            &root,
+            Path::new(".runyte"),
+            None,
+            Some(&runtime),
+            true,
+        )
+        .await
+        .unwrap();
+        assert!(
+            force_started.elapsed() >= Duration::from_millis(600),
+            "force stop returned before the incompatible host completed its delayed exit"
+        );
+        reaper.join().unwrap().unwrap();
+        assert!(!endpoint.metadata().exists());
+        assert!(!endpoint.socket().exists());
+        assert!(!registration.exists());
+
+        drop(server);
         fs::remove_dir_all(runtime).unwrap();
         fs::remove_dir_all(root).unwrap();
     }
@@ -1396,6 +1598,48 @@ mod tests {
             );
             assert_eq!(fs::read(&path).unwrap(), invalid);
         }
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn recents_reject_oversized_files_and_semantically_unbounded_entries() {
+        let root = unique_test_root("bounded-recents");
+        let path = root.join("cache/workspaces.json");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+
+        fs::write(&path, vec![b' '; MAX_RECENTS_BYTES + 1]).unwrap();
+        let error = read_recents(Some(&path)).unwrap_err().to_string();
+        assert!(error.contains("exceed"), "{error}");
+
+        let repeated = (0..=RECENT_LIMIT)
+            .map(|_| RecentWorkspace {
+                project_root_bytes: encode_path(Path::new("/")),
+                name: None,
+                number: None,
+            })
+            .collect::<Vec<_>>();
+        fs::write(&path, serde_json::to_vec(&repeated).unwrap()).unwrap();
+        let error = read_recents(Some(&path)).unwrap_err().to_string();
+        assert!(error.contains("more than"), "{error}");
+
+        let invalid_path = [RecentWorkspace {
+            project_root_bytes: vec![b'/'; MAX_PERSISTED_PATH_BYTES + 1],
+            name: None,
+            number: None,
+        }];
+        fs::write(&path, serde_json::to_vec(&invalid_path).unwrap()).unwrap();
+        let error = read_recents(Some(&path)).unwrap_err().to_string();
+        assert!(error.contains("project directory exceeds"), "{error}");
+
+        let invalid_name = [RecentWorkspace {
+            project_root_bytes: encode_path(Path::new("/")),
+            name: Some("x".repeat(MAX_HOST_NAME_BYTES + 1)),
+            number: None,
+        }];
+        fs::write(&path, serde_json::to_vec(&invalid_name).unwrap()).unwrap();
+        let error = read_recents(Some(&path)).unwrap_err().to_string();
+        assert!(error.contains("session name cannot exceed"), "{error}");
 
         fs::remove_dir_all(root).unwrap();
     }
@@ -2921,6 +3165,13 @@ fn prepare_recents_parent(parent: &Path) -> Result<()> {
 }
 
 fn write_recents(path: &Path, paths: &[RecentEntry], _lock: &RecentFileLock) -> Result<()> {
+    anyhow::ensure!(
+        paths.len() <= RECENT_LIMIT,
+        "workspace recents contain more than {RECENT_LIMIT} entries"
+    );
+    for entry in paths {
+        validate_recent_entry(entry)?;
+    }
     let entries = paths
         .iter()
         .map(|entry| RecentWorkspace {
@@ -2934,7 +3185,12 @@ fn write_recents(path: &Path, paths: &[RecentEntry], _lock: &RecentFileLock) -> 
     };
     prepare_recents_parent(parent)?;
     let temporary = path.with_extension(format!("tmp-{}", std::process::id()));
-    fs::write(&temporary, serde_json::to_vec_pretty(&entries)?)?;
+    let bytes = serde_json::to_vec_pretty(&entries)?;
+    anyhow::ensure!(
+        bytes.len() <= MAX_RECENTS_BYTES,
+        "workspace recents exceed {MAX_RECENTS_BYTES} bytes"
+    );
+    fs::write(&temporary, bytes)?;
     use std::os::unix::fs::PermissionsExt;
     fs::set_permissions(&temporary, fs::Permissions::from_mode(0o600))?;
     fs::rename(temporary, path)?;
@@ -2945,25 +3201,29 @@ fn read_recents(path: Option<&Path>) -> Result<Vec<RecentEntry>> {
     let Some(path) = path else {
         return Ok(Vec::new());
     };
-    let bytes = match fs::read(path) {
+    let bytes = match read_bounded_recents(path) {
         Ok(bytes) => bytes,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(error) => return Err(error.into()),
     };
     let entries: Vec<RecentWorkspace> = serde_json::from_slice(&bytes)?;
+    anyhow::ensure!(
+        entries.len() <= RECENT_LIMIT,
+        "workspace recents contain more than {RECENT_LIMIT} entries"
+    );
+    for entry in &entries {
+        validate_recent_workspace(entry)?;
+    }
     let mut entries = entries
         .into_iter()
         .map(|entry| {
             RecentEntry::new(
                 decode_path(entry.project_root_bytes),
                 entry.name,
-                entry
-                    .number
-                    .filter(|number| (1..=MAX_WORKSPACE_NUMBER).contains(number)),
+                entry.number,
             )
         })
         .filter(|entry| entry.project_root.is_dir())
-        .take(RECENT_LIMIT)
         .collect::<Vec<_>>();
     // A number identifies one workspace, so a file hand-edited into holding a
     // duplicate is repaired on the way in rather than reaching a listing where
@@ -2977,4 +3237,71 @@ fn read_recents(path: Option<&Path>) -> Result<Vec<RecentEntry>> {
         }
     }
     Ok(entries)
+}
+
+fn read_bounded_recents(path: &Path) -> io::Result<Vec<u8>> {
+    let file = fs::File::open(path)?;
+    let mut bytes = Vec::new();
+    file.take(MAX_RECENTS_BYTES.saturating_add(1) as u64)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() > MAX_RECENTS_BYTES {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("workspace recents exceed {MAX_RECENTS_BYTES} bytes"),
+        ));
+    }
+    Ok(bytes)
+}
+
+fn validate_recent_workspace(entry: &RecentWorkspace) -> Result<()> {
+    validate_persisted_path(
+        &entry.project_root_bytes,
+        "recent workspace project directory",
+    )?;
+    let project_root = decode_path(entry.project_root_bytes.clone());
+    anyhow::ensure!(
+        project_root.is_absolute(),
+        "recent workspace project directory is not absolute"
+    );
+    if let Some(name) = entry.name.as_deref() {
+        validate_host_name(name)?;
+    }
+    if let Some(number) = entry.number {
+        anyhow::ensure!(
+            (1..=MAX_WORKSPACE_NUMBER).contains(&number),
+            "recent workspace number must be between 1 and {MAX_WORKSPACE_NUMBER}"
+        );
+    }
+    Ok(())
+}
+
+fn validate_recent_entry(entry: &RecentEntry) -> Result<()> {
+    validate_persisted_path(
+        &encode_path(&entry.project_root),
+        "recent workspace project directory",
+    )?;
+    anyhow::ensure!(
+        entry.project_root.is_absolute(),
+        "recent workspace project directory is not absolute"
+    );
+    if let Some(name) = entry.name.as_deref() {
+        validate_host_name(name)?;
+    }
+    if let Some(number) = entry.number {
+        anyhow::ensure!(
+            (1..=MAX_WORKSPACE_NUMBER).contains(&number),
+            "recent workspace number must be between 1 and {MAX_WORKSPACE_NUMBER}"
+        );
+    }
+    Ok(())
+}
+
+fn validate_persisted_path(bytes: &[u8], description: &str) -> Result<()> {
+    anyhow::ensure!(!bytes.is_empty(), "{description} is empty");
+    anyhow::ensure!(
+        bytes.len() <= MAX_PERSISTED_PATH_BYTES,
+        "{description} exceeds {MAX_PERSISTED_PATH_BYTES} bytes"
+    );
+    anyhow::ensure!(!bytes.contains(&0), "{description} contains a null byte");
+    Ok(())
 }

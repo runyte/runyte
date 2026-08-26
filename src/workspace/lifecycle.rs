@@ -34,24 +34,37 @@ use super::transport::{
 /// often to retry while waiting.
 const READINESS_ATTEMPTS: u32 = 200;
 const READINESS_INTERVAL: Duration = Duration::from_millis(25);
+/// A lifecycle control peer must complete its welcome or one request/response
+/// exchange promptly. Interactive connections remain long-lived; this bound
+/// applies only to the short control operations in this module.
+#[cfg(not(test))]
+const LIFECYCLE_IO_TIMEOUT: Duration = Duration::from_secs(2);
+#[cfg(test)]
+const LIFECYCLE_IO_TIMEOUT: Duration = Duration::from_millis(200);
 
 /// Opens a non-interactive control connection and completes its handshake.
 ///
 /// This doubles as the liveness check for a host: a successful return means the
 /// host is accepting connections and speaks a compatible protocol.
 pub async fn connect_control(endpoint: &LocalEndpoint) -> Result<LocalClient> {
-    let mut client = LocalClient::connect(endpoint, FrameGeometry::default(), false).await?;
-    match client.recv().await? {
-        Some(response @ HostResponse::Welcome { .. }) => {
-            validate_welcome(&response, false).map_err(anyhow::Error::msg)?;
-            Ok(client)
+    tokio::time::timeout(LIFECYCLE_IO_TIMEOUT, async {
+        let mut client = LocalClient::connect(endpoint, FrameGeometry::default(), false).await?;
+        match client.recv().await? {
+            Some(response @ HostResponse::Welcome { .. }) => {
+                validate_welcome(&response, false).map_err(anyhow::Error::msg)?;
+                Ok(client)
+            }
+            Some(HostResponse::Refused { message } | HostResponse::Error { message }) => {
+                anyhow::bail!(message)
+            }
+            Some(response) => {
+                anyhow::bail!("unexpected workspace handshake response: {response:?}")
+            }
+            None => anyhow::bail!("workspace host disconnected during handshake"),
         }
-        Some(HostResponse::Refused { message } | HostResponse::Error { message }) => {
-            anyhow::bail!(message)
-        }
-        Some(response) => anyhow::bail!("unexpected workspace handshake response: {response:?}"),
-        None => anyhow::bail!("workspace host disconnected during handshake"),
-    }
+    })
+    .await
+    .context("workspace host handshake timed out")?
 }
 
 /// Resolves a running host by full ID, unambiguous ID prefix, exact name, or
@@ -133,45 +146,54 @@ pub(super) fn resolve_registered_host_from(
 /// Changes a running host's persistent display name.
 pub async fn rename_host(endpoint: &LocalEndpoint, name: &str) -> Result<()> {
     let mut client = connect_control(endpoint).await?;
-    client
-        .send(&ClientRequest::RenameHost {
-            name: name.to_owned(),
-        })
-        .await?;
-    match client.recv().await? {
-        Some(HostResponse::HostRenamed { name: renamed }) if renamed == name => Ok(()),
-        Some(HostResponse::Refused { message } | HostResponse::Error { message }) => {
-            anyhow::bail!(message)
+    tokio::time::timeout(LIFECYCLE_IO_TIMEOUT, async {
+        client
+            .send(&ClientRequest::RenameHost {
+                name: name.to_owned(),
+            })
+            .await?;
+        match client.recv().await? {
+            Some(HostResponse::HostRenamed { name: renamed }) if renamed == name => Ok(()),
+            Some(HostResponse::Refused { message } | HostResponse::Error { message }) => {
+                anyhow::bail!(message)
+            }
+            Some(response) => anyhow::bail!("unexpected host-rename response: {response:?}"),
+            None => anyhow::bail!("workspace host disconnected while being renamed"),
         }
-        Some(response) => anyhow::bail!("unexpected host-rename response: {response:?}"),
-        None => anyhow::bail!("workspace host disconnected while being renamed"),
-    }
+    })
+    .await
+    .context("workspace host rename request timed out")?
 }
 
 /// Asks a running host to stop. The host owns the dirty-buffer refusal.
 pub async fn shutdown_host(endpoint: &LocalEndpoint) -> Result<()> {
     let mut client = connect_control(endpoint).await?;
-    client.send(&ClientRequest::Shutdown).await?;
-    match client.recv().await? {
-        Some(HostResponse::ShuttingDown) | None => Ok(()),
-        Some(HostResponse::Refused { message } | HostResponse::Error { message }) => {
-            anyhow::bail!(message)
-        }
-        Some(response) => anyhow::bail!("unexpected shutdown response: {response:?}"),
-    }
+    shutdown_request(&mut client, ClientRequest::Shutdown, "shutdown").await
 }
 
 /// Explicitly stops a host even when doing so abandons protected live state.
 pub async fn force_shutdown_host(endpoint: &LocalEndpoint) -> Result<()> {
     let mut client = connect_control(endpoint).await?;
-    client.send(&ClientRequest::ForceShutdown).await?;
-    match client.recv().await? {
-        Some(HostResponse::ShuttingDown) | None => Ok(()),
-        Some(HostResponse::Refused { message } | HostResponse::Error { message }) => {
-            anyhow::bail!(message)
+    shutdown_request(&mut client, ClientRequest::ForceShutdown, "force-shutdown").await
+}
+
+async fn shutdown_request(
+    client: &mut LocalClient,
+    request: ClientRequest,
+    description: &str,
+) -> Result<()> {
+    tokio::time::timeout(LIFECYCLE_IO_TIMEOUT, async {
+        client.send(&request).await?;
+        match client.recv().await? {
+            Some(HostResponse::ShuttingDown) | None => Ok(()),
+            Some(HostResponse::Refused { message } | HostResponse::Error { message }) => {
+                anyhow::bail!(message)
+            }
+            Some(response) => anyhow::bail!("unexpected {description} response: {response:?}"),
         }
-        Some(response) => anyhow::bail!("unexpected force-shutdown response: {response:?}"),
-    }
+    })
+    .await
+    .with_context(|| format!("workspace host {description} request timed out"))?
 }
 
 /// Stops a host whose protocol this build cannot speak, then clears the
@@ -238,6 +260,15 @@ pub fn resolve_workspace_endpoint(
     state: &Path,
     config_path: Option<&Path>,
 ) -> Result<LocalEndpoint> {
+    resolve_workspace_endpoint_with_runtime(requested, state, config_path, None)
+}
+
+pub(super) fn resolve_workspace_endpoint_with_runtime(
+    requested: &Path,
+    state: &Path,
+    config_path: Option<&Path>,
+    runtime: Option<&Path>,
+) -> Result<LocalEndpoint> {
     anyhow::ensure!(
         requested.is_dir(),
         "workspace is unavailable: {}",
@@ -258,7 +289,12 @@ pub fn resolve_workspace_endpoint(
         reserved_user_roots.push(cache_root);
     }
     project_root::validate_state_root(&state_root, &reserved_user_roots)?;
-    LocalEndpoint::discover(&state_root, &project_root)
+    match runtime {
+        Some(runtime) => {
+            LocalEndpoint::discover_with_runtime(&state_root, &project_root, Some(runtime))
+        }
+        None => LocalEndpoint::discover(&state_root, &project_root),
+    }
 }
 
 /// Reaches a workspace, starting its detached host when necessary.
@@ -507,5 +543,117 @@ impl Drop for ReapedChild {
                 let _ = child.wait();
             });
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        fs, io,
+        sync::atomic::{AtomicU64, Ordering},
+    };
+
+    use super::*;
+    use crate::{
+        protocol::FeatureGroup,
+        workspace::transport::{LocalServer, PROTOCOL_VERSION, ServerEvent},
+    };
+
+    fn endpoint(label: &str) -> (PathBuf, LocalEndpoint) {
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        let root = Path::new("/tmp").join(format!(
+            "ryt-lifecycle-{label}-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let endpoint = LocalEndpoint::new(&root.join(".runyte"), &root).unwrap();
+        (root, endpoint)
+    }
+
+    async fn bind_or_skip(endpoint: &LocalEndpoint) -> Option<LocalServer> {
+        match LocalServer::bind(endpoint).await {
+            Ok(server) => Some(server),
+            Err(error)
+                if error.chain().any(|cause| {
+                    cause
+                        .downcast_ref::<io::Error>()
+                        .is_some_and(|error| error.raw_os_error() == Some(libc::EPERM))
+                }) =>
+            {
+                None
+            }
+            Err(error) => panic!("cannot bind lifecycle test transport: {error:#}"),
+        }
+    }
+
+    async fn welcome(responses: &super::super::transport::ResponseSender) {
+        responses
+            .send(HostResponse::Welcome {
+                protocol: PROTOCOL_VERSION,
+                pid: std::process::id(),
+                features: vec![
+                    FeatureGroup::Control,
+                    FeatureGroup::Buffers,
+                    FeatureGroup::Wait,
+                ],
+                host_version: env!("CARGO_PKG_VERSION").to_owned(),
+            })
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn control_handshake_has_a_deadline() {
+        let (root, endpoint) = endpoint("handshake-timeout");
+        let Some(mut server) = bind_or_skip(&endpoint).await else {
+            fs::remove_dir_all(root).unwrap();
+            return;
+        };
+        let target = endpoint.clone();
+        let connection = tokio::spawn(async move { connect_control(&target).await });
+        let Some(ServerEvent::Connected { responses, .. }) = server.recv().await else {
+            panic!("control client did not connect")
+        };
+
+        let error = match connection.await.unwrap() {
+            Ok(_) => panic!("silent host unexpectedly completed its handshake"),
+            Err(error) => error.to_string(),
+        };
+        assert!(error.contains("handshake timed out"), "{error}");
+
+        drop(responses);
+        drop(server);
+        endpoint.cleanup().unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn lifecycle_request_response_has_a_deadline() {
+        let (root, endpoint) = endpoint("response-timeout");
+        let Some(mut server) = bind_or_skip(&endpoint).await else {
+            fs::remove_dir_all(root).unwrap();
+            return;
+        };
+        let target = endpoint.clone();
+        let rename = tokio::spawn(async move { rename_host(&target, "renamed").await });
+        let Some(ServerEvent::Connected { responses, .. }) = server.recv().await else {
+            panic!("control client did not connect")
+        };
+        welcome(&responses).await;
+        assert!(matches!(
+            server.recv().await,
+            Some(ServerEvent::Request {
+                request: ClientRequest::RenameHost { .. },
+                ..
+            })
+        ));
+
+        let error = rename.await.unwrap().unwrap_err().to_string();
+        assert!(error.contains("rename request timed out"), "{error}");
+
+        drop(server);
+        endpoint.cleanup().unwrap();
+        fs::remove_dir_all(root).unwrap();
     }
 }
