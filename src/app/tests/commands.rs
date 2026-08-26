@@ -444,6 +444,37 @@ fn vim_operator_counts_linewise_registers_change_and_cw_are_shared_edits() {
 }
 
 #[test]
+fn vim_visual_line_change_preserves_crlf_registers_and_undo_grouping() {
+    for (source, row, changed, register, inserted) in [
+        (
+            "one\r\ntwo\r\n",
+            0,
+            "\r\ntwo\r\n",
+            "one\r\n",
+            "X\r\ntwo\r\n",
+        ),
+        ("one\r\ntwo", 1, "one\r\n", "two\r\n", "one\r\nX"),
+    ] {
+        let mut app = vim_app(source);
+        set_cursor(&mut app, row, 0);
+
+        press(&mut app, 'V');
+        press(&mut app, 'c');
+
+        assert_eq!(text(&app), changed, "change row {row}");
+        assert_eq!(app.registers[&'"'].text, register, "register row {row}");
+        assert!(app.registers[&'"'].linewise);
+        assert_eq!(app.mode, Mode::Insert);
+
+        press(&mut app, 'X');
+        assert_eq!(text(&app), inserted, "insert row {row}");
+        key(&mut app, KeyCode::Escape, Modifiers::NONE);
+        press(&mut app, 'u');
+        assert_eq!(text(&app), source, "undo row {row}");
+    }
+}
+
+#[test]
 fn vim_visual_syntax_objects_are_half_open_and_failed_objects_are_atomic() {
     let path = temporary("vim-syntax-objects.rs");
     fs::write(&path, "fn café(x: i32) { x; }\n").unwrap();

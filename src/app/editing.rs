@@ -4,7 +4,7 @@
 
 // Application-module dependencies:
 use super::{
-    App, BTreeMap, Change, DelimiterPair, DirectoryRegister, HashSet, HistoryReset, Jump,
+    App, BTreeMap, Buffer, Change, DelimiterPair, DirectoryRegister, HashSet, HistoryReset, Jump,
     JumpLabels, KeyCode, KeyStroke, LanguageId, ListAction, ListPicker, Mode, Modifiers, Motion,
     Offset, Outline, Pane, PickerItem, Press, Range, Regex, Register, Result,
     SearchSelectionPresentation, Selection, SelectionSemantics, ShrinkResult, SyntaxError,
@@ -616,26 +616,30 @@ impl App {
                     .chars()
                     .take_while(|character| matches!(character, ' ' | '\t'))
                     .collect::<String>();
+                let existing_terminator = line_terminator(buffer, row);
+                let terminator = existing_terminator
+                    .map(|(terminator, _)| terminator)
+                    .unwrap_or_else(|| preferred_line_ending(buffer, row));
                 if !smart_newline {
-                    return format!("\n{prefix}");
+                    return format!("{terminator}{prefix}");
                 }
                 let list_indent = list_continuation_indent(&before_caret);
                 // The syntax contract answers for an existing newline token,
                 // so a mid-line caret deliberately probes its pre-edit row
                 // terminator. An unterminated final row has no truthful token
                 // to query and falls back to its exact leading prefix.
-                let line_end = buffer.line_to_offset(row) + buffer.line_len(row);
+                let newline_offset = existing_terminator.map(|(_, offset)| offset);
                 let add_level = list_indent.is_none()
-                    && syntax
-                        .filter(|_| buffer.char_at(line_end) == Some('\n'))
-                        .and_then(|syntax| {
+                    && newline_offset
+                        .and_then(|newline_offset| syntax.map(|syntax| (syntax, newline_offset)))
+                        .and_then(|(syntax, newline_offset)| {
                             syntax
-                                .newline_indent(buffer.text(), &self.registry, line_end)
+                                .newline_indent(buffer.text(), &self.registry, newline_offset)
                                 .ok()
                         })
                         .is_some_and(|indent| indent.begin_levels + indent.always_levels > 0);
                 format!(
-                    "\n{}{}",
+                    "{terminator}{}{}",
                     list_indent.as_deref().unwrap_or(&prefix),
                     if add_level { unit.as_str() } else { "" }
                 )
@@ -652,18 +656,19 @@ impl App {
 
     pub(super) fn edit_backspace(&mut self) {
         let buffer_id = self.active().buffer;
-        let changes = self
+        let spans = self
             .active()
             .selection
             .ranges()
             .iter()
             .filter_map(|range| {
                 if !range.is_empty() {
-                    return Some(Change::new(range.from(), range.to(), ""));
+                    return Some((range.from(), range.to()));
                 }
-                (range.head > 0).then(|| Change::new(range.head - 1, range.head, ""))
+                (range.head > 0).then_some((range.head - 1, range.head))
             })
-            .collect();
+            .collect::<Vec<_>>();
+        let changes = crlf_safe_deletions(&self.buffers[buffer_id], spans);
         self.edit(Transaction::new(changes));
         self.normalize_buffer(buffer_id);
     }
@@ -671,18 +676,19 @@ impl App {
     pub(super) fn edit_delete(&mut self) {
         let buffer_id = self.active().buffer;
         let len = self.active_buffer().len_chars();
-        let changes = self
+        let spans = self
             .active()
             .selection
             .ranges()
             .iter()
             .filter_map(|range| {
                 if !range.is_empty() {
-                    return Some(Change::new(range.from(), range.to(), ""));
+                    return Some((range.from(), range.to()));
                 }
-                (range.head < len).then(|| Change::new(range.head, range.head + 1, ""))
+                (range.head < len).then_some((range.head, range.head + 1))
             })
-            .collect();
+            .collect::<Vec<_>>();
+        let changes = crlf_safe_deletions(&self.buffers[buffer_id], spans);
         self.edit(Transaction::new(changes));
         self.normalize_buffer(buffer_id);
     }
@@ -764,7 +770,8 @@ impl App {
             .ranges()
             .iter()
             .map(|range| {
-                let column = buffer.position_of(range.head).col;
+                let position = buffer.position_of(range.head);
+                let column = visual_column(&buffer.line_string(position.row), position.col, width);
                 " ".repeat(width - column % width)
             })
             .collect();
@@ -802,19 +809,27 @@ impl App {
             })
             .collect();
 
-        // Each insertion adds exactly one character, so the caret for the
-        // n-th insertion sits n characters further along than in the original
-        // document. Opening below lands after the new terminator; opening
-        // above lands on the row the existing text was pushed off.
-        let heads: Vec<Offset> = points
+        let insertions = points
             .iter()
-            .enumerate()
-            .map(|(index, point)| point + index + usize::from(!above))
+            .zip(&rows)
+            .map(|(point, row)| (*point, preferred_line_ending(buffer, *row)))
+            .collect::<Vec<_>>();
+        // Earlier insertions shift every later caret by their complete line
+        // terminator. Opening below lands after its new terminator; opening
+        // above lands before it, on the empty row just created.
+        let mut inserted = 0;
+        let heads: Vec<Offset> = insertions
+            .iter()
+            .map(|(point, terminator)| {
+                let head = point + inserted + usize::from(!above) * terminator.len();
+                inserted += terminator.len();
+                head
+            })
             .collect();
 
-        let changes = points
-            .iter()
-            .map(|point| Change::new(*point, *point, "\n"))
+        let changes = insertions
+            .into_iter()
+            .map(|(point, terminator)| Change::new(point, point, terminator))
             .collect();
         if !self.edit(Transaction::new(changes)) {
             return;
@@ -1665,12 +1680,23 @@ impl App {
     /// nothing but whitespace is emptied outright.
     pub(super) fn trim_trailing_whitespace_in_selection(&mut self) {
         let buffer = self.active_buffer();
+        let half_open = matches!(
+            self.active().selection_semantics(),
+            SelectionSemantics::HalfOpen | SelectionSemantics::VimLinewise
+        );
         let mut rows: Vec<usize> = self
             .active()
             .selection
             .ranges()
             .iter()
-            .flat_map(|range| buffer.offset_to_row(range.from())..=buffer.offset_to_row(range.to()))
+            .flat_map(|range| {
+                let last = if half_open && !range.is_empty() {
+                    range.to() - 1
+                } else {
+                    range.to()
+                };
+                buffer.offset_to_row(range.from())..=buffer.offset_to_row(last)
+            })
             .collect();
         rows.sort_unstable();
         rows.dedup();
@@ -1837,7 +1863,14 @@ impl App {
             .selection
             .ranges()
             .iter()
-            .map(|range| buffer.position_of(range.from()).col)
+            .map(|range| {
+                let position = buffer.position_of(range.from());
+                visual_column(
+                    &buffer.line_string(position.row),
+                    position.col,
+                    self.config.editor.tab_width,
+                )
+            })
             .collect();
         let Some(target) = columns.iter().copied().max() else {
             return;
@@ -1921,10 +1954,11 @@ impl App {
         }
         let linewise = transient_line_selection
             || self.active().selection_semantics() == SelectionSemantics::VimLinewise;
-        let mut text = self.selection_text();
-        if linewise && !text.ends_with('\n') {
-            text.push('\n');
-        }
+        let text = if linewise {
+            self.line_register().text
+        } else {
+            self.selection_text()
+        };
         let directory = match self.directory_register(TransferMode::Move, false) {
             Ok(directory) => directory,
             Err(error) => {
@@ -1956,7 +1990,7 @@ impl App {
                     )
                 } else if first_row > 0 {
                     Change::new(
-                        buffer.line_to_offset(first_row).saturating_sub(1),
+                        buffer.line_to_offset(first_row - 1) + buffer.line_len(first_row - 1),
                         buffer.len_chars(),
                         "",
                     )
@@ -1985,11 +2019,17 @@ impl App {
             .filter(|(from, to)| from < to)
             .map(|(from, to)| {
                 // Replace characters one for one, leaving line structure alone.
-                let text = buffer
-                    .slice(from, to)
-                    .chars()
-                    .map(|ch| if ch == '\n' { '\n' } else { replacement })
-                    .collect::<String>();
+                let source = buffer.slice(from, to);
+                let mut text = String::with_capacity(source.len());
+                for (index, character) in source.chars().enumerate() {
+                    if character == '\n'
+                        || character == '\r' && buffer.char_at(from + index + 1) == Some('\n')
+                    {
+                        text.push(character);
+                    } else {
+                        text.push(replacement);
+                    }
+                }
                 Change::new(from, to, text)
             })
             .collect();
@@ -2225,13 +2265,12 @@ impl App {
         }
         let linewise = transient_line_selection
             || self.active().selection_semantics() == SelectionSemantics::VimLinewise;
-        let mut text = self.selection_text();
-        if linewise && !text.ends_with('\n') {
-            text.push('\n');
+        if linewise {
+            return self.line_register();
         }
         Register {
-            text,
-            linewise,
+            text: self.selection_text(),
+            linewise: false,
             directory: None,
         }
     }
@@ -2240,19 +2279,38 @@ impl App {
     /// pastes as whole lines.
     fn line_register(&self) -> Register {
         let buffer = self.active_buffer();
+        let half_open = matches!(
+            self.active().selection_semantics(),
+            SelectionSemantics::HalfOpen | SelectionSemantics::VimLinewise
+        );
         let mut rows: Vec<usize> = self
             .active()
             .selection
             .ranges()
             .iter()
-            .flat_map(|range| buffer.offset_to_row(range.from())..=buffer.offset_to_row(range.to()))
+            .flat_map(|range| {
+                let last = if half_open && !range.is_empty() {
+                    range.to() - 1
+                } else {
+                    range.to()
+                };
+                buffer.offset_to_row(range.from())..=buffer.offset_to_row(last)
+            })
             .collect();
         rows.sort_unstable();
         rows.dedup();
         Register {
             text: rows
                 .into_iter()
-                .map(|row| format!("{}\n", buffer.line_string(row)))
+                .map(|row| {
+                    format!(
+                        "{}{}",
+                        buffer.line_string(row),
+                        line_terminator(buffer, row)
+                            .map(|(terminator, _)| terminator)
+                            .unwrap_or_else(|| preferred_line_ending(buffer, row))
+                    )
+                })
                 .collect(),
             linewise: true,
             directory: None,
@@ -2294,9 +2352,18 @@ impl App {
                     } else {
                         let line_end = buffer.line_to_offset(row) + buffer.line_len(row);
                         if line_end == buffer.len_chars() && line_end > 0 {
-                            text.insert(0, '\n');
+                            let terminator = if text.ends_with("\r\n") {
+                                "\r\n"
+                            } else {
+                                preferred_line_ending(buffer, row)
+                            };
+                            text.insert_str(0, terminator);
                         }
-                        (line_end + 1).min(buffer.len_chars())
+                        if row < buffer.last_row() {
+                            buffer.line_to_offset(row + 1)
+                        } else {
+                            buffer.len_chars()
+                        }
                     }
                 } else if before {
                     range.from()
@@ -2412,4 +2479,71 @@ impl App {
         let selected = std::mem::replace(&mut self.selected_register, '"');
         self.registers.get(&selected).cloned().unwrap_or_default()
     }
+}
+
+/// Existing line terminator and the offset of its `\n` token.
+fn line_terminator(buffer: &Buffer, row: usize) -> Option<(&'static str, Offset)> {
+    let end = buffer.line_to_offset(row) + buffer.line_len(row);
+    if buffer.char_at(end) == Some('\r') && buffer.char_at(end + 1) == Some('\n') {
+        Some(("\r\n", end + 1))
+    } else if buffer.char_at(end) == Some('\n') {
+        Some(("\n", end))
+    } else {
+        None
+    }
+}
+
+/// Line ending to use for a newly inserted row near `row`.
+fn preferred_line_ending(buffer: &Buffer, row: usize) -> &'static str {
+    line_terminator(buffer, row)
+        .or_else(|| {
+            (0..row)
+                .rev()
+                .find_map(|candidate| line_terminator(buffer, candidate))
+        })
+        .or_else(|| {
+            (row + 1..buffer.len_lines()).find_map(|candidate| line_terminator(buffer, candidate))
+        })
+        .map_or("\n", |(terminator, _)| terminator)
+}
+
+/// Expands deletions at either side of CRLF and unions any expansions that
+/// now overlap. A selection or insert caret must never leave half a line
+/// terminator behind.
+fn crlf_safe_deletions(
+    buffer: &Buffer,
+    spans: impl IntoIterator<Item = (Offset, Offset)>,
+) -> Vec<Change> {
+    let mut spans = spans
+        .into_iter()
+        .filter(|(from, to)| from < to)
+        .map(|(mut from, mut to)| {
+            if from > 0
+                && buffer.char_at(from) == Some('\n')
+                && buffer.char_at(from - 1) == Some('\r')
+            {
+                from -= 1;
+            }
+            if buffer.char_at(to - 1) == Some('\r') && buffer.char_at(to) == Some('\n') {
+                to += 1;
+            }
+            (from, to)
+        })
+        .collect::<Vec<_>>();
+    spans.sort_unstable();
+
+    let mut merged: Vec<(Offset, Offset)> = Vec::with_capacity(spans.len());
+    for (from, to) in spans {
+        if let Some((_, previous_to)) = merged.last_mut()
+            && from <= *previous_to
+        {
+            *previous_to = (*previous_to).max(to);
+        } else {
+            merged.push((from, to));
+        }
+    }
+    merged
+        .into_iter()
+        .map(|(from, to)| Change::new(from, to, ""))
+        .collect()
 }

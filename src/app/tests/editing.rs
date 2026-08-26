@@ -841,6 +841,133 @@ fn y_yanks_the_caret_character_and_capital_y_yanks_whole_lines() {
 }
 
 #[test]
+fn line_commands_hold_back_a_half_open_selection_end_row() {
+    let mut yank = App::new(Config::default(), None).unwrap();
+    seed(&mut yank, "alpha  \nbravo  \ncharlie");
+    let next_row = yank.active_buffer().line_to_offset(1);
+    yank.active_mut().selection = Selection::single(Range::new(0, next_row));
+    yank.active_mut()
+        .mark_selection_semantics(SelectionSemantics::HalfOpen);
+
+    press(&mut yank, 'Y');
+
+    assert_eq!(yank.registers[&'"'].text, "alpha  \n");
+
+    let mut trim = App::new(Config::default(), None).unwrap();
+    seed(&mut trim, "alpha  \nbravo  \ncharlie");
+    let next_row = trim.active_buffer().line_to_offset(1);
+    trim.active_mut().selection = Selection::single(Range::new(0, next_row));
+    trim.active_mut()
+        .mark_selection_semantics(SelectionSemantics::HalfOpen);
+
+    press(&mut trim, '_');
+
+    assert_eq!(text(&trim), "alpha\nbravo  \ncharlie");
+}
+
+#[test]
+fn replace_preserves_crlf_terminators_inside_a_selection() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    seed(&mut app, "ab\r\ncd");
+    app.mode = Mode::Select;
+    app.active_mut().selection = Selection::single(Range::new(0, 5));
+
+    press(&mut app, 'r');
+    press(&mut app, 'z');
+
+    assert_eq!(text(&app), "zz\r\nzz");
+}
+
+#[test]
+fn linewise_delete_and_paste_keep_crlf_terminators_atomic() {
+    let mut delete = App::new(Config::default(), None).unwrap();
+    seed(&mut delete, "alpha\r\nbravo");
+    set_cursor(&mut delete, 1, 0);
+
+    press(&mut delete, 'x');
+    press(&mut delete, 'd');
+
+    assert_eq!(text(&delete), "alpha");
+    assert_eq!(delete.registers[&'"'].text, "bravo\r\n");
+    press(&mut delete, 'p');
+    assert_eq!(text(&delete), "alpha\r\nbravo\r\n");
+
+    let mut paste = App::new(Config::default(), None).unwrap();
+    seed(&mut paste, "alpha\r\nbravo");
+    paste.registers.insert(
+        '"',
+        Register {
+            text: "copied\n".to_owned(),
+            linewise: true,
+            directory: None,
+        },
+    );
+
+    press(&mut paste, 'p');
+
+    assert_eq!(text(&paste), "alpha\r\ncopied\nbravo");
+}
+
+#[test]
+fn open_line_uses_the_surrounding_crlf_style_as_one_undo_group() {
+    for (binding, expected) in [('o', "alpha\r\n\r\nbravo"), ('O', "\r\nalpha\r\nbravo")] {
+        let mut app = App::new(Config::default(), None).unwrap();
+        seed(&mut app, "alpha\r\nbravo");
+
+        press(&mut app, binding);
+
+        assert_eq!(text(&app), expected, "{binding}");
+        key(&mut app, KeyCode::Escape, Modifiers::NONE);
+        press(&mut app, 'u');
+        assert_eq!(text(&app), "alpha\r\nbravo", "undo {binding}");
+    }
+}
+
+#[test]
+fn tab_stops_and_selection_alignment_use_display_columns() {
+    let mut tab = App::new(Config::default(), None).unwrap();
+    tab.config.editor.tab_width = 4;
+    seed(&mut tab, "界");
+    tab.mode = Mode::Insert;
+    tab.active_mut().selection = Selection::point(1);
+
+    key(&mut tab, KeyCode::Tab, Modifiers::NONE);
+
+    assert_eq!(text(&tab), "界  ");
+
+    let mut tab_after_tab = App::new(Config::default(), None).unwrap();
+    tab_after_tab.config.editor.tab_width = 4;
+    seed(&mut tab_after_tab, "\tx");
+    tab_after_tab.mode = Mode::Insert;
+    tab_after_tab.active_mut().selection = Selection::point(1);
+
+    key(&mut tab_after_tab, KeyCode::Tab, Modifiers::NONE);
+
+    assert_eq!(text(&tab_after_tab), "\t    x");
+
+    let mut align = App::new(Config::default(), None).unwrap();
+    align.config.editor.tab_width = 4;
+    seed(&mut align, "界x\nabc");
+    let second = align.active_buffer().line_to_offset(1) + 3;
+    align.active_mut().selection = Selection::new(vec![Range::point(1), Range::point(second)], 0);
+
+    press(&mut align, '&');
+
+    assert_eq!(text(&align), "界 x\nabc");
+
+    let mut align_after_tab = App::new(Config::default(), None).unwrap();
+    align_after_tab.config.editor.tab_width = 4;
+    seed(&mut align_after_tab, "\tx\nabcde");
+    let second = align_after_tab.active_buffer().line_to_offset(1) + 5;
+    align_after_tab.active_mut().selection =
+        Selection::new(vec![Range::point(1), Range::point(second)], 0);
+
+    press(&mut align_after_tab, '&');
+
+    assert_eq!(text(&align_after_tab), "\t x\nabcde");
+}
+
+#[test]
 fn x_delete_pastes_whole_lines_but_v_delete_remains_characterwise() {
     let mut line = App::new(Config::default(), None).unwrap();
     seed(&mut line, "alpha\nbravo\ncharlie");

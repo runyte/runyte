@@ -304,6 +304,46 @@ fn insert_mode_word_and_line_deletion_bindings_edit_without_literal_input() {
 }
 
 #[test]
+fn insert_backspace_and_delete_treat_crlf_as_one_line_break() {
+    let mut backspace = App::new(Config::default(), None).unwrap();
+    seed(&mut backspace, "alpha\r\nbravo");
+    backspace.mode = Mode::Insert;
+    backspace.active_mut().selection =
+        Selection::point(backspace.active_buffer().line_to_offset(1));
+
+    key(&mut backspace, KeyCode::Backspace, Modifiers::NONE);
+
+    assert_eq!(text(&backspace), "alphabravo");
+
+    let mut delete = App::new(Config::default(), None).unwrap();
+    seed(&mut delete, "alpha\r\nbravo");
+    delete.mode = Mode::Insert;
+    delete.active_mut().selection = Selection::point(5);
+
+    key(&mut delete, KeyCode::Delete, Modifiers::NONE);
+
+    assert_eq!(text(&delete), "alphabravo");
+
+    let mut selected_cr = App::new(Config::default(), None).unwrap();
+    seed(&mut selected_cr, "alpha\r\nbravo");
+    selected_cr.mode = Mode::Insert;
+    selected_cr.active_mut().selection = Selection::single(Range::new(5, 6));
+
+    key(&mut selected_cr, KeyCode::Backspace, Modifiers::NONE);
+
+    assert_eq!(text(&selected_cr), "alphabravo");
+
+    let mut selected_lf = App::new(Config::default(), None).unwrap();
+    seed(&mut selected_lf, "alpha\r\nbravo");
+    selected_lf.mode = Mode::Insert;
+    selected_lf.active_mut().selection = Selection::single(Range::new(6, 7));
+
+    key(&mut selected_lf, KeyCode::Delete, Modifiers::NONE);
+
+    assert_eq!(text(&selected_lf), "alphabravo");
+}
+
+#[test]
 fn alt_delete_deletes_forward_by_word_class_across_unicode_and_lines() {
     let mut app = App::new(Config::default(), None).unwrap();
     seed(&mut app, "one \nβeta!");

@@ -1032,7 +1032,7 @@ context; scoped explorer keys are documented under
 | `,` / `Space s c` / `Alt-,` | Keep only the primary selection / drop it |
 | `)` / `(` | Make the next / previous selection primary |
 | `Alt-)` / `Alt-(` | Rotate selection contents forward / backward |
-| `&` | Pad until every cursor shares the rightmost column |
+| `&` | Pad until every cursor shares the rightmost display column |
 | `_` | Delete trailing whitespace from every selected line; `%` then `_` strips the buffer |
 | `Alt-_` | Shrink every selection past the whitespace at its ends, without changing the text |
 | `d` / `c` | Delete / change selection or cursor character; `d` after transient `x`/`X` cuts whole lines |
@@ -1148,7 +1148,7 @@ case.
 | `Space / f` / `Space f` | Find project files, open buffers, or terminals; `Tab` switches modes and `Ctrl-t` toggles preview |
 | `Space s c` | Keep only the primary selection in any multi-selection |
 | `Space s e` / `Space s b` | Put a cursor at the end / start of every selected line |
-| `Space s a` or `&` | Pad with spaces until every cursor shares the rightmost column |
+| `Space s a` or `&` | Pad with spaces until every cursor shares the rightmost display column |
 | `Space s k` / `Space s r` | Keep / remove selections matching a typed regular expression |
 
 The directory-scoped pickers have no key. `:file-picker-directory` and

@@ -106,10 +106,16 @@ pub fn hard_wrap(text: &str, width: usize) -> String {
     let width = width.max(1);
     let mut output = String::with_capacity(text.len());
     for part in text.split_inclusive('\n') {
-        let (line, newline) = part
-            .strip_suffix('\n')
-            .map_or((part, ""), |line| (line, "\n"));
-        output.push_str(&hard_wrap_line(line, width));
+        let (line, newline) = part.strip_suffix('\n').map_or((part, ""), |line| {
+            line.strip_suffix('\r')
+                .map_or((line, "\n"), |line| (line, "\r\n"))
+        });
+        let wrapped = hard_wrap_line(line, width);
+        if newline == "\r\n" {
+            output.push_str(&wrapped.replace('\n', "\r\n"));
+        } else {
+            output.push_str(&wrapped);
+        }
         output.push_str(newline);
     }
     output
@@ -212,6 +218,20 @@ pub fn join_lines(text: &str, delimiter: &str) -> String {
 /// Markdown, consecutive `#` and `//` line comments are refilled while
 /// repeating their leader on every output line.
 pub fn reflow(text: &str, width: usize, kind: ReflowKind) -> String {
+    let crlf = text
+        .char_indices()
+        .filter(|(_, character)| *character == '\n')
+        .try_fold(false, |_, (index, _)| {
+            (index > 0 && text.as_bytes()[index - 1] == b'\r').then_some(true)
+        })
+        .unwrap_or(false);
+    if crlf {
+        return reflow_lf(&text.replace("\r\n", "\n"), width, kind).replace('\n', "\r\n");
+    }
+    reflow_lf(text, width, kind)
+}
+
+fn reflow_lf(text: &str, width: usize, kind: ReflowKind) -> String {
     let markdown = kind == ReflowKind::Markdown;
     let lines: Vec<&str> = text.split('\n').collect();
     let mut output = Vec::with_capacity(lines.len());
@@ -922,6 +942,7 @@ mod tests {
         );
         assert_eq!(hard_wrap("abcdefghij", 4), "abcd\nefgh\nij");
         assert_eq!(hard_wrap("zażółć gęślą", 6), "zażółć\ngęślą");
+        assert_eq!(hard_wrap("abcd\r\nnext\r\n", 3), "abc\r\nd\r\nnex\r\nt\r\n");
     }
 
     #[test]
@@ -1009,6 +1030,18 @@ mod tests {
         assert_eq!(
             reflow(source, 24, ReflowKind::Plain),
             "    // alpha beta gamma\n    // delta epsilon\n    //\n    // - first list item\n    //   has words\n    // - second stays\n    //   separate\ncode();\n# shell comments can\n# also be filled"
+        );
+    }
+
+    #[test]
+    fn reflow_preserves_consistent_crlf_line_endings() {
+        assert_eq!(
+            reflow(
+                "// alpha beta\r\n// gamma delta epsilon\r\n",
+                18,
+                ReflowKind::Source,
+            ),
+            "// alpha beta\r\n// gamma delta\r\n// epsilon\r\n"
         );
     }
 

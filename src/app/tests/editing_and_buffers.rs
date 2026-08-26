@@ -1421,6 +1421,27 @@ fn syntax_newline_indentation_is_one_pre_edit_multi_caret_transaction() {
 }
 
 #[test]
+fn smart_newline_preserves_crlf_and_uses_its_syntax_indent() {
+    let path = temporary("syntax-indent-crlf.rs");
+    let original = "fn outer() {\r\n    if ready {\r\n    }\r\n}\r\n";
+    fs::write(&path, original).unwrap();
+    let mut app = App::new(Config::default(), Some(path.clone())).unwrap();
+    app.mode = Mode::Insert;
+    let caret = app.buffers[0].line_to_offset(1) + app.buffers[0].line_len(1);
+    app.replace_active_selection(Selection::point(caret));
+
+    app.edit_newline();
+
+    assert_eq!(
+        text(&app),
+        "fn outer() {\r\n    if ready {\r\n        \r\n    }\r\n}\r\n"
+    );
+    app.undo();
+    assert_eq!(text(&app), original);
+    fs::remove_file(path).unwrap();
+}
+
+#[test]
 fn syntax_newline_mid_line_and_unterminated_eof_degrade_without_losing_prefix() {
     let path = temporary("syntax-indent-positions.rs");
     fs::write(&path, "fn outer() {\n    let value = 1;\n    tail").unwrap();
@@ -1565,6 +1586,18 @@ fn disabled_smart_newline_keeps_leading_indent_without_list_alignment() {
 
         assert_eq!(text(&app), expected, "{line}");
     }
+
+    let mut config = Config::default();
+    config.editor.smart_newline = false;
+    let mut crlf = App::new(config, None).unwrap();
+    seed(&mut crlf, "   alpha\r\nnext");
+    crlf.mode = Mode::Insert;
+    let caret = crlf.active_buffer().line_len(0);
+    crlf.replace_active_selection(Selection::point(caret));
+
+    crlf.edit_newline();
+
+    assert_eq!(text(&crlf), "   alpha\r\n   \r\nnext");
 }
 
 #[test]

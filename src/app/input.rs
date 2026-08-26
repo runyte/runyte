@@ -17,8 +17,8 @@ use super::{
     KeyStroke, Keymap, LineDirection, ListPicker, LspCommand, MaximizedView, Mode, Modifiers,
     Motion, Offset, Path, PathBuf, PathHint, PickerTarget, PointerButton, PointerDrag,
     PointerEvent, PointerEventKind, PointerOutcome, PreparedView, ProgramAction, ProgramActionMenu,
-    ProgramChoice, PromptKind, Range, RangeIntent, Register, RequestKind, ResourceFinder, Result,
-    SearchMode, SearchQuery, Selection, SelectionSemantics, SettingId, SettingType, SettingValue,
+    ProgramChoice, PromptKind, Range, RangeIntent, RequestKind, ResourceFinder, Result, SearchMode,
+    SearchQuery, Selection, SelectionSemantics, SettingId, SettingType, SettingValue,
     SignatureContext, StashScope, SyntaxObject, SyntaxObjectPart, SyntaxSelectionTransform,
     SystemClipboard, Transaction, ViewAlignment, VimMotion, VimOperator, VimRangeTarget,
     VimTextObject, buffer_language, char_to_byte, display_path, enclosing_area, expand_home_path,
@@ -1832,15 +1832,9 @@ impl App {
 
     fn change_vim_lines(&mut self) {
         let buffer_id = self.active().buffer;
-        let mut text = self.selection_text();
-        if !text.ends_with('\n') {
-            text.push('\n');
-        }
-        self.write_selected_register(Register {
-            text,
-            linewise: true,
-            directory: None,
-        });
+        let register = self.yank_value(true);
+        self.write_selected_register(register);
+        self.buffers[buffer_id].begin_undo_group();
         let buffer = self.active_buffer();
         let spans = self.operative_spans();
         let primary = self.active().selection.primary_index();
@@ -1852,7 +1846,11 @@ impl App {
             .into_iter()
             .filter_map(|(from, to)| {
                 let delete_to = if to > from && buffer.char_at(to - 1) == Some('\n') {
-                    to - 1
+                    if to - from >= 2 && buffer.char_at(to - 2) == Some('\r') {
+                        to - 2
+                    } else {
+                        to - 1
+                    }
                 } else {
                     to
                 };
