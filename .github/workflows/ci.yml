@@ -1,0 +1,103 @@
+# SPDX-License-Identifier: MPL-2.0
+
+name: CI
+
+on:
+  push:
+    # `fix/ci` is temporary: it lets this workflow be exercised on its own
+    # branch before it merges. Remove it once CI is on `dev`.
+    branches: [main, dev, fix/ci]
+  pull_request:
+    branches: [main, dev]
+
+# Read-only by default. No job here needs to write to the repository; the
+# release workflow is the only place that raises this.
+permissions:
+  contents: read
+
+# A newer push to the same ref makes an in-flight run obsolete. Cancelling it
+# frees the runner instead of paying for a result nobody will read.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  gates:
+    name: Gates (ubuntu-latest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Every tree-sitter grammar crate runs a build script. Leaving the
+          # job token in .git/config would put it within reach of one.
+          persist-credentials: false
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: Check formatting
+        run: cargo fmt --check
+
+      - name: Lint
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Test
+        run: cargo test
+
+  macos:
+    name: Tests (macos-latest)
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      # PTY handling and terminal emulation are where macOS and Linux diverge,
+      # so the suite runs in full here rather than just building.
+      - name: Test
+        run: cargo test
+
+  floor:
+    name: Release build floor (ubuntu-22.04)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      # Linux release artifacts are built on 22.04 so they inherit its glibc
+      # 2.35 floor. This job is the early warning that the image still builds:
+      # it fails on an ordinary push rather than during a release.
+      - name: Build
+        run: cargo build --release --locked
+
+  msrv:
+    name: MSRV (Rust 1.88)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # rustup ships on the runner image, so pinning a toolchain needs no
+      # third-party action.
+      - name: Install Rust 1.88
+        run: rustup toolchain install 1.88 --profile minimal
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: msrv
+
+      # Keeps `rust-version = "1.88"` in Cargo.toml honest.
+      - name: Check
+        run: cargo +1.88 check --all-targets --locked
