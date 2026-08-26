@@ -270,8 +270,10 @@ fn control_w_focus_moves_directly_from_terminal_insert_without_sending_input() {
     let mut session = Session::start("/bin/sh -c 'stty raw -echo; printf ready; cat -v'");
     assert!(session.settle(|app| terminal_text(app).contains("ready")));
     let terminal = session.app.active_terminal().unwrap();
-    session.colon("vsplit");
+    session.app.handle_key(KeyStroke::ctrl('w')).unwrap();
+    session.type_text("v");
     assert!(session.app.active_terminal().is_none());
+    assert!(!session.app.terminals.get(terminal).unwrap().reviewing());
     render(&mut session.app, 60, 12);
 
     session.app.handle_key(KeyStroke::ctrl('w')).unwrap();
@@ -297,7 +299,8 @@ fn fast_pane_keys_move_out_of_terminal_input_without_reaching_the_child() {
         Session::start_with(config, "/bin/sh -c 'stty raw -echo; printf ready; cat -v'");
     assert!(session.settle(|app| terminal_text(app).contains("ready")));
     let terminal = session.app.active_terminal().unwrap();
-    session.colon("vsplit");
+    session.app.handle_key(KeyStroke::ctrl('w')).unwrap();
+    session.type_text("v");
     assert!(session.app.active_terminal().is_none());
     render(&mut session.app, 60, 12);
 
@@ -329,7 +332,8 @@ fn pane_keys_dispatch_over_a_read_only_buffer_hidden_by_the_terminal() {
 
         let mut session = Session::start_from_app(app, "/bin/cat");
         let terminal = session.app.active_terminal().unwrap();
-        session.colon("vsplit");
+        session.app.handle_key(KeyStroke::ctrl('w')).unwrap();
+        session.type_text("v");
         assert!(session.app.active_terminal().is_none());
         render(&mut session.app, 60, 12);
 
@@ -472,7 +476,7 @@ fn moving_away_from_a_live_terminal_does_not_dim_it() {
 }
 
 #[test]
-fn control_w_focus_returns_a_reviewing_terminal_to_live_input() {
+fn control_w_focus_preserves_review_until_an_insert_key() {
     for (split, suffix) in [('v', 'h'), ('s', 'k'), ('v', 'w')] {
         let mut session = Session::start("/bin/cat");
         let first = session.app.active_terminal().unwrap();
@@ -492,6 +496,10 @@ fn control_w_focus_returns_a_reviewing_terminal_to_live_input() {
         session.app.handle_key(KeyStroke::ctrl('w')).unwrap();
         session.type_text(&suffix.to_string());
         assert_eq!(session.app.active_terminal(), Some(first));
+        assert_eq!(session.app.mode, Mode::Normal);
+        assert!(session.app.terminals.get(first).unwrap().reviewing());
+
+        session.type_text("i");
         assert_eq!(session.app.mode, Mode::Insert);
         assert!(!session.app.terminals.get(first).unwrap().reviewing());
         session.type_text("x");
@@ -500,7 +508,7 @@ fn control_w_focus_returns_a_reviewing_terminal_to_live_input() {
 }
 
 #[test]
-fn control_w_from_document_insert_returns_a_reviewing_terminal_to_live_input() {
+fn control_w_from_document_insert_preserves_terminal_review() {
     let mut session = Session::start("/bin/cat");
     let terminal = session.app.active_terminal().unwrap();
 
@@ -517,8 +525,8 @@ fn control_w_from_document_insert_returns_a_reviewing_terminal_to_live_input() {
     session.type_text("h");
 
     assert_eq!(session.app.active_terminal(), Some(terminal));
-    assert_eq!(session.app.mode, Mode::Insert);
-    assert!(!session.app.terminals.get(terminal).unwrap().reviewing());
+    assert_eq!(session.app.mode, Mode::Normal);
+    assert!(session.app.terminals.get(terminal).unwrap().reviewing());
 }
 
 #[test]
@@ -1081,7 +1089,8 @@ fn exiting_the_last_terminal_reveals_its_buffer_without_quitting_runyte() {
 #[test]
 fn exiting_a_terminal_preserves_its_pane_when_another_pane_exists() {
     let mut session = Session::start("/bin/sh");
-    session.colon("vsplit");
+    session.app.handle_key(KeyStroke::ctrl('w')).unwrap();
+    session.type_text("v");
     assert_eq!(session.app.panes.len(), 2);
     session
         .app
@@ -1100,7 +1109,7 @@ fn exiting_a_terminal_preserves_its_pane_when_another_pane_exists() {
 }
 
 #[test]
-fn closing_a_document_pane_focuses_terminal_in_live_input() {
+fn closing_a_document_pane_preserves_terminal_review() {
     let mut session = Session::start("/bin/cat");
     let terminal = session.app.active_terminal().unwrap();
     session.leave_input();
@@ -1111,8 +1120,8 @@ fn closing_a_document_pane_focuses_terminal_in_live_input() {
     session.colon("quit!");
 
     assert_eq!(session.app.active_terminal(), Some(terminal));
-    assert_eq!(session.app.mode, Mode::Insert);
-    assert!(!session.app.terminals.get(terminal).unwrap().reviewing());
+    assert_eq!(session.app.mode, Mode::Normal);
+    assert!(session.app.terminals.get(terminal).unwrap().reviewing());
 }
 
 #[test]
@@ -1233,7 +1242,7 @@ fn buffer_picker_retargets_a_terminal_pane_to_a_different_open_buffer() {
 }
 
 #[test]
-fn showing_a_reviewed_terminal_returns_to_live_input_before_pane_focus() {
+fn showing_a_reviewed_terminal_preserves_review() {
     let mut session = Session::start("/bin/cat");
     let id = session.app.active_terminal().unwrap();
 
@@ -1244,19 +1253,19 @@ fn showing_a_reviewed_terminal_returns_to_live_input_before_pane_focus() {
 
     // Every existing-session activation reaches `show_terminal`: the manager,
     // resource finder, and `:terminal-show` differ only in how they choose the
-    // id. Reopening through the manager used to produce [insert] [review].
+    // id. Showing the session is not itself a request to resume child input.
     session.type_text(" tt");
     session.press(KeyCode::Enter);
     assert_eq!(session.app.active_terminal(), Some(id));
-    assert_eq!(session.app.mode, Mode::Insert);
-    assert!(!session.app.terminals.get(id).unwrap().reviewing());
+    assert_eq!(session.app.mode, Mode::Normal);
+    assert!(session.app.terminals.get(id).unwrap().reviewing());
 
     render(&mut session.app, 60, 12);
     session.app.handle_key(KeyStroke::ctrl('w')).unwrap();
     session.type_text("h");
     assert!(session.app.active_terminal().is_none());
     assert_eq!(session.app.mode, Mode::Normal);
-    assert!(!session.app.terminals.get(id).unwrap().reviewing());
+    assert!(session.app.terminals.get(id).unwrap().reviewing());
 }
 
 #[test]

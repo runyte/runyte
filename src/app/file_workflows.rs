@@ -7,10 +7,10 @@ use super::{
     App, Axis, Buffer, BufferKind, ContentAlignment, DiffSession, DiffSide,
     DirectoryReloadConfirmation, DirectoryView, DocumentSyntax, FsConfirmation, FsOperation,
     FsPlan, GeneratedViewIdentity, HashSet, InputGrammar, Layout, MAX_DIFF_BYTES, MaximizedPane,
-    MaximizedView, Mode, PaneDirectory, Path, PathBuf, PromptKind, Result, Selection, Transaction,
-    TransferMode, bail, buffer_language, diff_row_for_identity, diff_row_identity, enclosing_area,
-    ensure, expand_home_path, external_open, fs, open_or_new_at_identity, parse_buffer,
-    resolved_operation_path, trailing_whitespace_changes,
+    MaximizedView, Mode, PaneDirectory, Path, PathBuf, PromptKind, Result, Selection, TerminalId,
+    Transaction, TransferMode, bail, buffer_language, diff_row_for_identity, diff_row_identity,
+    enclosing_area, ensure, expand_home_path, external_open, fs, open_or_new_at_identity,
+    parse_buffer, resolved_operation_path, trailing_whitespace_changes,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1527,19 +1527,17 @@ impl App {
     }
 
     /// Gives a pointer press ownership of its pane without carrying document
-    /// Insert across a focus boundary. A terminal destination starts live
-    /// input, while a press in the current document pane can still reposition
-    /// its Insert caret and the drag path remains free to enter Select mode.
+    /// Insert across a focus boundary. A live terminal destination starts
+    /// input, while a reviewed terminal keeps its snapshot and a press in the
+    /// current document pane can still reposition its Insert caret. The drag
+    /// path remains free to enter Select mode.
     pub(super) fn activate_pane_from_pointer(&mut self, pane: usize) {
         if pane != self.active_pane && self.mode == Mode::Insert {
             self.enter_normal_mode();
         }
         self.activate_pane(pane);
         if let Some(id) = self.terminal_of_pane(pane) {
-            if let Some(session) = self.terminals.get_mut(id) {
-                session.scroll_to_live();
-            }
-            self.mode = Mode::Insert;
+            self.settle_terminal_focus(id);
         }
     }
 
@@ -1617,20 +1615,33 @@ impl App {
     }
 
     /// Settles a user-driven pane focus change at the destination's natural
-    /// mode. Terminals always resume live input; documents reached directly
-    /// from Terminal Insert remain protected by Normal mode.
+    /// mode. Live terminals resume input, reviewed terminals keep their
+    /// snapshot, and documents reached directly from Terminal Insert remain
+    /// protected by Normal mode.
     fn finish_pane_focus(&mut self, previous_pane: usize, terminal_input: bool) {
         if self.active_pane == previous_pane {
             return;
         }
         if let Some(id) = self.active_terminal() {
-            if let Some(session) = self.terminals.get_mut(id) {
-                session.scroll_to_live();
-            }
-            self.mode = Mode::Insert;
+            self.settle_terminal_focus(id);
             self.grammar.reset();
         } else if terminal_input {
             self.enter_normal_mode();
+        }
+    }
+
+    /// Chooses the mode of a terminal that gained focus without interpreting
+    /// focus itself as an input request. Review belongs to the terminal
+    /// session, so it survives application-wide mode changes in other panes.
+    pub(super) fn settle_terminal_focus(&mut self, id: TerminalId) {
+        let Some(session) = self.terminals.get_mut(id) else {
+            return;
+        };
+        if session.reviewing() {
+            self.mode = Mode::Normal;
+        } else {
+            session.scroll_to_live();
+            self.mode = Mode::Insert;
         }
     }
 
@@ -1639,19 +1650,15 @@ impl App {
     /// Mode is application-wide, while review belongs to one terminal
     /// session. A terminal reached from another terminal can therefore still
     /// own a snapshot captured before the source — terminal or document —
-    /// entered Insert. Reaching it through the Insert window prefix means live
-    /// input, so discard that old review just as an explicit `i` would. A
-    /// document reached from Terminal Insert instead uses Normal so the next
-    /// key cannot edit it accidentally.
+    /// entered Insert. Pane focus preserves that snapshot; a document reached
+    /// from Terminal Insert instead uses Normal so the next key cannot edit it
+    /// accidentally.
     fn finish_insert_window_command(&mut self, insert_mode: bool, terminal_input: bool) {
         if !insert_mode {
             return;
         }
         if let Some(id) = self.active_terminal() {
-            if let Some(session) = self.terminals.get_mut(id) {
-                session.scroll_to_live();
-            }
-            self.mode = Mode::Insert;
+            self.settle_terminal_focus(id);
         } else if terminal_input {
             self.enter_normal_mode();
         }

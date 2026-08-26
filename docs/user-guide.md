@@ -489,14 +489,15 @@ In **Insert mode keys go to the program except for Runyte's terminal exit and
 window prefix**. `Ctrl-\` leaves input in live Normal mode. `Ctrl-w` instead
 begins the registered window namespace: `Ctrl-w h/j/k/l` and their
 control/arrow aliases move to another pane immediately. Every focus route,
-including these keys, pane cycling, and a mouse click, activates a terminal
-destination in Insert mode and returns any captured review to its live screen;
-a document reached from Terminal Insert starts in Normal. `Ctrl-w v/s` and
-their control-key aliases split the only pane while leaving the child live in
-the original pane. Directional navigation and splitting never capture a
-terminal review snapshot. Canceling the prefix leaves the terminal in Insert
-mode. `Escape`, `Ctrl-c`, `Ctrl-o`, `Space`, and ordinary keys still reach the
-child unchanged.
+including these keys, pane cycling, and a mouse click, activates a live Normal
+terminal destination in Insert mode. A terminal that already owns a captured
+review stays in Normal/review mode until `i`, `a`, `o`, or another terminal
+insert key returns it to the live screen; a document reached from Terminal
+Insert starts in Normal. `Ctrl-w v/s` and their control-key aliases split the
+only pane while leaving the child live in the original pane. Directional
+navigation and splitting never capture a terminal review snapshot. Canceling
+the prefix leaves the terminal in Insert mode. `Escape`, `Ctrl-c`, `Ctrl-o`,
+`Space`, and ordinary keys still reach the child unchanged.
 
 Turning on `editor.fast_pane_keys` adds `Ctrl-h/j/k/l` to that short list of
 keys the terminal does not own, so a pane move costs one keystroke instead of
@@ -539,9 +540,10 @@ it — and it is refused for a paste that ended a line the child has already run
 since what ran is the child's. `i` discards review and types again. The
 title marks review state and newer output, and a reviewed terminal's text is
 grayed out, so a frozen still image never looks like a child that is still
-printing. Moving to another pane does not start review, and that terminal keeps
-its own colours. Alternate-screen review contains only its captured visible
-screen.
+printing. Moving to another pane does not start review; returning to a terminal
+that is already under review does not discard its snapshot. A live terminal
+keeps its own colours. Alternate-screen review contains only its captured
+visible screen.
 
 For real Runyte editing over what a terminal printed, `Space t y`
 (`:terminal-output`) copies the session into an ordinary read-only buffer.
@@ -820,9 +822,10 @@ a terminal that cannot reliably distinguish file contents from input events.
 Terminals with mouse reporting support can click an editor body to focus it
 and place the caret, Shift-click to extend, drag to select, scroll the pane
 under the pointer, and drag a shared pane border to resize the split. Clicking
-a terminal pane focuses it in Insert mode and returns any captured review to
-the live screen; clicking another pane focuses it in Normal mode. Dragging on
-from a document press still creates a selection and enters Select mode.
+a live terminal pane focuses it in Insert mode; clicking a reviewed terminal
+keeps it in Normal/review mode until a terminal insert key returns to the live
+screen. Clicking another pane focuses it in Normal mode. Dragging on from a
+document press still creates a selection and enters Select mode.
 Pointer coordinates are resolved through the same fold- and wrap-aware
 prepared rows used for rendering, so collapsed lines and wide Unicode glyphs
 do not create a second coordinate model. Mouse capture is disabled again on
@@ -1567,9 +1570,9 @@ message without affecting the internal registers.
 | `Space t y` | Copy this terminal's output into a read-only buffer (`:terminal-output`) |
 | `Space t s` | Send the selection — or the whole buffer — to a terminal as one bracketed paste (`:terminal-send [id\|name]`) |
 | `Tab`, then Close in `Space t t` | Explicitly end and forget the selected terminal |
-| `Ctrl-w h/j/k/l` or arrows in Terminal Insert | Move directly without capturing review; a terminal destination starts Insert, a document destination Normal |
+| `Ctrl-w h/j/k/l` or arrows in Terminal Insert | Move directly without capturing or discarding review; a live terminal destination starts Insert, a reviewed terminal stays in review, and a document destination starts Normal |
 | `Ctrl-h/j/k/l` in Terminal Insert | The exact same destination behavior without the prefix, when `editor.fast_pane_keys` is on; the child stops receiving those four keys |
-| `Ctrl-w w` in Terminal Insert | Cycle panes with the same terminal-Insert/document-Normal destination behavior |
+| `Ctrl-w w` in Terminal Insert | Cycle panes with the same live-terminal/reviewed-terminal/document destination behavior |
 | `Ctrl-w v/s` in Terminal Insert | Create a vertical/horizontal document split while leaving the terminal child live without review |
 | `Ctrl-\` in a terminal | First leave INSERT for live NORMAL, then enter review on the second press. Reported as `Ctrl-4` by terminals without the enhanced keyboard protocol, and both work |
 | `i` / `a` in a terminal | Type again, returning to the live screen first |

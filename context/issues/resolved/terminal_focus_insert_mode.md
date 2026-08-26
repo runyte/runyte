@@ -37,13 +37,31 @@ without pressing `i`;
 `control_w_focus_moves_directly_from_terminal_insert_without_sending_input`
 and `fast_pane_keys_move_out_of_terminal_input_without_reaching_the_child`
 cover terminal/document boundaries and child-input isolation;
-`control_w_focus_returns_a_reviewing_terminal_to_live_input` covers stale
-review removal for directional and cycling commands;
-`closing_a_document_pane_focuses_terminal_in_live_input` covers the pane-close
+`control_w_focus_preserves_review_until_an_insert_key` covers terminal review
+for directional and cycling commands;
+`closing_a_document_pane_preserves_terminal_review` covers the pane-close
 successor path; and
 `control_backslash_steps_from_terminal_input_through_normal_to_review` pins the
-unchanged staged transition. `pointer_focus_uses_insert_for_a_terminal_and_normal_for_a_document`
-in `src/app.rs` retains the matching mouse behavior.
+unchanged staged transition.
+`pointer_focus_uses_insert_for_a_live_terminal_and_preserves_review` in
+`src/app/tests/presentation_and_settings.rs` retains the matching mouse
+behavior.
+
+A later behavior refinement kept that consistent destination-based boundary
+while qualifying a terminal's natural mode by its own retained state.
+`App::settle_terminal_focus` now starts Insert only for a live terminal; a
+terminal that already owns a review snapshot keeps it and gains focus in
+Normal until an explicit terminal insert key returns to live input. The same
+boundary covers directional and cycling commands, pointer focus, pane-close
+successor focus, and showing an existing terminal session. Protocol version 36
+keeps this host-owned transition consistent for attached clients. Current
+coverage lives in `tests/terminal.rs` tests
+`control_w_focus_preserves_review_until_an_insert_key`,
+`control_w_from_document_insert_preserves_terminal_review`,
+`closing_a_document_pane_preserves_terminal_review`, and
+`showing_a_reviewed_terminal_preserves_review`, plus
+`pointer_focus_uses_insert_for_a_live_terminal_and_preserves_review` in
+`src/app/tests/presentation_and_settings.rs`.
 
 ## Report
 

@@ -30,7 +30,7 @@ without adding a dispatch exception or a second keymap.
 Coverage lives in `tests/terminal.rs`: test
 `control_backslash_steps_from_terminal_input_through_normal_to_review` covers
 both `Ctrl-\` and legacy `Ctrl-4`; test
-`directional_pane_keys_focus_another_terminal_in_live_normal` covers all four
+`directional_pane_keys_focus_another_terminal_in_insert` covers all four
 directions with prefixed and fast keys; tests
 `control_w_focus_moves_directly_from_terminal_insert_without_sending_input`
 and `fast_pane_keys_move_out_of_terminal_input_without_reaching_the_child`

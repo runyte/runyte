@@ -350,11 +350,10 @@ fn a_reported_terminal_click_enters_input_before_forwarding() {
 
 #[cfg(unix)]
 #[test]
-fn pointer_focus_uses_insert_for_a_terminal_and_normal_for_a_document() {
+fn pointer_focus_uses_insert_for_a_live_terminal_and_preserves_review() {
     let mut app = App::new(Config::default(), None).unwrap();
     app.open_terminal(Some("/bin/cat".to_owned()));
     let terminal = app.active_terminal().unwrap();
-    app.terminals.get_mut(terminal).unwrap().begin_review();
     app.mode = Mode::Normal;
     app.panes.insert(1, Pane::new(0));
     app.layout = Layout::Split {
@@ -408,6 +407,25 @@ fn pointer_focus_uses_insert_for_a_terminal_and_normal_for_a_document() {
     .unwrap();
     assert_eq!(app.active_pane, 1);
     assert_eq!(app.mode, Mode::Normal);
+
+    app.terminals.get_mut(terminal).unwrap().begin_review();
+    app.handle_pointer(
+        PointerEvent {
+            kind: PointerEventKind::Down(PointerButton::Left),
+            column: terminal_body.x,
+            row: terminal_body.y,
+            modifiers: Modifiers::NONE,
+        },
+        &view,
+    )
+    .unwrap();
+    assert_eq!(app.active_pane, 0);
+    assert_eq!(app.mode, Mode::Normal);
+    assert!(app.terminals.get(terminal).unwrap().reviewing());
+
+    app.handle_key(KeyStroke::char('i')).unwrap();
+    assert_eq!(app.mode, Mode::Insert);
+    assert!(!app.terminals.get(terminal).unwrap().reviewing());
 }
 
 #[test]

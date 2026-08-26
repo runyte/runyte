@@ -183,15 +183,11 @@ impl App {
         }
         self.move_terminal_to_pane(id, self.active_pane);
         self.last_terminal = Some(id);
-        // Showing a terminal is an explicit request to type into its live
-        // child. The session may still own review captured before it was
-        // hidden or moved, so settle both halves of the state transition:
-        // application-wide Insert and terminal-local live output.
-        self.terminals
-            .get_mut(id)
-            .expect("shown terminal exists")
-            .scroll_to_live();
-        self.mode = Mode::Insert;
+        // Showing a terminal changes which content the pane owns; it is not
+        // itself an input command. Preserve a review captured before the
+        // session was hidden or moved, while a still-live terminal starts in
+        // its natural input mode.
+        self.settle_terminal_focus(id);
     }
 
     /// Makes one pane the sole visible owner of a terminal session.

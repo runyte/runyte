@@ -27,10 +27,10 @@ destination accidentally. The same boundary covers directional focus,
 next-window cycling, and split creation.
 
 Coverage lives in `tests/terminal.rs` tests
-`control_w_focus_returns_a_reviewing_terminal_to_live_input`, which exercises
+`control_w_focus_preserves_review_until_an_insert_key`, which exercises
 side-by-side and stacked panes through `Ctrl-w h`, `Ctrl-w k`, and `Ctrl-w w`
 and verifies subsequent child input, and
-`control_w_from_document_insert_returns_a_reviewing_terminal_to_live_input`,
+`control_w_from_document_insert_preserves_terminal_review`,
 which covers entering a reviewed terminal from an Insert-mode document.
 
 A later audit found a second route to the same contradictory state:
@@ -41,16 +41,25 @@ stale snapshot and made the movement appear to have entered review. Terminal
 activation now calls `TerminalSession::scroll_to_live` before entering Insert,
 so every existing-session activation has the same live-input boundary as pane
 focus. `tests/terminal.rs` test
-`showing_a_reviewed_terminal_returns_to_live_input_before_pane_focus` covers
+`showing_a_reviewed_terminal_preserves_review` covers
 the hide, manager reopen, and subsequent `Ctrl-w h` sequence.
 
 A later terminal-mode correction made directional focus stop in live Normal
 instead of preserving Insert on a terminal destination. `Ctrl-w h/j/k/l` and
 the configured fast `Ctrl-h/j/k/l` now share that command boundary: both leave
 terminal input and focus the destination immediately, while neither captures
-review. Existing review on a terminal destination is still discarded so the
-move cannot expose stale frozen output. Coverage lives in `tests/terminal.rs`
-test `directional_pane_keys_focus_another_terminal_in_live_normal`.
+review. At that stage, existing review on a terminal destination was still
+discarded so the move could not expose stale frozen output.
+
+The current rule instead treats that snapshot as intentional retained session
+state. `App::settle_terminal_focus` keeps an already-reviewed destination in
+Normal/review, while a live Normal destination still starts Insert. This
+avoids the original contradictory `[insert] [review]` state without erasing
+the review: application mode and terminal-local state agree on Normal until an
+explicit terminal insert key discards the snapshot. Coverage lives in
+`tests/terminal.rs` tests
+`control_w_focus_preserves_review_until_an_insert_key` and
+`control_w_from_document_insert_preserves_terminal_review`.
 
 ## Report
 
