@@ -9,6 +9,7 @@ const DESCRIPTION: &str = "A fast modal terminal editor with selection-first edi
 const TAGLINE: &str = "Navigate. Select. Act.";
 const HEADING: &str = "Getting around";
 const FIRST_STEPS: &[(&str, &str)] = &[
+    (":tutorial", "learn Runyte interactively"),
     ("Space ?", "help for the current view"),
     (":help", "open the general manual"),
     ("Space f", "find files, buffers, or terminals"),

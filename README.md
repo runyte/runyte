@@ -79,6 +79,10 @@ Key execution, help, hints, and command descriptions all come from the same
 registry, so the documentation shown inside the editor cannot silently drift
 from what the keys do.
 
+Run `:tutorial` for a guided two-pane introduction to modes, selection-first
+editing, search, multiple carets, command namespaces, pane and buffer
+navigation, jump history, and persistent sessions.
+
 ## Opinionated by default
 
 Runyte has a YAML configuration file, but its built-in features are intended to

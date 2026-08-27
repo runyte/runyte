@@ -143,6 +143,7 @@ mod language;
 mod navigation_and_files;
 mod presentation_and_settings;
 mod search_and_pickers;
+mod tutorial;
 mod workspace;
 
 use commands::{type_command, type_text, vim_app};

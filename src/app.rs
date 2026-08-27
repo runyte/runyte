@@ -103,6 +103,7 @@ use crate::{
         TerminalSessions,
     },
     text::{Assoc, Change, Offset, Text, Transaction},
+    tutorial::{MotionHints, TutorialState},
     word_index::WordIndexHandle,
 };
 
@@ -139,6 +140,7 @@ mod search_history;
 mod settings_workflows;
 mod syntax_workflows;
 mod terminal_workflows;
+mod tutorial_workflows;
 mod workspace_workflows;
 
 use completion_support::*;
@@ -2535,6 +2537,7 @@ pub struct App {
     /// The buffer revision against which the visible code actions were
     /// computed. A chosen action must not edit text that has since changed.
     lsp_action_source: Option<ActionSource>,
+    tutorial: Option<TutorialState>,
     next_lsp_token: u64,
     next_completion_session: u64,
 }
@@ -2877,6 +2880,7 @@ impl App {
             pointer_drag: None,
             lsp_actions: Vec::new(),
             lsp_action_source: None,
+            tutorial: None,
             next_lsp_token: 1,
             next_completion_session: 1,
         };
@@ -2973,6 +2977,7 @@ enum ListAction {
     Macro(char),
     GitCommit(String),
     Terminal(TerminalId),
+    TutorialMotionHints(MotionHints),
     #[cfg(unix)]
     Workspace(usize),
 }

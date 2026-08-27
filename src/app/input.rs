@@ -458,6 +458,9 @@ impl App {
                 self.macros.entry(register).or_default().extend(staged);
             }
         }
+        if result.is_ok() {
+            self.reconcile_tutorial();
+        }
         self.active_action_id = previous_action;
         result
     }
@@ -1348,6 +1351,12 @@ impl App {
                         CommandOutcome::Completed
                     }
                 });
+                if !matches!(
+                    outcome,
+                    CommandOutcome::UserError(_) | CommandOutcome::Unavailable(_)
+                ) {
+                    self.note_tutorial_action(target.id(), &sequence.to_string());
+                }
                 self.report_completed_action(&sequence.to_string(), target.description(), outcome);
             }
             if let Some(mode) = self.grammar.preferred_mode()
@@ -3535,6 +3544,7 @@ impl App {
             Command::ForceSave => self.save(None, true)?,
             Command::ShowHelp => self.open_help(),
             Command::ShowAbout => self.open_about(),
+            Command::ShowTutorial => self.open_tutorial(None)?,
             Command::ActivateSetting => self.activate_selected_setting(),
             Command::FocusWindowLeft => self.focus_from_terminal_insert(-1, 0),
             Command::FocusWindowDown => self.focus_from_terminal_insert(0, 1),
@@ -4237,6 +4247,9 @@ impl App {
                     HelpInvocation::Manual(topic) => self.open_manual(topic.as_deref()),
                 }
                 return Ok(());
+            }
+            (EditorCommand::ShowTutorial, InvocationParameters::OptionalText(request)) => {
+                return self.open_tutorial(request.as_deref());
             }
             (EditorCommand::Save, InvocationParameters::OptionalPath(path)) => {
                 return match path {

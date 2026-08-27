@@ -150,6 +150,7 @@ pub enum GeneratedViewIdentity {
     /// Deliberately named internal projections and test/embedder documents.
     Named(String),
     About,
+    Tutorial,
     Manual,
     Documentation,
     GitIndex,

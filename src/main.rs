@@ -932,6 +932,7 @@ async fn run_host_server(
                             }).is_ok() {
                                 active = Some(client);
                                 last_detached = Instant::now();
+                                host.app_mut().note_frontend_attached();
                                 publish_attached_frame(&mut host, &mut active, &key_hints);
                                 terminal_frame_pending = false;
                             }
