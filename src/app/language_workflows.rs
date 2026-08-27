@@ -2583,7 +2583,7 @@ impl App {
                         self.status("this session is already stopped")
                     }
                     Some((selector, _, false, SessionAction::Forget)) => {
-                        self.forget_workspace(selector)
+                        let _ = self.forget_workspace(selector);
                     }
                     Some((_, _, true, SessionAction::Forget)) => {
                         self.status("stop this session before forgetting it")

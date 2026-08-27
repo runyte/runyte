@@ -512,13 +512,32 @@ impl App {
                         self.apply_git_response(
                             operation,
                             response,
-                            state,
+                            (Some(id), state),
                             requested_views,
                             log_view_request,
                             action,
                         );
                     }
                     Err(error) => {
+                        #[cfg(unix)]
+                        if let GitOperation::Mutate {
+                            mutation: GitMutation::RemoveWorktree { plan, .. },
+                            ..
+                        } = &operation
+                            && self.awaits_worktree_removal(Some(id), &plan.path)
+                        {
+                            self.abandon_worktree_teardown();
+                        }
+                        #[cfg(unix)]
+                        let branch_cascade = match &operation {
+                            GitOperation::Mutate {
+                                mutation: GitMutation::DeleteBranch { plan, .. },
+                                ..
+                            } => self
+                                .take_branch_deleting_teardown(Some(id), &plan.branch)
+                                .map(|teardown| Self::unfinished_branch_cascade(&teardown)),
+                            _ => None,
+                        };
                         if matches!(&operation, GitOperation::Discover { .. }) {
                             self.git_state.discovery_complete = true;
                         }
@@ -535,6 +554,10 @@ impl App {
                         } else {
                             error.to_string()
                         };
+                        #[cfg(unix)]
+                        let message = branch_cascade
+                            .map(|cascade| format!("{cascade}; {message}"))
+                            .unwrap_or(message);
                         if matches!(operation, GitOperation::Mutate { .. }) {
                             self.mark_action_feedback_failed(action, &message);
                         }
@@ -612,11 +635,12 @@ impl App {
         &mut self,
         operation: GitOperation,
         response: GitResponse,
-        state: GitServiceState,
+        completion: (Option<GitRequestId>, GitServiceState),
         requested_views: RequestedGitViews,
         log_view_request: Option<LogViewRequest>,
         action: Option<u64>,
     ) {
+        let (request, state) = completion;
         match response {
             GitResponse::Discovered(repository) => {
                 self.git_state.discovery_complete = true;
@@ -746,12 +770,12 @@ impl App {
                     // gets another chance to converge.
                     let _ = self.request_git_refresh();
                 }
-                self.apply_git_mutation_result(
+                self.apply_git_mutation_result_for_request(
                     mutation,
                     applied_paths,
                     summary,
                     failure,
-                    state,
+                    (request, state),
                     action,
                 );
             }
@@ -828,6 +852,7 @@ impl App {
         }
     }
 
+    #[cfg(test)]
     pub(super) fn apply_git_mutation_result(
         &mut self,
         mutation: GitMutation,
@@ -837,6 +862,26 @@ impl App {
         state: GitServiceState,
         action: Option<u64>,
     ) {
+        self.apply_git_mutation_result_for_request(
+            mutation,
+            applied_paths,
+            summary,
+            failure,
+            (None, state),
+            action,
+        );
+    }
+
+    pub(super) fn apply_git_mutation_result_for_request(
+        &mut self,
+        mutation: GitMutation,
+        applied_paths: Vec<PathBuf>,
+        summary: Option<String>,
+        failure: Option<crate::git::GitError>,
+        completion: (Option<GitRequestId>, GitServiceState),
+        action: Option<u64>,
+    ) {
+        let (request, state) = completion;
         let created_worktree = match &mutation {
             GitMutation::CreateWorktree(request) => Some(request.destination.clone()),
             _ => None,
@@ -846,6 +891,11 @@ impl App {
         #[cfg(unix)]
         let removed_worktree = match &mutation {
             GitMutation::RemoveWorktree { plan, .. } => Some(plan.path.clone()),
+            _ => None,
+        };
+        #[cfg(unix)]
+        let deleted_branch = match &mutation {
+            GitMutation::DeleteBranch { plan, .. } => Some(plan.branch.clone()),
             _ => None,
         };
         if let GitMutation::PartialStage(request) = &mutation
@@ -896,6 +946,29 @@ impl App {
             self.report_pull_failure(error);
             return;
         }
+        #[cfg(unix)]
+        if uncertain
+            && let Some(teardown) = deleted_branch
+                .as_deref()
+                .and_then(|branch| self.take_branch_deleting_teardown(request, branch))
+        {
+            let branch = teardown
+                .branch
+                .as_ref()
+                .expect("branch-deleting teardown has a branch");
+            let detail = failure
+                .as_ref()
+                .map(|error| format!(": {error}"))
+                .unwrap_or_default();
+            let message = format!(
+                "{}; branch {} deletion outcome is uncertain{detail}; repository reconciliation was scheduled",
+                Self::completed_worktree_teardown(&teardown),
+                branch.branch
+            );
+            self.mark_action_feedback_failed(action, &message);
+            self.error_from("Git", "Git mutation outcome is uncertain", message);
+            return;
+        }
         if let Some(error) = failure {
             let prefix = if applied_paths.is_empty() {
                 String::new()
@@ -910,6 +983,14 @@ impl App {
                     ""
                 }
             );
+            #[cfg(unix)]
+            let message = deleted_branch
+                .as_deref()
+                .and_then(|branch| self.take_branch_deleting_teardown(request, branch))
+                .map(|teardown| {
+                    format!("{}; {message}", Self::unfinished_branch_cascade(&teardown))
+                })
+                .unwrap_or(message);
             self.mark_action_feedback_failed(action, &message);
             // A refused or failed removal ends its cascade here. The directory
             // is still there, so the record behind it is still true and the
@@ -917,21 +998,48 @@ impl App {
             #[cfg(unix)]
             if removed_worktree
                 .as_deref()
-                .is_some_and(|path| self.awaits_worktree_removal(path))
+                .is_some_and(|path| self.awaits_worktree_removal(request, path))
             {
                 self.abandon_worktree_teardown();
             }
             self.error_from("Git", "Git mutation failed", message);
             return;
         }
+        #[cfg(unix)]
+        if state != GitServiceState::Completed
+            && let Some(teardown) = deleted_branch
+                .as_deref()
+                .and_then(|branch| self.take_branch_deleting_teardown(request, branch))
+        {
+            let message = format!(
+                "{}; the branch deletion did not complete",
+                Self::unfinished_branch_cascade(&teardown)
+            );
+            self.mark_action_feedback_failed(action, &message);
+            self.error_from("Git", "Git mutation outcome is uncertain", message);
+            return;
+        }
+        #[cfg(unix)]
+        let branch_cascade_summary = deleted_branch.as_deref().and_then(|branch| {
+            self.take_branch_deleting_teardown(request, branch)
+                .map(|teardown| {
+                    self.git_state
+                        .branch_cascade_summary
+                        .take()
+                        .unwrap_or_else(|| Self::completed_branch_cascade(&teardown))
+                })
+        });
         let producer_summary = summary
             .map(|summary| summary.trim().to_owned())
             .filter(|summary| !summary.is_empty());
-        let message = producer_summary
-            .as_deref()
-            .and_then(|summary| summary.lines().next().map(str::trim))
-            .filter(|summary| !summary.is_empty())
-            .map(str::to_owned)
+        let message = branch_cascade_summary
+            .or_else(|| {
+                producer_summary
+                    .as_deref()
+                    .and_then(|summary| summary.lines().next().map(str::trim))
+                    .filter(|summary| !summary.is_empty())
+                    .map(str::to_owned)
+            })
             .unwrap_or_else(|| match mutation {
                 GitMutation::Stage(_) => format!("staged {} path(s)", applied_paths.len()),
                 GitMutation::Unstage(_) => format!("unstaged {} path(s)", applied_paths.len()),
@@ -942,11 +1050,9 @@ impl App {
                 GitMutation::CreateBranch { branch, start } => {
                     format!("created {branch} from {start}")
                 }
-                GitMutation::DeleteBranch { plan, .. } => self
-                    .git_state
-                    .branch_cascade_summary
-                    .take()
-                    .unwrap_or_else(|| format!("deleted branch {}", plan.branch)),
+                GitMutation::DeleteBranch { plan, .. } => {
+                    format!("deleted branch {}", plan.branch)
+                }
                 GitMutation::Commit { .. } => "committed".to_owned(),
                 GitMutation::Pull => "pull completed".to_owned(),
                 GitMutation::RebaseOntoUpstream => "replayed onto the upstream".to_owned(),
@@ -990,7 +1096,7 @@ impl App {
         if state == GitServiceState::Completed
             && removed_worktree
                 .as_deref()
-                .is_some_and(|path| self.awaits_worktree_removal(path))
+                .is_some_and(|path| self.awaits_worktree_removal(request, path))
         {
             self.finish_worktree_removal_step();
         }
@@ -998,7 +1104,7 @@ impl App {
         if state != GitServiceState::Completed
             && removed_worktree
                 .as_deref()
-                .is_some_and(|path| self.awaits_worktree_removal(path))
+                .is_some_and(|path| self.awaits_worktree_removal(request, path))
         {
             self.abandon_worktree_teardown();
         }
@@ -1006,10 +1112,64 @@ impl App {
 
     /// Whether the cascade in flight is waiting on this exact removal.
     #[cfg(unix)]
-    fn awaits_worktree_removal(&self, path: &Path) -> bool {
+    fn awaits_worktree_removal(&self, request: Option<GitRequestId>, path: &Path) -> bool {
         self.worktree_teardown
             .as_ref()
-            .is_some_and(|teardown| teardown.awaits_removal(path))
+            .is_some_and(|teardown| teardown.awaits_removal(request, path))
+    }
+
+    #[cfg(unix)]
+    fn take_branch_deleting_teardown(
+        &mut self,
+        request: Option<GitRequestId>,
+        branch: &str,
+    ) -> Option<WorktreeTeardown> {
+        if !self
+            .worktree_teardown
+            .as_ref()
+            .is_some_and(|teardown| teardown.awaits_branch_deletion(request, branch))
+        {
+            return None;
+        }
+        self.git_state.branch_cascade_summary = None;
+        self.worktree_teardown.take()
+    }
+
+    #[cfg(unix)]
+    fn completed_branch_cascade(teardown: &WorktreeTeardown) -> String {
+        let branch = teardown
+            .branch
+            .as_ref()
+            .expect("branch-deleting teardown has a branch");
+        format!(
+            "deleted branch {}, {}",
+            branch.branch,
+            Self::completed_worktree_teardown(teardown)
+        )
+    }
+
+    #[cfg(unix)]
+    fn unfinished_branch_cascade(teardown: &WorktreeTeardown) -> String {
+        let branch = teardown
+            .branch
+            .as_ref()
+            .expect("branch-deleting teardown has a branch");
+        format!(
+            "{}; branch {} was not deleted",
+            Self::completed_worktree_teardown(teardown),
+            branch.branch
+        )
+    }
+
+    #[cfg(unix)]
+    fn completed_worktree_teardown(teardown: &WorktreeTeardown) -> String {
+        let path = crate::git::display_path(&teardown.plan.path);
+        let stopped = teardown
+            .session
+            .as_ref()
+            .map(|session| format!(" and stopped {}", session.describe()))
+            .unwrap_or_default();
+        format!("removed worktree {path}{stopped}")
     }
 
     fn reload_clean_repository_buffers(&mut self) {
@@ -2193,6 +2353,10 @@ impl App {
         let Some(row) = self.selected_worktree() else {
             return;
         };
+        #[cfg(unix)]
+        if self.refuse_concurrent_worktree_teardown() {
+            return;
+        }
         let worktree = row.worktree;
         if worktree.path == self.project_root {
             self.error("cannot remove the worktree this Runyte workspace is using");
@@ -2283,27 +2447,29 @@ impl App {
         authorization: DeletionAuthorization,
     ) {
         #[cfg(unix)]
+        if self.refuse_concurrent_worktree_teardown() {
+            return;
+        }
+        #[cfg(unix)]
         if self.request_worktree_session_check(plan.clone(), Some(authorization), None) {
             return;
         }
-        self.apply_guarded_worktree_removal(plan, authorization);
+        let _ = self.apply_guarded_worktree_removal(plan, authorization);
     }
 
     fn apply_guarded_worktree_removal(
         &mut self,
         plan: WorktreeRemovalPlan,
         authorization: DeletionAuthorization,
-    ) {
-        let Some(repository) = self.git.repository().cloned() else {
-            return;
-        };
+    ) -> Option<GitRequestId> {
+        let repository = self.git.repository().cloned()?;
         if self.ports.git_service.is_some() {
             let mut refresh = self.git_refresh_spec(&repository);
             // Removal changes both the worktree registry and every branch's
             // checkout annotations, even when one of those buffers is hidden.
             refresh.worktrees = true;
             refresh.branches = true;
-            let _ = self.request_git(GitOperation::Mutate {
+            return self.request_git(GitOperation::Mutate {
                 repository,
                 mutation: GitMutation::RemoveWorktree {
                     plan: Box::new(plan),
@@ -2311,14 +2477,11 @@ impl App {
                 },
                 refresh,
             });
-            return;
         }
-        let Some(provider) = self.ports.git.as_deref() else {
-            return;
-        };
+        let provider = self.ports.git.as_deref()?;
         if let Err(error) = provider.remove_worktree_guarded(&repository, &plan, authorization) {
             self.error(error.to_string());
-            return;
+            return None;
         }
         let branches = provider.branches(&repository);
         let worktrees = provider.worktrees(&repository);
@@ -2332,15 +2495,31 @@ impl App {
             "removed worktree {}; no branch was deleted",
             crate::git::display_path(&plan.path)
         ));
+        None
+    }
+
+    /// Keeps destructive worktree cascades single-file. The editor stays
+    /// interactive while services work, but a second confirmation must not
+    /// replace the state that correlates the first operation's replies.
+    #[cfg(unix)]
+    fn refuse_concurrent_worktree_teardown(&mut self) -> bool {
+        if self.pending_worktree_removal.is_none() && self.worktree_teardown.is_none() {
+            return false;
+        }
+        self.error("another worktree removal is still in progress");
+        true
     }
 
     #[cfg(unix)]
-    fn request_worktree_session_check(
+    pub(super) fn request_worktree_session_check(
         &mut self,
         plan: WorktreeRemovalPlan,
         authorization: Option<DeletionAuthorization>,
         branch: Option<BranchDeletionPlan>,
     ) -> bool {
+        if self.refuse_concurrent_worktree_teardown() {
+            return true;
+        }
         let Some(service) = self.ports.workspace_service.as_ref() else {
             return false;
         };
@@ -2459,13 +2638,17 @@ impl App {
     /// for the previous one to report, and a failure stops the cascade where it
     /// happened rather than continuing into the level below.
     #[cfg(unix)]
-    fn begin_worktree_teardown(
+    pub(super) fn begin_worktree_teardown(
         &mut self,
         plan: WorktreeRemovalPlan,
         authorization: DeletionAuthorization,
         session: Option<AttachedSession>,
         branch: Option<BranchDeletionPlan>,
     ) {
+        if self.worktree_teardown.is_some() {
+            self.error("another worktree removal is still in progress");
+            return;
+        }
         let root = session.as_ref().map_or_else(
             || {
                 plan.path
@@ -2480,16 +2663,22 @@ impl App {
             session: session.clone(),
             root,
             branch,
+            workspace_request_generation: None,
+            git_request: None,
             stage: WorktreeTeardownStage::Stopping,
         };
         match session {
             Some(session) => {
                 self.worktree_teardown = Some(teardown);
-                self.request_session_stop(session.root, false);
+                let generation = self.request_session_stop(session.root, false);
                 // A stop that could not even be sent has no event coming, so
                 // the cascade is abandoned here rather than left waiting on a
                 // reply while the reader believes it is under way.
-                if self.status_error {
+                if let Some(generation) = generation {
+                    if let Some(teardown) = self.worktree_teardown.as_mut() {
+                        teardown.workspace_request_generation = Some(generation);
+                    }
+                } else {
                     self.worktree_teardown = None;
                 }
             }
@@ -2500,7 +2689,7 @@ impl App {
             // first place.
             None => {
                 self.worktree_teardown = Some(WorktreeTeardown {
-                    stage: WorktreeTeardownStage::Forgetting,
+                    stage: WorktreeTeardownStage::Removing,
                     ..teardown
                 });
                 self.continue_worktree_teardown_after_stop();
@@ -2523,12 +2712,22 @@ impl App {
         // actually gone, so the cascade waits for the mutation rather than
         // treating a successful hand-off as a successful removal.
         let queued = self.ports.git_service.is_some();
-        self.apply_guarded_worktree_removal(teardown.plan, teardown.authorization);
+        let request = self.apply_guarded_worktree_removal(teardown.plan, teardown.authorization);
         if self.status_error {
             self.worktree_teardown = None;
             return;
         }
         if queued {
+            let Some(request) = request else {
+                if !self.status_error {
+                    self.error("Git worktree removal could not be queued");
+                }
+                self.worktree_teardown = None;
+                return;
+            };
+            if let Some(teardown) = self.worktree_teardown.as_mut() {
+                teardown.git_request = Some(request);
+            }
             return;
         }
         self.finish_worktree_removal_step();
@@ -2548,13 +2747,16 @@ impl App {
             self.finish_worktree_teardown();
             return;
         }
-        self.forget_workspace(teardown.root);
-        if self.status_error {
+        let generation = self.forget_workspace(teardown.root);
+        if let Some(generation) = generation {
+            if let Some(teardown) = self.worktree_teardown.as_mut() {
+                teardown.workspace_request_generation = Some(generation);
+            }
+        } else {
             // The directory is gone either way, so the cascade still reports
             // what it did; only the record it could not reach is left behind.
             let refusal = self.status.clone();
-            self.finish_worktree_teardown();
-            self.error(format!("{}; {refusal}", self.status));
+            self.fail_worktree_teardown_after_removal(refusal);
         }
     }
 
@@ -2568,12 +2770,37 @@ impl App {
         self.git_state.branch_cascade_summary = None;
     }
 
+    /// Reports a cascade that removed its worktree but could not forget the
+    /// catalog record. The branch is deliberately left intact: failure at one
+    /// level stops every destructive level above it.
+    #[cfg(unix)]
+    pub(super) fn fail_worktree_teardown_after_removal(&mut self, reason: impl AsRef<str>) {
+        let Some(teardown) = self.worktree_teardown.take() else {
+            return;
+        };
+        self.git_state.branch_cascade_summary = None;
+        let path = crate::git::display_path(&teardown.plan.path);
+        let stopped = teardown
+            .session
+            .as_ref()
+            .map(|session| format!(" and stopped {}", session.describe()))
+            .unwrap_or_default();
+        let branch = teardown.branch.map_or_else(
+            || "no branch was deleted".to_owned(),
+            |branch| format!("branch {} was not deleted", branch.branch),
+        );
+        self.error(format!(
+            "removed worktree {path}{stopped}; its session record could not be forgotten: {}; {branch}",
+            reason.as_ref()
+        ));
+    }
+
     /// The one message a completed cascade leaves behind, naming every level
     /// it touched. The intermediate steps' own status lines are on the way to
     /// this one, not the answer.
     #[cfg(unix)]
     pub(super) fn finish_worktree_teardown(&mut self) {
-        let Some(teardown) = self.worktree_teardown.take() else {
+        let Some(teardown) = self.worktree_teardown.as_ref() else {
             return;
         };
         let path = crate::git::display_path(&teardown.plan.path);
@@ -2582,7 +2809,8 @@ impl App {
             .as_ref()
             .map(|session| format!(" and stopped {}", session.describe()))
             .unwrap_or_default();
-        let Some(branch) = teardown.branch else {
+        let Some(branch) = teardown.branch.clone() else {
+            self.worktree_teardown = None;
             self.status(format!(
                 "removed worktree {path}{stopped}; no branch was deleted"
             ));
@@ -2595,7 +2823,40 @@ impl App {
             "deleted branch {}, removed worktree {path}{stopped}",
             branch.branch
         ));
-        self.apply_branch_deletion(branch, teardown.authorization);
+        let authorization = teardown.authorization;
+        if let Some(teardown) = self.worktree_teardown.as_mut() {
+            teardown.stage = WorktreeTeardownStage::BranchDeleting;
+            teardown.workspace_request_generation = None;
+            teardown.git_request = None;
+        }
+        let queued = self.ports.git_service.is_some();
+        let request = self.queue_branch_deletion(branch, authorization);
+        if queued {
+            if let Some(request) = request {
+                if let Some(teardown) = self.worktree_teardown.as_mut() {
+                    teardown.git_request = Some(request);
+                }
+            } else if let Some(teardown) = self.worktree_teardown.take() {
+                self.git_state.branch_cascade_summary = None;
+                let reason = self.status.clone();
+                self.error(format!(
+                    "{}; {reason}",
+                    Self::unfinished_branch_cascade(&teardown)
+                ));
+            }
+        } else {
+            let teardown = self.worktree_teardown.take();
+            self.git_state.branch_cascade_summary = None;
+            if self.status_error
+                && let Some(teardown) = teardown
+            {
+                let reason = self.status.clone();
+                self.error(format!(
+                    "{}; {reason}",
+                    Self::unfinished_branch_cascade(&teardown)
+                ));
+            }
+        }
     }
 
     pub(super) fn create_worktree_prompt(&mut self, new_branch: bool) {
@@ -3851,6 +4112,10 @@ impl App {
         let Some(branch) = self.selected_branch() else {
             return;
         };
+        #[cfg(unix)]
+        if self.refuse_concurrent_worktree_teardown() {
+            return;
+        }
         if branch.current {
             self.error(
                 "cannot delete the branch this working tree is on; check out another branch first",
@@ -4061,6 +4326,10 @@ impl App {
         authorization: DeletionAuthorization,
     ) {
         #[cfg(unix)]
+        if self.refuse_concurrent_worktree_teardown() {
+            return;
+        }
+        #[cfg(unix)]
         if self.request_worktree_session_check(
             cascade.worktree.clone(),
             Some(authorization),
@@ -4073,7 +4342,7 @@ impl App {
         #[cfg(not(unix))]
         {
             let _ = cascade;
-            self.apply_branch_deletion(plan, authorization);
+            let _ = self.queue_branch_deletion(plan, authorization);
         }
     }
 
@@ -4083,12 +4352,22 @@ impl App {
         plan: BranchDeletionPlan,
         authorization: DeletionAuthorization,
     ) {
-        let Some(repository) = self.git.repository().cloned() else {
+        #[cfg(unix)]
+        if self.refuse_concurrent_worktree_teardown() {
             return;
-        };
+        }
+        let _ = self.queue_branch_deletion(plan, authorization);
+    }
+
+    fn queue_branch_deletion(
+        &mut self,
+        plan: BranchDeletionPlan,
+        authorization: DeletionAuthorization,
+    ) -> Option<GitRequestId> {
+        let repository = self.git.repository().cloned()?;
         if self.ports.git_service.is_some() {
             let refresh = self.git_refresh_spec(&repository);
-            let _ = self.request_git(GitOperation::Mutate {
+            return self.request_git(GitOperation::Mutate {
                 repository,
                 mutation: GitMutation::DeleteBranch {
                     plan: Box::new(plan),
@@ -4096,14 +4375,11 @@ impl App {
                 },
                 refresh,
             });
-            return;
         }
-        let Some(provider) = self.ports.git.as_deref() else {
-            return;
-        };
+        let provider = self.ports.git.as_deref()?;
         if let Err(error) = provider.delete_branch_guarded(&repository, &plan, authorization) {
             self.error(error.to_string());
-            return;
+            return None;
         }
         // The deleted branch is gone from the list, so the caret is asked to
         // follow a name that is not there; the refresh keeps it where it was.
@@ -4114,6 +4390,7 @@ impl App {
             .take()
             .unwrap_or_else(|| format!("deleted {}", plan.branch));
         self.status(message);
+        None
     }
 
     /// Reprojects the branch list, returning its text.
