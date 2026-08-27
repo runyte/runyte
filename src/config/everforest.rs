@@ -97,6 +97,7 @@ fn everforest_theme(
         background: background.background.into(),
         foreground: foreground.foreground.into(),
         muted: foreground.muted.into(),
+        whitespace: None,
         jump_text_muted: background.dimmed_text.map(Into::into),
         accent: foreground.green.into(),
         cursor_normal: Some(foreground.blue.into()),

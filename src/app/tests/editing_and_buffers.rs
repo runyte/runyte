@@ -62,7 +62,7 @@ fn soft_wrap_vertical_motion_stops_at_document_edges() {
 }
 
 #[test]
-fn wrapping_namespace_hard_wraps_at_configured_width_and_toggles_soft_wrap() {
+fn wrapping_namespace_wraps_and_toggles_soft_wrap_and_whitespace_markers() {
     let mut config = Config::default();
     config.editor.hard_wrap_width = 10;
     let mut app = App::new(config, None).unwrap();
@@ -91,6 +91,18 @@ fn wrapping_namespace_hard_wraps_at_configured_width_and_toggles_soft_wrap() {
         press(&mut app, stroke);
     }
     assert!(app.config.editor.soft_wrap);
+
+    assert!(!app.config.editor.render_whitespace);
+    for stroke in [' ', 'p', '.'] {
+        press(&mut app, stroke);
+    }
+    assert!(app.config.editor.render_whitespace);
+    assert!(app.status.contains("whitespace markers enabled"));
+    for stroke in [' ', 'p', '.'] {
+        press(&mut app, stroke);
+    }
+    assert!(!app.config.editor.render_whitespace);
+    assert!(app.status.contains("whitespace markers disabled"));
 }
 
 #[test]

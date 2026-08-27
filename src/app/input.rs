@@ -3330,6 +3330,14 @@ impl App {
                     "soft wrap disabled"
                 });
             }
+            Command::ToggleWhitespace => {
+                self.config.editor.render_whitespace = !self.config.editor.render_whitespace;
+                self.status(if self.config.editor.render_whitespace {
+                    "whitespace markers enabled"
+                } else {
+                    "whitespace markers disabled"
+                });
+            }
             Command::ToggleZen => self.toggle_maximized(MaximizedView::Zen),
             Command::ToggleFullscreen => self.toggle_maximized(MaximizedView::Fullscreen),
             Command::OpenExplorer => self.open_active_directory_explorer()?,

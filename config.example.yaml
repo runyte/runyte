@@ -7,8 +7,10 @@ editor:
   scroll_offset: 3
   # Cursor motions per held-key repeat event. Set to 1 for terminal-native speed.
   motion_repeat_multiplier: 2
-  show_hidden_files: false
+  show_hidden_files: false # press . in an explorer to toggle for the session
   soft_wrap: false
+  # Draw spaces as ·, tabs from →, and line endings as ↵.
+  render_whitespace: false
   zen_width: 100
   hard_wrap_width: 80
   # Gray out every pane's text while a command prompt is open.
@@ -47,6 +49,8 @@ themes:
     background: "#10131a"
     foreground: "#d8dee9"
     muted: "#65737e"
+    # Optional marker colour; omitted derives a very dim colour from background.
+    whitespace: "#292c33"
     # Optional ordinary-text colour while `gw` is active; omitted uses muted.
     # jump_text_muted: "#65737e"
     accent: "#88c0d0"

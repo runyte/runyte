@@ -376,6 +376,7 @@ impl Palette {
             background: self.background.into(),
             foreground: self.foreground.into(),
             muted: self.muted.into(),
+            whitespace: None,
             jump_text_muted,
             accent: self.info.into(),
             cursor_normal: Some(self.info.into()),

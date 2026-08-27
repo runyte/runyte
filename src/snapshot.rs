@@ -368,6 +368,8 @@ pub enum TextRunKind {
         scope: Option<Scope>,
         diagnostic: Option<Severity>,
         directory: bool,
+        /// This run contains display-only markers for buffer whitespace.
+        whitespace: bool,
         /// Which of the changed-file list's two counts this run stands in, so
         /// a frontend can paint it in the palette Git changes already use.
         count: Option<CountKind>,
@@ -996,6 +998,7 @@ impl App {
         let mut current_scope = None;
         let mut current_diagnostic = None;
         let mut current_count = None;
+        let mut current_whitespace = false;
         let segment = context.segment;
         let start_col = segment.map_or(prepared.scroll_col, |segment| segment.start);
         let mut visual_col = segment.map_or(0, |segment| segment.start_cell);
@@ -1056,11 +1059,14 @@ impl App {
                 push_text_run(
                     &mut runs,
                     &mut current,
-                    current_role,
-                    current_scope,
-                    current_diagnostic,
-                    directory,
-                    current_count,
+                    TextRunMetadata {
+                        role: current_role,
+                        scope: current_scope,
+                        diagnostic: current_diagnostic,
+                        directory,
+                        count: current_count,
+                        whitespace: current_whitespace,
+                    },
                 );
                 runs.push(TextRun {
                     text: label.to_string(),
@@ -1076,52 +1082,97 @@ impl App {
             let scope = scope_at(row_start + col);
             let diagnostic = flagged_at(row_start + col);
             let count = counts.as_ref().and_then(|columns| columns.kind_at(col));
+            let whitespace =
+                self.config.editor.render_whitespace && matches!(character, ' ' | '\t');
             if (role != current_role
                 || scope != current_scope
                 || diagnostic != current_diagnostic
-                || count != current_count)
+                || count != current_count
+                || whitespace != current_whitespace)
                 && !current.is_empty()
             {
                 push_text_run(
                     &mut runs,
                     &mut current,
-                    current_role,
-                    current_scope,
-                    current_diagnostic,
-                    directory,
-                    current_count,
+                    TextRunMetadata {
+                        role: current_role,
+                        scope: current_scope,
+                        diagnostic: current_diagnostic,
+                        directory,
+                        count: current_count,
+                        whitespace: current_whitespace,
+                    },
                 );
             }
             current_role = role;
             current_scope = scope;
             current_diagnostic = diagnostic;
             current_count = count;
+            current_whitespace = whitespace;
             if character == '\t' {
                 if remaining == 0 {
                     break;
                 }
                 let tab_width = self.config.editor.tab_width.max(1);
                 let width = (tab_width - (visual_col % tab_width)).min(remaining);
-                current.push_str(&" ".repeat(width));
+                if self.config.editor.render_whitespace {
+                    current.push('→');
+                    current.push_str(&" ".repeat(width.saturating_sub(1)));
+                } else {
+                    current.push_str(&" ".repeat(width));
+                }
                 visual_col += width;
             } else {
                 let width = UnicodeWidthChar::width(character).unwrap_or(0);
                 if width > remaining {
                     break;
                 }
-                current.push(character);
+                current.push(if whitespace { '·' } else { character });
                 visual_col += width;
             }
         }
         push_text_run(
             &mut runs,
             &mut current,
-            current_role,
-            current_scope,
-            current_diagnostic,
-            directory,
-            current_count,
+            TextRunMetadata {
+                role: current_role,
+                scope: current_scope,
+                diagnostic: current_diagnostic,
+                directory,
+                count: current_count,
+                whitespace: current_whitespace,
+            },
         );
+
+        // A line terminator is not part of `line_len`, but it is part of the
+        // buffer and gets one display cell when the final visual segment has
+        // room. CRLF is one terminator and therefore one marker.
+        let final_segment = context
+            .segment
+            .is_none_or(|segment| segment.end == buffer.line_len(context.row));
+        let has_terminator = buffer.text().line(context.row).len_chars() > line_len;
+        if self.config.editor.render_whitespace
+            && final_segment
+            && has_terminator
+            && runs
+                .iter()
+                .map(|run| display_cells(&run.text))
+                .sum::<usize>()
+                < context.text_width
+        {
+            let end = row_start + line_len;
+            runs.push(TextRun {
+                text: "↵".to_owned(),
+                kind: TextRunKind::Text {
+                    role: role_at(end),
+                    scope: None,
+                    diagnostic: None,
+                    directory,
+                    whitespace: true,
+                    count: None,
+                },
+            });
+        }
 
         // A caret parked past the last character of a row still needs a cell,
         // but only when that cell belongs to this segment and fits on screen.
@@ -1148,6 +1199,7 @@ impl App {
                         scope: None,
                         diagnostic: None,
                         directory,
+                        whitespace: false,
                         count: None,
                     },
                 });
@@ -1186,26 +1238,29 @@ impl App {
     }
 }
 
-fn push_text_run(
-    runs: &mut Vec<TextRun>,
-    current: &mut String,
+#[derive(Clone, Copy)]
+struct TextRunMetadata {
     role: TextRole,
     scope: Option<Scope>,
     diagnostic: Option<Severity>,
     directory: bool,
     count: Option<CountKind>,
-) {
+    whitespace: bool,
+}
+
+fn push_text_run(runs: &mut Vec<TextRun>, current: &mut String, metadata: TextRunMetadata) {
     if current.is_empty() {
         return;
     }
     runs.push(TextRun {
         text: std::mem::take(current),
         kind: TextRunKind::Text {
-            role,
-            scope,
-            diagnostic,
-            directory,
-            count,
+            role: metadata.role,
+            scope: metadata.scope,
+            diagnostic: metadata.diagnostic,
+            directory: metadata.directory,
+            whitespace: metadata.whitespace,
+            count: metadata.count,
         },
     });
 }
@@ -1436,6 +1491,61 @@ mod tests {
         let snapshot = prepared_snapshot(&mut app, 80, 24);
         assert_eq!(snapshot.status.interaction_line, "search: needle");
         assert_eq!(snapshot.status.prompt_cursor_column, Some(14));
+    }
+
+    #[test]
+    fn whitespace_markers_preserve_cells_and_distinguish_real_line_endings() {
+        let mut config = Config::default();
+        config.editor.line_numbers = false;
+        config.editor.tab_width = 4;
+        config.editor.render_whitespace = true;
+        let mut app = App::new(config, None).unwrap();
+        app.buffers[0].apply(&Transaction::insert(0, "a \tb\r\nlast"));
+
+        let snapshot = prepared_snapshot(&mut app, 20, 8);
+        let SnapshotRow::Text(first) = &snapshot.pane(0).unwrap().rows[0] else {
+            panic!("first row is text");
+        };
+        let rendered = first
+            .runs
+            .iter()
+            .map(|run| run.text.as_str())
+            .collect::<String>();
+        assert_eq!(rendered, "a·→ b↵");
+        assert_eq!(display_cells(&rendered), 6);
+        assert!(first.runs.iter().any(|run| matches!(
+            run.kind,
+            TextRunKind::Text {
+                whitespace: true,
+                ..
+            } if run.text == "·→ "
+        )));
+        assert!(first.runs.iter().any(|run| matches!(
+            run.kind,
+            TextRunKind::Text {
+                whitespace: true,
+                ..
+            } if run.text == "↵"
+        )));
+
+        let SnapshotRow::Text(last) = &snapshot.pane(0).unwrap().rows[1] else {
+            panic!("last row is text");
+        };
+        assert!(!last.runs.iter().any(|run| run.text.contains('↵')));
+
+        app.config.editor.render_whitespace = false;
+        let snapshot = prepared_snapshot(&mut app, 20, 8);
+        let SnapshotRow::Text(first) = &snapshot.pane(0).unwrap().rows[0] else {
+            panic!("first row is text");
+        };
+        assert_eq!(
+            first
+                .runs
+                .iter()
+                .map(|run| run.text.as_str())
+                .collect::<String>(),
+            "a   b"
+        );
     }
 
     #[test]

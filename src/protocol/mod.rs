@@ -120,7 +120,10 @@ use crate::workspace::{
 /// Version 36 preserves a terminal's captured review when pane focus returns
 /// to it. The host owns focus and mode transitions, so an older host would
 /// otherwise discard review requested through a newer attached client.
-pub const VERSION: u32 = 36;
+/// Version 37 carries the whitespace theme role and semantic whitespace runs.
+/// An older attached client would otherwise render the markers as ordinary
+/// syntax-coloured text or fail to deserialize the resolved theme.
+pub const VERSION: u32 = 37;
 pub const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const MAX_PATHS: usize = 32;
 pub const MAX_PATH_BYTES: usize = 32 * 1024;
@@ -886,7 +889,7 @@ mod tests {
 
     #[test]
     fn protocol_version_and_request_bounds_are_explicit() {
-        assert_eq!(VERSION, 36);
+        assert_eq!(VERSION, 37);
         let oversized_command = ClientRequest::Invoke {
             command: CommandRequest {
                 name: "open".to_owned(),

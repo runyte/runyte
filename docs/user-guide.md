@@ -1046,6 +1046,7 @@ context; scoped explorer keys are documented under
 | `&` | Pad until every cursor shares the rightmost display column |
 | `_` | Delete trailing whitespace from every selected line; `%` then `_` strips the buffer |
 | `Alt-_` | Shrink every selection past the whitespace at its ends, without changing the text |
+| `Space p .` | Toggle dim `·`, `→`, and `↵` markers for spaces, tabs, and line endings |
 | `d` / `c` | Delete / change selection or cursor character; `d` after transient `x`/`X` cuts whole lines |
 | `y` / `p` / `P` | Yank selection or cursor character / paste after / paste before |
 | `Y` | Yank every line the selection touches, as whole lines |
@@ -1175,9 +1176,16 @@ refresh and replace the singleton result view. This is deliberately different
 from `Space / g`, whose fuzzy query remains live and therefore stays a
 choose-one picker.
 
-### Wrapping, joining, and tables
+### Layout and whitespace display
 
-`Space p` groups the commands that lay selected lines out. `Space p w`
+`Space p` groups text presentation and the commands that lay selected lines
+out. `Space p .` toggles visible whitespace for the current session.
+Spaces become `·`, tabs begin with `→` and retain enough following cells to
+reach the same tab stop, and a real LF or CRLF line ending becomes one `↵`.
+An unterminated final line has no marker. These symbols are display-only: they
+do not change buffer text, offsets, selections, wrapping, or saved files.
+
+`Space p w`
 hard-wraps every selection at `editor.hard_wrap_width` (80 by default).
 Existing newlines remain boundaries, and words are kept intact unless one word
 alone is wider than the configured line width.
@@ -2297,8 +2305,9 @@ editor:
   smart_newline: true # add syntax indentation and align list continuations
   scroll_offset: 3
   motion_repeat_multiplier: 2 # held cursor motions; 1 retains terminal/Helix speed
-  show_hidden_files: false # explorer, file picker, and workspace search; `.` toggles it
+  show_hidden_files: false # explorer, file picker, and workspace search; . toggles it in an explorer
   soft_wrap: false
+  render_whitespace: false # show · for spaces, → for tabs, and ↵ for line endings
   zen_width: 100 # maximum text width while :zen is active; editable in :config's popup
   hard_wrap_width: 80 # width for Space p w and Space p r; editable in :config's popup
   trim_trailing_whitespace: true # remove spaces and tabs at line ends on save
@@ -2405,6 +2414,7 @@ themes:
     background: "#10131a"
     foreground: "#d8dee9"
     muted: "#65737e"
+    whitespace: "#292c33"
     accent: "#88c0d0"
     cursor_normal: "#ff5555"
     cursor_insert: "#ff79c6"
@@ -2441,6 +2451,11 @@ Markdown uses the semantic syntax scopes `markup.heading`, `markup.bold`,
 `markup.quote`, and `markup.raw`. Bundled themes assign all of them colours;
 custom themes may override any subset, and omitted scopes use the theme's
 foreground like every other omitted syntax scope.
+
+`whitespace` colours the display-only `·`, `→`, and `↵` markers. When a custom
+theme omits it, Runyte derives a very dim colour one small step away from that
+theme's `background`; a theme using the terminal's `reset` background falls
+back to `muted` because its actual ground is unknown.
 
 The same `jump_text_muted` colour grays out every pane while a command prompt
 is open — `:` and the search, rename, and other text-entry prompts alike, since
