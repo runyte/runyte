@@ -2724,6 +2724,32 @@ fn word_completion_triggers_after_the_minimum_and_orders_own_buffer_first() {
 }
 
 #[test]
+fn word_completion_keeps_a_hyphen_that_joins_word_parts() {
+    let root = temporary("word-completion-hyphenated-word");
+    fs::create_dir_all(&root).unwrap();
+    let active = root.join("a.txt");
+    fs::write(&active, "up-to-date\n").unwrap();
+    let mut app = App::new_in_project(Config::default(), Some(active), &root).unwrap();
+    let handle = crate::word_index::spawn();
+    app.attach_word_index(handle.clone());
+    app.prepare_view(word_completion_geometry());
+    handle.flush();
+
+    set_cursor(&mut app, 1, 0);
+    press(&mut app, 'i');
+    type_text(&mut app, "up-");
+
+    let state = app.completion.as_ref().expect("word popup should be open");
+    assert_eq!(state.source, CompletionSource::Word);
+    assert_eq!(state.selected_item().unwrap().label, "up-to-date");
+
+    key(&mut app, KeyCode::Tab, Modifiers::NONE);
+    assert_eq!(text(&app), "up-to-date\nup-to-date");
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn word_completion_lets_enter_insert_a_newline_instead_of_accepting() {
     let root = temporary("word-completion-enter-newline");
     fs::create_dir_all(&root).unwrap();

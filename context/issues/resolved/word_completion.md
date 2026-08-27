@@ -24,11 +24,12 @@ every change. The main thread only ever reads that snapshot — a lock held
 just long enough to clone the `Arc` — so a completion query can never block
 on the worker, and updates arrive through a bounded, best-effort channel
 where a dropped message is harmless because the next edit supersedes it.
-Word extraction splits each line on Unicode whitespace, then trims a fixed
-set of wrapper punctuation (backtick, quote, comma, semicolon, and matching
-brackets) from both ends of each token without touching the interior, which
-is what keeps `--workspace-restart`, `:quit-here`, and `background-color`
-whole while still turning `` `--wls` `` into `--wls`.
+Word extraction originally split each line on Unicode whitespace, then
+trimmed a fixed set of wrapper punctuation from both ends without touching
+the interior. A later tokenization refinement restricted candidates to runs
+of Unicode letters and numbers, with a hyphen retained only when it joins
+alphanumeric characters on both sides. Every other character is now a
+boundary, so source and prose punctuation cannot enter a candidate.
 
 `App::word_completion`, called from `after_insert`, triggers once the word
 before the cursor reaches `editor.word_completion_minimum` characters,
@@ -80,13 +81,15 @@ completion therefore does not add an extra step on the way back to Normal
 mode; explicitly requested language completion and path completion outside an
 explorer retain their dismiss-only Escape behavior.
 
-Coverage: `src/word_index.rs` (`preserves_examples_from_the_issue`,
-`trims_surrounding_punctuation_only`, `discards_pure_punctuation_tokens`,
-`keeps_interior_punctuation_untouched`, `splits_on_whitespace_across_lines`,
-`worker_indexes_and_removes_buffers`, `a_removal_survives_a_saturated_update_queue`);
+Coverage: `src/word_index.rs`
+(`extracts_only_alphanumeric_words_and_interior_hyphens`,
+`splits_on_whitespace_across_lines`,
+`worker_indexes_and_removes_buffers`, `the_latest_update_survives_a_large_burst`,
+`a_removal_supersedes_every_older_update`);
 `src/buffer.rs` (`word_completion_eligibility_matches_read_only_and_directory_status`,
-exhaustive over every `BufferKind`); `src/app.rs`
+exhaustive over every `BufferKind`); `src/app/tests/language.rs`
 (`word_completion_triggers_after_the_minimum_and_orders_own_buffer_first`,
+`word_completion_keeps_a_hyphen_that_joins_word_parts`,
 `word_completion_is_replaced_by_a_language_response_but_never_opens_over_one`,
 `word_completion_yields_to_a_typed_path`,
 `word_index_follows_buffer_open_edit_and_close`,

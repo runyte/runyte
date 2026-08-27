@@ -96,24 +96,37 @@ pub(super) fn path_token_before(buffer: &Buffer, head: Offset) -> String {
     line[token_start..].to_owned()
 }
 
-/// The run of non-whitespace characters immediately before `head`, matching
-/// the "run of characters between whitespace" word rule word completion uses
-/// — deliberately wider than [`is_path_token_boundary`], which also breaks
-/// on punctuation that is not whitespace.
+pub(super) fn is_word_completion_character(character: char) -> bool {
+    character.is_alphanumeric() || character == '-'
+}
+
+/// The alphanumeric word fragment immediately before `head`. Interior
+/// hyphens stay in the fragment, and a trailing hyphen is retained while the
+/// next part of a hyphenated word is being typed.
 pub(super) fn word_token_before(buffer: &Buffer, head: Offset) -> String {
     let row = buffer.offset_to_row(head);
     let start = buffer.line_to_offset(row);
     let line = buffer.slice(start, head);
-    let token_start = line
-        .char_indices()
-        .rev()
-        .find_map(|(index, character)| {
-            character
-                .is_whitespace()
-                .then_some(index + character.len_utf8())
-        })
-        .unwrap_or(0);
-    line[token_start..].to_owned()
+    let mut valid_start = line.len();
+    let mut hyphen_needs_left_side = false;
+    let mut at_end = true;
+
+    for (index, character) in line.char_indices().rev() {
+        if character.is_alphanumeric() {
+            valid_start = index;
+            hyphen_needs_left_side = false;
+            at_end = false;
+        } else if character == '-'
+            && !hyphen_needs_left_side
+            && (valid_start < line.len() || at_end)
+        {
+            hyphen_needs_left_side = true;
+            at_end = false;
+        } else {
+            break;
+        }
+    }
+    line[valid_start..].to_owned()
 }
 
 /// Start of the identifier fragment a language completion should filter and,

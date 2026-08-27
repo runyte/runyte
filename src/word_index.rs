@@ -29,16 +29,6 @@ const MAX_WORDS_PER_BUFFER: usize = 20_000;
 /// somehow never observed.
 const MAX_INDEXED_BUFFERS: usize = 256;
 
-/// Wrapper punctuation trimmed from both ends of a stored word, and from the
-/// start of a completion query so it can still match a word the index
-/// stored without it (see [`trim_word`] and `App::word_completion`).
-pub(crate) fn is_wrapper_punctuation(c: char) -> bool {
-    matches!(
-        c,
-        '`' | '\'' | '"' | ',' | ';' | '(' | ')' | '[' | ']' | '{' | '}'
-    )
-}
-
 enum PendingAction {
     Update(Text),
     Remove,
@@ -269,26 +259,36 @@ fn publish(
     }
 }
 
-/// A word is a run of characters between whitespace, trimmed of punctuation
-/// that merely wraps it rather than belonging to it.
+/// Extracts alphanumeric words, retaining a hyphen only when it joins two
+/// alphanumeric characters.
 ///
-/// Deliberately wider than an identifier: `--session-restart`,
-/// `:quit-here`, and `background-color` are meant to stay whole, so only a
-/// small, fixed set of wrapper punctuation is trimmed from each end, and
-/// nothing is trimmed from the interior.
+/// Every other character is a boundary. This keeps prose such as
+/// `up-to-date` whole without putting surrounding or source punctuation in
+/// the completion list.
 fn words_in(text: &Text) -> Vec<String> {
-    text.lines()
-        .flat_map(|line| {
-            line.split_whitespace()
-                .filter_map(trim_word)
-                .collect::<Vec<_>>()
-        })
-        .collect()
+    text.lines().flat_map(|line| words_in_line(&line)).collect()
 }
 
-fn trim_word(token: &str) -> Option<String> {
-    let trimmed = token.trim_matches(is_wrapper_punctuation);
-    (!trimmed.is_empty()).then(|| trimmed.to_owned())
+fn words_in_line(line: &str) -> Vec<String> {
+    let mut characters = line.chars().peekable();
+    let mut words = Vec::new();
+    let mut word = String::new();
+
+    while let Some(character) = characters.next() {
+        let belongs_to_word = character.is_alphanumeric()
+            || character == '-'
+                && !word.is_empty()
+                && characters.peek().is_some_and(|next| next.is_alphanumeric());
+        if belongs_to_word {
+            word.push(character);
+        } else if !word.is_empty() {
+            words.push(std::mem::take(&mut word));
+        }
+    }
+    if !word.is_empty() {
+        words.push(word);
+    }
+    words
 }
 
 #[cfg(test)]
@@ -302,40 +302,34 @@ mod tests {
     }
 
     #[test]
-    fn preserves_examples_from_the_issue() {
-        assert_eq!(
-            trim_word("--session-restart").as_deref(),
-            Some("--session-restart")
-        );
-        assert_eq!(trim_word(":quit-here").as_deref(), Some(":quit-here"));
-        assert_eq!(
-            trim_word("background-color").as_deref(),
-            Some("background-color")
-        );
-    }
-
-    #[test]
-    fn trims_surrounding_punctuation_only() {
-        assert_eq!(
-            trim_word("`--session-list`").as_deref(),
-            Some("--session-list")
+    fn extracts_only_alphanumeric_words_and_interior_hyphens() {
+        let text = text_of(
+            "alpha,beta foo_bar baz.qux up-to-date -leading trailing- two--parts \
+             123 42nd café 中文 can't $cash @ # [] {}",
         );
         assert_eq!(
-            trim_word("background-color,").as_deref(),
-            Some("background-color")
+            words_in(&text),
+            vec![
+                "alpha",
+                "beta",
+                "foo",
+                "bar",
+                "baz",
+                "qux",
+                "up-to-date",
+                "leading",
+                "trailing",
+                "two",
+                "parts",
+                "123",
+                "42nd",
+                "café",
+                "中文",
+                "can",
+                "t",
+                "cash",
+            ]
         );
-        assert_eq!(trim_word("(word)").as_deref(), Some("word"));
-    }
-
-    #[test]
-    fn discards_pure_punctuation_tokens() {
-        assert_eq!(trim_word(","), None);
-        assert_eq!(trim_word("`\"'"), None);
-    }
-
-    #[test]
-    fn keeps_interior_punctuation_untouched() {
-        assert_eq!(trim_word("foo_bar.baz").as_deref(), Some("foo_bar.baz"));
     }
 
     #[test]

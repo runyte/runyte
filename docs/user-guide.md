@@ -2018,11 +2018,12 @@ It needs no language server and no trigger key: once a typed prefix reaches
 `editor.word_completion_minimum` characters (3 by default), the popup appears
 on its own in file buffers, the scratch buffer, and the commit message, using
 the same filtering, navigation, and acceptance as language and path
-completion. A word is a run of characters between whitespace, so
-`--session-restart`, `:quit-here`, and `background-color` stay whole rather
-than splitting like an identifier; punctuation that only wraps a word, such as
-surrounding backticks or a trailing comma, is trimmed. Candidates from the
-buffer being typed in come first, ordered by how often each occurs there,
+completion. A word contains Unicode letters and numbers. A hyphen stays part
+of it only when it joins characters on both sides, so `up-to-date` stays whole;
+all other punctuation is a boundary and is never included in a candidate.
+This keeps the list focused on prose words, numbers, and source-code name
+fragments. Candidates from the buffer being typed in come first, ordered by
+how often each occurs there,
 followed by words from every other buffer in the same order; the word
 currently being typed is never offered as a completion of itself. A background
 index maintains this off the main thread, so a candidate can be one keystroke

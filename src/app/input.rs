@@ -23,11 +23,12 @@ use super::{
     SystemClipboard, Transaction, ViewAlignment, VimMotion, VimOperator, VimRangeTarget,
     VimTextObject, buffer_language, char_to_byte, display_path, enclosing_area, expand_home_path,
     external_open, hint_is_not_before, hover_content_rows, is_path_separator,
-    is_path_token_boundary, is_terminal_normal_key, is_word, keymap_for, mapped_applied_path,
-    operative_span, parse_colon_command, persistent_session_availability, pointer_pane,
-    pointer_resize_pair, prompt_backspace, prompt_delete, prompt_delete_range, prompt_insert,
-    prompt_word_backward, prompt_word_forward, quote_path_hint, rect_contains, resolve_command,
-    resolved_operation_path, row_characters, unclosed_or_complete_quoted_path,
+    is_path_token_boundary, is_terminal_normal_key, is_word, is_word_completion_character,
+    keymap_for, mapped_applied_path, operative_span, parse_colon_command,
+    persistent_session_availability, pointer_pane, pointer_resize_pair, prompt_backspace,
+    prompt_delete, prompt_delete_range, prompt_insert, prompt_word_backward, prompt_word_forward,
+    quote_path_hint, rect_contains, resolve_command, resolved_operation_path, row_characters,
+    unclosed_or_complete_quoted_path,
 };
 
 impl App {
@@ -2582,7 +2583,7 @@ impl App {
             let keeps_popup = match source {
                 CompletionSource::Language => character.is_alphanumeric() || character == '_',
                 CompletionSource::Path => !is_path_token_boundary(character) && character != '/',
-                CompletionSource::Word => !character.is_whitespace(),
+                CompletionSource::Word => is_word_completion_character(character),
             };
             // A path popup is rebuilt from the directory below rather than
             // narrowed in place. Its items are only the bounded best of a

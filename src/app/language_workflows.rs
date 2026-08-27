@@ -16,9 +16,10 @@ use super::{
     TextDocumentContentChangeEvent, TrackedRequest, Transaction, WORD_COMPLETION_ITEM_LIMIT,
     WorkspaceSearchTarget, buffer_language, buffer_picker_columns, buffer_preview,
     checked_lsp_range, display_path, edit_summary, from_lsp_position, from_lsp_range,
-    language_completion_prefix_start, matches_in_text, open_or_new, operative_span, parse_buffer,
-    path_token_before, push_matching_words, response_name, row_is_not_before, to_lsp_position,
-    word_bounds, word_token_before, workspace_edit_path_identity, workspace_matches,
+    is_word_completion_character, language_completion_prefix_start, matches_in_text, open_or_new,
+    operative_span, parse_buffer, path_token_before, push_matching_words, response_name,
+    row_is_not_before, to_lsp_position, word_bounds, word_token_before,
+    workspace_edit_path_identity, workspace_matches,
 };
 #[cfg(unix)]
 use super::{SessionAction, SessionActionMenu};
@@ -762,7 +763,7 @@ impl App {
     /// showing takes precedence, and a later Language response is still free
     /// to replace a Word popup (`show_completion` only protects Path).
     pub(super) fn word_completion(&mut self, character: char) {
-        if character.is_whitespace() || self.completion.is_some() {
+        if !is_word_completion_character(character) || self.completion.is_some() {
             return;
         }
         if !self.config.editor.word_completion {
@@ -778,18 +779,11 @@ impl App {
         }
         let head = self.active().head();
         let token = word_token_before(buffer, head);
-        // A word being typed inside wrapping punctuation, such as `` `back ``
-        // or `(back`, carries that wrapper in the raw token even though the
-        // index trims the same punctuation from stored words. Matching
-        // against it would never find `background`, so the query — and the
-        // anchor the accepted candidate replaces from — both start after it,
-        // leaving the wrapper itself untouched in the buffer.
-        let query_token = token.trim_start_matches(crate::word_index::is_wrapper_punctuation);
-        let query_len = query_token.chars().count();
+        let query_len = token.chars().count();
         if query_len < self.config.editor.word_completion_minimum {
             return;
         }
-        let query = query_token.to_lowercase();
+        let query = token.to_lowercase();
         let snapshot = handle.current();
         let mut seen = HashSet::new();
         seen.insert(query.clone());
@@ -811,7 +805,7 @@ impl App {
             selected: 0,
             buffer: buffer_id,
             anchor: head - query_len,
-            filter: query_token.to_owned(),
+            filter: token,
             source: CompletionSource::Word,
             explicit_session: None,
         });
