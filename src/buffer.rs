@@ -12,6 +12,7 @@ use std::{
     fs::{self, File, OpenOptions},
     io::{self, Read, Write},
     path::{Path, PathBuf},
+    sync::Arc,
     sync::atomic::{AtomicU64, Ordering},
 };
 
@@ -161,6 +162,31 @@ pub enum GeneratedViewIdentity {
         scope: String,
         previous: bool,
     },
+    /// One immutable observation of an ordinary file's disk contents.
+    DiskSnapshot {
+        source_buffer: usize,
+        revision: String,
+    },
+}
+
+/// Why an ordinary file buffer no longer agrees with its accepted baseline.
+///
+/// This is presentation-neutral state. Frontends render every non-synchronized
+/// value as `[STALE]` and leave the more specific explanation to notifications.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum ExternalFileStatus {
+    #[default]
+    Synchronized,
+    Changed,
+    Deleted,
+    Binary,
+    Unreadable,
+}
+
+impl ExternalFileStatus {
+    pub const fn is_stale(self) -> bool {
+        !matches!(self, Self::Synchronized)
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -213,6 +239,11 @@ pub struct Buffer {
     /// `None` for a buffer with no file behind it, and for one whose file
     /// could not be inspected, which is treated as nothing to protect.
     disk_state: Option<DiskState>,
+    /// Monotonic identity of the accepted disk baseline and path ownership.
+    disk_generation: u64,
+    external_status: ExternalFileStatus,
+    external_observation: Option<FileObservation>,
+    last_reported_observation: Option<FileObservation>,
     /// Bytes in the longest line this buffer's text had when it was built.
     ///
     /// Measured once, where the text arrives, because it exists to answer one
@@ -231,12 +262,54 @@ pub struct Buffer {
 
 /// Enough of a file's metadata to notice that something else rewrote it.
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct DiskState {
+pub(crate) struct DiskState {
     len: u64,
     modified: Option<std::time::SystemTime>,
     digest: String,
     identity: Option<FileIdentity>,
     access: Option<FileAccessState>,
+}
+
+/// One complete path observation. Text and disk state are always built from
+/// the same open file handle, so a confirmation never combines two revisions.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum FileObservation {
+    Text { text: Arc<str>, state: DiskState },
+    Deleted,
+    Binary { digest: String },
+    Unreadable { message: String },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FileObservationRequest {
+    pub(crate) buffer: usize,
+    pub(crate) path: PathBuf,
+    pub(crate) generation: u64,
+    pub(crate) baseline_metadata: Option<FileMetadataHint>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FileObservationEvent {
+    pub(crate) buffer: usize,
+    pub(crate) path: PathBuf,
+    pub(crate) generation: u64,
+    pub(crate) observation: FileObservation,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct FileMetadataHint {
+    len: u64,
+    modified: Option<std::time::SystemTime>,
+    identity: Option<FileIdentity>,
+    access: Option<FileAccessState>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ObservationApply {
+    Ignored,
+    Synchronized,
+    Converged,
+    Stale { notify: bool },
 }
 
 impl DiskState {
@@ -269,6 +342,19 @@ impl DiskState {
 
     fn same_contents(&self, other: &Self) -> bool {
         self.len == other.len && self.digest == other.digest
+    }
+
+    fn metadata_hint(&self) -> FileMetadataHint {
+        FileMetadataHint {
+            len: self.len,
+            modified: self.modified,
+            identity: self.identity.clone(),
+            access: self.access.clone(),
+        }
+    }
+
+    fn revision_key(&self) -> String {
+        format!("{}:{}", self.len, self.digest)
     }
 
     fn matches_displaced(&self, expected: &Self) -> bool {
@@ -447,6 +533,62 @@ fn read_text_and_state(path: &Path, action: &str) -> Result<(String, DiskState)>
     let contents =
         String::from_utf8(contents).expect("complete binary classification rejects invalid UTF-8");
     Ok((contents, state))
+}
+
+pub(crate) fn observe_file(path: &Path) -> FileObservation {
+    let mut file = match File::open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            return FileObservation::Deleted;
+        }
+        Err(error) => {
+            return FileObservation::Unreadable {
+                message: error.to_string(),
+            };
+        }
+    };
+    let metadata = match file.metadata() {
+        Ok(metadata) => metadata,
+        Err(error) => {
+            return FileObservation::Unreadable {
+                message: error.to_string(),
+            };
+        }
+    };
+    let mut contents = Vec::new();
+    if let Err(error) = file.read_to_end(&mut contents) {
+        return FileObservation::Unreadable {
+            message: error.to_string(),
+        };
+    }
+    if crate::external_open::is_binary(&contents, true) {
+        return FileObservation::Binary {
+            digest: crate::hash::sha256_hex(&contents),
+        };
+    }
+    let state = match DiskState::from_contents(&file, &metadata, &contents) {
+        Ok(state) => state,
+        Err(error) => {
+            return FileObservation::Unreadable {
+                message: error.to_string(),
+            };
+        }
+    };
+    let text = String::from_utf8(contents)
+        .expect("complete binary classification rejects invalid UTF-8")
+        .into();
+    FileObservation::Text { text, state }
+}
+
+pub(crate) fn inspect_file_metadata(path: &Path) -> Option<FileMetadataHint> {
+    let file = File::open(path).ok()?;
+    let metadata = file.metadata().ok()?;
+    Some(FileMetadataHint {
+        len: metadata.len(),
+        modified: metadata.modified().ok(),
+        identity: file_identity(&metadata),
+        access: file_access_state(&file, &metadata).ok()?,
+    })
 }
 
 struct SaveTemporary(Option<PathBuf>);
@@ -1447,6 +1589,10 @@ impl Buffer {
             redo: Vec::new(),
             undo_group: None,
             disk_state: None,
+            disk_generation: 0,
+            external_status: ExternalFileStatus::Synchronized,
+            external_observation: None,
+            last_reported_observation: None,
             layout: ContentLayout::default(),
         }
     }
@@ -1467,8 +1613,112 @@ impl Buffer {
             redo: Vec::new(),
             undo_group: None,
             disk_state: Some(disk_state),
+            disk_generation: 1,
+            external_status: ExternalFileStatus::Synchronized,
+            external_observation: None,
+            last_reported_observation: None,
             layout: ContentLayout::default(),
         })
+    }
+
+    pub fn external_file_status(&self) -> ExternalFileStatus {
+        self.external_status
+    }
+
+    pub(crate) fn file_observation_request(&self, buffer: usize) -> Option<FileObservationRequest> {
+        (self.kind == BufferKind::File).then(|| FileObservationRequest {
+            buffer,
+            path: self.path.clone().expect("a file buffer has a path"),
+            generation: self.disk_generation,
+            baseline_metadata: self.disk_state.as_ref().map(DiskState::metadata_hint),
+        })
+    }
+
+    pub(crate) fn observe_now(&self, buffer: usize) -> Option<FileObservationEvent> {
+        let request = self.file_observation_request(buffer)?;
+        Some(FileObservationEvent {
+            observation: observe_file(&request.path),
+            buffer: request.buffer,
+            path: request.path,
+            generation: request.generation,
+        })
+    }
+
+    pub(crate) fn apply_file_observation(
+        &mut self,
+        event: &FileObservationEvent,
+    ) -> ObservationApply {
+        if self.kind != BufferKind::File
+            || self.path.as_deref() != Some(event.path.as_path())
+            || self.disk_generation != event.generation
+        {
+            return ObservationApply::Ignored;
+        }
+
+        if let FileObservation::Text { text, state } = &event.observation {
+            if self.disk_state.as_ref() == Some(state) {
+                self.clear_external_file_state();
+                return ObservationApply::Synchronized;
+            }
+            if self.text.to_string() == text.as_ref() {
+                self.disk_state = Some(state.clone());
+                self.disk_generation = self.disk_generation.wrapping_add(1);
+                // The text already agrees. Only advance the saved baseline;
+                // retaining history lets undo recover the edit that converged.
+                self.saved_text = Some(self.text.clone());
+                self.dirty = false;
+                self.clear_external_file_state();
+                return ObservationApply::Converged;
+            }
+        }
+
+        self.external_status = match &event.observation {
+            FileObservation::Text { .. } => ExternalFileStatus::Changed,
+            FileObservation::Deleted => ExternalFileStatus::Deleted,
+            FileObservation::Binary { .. } => ExternalFileStatus::Binary,
+            FileObservation::Unreadable { .. } => ExternalFileStatus::Unreadable,
+        };
+        let notify = self.last_reported_observation.as_ref() != Some(&event.observation);
+        self.external_observation = Some(event.observation.clone());
+        if notify {
+            self.last_reported_observation = Some(event.observation.clone());
+        }
+        ObservationApply::Stale { notify }
+    }
+
+    pub(crate) fn reload_from_observation(&mut self, observation: &FileObservation) -> Result<()> {
+        ensure!(self.kind == BufferKind::File, "buffer is not a file");
+        let FileObservation::Text { text, state } = observation else {
+            bail!("the current disk version is not editable text");
+        };
+        self.disk_state = Some(state.clone());
+        self.text = Text::from_str(text);
+        self.undo.clear();
+        self.redo.clear();
+        self.undo_group = None;
+        self.accept_current_as_disk_baseline();
+        Ok(())
+    }
+
+    pub(crate) fn observed_revision_key(observation: &FileObservation) -> String {
+        match observation {
+            FileObservation::Text { state, .. } => state.revision_key(),
+            FileObservation::Deleted => "deleted".to_owned(),
+            FileObservation::Binary { digest } => format!("binary:{digest}"),
+            FileObservation::Unreadable { message } => format!("unreadable:{message}"),
+        }
+    }
+
+    fn clear_external_file_state(&mut self) {
+        self.external_status = ExternalFileStatus::Synchronized;
+        self.external_observation = None;
+        self.last_reported_observation = None;
+    }
+
+    fn accept_current_as_disk_baseline(&mut self) {
+        self.mark_saved();
+        self.disk_generation = self.disk_generation.wrapping_add(1);
+        self.clear_external_file_state();
     }
 
     pub fn open_directory(path: &Path, show_hidden: bool) -> Result<Self> {
@@ -1487,6 +1737,10 @@ impl Buffer {
             redo: Vec::new(),
             undo_group: None,
             disk_state: None,
+            disk_generation: 0,
+            external_status: ExternalFileStatus::Synchronized,
+            external_observation: None,
+            last_reported_observation: None,
             layout: ContentLayout::default(),
         })
     }
@@ -1531,6 +1785,10 @@ impl Buffer {
             redo: Vec::new(),
             undo_group: None,
             disk_state: None,
+            disk_generation: 0,
+            external_status: ExternalFileStatus::Synchronized,
+            external_observation: None,
+            last_reported_observation: None,
             layout: ContentLayout::default(),
         }
     }
@@ -1560,6 +1818,10 @@ impl Buffer {
             redo: Vec::new(),
             undo_group: None,
             disk_state: None,
+            disk_generation: 0,
+            external_status: ExternalFileStatus::Synchronized,
+            external_observation: None,
+            last_reported_observation: None,
             layout: ContentLayout::default(),
         }
     }
@@ -1636,6 +1898,10 @@ impl Buffer {
             redo: Vec::new(),
             undo_group: None,
             disk_state: None,
+            disk_generation: 0,
+            external_status: ExternalFileStatus::Synchronized,
+            external_observation: None,
+            last_reported_observation: None,
             layout: ContentLayout::default(),
         }
     }
@@ -1656,6 +1922,10 @@ impl Buffer {
             redo: Vec::new(),
             undo_group: None,
             disk_state: None,
+            disk_generation: 0,
+            external_status: ExternalFileStatus::Synchronized,
+            external_observation: None,
+            last_reported_observation: None,
             layout: ContentLayout::default(),
         }
     }
@@ -1676,6 +1946,10 @@ impl Buffer {
             redo: Vec::new(),
             undo_group: None,
             disk_state: None,
+            disk_generation: 0,
+            external_status: ExternalFileStatus::Synchronized,
+            external_observation: None,
+            last_reported_observation: None,
             layout: ContentLayout::default(),
         }
     }
@@ -1696,6 +1970,10 @@ impl Buffer {
             redo: Vec::new(),
             undo_group: None,
             disk_state: None,
+            disk_generation: 0,
+            external_status: ExternalFileStatus::Synchronized,
+            external_observation: None,
+            last_reported_observation: None,
             layout: ContentLayout::default(),
         }
     }
@@ -1715,6 +1993,10 @@ impl Buffer {
             redo: Vec::new(),
             undo_group: None,
             disk_state: None,
+            disk_generation: 0,
+            external_status: ExternalFileStatus::Synchronized,
+            external_observation: None,
+            last_reported_observation: None,
             layout: ContentLayout::default(),
         }
     }
@@ -1734,6 +2016,10 @@ impl Buffer {
             redo: Vec::new(),
             undo_group: None,
             disk_state: None,
+            disk_generation: 0,
+            external_status: ExternalFileStatus::Synchronized,
+            external_observation: None,
+            last_reported_observation: None,
             layout: ContentLayout::default(),
         }
     }
@@ -1753,6 +2039,10 @@ impl Buffer {
             redo: Vec::new(),
             undo_group: None,
             disk_state: None,
+            disk_generation: 0,
+            external_status: ExternalFileStatus::Synchronized,
+            external_observation: None,
+            last_reported_observation: None,
             layout: ContentLayout::default(),
         }
     }
@@ -1781,6 +2071,10 @@ impl Buffer {
             redo: Vec::new(),
             undo_group: None,
             disk_state: None,
+            disk_generation: 0,
+            external_status: ExternalFileStatus::Synchronized,
+            external_observation: None,
+            last_reported_observation: None,
             layout: ContentLayout::default(),
         }
     }
@@ -1801,6 +2095,10 @@ impl Buffer {
             redo: Vec::new(),
             undo_group: None,
             disk_state: None,
+            disk_generation: 0,
+            external_status: ExternalFileStatus::Synchronized,
+            external_observation: None,
+            last_reported_observation: None,
             layout: ContentLayout::default(),
         }
     }
@@ -1820,6 +2118,10 @@ impl Buffer {
             redo: Vec::new(),
             undo_group: None,
             disk_state: None,
+            disk_generation: 0,
+            external_status: ExternalFileStatus::Synchronized,
+            external_observation: None,
+            last_reported_observation: None,
             layout: ContentLayout::default(),
         }
     }
@@ -1841,6 +2143,10 @@ impl Buffer {
             redo: Vec::new(),
             undo_group: None,
             disk_state: None,
+            disk_generation: 0,
+            external_status: ExternalFileStatus::Synchronized,
+            external_observation: None,
+            last_reported_observation: None,
             layout: ContentLayout::default(),
         }
     }
@@ -2407,7 +2713,7 @@ impl Buffer {
         match DiskState::inspect(path) {
             Ok(Some(current)) if current.same_contents(&write_status.installed_state) => {
                 self.disk_state = Some(current);
-                self.mark_saved();
+                self.accept_current_as_disk_baseline();
             }
             Ok(_) => write_status.warn(format!(
                 "{} was saved, but changed again before Runyte could verify it; the buffer remains modified",
@@ -2494,7 +2800,7 @@ impl Buffer {
         match DiskState::inspect(path) {
             Ok(Some(current)) if current.same_contents(&write_status.installed_state) => {
                 self.disk_state = Some(current);
-                self.mark_saved();
+                self.accept_current_as_disk_baseline();
             }
             Ok(_) => write_status.warn(format!(
                 "{} was saved, but changed again before Runyte could verify it; the buffer remains modified",
@@ -2524,6 +2830,10 @@ impl Buffer {
         }
     }
 
+    pub(crate) fn owns_path_identity(&self, requested: &Path) -> bool {
+        self.has_path_identity(requested)
+    }
+
     /// Replaces a file buffer with its current contents on disk.
     ///
     /// The read completes before any in-memory state changes, so a missing or
@@ -2537,7 +2847,7 @@ impl Buffer {
         self.undo.clear();
         self.redo.clear();
         self.undo_group = None;
-        self.mark_saved();
+        self.accept_current_as_disk_baseline();
         Ok(())
     }
 
@@ -2700,6 +3010,8 @@ impl Buffer {
             self.disk_state = Some(current);
         }
         self.path = Some(path.clone());
+        self.disk_generation = self.disk_generation.wrapping_add(1);
+        self.clear_external_file_state();
         if let Some(directory) = &mut self.directory {
             directory.retarget_root(path);
         }
@@ -3948,5 +4260,99 @@ mod tests {
             buffer.apply(&Transaction::insert(index, "x"));
         }
         assert_eq!(buffer.undo.len(), HISTORY_LIMIT);
+    }
+
+    #[test]
+    fn external_observation_marks_stale_without_touching_text_or_history() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "runyte-buffer-external-observation-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("notes.txt");
+        fs::write(&path, "baseline\n").unwrap();
+        let mut buffer = Buffer::open(&path).unwrap();
+        buffer.apply(&Transaction::insert(0, "local "));
+        let before = buffer.to_string();
+        let history = buffer.history_len();
+
+        fs::write(&path, "external\n").unwrap();
+        let event = buffer.observe_now(7).unwrap();
+        assert_eq!(
+            buffer.apply_file_observation(&event),
+            ObservationApply::Stale { notify: true }
+        );
+        assert_eq!(buffer.external_file_status(), ExternalFileStatus::Changed);
+        assert_eq!(buffer.to_string(), before);
+        assert_eq!(buffer.history_len(), history);
+        assert!(buffer.dirty);
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn matching_external_text_converges_without_clearing_undo() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "runyte-buffer-external-convergence-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("notes.txt");
+        fs::write(&path, "base").unwrap();
+        let mut buffer = Buffer::open(&path).unwrap();
+        buffer.apply(&Transaction::insert(4, "!"));
+        fs::write(&path, "base!").unwrap();
+
+        let event = buffer.observe_now(0).unwrap();
+        assert_eq!(
+            buffer.apply_file_observation(&event),
+            ObservationApply::Converged
+        );
+        assert!(!buffer.dirty);
+        assert_eq!(buffer.history_len(), 1);
+        assert!(buffer.undo());
+        assert_eq!(buffer.to_string(), "base");
+        assert!(buffer.dirty);
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn observation_from_before_a_save_is_ignored() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "runyte-buffer-old-observation-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("notes.txt");
+        fs::write(&path, "before").unwrap();
+        let mut buffer = Buffer::open(&path).unwrap();
+        fs::write(&path, "external").unwrap();
+        let old = buffer.observe_now(0).unwrap();
+
+        buffer.apply(&Transaction::insert(0, "saved "));
+        buffer.save(true).unwrap();
+        assert_eq!(
+            buffer.apply_file_observation(&old),
+            ObservationApply::Ignored
+        );
+        assert_eq!(
+            buffer.external_file_status(),
+            ExternalFileStatus::Synchronized
+        );
+
+        fs::remove_dir_all(directory).unwrap();
     }
 }

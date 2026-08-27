@@ -640,6 +640,7 @@ impl App {
         self.picker.is_some()
             || self.fs_confirmation.is_some()
             || self.directory_reload_confirmation.is_some()
+            || self.file_reload_confirmation.is_some()
             || self.buffer_discard_confirmation.is_some()
             || self.git_discard_confirmation.is_some()
             || self.git_stash_confirmation.is_some()
@@ -664,6 +665,18 @@ impl App {
     /// line. Service feedback and action echoes may change while a decision is
     /// open; its popup must continue to name the exact operation Enter accepts.
     fn confirmation_overlay(&self) -> Option<ConfirmationOverlay> {
+        if let Some(confirmation) = &self.file_reload_confirmation {
+            return Some(ConfirmationOverlay {
+                title: "Reload file",
+                accept: "reload and discard",
+                message: confirmation.message(
+                    self.buffers[confirmation.buffer]
+                        .external_file_status()
+                        .is_stale(),
+                ),
+                input: None,
+            });
+        }
         if let Some(confirmation) = &self.directory_reload_confirmation {
             return Some(ConfirmationOverlay {
                 title: "Discard directory edits",

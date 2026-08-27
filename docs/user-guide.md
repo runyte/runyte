@@ -719,6 +719,37 @@ A comparison needs both its panes and both its buffers. Closing either pane, or
 pointing one of them at a different buffer, ends it — the view was about those
 two files.
 
+### Files changed outside Runyte
+
+Runyte monitors the parent directories of open ordinary files in standalone
+and persistent modes, including while a persistent TUI is detached. When a
+path no longer agrees with the disk state accepted at open, save, or reload,
+every pane showing it and the global status line show `[STALE]`; the buffer
+manager marks hidden stale buffers too. This is separate from `[+]`, so a
+conflict reads `[+] [STALE]`. Detection preserves text, selections, undo, and
+language-server state, and the first observation of each disk revision creates
+one retained WARNING notification.
+
+`Space b d` or `:diff-disk` reads the path again and opens that immutable disk
+revision as `[disk] path [RO]` on the left of the editable Runyte buffer. The
+view uses the ordinary aligned side-by-side comparison and follows later edits
+on the right. Deleted, unreadable, binary, and versions over the comparison
+size limit have no comparison source and are refused without changing panes.
+
+`Space r` or `:reload` reloads a clean file immediately. For every dirty file,
+it first opens a confirmation naming the path and the undo history that will be
+discarded; Escape or `Ctrl-c` keeps the buffer. Enter applies only the exact
+disk revision reviewed by that confirmation. If the path changes again, the
+buffer is retained and the new revision must be reviewed again.
+
+When the in-memory and observed disk text become equal, Runyte adopts the new
+disk identity and marks the buffer clean without clearing usable undo history.
+A deleted path remains stale but an ordinary save may recreate it. Binary and
+unreadable replacements are never admitted into a text buffer. An ordinary
+save refuses a known conflicting revision before save hooks can edit the
+buffer; `:write!` is the explicit boundary for replacing it and clears
+`[STALE]` only after the installed file is verified.
+
 ### Directory buffers
 
 Open a directory with `runyte <directory>` or `:open <directory>`. It appears
@@ -793,7 +824,8 @@ when another mode already uses green), orange for Select, and purple for
 Command. The rest of the row keeps the
 theme's ordinary background. Its left side
 then names the workspace mode and current workspace directory, marking the
-active buffer `[+]` when it has unsaved changes and `[RO]` when it is read-only.
+active buffer `[+]` when it has unsaved changes, `[STALE]` when its file path
+disagrees with the accepted disk baseline, and `[RO]` when it is read-only.
 Pane titles carry file and buffer identity. The right carries the cursor and how
 far through the file it sits:
 
@@ -1409,6 +1441,7 @@ cancellation keys.
 | `:fuzzy-grep-directory` | Fuzzy-search contents below the active file/explorer directory |
 | `Space b b` | Open the filterable buffer picker; `Ctrl-t` toggles preview and `Tab` shows valid actions |
 | `Space b c` | Close the active buffer safely (`:close`, `:c`) without changing the pane layout |
+| `Space b d` | Compare a fresh immutable disk revision with the active file buffer (`:diff-disk`) |
 | `Space b n` | Open a new scratch buffer in the current pane (`:buffer-new`, `:new`) |
 | `Space / /` | Search the workspace with a regular expression; see [Search](#search) |
 | `Space r` | Reload the active text file or refresh the active explorer or supported Git list |
@@ -1426,9 +1459,10 @@ cancellation keys.
 | `Space o t` | Preview and save a theme in `config.yaml`; `Tab` narrows to the dark or light ones |
 | `Space o s` | Inspect syntax and LSP service health |
 | `Ctrl-s`, `:write`, or `:save` | Save |
+| `:diff-disk` | Compare the active file buffer with a fresh immutable disk snapshot |
 | `:diff-this` (`:difft`, `:dt`) | Mark this buffer, or compare it with the one marked before it |
 | `:diff-off` (`:do`) | Close the comparison this buffer is part of |
-| `:reload` | Discard unsaved changes and reload the active file, or refresh the active explorer or supported Git list |
+| `:reload` | Reload the active file (confirming first when dirty), or refresh the active explorer or supported Git list |
 | `:path` | Show the active buffer's absolute path in a wrapped popup; `Tab` opens a menu to copy it to the system clipboard (`s`) or the unnamed Runyte register (`r`) |
 | `:resize-right +/- N` | Grow or shrink the active pane at its right edge by `N` terminal cells |
 | `:resize-left +/- N` | Grow or shrink the active pane at its left edge by `N` terminal cells |
@@ -2236,6 +2270,7 @@ are enabled.
 :close!                 discard unsaved text and close the active buffer (aliases: c!, buffer-close!, bc!)
 :window-close           close the active pane, but not the last one (alias: wc)
 :buffer-new             open a new scratch buffer in the current pane (alias: new)
+:diff-disk              compare a fresh disk snapshot with the active file buffer
 :diff-this              mark this buffer, or compare it with the one marked before it (aliases: difft, dt)
 :diff-off               close the comparison this buffer is part of (alias: do)
 :explorer [path]        open an editable directory explorer (alias: files)

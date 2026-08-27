@@ -2,6 +2,85 @@
 
 use super::*;
 
+#[test]
+fn dirty_file_reload_is_confirmed_and_installs_only_the_reviewed_revision() {
+    let directory = temporary("dirty-file-reload-confirmation");
+    fs::create_dir_all(&directory).unwrap();
+    let path = directory.join("notes.txt");
+    fs::write(&path, "disk one\n").unwrap();
+    let mut app = App::new(Config::default(), Some(path.clone())).unwrap();
+    let buffer = app.active().buffer;
+    app.apply_to_buffer(buffer, &Transaction::insert(0, "local "));
+    let history = app.buffers[buffer].history_len();
+    fs::write(&path, "disk two\n").unwrap();
+
+    app.reload_file().unwrap();
+    assert!(app.file_reload_confirmation.is_some());
+    assert_eq!(app.buffers[buffer].to_string(), "local disk one\n");
+    assert_eq!(app.buffers[buffer].history_len(), history);
+    let overlay = confirmation_snapshot(&app);
+    assert_eq!(overlay.title, "Reload file");
+    assert!(overlay.message.unwrap().contains("Space b d"));
+
+    fs::write(&path, "disk three\n").unwrap();
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert!(app.file_reload_confirmation.is_some());
+    assert_eq!(app.buffers[buffer].to_string(), "local disk one\n");
+    assert!(app.status.contains("review reload again"), "{}", app.status);
+
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert!(app.file_reload_confirmation.is_none());
+    assert_eq!(app.buffers[buffer].to_string(), "disk three\n");
+    assert!(!app.buffers[buffer].dirty);
+    assert_eq!(app.buffers[buffer].history_len(), 0);
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn stale_state_is_shared_by_panes_and_transported_snapshots() {
+    let directory = temporary("stale-shared-snapshot");
+    fs::create_dir_all(&directory).unwrap();
+    let path = directory.join("notes.txt");
+    fs::write(&path, "baseline\n").unwrap();
+    let mut app = App::new(Config::default(), Some(path.clone())).unwrap();
+    app.split(Axis::Horizontal, None).unwrap();
+    let buffer = app.active().buffer;
+    app.apply_to_buffer(buffer, &Transaction::insert(0, "local "));
+    fs::write(&path, "external\n").unwrap();
+    let event = app.buffers[buffer].observe_now(buffer).unwrap();
+    app.apply_file_observation(event.clone());
+    app.apply_file_observation(event);
+
+    let view = app.prepare_view(FrameGeometry {
+        screen: Rect {
+            width: 80,
+            height: 22,
+            ..Rect::default()
+        },
+        editor: Rect {
+            width: 80,
+            height: 20,
+            ..Rect::default()
+        },
+        status: Rect::default(),
+        message: Rect::default(),
+    });
+    let snapshot = app.snapshot(&view);
+    assert!(snapshot.panes.iter().all(|pane| {
+        pane.title.external_file_status == crate::buffer::ExternalFileStatus::Changed
+    }));
+    assert_eq!(
+        snapshot.status.external_file_status,
+        crate::buffer::ExternalFileStatus::Changed
+    );
+    assert_eq!(app.unread_notification_counts().warnings, 1);
+    let wire: crate::protocol::EditorSnapshot = snapshot.into();
+    assert!(wire.panes.iter().all(|pane| {
+        pane.title.external_file_status == crate::protocol::ExternalFileStatus::Changed
+    }));
+    fs::remove_dir_all(directory).unwrap();
+}
+
 #[cfg(unix)]
 #[test]
 fn opening_a_symlink_alias_reuses_the_live_file_buffer() {

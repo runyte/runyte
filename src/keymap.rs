@@ -1136,6 +1136,10 @@ fn built_in_bindings() -> Vec<Binding> {
             ColonCommand::CloseBuffer,
         ),
         primary_modal(
+            [Key::char(' '), Key::char('b'), Key::char('d')],
+            ColonCommand::DiffDisk,
+        ),
+        primary_modal(
             [Key::char(' '), Key::char('b'), Key::char('n')],
             Command::NewBuffer,
         ),

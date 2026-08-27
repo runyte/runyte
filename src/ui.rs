@@ -925,6 +925,7 @@ fn draw_pane(frame: &mut Frame<'_>, theme: &TuiTheme, mode: Mode, pane: &PaneSna
     let title = pane_title_text(
         &pane.title.name,
         pane.title.dirty,
+        pane.title.external_file_status.is_stale(),
         pane.title.read_only,
         pane.title.maximized,
         usize::from(area.width),
@@ -1545,8 +1546,13 @@ fn draw_normal_status(
         .unwrap_or_default();
     let left_prefix = format!("│ {} │ {number_label}Workspace: ", session.label());
     let left_suffix = format!(
-        "{}{} ",
+        "{}{}{} ",
         if status.dirty { " [+]" } else { "" },
+        if status.external_file_status.is_stale() {
+            " [STALE]"
+        } else {
+            ""
+        },
         if status.read_only { " [RO]" } else { "" }
     );
     let count = status.selection_count;
@@ -1627,11 +1633,13 @@ fn draw_normal_status(
 fn pane_title_text(
     name: &str,
     dirty: bool,
+    stale: bool,
     read_only: bool,
     maximized: Option<MaximizedView>,
     pane_width: usize,
 ) -> String {
     let dirty_marker = if dirty { " [+]" } else { "" };
+    let stale_marker = if stale { " [STALE]" } else { "" };
     let read_only_marker = if read_only { " [RO]" } else { "" };
     let maximized_marker = match maximized {
         Some(MaximizedView::Zen) => " [zen]",
@@ -1641,11 +1649,12 @@ fn pane_title_text(
     let fixed_width = 2 // border cells
         + 2 // leading/trailing padding spaces
         + UnicodeWidthStr::width(dirty_marker)
+        + UnicodeWidthStr::width(stale_marker)
         + UnicodeWidthStr::width(read_only_marker)
         + UnicodeWidthStr::width(maximized_marker);
     let name_width = pane_width.saturating_sub(fixed_width);
     let name = clip_path_start(name, name_width);
-    format!(" {name}{dirty_marker}{read_only_marker}{maximized_marker} ")
+    format!(" {name}{dirty_marker}{stale_marker}{read_only_marker}{maximized_marker} ")
 }
 
 /// Keeps the identifying end of a workspace path when the status row is
@@ -3632,6 +3641,7 @@ mod tests {
             mode: Mode::Normal,
             workspace_directory: "/a/very/long/workspace/directory".to_owned(),
             dirty: true,
+            external_file_status: crate::buffer::ExternalFileStatus::Synchronized,
             read_only: false,
             cursor: Position::new(41, 7),
             line_count: 100,
@@ -3886,14 +3896,27 @@ mod tests {
 
     #[test]
     fn pane_title_leaves_a_short_path_untouched() {
-        let title = pane_title_text("[file] /tmp/x.rs", false, false, None, 40);
+        let title = pane_title_text("[file] /tmp/x.rs", false, false, false, None, 40);
         assert_eq!(title, " [file] /tmp/x.rs ");
+    }
+
+    #[test]
+    fn pane_title_orders_independent_buffer_markers() {
+        let title = pane_title_text(
+            "[file] /tmp/x.rs",
+            true,
+            true,
+            true,
+            Some(MaximizedView::Zen),
+            80,
+        );
+        assert_eq!(title, " [file] /tmp/x.rs [+] [STALE] [RO] [zen] ");
     }
 
     #[test]
     fn pane_title_trims_a_long_path_from_the_start_keeping_markers() {
         let name = "[file] /home/user/code/runyte/src/very/deeply/nested/module.rs";
-        let title = pane_title_text(name, true, true, None, 40);
+        let title = pane_title_text(name, true, false, true, None, 40);
 
         assert!(title.starts_with(" ..."), "{title:?}");
         assert!(title.ends_with("module.rs [+] [RO] "), "{title:?}");
@@ -3904,7 +3927,7 @@ mod tests {
 
     #[test]
     fn pane_title_degrades_gracefully_when_too_narrow_for_an_ellipsis() {
-        let title = pane_title_text("[file] /a/b/c.rs", false, false, None, 2);
+        let title = pane_title_text("[file] /a/b/c.rs", false, false, false, None, 2);
         assert_eq!(title, "  ");
     }
 
@@ -3913,6 +3936,7 @@ mod tests {
         assert_eq!(
             pane_title_text(
                 "[file] /tmp/x.rs",
+                false,
                 false,
                 false,
                 Some(MaximizedView::Zen),
@@ -3925,13 +3949,14 @@ mod tests {
                 "[file] /tmp/x.rs",
                 false,
                 false,
+                false,
                 Some(MaximizedView::Fullscreen),
                 40
             ),
             " [file] /tmp/x.rs [fullscreen] "
         );
         assert_eq!(
-            pane_title_text("[file] /tmp/x.rs", false, false, None, 40),
+            pane_title_text("[file] /tmp/x.rs", false, false, false, None, 40),
             " [file] /tmp/x.rs "
         );
     }
@@ -3939,7 +3964,7 @@ mod tests {
     #[test]
     fn pane_title_keeps_the_maximized_tag_when_the_path_is_trimmed() {
         let name = "[file] /home/user/code/runyte/src/very/deeply/nested/module.rs";
-        let title = pane_title_text(name, true, true, Some(MaximizedView::Zen), 40);
+        let title = pane_title_text(name, true, false, true, Some(MaximizedView::Zen), 40);
 
         assert!(title.starts_with(" ..."), "{title:?}");
         assert!(title.ends_with("module.rs [+] [RO] [zen] "), "{title:?}");
@@ -4222,6 +4247,7 @@ mod tests {
             title: crate::snapshot::PaneTitle {
                 name: "fold.rs".to_owned(),
                 dirty: false,
+                external_file_status: crate::buffer::ExternalFileStatus::Synchronized,
                 read_only: false,
                 maximized: None,
             },
@@ -4288,6 +4314,7 @@ mod tests {
             title: crate::snapshot::PaneTitle {
                 name: "changed.rs".to_owned(),
                 dirty: true,
+                external_file_status: crate::buffer::ExternalFileStatus::Synchronized,
                 read_only: false,
                 maximized: None,
             },
@@ -4371,6 +4398,7 @@ mod tests {
             title: crate::snapshot::PaneTitle {
                 name: "changed.rs".to_owned(),
                 dirty: true,
+                external_file_status: crate::buffer::ExternalFileStatus::Synchronized,
                 read_only: false,
                 maximized: None,
             },
@@ -4456,6 +4484,7 @@ mod tests {
             title: crate::snapshot::PaneTitle {
                 name: "changed.rs".to_owned(),
                 dirty: true,
+                external_file_status: crate::buffer::ExternalFileStatus::Synchronized,
                 read_only: false,
                 maximized: None,
             },
@@ -4526,6 +4555,7 @@ mod tests {
             title: crate::snapshot::PaneTitle {
                 name: "[git diff a.rs]".to_owned(),
                 dirty: false,
+                external_file_status: crate::buffer::ExternalFileStatus::Synchronized,
                 read_only: false,
                 maximized: None,
             },

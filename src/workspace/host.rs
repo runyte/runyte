@@ -10,6 +10,7 @@ use anyhow::Result;
 
 use crate::{
     app::{App, CommandOutcome, FrameGeometry, PointerOutcome, PreparedView},
+    buffer::FileObservationEvent,
     command::CommandInvocation,
     file_picker::{FilePickerEvent, FileScanner},
     git::GitServiceEvent,
@@ -178,6 +179,7 @@ pub enum HostEvent {
     Syntax(SyntaxEvent),
     Lsp(LspEvent),
     FilePicker(FilePickerEvent),
+    FileObservation(FileObservationEvent),
     Git(GitServiceEvent),
     Terminal(crate::terminal::TerminalOutput),
     #[cfg(unix)]
@@ -1014,6 +1016,7 @@ impl WorkspaceHost {
             }
             HostEvent::Lsp(event) => self.app.apply_lsp_event(event),
             HostEvent::FilePicker(event) => self.app.apply_file_picker_event(event),
+            HostEvent::FileObservation(event) => self.app.apply_file_observation(event),
             HostEvent::Git(event) => self.app.apply_git_service_event(event),
             HostEvent::Terminal(output) => self.app.apply_terminal_output(output),
             #[cfg(unix)]

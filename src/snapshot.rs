@@ -12,7 +12,7 @@ use unicode_width::UnicodeWidthChar;
 
 use crate::{
     app::{App, MaximizedView, Mode, PreparedPane, PreparedView, PromptKind},
-    buffer::{Buffer, Position},
+    buffer::{Buffer, ExternalFileStatus, Position},
     command::EditorCommand,
     config::Theme,
     diff::Change,
@@ -306,6 +306,7 @@ pub struct PaneSnapshot {
 pub struct PaneTitle {
     pub name: String,
     pub dirty: bool,
+    pub external_file_status: ExternalFileStatus,
     /// Whether the buffer refuses text edits. Carried here rather than
     /// re-derived by a frontend so every surface names it the same way.
     pub read_only: bool,
@@ -406,6 +407,7 @@ pub struct StatusSnapshot {
     /// workspace context independently of the active pane's buffer identity.
     pub workspace_directory: String,
     pub dirty: bool,
+    pub external_file_status: ExternalFileStatus,
     pub read_only: bool,
     pub cursor: Position,
     /// Rows in the buffer the cursor sits in, so a frontend can say how far
@@ -547,6 +549,11 @@ impl App {
                 workspace_number: self.workspace_number,
                 workspace_directory: self.working_directory.to_string_lossy().into_owned(),
                 dirty: terminal.is_none() && buffer.dirty,
+                external_file_status: if terminal.is_none() {
+                    buffer.external_file_status()
+                } else {
+                    ExternalFileStatus::Synchronized
+                },
                 read_only: terminal.is_none() && buffer.is_read_only(),
                 cursor: terminal.map_or_else(|| active.cursor(buffer), |(cursor, _, _)| cursor),
                 line_count: terminal.map_or_else(|| buffer.len_lines(), |(_, lines, _)| lines),
@@ -595,6 +602,7 @@ impl App {
                         (prepared.pane_id == self.active_pane).then_some(self.mode),
                     ),
                     dirty: false,
+                    external_file_status: ExternalFileStatus::Synchronized,
                     // A terminal is neither writable nor refusing writes; it
                     // is not a document. Saying "read only" here would answer
                     // a question nobody asked of it.
@@ -644,6 +652,7 @@ impl App {
             title: PaneTitle {
                 name: buffer.pane_title(),
                 dirty: buffer.dirty,
+                external_file_status: buffer.external_file_status(),
                 read_only: buffer.is_read_only(),
                 maximized: self.maximized_view(prepared.pane_id),
             },
@@ -1637,6 +1646,7 @@ mod tests {
             mode: Mode::Normal,
             workspace_directory: String::new(),
             dirty: false,
+            external_file_status: ExternalFileStatus::Synchronized,
             read_only: false,
             cursor: Position { row, col: 0 },
             line_count,

@@ -737,6 +737,7 @@ impl App {
     ) {
         if self.fs_confirmation.is_some()
             || self.directory_reload_confirmation.is_some()
+            || self.file_reload_confirmation.is_some()
             || self.buffer_discard_confirmation.is_some()
             || self.git_discard_confirmation.is_some()
             || self.git_stash_confirmation.is_some()

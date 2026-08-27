@@ -240,7 +240,7 @@ impl App {
         }
     }
 
-    fn rebuild_resource_finder(&mut self) {
+    pub(super) fn rebuild_resource_finder(&mut self) {
         let Some(query) = self.picker.as_ref().map(|picker| picker.query.clone()) else {
             return;
         };

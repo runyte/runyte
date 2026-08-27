@@ -56,6 +56,39 @@ fn sides(app: &App) -> (usize, usize) {
     )
 }
 
+#[test]
+fn diff_disk_places_an_immutable_disk_snapshot_left_of_the_editable_source() {
+    let directory = temporary("diff-disk");
+    fs::create_dir_all(&directory).unwrap();
+    let path = directory.join("notes.txt");
+    fs::write(&path, "one\ntwo\n").unwrap();
+    let mut app = App::new(Config::default(), Some(path.clone())).unwrap();
+    let source = app.active().buffer;
+    app.apply_to_buffer(source, &Transaction::insert(4, "local\n"));
+    fs::write(&path, "one\ndisk\ntwo\n").unwrap();
+    prepare(&mut app);
+
+    app.execute_command("diff-disk").unwrap();
+
+    assert_eq!(app.diffs.len(), 1);
+    let session = &app.diffs[0];
+    let left = session.side(Side::Left);
+    let right = session.side(Side::Right);
+    assert_eq!(right.buffer, source);
+    assert!(app.buffers[left.buffer].is_read_only());
+    assert_eq!(app.buffers[left.buffer].to_string(), "one\ndisk\ntwo\n");
+    assert!(app.buffers[left.buffer].pane_title().starts_with("[disk] "));
+    assert_eq!(app.buffers[source].to_string(), "one\nlocal\ntwo\n");
+    assert!(app.buffers[source].dirty);
+
+    fs::write(&path, "one\nnew disk\ntwo\n").unwrap();
+    app.execute_command("diff-disk").unwrap();
+    assert_eq!(app.diffs.len(), 1);
+    assert_eq!(app.diffs[0].side(Side::Left).buffer, left.buffer);
+    assert_eq!(app.buffers[left.buffer].to_string(), "one\nnew disk\ntwo\n");
+    fs::remove_dir_all(directory).unwrap();
+}
+
 /// The second `:diff-this` is what opens the view, and it splits by itself
 /// when the buffer marked first is not on screen.
 #[test]

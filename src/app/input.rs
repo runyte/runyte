@@ -11,24 +11,24 @@ use super::{
     CommandAvailability, CommandExecutionContext, CommandId, CommandInvocation, CommandMatch,
     CommandOutcome, CommandOutcomeHint, CommandState, CommandUnavailable, CompletionSource,
     ContentAlignment, DEFAULT_MACRO_REGISTER, DeletionAuthorization, DeletionMode, DelimiterPair,
-    DiffScope, EditorCommand, EditorIntent, EntryKind, FilePicker, FinderMode, FsOperation,
-    GeneratedViewIdentity, GrammarContext, GrammarNotice, GrammarOutput, HOVER_PEEK_ROWS, HashSet,
-    HelpInvocation, InputEvent, InputGrammar, Instant, InvocationParameters, KeyCode, KeySequence,
-    KeyStroke, Keymap, LineDirection, ListPicker, LspCommand, MaximizedView, Mode, Modifiers,
-    Motion, Offset, Path, PathBuf, PathHint, PickerTarget, PointerButton, PointerDrag,
-    PointerEvent, PointerEventKind, PointerOutcome, PreparedView, ProgramAction, ProgramActionMenu,
-    ProgramChoice, PromptKind, Range, RangeIntent, RequestKind, ResourceFinder, Result, SearchMode,
-    SearchQuery, Selection, SelectionSemantics, SettingId, SettingType, SettingValue,
-    SignatureContext, StashScope, SyntaxObject, SyntaxObjectPart, SyntaxSelectionTransform,
-    SystemClipboard, Transaction, ViewAlignment, VimMotion, VimOperator, VimRangeTarget,
-    VimTextObject, buffer_language, char_to_byte, display_path, enclosing_area, expand_home_path,
-    external_open, hint_is_not_before, hover_content_rows, is_path_separator,
-    is_path_token_boundary, is_terminal_normal_key, is_word, is_word_completion_character,
-    keymap_for, mapped_applied_path, operative_span, parse_colon_command,
-    persistent_session_availability, pointer_pane, pointer_resize_pair, prompt_backspace,
-    prompt_delete, prompt_delete_range, prompt_insert, prompt_word_backward, prompt_word_forward,
-    quote_path_hint, rect_contains, resolve_command, resolved_operation_path, row_characters,
-    unclosed_or_complete_quoted_path,
+    DiffScope, EditorCommand, EditorIntent, EntryKind, FileObservation, FilePicker, FinderMode,
+    FsOperation, GeneratedViewIdentity, GrammarContext, GrammarNotice, GrammarOutput,
+    HOVER_PEEK_ROWS, HashSet, HelpInvocation, InputEvent, InputGrammar, Instant,
+    InvocationParameters, KeyCode, KeySequence, KeyStroke, Keymap, LineDirection, ListPicker,
+    LspCommand, MaximizedView, Mode, Modifiers, Motion, Offset, Path, PathBuf, PathHint,
+    PickerTarget, PointerButton, PointerDrag, PointerEvent, PointerEventKind, PointerOutcome,
+    PreparedView, ProgramAction, ProgramActionMenu, ProgramChoice, PromptKind, Range, RangeIntent,
+    RequestKind, ResourceFinder, Result, SearchMode, SearchQuery, Selection, SelectionSemantics,
+    SettingId, SettingType, SettingValue, SignatureContext, StashScope, SyntaxObject,
+    SyntaxObjectPart, SyntaxSelectionTransform, SystemClipboard, Transaction, ViewAlignment,
+    VimMotion, VimOperator, VimRangeTarget, VimTextObject, buffer_language, char_to_byte,
+    display_path, enclosing_area, expand_home_path, external_open, hint_is_not_before,
+    hover_content_rows, is_path_separator, is_path_token_boundary, is_terminal_normal_key, is_word,
+    is_word_completion_character, keymap_for, mapped_applied_path, operative_span,
+    parse_colon_command, persistent_session_availability, pointer_pane, pointer_resize_pair,
+    prompt_backspace, prompt_delete, prompt_delete_range, prompt_insert, prompt_word_backward,
+    prompt_word_forward, quote_path_hint, rect_contains, resolve_command, resolved_operation_path,
+    row_characters, unclosed_or_complete_quoted_path,
 };
 
 impl App {
@@ -1090,6 +1090,9 @@ impl App {
         }
         if self.directory_reload_confirmation.is_some() {
             return self.handle_directory_reload_confirmation(key);
+        }
+        if self.file_reload_confirmation.is_some() {
+            return self.handle_file_reload_confirmation(key);
         }
         if self.git_discard_confirmation.is_some() {
             return self.handle_git_discard_confirmation(key);
@@ -2455,6 +2458,58 @@ impl App {
                     return Ok(());
                 };
                 self.discard_buffer_changes(buffer)?;
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn handle_file_reload_confirmation(&mut self, key: KeyStroke) -> Result<()> {
+        match (key.code, key.modifiers) {
+            (KeyCode::Escape, _) => {
+                self.file_reload_confirmation = None;
+                self.status("reload cancelled");
+            }
+            (KeyCode::Char('c'), modifiers) if modifiers.contains(Modifiers::CONTROL) => {
+                self.file_reload_confirmation = None;
+                self.status("reload cancelled");
+            }
+            (KeyCode::Enter, _) => {
+                let Some(mut confirmation) = self.file_reload_confirmation.take() else {
+                    return Ok(());
+                };
+                if confirmation.buffer >= self.buffers.len()
+                    || self.closed_buffers.contains(&confirmation.buffer)
+                {
+                    self.error("the file buffer was closed; reload cancelled");
+                    return Ok(());
+                }
+                let Some(current) =
+                    self.buffers[confirmation.buffer].observe_now(confirmation.buffer)
+                else {
+                    self.error("the buffer is no longer an ordinary file; reload cancelled");
+                    return Ok(());
+                };
+                if current.generation != confirmation.generation
+                    || current.path != confirmation.path
+                {
+                    self.error("the file baseline changed; review reload again");
+                    return Ok(());
+                }
+                if current.observation != confirmation.observation {
+                    self.apply_file_observation(current.clone());
+                    if matches!(current.observation, FileObservation::Text { .. })
+                        && self.buffers[confirmation.buffer]
+                            .external_file_status()
+                            .is_stale()
+                    {
+                        confirmation.observation = current.observation;
+                        self.file_reload_confirmation = Some(confirmation);
+                    }
+                    self.error("the file changed again on disk; review reload again");
+                    return Ok(());
+                }
+                self.install_file_reload(confirmation.buffer, &confirmation.observation)?;
             }
             _ => {}
         }
@@ -4528,6 +4583,10 @@ impl App {
             }
             (Colon::DiffThis, InvocationParameters::None) => {
                 self.diff_this();
+                Ok(())
+            }
+            (Colon::DiffDisk, InvocationParameters::None) => {
+                self.diff_disk();
                 Ok(())
             }
             (Colon::DiffOff, InvocationParameters::None) => {

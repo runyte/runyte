@@ -28,7 +28,7 @@ use runyte::{
     app::App,
     command::{CommandCategory, CommandExecutionContext, CommandInvocation, EditorCommand},
     config::{self, Config, WorkspaceMode},
-    external_open, file_picker,
+    external_open, file_monitor, file_picker,
     git::{GitCliProvider, GitService, GitServiceEvent},
     input::{InputEvent, KeyStroke, PointerEvent, PointerEventKind},
     key_hints::{HintEventResult, KeyHintState},
@@ -683,6 +683,11 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
                     app.apply_event(HostEvent::FilePicker(event));
                 }
             }
+            event = services.file_monitor_events.recv() => {
+                if let Some(event) = event {
+                    app.apply_event(HostEvent::FileObservation(event));
+                }
+            }
             output = services.terminal_events.recv() => {
                 if let Some(output) = output {
                     app.apply_event(HostEvent::Terminal(output));
@@ -707,6 +712,7 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
                 }
             }
             _ = git_refresh_tick.tick() => {
+                services.file_monitor.sync(app.file_monitor_requests());
                 if !app.refresh_git_if_due(Instant::now()) {
                     continue;
                 }
@@ -1156,6 +1162,12 @@ async fn run_host_server(
                     changed = true;
                 }
             }
+            event = services.file_monitor_events.recv() => {
+                if let Some(event) = event {
+                    host.apply_event(HostEvent::FileObservation(event));
+                    changed = true;
+                }
+            }
             output = services.terminal_events.recv() => {
                 if let Some(output) = output {
                     let observed = active.is_some();
@@ -1184,6 +1196,7 @@ async fn run_host_server(
                 }
             }
             _ = refresh_tick.tick() => {
+                services.file_monitor.sync(host.file_monitor_requests());
                 changed = host.refresh_git_if_due(Instant::now());
             }
             _ = idle_tick.tick() => {
@@ -2599,6 +2612,8 @@ struct HostServices {
     language_servers: LspHandle,
     lsp_events: tokio::sync::mpsc::Receiver<LspEvent>,
     file_picker_events: tokio::sync::mpsc::Receiver<runyte::file_picker::FilePickerEvent>,
+    file_monitor: runyte::file_monitor::FileMonitorHandle,
+    file_monitor_events: tokio::sync::mpsc::Receiver<runyte::buffer::FileObservationEvent>,
     workspace_events: Option<tokio::sync::mpsc::Receiver<HostEvent>>,
     /// Output from every child running on a terminal pane.
     ///
@@ -2637,6 +2652,8 @@ fn start_host_services(
     app.attach_syntax_worker(syntax_worker);
     let (file_scanner, file_picker_events) = file_picker::scanner();
     app.attach_file_scanner(file_scanner);
+    let (file_monitor, file_monitor_events) = file_monitor::spawn();
+    file_monitor.sync(app.file_monitor_requests());
     app.attach_word_index(word_index::spawn());
     #[cfg(unix)]
     let workspace_events = {
@@ -2667,6 +2684,8 @@ fn start_host_services(
         language_servers,
         lsp_events,
         file_picker_events,
+        file_monitor,
+        file_monitor_events,
         workspace_events,
         terminal_events,
     })
