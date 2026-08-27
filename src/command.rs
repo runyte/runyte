@@ -55,6 +55,7 @@ pub enum CommandCapability {
 pub enum ColonCommand {
     ChangeDirectory,
     CloseBuffer,
+    DiffDisk,
     DiffOff,
     DiffThis,
     ForceCloseBuffer,
@@ -214,6 +215,7 @@ impl ColonCommand {
     pub const ALL: &'static [Self] = &[
         Self::ChangeDirectory,
         Self::CloseBuffer,
+        Self::DiffDisk,
         Self::DiffOff,
         Self::DiffThis,
         Self::ForceCloseBuffer,
@@ -283,7 +285,7 @@ impl ColonCommand {
             Self::ResizeRight | Self::ResizeLeft | Self::ResizeTop | Self::ResizeBottom => {
                 CommandCategory::Window
             }
-            Self::DiffThis | Self::DiffOff | Self::Notifications | Self::Path => {
+            Self::DiffThis | Self::DiffDisk | Self::DiffOff | Self::Notifications | Self::Path => {
                 CommandCategory::View
             }
             Self::Format | Self::LspRestart | Self::LspStatus => CommandCategory::Language,
@@ -1322,6 +1324,14 @@ pub const COMMANDS: &[CommandSpec] = &[
         Required(FreeText)
     ),
     spec!(
+        ColonId(Colon::DiffDisk),
+        "diff-disk",
+        [],
+        "diff-disk",
+        "Compare the active file buffer with a fresh disk observation",
+        NoArguments
+    ),
+    spec!(
         ColonId(Colon::DiffThis),
         "diff-this",
         ["difft", "dt"],
@@ -2250,6 +2260,7 @@ fn valid_colon_parameters(command: ColonCommand, parameters: &InvocationParamete
     match (command, parameters) {
         (
             Colon::CloseBuffer
+            | Colon::DiffDisk
             | Colon::DiffOff
             | Colon::DiffThis
             | Colon::ForceCloseBuffer
@@ -2573,6 +2584,7 @@ fn invocation_from_parts(
             ) => Ok(CommandInvocation::new(id, InvocationParameters::Path(path))),
             (
                 ColonCommand::CloseBuffer
+                | ColonCommand::DiffDisk
                 | ColonCommand::DiffOff
                 | ColonCommand::DiffThis
                 | ColonCommand::ForceCloseBuffer

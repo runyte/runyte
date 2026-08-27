@@ -121,6 +121,7 @@ impl HelpTopic {
                 "NORMAL mode replaces the selection as you move. v enters SELECT mode, where moving extends every selection instead; v or Escape returns.",
                 "Search selects every match at once. With two or more characters selected, s and / search only inside the selection, leaving a cursor on every match; n and N then select only one result and step through them.",
                 "Press Space and pause to explore command groups without memorising the full keymap.",
+                "An ordinary file changed outside Runyte keeps its in-memory text and gains [STALE]. Space b d compares a fresh disk snapshot without discarding edits; Space r reloads, asking first whenever the buffer is dirty.",
                 "Below the editor area, the global status line reports editor state and unread notification counts. The interaction line below it is reserved for active prompts and the last action echo; :notifications or :not opens complete retained feedback.",
             ],
             Self::Explorer => &[

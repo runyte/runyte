@@ -634,6 +634,8 @@ fn opening_a_lazily_broken_language_reports_once_and_keeps_the_buffer_editable()
 
     fs::write(&path, "fn reloaded() {}\n").unwrap();
     app.reload_file().unwrap();
+    assert!(app.file_reload_confirmation.is_some());
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
     assert_eq!(app.status, format!("reloaded {}", path.display()));
     assert!(!app.status_error);
     assert_eq!(app.reported_registry_errors.len(), 1);
@@ -1305,7 +1307,7 @@ fn typed_colon_paths_preserve_spaces_and_remove_balanced_quotes() {
 #[test]
 fn command_inventory_classifies_every_command_and_current_binding() {
     let bindings = crate::keymap::default_keymap().bindings();
-    assert_eq!(bindings.len(), 342, "current binding inventory changed");
+    assert_eq!(bindings.len(), 343, "current binding inventory changed");
 
     let mut rows = HashSet::new();
     for binding in bindings {
@@ -1327,7 +1329,7 @@ fn command_inventory_classifies_every_command_and_current_binding() {
             );
         }
     }
-    assert_eq!(rows.len(), 684, "mode-expanded binding inventory changed");
+    assert_eq!(rows.len(), 686, "mode-expanded binding inventory changed");
 
     let shared_colon = COMMANDS
         .iter()
@@ -1527,6 +1529,8 @@ fn space_r_reloads_files_and_refreshes_directories() {
     file_app.buffers[0].apply(&Transaction::insert(0, "draft "));
     press(&mut file_app, ' ');
     press(&mut file_app, 'r');
+    assert!(file_app.file_reload_confirmation.is_some());
+    key(&mut file_app, KeyCode::Enter, Modifiers::NONE);
     assert_eq!(text(&file_app), "disk");
     assert_eq!(file_app.status, format!("reloaded {}", file.display()));
 
@@ -2241,6 +2245,10 @@ fn reload_command_discards_edits_and_clamps_every_shared_view() {
 
     app.execute_command("reload").unwrap();
 
+    assert_eq!(text(&app), "draft one\ntwo\nthree\n");
+    assert!(app.file_reload_confirmation.is_some());
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+
     assert_eq!(text(&app), "new\n");
     assert!(!app.buffers[0].dirty);
     assert_eq!(app.buffers[0].history_len(), 0);
@@ -2267,7 +2275,7 @@ fn failed_reload_keeps_the_edited_buffer_and_undo_history() {
     let outcome = app.execute_command("reload").unwrap();
 
     assert!(
-        matches!(outcome, CommandOutcome::UserError(message) if message.contains("failed to reload"))
+        matches!(outcome, CommandOutcome::UserError(message) if message.contains("deleted on disk"))
     );
     assert_eq!(text(&app), before);
     assert!(app.buffers[0].dirty);

@@ -5,12 +5,13 @@
 // Application-module dependencies:
 use super::{
     App, Axis, Buffer, BufferKind, ContentAlignment, DiffSession, DiffSide,
-    DirectoryReloadConfirmation, DirectoryView, DocumentSyntax, FsConfirmation, FsOperation,
-    FsPlan, GeneratedViewIdentity, HashSet, InputGrammar, Layout, MAX_DIFF_BYTES, MaximizedPane,
-    MaximizedView, Mode, PaneDirectory, Path, PathBuf, PromptKind, Result, Selection, TerminalId,
-    Transaction, TransferMode, bail, buffer_language, diff_row_for_identity, diff_row_identity,
-    enclosing_area, ensure, expand_home_path, external_open, fs, open_or_new_at_identity,
-    parse_buffer, resolved_operation_path, trailing_whitespace_changes,
+    DirectoryReloadConfirmation, DirectoryView, DocumentSyntax, FileObservation,
+    FileReloadConfirmation, FsConfirmation, FsOperation, FsPlan, GeneratedViewIdentity, HashSet,
+    InputGrammar, Layout, MAX_DIFF_BYTES, MaximizedPane, MaximizedView, Mode, PaneDirectory, Path,
+    PathBuf, PromptKind, Result, Selection, Side, TerminalId, Transaction, TransferMode, bail,
+    buffer_language, diff_row_for_identity, diff_row_identity, enclosing_area, ensure,
+    expand_home_path, external_open, fs, open_or_new_at_identity, parse_buffer,
+    resolved_operation_path, trailing_whitespace_changes,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1002,6 +1003,19 @@ impl App {
             return Ok(());
         }
         let path = path.map(|path| self.resolve_working_path(path));
+        let saving_current_path = path.as_deref().map_or_else(
+            || self.buffers[buffer_id].path.is_some(),
+            |destination| self.buffers[buffer_id].owns_path_identity(destination),
+        );
+        if !replace
+            && saving_current_path
+            && self.buffers[buffer_id].external_file_status().is_stale()
+            && self.buffers[buffer_id].external_file_status()
+                != crate::buffer::ExternalFileStatus::Deleted
+        {
+            self.error("file changed on disk; Space b d compares, Space r reloads, and :write! replaces it");
+            return Ok(());
+        }
         let destination = path.as_deref().or(self.buffers[buffer_id].path.as_deref());
         let expected_identity = destination
             .map(crate::path_safety::path_identity)
@@ -1074,6 +1088,11 @@ impl App {
             }
             Err(error) => {
                 self.error(error.to_string());
+                if saving_current_path
+                    && let Some(observation) = self.buffers[buffer_id].observe_now(buffer_id)
+                {
+                    self.apply_file_observation(observation);
+                }
                 Ok(())
             }
         }
@@ -1118,8 +1137,56 @@ impl App {
 
     pub(super) fn reload_file(&mut self) -> Result<()> {
         let buffer_id = self.active().buffer;
+        let was_dirty = self.buffers[buffer_id].dirty;
+        let Some(observation) = self.buffers[buffer_id].observe_now(buffer_id) else {
+            bail!("buffer is not a file");
+        };
+        self.apply_file_observation(observation.clone());
+        if !was_dirty {
+            return match &observation.observation {
+                FileObservation::Text { .. } => {
+                    self.install_file_reload(buffer_id, &observation.observation)
+                }
+                _ => self.report_unreloadable_observation(&observation.observation),
+            };
+        }
+        if !self.buffers[buffer_id].dirty {
+            match &observation.observation {
+                FileObservation::Text { text, .. } => {
+                    // Convergence adopted the disk state without clearing history.
+                    if self.buffers[buffer_id].to_string() == text.as_ref() {
+                        self.status("buffer already agrees with disk");
+                        return Ok(());
+                    }
+                    return self.install_file_reload(buffer_id, &observation.observation);
+                }
+                _ => return self.report_unreloadable_observation(&observation.observation),
+            }
+        }
+        if !matches!(observation.observation, FileObservation::Text { .. }) {
+            return self.report_unreloadable_observation(&observation.observation);
+        }
+        let confirmation = FileReloadConfirmation {
+            buffer: buffer_id,
+            path: observation.path,
+            generation: observation.generation,
+            observation: observation.observation,
+        };
+        self.status(
+            confirmation.message(self.buffers[buffer_id].external_file_status().is_stale()),
+        );
+        self.file_reload_confirmation = Some(confirmation);
+        self.confirmation_revision = self.confirmation_revision.wrapping_add(1);
+        Ok(())
+    }
+
+    pub(super) fn install_file_reload(
+        &mut self,
+        buffer_id: usize,
+        observation: &FileObservation,
+    ) -> Result<()> {
         let language_before = buffer_language(&self.buffers[buffer_id], &self.registry);
-        self.buffers[buffer_id].reload()?;
+        self.buffers[buffer_id].reload_from_observation(observation)?;
         self.resync_replaced_buffer(buffer_id, language_before);
         self.normalize_buffer(buffer_id);
         let path = self.buffers[buffer_id]
@@ -1128,6 +1195,21 @@ impl App {
             .expect("a reloaded file buffer has a path");
         self.status(format!("reloaded {}", path.display()));
         self.report_new_registry_errors();
+        Ok(())
+    }
+
+    fn report_unreloadable_observation(&mut self, observation: &FileObservation) -> Result<()> {
+        let message = match observation {
+            FileObservation::Deleted => "file was deleted on disk; there is nothing to reload",
+            FileObservation::Binary { .. } => {
+                "file became binary on disk; the text buffer was preserved"
+            }
+            FileObservation::Unreadable { .. } => {
+                "file is unreadable on disk; the text buffer was preserved"
+            }
+            FileObservation::Text { .. } => return Ok(()),
+        };
+        self.error(message);
         Ok(())
     }
 
@@ -1287,6 +1369,114 @@ impl App {
         } else {
             self.status(format!("comparing {left_name} with {right_name}"));
         }
+    }
+
+    /// Compares one immutable, freshly observed disk revision on the left
+    /// with the authoritative editable buffer on the right.
+    pub(super) fn diff_disk(&mut self) {
+        let source = self.active().buffer;
+        if self.buffers[source].kind != BufferKind::File {
+            self.error(":diff-disk requires an ordinary file buffer");
+            return;
+        }
+        if self.maximized.is_some() {
+            self.error("leave the maximized view before comparing");
+            return;
+        }
+        let existing_disk_diff = self.diffs.iter().position(|diff| {
+            diff.has_buffer(source)
+                && [Side::Left, Side::Right].into_iter().any(|side| {
+                    let candidate = diff.side(side).buffer;
+                    matches!(
+                        self.buffers[candidate].generated_view_identity(),
+                        Some(GeneratedViewIdentity::DiskSnapshot { source_buffer, .. })
+                            if *source_buffer == source
+                    )
+                })
+        });
+        if self.diffs.iter().any(|diff| diff.has_buffer(source)) && existing_disk_diff.is_none() {
+            self.error("this buffer is already being compared; :diff-off closes it");
+            return;
+        }
+        if self.buffers[source].len_bytes() > MAX_DIFF_BYTES {
+            self.error("the Runyte buffer is too large to compare");
+            return;
+        }
+        let Some(event) = self.buffers[source].observe_now(source) else {
+            self.error(":diff-disk requires an ordinary file buffer");
+            return;
+        };
+        self.apply_file_observation(event.clone());
+        let FileObservation::Text { text, .. } = &event.observation else {
+            let message = match &event.observation {
+                FileObservation::Deleted => {
+                    "the file was deleted; there is no disk text to compare"
+                }
+                FileObservation::Binary { .. } => {
+                    "the disk version is binary and cannot be compared"
+                }
+                FileObservation::Unreadable { .. } => {
+                    "the disk version is unreadable and cannot be compared"
+                }
+                FileObservation::Text { .. } => unreachable!(),
+            };
+            self.error(message);
+            return;
+        };
+        if text.len() > MAX_DIFF_BYTES {
+            self.error("the disk version is too large to compare");
+            return;
+        }
+
+        let path = event.path.clone();
+        let identity = GeneratedViewIdentity::DiskSnapshot {
+            source_buffer: source,
+            revision: Buffer::observed_revision_key(&event.observation),
+        };
+        let snapshot =
+            Buffer::virtual_text_identified(identity, format!("[disk] {}", path.display()), text);
+        if let Some(index) = existing_disk_diff {
+            let left = self.diffs[index].side(Side::Left);
+            let right = self.diffs[index].side(Side::Right);
+            debug_assert_eq!(right.buffer, source);
+            self.buffers[left.buffer] = snapshot;
+            self.syntax[left.buffer] = None;
+            let source_text = self.buffers[source].to_string();
+            let session = DiffSession::new(left, right, text, &source_text);
+            let equal = session.alignment().is_equal();
+            self.diffs[index] = session;
+            self.status(if equal {
+                format!("{} and its disk version are identical", path.display())
+            } else {
+                format!("comparing disk with {}", path.display())
+            });
+            return;
+        }
+        self.buffers.push(snapshot);
+        self.syntax.push(None);
+        let disk = self.buffers.len() - 1;
+        let Some((left, right)) = self.diff_sides(disk, source) else {
+            self.closed_buffers.insert(disk);
+            self.error("comparing needs room for two panes");
+            return;
+        };
+        debug_assert_eq!(left.buffer, disk);
+        debug_assert_eq!(right.buffer, source);
+        for side in [left, right] {
+            if let Some(pane) = self.panes.get_mut(&side.pane) {
+                pane.folds.clear();
+                pane.preserve_scroll = false;
+            }
+        }
+        let right_text = self.buffers[source].to_string();
+        let session = DiffSession::new(left, right, text, &right_text);
+        let equal = session.alignment().is_equal();
+        self.diffs.push(session);
+        self.status(if equal {
+            format!("{} and its disk version are identical", path.display())
+        } else {
+            format!("comparing disk with {}", path.display())
+        });
     }
 
     /// Settles which pane shows which buffer, and which of them is the left.

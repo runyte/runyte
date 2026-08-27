@@ -134,6 +134,11 @@ unit_enum!(DiffLine, CoreDiffLine, [Added, Removed, Hunk, Meta]);
 unit_enum!(Change, CoreChange, [Added, Removed, Changed]);
 unit_enum!(LabelPart, CoreLabelPart, [Immediate, Prefix, Suffix]);
 unit_enum!(CountKind, CoreCountKind, [Added, Removed]);
+unit_enum!(
+    ExternalFileStatus,
+    crate::buffer::ExternalFileStatus,
+    [Synchronized, Changed, Deleted, Binary, Unreadable]
+);
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct HostFrame {
@@ -910,6 +915,7 @@ impl TryFrom<PaneSnapshot> for core::PaneSnapshot {
 pub struct PaneTitle {
     pub name: String,
     pub dirty: bool,
+    pub external_file_status: ExternalFileStatus,
     pub read_only: bool,
     pub maximized: Option<MaximizedView>,
 }
@@ -918,6 +924,7 @@ impl From<core::PaneTitle> for PaneTitle {
         Self {
             name: value.name,
             dirty: value.dirty,
+            external_file_status: value.external_file_status.into(),
             read_only: value.read_only,
             maximized: value.maximized.map(Into::into),
         }
@@ -928,6 +935,7 @@ impl From<PaneTitle> for core::PaneTitle {
         Self {
             name: value.name,
             dirty: value.dirty,
+            external_file_status: value.external_file_status.into(),
             read_only: value.read_only,
             maximized: value.maximized.map(Into::into),
         }
@@ -1142,6 +1150,7 @@ pub struct StatusSnapshot {
     pub workspace_number: Option<u8>,
     pub workspace_directory: String,
     pub dirty: bool,
+    pub external_file_status: ExternalFileStatus,
     pub read_only: bool,
     pub cursor: Position,
     pub line_count: usize,
@@ -1219,6 +1228,7 @@ impl From<core::StatusSnapshot> for StatusSnapshot {
             workspace_number: value.workspace_number,
             workspace_directory: value.workspace_directory,
             dirty: value.dirty,
+            external_file_status: value.external_file_status.into(),
             read_only: value.read_only,
             cursor: value.cursor.into(),
             line_count: value.line_count,
@@ -1240,6 +1250,7 @@ impl From<StatusSnapshot> for core::StatusSnapshot {
             workspace_number: value.workspace_number,
             workspace_directory: value.workspace_directory,
             dirty: value.dirty,
+            external_file_status: value.external_file_status.into(),
             read_only: value.read_only,
             cursor: value.cursor.into(),
             line_count: value.line_count,

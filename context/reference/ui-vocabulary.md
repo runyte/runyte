@@ -12,8 +12,11 @@ them, regardless of which extensibility direction is chosen.
   use a derived ground halfway between it and the overlay ground.
 - **Pane border** — the frame delimiting a pane.
 - **Pane title** — structural buffer identity in the pane's top border, such as
-  `[file] path`, `[explorer] path`, or `[notifications]`, plus `[+]` and `[RO]`,
-  and finally `[zen]` or `[fullscreen]` while the pane is the maximized one.
+  `[file] path`, `[explorer] path`, or `[notifications]`, plus `[+]`, `[STALE]`,
+  and `[RO]`, in that order, and finally `[zen]` or `[fullscreen]` while the pane
+  is the maximized one. `[STALE]` means an ordinary file's path no longer
+  agrees with the disk baseline Runyte accepted; it is independent of `[+]`,
+  which means the buffer text differs from its baseline.
   The first markers describe the buffer; the last describes how this pane is
   presented, and is absent in an ordinary layout.
 - **Pane body** — the complete drawable interior of a pane border.
@@ -32,6 +35,8 @@ them, regardless of which extensibility direction is chosen.
   notification counts. Its leftmost mode label follows the current mode's
   caret role; the rest of the row keeps the ordinary theme background. The pane
   title, not this row, owns active-buffer identity.
+  Active-buffer state includes `[+]`, `[STALE]`, and `[RO]` with the same
+  meanings and order as the pane title.
 - **Interaction line** — the final global row. It is reserved for an active
   prompt or the last action echo. Notifications never replace it.
 - **Overlay** — a temporary surface drawn over the editor area, such as a

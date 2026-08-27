@@ -22,7 +22,9 @@ use crate::workspace::{
 
 use crate::{
     buffer::{
-        BinaryFileError, Buffer, BufferKind, GeneratedViewIdentity, Position, WorkspaceSearchTarget,
+        BinaryFileError, Buffer, BufferKind, FileObservation, FileObservationEvent,
+        FileObservationRequest, GeneratedViewIdentity, ObservationApply, Position,
+        WorkspaceSearchTarget,
     },
     clipboard::{CommandClipboard, SystemClipboard},
     command::{
@@ -746,6 +748,28 @@ struct DirectoryReloadConfirmation {
     /// the directory being left through the confirmation so an accepted
     /// discard behaves exactly like an immediate `-`.
     focus_entry: Option<PathBuf>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct FileReloadConfirmation {
+    buffer: usize,
+    path: PathBuf,
+    generation: u64,
+    observation: FileObservation,
+}
+
+impl FileReloadConfirmation {
+    fn message(&self, stale: bool) -> String {
+        let mut message = format!(
+            "Reload {} and discard unsaved Runyte changes and their undo history?",
+            self.path.display()
+        );
+        if stale {
+            message.push_str("\nSpace b d compares without discarding changes.");
+        }
+        message.push_str("\nEnter confirms.\nEscape cancels.");
+        message
+    }
 }
 
 impl DirectoryReloadConfirmation {
@@ -2300,6 +2324,7 @@ pub struct App {
     /// where it should go afterwards: `None` re-reads the same directory,
     /// `Some(path)` resumes a navigation the edits were blocking.
     directory_reload_confirmation: Option<DirectoryReloadConfirmation>,
+    file_reload_confirmation: Option<FileReloadConfirmation>,
     /// Symbols, references, diagnostics, and code actions, which are all the
     /// same list-and-filter interaction.
     pub list: Option<ListPicker>,
@@ -2515,6 +2540,53 @@ pub struct App {
 }
 
 impl App {
+    pub fn file_monitor_requests(&self) -> Vec<FileObservationRequest> {
+        self.buffers
+            .iter()
+            .enumerate()
+            .filter(|(buffer, _)| !self.closed_buffers.contains(buffer))
+            .filter_map(|(buffer, value)| value.file_observation_request(buffer))
+            .collect()
+    }
+
+    pub(crate) fn apply_file_observation(&mut self, event: FileObservationEvent) {
+        if event.buffer >= self.buffers.len() || self.closed_buffers.contains(&event.buffer) {
+            return;
+        }
+        let result = self.buffers[event.buffer].apply_file_observation(&event);
+        if !matches!(result, ObservationApply::Stale { notify: true }) {
+            return;
+        }
+        let shown = event
+            .path
+            .strip_prefix(&self.project_root)
+            .unwrap_or(&event.path)
+            .display();
+        let body = match &event.observation {
+            FileObservation::Text { .. } => {
+                format!("{shown} changed on disk · Space b d compares · Space r reloads")
+            }
+            FileObservation::Deleted => {
+                format!("{shown} was deleted on disk · saving recreates it")
+            }
+            FileObservation::Binary { .. } => {
+                format!("{shown} became binary on disk · Runyte kept the text buffer")
+            }
+            FileObservation::Unreadable { message } => {
+                format!("{shown} cannot be read from disk ({message}) · Runyte kept the buffer")
+            }
+        };
+        self.push_notification(NotificationDraft::new(
+            NotificationSeverity::Warning,
+            "Files",
+            "External file change",
+            body,
+        ));
+        if self.finder.is_some() {
+            self.rebuild_resource_finder();
+        }
+    }
+
     pub fn new(config: Config, file: Option<PathBuf>) -> Result<Self> {
         Self::new_with_targets(config, file.into_iter().map(LaunchTarget::new).collect())
     }
@@ -2702,6 +2774,7 @@ impl App {
             fs_confirmation: None,
             confirmation_revision: 0,
             directory_reload_confirmation: None,
+            file_reload_confirmation: None,
             list: None,
             buffer_action_menu: None,
             context_action_menu: None,
@@ -3390,6 +3463,9 @@ fn buffer_picker_columns(buffer: &Buffer, project_root: &Path, active: bool) -> 
     };
     if active {
         label = format!("*{label}*");
+    }
+    if buffer.external_file_status().is_stale() {
+        label.push_str(" [STALE]");
     }
     if buffer.is_read_only() {
         label.push_str(" [RO]");

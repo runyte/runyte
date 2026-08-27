@@ -13,7 +13,9 @@ use serde::{Deserialize, Serialize};
 mod frame;
 mod input;
 
-pub use frame::{FrameId, HostFrame, SnapshotRow, TerminalDamageFrame};
+pub use frame::{
+    EditorSnapshot, ExternalFileStatus, FrameId, HostFrame, SnapshotRow, TerminalDamageFrame,
+};
 pub use input::{FrameGeometry, InputEvent, PointerEvent, Rect};
 
 use crate::app::{
@@ -129,8 +131,10 @@ use crate::workspace::{
 /// answer to give: every such session would read `Buffers: 0`, which is a
 /// wrong answer rather than a missing one. Version 39 adds Replace mode and
 /// its resolved caret colour to frames; older peers cannot deserialize either
-/// required enum or theme value.
-pub const VERSION: u32 = 39;
+/// required enum or theme value. Version 40 carries semantic external-file
+/// state in pane titles and the global status line; an older attached client
+/// would otherwise omit `[STALE]` and hide a conflict retained by the host.
+pub const VERSION: u32 = 40;
 pub const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const MAX_PATHS: usize = 32;
 pub const MAX_PATH_BYTES: usize = 32 * 1024;
@@ -900,7 +904,7 @@ mod tests {
 
     #[test]
     fn protocol_version_and_request_bounds_are_explicit() {
-        assert_eq!(VERSION, 39);
+        assert_eq!(VERSION, 40);
         let oversized_command = ClientRequest::Invoke {
             command: CommandRequest {
                 name: "open".to_owned(),
