@@ -1976,7 +1976,8 @@ Insert `Ctrl-x`, or when `Space l c` enters Insert mode and asks explicitly.
 It then filters locally as you keep typing; `Tab` accepts and `Escape`
 dismisses. In an editable explorer, `Escape` also leaves Insert mode in that
 same press, because a directory row's structural `/` can open path completion
-without an explicit request.
+without an explicit request. An automatic word-completion popup behaves the
+same way: `Escape` dismisses it and returns to Normal mode in one press.
 An explicit `Ctrl-x` request includes the identifier already before the caret,
 uses the server's `filterText` and `sortText` when present, and remains the
 active completion source until space, newline, acceptance, or dismissal.

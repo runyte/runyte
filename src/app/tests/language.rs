@@ -2754,6 +2754,34 @@ fn word_completion_lets_enter_insert_a_newline_instead_of_accepting() {
 }
 
 #[test]
+fn word_completion_escape_dismisses_the_popup_and_leaves_insert_mode() {
+    let root = temporary("word-completion-escape-normal");
+    fs::create_dir_all(&root).unwrap();
+    let active = root.join("a.txt");
+    fs::write(&active, "wobble wobble\n").unwrap();
+    let mut app = App::new_in_project(Config::default(), Some(active), &root).unwrap();
+    let handle = crate::word_index::spawn();
+    app.attach_word_index(handle.clone());
+    app.prepare_view(word_completion_geometry());
+    handle.flush();
+
+    set_cursor(&mut app, 1, 0);
+    press(&mut app, 'i');
+    type_text(&mut app, "wob");
+    assert_eq!(
+        app.completion.as_ref().unwrap().source,
+        CompletionSource::Word
+    );
+
+    key(&mut app, KeyCode::Escape, Modifiers::NONE);
+
+    assert!(app.completion.is_none());
+    assert_eq!(app.mode, Mode::Normal);
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn word_completion_is_replaced_by_a_language_response_but_never_opens_over_one() {
     let root = temporary("word-completion-language-precedence");
     fs::create_dir_all(&root).unwrap();

@@ -1057,13 +1057,8 @@ async fn git_commit_wait_tui_completes_through_write_quit() {
     // The commit message instructions this editor writes into the buffer
     // ("commit", "message", ...) are ordinary words, so word completion can
     // legitimately be showing a popup once "commit message" has been typed.
-    // The first Escape then only dismisses that popup rather than leaving
-    // insert mode, exactly as it would for a person; a second Escape is what
-    // actually leaves insert mode, and is a harmless no-op if the first one
-    // already did.
-    terminal.write_all(b"\x1b").unwrap();
-    terminal.flush().unwrap();
-    tokio::time::sleep(Duration::from_millis(150)).await;
+    // One Escape must both dismiss that automatic popup and leave insert
+    // mode, exactly as it does when word completion is switched off.
     terminal.write_all(b"\x1b").unwrap();
     terminal.flush().unwrap();
     tokio::time::sleep(Duration::from_millis(150)).await;

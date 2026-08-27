@@ -2161,10 +2161,18 @@ impl App {
         let Some(state) = self.completion.as_mut() else {
             return false;
         };
+        let source = state.source;
         let control = key.modifiers.contains(Modifiers::CONTROL);
         match (key.code, control) {
             (KeyCode::Escape, _) => {
                 self.completion = None;
+                // Word completion appears automatically during ordinary
+                // prose, so dismissing it must not interpose an extra modal
+                // step between Insert and Normal. Let the registry handle
+                // the same Escape after closing the popup.
+                if source == CompletionSource::Word {
+                    return false;
+                }
                 // A slash in an explorer row is both path syntax and the
                 // directory-kind marker, so ordinary editing can open path
                 // completion there without an explicit request. Escape's

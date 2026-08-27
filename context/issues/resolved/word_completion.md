@@ -74,6 +74,12 @@ newline everywhere, and only Tab accepts, with the popup titling itself
 "LSP Complete" rather than the generic "Complete" for a language-server
 response.
 
+A later interaction refinement made Escape close an automatic Word popup and
+continue through the ordinary Insert-mode binding in the same keypress. Word
+completion therefore does not add an extra step on the way back to Normal
+mode; explicitly requested language completion and path completion outside an
+explorer retain their dismiss-only Escape behavior.
+
 Coverage: `src/word_index.rs` (`preserves_examples_from_the_issue`,
 `trims_surrounding_punctuation_only`, `discards_pure_punctuation_tokens`,
 `keeps_interior_punctuation_untouched`, `splits_on_whitespace_across_lines`,
@@ -86,11 +92,12 @@ exhaustive over every `BufferKind`); `src/app.rs`
 `word_index_follows_buffer_open_edit_and_close`,
 `word_index_resyncs_after_undo`,
 `word_completion_queries_skip_a_typed_opening_wrapper`,
-`word_completion_lets_enter_insert_a_newline_instead_of_accepting`); and
+`word_completion_lets_enter_insert_a_newline_instead_of_accepting`,
+`word_completion_escape_dismisses_the_popup_and_leaves_insert_mode`); and
 `tests/local_protocol.rs`
-(`git_commit_wait_tui_completes_through_write_quit`, updated to send Escape
-twice, since a word popup can legitimately be open after typing an ordinary
-commit message whose own boilerplate text shares words with it).
+(`git_commit_wait_tui_completes_through_write_quit`, which sends one Escape
+before `:wq` even though a word popup can legitimately be open after typing an
+ordinary commit message whose own boilerplate text shares words with it).
 
 Known limitation: the explorer's directory listing can also refresh outside
 the transaction path, when the filesystem changes underneath it; that route
