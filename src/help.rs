@@ -188,6 +188,15 @@ const TERMINAL_OVERVIEW: &[&str] = &[
     "The pane's buffer is still there behind the terminal, and leaving the terminal shows it again without ending the program. Closing the pane or opening a file in it does the same; the session keeps running and the terminal list reaches it.",
 ];
 
+/// Mouse input sits above the keymap and therefore cannot appear in the
+/// registry-derived rows below. Keep the application-wide gestures together
+/// here so every contextual help document describes them.
+const MOUSE_OVERVIEW: &[&str] = &[
+    "Left click focuses a pane and places its caret. Shift-click extends the current selection, and left-button drag selects text and enters SELECT mode. The wheel scrolls the pane under the pointer; dragging a shared pane border resizes the split.",
+    "Right-clicking any current selection copies all current selections to the system clipboard, exactly like Space c y, without moving or replacing them.",
+    "A reviewed terminal accepts the same drag-selection and right-click copy gestures. A live terminal that requests SGR mouse input receives its mouse events instead. Runyte's mouse capture replaces the terminal's native text selection; set editor.mouse to false and restart when native selection is preferred.",
+];
+
 const DIFF_OVERVIEW: &[&str] = &[
     "A unified diff, rendered read-only. Leading `+` and `-` belong to the patch rather than to the text, so nothing here can be edited into a different change.",
     "The staged view shows what a commit would take; the unstaged view shows what staging would add to it.",
@@ -263,6 +272,11 @@ pub fn render(
         ":help opens the general Runyte manual; :help <topic> jumps to one of\n\
          its sections. This contextual page remains available through Space ?.\n"
     );
+
+    let _ = writeln!(out, "Mouse");
+    for paragraph in MOUSE_OVERVIEW {
+        let _ = writeln!(out, "{paragraph}\n");
+    }
 
     // Written out as-is. These rows are already aligned against each other,
     // so anything that reflowed them would be destroying the only reason they
@@ -532,6 +546,34 @@ mod tests {
         assert!(prose.contains("A live terminal destination enters INSERT"));
         assert!(prose.contains("a reviewed terminal stays in NORMAL/review"));
         assert!(prose.contains("never starts or discards review"));
+    }
+
+    #[test]
+    fn every_contextual_document_describes_mouse_selection_and_clipboard_copy() {
+        for topic in HelpTopic::ALL {
+            let rendered = render(
+                *topic,
+                GrammarKind::Runyte,
+                BindingScope::Global,
+                default_keymap(),
+                false,
+            );
+
+            for required in [
+                "Mouse\n",
+                "Shift-click extends the current selection",
+                "left-button drag selects text",
+                "copies all current selections to the system clipboard",
+                "exactly like Space c y",
+                "reviewed terminal",
+                "editor.mouse to false",
+            ] {
+                assert!(
+                    rendered.contains(required),
+                    "{topic:?} is missing {required:?}"
+                );
+            }
+        }
     }
 
     /// Every topic still has prose of its own. The key tables are derived, so

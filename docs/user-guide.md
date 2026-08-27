@@ -1073,10 +1073,10 @@ hiding the rest of the layout; an ordinary pane carries neither tag.
 In the Runyte grammar, `Space ?` opens contextual help for the current buffer
 type. `:help` and its `:?` alias instead open the general Runyte manual;
 `:help <topic>` opens the same manual at a section such as
-`:help regex`, `:help search`, `:help git`, or `:help lsp`. Both kinds of help
-are ordinary read-only buffers, so they scroll, search, split, and close with
-their scoped `q`, `:c`, or `Space b c`. Nothing is truncated to fit the window,
-and opening one kind of help does not overwrite the other.
+`:help regex`, `:help search`, `:help mouse`, `:help git`, or `:help lsp`. Both
+kinds of help are ordinary read-only buffers, so they scroll, search, split,
+and close with their scoped `q`, `:c`, or `Space b c`. Nothing is truncated to
+fit the window, and opening one kind of help does not overwrite the other.
 
 A read-only buffer is marked `[RO]` in the pane title and the status line,
 beside the `[+]` that marks unsaved changes, and its help states the same in

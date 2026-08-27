@@ -13,6 +13,7 @@ use std::fmt::Write as _;
 pub enum ManualTopic {
     GettingStarted,
     Editing,
+    MouseAndClipboard,
     Search,
     Regex,
     FilesAndBuffers,
@@ -27,6 +28,7 @@ impl ManualTopic {
     pub const ALL: &'static [Self] = &[
         Self::GettingStarted,
         Self::Editing,
+        Self::MouseAndClipboard,
         Self::Search,
         Self::Regex,
         Self::FilesAndBuffers,
@@ -41,6 +43,7 @@ impl ManualTopic {
         match self {
             Self::GettingStarted => "getting-started",
             Self::Editing => "editing",
+            Self::MouseAndClipboard => "mouse",
             Self::Search => "search",
             Self::Regex => "regex",
             Self::FilesAndBuffers => "files-and-buffers",
@@ -56,6 +59,7 @@ impl ManualTopic {
         match self {
             Self::GettingStarted => &["start", "getting-started"],
             Self::Editing => &["edit", "editing", "selections"],
+            Self::MouseAndClipboard => &["mouse", "pointer", "clipboard"],
             Self::Search => &["search"],
             Self::Regex => &["regex", "regexp", "regular-expressions"],
             Self::FilesAndBuffers => &["files", "buffers", "files-and-buffers", "panes"],
@@ -71,6 +75,7 @@ impl ManualTopic {
         match self {
             Self::GettingStarted => "Getting started",
             Self::Editing => "Editing and selections",
+            Self::MouseAndClipboard => "Mouse and clipboard",
             Self::Search => "Search",
             Self::Regex => "Regular expressions",
             Self::FilesAndBuffers => "Files, buffers, and panes",
@@ -93,6 +98,9 @@ impl ManualTopic {
             }
             Self::Editing => {
                 "Every editing command operates on every selected range. A motion in NORMAL mode replaces each range; v enters SELECT mode so subsequent motions extend them. Multiple ranges are ordinary editor state rather than a special mode, so one change, delete, yank, or paste applies everywhere.\n\nSearch is the quickest way to create a useful multi-selection. An initial search selects every match; editing immediately changes them all. Press n or N first when the intended edit belongs to only one result.\n\nAll buffer mutations are transactions. Undo and redo therefore restore text and selections together rather than replaying direct writes."
+            }
+            Self::MouseAndClipboard => {
+                "Left click focuses a pane and places its caret. Shift-click extends the current selection, and left-button drag selects text and enters SELECT mode. The wheel scrolls the pane under the pointer; dragging a shared pane border resizes the split.\n\nRight-clicking any current selection copies all current selections to the system clipboard, exactly like Space c y, without moving or replacing them. Bare y instead yanks to the selected Runyte register. Space c p and Space c P paste from the system clipboard after or before the selection.\n\nA reviewed terminal accepts the same drag-selection and right-click copy gestures. A live terminal that requests SGR mouse input receives its mouse events instead. Runyte's mouse capture replaces the terminal's native text selection; set editor.mouse to false and restart when native selection is preferred."
             }
             Self::Search => {
                 "Runyte has two search flavours. s searches for a case-insensitive literal and / interprets the prompt as a regular expression. Neither takes a namespaced spelling: two keys are already the short spelling. Write (?-i) in a regular expression when a search has to match case.\n\nA search selects every non-overlapping match at once. n and N reduce that result to one selection and cycle forward or backward through the remembered matches.\n\nWith at least two characters selected, a new search is confined to the selected spans. Successive searches therefore narrow. Collapse to a bare caret with ; before searching when the whole buffer should be considered again.\n\nSpace / widens the same letters to the whole project: Space / s and Space / / are the workspace versions of s and /, Space / g fuzzy-searches file contents, and Space / f opens the project finder. Tab switches that finder between files and open buffers plus terminals."
@@ -204,6 +212,31 @@ mod tests {
         ] {
             assert!(regex.contains(required), "missing {required:?}");
         }
+    }
+
+    #[test]
+    fn mouse_topic_explains_selection_and_system_clipboard_copy() {
+        let rendered = render();
+        let mouse = rendered
+            .chars()
+            .skip(topic_offset(&rendered, ManualTopic::MouseAndClipboard))
+            .collect::<String>();
+        let mouse = mouse.split("\nSEARCH\n").next().unwrap();
+
+        for required in [
+            "Shift-click extends the current selection",
+            "left-button drag selects text",
+            "copies all current selections to the system clipboard",
+            "exactly like Space c y",
+            "reviewed terminal",
+            "editor.mouse to false",
+        ] {
+            assert!(mouse.contains(required), "missing {required:?}");
+        }
+        assert_eq!(
+            ManualTopic::resolve("clipboard"),
+            Some(ManualTopic::MouseAndClipboard)
+        );
     }
 
     #[test]
