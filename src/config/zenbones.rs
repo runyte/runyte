@@ -381,6 +381,7 @@ impl Palette {
             accent: self.info.into(),
             cursor_normal: Some(self.info.into()),
             cursor_insert: Some(self.error.into()),
+            cursor_replace: None,
             cursor_select: Some(self.warning.into()),
             cursor_command: Some(cursor_command.into()),
             directory: Some(self.info.into()),

@@ -801,7 +801,7 @@ impl Keymap {
 }
 
 const MODAL: &[Mode] = &[Mode::Normal, Mode::Select];
-const INSERT: &[Mode] = &[Mode::Insert];
+const INSERT: &[Mode] = &[Mode::Insert, Mode::Replace];
 
 fn modal(sequence: impl Into<KeySequence>, command: EditorCommand) -> Binding {
     let sequence = sequence.into();
@@ -943,6 +943,7 @@ fn built_in_bindings() -> Vec<Binding> {
         modal(Key::char('o'), Command::OpenLineBelow),
         modal(Key::char('O'), Command::OpenLineAbove),
         modal(Key::char('r'), Command::ReplaceChar),
+        modal(Key::char('R'), Command::EnterReplaceMode),
         modal(Key::char('~'), Command::ToggleCase),
         modal(Key::char('u'), Command::Undo),
         modal(Key::char('U'), Command::Redo),

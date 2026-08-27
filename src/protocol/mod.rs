@@ -127,8 +127,10 @@ use crate::workspace::{
 /// those holding unsaved work. The session manager states the number as a fact
 /// about the session, and a host still running the previous binary has no
 /// answer to give: every such session would read `Buffers: 0`, which is a
-/// wrong answer rather than a missing one.
-pub const VERSION: u32 = 38;
+/// wrong answer rather than a missing one. Version 39 adds Replace mode and
+/// its resolved caret colour to frames; older peers cannot deserialize either
+/// required enum or theme value.
+pub const VERSION: u32 = 39;
 pub const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const MAX_PATHS: usize = 32;
 pub const MAX_PATH_BYTES: usize = 32 * 1024;
@@ -898,7 +900,7 @@ mod tests {
 
     #[test]
     fn protocol_version_and_request_bounds_are_explicit() {
-        assert_eq!(VERSION, 38);
+        assert_eq!(VERSION, 39);
         let oversized_command = ClientRequest::Invoke {
             command: CommandRequest {
                 name: "open".to_owned(),

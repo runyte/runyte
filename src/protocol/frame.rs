@@ -63,7 +63,7 @@ macro_rules! unit_enum {
 unit_enum!(
     Mode,
     crate::command::Mode,
-    [Normal, Insert, Select, Command]
+    [Normal, Insert, Replace, Select, Command]
 );
 unit_enum!(
     NotificationSeverity,
@@ -1284,6 +1284,7 @@ pub struct Theme {
     pub accent: Color,
     pub cursor_normal: Color,
     pub cursor_insert: Color,
+    pub cursor_replace: Color,
     pub cursor_select: Color,
     pub cursor_command: Color,
     pub directory: Color,
@@ -1319,6 +1320,7 @@ macro_rules! theme {
             accent: $map($value.accent),
             cursor_normal: $map($value.cursor_normal),
             cursor_insert: $map($value.cursor_insert),
+            cursor_replace: $map($value.cursor_replace),
             cursor_select: $map($value.cursor_select),
             cursor_command: $map($value.cursor_command),
             directory: $map($value.directory),

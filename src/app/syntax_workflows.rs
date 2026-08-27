@@ -234,7 +234,7 @@ impl App {
 
     pub(crate) fn normalize_buffer(&mut self, buffer_id: usize) {
         let buffer = &self.buffers[buffer_id];
-        let insert = self.mode == Mode::Insert;
+        let insert = matches!(self.mode, Mode::Insert | Mode::Replace);
         for pane in self
             .panes
             .values_mut()

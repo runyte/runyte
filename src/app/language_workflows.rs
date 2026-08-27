@@ -1568,7 +1568,7 @@ impl App {
             None if self.explicit_completion_session().is_some() => return,
             _ => {}
         }
-        if self.mode != Mode::Insert || self.active().buffer != buffer {
+        if !matches!(self.mode, Mode::Insert | Mode::Replace) || self.active().buffer != buffer {
             self.completion = None;
             return;
         }

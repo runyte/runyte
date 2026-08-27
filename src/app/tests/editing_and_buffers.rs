@@ -3,6 +3,145 @@
 use super::*;
 
 #[test]
+fn replace_mode_overwrites_from_every_selection_head_and_restores_steps() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    seed(&mut app, "abc\nxy");
+    app.panes.get_mut(&0).unwrap().selection =
+        Selection::new(vec![Range::new(2, 0), Range::new(4, 5)], 0);
+
+    press(&mut app, 'R');
+    assert_eq!(app.mode, Mode::Replace);
+    assert_eq!(
+        app.active().selection.ranges(),
+        &[Range::point(0), Range::point(5)]
+    );
+
+    app.handle_input(InputEvent::Text("λZ".to_owned())).unwrap();
+    assert_eq!(text(&app), "λZc\nxλZ");
+
+    key(&mut app, KeyCode::Backspace, Modifiers::NONE);
+    assert_eq!(text(&app), "λbc\nxλ");
+    key(&mut app, KeyCode::Backspace, Modifiers::NONE);
+    assert_eq!(text(&app), "abc\nxy");
+    assert_eq!(app.mode, Mode::Replace);
+}
+
+#[test]
+fn external_active_buffer_mutation_invalidates_the_replace_trail() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    seed(&mut app, "abc");
+
+    press(&mut app, 'R');
+    app.handle_input(InputEvent::Text("X".to_owned())).unwrap();
+    assert_eq!(text(&app), "Xbc");
+    assert_eq!(app.replace_session.as_ref().unwrap().steps.len(), 1);
+
+    assert!(app.apply_to_buffer(
+        app.active().buffer,
+        &Transaction::new(vec![Change::new(0, 1, "Q")]),
+    ));
+    assert_eq!(text(&app), "Qbc");
+    assert!(app.replace_session.is_none());
+
+    key(&mut app, KeyCode::Backspace, Modifiers::NONE);
+    assert_eq!(text(&app), "Qbc");
+    assert_eq!(app.mode, Mode::Replace);
+}
+
+#[test]
+fn replace_word_restoration_uses_the_primary_carets_boundary() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    seed(&mut app, "xxxxx-----yyyyyyyyyy");
+    app.active_mut().selection = Selection::new(vec![Range::point(0), Range::point(10)], 1);
+
+    press(&mut app, 'R');
+    app.handle_input(InputEvent::Text("ab cd".to_owned()))
+        .unwrap();
+    key(&mut app, KeyCode::Backspace, Modifiers::ALT);
+
+    assert_eq!(text(&app), "ab xx-----ab yyyyyyy");
+    assert_eq!(
+        app.active().selection.ranges(),
+        &[Range::point(3), Range::point(13)]
+    );
+}
+
+#[test]
+fn replace_line_restoration_uses_the_primary_carets_line() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    seed(&mut app, "xxxxx\nYYYYYYYYYY");
+    app.active_mut().selection = Selection::new(vec![Range::point(0), Range::point(6)], 1);
+
+    press(&mut app, 'R');
+    app.handle_input(InputEvent::Text("AB".to_owned())).unwrap();
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    app.handle_input(InputEvent::Text("CD".to_owned())).unwrap();
+    key(&mut app, KeyCode::Char('u'), Modifiers::CONTROL);
+
+    assert_eq!(text(&app), "AB\nxxx\nAB\nYYYYYYYY");
+    assert_eq!(
+        app.active().selection.ranges(),
+        &[Range::point(3), Range::point(10)]
+    );
+}
+
+#[test]
+fn no_op_pane_navigation_preserves_replace_mode_and_its_trail() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    seed(&mut app, "abc");
+
+    press(&mut app, 'R');
+    app.handle_input(InputEvent::Text("X".to_owned())).unwrap();
+    app.focus_from_terminal_insert(1, 0);
+    assert_eq!(app.mode, Mode::Replace);
+    assert_eq!(app.replace_session.as_ref().unwrap().steps.len(), 1);
+
+    app.next_window_from_terminal_insert();
+    assert_eq!(app.mode, Mode::Replace);
+    assert_eq!(app.replace_session.as_ref().unwrap().steps.len(), 1);
+
+    app.toggle_maximized(MaximizedView::Fullscreen);
+    app.focus_from_terminal_insert(-1, 0);
+    assert_eq!(app.mode, Mode::Replace);
+    assert_eq!(app.replace_session.as_ref().unwrap().steps.len(), 1);
+
+    key(&mut app, KeyCode::Backspace, Modifiers::NONE);
+    assert_eq!(text(&app), "abc");
+}
+
+#[test]
+fn replace_mode_appends_at_line_end_inserts_newlines_and_undoes_as_one_edit() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    seed(&mut app, "ab");
+    set_cursor(&mut app, 0, 1);
+
+    press(&mut app, 'R');
+    app.handle_input(InputEvent::Text("XYZ".to_owned()))
+        .unwrap();
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    app.handle_input(InputEvent::Text("Q".to_owned())).unwrap();
+    assert_eq!(text(&app), "aXYZ\nQ");
+    assert_eq!(app.mode.label(), "REP");
+
+    key(&mut app, KeyCode::Escape, Modifiers::NONE);
+    assert_eq!(app.mode, Mode::Normal);
+    press(&mut app, 'u');
+    assert_eq!(text(&app), "ab");
+}
+
+#[test]
+fn lowercase_r_remains_a_single_character_normal_mode_command() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    seed(&mut app, "abc");
+
+    press(&mut app, 'r');
+    press(&mut app, 'X');
+
+    assert_eq!(text(&app), "Xbc");
+    assert_eq!(app.mode, Mode::Normal);
+}
+
+#[test]
 fn count_prefixes_repeat_motions_and_address_lines() {
     let mut app = App::new(Config::default(), None).unwrap();
     seed(&mut app, "zero\none\ntwo\nthree\nfour\n");

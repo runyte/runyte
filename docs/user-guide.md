@@ -6,7 +6,7 @@ For the project overview and quick start, see the [main README](../README.md).
 
 ## Feature reference
 
-- Normal, Insert, Select, and Command modes
+- Normal, Insert, Replace, Select, and Command modes
 - Tree-sitter syntax highlighting for Python, Rust, Swift, C, C++, JavaScript,
   TypeScript, TSX, HTML, CSS, Go, Bash, Java, Kotlin, Markdown, TOML, YAML, and
   JSON
@@ -788,8 +788,9 @@ The canonical definitions live in
 ### Global status line
 
 The leftmost mode label in the global status line uses the current mode's caret
-colour — blue for Normal, red for Insert, and orange for Select in every built-in
-theme. The rest of the row keeps the theme's ordinary background. Its left side
+colour — blue for Normal, red for Insert, the palette's added-text colour for
+Replace (usually green), orange for Select, and purple for Command. The rest of the row keeps the
+theme's ordinary background. Its left side
 then names the workspace mode and current workspace directory, marking the
 active buffer `[+]` when it has unsaved changes and `[RO]` when it is read-only.
 Pane titles carry file and buffer identity. The right carries the cursor and how
@@ -1092,7 +1093,7 @@ context; scoped explorer keys are documented under
 | `gw` | Dim the view, label nearby words with one key and farther words with two, then type a label to jump |
 | `i` / `a` / `I` / `A` | Insert before/after cursor or at line boundary |
 | `o` / `O` | Open line below / above |
-| `r` / `~` | Replace the cursor character / toggle its case |
+| `r` / `R` / `~` | Replace once / enter Replace mode / toggle case |
 | `v` | Enter Select mode |
 | `x` / `X` | Select current line, then extend down / up |
 | `%` | Select the entire buffer |
@@ -1128,6 +1129,23 @@ context; scoped explorer keys are documented under
 | `mm` | Jump to the matching bracket |
 | `z…` / `Z…` | View alignment and scrolling |
 | `Esc` | Return to Normal mode |
+
+<a id="insert-mode"></a>
+
+### Insert and Replace modes
+
+Insert mode adds text at every caret. Replace mode starts with `R`, collapses
+every selection to its active head, and overwrites the character ahead of each
+caret as text is entered. A caret already at line end appends instead, and a
+newline inserts a line break rather than consuming the existing terminator.
+Unicode characters are replaced one for one and CRLF remains one line ending.
+
+Backspace in Replace mode retraces the current overwrite run: overwritten
+characters return, while characters appended past line end are removed.
+Alt-Backspace and Ctrl-u restore by word and to the beginning of the current
+line. Escape or Ctrl-`\` returns to Normal mode, and the complete Replace-mode
+session is one undo checkpoint. Lowercase `r` remains the single-character
+Normal-mode command and never enters Replace mode.
 
 `Ctrl-c` comments or uncomments every line the selection touches, taking the
 marker from the buffer's language: `//` for Rust, C, C++, Go, Java, JavaScript,
@@ -2526,6 +2544,7 @@ themes:
     accent: "#88c0d0"
     cursor_normal: "#ff5555"
     cursor_insert: "#ff79c6"
+    cursor_replace: "#50fa7b"
     cursor_select: "#ffb86c"
     cursor_command: "#bd93f9"
     directory: "#8be9fd"
@@ -2610,12 +2629,13 @@ it existed.
 counts. Custom themes that omit `warning` use `change_modified` (then terminal
 yellow), while omitted `info` uses `change_added` (then terminal green).
 
-`cursor_normal`, `cursor_insert`, `cursor_select`, and `cursor_command` colour
-both carets and the global status line's mode label in Normal, Insert, Select,
-and Command modes respectively. When omitted they fall back to `accent`,
-`error`, `warning`, and `info`, so even a compact custom theme starts with
-separate mode colours. The built-in themes use blue for Normal, red for Insert,
-orange for Select, and purple for Command.
+`cursor_normal`, `cursor_insert`, `cursor_replace`, `cursor_select`, and
+`cursor_command` colour both carets and the global status line's mode label in
+Normal, Insert, Replace, Select, and Command modes respectively. When omitted
+they fall back to `accent`, `error`, `change_added`, `warning`, and `info`.
+The built-in themes use blue for Normal, red for Insert, their palette's
+added-text colour for Replace (usually green), orange for Select, and purple
+for Command.
 
 `selection` colours secondary ranges in a multi-selection.
 `selection_primary` colours the primary range and ordinary Select-mode ranges;

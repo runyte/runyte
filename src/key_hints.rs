@@ -246,11 +246,17 @@ impl KeyHintState {
     ) -> HintEventResult {
         let key = key.into();
         self.expire_at(now);
-        if mode == Mode::Insert && !self.is_pending() && key != KeyStroke::ctrl('w') {
+        if matches!(mode, Mode::Insert | Mode::Replace)
+            && !self.is_pending()
+            && key != KeyStroke::ctrl('w')
+        {
             self.clear();
             return HintEventResult::Forward;
         }
-        if !matches!(mode, Mode::Normal | Mode::Select | Mode::Insert) {
+        if !matches!(
+            mode,
+            Mode::Normal | Mode::Select | Mode::Insert | Mode::Replace
+        ) {
             self.clear();
             return HintEventResult::Forward;
         }
@@ -512,7 +518,10 @@ mod tests {
             .find(|row| row.target == Some(BindingTarget::Editor(EditorCommand::TriggerCompletion)))
             .expect("the language namespace lists completion");
         assert_eq!(completion.alias, Some(KeySequence::from(Key::ctrl('x'))));
-        assert_eq!(completion.alias_modes, Some(&[Mode::Insert][..]));
+        assert_eq!(
+            completion.alias_modes,
+            Some(&[Mode::Insert, Mode::Replace][..])
+        );
 
         hints.observe(event('g'), Mode::Normal, default_keymap());
         let navigation = hints.rows(default_keymap(), Mode::Normal);

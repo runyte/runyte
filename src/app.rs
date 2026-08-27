@@ -106,6 +106,19 @@ use crate::{
 
 pub use crate::command::Mode;
 
+#[derive(Clone, Debug)]
+struct ReplaceStep {
+    before: Selection,
+    after: Selection,
+    inverse: Transaction,
+}
+
+#[derive(Clone, Debug)]
+struct ReplaceSession {
+    buffer: usize,
+    steps: Vec<ReplaceStep>,
+}
+
 // Application behavior is grouped by editor-level workflow below. These
 // modules coordinate the lower-level owners imported above; they do not take
 // over Git processes, LSP transport, terminal emulation, buffer mutation, or
@@ -2256,6 +2269,8 @@ pub struct App {
     /// again, or when the buffer goes away.
     pending_diff: Option<usize>,
     pub mode: Mode,
+    /// The reversible overwrite trail owned by a live Replace-mode edit.
+    replace_session: Option<ReplaceSession>,
     pub command: String,
     pub command_cursor: usize,
     pub command_selection: usize,
@@ -2675,6 +2690,7 @@ impl App {
             active_pane: 0,
             maximized: None,
             mode: initial_mode,
+            replace_session: None,
             command: String::new(),
             command_cursor: 0,
             command_selection: 0,

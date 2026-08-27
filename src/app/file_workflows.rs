@@ -1532,7 +1532,7 @@ impl App {
     /// current document pane can still reposition its Insert caret. The drag
     /// path remains free to enter Select mode.
     pub(super) fn activate_pane_from_pointer(&mut self, pane: usize) {
-        if pane != self.active_pane && self.mode == Mode::Insert {
+        if pane != self.active_pane && matches!(self.mode, Mode::Insert | Mode::Replace) {
             self.enter_normal_mode();
         }
         self.activate_pane(pane);
@@ -1602,16 +1602,51 @@ impl App {
 
     pub(super) fn focus_from_terminal_insert(&mut self, dx: i32, dy: i32) {
         let terminal_input = self.mode == Mode::Insert && self.active_terminal().is_some();
+        let replacing = self.mode == Mode::Replace;
         let previous_pane = self.active_pane;
+        let replace_focus_moves = replacing
+            && self.maximized.is_none()
+            && self
+                .pane_neighbor(dx, dy)
+                .is_some_and(|pane| pane != previous_pane);
+        if replace_focus_moves {
+            self.enter_normal_mode();
+        }
         self.focus(dx, dy);
         self.finish_pane_focus(previous_pane, terminal_input);
+        if replacing && self.active_pane != previous_pane && self.active_terminal().is_none() {
+            if self.active_buffer().is_read_only() {
+                self.mode = Mode::Normal;
+            } else {
+                self.enter_replace_mode();
+            }
+        }
     }
 
     pub(super) fn next_window_from_terminal_insert(&mut self) {
         let terminal_input = self.mode == Mode::Insert && self.active_terminal().is_some();
+        let replacing = self.mode == Mode::Replace;
         let previous_pane = self.active_pane;
+        let mut panes = Vec::new();
+        self.layout.panes(&mut panes);
+        let replace_focus_moves = replacing
+            && self.maximized.is_none()
+            && panes
+                .iter()
+                .position(|pane| *pane == previous_pane)
+                .is_some_and(|index| panes[(index + 1) % panes.len()] != previous_pane);
+        if replace_focus_moves {
+            self.enter_normal_mode();
+        }
         self.next_window();
         self.finish_pane_focus(previous_pane, terminal_input);
+        if replacing && self.active_pane != previous_pane && self.active_terminal().is_none() {
+            if self.active_buffer().is_read_only() {
+                self.mode = Mode::Normal;
+            } else {
+                self.enter_replace_mode();
+            }
+        }
     }
 
     /// Settles a user-driven pane focus change at the destination's natural

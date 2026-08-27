@@ -413,7 +413,7 @@ impl App {
     /// selection through it, so panes sharing a buffer stay consistent.
     pub(crate) fn edit(&mut self, transaction: Transaction) -> bool {
         let buffer_id = self.active().buffer;
-        if self.mode == Mode::Insert {
+        if matches!(self.mode, Mode::Insert | Mode::Replace) {
             self.buffers[buffer_id].begin_undo_group();
         }
         let changed = self.apply_to_buffer(buffer_id, &transaction);
@@ -441,6 +441,12 @@ impl App {
         let before = watched.then(|| self.buffers[buffer_id].text().clone());
         if !self.buffers[buffer_id].apply(transaction) {
             return false;
+        }
+        if self.mode == Mode::Replace && self.active().buffer == buffer_id {
+            // Replace's own overwrites and restorations take the session out
+            // around this call. Every other mutation of the active Replace
+            // buffer invalidates inverse ranges recorded against older text.
+            self.replace_session = None;
         }
         self.reconcile_applied_transaction(
             buffer_id,
@@ -517,6 +523,141 @@ impl App {
         let selection = self.active().selection.clone();
         let transaction = selection.change_by(|_| Some(text.to_owned()));
         self.edit(transaction);
+    }
+
+    pub(super) fn enter_replace_mode(&mut self) {
+        let buffer_id = self.active().buffer;
+        let selection = self
+            .active()
+            .selection
+            .transform(|range| Range::point(range.head));
+        self.active_mut().replace_selection(selection);
+        self.buffers[buffer_id].begin_undo_group();
+        self.replace_session = Some(super::ReplaceSession {
+            buffer: buffer_id,
+            steps: Vec::new(),
+        });
+        self.mode = Mode::Replace;
+    }
+
+    /// Overwrites one character at every Replace caret, appending at line end.
+    /// Line terminators are structural: a typed newline inserts one, while no
+    /// other character is allowed to consume LF or either half of CRLF.
+    pub(super) fn replace_mode_text(&mut self, text: &str) {
+        let mut characters = text.chars().peekable();
+        while let Some(character) = characters.next() {
+            if character == '\r' && characters.peek() == Some(&'\n') {
+                characters.next();
+                self.replace_mode_character('\n');
+            } else {
+                self.replace_mode_character(character);
+            }
+        }
+    }
+
+    fn replace_mode_character(&mut self, character: char) {
+        let buffer_id = self.active().buffer;
+        let before = self.active().selection.clone();
+        let buffer = self.active_buffer();
+        let changes = before
+            .ranges()
+            .iter()
+            .map(|range| {
+                let head = range.head;
+                if character == '\n' {
+                    let row = buffer.offset_to_row(head);
+                    Change::new(head, head, preferred_line_ending(buffer, row))
+                } else {
+                    let row = buffer.offset_to_row(head);
+                    let row_end = buffer.line_to_offset(row) + buffer.line_len(row);
+                    if head < row_end {
+                        Change::new(head, head + 1, character.to_string())
+                    } else {
+                        Change::new(head, head, character.to_string())
+                    }
+                }
+            })
+            .collect::<Vec<_>>();
+        let transaction = Transaction::new(changes);
+        let mut preview = self.buffers[buffer_id].text().clone();
+        let inverse = preview.apply(&transaction).into_transaction();
+        let after = Selection::new(
+            before
+                .ranges()
+                .iter()
+                .map(|range| {
+                    let start = transaction.map_offset(range.head, crate::text::Assoc::Before);
+                    let inserted = if character == '\n' {
+                        let row = self.active_buffer().offset_to_row(range.head);
+                        preferred_line_ending(self.active_buffer(), row)
+                            .chars()
+                            .count()
+                    } else {
+                        1
+                    };
+                    Range::point(start + inserted)
+                })
+                .collect(),
+            before.primary_index(),
+        );
+        let mut session = self
+            .replace_session
+            .take()
+            .unwrap_or(super::ReplaceSession {
+                buffer: buffer_id,
+                steps: Vec::new(),
+            });
+        if session.buffer != buffer_id {
+            session = super::ReplaceSession {
+                buffer: buffer_id,
+                steps: Vec::new(),
+            };
+        }
+        if self.edit(transaction) {
+            self.active_mut().replace_selection(after.clone());
+            session.steps.push(super::ReplaceStep {
+                before,
+                after,
+                inverse,
+            });
+        }
+        self.replace_session = Some(session);
+    }
+
+    pub(super) fn restore_replace_step(&mut self) -> bool {
+        let buffer_id = self.active().buffer;
+        let current = self.active().selection.clone();
+        let Some(mut session) = self.replace_session.take() else {
+            return false;
+        };
+        if session.buffer != buffer_id
+            || session
+                .steps
+                .last()
+                .is_none_or(|step| step.after != current)
+        {
+            self.replace_session = Some(session);
+            return false;
+        }
+        let step = session.steps.pop().unwrap();
+        let changed = self.edit(step.inverse);
+        if changed {
+            self.active_mut().replace_selection(step.before);
+        }
+        self.replace_session = Some(session);
+        changed
+    }
+
+    pub(super) fn restore_replace_word(&mut self) {
+        let target = insert_word_back(self.active_buffer(), self.active().selection.primary().head);
+        while self.active().selection.primary().head > target && self.restore_replace_step() {}
+    }
+
+    pub(super) fn restore_replace_line(&mut self) {
+        let head = self.active().selection.primary().head;
+        let row = self.active_buffer().offset_to_row(head);
+        let target = self.active_buffer().line_to_offset(row);
+        while self.active().selection.primary().head > target && self.restore_replace_step() {}
     }
 
     pub(super) fn edit_newline(&mut self) {

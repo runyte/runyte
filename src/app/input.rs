@@ -117,10 +117,10 @@ impl App {
 
     /// Registry mode a frontend should use while observing this key.
     pub fn key_hint_mode_for_key(&self, key: KeyStroke) -> Option<Mode> {
-        if self.mode == Mode::Insert
+        if matches!(self.mode, Mode::Insert | Mode::Replace)
             && (key == KeyStroke::ctrl('w') || !self.grammar.pending_sequence().is_empty())
         {
-            return Some(Mode::Insert);
+            return Some(self.mode);
         }
         self.key_hint_mode()
     }
@@ -585,7 +585,7 @@ impl App {
                 // rather than placing an Insert caret, so its head addresses a
                 // character even when the pane was in Insert mode.
                 let extend = event.modifiers.contains(Modifiers::SHIFT);
-                let insert = self.mode == Mode::Insert && !extend;
+                let insert = matches!(self.mode, Mode::Insert | Mode::Replace) && !extend;
                 let Some(offset) =
                     self.pointer_offset(view, pane_id, event.column, event.row, insert)
                 else {
@@ -609,8 +609,14 @@ impl App {
                 });
                 if extend && anchor != offset {
                     self.mode = Mode::Select;
-                } else if previous_mode == Mode::Insert {
-                    self.mode = Mode::Insert;
+                } else if matches!(previous_mode, Mode::Insert | Mode::Replace) {
+                    self.mode = previous_mode;
+                    if previous_mode == Mode::Replace {
+                        self.replace_session = Some(super::ReplaceSession {
+                            buffer: self.active().buffer,
+                            steps: Vec::new(),
+                        });
+                    }
                 } else if anchor == offset {
                     self.mode = Mode::Normal;
                 } else {
@@ -1185,7 +1191,7 @@ impl App {
 
         match self.mode {
             Mode::Command => self.handle_command(key),
-            Mode::Insert | Mode::Normal | Mode::Select => {
+            Mode::Insert | Mode::Replace | Mode::Normal | Mode::Select => {
                 self.handle_editor_input(InputEvent::Key(key))
             }
         }
@@ -1277,7 +1283,9 @@ impl App {
         }
 
         match self.mode {
-            Mode::Insert => return self.handle_editor_input(InputEvent::Text(text.to_owned())),
+            Mode::Insert | Mode::Replace => {
+                return self.handle_editor_input(InputEvent::Text(text.to_owned()));
+            }
             Mode::Command => {
                 let cursor = char_to_byte(&self.command, self.command_cursor);
                 self.command.insert_str(cursor, text);
@@ -1291,7 +1299,7 @@ impl App {
 
     fn handle_editor_input(&mut self, mut input: InputEvent) -> Result<()> {
         loop {
-            if self.mode == Mode::Insert
+            if matches!(self.mode, Mode::Insert | Mode::Replace)
                 // A terminal is pane content in front of its backing buffer.
                 // The terminal-specific gate in `handle_key_stroke` only lets
                 // Runyte-owned keys reach this grammar, so a read-only backing
@@ -1308,7 +1316,7 @@ impl App {
                 return Ok(());
             }
             if let InputEvent::Key(key) = &input
-                && self.mode == Mode::Insert
+                && matches!(self.mode, Mode::Insert | Mode::Replace)
                 && self.grammar.pending_sequence().is_empty()
                 && self.handle_completion_key(*key)
             {
@@ -1348,7 +1356,7 @@ impl App {
             let Some(next) = reprocess else {
                 return Ok(());
             };
-            if self.mode != Mode::Insert {
+            if !matches!(self.mode, Mode::Insert | Mode::Replace) {
                 return Ok(());
             }
             input = next;
@@ -1420,7 +1428,11 @@ impl App {
                     self.error(reason);
                     return Ok(None);
                 }
-                self.insert_text(&text);
+                if self.mode == Mode::Replace {
+                    self.replace_mode_text(&text);
+                } else {
+                    self.insert_text(&text);
+                }
                 for character in text.chars() {
                     self.after_insert(character);
                 }
@@ -3233,6 +3245,7 @@ impl App {
             Command::HalfPageUp => self.motion(Motion::HalfPageUp),
             Command::HalfPageDown => self.motion(Motion::HalfPageDown),
             Command::EnterInsertMode => self.enter_insert(false),
+            Command::EnterReplaceMode => self.enter_replace_mode(),
             Command::AppendAfter => self.enter_insert(true),
             Command::InsertLineStart => {
                 self.motion(Motion::LineStart);
@@ -3476,20 +3489,33 @@ impl App {
             Command::CloseWindow => self.close_pane(),
             Command::OnlyWindow => self.only_window(),
             Command::EqualizeWindows => self.equalize_panes(),
+            Command::DeleteWordBackward if self.mode == Mode::Replace => {
+                self.restore_replace_word()
+            }
             Command::DeleteWordBackward => self.delete_word_backward(),
             Command::DeleteWordForward => self.delete_word_forward(),
+            Command::DeleteToLineStart if self.mode == Mode::Replace => self.restore_replace_line(),
             Command::DeleteToLineStart => self.delete_to_line_start(),
             Command::DeleteToLineEnd => self.delete_to_line_end(),
             Command::DeleteCharBackward => {
-                self.edit_backspace();
+                if self.mode != Mode::Replace {
+                    self.edit_backspace();
+                } else {
+                    self.restore_replace_step();
+                }
                 self.refresh_explicit_completion_filter();
             }
             Command::DeleteCharForward => {
                 self.edit_delete();
                 self.refresh_explicit_completion_filter();
             }
+            Command::InsertNewline if self.mode == Mode::Replace => self.replace_mode_text("\n"),
             Command::InsertNewline => self.edit_newline(),
+            Command::InsertTab if self.mode == Mode::Replace => {
+                self.replace_mode_text(&" ".repeat(self.config.editor.tab_width.max(1)))
+            }
             Command::InsertTab => self.insert_indentation(),
+            Command::InsertLiteralTab if self.mode == Mode::Replace => self.replace_mode_text("\t"),
             Command::InsertLiteralTab => self.insert_char('\t'),
             Command::CommitUndoCheckpoint => {
                 let buffer_id = self.active().buffer;
@@ -3522,7 +3548,8 @@ impl App {
             Command::RenameSymbol => self.lsp_rename_prompt(),
             Command::CodeAction => self.lsp_code_actions(),
             Command::TriggerCompletion => {
-                if self.has_language_server() && self.mode != Mode::Insert {
+                if self.has_language_server() && !matches!(self.mode, Mode::Insert | Mode::Replace)
+                {
                     self.enter_insert(false);
                 }
                 self.start_explicit_lsp_completion();
@@ -3990,7 +4017,7 @@ impl App {
     }
 
     pub(super) fn enter_normal_mode(&mut self) {
-        if self.mode == Mode::Insert {
+        if matches!(self.mode, Mode::Insert | Mode::Replace) {
             let buffer_id = self.active().buffer;
             self.buffers[buffer_id].commit_undo_group();
             let buffer = self.active_buffer();
@@ -4021,6 +4048,7 @@ impl App {
             };
             self.active_mut().replace_selection(selection);
         }
+        self.replace_session = None;
         self.mode = Mode::Normal;
         match self.grammar.kind() {
             crate::command::GrammarKind::Runyte => self

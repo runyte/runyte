@@ -49,6 +49,7 @@ fn catppuccin_theme(palette: CatppuccinPalette) -> ThemeDefinition {
         accent: palette.blue.into(),
         cursor_normal: Some(palette.blue.into()),
         cursor_insert: Some(palette.red.into()),
+        cursor_replace: None,
         cursor_select: Some(palette.cursor_select.into()),
         cursor_command: Some(palette.mauve.into()),
         directory: Some(palette.blue.into()),

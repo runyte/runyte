@@ -55,9 +55,10 @@ themes:
     # jump_text_muted: "#65737e"
     accent: "#88c0d0"
     # Carets and the status line distinguish modes. Omitted values use accent,
-    # error, warning, and info respectively.
+    # error, change_added, warning, and info respectively.
     cursor_normal: "#ff5555"
     cursor_insert: "#ff79c6"
+    cursor_replace: "#50fa7b"
     cursor_select: "#ffb86c"
     cursor_command: "#bd93f9"
     directory: "#8be9fd"

@@ -195,6 +195,8 @@ pub struct ThemeDefinition {
     pub cursor_normal: Option<String>,
     /// Insert-mode caret colour. An omitted value uses `error`.
     pub cursor_insert: Option<String>,
+    /// Replace-mode caret colour. An omitted value uses `change_added`.
+    pub cursor_replace: Option<String>,
     /// Select-mode caret colour. An omitted value uses `warning`.
     pub cursor_select: Option<String>,
     /// Command-mode caret colour. An omitted value uses `info`, which is the
@@ -378,6 +380,7 @@ pub struct Theme {
     pub accent: Color,
     pub cursor_normal: Color,
     pub cursor_insert: Color,
+    pub cursor_replace: Color,
     pub cursor_select: Color,
     pub cursor_command: Color,
     pub directory: Color,
@@ -410,6 +413,30 @@ pub struct Theme {
 }
 
 impl Theme {
+    /// Keeps a mode caret legible while retaining the candidate palette hue.
+    fn legible_mode_color(background: Color, mut candidate: Color) -> Color {
+        let Some(background_luminance) = background.relative_luminance() else {
+            return candidate;
+        };
+        let appearance = if background_luminance < 0.5 {
+            ThemeAppearance::Dark
+        } else {
+            ThemeAppearance::Light
+        };
+        for _ in 0..8 {
+            let Some(candidate_luminance) = candidate.relative_luminance() else {
+                return candidate;
+            };
+            let contrast = (background_luminance.max(candidate_luminance) + 0.05)
+                / (background_luminance.min(candidate_luminance) + 0.05);
+            if contrast >= 3.0 {
+                break;
+            }
+            candidate = candidate.stepped_off(appearance, 0.15);
+        }
+        candidate
+    }
+
     /// A marker colour only slightly separated from the editor ground.
     ///
     /// Whitespace is structural information rather than ordinary text, so it
@@ -596,6 +623,7 @@ impl Default for ThemeDefinition {
             accent: "#7cafc2".into(),
             cursor_normal: None,
             cursor_insert: None,
+            cursor_replace: None,
             cursor_select: None,
             cursor_command: None,
             directory: None,
@@ -814,6 +842,16 @@ impl TryFrom<&ThemeDefinition> for Theme {
             value.info.as_deref().or(value.change_added.as_deref()),
             Color::Green,
         )?;
+        let cursor_replace = Theme::legible_mode_color(
+            background,
+            optional_color(
+                value
+                    .cursor_replace
+                    .as_deref()
+                    .or(value.change_added.as_deref()),
+                Color::Green,
+            )?,
+        );
         Ok(Self {
             background,
             foreground: parse_color(&value.foreground)?,
@@ -838,6 +876,7 @@ impl TryFrom<&ThemeDefinition> for Theme {
                 .map(parse_color)
                 .transpose()?
                 .unwrap_or(error),
+            cursor_replace,
             cursor_select: value
                 .cursor_select
                 .as_deref()
@@ -2353,9 +2392,25 @@ mod tests {
                 theme.cursor_select, theme.cursor_command,
                 "{name}: SEL = CMD"
             );
+            for (label, other) in [
+                ("NOR", theme.cursor_normal),
+                ("INS", theme.cursor_insert),
+                ("SEL", theme.cursor_select),
+                ("CMD", theme.cursor_command),
+            ] {
+                assert_ne!(theme.cursor_replace, other, "{name}: REP = {label}");
+            }
+            let ground = theme.background.relative_luminance().unwrap();
+            let replace = theme.cursor_replace.relative_luminance().unwrap();
+            let replace_contrast = (ground.max(replace) + 0.05) / (ground.min(replace) + 0.05);
+            assert!(
+                replace_contrast >= 3.0,
+                "{name} Replace cursor obscures its glyph: {replace_contrast}"
+            );
             // Command mode is the one mode whose colour is a Runyte decision
             // rather than an upstream one, so every theme is held to the hue
-            // the four-mode vocabulary promises: blue, red, orange, purple.
+            // the mode vocabulary promises: blue, red, added-text, orange,
+            // purple.
             let (red, green, blue) = theme.cursor_command.channels().unwrap();
             assert!(
                 red > green && blue > green,

@@ -102,6 +102,7 @@ fn everforest_theme(
         accent: foreground.green.into(),
         cursor_normal: Some(foreground.blue.into()),
         cursor_insert: Some(foreground.red.into()),
+        cursor_replace: None,
         cursor_select: Some(foreground.orange.into()),
         cursor_command: Some(foreground.command.into()),
         directory: Some(foreground.blue.into()),

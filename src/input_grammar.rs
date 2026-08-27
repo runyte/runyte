@@ -1102,7 +1102,7 @@ impl InputGrammar for RunyteGrammar {
         context: GrammarContext<'_>,
     ) -> Result<GrammarOutput, CommandInvocationError> {
         match context.mode() {
-            Mode::Insert => self.translate_insert(input, context),
+            Mode::Insert | Mode::Replace => self.translate_insert(input, context),
             Mode::Normal | Mode::Select => match input {
                 InputEvent::Key(key) => self.translate_modal(key, context),
                 InputEvent::Text(_) | InputEvent::Pointer(_) => Ok(GrammarOutput::default()),
@@ -2224,7 +2224,7 @@ impl InputGrammar for VimGrammar {
         context: GrammarContext<'_>,
     ) -> Result<GrammarOutput, CommandInvocationError> {
         match context.mode() {
-            Mode::Insert => self.translate_insert(input, context),
+            Mode::Insert | Mode::Replace => self.translate_insert(input, context),
             Mode::Normal | Mode::Select => match input {
                 InputEvent::Key(key) => self.translate_modal(key, context),
                 InputEvent::Text(_) | InputEvent::Pointer(_) => Ok(GrammarOutput::default()),

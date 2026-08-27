@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 pub enum Mode {
     Normal,
     Insert,
+    Replace,
     Select,
     Command,
 }
@@ -19,6 +20,7 @@ impl Mode {
         match self {
             Self::Normal => "NOR",
             Self::Insert => "INS",
+            Self::Replace => "REP",
             Self::Select => "SEL",
             Self::Command => "CMD",
         }
@@ -458,6 +460,7 @@ editor_commands! {
     HalfPageDown => ("half-page-down", "Move half a page down"),
 
     EnterInsertMode => ("enter-insert-mode", "Insert before the selection"),
+    EnterReplaceMode => ("enter-replace-mode", "Replace text from each selection head"),
     AppendAfter => ("append-after", "Insert after the selection"),
     InsertLineStart => ("insert-line-start", "Insert at line start"),
     InsertLineEnd => ("insert-line-end", "Insert at line end"),
@@ -790,6 +793,7 @@ impl EditorCommand {
         matches!(
             self,
             Self::EnterInsertMode
+                | Self::EnterReplaceMode
                 | Self::AppendAfter
                 | Self::InsertLineStart
                 | Self::InsertLineEnd
@@ -927,6 +931,7 @@ impl EditorCommand {
             | Self::JumpBackwardBuffer
             | Self::JumpForwardBuffer => CommandCategory::Movement,
             Self::EnterInsertMode
+            | Self::EnterReplaceMode
             | Self::AppendAfter
             | Self::InsertLineStart
             | Self::InsertLineEnd

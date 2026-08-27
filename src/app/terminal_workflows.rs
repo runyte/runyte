@@ -752,6 +752,11 @@ impl App {
                 self.status("terminal input · Ctrl-\\ returns to normal mode");
                 true
             }
+            Command::EnterReplaceMode => {
+                let _ = session;
+                self.error("replace mode needs an editable buffer");
+                true
+            }
             Command::ScrollViewUp => {
                 session.begin_review();
                 session.scroll_back(1);

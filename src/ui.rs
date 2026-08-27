@@ -57,6 +57,7 @@ struct TuiTheme {
     accent: ratatui::style::Color,
     cursor_normal: ratatui::style::Color,
     cursor_insert: ratatui::style::Color,
+    cursor_replace: ratatui::style::Color,
     cursor_select: ratatui::style::Color,
     cursor_command: ratatui::style::Color,
     directory: ratatui::style::Color,
@@ -92,6 +93,7 @@ impl TuiTheme {
             accent: to_tui_color(theme.accent),
             cursor_normal: to_tui_color(theme.cursor_normal),
             cursor_insert: to_tui_color(theme.cursor_insert),
+            cursor_replace: to_tui_color(theme.cursor_replace),
             cursor_select: to_tui_color(theme.cursor_select),
             cursor_command: to_tui_color(theme.cursor_command),
             directory: to_tui_color(theme.directory),
@@ -126,6 +128,7 @@ impl TuiTheme {
     fn cursor(&self, mode: Mode) -> ratatui::style::Color {
         match mode {
             Mode::Insert => self.cursor_insert,
+            Mode::Replace => self.cursor_replace,
             Mode::Select => self.cursor_select,
             Mode::Command => self.cursor_command,
             Mode::Normal => self.cursor_normal,
@@ -3497,6 +3500,7 @@ mod tests {
         assert_role!(accent);
         assert_role!(cursor_normal);
         assert_role!(cursor_insert);
+        assert_role!(cursor_replace);
         assert_role!(cursor_select);
         assert_role!(cursor_command);
         assert_role!(directory);
@@ -3721,7 +3725,13 @@ mod tests {
     fn only_the_status_mode_label_follows_the_caret_color() {
         let app = App::new(Config::default(), None).unwrap();
         let theme = TuiTheme::new(&app.theme);
-        for mode in [Mode::Normal, Mode::Insert, Mode::Select, Mode::Command] {
+        for mode in [
+            Mode::Normal,
+            Mode::Insert,
+            Mode::Replace,
+            Mode::Select,
+            Mode::Command,
+        ] {
             let mut status = status_with_notifications(NotificationCounts::default());
             status.mode = mode;
             let mut terminal = Terminal::new(TestBackend::new(120, 1)).unwrap();
@@ -4184,7 +4194,7 @@ mod tests {
             })
             .expect("the language namespace lists completion");
 
-        assert_eq!(key_hint_keys(&completion), "Space l c, INS Ctrl-x");
+        assert_eq!(key_hint_keys(&completion), "Space l c, INS/REP Ctrl-x");
     }
 
     #[test]
@@ -5757,7 +5767,13 @@ mod tests {
             highlights: Vec::new(),
         };
 
-        for mode in [Mode::Normal, Mode::Insert, Mode::Select, Mode::Command] {
+        for mode in [
+            Mode::Normal,
+            Mode::Insert,
+            Mode::Replace,
+            Mode::Select,
+            Mode::Command,
+        ] {
             let line = terminal_line(&theme, mode, true, false, &view, 0, &view.rows[0]);
             let style = line.spans[0].style;
             assert_eq!(

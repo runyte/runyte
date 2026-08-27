@@ -570,7 +570,7 @@ fn find_next_character_keeps_only_its_direct_binding() {
 }
 
 #[test]
-fn completion_has_a_discoverable_space_binding_and_insert_alias() {
+fn completion_has_a_discoverable_space_binding_and_text_entry_alias() {
     let canonical = sequence(" lc");
     let insert_alias = KeySequence::from(Key::ctrl('x'));
 
@@ -584,11 +584,19 @@ fn completion_has_a_discoverable_space_binding_and_insert_alias() {
         );
         assert_eq!(binding.role, BindingRole::Primary);
         assert_eq!(binding.alias.as_ref(), Some(&insert_alias));
-        assert_eq!(binding.alias_modes, Some(&[Mode::Insert][..]));
+        assert_eq!(
+            binding.alias_modes,
+            Some(&[Mode::Insert, Mode::Replace][..])
+        );
     }
 
     assert!(matches!(
         default_keymap().lookup(Mode::Insert, &insert_alias),
+        Lookup::Exact(binding)
+            if binding.target == BindingTarget::Editor(EditorCommand::TriggerCompletion)
+    ));
+    assert!(matches!(
+        default_keymap().lookup(Mode::Replace, &insert_alias),
         Lookup::Exact(binding)
             if binding.target == BindingTarget::Editor(EditorCommand::TriggerCompletion)
     ));
