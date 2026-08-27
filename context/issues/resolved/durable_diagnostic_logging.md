@@ -1,4 +1,110 @@
-# Durable diagnostic logging with persistent-host ownership
+---
+title: "No durable diagnostic log survived a process failure, most visibly in persistent mode"
+status: resolved
+reported: 2026-08-27
+resolved: 2026-08-27
+commit: 5a3b9ea
+---
+
+## Resolution
+
+Commit `5a3b9ea` (`Add durable diagnostic logging owned by the editor
+process`) adds a bounded local log written by whichever process owns `App`.
+
+The whole mechanism is `src/log.rs`, a module the rest of the editor does not
+type against. `Logger::start` takes a `Settings` value — level, role, workspace
+identity, PID — and a `Sink`, opens or rotates the file before returning so an
+unusable destination is reported to its caller rather than discovered later by
+a background thread, and spawns one writer thread behind a bounded
+`sync_channel`. `Logger::emit` formats a record and `try_send`s it: a full
+queue increments a dropped counter and returns, so no producer ever waits for
+disk, and the writer emits a summary record when it notices the counter has
+moved. `Destination::File` tracks its own size and rotates when the next line
+would cross `MAX_LOG_BYTES`, keeping one previous file named by appending `.1`;
+`open_log_file` performs the same rotation at startup, which is what stops a
+frequently restarted host from inheriting a full file forever. `append_sanitized`
+replaces control characters so an operating-system error string embedded in a
+message cannot split one event across two lines.
+
+Instrumentation goes through `log_error!`, `log_warn!`, `log_info!`,
+`log_debug!`, and `log_trace!`. Each checks one atomic before formatting and
+takes an optional `; "key" => value` tail for structured context, which is how
+compact identifiers — workspace ID, language, server generation, connection,
+Git request, terminal session — reach a record without any domain type being
+serialized.
+
+`default_path` is where ownership lives: `Role::Host` resolves to `host.log`
+and `Role::Standalone` to `standalone-<pid>.log`, both beneath the resolved
+runtime state root. The PID is what guarantees two concurrent standalone
+editors cannot write or rotate one file, so no cross-process append lock was
+needed. A client installs no logger at all, which is what keeps transport
+diagnostics from depending on the transport being healthy.
+
+`src/main.rs` installs the logger immediately before `App` is constructed,
+choosing the role from `LaunchMode::Serve`, and installs the panic hook there
+too. `initialize_logging` returns the failure text for an unusable default so
+the notification can be pushed once `App` exists, and turns an unusable
+explicit `--log` into a startup error. `HostStartup::with_logging` passes
+verbosity and destination to every host this process starts; the paths that
+find one already running call `report_retained_logging` instead, so `-v` or
+`--log` on an attachment says the session kept its configuration rather than
+appearing to have changed it. No runtime log-level command or protocol message
+was added.
+
+`App::logging_health` projects `log::status()` onto a `log` row in
+`:service-health`, through the free function `logging_health_entry` so both a
+healthy and a degraded logger are coverable without installing a process-wide
+one in a test. `App::open_log_buffer` flushes, reads the owning process's file,
+and opens it through the existing `open_virtual_page` path under the new
+`GeneratedViewIdentity::Log`, so `[log]` is an ordinary read-only generated
+buffer.
+
+Two boundaries turned out to be recording nothing at all, and the fix covers
+both rather than adding a record beside them. `publish_attached_frame` cleared
+`active` silently when a client's channel was already closed, which is the
+common case for a client that goes away between frames; it now records the
+departure, and the `ServerEvent::Disconnected` that follows finds no
+attachment and stays quiet instead of reporting the same client twice.
+`note_ended_service` records a background service whose channel closes exactly
+once, in both the standalone and host loops, because the editor keeps working
+without it and nothing else says so.
+
+`workspace_id` moved from `src/workspace/transport.rs` to
+`src/workspace/identity.rs`, where it is portable and public, so the transport
+endpoint, the session catalog, and diagnostic records all derive one identity
+rather than two implementations that could drift.
+
+Tests. Unit tests in `src/log.rs` cover the verbosity mapping and its trace
+cap, what each level admits, the one-line record shape and its role/PID/
+workspace/target prefix, structured fields, the standalone/host path
+derivation, rotation at startup and in flight with exactly one previous file
+retained, a stalled writer that drops instead of blocking, and an unusable
+destination reported at construction. `src/launch.rs` covers `-v`,
+`--verbose`, the clustered `-vv`/`-vvv` spelling, and `--log` validation.
+`src/app/settings_workflows.rs` covers the three service-health projections,
+and `src/app/tests/presentation_and_settings.rs` covers `:log-open` in a
+process with no logger. `tests/diagnostic_log.rs` drives real processes: a
+standalone editor keeping warnings and errors and omitting the rest, repeated
+`-v` reaching each documented level, two concurrent standalone processes
+owning separate files, an invalid `--log` failing startup without falling back,
+an unusable default leaving a host serving, a host owning `host.log` and
+recording attachment, detachment, and disconnection while its client comes and
+goes, `:log-open` showing those records back through the buffer, an attachment
+reporting the retained configuration, a client-side failure appending nothing,
+rotation across a host restart, a panic leaving its location and message
+without changing process failure, and a redaction pass at trace level
+asserting that file text, typed text, a terminal child's output, and an
+environment value all stay out of the log.
+`tests/release_packaging.rs` was adjusted: `--help` still may not use `host` or
+`client` as vocabulary, but `host.log` is exempt, because help has to name a
+path somebody can open.
+
+Known limitation: an explicit `--log` is honoured only by processes that own
+editor state. Passing it to a session-management command that neither starts
+nor attaches to a session — `--session-list`, `--session-stop`,
+`--session-clear-all` — is accepted and ignored without comment.
+
+## Report
 
 Runyte has strong user-facing failure reporting but no general diagnostic log
 that survives a process failure. The interaction line reports the immediate
@@ -20,7 +126,7 @@ would not replace the boundary checks and focused regression tests that fixed
 that defect, but it would preserve the temporal context needed to choose the
 right boundary to investigate.
 
-## Expected behavior
+### Expected behavior
 
 Runyte has a small, bounded, local diagnostic log for warnings, errors, and
 explicitly enabled verbose events. It complements notifications and health
@@ -63,7 +169,7 @@ persistent mode. It does not open or aggregate a client-side trace. The log is
 an ordinary generated read-only buffer and must follow the established buffer
 and generated-page vocabulary.
 
-## Levels and startup controls
+### Levels and startup controls
 
 The default level is warning: warnings and errors are retained without asking
 the person to reproduce an unexpected first failure, while routine operation
@@ -92,7 +198,7 @@ and any logger initialization or write failure. In persistent mode these are
 host facts. A newly attached client therefore sees how the host that owns its
 workspace is actually logging rather than the flags of the client process.
 
-## Records and context
+### Records and context
 
 Each record is a single human-readable line with an RFC 3339 timestamp, level,
 subsystem or target, process role (`standalone` or `host`), PID, and message.
@@ -130,7 +236,7 @@ The hook matters especially for a detached host, where stderr is not a durable
 diagnostic destination. Logging must not change unwind behavior or terminal
 restoration.
 
-## Privacy and safety
+### Privacy and safety
 
 Default and verbose logging must never contain buffer text, selections,
 clipboard contents, typed or pasted text, terminal contents, credentials,
@@ -167,7 +273,7 @@ for convenience, or expose logging types through editor, snapshot, workspace,
 LSP, Git, or terminal APIs. Instrumentation receives compact values at the
 existing ownership boundaries.
 
-## Coverage
+### Coverage
 
 Tests must exercise behavior rather than merely assert that logging calls
 compile:
