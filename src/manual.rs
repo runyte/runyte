@@ -110,7 +110,7 @@ impl ManualTopic {
                 "Space g opens Git navigation and refresh commands. The changed-file list, branches, worktrees, log, blame, stashes, and diffs are typed editor views rather than terminal output. Open Space ? in any of those views for its exact row actions and keys.\n\nGit reads and mutations run through Runyte's Git service boundary. Mutations are ordered per repository, and stale results are rejected rather than applied to newer editor or repository state. Cancellation stops waiting and reconciles state; it does not claim rollback.\n\nThe changed-file list distinguishes staged content from unstaged working-tree content. A commit takes the index shown by its Staged section, and writing the generated commit-message buffer performs the commit."
             }
             Self::LanguageServers => {
-                "Language-server commands live under Space l. Definitions, references, implementations, symbols, diagnostics, code actions, hover documentation, completion, formatting, rename, and signature help appear only when the active language and server provide them.\n\nLanguage-server JSON-RPC runs outside the input and rendering path. Responses carry document identity and revision information, so stale edits and locations can be refused instead of overwriting newer text.\n\nUse :lsp-status to inspect configured servers and :lsp-restart [language] to restart stopped ones. :service-health includes syntax, language-server, provider, and helper failures."
+                "rust-analyzer is configured automatically. To add another language, first install its server executable so it is on PATH, then add the language directly below lsp in ~/.config/runyte/config.yaml (or the path passed with --config):\n\nlsp:\n  markdown:\n    command: marksman\n    args: [\"server\"]\n\nThe language key is Runyte's built-in language name. command is an executable name or absolute path and args is the argument list passed to it; Runyte launches the process directly, without a shell. The older lsp.servers.<language> spelling is still accepted, but servers is only a redundant compatibility wrapper. Server definitions are edited in YAML; Space o o can enable or disable LSP as a whole. Exit and reopen standalone Runyte after changing the file. A persistent session retains its host's loaded configuration, so use runyte --session-restart [WORKSPACE] and repeat any non-default --config PATH.\n\nLanguage-server commands live under Space l. Definitions, references, implementations, symbols, diagnostics, code actions, hover documentation, completion, formatting, rename, and signature help appear only when the active language and server provide them.\n\nUse :lsp-status to inspect servers that have started or failed, :lsp-restart [language] to restart one from the loaded configuration, and :service-health to check whether the active document has a configured and attached server. Launch failures appear in :lsp-status after the first attempt and in notifications. Source and package checkouts include copy-ready configurations under docs/lsp/."
             }
             Self::Configuration => {
                 "Runyte reads YAML configuration from its platform configuration path. :settings opens the typed setting registry as a read-only buffer; Enter on a row opens the appropriate finite-choice or validated-value prompt. :theme opens theme choices directly.\n\nThe settings page distinguishes changes that apply immediately from those that require restart. Accepted changes are persisted without replacing unrelated YAML settings and comments.\n\nThe active editing grammar is Runyte. The accepted helix configuration spelling is only a compatibility alias for that same grammar, not a claim of complete Helix compatibility."
@@ -203,6 +203,27 @@ mod tests {
             "Space / / searches each workspace file one line at a time",
         ] {
             assert!(regex.contains(required), "missing {required:?}");
+        }
+    }
+
+    #[test]
+    fn language_server_topic_contains_a_complete_flat_setup_example() {
+        let rendered = render();
+        let lsp = rendered
+            .chars()
+            .skip(topic_offset(&rendered, ManualTopic::LanguageServers))
+            .collect::<String>();
+        let lsp = lsp.split("\nCONFIGURATION\n").next().unwrap();
+
+        for required in [
+            "rust-analyzer is configured automatically",
+            "lsp:\n  markdown:\n    command: marksman\n    args: [\"server\"]",
+            "older lsp.servers.<language> spelling is still accepted",
+            ":lsp-status",
+            ":lsp-restart [language]",
+            ":service-health",
+        ] {
+            assert!(lsp.contains(required), "missing {required:?}");
         }
     }
 }

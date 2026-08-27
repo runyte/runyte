@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: MPL-2.0
+
+# Built into Runyte; this is the equivalent explicit declaration.
+lsp:
+  rust:
+    command: rust-analyzer

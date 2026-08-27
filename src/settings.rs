@@ -1583,6 +1583,37 @@ mod tests {
         );
     }
 
+    #[test]
+    fn lsp_enable_persistence_preserves_flat_and_legacy_server_blocks() {
+        for (name, source, expected) in [
+            (
+                "flat",
+                "lsp: # services\n  markdown:\n    command: marksman # keep\n    args: [\"server\"]\n",
+                "lsp: # services\n  markdown:\n    command: marksman # keep\n    args: [\"server\"]\n  enable: false\n",
+            ),
+            (
+                "legacy",
+                "lsp: # services\n  servers:\n    markdown:\n      command: marksman # keep\n      args: [\"server\"]\n",
+                "lsp: # services\n  servers:\n    markdown:\n      command: marksman # keep\n      args: [\"server\"]\n  enable: false\n",
+            ),
+        ] {
+            let directory = TempDir::new();
+            let path = directory.path("config.yaml");
+            fs::write(&path, source).unwrap();
+
+            let config =
+                persist_setting(&path, SettingId::LspEnable, &SettingValue::Boolean(false))
+                    .unwrap_or_else(|error| panic!("{name} LSP block was not writable: {error}"));
+
+            assert!(!config.lsp.enable);
+            assert_eq!(
+                config.lsp.servers["markdown"].command,
+                PathBuf::from("marksman")
+            );
+            assert_eq!(fs::read_to_string(path).unwrap(), expected, "{name}");
+        }
+    }
+
     /// The realistic first use: the key is not in the file yet, because it is
     /// off by default and nobody has ever written it down.
     #[test]

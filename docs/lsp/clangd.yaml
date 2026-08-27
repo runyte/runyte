@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: MPL-2.0
+
+lsp:
+  c:
+    command: clangd
+  cpp:
+    command: clangd

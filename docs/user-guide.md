@@ -99,27 +99,49 @@ new tree, not the keystroke that requested it.
 
 ### Language servers
 
-`rust-analyzer` is configured out of the box; any other language server is two
-lines of YAML. A server that is not installed, that crashes, or that answers
-slowly costs you the language features and nothing else — the editor never
-waits on one, and diagnostics from a server that stops are dropped rather than
-left behind as stale claims about the code.
+`rust-analyzer` is configured out of the box. For another language, install
+the server executable so that it is on `PATH`, then add it directly below
+`lsp` in the configuration file. A server that is not installed, that crashes,
+or that answers slowly costs you the language features and nothing else — the
+editor never waits on one, and diagnostics from a server that stops are
+dropped rather than left behind as stale claims about the code.
 
 ```yaml
 lsp:
   enable: true
-  servers:
-    rust:
-      command: rust-analyzer
-    json:
-      command: vscode-json-language-server
-      args: ["--stdio"]
+  markdown:
+    command: marksman
+    args: ["server"]
 ```
 
+`command` is an executable name or absolute path. `args` is an optional YAML
+list passed to that executable; Runyte starts it directly rather than through
+a shell. Server definitions currently remain a YAML-only setting, while
+`Space o o` can enable or disable LSP as a whole. After adding or changing a
+definition, exit and reopen standalone Runyte. A persistent session retains
+the configuration its host loaded, so restart it with
+`runyte --session-restart [WORKSPACE]`; include the same `--config PATH` when
+the host used a non-default configuration. `:lsp-restart` restarts a server
+from the configuration already loaded by the running editor; it does not
+reread YAML.
+
 Servers are keyed by the language names in `src/syntax/grammars.rs`, so a
-buffer's language is the same question for highlighting and for LSP. Use
-`:lsp-status` to see what is running and `:lsp-restart` to bring back a server
-that stopped.
+buffer's language is the same question for highlighting and for LSP. The
+available keys are `rust`, `python`, `swift`, `c`, `cpp`, `javascript`,
+`typescript`, `tsx`, `html`, `css`, `go`, `bash`, `java`, `kotlin`, `json`,
+`toml`, `yaml`, and `markdown`. Other keys below `lsp` are rejected, apart from
+the reserved `enable` setting and legacy `servers` wrapper. Use `:lsp-status`
+to see servers that have started or failed, `:lsp-restart <language>` to bring
+back a loaded server that stopped, and `:service-health` to see whether the
+active document has a configured and attached server. A process-launch error
+appears in `:lsp-status` after the first start attempt and in the notification
+center. `:help lsp` keeps this setup sequence inside the editor.
+
+The older `lsp.servers.<language>` shape remains accepted for existing files,
+but `servers` carried no separate behavior and is now only a compatibility
+wrapper. New configurations should use `lsp.<language>` as above. Copy-ready
+examples for the servers covered by Runyte's real-server compatibility tests
+live in [docs/lsp/](lsp/README.md).
 
 Runyte reads what a server actually advertised during its handshake and never
 sends a request for a capability it did not claim: hover, completion,
@@ -1019,10 +1041,10 @@ hiding the rest of the layout; an ordinary pane carries neither tag.
 In the Runyte grammar, `Space ?` opens contextual help for the current buffer
 type. `:help` and its `:?` alias instead open the general Runyte manual;
 `:help <topic>` opens the same manual at a section such as
-`:help regex`, `:help search`, or `:help git`. Both kinds of help are ordinary
-read-only buffers, so they scroll, search, split, and close with their scoped
-`q`, `:c`, or `Space b c`. Nothing is truncated to fit the window, and opening
-one kind of help does not overwrite the other.
+`:help regex`, `:help search`, `:help git`, or `:help lsp`. Both kinds of help
+are ordinary read-only buffers, so they scroll, search, split, and close with
+their scoped `q`, `:c`, or `Space b c`. Nothing is truncated to fit the window,
+and opening one kind of help does not overwrite the other.
 
 A read-only buffer is marked `[RO]` in the pane title and the status line,
 beside the `[+]` that marks unsaved changes, and its help states the same in

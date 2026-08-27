@@ -38,6 +38,13 @@ workspace:
 notifications:
   history_limit: 50
 
+# rust-analyzer is configured automatically. Other servers are keyed directly
+# by Runyte's language name; see docs/lsp/ for copy-ready examples.
+# lsp:
+#   markdown:
+#     command: marksman
+#     args: ["server"]
+
 # Built-ins: dark, light, base16, paper, gruvbox, and Everforest's dark/light
 # hard/medium/soft variants (for example, everforest-dark-medium).
 theme: gruvbox
