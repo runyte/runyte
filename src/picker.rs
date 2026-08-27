@@ -22,6 +22,9 @@ pub enum ListPurpose {
 pub struct PickerItem {
     pub label: String,
     pub detail: String,
+    /// A short final column that remains visible when the middle of an
+    /// overlong row must be clipped. Empty for ordinary picker rows.
+    pub trailing_detail: String,
     /// What the row stands for, resolved by whoever opened the picker.
     ///
     /// The picker deliberately knows nothing about locations, actions, or
@@ -50,6 +53,7 @@ impl PickerItem {
             search: format!("{label} {detail}").to_lowercase(),
             label,
             detail,
+            trailing_detail: String::new(),
             index,
             preview: None,
             tag: None,
@@ -66,6 +70,7 @@ impl PickerItem {
         Self {
             label: label.into(),
             detail: detail.into(),
+            trailing_detail: String::new(),
             search: search.into().to_lowercase(),
             index,
             preview: None,
@@ -76,6 +81,13 @@ impl PickerItem {
 
     pub fn with_preview(mut self, preview: impl Into<String>) -> Self {
         self.preview = Some(preview.into());
+        self
+    }
+
+    /// Pins one short final column to the visible right edge of an overlong
+    /// row instead of letting ordinary right truncation remove it first.
+    pub fn with_trailing_detail(mut self, detail: impl Into<String>) -> Self {
+        self.trailing_detail = detail.into();
         self
     }
 

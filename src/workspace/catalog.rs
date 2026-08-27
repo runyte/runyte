@@ -10,7 +10,7 @@ use std::{
     fs::{self, OpenOptions},
     io::{self, Read as _},
     path::{Path, PathBuf},
-    time::Duration,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::{Context, Result};
@@ -89,6 +89,10 @@ pub struct WorkspaceRow {
     /// not answer it, and the same project numbered on one machine is
     /// unnumbered on another.
     pub number: Option<u8>,
+    /// The latest wall-clock second at which this workspace was visited.
+    /// Per-user history like `number`, and absent for catalog entries written
+    /// before activity timestamps were introduced until they are visited.
+    pub last_active_unix_seconds: Option<u64>,
     pub project_root: PathBuf,
     pub running: bool,
     /// The protocol of a running host this build cannot speak to. Such a
@@ -705,6 +709,7 @@ async fn refresh(
         project_root,
         name,
         number: _,
+        last_active_unix_seconds,
     } in openable
     {
         if rows.iter().any(|row| row.project_root == project_root) {
@@ -725,6 +730,7 @@ async fn refresh(
             id,
             name,
             number: None,
+            last_active_unix_seconds,
             project_root,
             running: false,
             incompatible_protocol: None,
@@ -741,6 +747,7 @@ async fn refresh(
         });
     }
     apply_recent_numbers(&mut rows, &remembered);
+    apply_recent_activity(&mut rows, &remembered);
     // Git facts and directory existence are filesystem reads, and a listing
     // can hold hundreds of rows, so they are gathered once here rather than
     // recomputed by whatever draws them.
@@ -800,6 +807,19 @@ fn apply_recent_numbers(rows: &mut [WorkspaceRow], recent_entries: &[RecentEntry
     }
 }
 
+/// Supplies the per-user visit time to every row, including running hosts.
+///
+/// Hosts do not own this value: it describes when this client was in the
+/// workspace, so the recent-workspace catalog remains its single source.
+fn apply_recent_activity(rows: &mut [WorkspaceRow], recent_entries: &[RecentEntry]) {
+    for row in rows.iter_mut() {
+        row.last_active_unix_seconds = recent_entries
+            .iter()
+            .find(|entry| entry.project_root == row.project_root)
+            .and_then(|entry| entry.last_active_unix_seconds);
+    }
+}
+
 /// Describes the host a project root publishes, when one is there and the
 /// registry did not already account for it.
 async fn published_row(
@@ -818,6 +838,7 @@ async fn published_row(
             name: host.name.or(name),
             // Filled from the catalog once every row exists.
             number: None,
+            last_active_unix_seconds: None,
             project_root: host.project_root,
             running: true,
             incompatible_protocol: Some(host.protocol),
@@ -836,6 +857,7 @@ async fn published_row(
         id: host.id,
         name: host.name.or(name),
         number: None,
+        last_active_unix_seconds: None,
         project_root: host.project_root,
         running: true,
         incompatible_protocol: None,
@@ -894,6 +916,7 @@ async fn inspect_workspace_target(
             id: host.id,
             name: host.name,
             number,
+            last_active_unix_seconds: None,
             project_root,
             running: true,
             incompatible_protocol: Some(host.protocol),
@@ -912,6 +935,7 @@ async fn inspect_workspace_target(
         id: host.id,
         name: host.name,
         number,
+        last_active_unix_seconds: None,
         project_root,
         running: true,
         incompatible_protocol: None,
@@ -948,6 +972,7 @@ async fn inspect_host(host: RegisteredHost) -> WorkspaceRow {
             id: host.id,
             name: host.name,
             number: None,
+            last_active_unix_seconds: None,
             project_root: host.project_root,
             running: true,
             incompatible_protocol: Some(host.protocol),
@@ -966,6 +991,7 @@ async fn inspect_host(host: RegisteredHost) -> WorkspaceRow {
         id: host.id,
         name: host.name,
         number: None,
+        last_active_unix_seconds: None,
         project_root: host.project_root,
         running: true,
         incompatible_protocol: None,
@@ -1261,7 +1287,7 @@ mod tests {
     }
 
     fn entry(project_root: PathBuf, name: Option<String>) -> RecentEntry {
-        RecentEntry::new(project_root, name, None)
+        RecentEntry::new(project_root, name, None, None)
     }
 
     #[test]
@@ -1310,6 +1336,7 @@ mod tests {
                 id: (*id).to_owned(),
                 name: None,
                 number: None,
+                last_active_unix_seconds: None,
                 project_root: PathBuf::from(format!("/projects/{}", &id[..4])),
                 running: false,
                 incompatible_protocol: None,
@@ -1703,6 +1730,7 @@ mod tests {
                 project_root_bytes: encode_path(Path::new("/")),
                 name: None,
                 number: None,
+                last_active_unix_seconds: None,
             })
             .collect::<Vec<_>>();
         fs::write(&path, serde_json::to_vec(&repeated).unwrap()).unwrap();
@@ -1713,6 +1741,7 @@ mod tests {
             project_root_bytes: vec![b'/'; MAX_PERSISTED_PATH_BYTES + 1],
             name: None,
             number: None,
+            last_active_unix_seconds: None,
         }];
         fs::write(&path, serde_json::to_vec(&invalid_path).unwrap()).unwrap();
         let error = read_recents(Some(&path)).unwrap_err().to_string();
@@ -1722,6 +1751,7 @@ mod tests {
             project_root_bytes: encode_path(Path::new("/")),
             name: Some("x".repeat(MAX_HOST_NAME_BYTES + 1)),
             number: None,
+            last_active_unix_seconds: None,
         }];
         fs::write(&path, serde_json::to_vec(&invalid_name).unwrap()).unwrap();
         let error = read_recents(Some(&path)).unwrap_err().to_string();
@@ -1787,6 +1817,7 @@ mod tests {
         assert_eq!(rows[0].interactive_attached, None);
         assert_eq!(rows[0].id, endpoint.id());
         assert_eq!(rows[0].id.len(), 32);
+        assert_eq!(rows[0].last_active_unix_seconds, None);
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -2114,6 +2145,60 @@ mod tests {
     }
 
     #[test]
+    fn only_successful_attachment_backfills_an_older_catalog_activity_time() {
+        let root = unique_test_root("activity-backfill");
+        let workspace = root.join("workspace");
+        fs::create_dir_all(&workspace).unwrap();
+        let workspace = workspace.canonicalize().unwrap();
+        let path = root.join("cache/workspaces.json");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let old_catalog = serde_json::json!([{
+            "project_root_bytes": encode_path(&workspace),
+            "name": "workspace",
+            "number": 1
+        }]);
+        fs::write(&path, serde_json::to_vec(&old_catalog).unwrap()).unwrap();
+
+        let entries = read_recents(Some(&path)).unwrap();
+        assert_eq!(entries[0].last_active_unix_seconds, None);
+
+        record_recent_workspace_in(&path, &workspace).unwrap();
+        let entries = read_recents(Some(&path)).unwrap();
+        assert_eq!(entries[0].last_active_unix_seconds, None);
+
+        record_workspace_activity_in(&path, &workspace).unwrap();
+        let entries = read_recents(Some(&path)).unwrap();
+        assert!(entries[0].last_active_unix_seconds.is_some());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn lifecycle_metadata_does_not_reorder_or_activate_an_existing_workspace() {
+        let root = unique_test_root("metadata-without-visit");
+        let path = root.join("cache/workspaces.json");
+        let first = root.join("first");
+        let second = root.join("second");
+        fs::create_dir_all(&first).unwrap();
+        fs::create_dir_all(&second).unwrap();
+        record_recent_workspace_in(&path, &first).unwrap();
+        record_recent_workspace_in(&path, &second).unwrap();
+        let first = first.canonicalize().unwrap();
+        let second = second.canonicalize().unwrap();
+
+        ensure_recent_workspace_in(&path, &first).unwrap();
+        let entries = read_recents(Some(&path)).unwrap();
+        assert_eq!(entries[0].project_root, second);
+        assert_eq!(entries[1].project_root, first);
+        assert_eq!(entries[1].last_active_unix_seconds, None);
+
+        record_workspace_activity_in(&path, &first).unwrap();
+        let entries = read_recents(Some(&path)).unwrap();
+        assert_eq!(entries[0].project_root, first);
+        assert!(entries[0].last_active_unix_seconds.is_some());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn new_recents_receive_unique_directory_names_and_keep_them_when_revisited() {
         let root = unique_test_root("default-names");
         let path = root.join("cache/workspaces.json");
@@ -2176,6 +2261,7 @@ mod tests {
                 id: "11111111111111111111111111111111".to_owned(),
                 name: None,
                 number: None,
+                last_active_unix_seconds: None,
                 project_root: unnamed_root.clone(),
                 running: true,
                 incompatible_protocol: None,
@@ -2192,6 +2278,7 @@ mod tests {
                 id: "22222222222222222222222222222222".to_owned(),
                 name: Some("chosen".to_owned()),
                 number: None,
+                last_active_unix_seconds: None,
                 project_root: explicit_root.clone(),
                 running: true,
                 incompatible_protocol: None,
@@ -2270,6 +2357,7 @@ mod tests {
                 id: "11111111111111111111111111111111".to_owned(),
                 name: None,
                 number: None,
+                last_active_unix_seconds: None,
                 project_root: relative_target.clone(),
                 running: false,
                 incompatible_protocol: None,
@@ -2286,6 +2374,7 @@ mod tests {
                 id: "22222222222222222222222222222222".to_owned(),
                 name: Some("archive".to_owned()),
                 number: None,
+                last_active_unix_seconds: None,
                 project_root: named_target.clone(),
                 running: false,
                 incompatible_protocol: None,
@@ -2302,6 +2391,7 @@ mod tests {
                 id: "abcdef0123456789abcdef0123456789".to_owned(),
                 name: None,
                 number: None,
+                last_active_unix_seconds: None,
                 project_root: id_target.clone(),
                 running: false,
                 incompatible_protocol: None,
@@ -2363,6 +2453,7 @@ mod tests {
             id: "11111111111111111111111111111111".to_owned(),
             name: Some("named-first".to_owned()),
             number: None,
+            last_active_unix_seconds: None,
             project_root: first.clone(),
             running: true,
             incompatible_protocol: None,
@@ -2407,6 +2498,7 @@ mod tests {
             id: "11111111111111111111111111111111".to_owned(),
             name: Some("stale-inspection".to_owned()),
             number: None,
+            last_active_unix_seconds: None,
             project_root: workspace.clone(),
             running: true,
             incompatible_protocol: None,
@@ -2617,6 +2709,7 @@ mod tests {
             id: "aaaaaaaaaaaaaaaa".to_owned(),
             name: Some("vanishing".to_owned()),
             number: None,
+            last_active_unix_seconds: None,
             project_root: vanishing.clone(),
             running: true,
             incompatible_protocol: None,
@@ -2826,11 +2919,13 @@ mod tests {
                 first.canonicalize().unwrap(),
                 Some("first".to_owned()),
                 Some(1),
+                None,
             ));
             paths.push(RecentEntry::new(
                 second.canonicalize().unwrap(),
                 Some("second".to_owned()),
                 Some(1),
+                None,
             ));
         })
         .unwrap();
@@ -2875,6 +2970,9 @@ struct RecentWorkspace {
     /// stays readable and is numbered on the next listing.
     #[serde(default)]
     number: Option<u8>,
+    /// Absent in catalogs written before the session manager showed activity.
+    #[serde(default)]
+    last_active_unix_seconds: Option<u64>,
 }
 
 /// The largest number a workspace can carry.
@@ -2899,14 +2997,23 @@ pub struct RecentEntry {
     /// `1` through [`MAX_WORKSPACE_NUMBER`], or `None` when every number was
     /// already taken as this workspace was first recorded.
     pub number: Option<u8>,
+    /// Whole Unix seconds make the regenerable catalog portable across
+    /// processes while keeping elapsed-time presentation out of persistence.
+    pub last_active_unix_seconds: Option<u64>,
 }
 
 impl RecentEntry {
-    fn new(project_root: PathBuf, name: Option<String>, number: Option<u8>) -> Self {
+    fn new(
+        project_root: PathBuf,
+        name: Option<String>,
+        number: Option<u8>,
+        last_active_unix_seconds: Option<u64>,
+    ) -> Self {
         Self {
             project_root,
             name,
             number,
+            last_active_unix_seconds,
         }
     }
 }
@@ -2933,6 +3040,28 @@ pub fn record_recent_workspace(project_root: &Path) -> Result<Option<RecordedWor
         return Ok(None);
     };
     record_recent_workspace_name_in(&path, project_root)
+}
+
+/// Ensures lifecycle and host-startup metadata exists without claiming a
+/// workspace was visited or changing an existing entry's recency.
+pub fn ensure_recent_workspace(project_root: &Path) -> Result<Option<RecordedWorkspace>> {
+    let Some(path) = recent_file() else {
+        return Ok(None);
+    };
+    ensure_recent_workspace_in(&path, project_root).map(Some)
+}
+
+/// Records the beginning or end of a successful interactive attachment.
+///
+/// Catalog discovery and lifecycle commands also remember workspace names and
+/// ordering, but they must not claim the person entered a session. Keeping the
+/// activity write separate makes the successful attachment handshake the only
+/// producer of this timestamp.
+pub fn record_workspace_activity(project_root: &Path) -> Result<()> {
+    let Some(path) = recent_file() else {
+        return Ok(());
+    };
+    record_workspace_activity_in(&path, project_root)
 }
 
 /// The number the catalog currently records for one workspace, if any.
@@ -3025,11 +3154,19 @@ fn record_recent_workspace_name_in(
         let previous = paths
             .iter()
             .find(|entry| entry.project_root == canonical)
-            .map(|entry| (entry.name.clone(), entry.number));
+            .map(|entry| {
+                (
+                    entry.name.clone(),
+                    entry.number,
+                    entry.last_active_unix_seconds,
+                )
+            });
         paths.retain(|entry| entry.project_root != canonical);
-        let (previous_name, previous_number) = previous.unzip();
+        let (previous_name, previous_number, last_active_unix_seconds) = previous
+            .map_or((None, None, None), |(name, number, active)| {
+                (name, Some(number), active)
+            });
         let name = previous_name
-            .flatten()
             .unwrap_or_else(|| unique_default_workspace_name(&canonical, paths.as_slice()));
         // Revisiting keeps the number this workspace already answered to.
         // Only a genuinely new record claims one, which is what makes the
@@ -3041,12 +3178,62 @@ fn record_recent_workspace_name_in(
             name: name.clone(),
             number,
         });
-        paths.insert(0, RecentEntry::new(canonical, Some(name), number));
+        paths.insert(
+            0,
+            RecentEntry::new(canonical, Some(name), number, last_active_unix_seconds),
+        );
         // Truncation drops the least recently visited tail, which can free a
         // number. The next new workspace claims it; the survivors keep theirs.
         paths.truncate(RECENT_LIMIT);
     })?;
     Ok(recorded)
+}
+
+fn ensure_recent_workspace_in(path: &Path, project_root: &Path) -> Result<RecordedWorkspace> {
+    let canonical = project_root.canonicalize()?;
+    let mut recorded = None;
+    update_recents(path, |entries| {
+        assign_missing_default_workspace_names(entries);
+        assign_missing_default_workspace_numbers(entries);
+        if let Some(entry) = entries.iter().find(|entry| entry.project_root == canonical) {
+            recorded = Some(RecordedWorkspace {
+                name: entry.name.clone().unwrap_or_else(|| {
+                    unique_default_workspace_name(&canonical, entries.as_slice())
+                }),
+                number: entry.number,
+            });
+            return;
+        }
+        let name = unique_default_workspace_name(&canonical, entries.as_slice());
+        let number = lowest_free_workspace_number(entries);
+        recorded = Some(RecordedWorkspace {
+            name: name.clone(),
+            number,
+        });
+        entries.insert(0, RecentEntry::new(canonical, Some(name), number, None));
+        entries.truncate(RECENT_LIMIT);
+    })?;
+    recorded.context("workspace metadata was not recorded")
+}
+
+fn record_workspace_activity_in(path: &Path, project_root: &Path) -> Result<()> {
+    // Successful attachment is also a genuine visit for recency ordering. It
+    // normally already has an entry from startup or session discovery, but
+    // recreating a concurrently removed cache must not lose the activity.
+    record_recent_workspace_name_in(path, project_root)?;
+    let canonical = project_root.canonicalize()?;
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .map(|duration| duration.as_secs());
+    update_recents(path, |entries| {
+        if let Some(entry) = entries
+            .iter_mut()
+            .find(|entry| entry.project_root == canonical)
+        {
+            entry.last_active_unix_seconds = now;
+        }
+    })
 }
 
 /// What recording a visit settled about a workspace.
@@ -3348,6 +3535,7 @@ fn write_recents(path: &Path, paths: &[RecentEntry], _lock: &RecentFileLock) -> 
             project_root_bytes: encode_path(&entry.project_root),
             name: entry.name.clone(),
             number: entry.number,
+            last_active_unix_seconds: entry.last_active_unix_seconds,
         })
         .collect::<Vec<_>>();
     let Some(parent) = path.parent() else {
@@ -3413,6 +3601,7 @@ fn read_recents(path: Option<&Path>) -> Result<Vec<RecentEntry>> {
                 decode_path(entry.project_root_bytes),
                 entry.name,
                 entry.number,
+                entry.last_active_unix_seconds,
             )
         })
         .collect::<Vec<_>>();

@@ -3061,6 +3061,7 @@ fn session_picker_preview(
     row: &WorkspaceRow,
     preview: Option<&Result<SessionPreview, String>>,
     loading: bool,
+    active: &str,
 ) -> String {
     // A successful health reply populates every live field, including
     // confirmed zeroes. A timed-out reply leaves them unknown, and that is a
@@ -3118,7 +3119,7 @@ fn session_picker_preview(
         .and_then(|facts| facts.remote.clone())
         .unwrap_or_else(|| "-".to_owned());
 
-    let mut lines = Vec::new();
+    let mut lines = vec![format!("Active: {active}")];
     for (field, value) in [
         ("Status", status),
         ("Panes", panes),
@@ -3148,6 +3149,30 @@ fn session_picker_preview(
         lines.push(format!("Pane count unavailable: {error}"));
     }
     lines.join("\n")
+}
+
+#[cfg(unix)]
+/// A short, single-unit age for the session manager and its preview.
+///
+/// Rounding happens before choosing the next larger unit, so 59 minutes and
+/// one second reads `1h ago`, not `60min ago`; the same boundary rule turns
+/// 23 hours and one second into `1day ago`.
+fn compact_session_elapsed(last_active_unix_seconds: Option<u64>, now: u64) -> String {
+    let Some(last_active) = last_active_unix_seconds else {
+        return "-".to_owned();
+    };
+    let elapsed = now.saturating_sub(last_active);
+    let minutes = elapsed.div_ceil(60);
+    if minutes < 60 {
+        return format!("{minutes}min ago");
+    }
+    let hours = minutes.div_ceil(60);
+    if hours < 24 {
+        return format!("{hours}h ago");
+    }
+    let days = hours.div_ceil(24);
+    let unit = if days == 1 { "day" } else { "days" };
+    format!("{days}{unit} ago")
 }
 
 /// A bounded view of authoritative buffer text for picker previews.

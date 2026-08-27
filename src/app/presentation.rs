@@ -935,6 +935,7 @@ impl App {
                 identity: identity.into(),
                 label: label.into(),
                 detail: detail.into(),
+                trailing_detail: String::new(),
                 available: true,
                 dimmed: false,
                 muted: Vec::new(),
@@ -1076,6 +1077,7 @@ impl App {
                 .filter_map(|index| picker.items.get(*index))
                 .map(|item| {
                     let mut row = row(item.index, item.label.clone(), item.detail.clone());
+                    row.trailing_detail = item.trailing_detail.clone();
                     row.dimmed = item.is_dimmed();
                     if picker.has_preview() {
                         row.emphasis = picker.item_label_emphasis(item);
@@ -1572,6 +1574,7 @@ fn context_action_rows(actions: &[ContextAction]) -> Vec<crate::snapshot::Overla
                     "{name:name_width$}  {context:context_width$}  {}",
                     action.description
                 ),
+                trailing_detail: String::new(),
                 available: true,
                 dimmed: false,
                 muted: Vec::new(),
