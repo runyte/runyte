@@ -1560,10 +1560,19 @@ async fn quit_here_reports_its_directory_to_a_handoff_capable_client() {
         })
         .await
         .unwrap();
-    assert!(matches!(
-        response(&mut plain).await,
-        HostResponse::CommandResult { outcome } if format!("{outcome:?}").contains("runyte()")
-    ));
+    let outcome = loop {
+        match response(&mut plain).await {
+            HostResponse::CommandResult { outcome } => break outcome,
+            // Services may publish a newer whole-frame snapshot between the
+            // frame used for the invocation and its semantic response.
+            HostResponse::Frame { .. } => {}
+            response => panic!("expected quit-here command result, got {response:?}"),
+        }
+    };
+    assert!(
+        format!("{outcome:?}").contains("runyte()"),
+        "unexpected quit-here outcome: {outcome:?}"
+    );
     plain.send(&ClientRequest::Detach).await.unwrap();
     let plain_detached = loop {
         if let HostResponse::Detached { directory_bytes } = response(&mut plain).await {
