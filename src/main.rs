@@ -46,6 +46,11 @@ use runyte::{
 
 const STATUS_ANIMATION_INTERVAL: Duration = Duration::from_millis(80);
 const TERMINAL_FRAME_INTERVAL: Duration = Duration::from_millis(16);
+/// How long a shutting-down host waits for its connections to finish writing.
+/// Longer than the transport's own write stall budget, so a peer that is
+/// merely slow is flushed and only one that has stopped reading is cut off.
+#[cfg(unix)]
+const SHUTDOWN_FLUSH_BUDGET: Duration = Duration::from_secs(3);
 
 #[cfg(unix)]
 use runyte::protocol::{MAX_POINTER_REPETITIONS, WaitStatus, WaitToken, validate_welcome};
@@ -1256,11 +1261,55 @@ async fn run_host_server(
     }
     host.cancel_all_waits("workspace host shut down");
     services.language_servers.send(LspCommand::Shutdown);
-    endpoint.cleanup()?;
+    // Unpublish before flushing rather than after: the listener is still
+    // accepting while the connections that are already established finish,
+    // and a client that discovered this endpoint in that window would attach
+    // to a host with no loop left to answer it.
+    let unpublished = endpoint.cleanup();
+    flush_connections(&mut server, active, controls).await;
+    unpublished?;
     if let Some(signal) = received_signal {
         return Err(terminated(signal));
     }
     Ok(())
+}
+
+/// Lets every connection finish the message it is writing before the process
+/// that owns it exits.
+///
+/// A connection task writes one framed message at a time, and the runtime
+/// stops as soon as this function's caller returns. Leaving a write in flight
+/// truncates it, so the client reads a message that ends inside itself and
+/// reports a transport error for what is an ordinary shutdown. Dropping the
+/// response senders closes each channel, which lets the task deliver what is
+/// already queued — `ShuttingDown` included — and then close its socket at a
+/// frame boundary. Waiting for the resulting `Disconnected` events keeps the
+/// runtime alive until that has happened. The budget bounds a peer that has
+/// stopped reading: it loses its last message, exactly as it did before.
+#[cfg(unix)]
+async fn flush_connections(
+    server: &mut LocalServer,
+    active: Option<AttachedClient>,
+    controls: std::collections::HashMap<u64, runyte::workspace::transport::ResponseSender>,
+) {
+    let mut pending: std::collections::HashSet<u64> = controls.keys().copied().collect();
+    pending.extend(active.as_ref().map(|client| client.id));
+    drop(active);
+    drop(controls);
+    let deadline = tokio::time::sleep(SHUTDOWN_FLUSH_BUDGET);
+    tokio::pin!(deadline);
+    while !pending.is_empty() {
+        tokio::select! {
+            () = &mut deadline => break,
+            event = server.recv() => match event {
+                Some(ServerEvent::Disconnected { id }) => {
+                    pending.remove(&id);
+                }
+                Some(_) => {}
+                None => break,
+            },
+        }
+    }
 }
 
 #[cfg(unix)]

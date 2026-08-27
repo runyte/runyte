@@ -2313,6 +2313,88 @@ async fn wait_terminal_hangup_is_not_reported_as_success() {
     fs::remove_dir_all(root).unwrap();
 }
 
+/// A host that is shutting down owns the last message on every connection it
+/// holds. Exiting with one still in flight truncates it, and the client reads
+/// a message that ends inside itself: a transport error for what is an
+/// ordinary end of session.
+#[tokio::test]
+async fn a_shutting_down_host_finishes_its_last_message_before_exiting() {
+    let root = project();
+    // Larger than any local socket send buffer, so the reply cannot be handed
+    // to the kernel in one write and is certain to still be in flight when
+    // the shutdown that follows it is answered.
+    fs::write(
+        root.join("large.txt"),
+        "abcdefghijklmnopqrstuvwxyz\n".repeat(80_000),
+    )
+    .unwrap();
+    let endpoint = LocalEndpoint::discover_with_runtime(
+        &root.join(".runyte"),
+        &root,
+        Some(test_runtime_dir()),
+    )
+    .unwrap();
+    let Some(mut host) = start_host_opening(&root, &endpoint, Some("large.txt")).await else {
+        fs::remove_dir_all(root).unwrap();
+        return;
+    };
+    let mut control = connect_control(&endpoint).await;
+    control.send(&ClientRequest::ListBuffers).await.unwrap();
+    let buffers = match response(&mut control).await {
+        HostResponse::Buffers { buffers } => buffers,
+        response => panic!("expected buffers, got {response:?}"),
+    };
+    let large = buffers
+        .iter()
+        .find(|buffer| {
+            buffer.path_bytes.clone().map(decode_path).as_deref()
+                == Some(root.join("large.txt").as_path())
+        })
+        .expect("host did not open the large file")
+        .id;
+
+    // Both requests are sent before either reply is read, so the host has
+    // queued the whole buffer and then `ShuttingDown` behind it by the time
+    // it leaves its loop.
+    control
+        .send(&ClientRequest::ReadBuffer { buffer: large })
+        .await
+        .unwrap();
+    control.send(&ClientRequest::Shutdown).await.unwrap();
+    assert!(matches!(
+        response_ignoring_frames(&mut control).await,
+        // The protocol caps buffer text at a mebibyte, which is already
+        // several times any local socket send buffer.
+        HostResponse::Buffer { buffer } if buffer.text.len() > 512 * 1024
+    ));
+    assert!(matches!(
+        response_ignoring_frames(&mut control).await,
+        HostResponse::ShuttingDown
+    ));
+    assert!(
+        end_of_stream(&mut control).await,
+        "the connection did not end on a message boundary"
+    );
+    assert!(wait_child(host.0.as_mut().unwrap()).await.success());
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// Reads until the host closes the connection, reporting whether it did so
+/// cleanly. A message that ends inside itself is an error rather than an end
+/// of stream, so this distinguishes a flushed shutdown from a truncated one.
+async fn end_of_stream(client: &mut LocalClient) -> bool {
+    loop {
+        let response = tokio::time::timeout(Duration::from_secs(5), client.recv())
+            .await
+            .expect("host did not close the connection");
+        match response {
+            Ok(None) => return true,
+            Ok(Some(_)) => {}
+            Err(error) => panic!("connection ended uncleanly: {error}"),
+        }
+    }
+}
+
 /// Switching between workspaces must stay in one process. The previous
 /// arrangement spawned a child `runyte --persistent` and blocked on it, so moving
 /// from one workspace to another and back again stacked processes and quitting

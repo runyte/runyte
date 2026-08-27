@@ -39,9 +39,12 @@ const EVENT_CAPACITY: usize = 64;
 /// short-lived control connections. Bounding accepted peers prevents a burst
 /// of incomplete handshakes from retaining one task and framing buffer each.
 const MAX_CONNECTIONS: usize = 16;
-/// A peer that has stopped reading must not retain its connection task or keep
-/// the host's interactive attachment occupied indefinitely.
-const CONNECTION_WRITE_TIMEOUT: Duration = Duration::from_secs(2);
+/// How long a peer may accept no bytes at all before its connection is
+/// abandoned. A peer that has stopped reading must not retain its connection
+/// task or keep the host's interactive attachment occupied indefinitely, but
+/// the budget measures a stall rather than a whole message: see
+/// `write_message_with_timeout`.
+const CONNECTION_WRITE_STALL: Duration = Duration::from_secs(2);
 const HOST_ID_LENGTH: usize = 32;
 pub(crate) const MAX_HOST_NAME_BYTES: usize = 64;
 const MAX_METADATA_BYTES: usize = 64 * 1024;
@@ -1891,8 +1894,9 @@ impl<R: AsyncRead + Unpin> MessageReader<R> {
                 if self.pending.is_empty() {
                     return Ok(None);
                 }
+                let pending = self.pending.len();
                 self.pending = Vec::new();
-                bail!("workspace transport ended inside a message");
+                bail!("workspace transport ended {pending} bytes inside a message");
             }
             let take = available
                 .iter()
@@ -1919,7 +1923,7 @@ async fn write_message<W: AsyncWrite + Unpin, T: Serialize>(
     writer: &mut W,
     message: &T,
 ) -> Result<()> {
-    write_message_with_timeout(writer, message, CONNECTION_WRITE_TIMEOUT).await
+    write_message_with_timeout(writer, message, CONNECTION_WRITE_STALL).await
 }
 
 async fn write_client_message<W: AsyncWrite + Unpin, T: Serialize>(
@@ -1941,23 +1945,42 @@ async fn write_client_message<W: AsyncWrite + Unpin, T: Serialize>(
     }
 }
 
+/// Frames one message, giving up only on a peer that accepts nothing.
+///
+/// Abandoning a write is safe before its first byte and never after: half a
+/// frame on the stream leaves the peer to read a message that ends inside
+/// itself, which is a transport error for what may only be a slow reader. A
+/// local socket send buffer is small enough on some platforms that a whole
+/// editor frame cannot fit in it, so a deadline spanning the message would
+/// truncate every frame a client took a moment too long to drain. The budget
+/// therefore covers a single write and restarts whenever the peer accepts any
+/// byte at all, which still ends a connection that has genuinely stopped
+/// reading.
 async fn write_message_with_timeout<W: AsyncWrite + Unpin, T: Serialize>(
     writer: &mut W,
     message: &T,
-    timeout: Duration,
+    stall: Duration,
 ) -> Result<()> {
-    let bytes = serde_json::to_vec(message)?;
+    let mut bytes = serde_json::to_vec(message)?;
     ensure!(
         bytes.len() < MAX_MESSAGE_BYTES,
         "workspace transport message exceeds {MAX_MESSAGE_BYTES} bytes"
     );
-    tokio::time::timeout(timeout, async {
-        writer.write_all(&bytes).await?;
-        writer.write_all(b"\n").await?;
-        writer.flush().await
-    })
-    .await
-    .context("workspace transport write timed out")??;
+    bytes.push(b'\n');
+    let mut written = 0;
+    while written < bytes.len() {
+        let count = tokio::time::timeout(stall, writer.write(&bytes[written..]))
+            .await
+            .context("workspace transport write timed out")??;
+        ensure!(
+            count > 0,
+            "workspace transport peer stopped accepting bytes"
+        );
+        written += count;
+    }
+    tokio::time::timeout(stall, writer.flush())
+        .await
+        .context("workspace transport write timed out")??;
     Ok(())
 }
 
@@ -3188,6 +3211,95 @@ mod tests {
         .unwrap_err()
         .to_string();
         assert!(error.contains("timed out"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn a_slow_but_reading_peer_receives_a_whole_message() {
+        // The message is far larger than the pipe, so every write blocks
+        // until the peer drains what is already there. No single write waits
+        // longer than the peer's pause, while the transfer as a whole takes
+        // several times the stall budget: a deadline spanning the message
+        // would cut this frame in half and leave the peer reading a message
+        // that ends inside itself.
+        let (mut writer, mut reader) = tokio::io::duplex(512);
+        let message = serde_json::json!({ "payload": "x".repeat(8 * 1024) });
+        let drain = tokio::spawn(async move {
+            let mut received = Vec::new();
+            let mut chunk = [0_u8; 512];
+            loop {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+                let count = reader.read(&mut chunk).await.unwrap();
+                if count == 0 {
+                    break;
+                }
+                received.extend_from_slice(&chunk[..count]);
+                if received.last() == Some(&b'\n') {
+                    break;
+                }
+            }
+            received
+        });
+        let stall = Duration::from_millis(250);
+        let started = std::time::Instant::now();
+        write_message_with_timeout(&mut writer, &message, stall)
+            .await
+            .unwrap();
+        assert!(
+            started.elapsed() > stall,
+            "the transfer was too quick to distinguish a stall budget from a message one"
+        );
+        let received = drain.await.unwrap();
+        assert_eq!(received.last(), Some(&b'\n'), "message was not terminated");
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&received[..received.len() - 1]).unwrap(),
+            message,
+            "the peer read a truncated message"
+        );
+    }
+
+    #[tokio::test]
+    async fn closing_the_response_channel_delivers_what_is_queued_before_disconnecting() {
+        // How a shutting-down host ends an attachment without truncating it:
+        // the queued responses are written first and the socket closes on a
+        // frame boundary, so the peer reads a clean end of stream.
+        let (root, endpoint) = endpoint("shutdown-flush");
+        let Some(mut server) = bind_or_skip(&endpoint).await else {
+            fs::remove_dir_all(root).unwrap();
+            return;
+        };
+        let mut client = LocalClient::connect(&endpoint, FrameGeometry::default(), false)
+            .await
+            .unwrap();
+        let ServerEvent::Connected { id, responses, .. } = server.recv().await.unwrap() else {
+            panic!("expected connection");
+        };
+        responses
+            .try_send(HostResponse::Error {
+                message: "x".repeat(64 * 1024),
+            })
+            .unwrap();
+        responses.try_send(HostResponse::ShuttingDown).unwrap();
+        drop(responses);
+        assert!(matches!(
+            client.recv().await.unwrap(),
+            Some(HostResponse::Error { message }) if message.len() == 64 * 1024
+        ));
+        assert!(matches!(
+            client.recv().await.unwrap(),
+            Some(HostResponse::ShuttingDown)
+        ));
+        assert!(
+            client.recv().await.unwrap().is_none(),
+            "the connection did not end on a frame boundary"
+        );
+        assert!(matches!(
+            tokio::time::timeout(Duration::from_secs(3), server.recv())
+                .await
+                .expect("connection did not report its end"),
+            Some(ServerEvent::Disconnected { id: disconnected }) if disconnected == id
+        ));
+        endpoint.cleanup().unwrap();
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[tokio::test]
