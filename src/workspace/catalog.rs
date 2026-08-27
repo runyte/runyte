@@ -17,6 +17,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, watch};
 
+use crate::git::{WorkspaceGitFacts, read_workspace_git_facts};
 use crate::protocol::{ClientRequest, HostResponse};
 use crate::{external_open, project_root};
 
@@ -97,10 +98,20 @@ pub struct WorkspaceRow {
     /// looked stopped was the reason attaching to it failed.
     pub incompatible_protocol: Option<u32>,
     pub unsaved_buffers: Option<usize>,
+    /// Every buffer the host holds open, unsaved or not.
+    pub open_buffers: Option<usize>,
     pub pending_wait_requests: Option<usize>,
     pub live_terminals: Option<usize>,
     pub terminal_sessions: Option<usize>,
     pub interactive_attached: Option<bool>,
+    /// What this workspace's own directory says about its Git checkout, when
+    /// it is one. Read from files rather than answered by the host, because a
+    /// stopped session has no host and its branch is worth listing anyway.
+    pub git: Option<WorkspaceGitFacts>,
+    /// Whether the project root has gone from disk while a host still runs in
+    /// it. Such a row keeps its number and its place so it can be found and
+    /// closed, rather than quietly becoming an unnumbered mystery.
+    pub missing_directory: bool,
 }
 
 impl WorkspaceRow {
@@ -405,9 +416,14 @@ impl WorkspaceService {
                             .map_err(|error| format!("{error:#}")),
                     },
                     WorkspaceRequest::Inspect { generation, path } => {
-                        let result = inspect_workspace_target(&path, &state, runtime.as_deref())
-                            .await
-                            .map_err(|error| format!("{error:#}"));
+                        let result = inspect_workspace_target(
+                            &path,
+                            recents.as_deref(),
+                            &state,
+                            runtime.as_deref(),
+                        )
+                        .await
+                        .map_err(|error| format!("{error:#}"));
                         WorkspaceEvent::Inspected {
                             generation,
                             path,
@@ -667,25 +683,29 @@ async fn refresh(
 ) -> Result<Vec<WorkspaceRow>> {
     let scan_roots = roots.to_vec();
     let recent_path = recents.map(Path::to_path_buf);
-    let (hosts, mut recent_entries) = tokio::task::spawn_blocking(move || {
+    let (hosts, mut remembered) = tokio::task::spawn_blocking(move || {
         Ok::<_, anyhow::Error>((
             registered_hosts_in(&scan_roots)?,
             read_recents(recent_path.as_deref())?,
         ))
     })
     .await??;
-    let recent_snapshot = recent_entries.clone();
-    assign_missing_default_workspace_names(&mut recent_entries);
+    let recent_snapshot = remembered.clone();
+    assign_missing_default_workspace_names(&mut remembered);
+    // Numbers and names come from every remembered workspace, including one
+    // whose directory has gone while its host keeps running. Only the rows a
+    // listing offers to open are drawn from the ones still on disk.
+    let openable = listable_recents(remembered.clone());
     let mut rows = Vec::with_capacity(hosts.len());
     for host in hosts {
         rows.push(inspect_host(host).await);
     }
-    apply_recent_names(&mut rows, &recent_entries);
+    apply_recent_names(&mut rows, &remembered);
     for RecentEntry {
         project_root,
         name,
         number: _,
-    } in recent_entries.clone()
+    } in openable
     {
         if rows.iter().any(|row| row.project_root == project_root) {
             continue;
@@ -715,9 +735,24 @@ async fn refresh(
             live_terminals: None,
             terminal_sessions: None,
             interactive_attached: None,
+            open_buffers: None,
+            git: None,
+            missing_directory: false,
         });
     }
-    apply_recent_numbers(&mut rows, &recent_entries);
+    apply_recent_numbers(&mut rows, &remembered);
+    // Git facts and directory existence are filesystem reads, and a listing
+    // can hold hundreds of rows, so they are gathered once here rather than
+    // recomputed by whatever draws them.
+    let described = tokio::task::spawn_blocking(move || {
+        for row in &mut rows {
+            row.missing_directory = !row.project_root.is_dir();
+            row.git = read_workspace_git_facts(&row.project_root);
+        }
+        rows
+    })
+    .await?;
+    let mut rows = described;
     // Most recently visited first, which is the order the recents file already
     // holds. A workspace absent from that history is a running host whose
     // record was pruned or never written; it sorts after the remembered ones,
@@ -791,6 +826,9 @@ async fn published_row(
             live_terminals: None,
             terminal_sessions: None,
             interactive_attached: None,
+            open_buffers: None,
+            git: None,
+            missing_directory: false,
         });
     }
     let inspection = inspect_endpoint(&endpoint).await;
@@ -806,6 +844,9 @@ async fn published_row(
         live_terminals: inspection.live_terminals,
         terminal_sessions: inspection.terminal_sessions,
         interactive_attached: inspection.interactive_attached,
+        open_buffers: inspection.open_buffers,
+        git: None,
+        missing_directory: false,
     })
 }
 
@@ -816,6 +857,7 @@ async fn published_row(
 /// stopped row. Endpoint artifacts with an unverifiable owner fail closed.
 async fn inspect_workspace_target(
     project_root: &Path,
+    recents: Option<&Path>,
     state: &Path,
     runtime: Option<&Path>,
 ) -> Result<Option<WorkspaceRow>> {
@@ -837,11 +879,21 @@ async fn inspect_workspace_target(
         "workspace endpoint identity does not match {}",
         project_root.display()
     );
+    // A host never answers a number, and the digit is how somebody knows which
+    // session a confirmation is about to stop, so it is read from the catalog
+    // here as it is for every listed row. A catalog that cannot be read leaves
+    // the row unnumbered rather than failing an inspection that is about
+    // whether the host is safe to touch.
+    let number = read_recents(recents)
+        .unwrap_or_default()
+        .into_iter()
+        .find(|entry| entry.project_root == project_root)
+        .and_then(|entry| entry.number);
     if !host.speaks_current_protocol() {
         return Ok(Some(WorkspaceRow {
             id: host.id,
             name: host.name,
-            number: None,
+            number,
             project_root,
             running: true,
             incompatible_protocol: Some(host.protocol),
@@ -850,13 +902,16 @@ async fn inspect_workspace_target(
             live_terminals: None,
             terminal_sessions: None,
             interactive_attached: None,
+            open_buffers: None,
+            git: None,
+            missing_directory: false,
         }));
     }
     let inspection = inspect_endpoint_strict(&endpoint).await?;
     Ok(Some(WorkspaceRow {
         id: host.id,
         name: host.name,
-        number: None,
+        number,
         project_root,
         running: true,
         incompatible_protocol: None,
@@ -865,6 +920,9 @@ async fn inspect_workspace_target(
         live_terminals: Some(inspection.live_terminals),
         terminal_sessions: Some(inspection.terminal_sessions),
         interactive_attached: Some(inspection.interactive_attached),
+        open_buffers: Some(inspection.open_buffers),
+        git: None,
+        missing_directory: false,
     }))
 }
 
@@ -898,6 +956,9 @@ async fn inspect_host(host: RegisteredHost) -> WorkspaceRow {
             live_terminals: None,
             terminal_sessions: None,
             interactive_attached: None,
+            open_buffers: None,
+            git: None,
+            missing_directory: false,
         };
     }
     let inspection = inspect_endpoint(host.endpoint()).await;
@@ -913,6 +974,9 @@ async fn inspect_host(host: RegisteredHost) -> WorkspaceRow {
         live_terminals: inspection.live_terminals,
         terminal_sessions: inspection.terminal_sessions,
         interactive_attached: inspection.interactive_attached,
+        open_buffers: inspection.open_buffers,
+        git: None,
+        missing_directory: false,
     }
 }
 
@@ -925,6 +989,7 @@ async fn inspect_host(host: RegisteredHost) -> WorkspaceRow {
 #[derive(Default)]
 struct HostInspection {
     unsaved_buffers: Option<usize>,
+    open_buffers: Option<usize>,
     pending_wait_requests: Option<usize>,
     live_terminals: Option<usize>,
     terminal_sessions: Option<usize>,
@@ -933,6 +998,7 @@ struct HostInspection {
 
 struct StrictHostInspection {
     unsaved_buffers: usize,
+    open_buffers: usize,
     pending_wait_requests: usize,
     live_terminals: usize,
     terminal_sessions: usize,
@@ -947,12 +1013,14 @@ async fn inspect_endpoint_strict(endpoint: &LocalEndpoint) -> Result<StrictHostI
             Some(HostResponse::Health {
                 interactive_attached,
                 unsaved_buffers,
+                open_buffers,
                 pending_wait_requests,
                 live_terminals,
                 terminal_sessions,
                 ..
             }) => Ok(StrictHostInspection {
                 unsaved_buffers,
+                open_buffers,
                 pending_wait_requests,
                 live_terminals,
                 terminal_sessions,
@@ -977,6 +1045,7 @@ async fn inspect_endpoint(endpoint: &LocalEndpoint) -> HostInspection {
         if let Some(HostResponse::Health {
             interactive_attached: attached,
             unsaved_buffers: unsaved,
+            open_buffers,
             pending_wait_requests,
             live_terminals,
             terminal_sessions,
@@ -985,6 +1054,7 @@ async fn inspect_endpoint(endpoint: &LocalEndpoint) -> HostInspection {
         {
             result.interactive_attached = Some(attached);
             result.unsaved_buffers = Some(unsaved);
+            result.open_buffers = Some(open_buffers);
             result.pending_wait_requests = Some(pending_wait_requests);
             result.live_terminals = Some(live_terminals);
             result.terminal_sessions = Some(terminal_sessions);
@@ -1248,6 +1318,9 @@ mod tests {
                 live_terminals: None,
                 terminal_sessions: None,
                 interactive_attached: None,
+                open_buffers: None,
+                git: None,
+                missing_directory: false,
             })
             .collect::<Vec<_>>();
 
@@ -1364,6 +1437,7 @@ mod tests {
                                     pid: std::process::id(),
                                     interactive_attached: false,
                                     unsaved_buffers: 3,
+                                    open_buffers: 9,
                                     pending_wait_requests: 0,
                                     live_terminals: 0,
                                     terminal_sessions: 0,
@@ -1392,9 +1466,14 @@ mod tests {
                 }
             }
         });
+        // A targeted inspection reads the number from the same catalog a
+        // listing does. A host never answers one, and the digit is how a
+        // confirmation names the session it is about to stop.
+        let recents = root.join("cache/workspaces.json");
+        record_recent_workspace_in(&recents, &project).unwrap();
         let (service, mut events) = WorkspaceService::spawn_with(
             vec![root.join("empty-registry")],
-            None,
+            Some(recents.clone()),
             PathBuf::from("runyte-does-not-run"),
             PathBuf::from(".runyte"),
             None,
@@ -1414,6 +1493,13 @@ mod tests {
         let row = result.unwrap().expect("the unregistered host is running");
         assert!(row.running);
         assert_eq!(row.unsaved_buffers, Some(3));
+        assert_eq!(row.open_buffers, Some(9));
+        assert_eq!(
+            row.number,
+            recorded_number(&recents, &project),
+            "a targeted inspection must recover the session's number"
+        );
+        assert_eq!(row.number, Some(1));
         service
             .try_stop(10, project.clone(), root.clone(), false)
             .unwrap();
@@ -2098,6 +2184,9 @@ mod tests {
                 live_terminals: None,
                 terminal_sessions: None,
                 interactive_attached: Some(false),
+                open_buffers: None,
+                git: None,
+                missing_directory: false,
             },
             WorkspaceRow {
                 id: "22222222222222222222222222222222".to_owned(),
@@ -2111,6 +2200,9 @@ mod tests {
                 live_terminals: None,
                 terminal_sessions: None,
                 interactive_attached: Some(false),
+                open_buffers: None,
+                git: None,
+                missing_directory: false,
             },
         ];
 
@@ -2186,6 +2278,9 @@ mod tests {
                 live_terminals: None,
                 terminal_sessions: None,
                 interactive_attached: None,
+                open_buffers: None,
+                git: None,
+                missing_directory: false,
             },
             WorkspaceRow {
                 id: "22222222222222222222222222222222".to_owned(),
@@ -2199,6 +2294,9 @@ mod tests {
                 live_terminals: None,
                 terminal_sessions: None,
                 interactive_attached: None,
+                open_buffers: None,
+                git: None,
+                missing_directory: false,
             },
             WorkspaceRow {
                 id: "abcdef0123456789abcdef0123456789".to_owned(),
@@ -2212,6 +2310,9 @@ mod tests {
                 live_terminals: None,
                 terminal_sessions: None,
                 interactive_attached: None,
+                open_buffers: None,
+                git: None,
+                missing_directory: false,
             },
         ];
 
@@ -2270,6 +2371,9 @@ mod tests {
             live_terminals: None,
             terminal_sessions: None,
             interactive_attached: Some(false),
+            open_buffers: None,
+            git: None,
+            missing_directory: false,
         }];
 
         // Model a second process recording a workspace while refresh is
@@ -2311,6 +2415,9 @@ mod tests {
             live_terminals: None,
             terminal_sessions: None,
             interactive_attached: Some(false),
+            open_buffers: None,
+            git: None,
+            missing_directory: false,
         }];
 
         update_recents(&path, |paths| {
@@ -2466,6 +2573,69 @@ mod tests {
         let entries = read_recents(Some(&path)).unwrap();
         assert_eq!(entries[0].project_root, workspaces[0]);
         assert_eq!(entries[0].number, Some(1));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// A worktree removed outside Runyte used to take its session's number with
+    /// it: the entry was filtered out on read, and the next write persisted
+    /// that filtered view, so a host still running there listed as unnumbered.
+    #[test]
+    fn a_vanished_directory_keeps_its_record_and_its_number() {
+        let root = unique_test_root("number-missing-directory");
+        let path = root.join("cache/workspaces.json");
+        let kept = root.join("kept");
+        let vanishing = root.join("vanishing");
+        for workspace in [&kept, &vanishing] {
+            fs::create_dir_all(workspace).unwrap();
+            record_recent_workspace_in(&path, workspace).unwrap();
+        }
+        let vanishing = vanishing.canonicalize().unwrap();
+        assert_eq!(recorded_number(&path, &vanishing), Some(2));
+
+        fs::remove_dir_all(&vanishing).unwrap();
+        // Any later write goes back through the reader, so this is where the
+        // record used to be erased.
+        let later = root.join("later");
+        fs::create_dir_all(&later).unwrap();
+        record_recent_workspace_in(&path, &later).unwrap();
+
+        assert_eq!(
+            recorded_number(&path, &vanishing),
+            Some(2),
+            "the number of a workspace whose directory went is still its own"
+        );
+        // The freed digit is not handed out again while the record holds it.
+        assert_eq!(
+            recorded_number(&path, &later.canonicalize().unwrap()),
+            Some(3)
+        );
+
+        // A host still running there therefore keeps its digit in a listing,
+        // while a stopped row with nothing left to open stays out of one.
+        let entries = read_recents(Some(&path)).unwrap();
+        let mut rows = vec![WorkspaceRow {
+            id: "aaaaaaaaaaaaaaaa".to_owned(),
+            name: Some("vanishing".to_owned()),
+            number: None,
+            project_root: vanishing.clone(),
+            running: true,
+            incompatible_protocol: None,
+            unsaved_buffers: None,
+            open_buffers: None,
+            pending_wait_requests: None,
+            live_terminals: None,
+            terminal_sessions: None,
+            interactive_attached: None,
+            git: None,
+            missing_directory: true,
+        }];
+        apply_recent_numbers(&mut rows, &entries);
+        assert_eq!(rows[0].number, Some(2));
+        assert!(
+            !listable_recents(entries)
+                .iter()
+                .any(|entry| entry.project_root == vanishing)
+        );
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -3197,6 +3367,28 @@ fn write_recents(path: &Path, paths: &[RecentEntry], _lock: &RecentFileLock) -> 
     Ok(())
 }
 
+/// The remembered workspaces worth showing: those whose directory is still
+/// there, plus any a running host is using.
+///
+/// A stopped workspace whose directory is gone has nothing left to open, so it
+/// stays out of the listing. Its record survives in the file, because the
+/// directory may come back — an unmounted volume, a detached external disk —
+/// and the number it answers to should come back with it.
+fn listable_recents(entries: Vec<RecentEntry>) -> Vec<RecentEntry> {
+    entries
+        .into_iter()
+        .filter(|entry| entry.project_root.is_dir())
+        .collect()
+}
+
+/// Reads the remembered workspaces exactly as the file holds them.
+///
+/// A directory that has gone from disk is deliberately still returned. Every
+/// write goes back through this reader, so filtering here would erase the
+/// record — and with it the workspace's number — the first time anything
+/// touched the file after the directory disappeared, including for a host
+/// still running in it. [`listable_recents`] drops those rows on the way to a
+/// listing instead, which is the only place the distinction matters.
 fn read_recents(path: Option<&Path>) -> Result<Vec<RecentEntry>> {
     let Some(path) = path else {
         return Ok(Vec::new());
@@ -3223,7 +3415,6 @@ fn read_recents(path: Option<&Path>) -> Result<Vec<RecentEntry>> {
                 entry.number,
             )
         })
-        .filter(|entry| entry.project_root.is_dir())
         .collect::<Vec<_>>();
     // A number identifies one workspace, so a file hand-edited into holding a
     // duplicate is repaired on the way in rather than reaching a listing where

@@ -448,6 +448,20 @@ impl WorkspaceHost {
             .count()
     }
 
+    /// How many buffers this host holds open, unsaved or not.
+    ///
+    /// The count a session manager states as a fact about the session, next to
+    /// [`Self::unsaved_buffers`]. Buffers the host has closed are excluded, so
+    /// the two counts are read against the same set.
+    pub fn open_buffer_count(&self) -> usize {
+        self.app
+            .buffers
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| !self.app.host_buffer_is_closed(*index))
+            .count()
+    }
+
     /// The single lifecycle summary used by retirement, inspection and stop.
     pub fn protected_state(&self) -> ProtectedHostState {
         ProtectedHostState {

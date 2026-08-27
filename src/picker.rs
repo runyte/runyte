@@ -93,6 +93,13 @@ impl PickerItem {
     pub fn is_dimmed(&self) -> bool {
         self.dimmed
     }
+
+    /// The row's own preview text, for a caller that needs a row other than
+    /// the selected one. Drawing still goes through
+    /// [`ListPicker::selected_preview`].
+    pub fn preview(&self) -> Option<&str> {
+        self.preview.as_deref()
+    }
 }
 
 #[derive(Clone, Debug)]

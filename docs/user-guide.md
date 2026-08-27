@@ -321,30 +321,72 @@ rebase message files this lifecycle. Persistent hosting and `--wait` currently
 use the private, versioned Unix local protocol; it is a bundled-client contract,
 not a public automation API.
 
-`Space Space` or `:session-list` (`:sl`) opens a filterable list of running
-and recently visited persistent sessions in either mode, most recently visited
-first. In persistent mode the current session leads the list; Enter attaches
-to the selected workspace's session in the same TUI and starts it when
-necessary. A stopped session keeps its place in that order but is drawn in the
-theme's dimmed text colour, the one a command prompt grays the panes behind it
-with, so the running hosts stand out without any row being hidden or moved.
+`Space Space` or `:session-list` (`:sl`) opens the session manager: a
+filterable list of running and recently visited persistent sessions, most
+recently visited first, with the current session at its head. Enter attaches to
+the selected workspace's session in the same TUI and starts it when necessary.
+A stopped session keeps its place in that order but is drawn in the theme's
+dimmed text colour, the one a command prompt grays the panes behind it with, so
+the running hosts stand out without any row being hidden or moved.
 `Space Space` is the complete binding,
 not a prefix with subcommands. Tab opens one manager menu listing only the
 actions the selected row's own state can answer: a running row offers Open,
 Rename, Number, Close, and Force close, and a stopped row offers Open, Rename,
-Number, and Forget. Open is identical to Enter.
+Number, and Forget. Open is identical to Enter. Close stops the host and leaves
+the workspace listed as a stopped row; nothing below the session is touched,
+because a session is the only level that means nothing on its own.
 
-The selected running session has a live preview, shown in the picker's right
-column and toggled with `Ctrl-t`. It reads the host through a bounded,
-read-only control request without becoming a second interactive attachment.
-Each visible pane is named and marked when active; buffer snippets begin at
-that pane's retained viewport, while terminal snippets show the latest parsed
-plain-text output. Buffers and terminals not represented by a visible pane are
-listed by name at the bottom. A maximized session previews the pane currently
-shown and reports how many panes remain in its retained layout. Stopped
-sessions have no retained live preview, and a host using another protocol
-version reports the preview as unavailable. Preview text is never persisted
-for later listings.
+Each row reads as four columns, padded to the widest value in the list so they
+line up down it:
+
+```text
+  2 * runyte-dev              dev               -
+  1   main                    main              -
+  4   runyte.github.io        main              -
+  3   Brain                   -                 -
+  5   runyte-enh-render-space enh/render-space  ~/code/runyte-enh-render-space
+```
+
+The number is the digit that attaches to the row, then the session name, then
+the checked-out branch, then this workspace's own path when it is a linked
+worktree. That last column is the widest thing on a row, so a path under your
+home directory is written with `~`; the preview keeps the full path. Only a
+checkout that shares a repository with others counts as a worktree there: a
+`.git` file alone does not make one, since a submodule and a repository created
+with `--separate-git-dir` both have one for their own main checkout. A column with nothing to say holds `-`: a workspace that is not a Git
+working tree has no branch, and a repository's main checkout is not a worktree
+in the sense the column means. The Git columns are read from the workspace
+directory itself rather than answered by a host, so a stopped session states its
+branch exactly as a running one does.
+
+The selected session's preview, shown in the picker's right column and toggled
+with `Ctrl-t`, states the session as a fixed set of fields:
+
+```text
+Status      running
+Panes       2
+Terminals   2 (1 exited)
+Buffers     9
+Unsaved     0
+Waiting     0
+Attached    yes
+Branch      enh/render-space
+Worktree    /home/me/code/runyte-enh-render-space
+Repo        git@github.com:me/runyte.git
+```
+
+Every row answers the same questions in the same order, so two sessions are
+compared by reading down one place rather than across two sentences. A value
+nothing can answer reads `-`, which is deliberately not the same as `0`. The
+pane count comes from a bounded, read-only control request made for the selected
+row alone, which never becomes a second interactive attachment; it reads `…`
+while that request is in flight and `-` for a stopped session or a host using
+another protocol version. Nothing in the preview is persisted for later
+listings.
+
+The manager does not show the contents of the session's buffers and terminals.
+It did, and at this width a snippet of a pane is neither readable as text nor
+useful as identity.
 
 Sessions carry a number from `1` to `9`, shown in the manager's first column
 and in the status line as `[S1]` before the workspace directory. Pressing that
@@ -367,22 +409,28 @@ manager menu sets the shortcut for the selected session, prefilled with the
 number it already has; an empty answer takes its number away. Giving a session
 a number another one holds swaps the two, so both keep a shortcut, and the
 status line names the workspace that took the number given up.
-In standalone mode the inventory remains available, and its picker title reads
-`Enter cannot attach in standalone mode` before a row is selected. Pressing
-Enter, `:session-attach`, `:session-start`, and `:session-stop` also explain
-that the operation needs `workspace.mode: persistent`. Fields only a running
-host can answer, such as the unsaved-buffer count and attached-TUI state, are
-blank when unavailable, so a stopped row carries none of them. A running row
-whose bounded health request
-does not answer is marked `health unavailable`; its unsaved buffers, pending
-waits, terminals, and attached-TUI state are unknown, so absence of a count on
-that row is not evidence that it is safe to stop. After a successful health
-reply, the row omits `unsaved`, `terminals`, and `waiting` when the confirmed
-count is zero, leaving a quiet session reading as its path and state; a count
-that is shown is one worth reading. The unsaved count is the host's own answer,
-so a healthy running row showing no `unsaved` is one the same host will agree
-to stop. Retained terminal screens whose children have exited are still named
-as `exited terminals`, since they are not live state.
+A standalone workspace owns no persistent host, so the whole `session`
+namespace is inert there rather than a set of commands that each refuse.
+`Space Space` greys out in the key-hint popup and `:session-list`,
+`:session-attach`, `:session-start`, `:session-stop`, and `:session-rename`
+grey out in the command palette, exactly as `Space l` and `Space x` do without
+a language server or a parser. Invoking one anyway answers
+`needs workspace.mode: persistent`.
+
+A running row whose bounded health request does not answer is marked
+`health unavailable`, and its terminals, buffers, unsaved buffers, waits, and
+attached-TUI state all read `-`: they are unknown, so absence of a count on that
+row is not evidence that it is safe to stop. A confirmed zero is shown as `0`
+instead, and the unsaved count is the host's own answer, so a healthy running
+row showing `Unsaved 0` is one the same host will agree to stop. Retained
+terminal screens whose children have exited are counted beside the live ones as
+`2 (1 exited)`, since they are not live state.
+
+A row whose project directory has gone while its host is still running says
+`missing directory` in its status. It keeps its number and its place so it can
+be found and closed; its history record survives the directory's absence for the
+same reason, and a stopped session with nothing left to open drops out of the
+listing without giving its digit away.
 Forget removes only the visited-history record behind a stopped row: nothing in
 the project is touched, and naming the directory again starts a host there and
 lists it once more.
@@ -1655,7 +1703,7 @@ no longer exists. A branch tracking nothing says nothing.
 | --- | --- |
 | `Enter` | Check out the branch on this line |
 | `Tab n` | Start a new branch here and switch to it |
-| `Tab D` | Delete this branch, after a confirmation |
+| `Tab D` | Delete this branch, with its worktree and session, after a confirmation |
 | `Tab p` | Fast-forward the current branch onto what it tracks |
 | `Tab P` | Publish this branch to what it tracks |
 
@@ -1667,10 +1715,29 @@ or another local branch, Enter confirms; the confirmation names the retaining
 local branches. When no such ref retains the tip, the exact branch name must be
 typed before Enter accepts it. Upstream reachability uses the locally cached
 remote-tracking ref and says so in the confirmation; fetch first when that
-answer needs to include newer remote state. A branch checked out in any
-registered worktree is refused before review; remove that checkout with
-`Tab D` in `:git-worktrees` first, then return to the branch list if the branch
-itself should also be deleted. The final mutation rechecks the tip and its
+answer needs to include newer remote state. A branch checked out in a registered
+worktree is not refused. A worktree means nothing without the branch it has
+checked out, and a session means nothing without the worktree it was opened on,
+so deleting the branch offers to take all three down at once. The confirmation
+names every level and always requires the exact branch name, whatever the tip
+alone would have settled for:
+
+```text
+Delete branch enh/render-space.
+This also:
+  · stops and forgets session 5 (runyte-enh-render-space)
+  · removes worktree /home/me/code/runyte-enh-render-space
+Type enh/render-space exactly to continue.
+Escape keeps it.
+```
+
+Accepting runs bottom-up: the session stops, then the worktree is removed, then
+the branch is deleted. A failure at any level stops the cascade there rather
+than continuing into the one below it, and the checkout's own refusals — a
+dirty working tree, a lock, a session holding unsaved buffers — are reported
+before anything is put to you as a choice. A branch reported as checked out in
+more than one worktree, or at the current Runyte root, is still refused before
+review. The final mutation rechecks the tip and its
 retaining refs, so a branch changed after review is not deleted.
 
 `Space g w` (equivalently `:git-worktrees`) opens every checkout registered with the repository, including
@@ -1684,7 +1751,7 @@ display uses replacement characters.
 | `Enter` | Attach to this root's persistent session, starting it if necessary |
 | `Tab n` | Create another checkout of this row's branch; attach to it in persistent mode |
 | `Tab N` | Name a new branch and create its checkout; attach to it in persistent mode |
-| `Tab D` | Remove this worktree after confirmation; keep its branch |
+| `Tab D` | Remove this worktree and its session after confirmation; keep its branch |
 | `Space g r` | Re-read the registered worktrees |
 
 Opening another root never retargets this workspace's buffers or language
@@ -1697,7 +1764,35 @@ but Enter explains that attachment needs `workspace.mode: persistent` and
 creation stays in the current workspace. `Tab D` removes one selected ordinary
 worktree at a time and never deletes its branch. Staged, unstaged, or untracked
 files refuse removal before confirmation, as does a running persistent session
-with unsaved file buffers or unavailable health. A clean worktree whose branch
+with unsaved file buffers or unavailable health.
+
+A *clean* session on that worktree does not refuse the removal — it goes with
+it. The confirmation says so, and asks for typed text for that reason alone
+even where the worktree's own state would have accepted Enter:
+
+```text
+Remove worktree /home/me/code/runyte-enh-render-space.
+This also stops and forgets session 5 (runyte-enh-render-space).
+Branch enh/render-space will remain.
+Type enh/render-space exactly to continue.
+Escape keeps it.
+```
+
+The session is stopped before Git is asked to remove the directory, because the
+host owns that directory and the runtime state under it, and the removal itself
+has to report success before anything below it happens: a removal Git refuses
+after the confirmation leaves the branch and the history record alone. A stop
+that fails likewise leaves the worktree standing. Once the directory is gone the
+workspace's history record is forgotten too, which is what frees its number for
+the next workspace; that happens whether or not a host was running, so a
+worktree opened as a workspace at any point leaves nothing behind.
+
+This part of removal is not a persistent-mode feature. A standalone editor
+cannot attach to a session, but it can still find one running on the worktree it
+is removing, and stopping that host is part of the removal rather than a
+`session` command — so it happens in either mode.
+
+A clean worktree whose branch
 has commits ahead of its cached upstream (or whose upstream is gone) requires
 the exact branch name; an unretained detached checkout requires its displayed
 path. Other clean removals use Enter. Git status, worktree identity, upstream
@@ -2184,7 +2279,7 @@ are enabled.
                         on disk (aliases: w!, save!)
 :write-quit             save, then close the pane or quit from the last one (alias: wq)
 :write-buffer-close     save and close the buffer in place (alias: wbc)
-:session-list           list running and recently visited persistent sessions (alias: sl)
+:session-list           open the session manager (persistent mode; alias: sl)
 :session-attach WORKSPACE
                         attach to another workspace's persistent session
 :session-start [WORKSPACE]

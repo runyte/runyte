@@ -2346,6 +2346,7 @@ fn stale_async_branch_deletion_preflights_never_open_a_confirmation() {
         target: "feature".to_owned(),
     });
     let operation = || GitOperation::PrepareBranchDeletion {
+        cascade_checkout: None,
         repository: repository.clone(),
         branch: "feature".to_owned(),
     };
@@ -2425,8 +2426,8 @@ fn deleting_a_merged_branch_is_not_forced() {
 }
 
 #[test]
-fn branch_deletion_refuses_a_registered_checkout_before_confirmation() {
-    use crate::git::{MemoryGitProvider, Repository};
+fn branch_deletion_cascades_through_its_checkout_and_asks_for_the_branch_name() {
+    use crate::git::{MemoryGitProvider, Repository, Worktree};
 
     let root = temporary("git-branch-delete-worktree");
     fs::create_dir_all(&root).unwrap();
@@ -2438,7 +2439,111 @@ fn branch_deletion_refuses_a_registered_checkout_before_confirmation() {
     let provider = Rc::new(
         MemoryGitProvider::new(Repository::new(&root))
             .with_branches(&["feature", "main"], "main")
-            .with_branch_checkout("feature", linked.clone()),
+            // Retained by `main`, so the branch alone would have settled for
+            // Enter. The cascade below it is what raises the bar.
+            .with_branch_detail("feature", None, true)
+            .with_branch_checkout("feature", linked.clone())
+            .with_worktrees(vec![
+                Worktree {
+                    path: root.clone(),
+                    head: Some("1".repeat(40)),
+                    branch: Some("refs/heads/main".to_owned()),
+                    detached: false,
+                    bare: false,
+                    locked: None,
+                    prunable: None,
+                    missing: false,
+                    common_dir: root.join(".git"),
+                },
+                Worktree {
+                    path: linked.clone(),
+                    head: Some("1".repeat(40)),
+                    branch: Some("refs/heads/feature".to_owned()),
+                    detached: false,
+                    bare: false,
+                    locked: None,
+                    prunable: None,
+                    missing: false,
+                    common_dir: root.join(".git"),
+                },
+            ]),
+    );
+    ports.replace_git(Box::new(Rc::clone(&provider)));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    app.execute_command("git-branches").unwrap();
+    press(&mut app, 'k');
+
+    context_action(&mut app, 'D');
+
+    // Every level is named before anything is accepted, rather than being
+    // discovered one refusal at a time.
+    assert!(!app.status_error, "{}", app.status);
+    assert!(
+        app.status.contains("Delete branch feature."),
+        "{}",
+        app.status
+    );
+    assert!(app.status.contains("This also:"), "{}", app.status);
+    assert!(
+        app.status
+            .contains(&format!("· removes worktree {}", linked.display())),
+        "{}",
+        app.status
+    );
+    assert!(
+        app.status.contains("Type feature exactly to continue."),
+        "{}",
+        app.status
+    );
+
+    // A compound action asks for typed text even where the branch tip alone
+    // would have accepted Enter.
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert!(app.status_error);
+    assert!(provider.deletions().is_empty());
+    assert!(provider.removed_worktrees().is_empty());
+    assert!(
+        app.git_branch_deletion.is_some(),
+        "the review is still open"
+    );
+
+    for character in "feature".chars() {
+        press(&mut app, character);
+    }
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+
+    // Bottom up: the checkout goes before the branch that is checked out in it.
+    assert_eq!(provider.removed_worktrees(), vec![linked.clone()]);
+    assert_eq!(provider.deletions(), vec![("feature".to_owned(), true)]);
+    assert!(
+        app.status.contains("deleted branch feature")
+            && app
+                .status
+                .contains(&format!("removed worktree {}", linked.display())),
+        "{}",
+        app.status
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn branch_deletion_refuses_more_checkouts_than_a_cascade_can_answer_for() {
+    use crate::git::{MemoryGitProvider, Repository};
+
+    let root = temporary("git-branch-delete-many-worktrees");
+    fs::create_dir_all(&root).unwrap();
+    let root = root.canonicalize().unwrap();
+    let first = root.join("first");
+    let second = root.join("second");
+    let mut ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    let provider = Rc::new(
+        MemoryGitProvider::new(Repository::new(&root))
+            .with_branches(&["feature", "main"], "main")
+            .with_branch_checkout("feature", first.clone())
+            .with_branch_checkout("feature", second.clone()),
     );
     ports.replace_git(Box::new(Rc::clone(&provider)));
     let mut app = App::new_in_isolated_project(&root, ports).unwrap();
@@ -2450,7 +2555,7 @@ fn branch_deletion_refuses_a_registered_checkout_before_confirmation() {
     assert!(app.status_error);
     assert!(app.status.contains("checked out"), "{}", app.status);
     assert!(app.status.contains(":git-worktrees"), "{}", app.status);
-    assert!(app.status.contains(&linked.to_string_lossy().to_string()));
+    assert!(app.status.contains(&first.to_string_lossy().to_string()));
     assert!(app.git_branch_deletion.is_none());
     assert!(provider.deletions().is_empty());
 

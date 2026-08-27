@@ -565,6 +565,44 @@ mod tests {
         );
     }
 
+    /// `Space Space` is an exact binding with no namespace of its own, so its
+    /// availability has to come from the command it targets. Standalone mode
+    /// must grey it out the way a missing language server greys `Space l`.
+    #[test]
+    fn the_session_manager_greys_out_in_standalone_mode() {
+        let snapshot = |persistent_session| AppCapabilitySnapshot {
+            syntax: CommandAvailability::Available,
+            lsp_manager: CommandAvailability::Available,
+            lsp_document: CommandAvailability::Available,
+            git_project: CommandAvailability::Available,
+            persistent_session,
+        };
+        let manager_row = |capabilities: &AppCapabilitySnapshot| {
+            let mut hints = KeyHintState::default();
+            hints.observe(event(' '), Mode::Normal, default_keymap());
+            let mut rows = hints.rows(default_keymap(), Mode::Normal);
+            for row in &mut rows {
+                row.apply_capabilities(capabilities);
+            }
+            rows.into_iter()
+                .find(|row| row.target == Some(BindingTarget::Colon(ColonCommand::SessionList)))
+                .expect("the Space menu lists the session manager")
+        };
+
+        assert_eq!(
+            manager_row(&snapshot(CommandAvailability::Unavailable(
+                crate::service_health::PERSISTENT_SESSION_STANDALONE_REASON.to_owned(),
+            )))
+            .unavailable_reason
+            .as_deref(),
+            Some(crate::service_health::PERSISTENT_SESSION_STANDALONE_REASON)
+        );
+        assert_eq!(
+            manager_row(&snapshot(CommandAvailability::Available)).unavailable_reason,
+            None
+        );
+    }
+
     #[test]
     fn namespace_rows_carry_the_aliases_their_bindings_advertise() {
         let rows_under = |key: char| {

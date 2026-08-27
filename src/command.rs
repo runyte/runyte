@@ -39,6 +39,11 @@ pub enum CommandCapability {
     LspDocument,
     LspManager,
     GitProject,
+    /// A persistent session host this editor can reach: the platform supports
+    /// one and this workspace is running in persistent mode. Everything in the
+    /// `session` namespace addresses that host, so in standalone mode the whole
+    /// namespace is inert rather than a set of commands that each refuse.
+    PersistentSession,
 }
 
 /// Stable identities for commands that currently exist only on the colon
@@ -1167,6 +1172,13 @@ impl CommandId {
             Self::Colon(ColonCommand::LspRestart | ColonCommand::LspStatus) => {
                 Some(CommandCapability::LspManager)
             }
+            Self::Colon(
+                ColonCommand::SessionAttach
+                | ColonCommand::SessionList
+                | ColonCommand::SessionStart
+                | ColonCommand::SessionStop
+                | ColonCommand::SessionRename,
+            ) => Some(CommandCapability::PersistentSession),
             Self::Colon(command) if matches!(command.category(), CommandCategory::Git) => {
                 Some(CommandCapability::GitProject)
             }
@@ -1277,7 +1289,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "session-list",
         ["sl"],
         "session-list",
-        "List known persistent sessions and switch to one",
+        "Session manager (persistent mode)",
         NoArguments
     ),
     spec!(

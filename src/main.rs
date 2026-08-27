@@ -1477,6 +1477,7 @@ fn handle_workspace_request(
             pid: std::process::id(),
             interactive_attached,
             unsaved_buffers: host.protected_state().unsaved_buffers,
+            open_buffers: host.open_buffer_count(),
             pending_wait_requests: host.protected_state().pending_wait_requests,
             live_terminals: host.protected_state().live_terminals,
             terminal_sessions: host.app().terminals.len(),

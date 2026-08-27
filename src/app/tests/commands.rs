@@ -2067,10 +2067,10 @@ fn command_palette_searches_categories_descriptions_and_owned_availability() {
 }
 
 #[test]
-fn session_commands_stay_in_the_palette_and_share_platform_availability() {
+fn session_commands_stay_in_the_palette_and_share_one_availability() {
     let app = App::new(Config::default(), None).unwrap();
     let mut capabilities = app.command_capabilities();
-    capabilities.persistent_session = persistent_session_availability(false);
+    capabilities.persistent_session = persistent_session_availability(true, false);
     let matches = app.matching_commands_with_capabilities(&capabilities);
 
     assert_eq!(matches.len(), COMMANDS.len());
@@ -2087,7 +2087,7 @@ fn session_commands_stay_in_the_palette_and_share_platform_availability() {
             .unwrap_or_else(|| panic!("{name} must remain in the command inventory"));
         assert_eq!(
             matched.availability.reason(),
-            Some(crate::service_health::PERSISTENT_SESSION_UNSUPPORTED_REASON)
+            Some(crate::service_health::PERSISTENT_SESSION_STANDALONE_REASON)
         );
     }
     assert!(
@@ -2099,21 +2099,27 @@ fn session_commands_stay_in_the_palette_and_share_platform_availability() {
             .is_available()
     );
 
+    // On Unix the namespace becomes available as soon as the workspace is in
+    // persistent mode; nothing else gates it.
     #[cfg(unix)]
-    for name in [
-        "session-attach",
-        "session-list",
-        "session-start",
-        "session-stop",
-        "session-rename",
-    ] {
-        let spec = resolve_command(name).unwrap();
-        assert!(
-            app.command_capabilities()
-                .command_availability(spec)
-                .is_available(),
-            "Unix availability changed for {name}"
-        );
+    {
+        let mut app = app;
+        app.enable_persistent_session();
+        for name in [
+            "session-attach",
+            "session-list",
+            "session-start",
+            "session-stop",
+            "session-rename",
+        ] {
+            let spec = resolve_command(name).unwrap();
+            assert!(
+                app.command_capabilities()
+                    .command_availability(spec)
+                    .is_available(),
+                "persistent-mode availability changed for {name}"
+            );
+        }
     }
 }
 

@@ -26,16 +26,30 @@ pub enum CommandAvailability {
 pub const PERSISTENT_SESSION_UNSUPPORTED_REASON: &str =
     "persistent mode is not supported on this platform";
 
-/// Projects the compile-time persistent-session boundary through an injectable
-/// value so the unsupported policy can be covered on Unix development hosts.
+/// Reason a standalone workspace cannot answer a `session` command.
+///
+/// A standalone editor owns no durable host, so the whole namespace — the
+/// manager included — has nothing to address. Naming the setting rather than
+/// the mode says what to change.
+pub const PERSISTENT_SESSION_STANDALONE_REASON: &str = "needs workspace.mode: persistent";
+
+/// Projects the persistent-session boundary through injectable values so both
+/// halves of the policy can be covered on a Unix development host.
+///
+/// The platform answer comes first: on a build without persistent sessions the
+/// mode is not a thing the reader can change, so naming the mode would send
+/// them after a setting that would not help.
 pub fn persistent_session_availability(
     platform_supports_persistent_sessions: bool,
+    workspace_is_persistent: bool,
 ) -> CommandAvailability {
-    if platform_supports_persistent_sessions {
-        CommandAvailability::Available
-    } else {
-        CommandAvailability::Unavailable(PERSISTENT_SESSION_UNSUPPORTED_REASON.to_owned())
+    if !platform_supports_persistent_sessions {
+        return CommandAvailability::Unavailable(PERSISTENT_SESSION_UNSUPPORTED_REASON.to_owned());
     }
+    if !workspace_is_persistent {
+        return CommandAvailability::Unavailable(PERSISTENT_SESSION_STANDALONE_REASON.to_owned());
+    }
+    CommandAvailability::Available
 }
 
 impl CommandAvailability {
@@ -68,16 +82,7 @@ impl AppCapabilitySnapshot {
     pub fn command_availability(&self, spec: &CommandSpec) -> CommandAvailability {
         match spec.capability() {
             Some(capability) => self.capability_availability(capability),
-            None => match spec.id {
-                crate::command::CommandId::Colon(
-                    crate::command::ColonCommand::SessionAttach
-                    | crate::command::ColonCommand::SessionList
-                    | crate::command::ColonCommand::SessionStart
-                    | crate::command::ColonCommand::SessionStop
-                    | crate::command::ColonCommand::SessionRename,
-                ) => self.persistent_session.clone(),
-                _ => CommandAvailability::Available,
-            },
+            None => CommandAvailability::Available,
         }
     }
 
@@ -87,6 +92,7 @@ impl AppCapabilitySnapshot {
             CommandCapability::LspDocument => self.lsp_document.clone(),
             CommandCapability::LspManager => self.lsp_manager.clone(),
             CommandCapability::GitProject => self.git_project.clone(),
+            CommandCapability::PersistentSession => self.persistent_session.clone(),
         }
     }
 }
@@ -294,10 +300,20 @@ mod tests {
     }
 
     #[test]
-    fn session_platform_capability_uses_the_policy_reason() {
-        assert!(persistent_session_availability(true).is_available());
+    fn session_capability_answers_platform_first_then_mode() {
+        assert!(persistent_session_availability(true, true).is_available());
         assert_eq!(
-            persistent_session_availability(false).reason(),
+            persistent_session_availability(true, false).reason(),
+            Some(PERSISTENT_SESSION_STANDALONE_REASON)
+        );
+        // A build without persistent sessions has no mode to change, so the
+        // platform answer wins whichever mode is configured.
+        assert_eq!(
+            persistent_session_availability(false, true).reason(),
+            Some(PERSISTENT_SESSION_UNSUPPORTED_REASON)
+        );
+        assert_eq!(
+            persistent_session_availability(false, false).reason(),
             Some(PERSISTENT_SESSION_UNSUPPORTED_REASON)
         );
     }

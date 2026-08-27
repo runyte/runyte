@@ -123,7 +123,12 @@ use crate::workspace::{
 /// Version 37 carries the whitespace theme role and semantic whitespace runs.
 /// An older attached client would otherwise render the markers as ordinary
 /// syntax-coloured text or fail to deserialize the resolved theme.
-pub const VERSION: u32 = 37;
+/// Version 38 reports how many buffers a host holds open, beside the count of
+/// those holding unsaved work. The session manager states the number as a fact
+/// about the session, and a host still running the previous binary has no
+/// answer to give: every such session would read `Buffers: 0`, which is a
+/// wrong answer rather than a missing one.
+pub const VERSION: u32 = 38;
 pub const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const MAX_PATHS: usize = 32;
 pub const MAX_PATH_BYTES: usize = 32 * 1024;
@@ -784,6 +789,10 @@ pub enum HostResponse {
         /// Live buffers holding unsaved work, which is what makes this
         /// workspace refuse to stop. The scratch buffer is not one of them.
         unsaved_buffers: usize,
+        /// Every buffer the host holds open, unsaved or not. Reported rather
+        /// than derived from the buffer list so a listing and the host agree
+        /// about what this session is holding without transferring it.
+        open_buffers: usize,
         /// Pending editor-wait requests protected by the same lifecycle rule.
         pending_wait_requests: usize,
         /// Children that are still running. Exited retained screens are not
@@ -889,7 +898,7 @@ mod tests {
 
     #[test]
     fn protocol_version_and_request_bounds_are_explicit() {
-        assert_eq!(VERSION, 37);
+        assert_eq!(VERSION, 38);
         let oversized_command = ClientRequest::Invoke {
             command: CommandRequest {
                 name: "open".to_owned(),

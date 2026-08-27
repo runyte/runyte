@@ -3097,6 +3097,7 @@ mod tests {
                 pid: std::process::id(),
                 interactive_attached: false,
                 unsaved_buffers: 0,
+                open_buffers: 0,
                 pending_wait_requests: 0,
                 live_terminals: 0,
                 terminal_sessions: 0,
