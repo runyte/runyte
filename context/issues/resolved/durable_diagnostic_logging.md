@@ -99,10 +99,37 @@ environment value all stay out of the log.
 `client` as vocabulary, but `host.log` is exempt, because help has to name a
 path somebody can open.
 
-Known limitation: an explicit `--log` is honoured only by processes that own
+A follow-up commit, `33aa45f` (`Keep typed text and subprocess output out of
+diagnostic records`), fixes what a review of the above found. Two records
+wrote content the report forbids, at the default level: `GitError`'s `Display`
+quotes the argument vector — which for `git commit … -m <message>` holds the
+message just typed — and Git's stderr, and `LspEvent::Stopped`'s message
+embeds up to 8 KiB of the server's own stderr. `GitError::redacted` now keeps
+only fields that cannot carry local content, and the language-server record
+carries the language alone; both details still reach the person through the
+notification, `:lsp-status`, and the interaction line. The redaction test drove
+neither a commit nor a language server, which is why both got through; it now
+starts a server that dies with a secret on its stderr and yanks a secret into a
+register, and `GitError::redacted` has a per-variant test in `src/git/mod.rs`.
+The same commit records the two remaining silent departures in
+`send_active_response` — including a client that has stopped reading, the
+report's "stalled writes" — marks the logger failed when its writer thread is
+gone rather than reporting it healthy, gives the dropped-record summary the
+shared record prefix, records forced termination and a terminal session that
+fails to start, and corrects three assertions in `tests/diagnostic_log.rs` that
+compared an empty file with an empty file or named the wrong default path.
+
+Known limitations. An explicit `--log` is honoured only by processes that own
 editor state. Passing it to a session-management command that neither starts
 nor attaches to a session — `--session-list`, `--session-stop`,
-`--session-clear-all` — is accepted and ignored without comment.
+`--session-clear-all` — is accepted and ignored without comment. The retention
+report is an `eprintln!`, so on an ordinary `runyte --persistent -v` it is
+printed immediately before the alternate screen opens and the person is
+unlikely to see it; it is visible on `--session-start` and `--wait`.
+Filesystem-watcher lifecycle beyond its channel closing, and a host restart as
+distinct from a stop followed by a start, are not instrumented. The shared
+per-test-binary runtime directory under the temporary directory is not removed
+after a run, matching the existing convention in `tests/persistent_host.rs`.
 
 ## Report
 
