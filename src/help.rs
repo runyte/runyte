@@ -123,6 +123,7 @@ impl HelpTopic {
                 "Press Space and pause to explore command groups without memorising the full keymap.",
                 "An ordinary file changed outside Runyte keeps its in-memory text and gains [STALE]. Space b d compares a fresh disk snapshot without discarding edits; Space r reloads, asking first whenever the buffer is dirty.",
                 "Below the editor area, the global status line reports editor state and unread notification counts. The interaction line below it is reserved for active prompts and the last action echo; :notifications or :not opens complete retained feedback.",
+                ":service-health describes optional services right now, and :log-open opens the durable diagnostic log of the process that owns this workspace. Start Runyte with -v, -vv, or -vvv for more detail in it; :help diagnostics explains the rest.",
             ],
             Self::Explorer => &[
                 "The explorer is an editable directory listing. Move and edit here just as you do in a text buffer.",

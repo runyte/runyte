@@ -12,6 +12,7 @@ use super::{
     outcome_clause, persist_setting, registry_failure_summary, render_settings_page,
     startup_status,
 };
+use crate::{buffer::GeneratedViewIdentity, content_alignment::ContentAlignment};
 
 impl App {
     /// Returns a complete optional-service report without starting a provider
@@ -87,7 +88,60 @@ impl App {
         };
         entries.push(ServiceHealthEntry::new("lsp", lsp_state, lsp_detail));
 
+        entries.push(self.logging_health());
         ServiceHealthSnapshot { entries }
+    }
+
+    /// Describes the diagnostic log of the process that owns this `App`.
+    ///
+    /// In persistent mode that is the host, so a newly attached client sees
+    /// how the process holding its workspace is actually logging rather than
+    /// the flags its own launch happened to carry.
+    fn logging_health(&self) -> ServiceHealthEntry {
+        logging_health_entry(crate::log::status())
+    }
+
+    /// Opens the log this process owns as an ordinary read-only buffer.
+    ///
+    /// It reads whichever file the installed logger owns, so in persistent
+    /// mode the host's `host.log` is what a client sees. No client-side trace
+    /// is opened or aggregated.
+    pub(super) fn open_log_buffer(&mut self) {
+        let Some(status) = crate::log::status() else {
+            self.error("no diagnostic log is installed for this process");
+            return;
+        };
+        let Some(path) = status.path else {
+            self.error("this process's diagnostic log has no file destination");
+            return;
+        };
+        // The queue is drained before reading so the records that explain what
+        // just happened are already on disk.
+        crate::log::flush(crate::log::FLUSH_BUDGET);
+        let text = match fs::read_to_string(&path) {
+            Ok(text) => text,
+            Err(error) => {
+                self.error(format!("cannot read {}: {error}", path.display()));
+                return;
+            }
+        };
+        let header = format!(
+            "{} · {} owner · {}
+
+",
+            path.display(),
+            status.role,
+            status.level.map_or_else(
+                || "not recording".to_owned(),
+                |level| level.label().to_ascii_lowercase()
+            )
+        );
+        self.open_virtual_page(
+            GeneratedViewIdentity::Log,
+            crate::buffer::LOG_NAME.to_owned(),
+            &format!("{header}{text}"),
+            ContentAlignment::default(),
+        );
     }
 
     pub(super) fn open_service_health(&mut self) {
@@ -965,5 +1019,100 @@ impl App {
     /// Hosts enter here so it is retained without replacing the action echo.
     pub fn report_host_error(&mut self, message: impl Into<String>) {
         self.error_from("Host", "Host operation failed", message);
+    }
+}
+
+/// Projects the installed logger's state onto one service-health row.
+///
+/// A free function over an owned status so both halves of the policy — a
+/// healthy log and a degraded one — are coverable without installing a
+/// process-wide logger in a test.
+fn logging_health_entry(status: Option<crate::log::Status>) -> ServiceHealthEntry {
+    let Some(status) = status else {
+        return ServiceHealthEntry::new(
+            "log",
+            ServiceState::Disabled,
+            "no diagnostic log is installed for this process",
+        );
+    };
+    let destination = status.path.as_ref().map_or_else(
+        || "no destination".to_owned(),
+        |path| path.display().to_string(),
+    );
+    match (status.failure, status.level) {
+        (Some(failure), _) => ServiceHealthEntry::new(
+            "log",
+            ServiceState::Degraded,
+            format!("{} owner · {destination} · {failure}", status.role),
+        ),
+        (None, Some(level)) => ServiceHealthEntry::new(
+            "log",
+            ServiceState::Ready,
+            format!(
+                "{} owner · {} · {destination}",
+                status.role,
+                level.label().to_ascii_lowercase()
+            ),
+        ),
+        (None, None) => ServiceHealthEntry::new(
+            "log",
+            ServiceState::Disabled,
+            format!("{} owner · {destination} · not recording", status.role),
+        ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::logging_health_entry;
+    use crate::{
+        log::{Level, Role, Status},
+        service_health::ServiceState,
+    };
+    use std::path::PathBuf;
+
+    #[test]
+    fn service_health_names_the_owner_level_and_resolved_path() {
+        let entry = logging_health_entry(Some(Status {
+            role: Role::Host,
+            level: Some(Level::Info),
+            path: Some(PathBuf::from("/work/api/.runyte/host.log")),
+            failure: None,
+        }));
+
+        assert_eq!(entry.service, "log");
+        assert_eq!(entry.state, ServiceState::Ready);
+        assert_eq!(
+            entry.detail,
+            "host owner · info · /work/api/.runyte/host.log"
+        );
+    }
+
+    #[test]
+    fn a_logger_that_could_not_be_installed_reports_degraded_with_its_failure() {
+        let entry = logging_health_entry(Some(Status {
+            role: Role::Standalone,
+            level: None,
+            path: Some(PathBuf::from("/work/api/.runyte/standalone-7.log")),
+            failure: Some("cannot open the diagnostic log: Is a directory".to_owned()),
+        }));
+
+        assert_eq!(entry.state, ServiceState::Degraded);
+        assert!(
+            entry.detail.contains("standalone owner"),
+            "{}",
+            entry.detail
+        );
+        assert!(entry.detail.contains("Is a directory"), "{}", entry.detail);
+    }
+
+    #[test]
+    fn a_process_without_a_logger_reports_it_plainly() {
+        let entry = logging_health_entry(None);
+        assert_eq!(entry.state, ServiceState::Disabled);
+        assert_eq!(
+            entry.detail,
+            "no diagnostic log is installed for this process"
+        );
     }
 }

@@ -519,6 +519,15 @@ impl App {
                         );
                     }
                     Err(error) => {
+                        // The one boundary that has the operation, the request
+                        // identity, and the complete error. Everything below
+                        // returned a typed result rather than reporting it.
+                        crate::log_warn!(
+                            "git",
+                            "Git operation failed: {error}";
+                            "operation" => operation.label(),
+                            "request" => id.get()
+                        );
                         #[cfg(unix)]
                         if let GitOperation::Mutate {
                             mutation: GitMutation::RemoveWorktree { plan, .. },

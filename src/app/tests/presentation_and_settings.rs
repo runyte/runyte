@@ -1383,6 +1383,24 @@ fn notification_commands_open_one_complete_buffer_and_acknowledge_history() {
     );
 }
 
+/// A process with no diagnostic log says so instead of opening an empty page.
+///
+/// Nothing in the library test binary installs a process-wide logger — the
+/// `log` module's own tests drive a `Logger` value directly — so this is the
+/// state every in-process editor is in.
+#[test]
+fn opening_the_log_without_one_installed_reports_it_rather_than_opening_a_page() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    let before = app.buffers.len();
+
+    app.execute_command("log-open").unwrap();
+
+    assert_eq!(app.buffers.len(), before, "no buffer was opened");
+    assert_ne!(app.active_buffer().display_name(), "[log]");
+    assert!(app.status.contains("no diagnostic log"), "{}", app.status);
+    assert!(app.status_error);
+}
+
 /// `acknowledge` in `NotificationCenter` only marks read what already
 /// existed when the buffer opened; anything that arrives afterward
 /// legitimately raises the count again. This confirms the buffer itself

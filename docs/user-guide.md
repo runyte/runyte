@@ -2319,6 +2319,8 @@ are enabled.
 :git-worktrees          open the repository worktree list
 :grammar [runyte]       report the active Runyte editing grammar
 :help [topic]           open the general manual, optionally at a named section (alias: ?)
+:log-open               open the diagnostic log owned by the process that
+                        holds this workspace
 :lsp-restart [language] restart stopped language servers
 :lsp-status             report language server state
 :notifications          open retained notification history (alias: not)
@@ -2434,6 +2436,122 @@ gets the usual refusal even when an earlier one had it. In persistent mode
 `:quit-here` detaches and leaves the host running, exactly as `:quit` does from
 the last pane.
 
+## Diagnostics and logging
+
+Four surfaces answer four different questions. The interaction line reports
+what the last command did. `:notifications` keeps bounded workspace-lifetime
+feedback in memory. `:service-health` describes optional services right now.
+The **diagnostic log** is the durable one: a small local file that outlives the
+process, so a failure can still be read after Runyte is gone. It is not a
+second notification system and not an audit trail — an actionable failure
+still reaches you through the ordinary surfaces whether or not a record was
+written.
+
+### Who owns the log
+
+Log ownership follows editor-state ownership.
+
+| Mode | Owner | File |
+| --- | --- | --- |
+| Standalone | the TUI process | `.runyte/standalone-<pid>.log` |
+| Persistent | the host process | `.runyte/host.log` |
+
+A standalone name carries the process ID because more than one standalone
+editor may open the same workspace; two of them can never write or rotate the
+same file. A host has one canonical name because exactly one host serves a
+workspace, and it keeps recording while no TUI is attached.
+
+A client never appends to a host's log and never forwards records over the
+local protocol: transport diagnostics must not depend on the transport being
+healthy. What the host observes about clients — attachment, detachment,
+refusal, disconnection, and rejected frames — is recorded by the host. Failures
+confined to a client's own input, rendering, or terminal setup are printed to
+stderr after the terminal has been restored, and are not claimed by the host
+log.
+
+Logs live under the configured runtime state boundary, normally `.runyte/`, and
+never under a Git-tracked directory.
+
+### Reading the log
+
+`:log-open` opens the log of the process that owns this workspace as an
+ordinary read-only `[log]` buffer, so it is searchable, splittable, and
+scrollable with the usual keys. In persistent mode that is the host's
+`host.log`; no client-side trace is opened or aggregated. `:service-health`
+names the owner role, active level, resolved path, and any logger failure.
+
+Each record is one line: an RFC 3339 timestamp, the level, the owning role and
+PID, the abbreviated workspace ID, the subsystem, the message, and any
+structured `key=value` context.
+
+```
+2026-08-27T12:34:56.789+02:00 WARN  host[8123] ws=a1b2c3d4 lsp: language server stopped: exited with 1 language=rust
+```
+
+### Levels and startup controls
+
+The default level records warnings and errors, so an unexpected first failure
+does not have to be reproduced, while routine operation produces no
+high-volume trace. Each `-v` raises the level and the cap is trace:
+
+| Flags | Level |
+| --- | --- |
+| *(none)* | warning |
+| `-v` | info |
+| `-vv` | debug |
+| `-vvv` and beyond | trace |
+
+`--log PATH` selects an explicit destination. Failing to honour it is a startup
+error, because silently choosing another file would make the requested capture
+misleading. An unwritable *default* destination only degrades logging: editing
+continues, a persistent host still serves, and the failure appears on stderr,
+as a notification, and in `:service-health`.
+
+In persistent mode, verbosity and destination are properties of host startup.
+`--serve`, `--session-start`, `--session-restart`, and the launch that creates
+a missing host pass them to that host. Attaching to an already-running host
+does not change its logger; supplying `-v` or `--log` there reports that the
+session kept its own configuration and that a restart is required:
+
+```sh
+runyte --session-restart -vv     # the only way to change a running host's logging
+```
+
+There is no runtime log-level command and no protocol message for logging.
+
+### What is recorded, and what never is
+
+Recorded: process startup, version, role, workspace identity, and orderly
+shutdown; host publication, retirement, and forced termination; client
+attachment, detachment, incompatibility, closure, and malformed or truncated
+frames; optional-service start, readiness, stop, restart, and failure,
+including language servers and filesystem watchers; terminal child exits; Git
+failures already converted into typed results; background services that end;
+and panics, including the thread, location, message, and backtrace when
+backtraces are enabled.
+
+Never recorded: routine keystrokes, rendered frames, successful editor
+commands, buffer edits, and complete language-server request or response
+bodies. Default and verbose logging never contains buffer text, selections,
+clipboard contents, typed or pasted text, terminal contents, credentials,
+environment-variable values, unrestricted subprocess output, or full LSP JSON.
+
+Records **do** contain local paths and process metadata, because those are what
+identify a failing local operation. Review a log before sharing it.
+
+### Bounds
+
+At most 4 MiB is kept in the active file, with one previous 4 MiB file beside
+it, named by appending `.1`. Rotation is owned by the same process that owns
+the file and happens both while a host runs and at startup when it inherits a
+full file, so a long-lived or often-restarted host cannot grow without bound.
+
+Producers never wait for disk. Records go through a bounded queue to a single
+background writer, and are dropped rather than delaying input, rendering,
+local-protocol handling, or service events; a later record summarizes how many
+were lost. Shutdown and panic paths flush within a bounded budget and never
+wait indefinitely.
+
 ## Configuration
 
 The default path is:
@@ -2477,9 +2595,11 @@ left untouched. A failed save also rolls back any live preview while keeping
 the choice popup open for correction or retry.
 
 `Space o s` or `:service-health` opens a read-only snapshot of syntax registry
-failures and the active document's LSP configuration and attachment. The
+failures, the active document's LSP configuration and attachment, and the
+diagnostic log's owner role, level, resolved path, and any failure. The
 report probes paths only and remains useful when every optional service is
-absent.
+absent. In persistent mode its `log` row describes the host that owns the
+workspace, not the client process that opened the report.
 
 ```yaml
 editor:

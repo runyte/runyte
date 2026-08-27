@@ -327,7 +327,7 @@ impl GitOperation {
         self.repository_key()
     }
 
-    fn label(&self) -> &'static str {
+    pub(crate) fn label(&self) -> &'static str {
         match self {
             Self::Discover { .. } => "discover repository",
             Self::Status { .. } => "refresh status",

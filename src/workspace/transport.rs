@@ -45,7 +45,7 @@ const MAX_CONNECTIONS: usize = 16;
 /// the budget measures a stall rather than a whole message: see
 /// `write_message_with_timeout`.
 const CONNECTION_WRITE_STALL: Duration = Duration::from_secs(2);
-const HOST_ID_LENGTH: usize = 32;
+const HOST_ID_LENGTH: usize = crate::workspace::WORKSPACE_ID_LENGTH;
 pub(crate) const MAX_HOST_NAME_BYTES: usize = 64;
 const MAX_METADATA_BYTES: usize = 64 * 1024;
 const MAX_STORED_NAME_BYTES: usize = 1024;
@@ -1229,7 +1229,7 @@ impl Drop for PrivateFileLock {
 
 /// Derives the transport identity for a canonical workspace project root.
 pub(super) fn workspace_id(project_root: &Path) -> String {
-    crate::hash::sha256_hex(&encode_path(project_root))[..HOST_ID_LENGTH].to_owned()
+    super::identity::workspace_id(project_root)
 }
 
 pub(super) fn registry_roots() -> Vec<PathBuf> {
