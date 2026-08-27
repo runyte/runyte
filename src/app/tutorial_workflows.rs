@@ -35,15 +35,19 @@ impl App {
                 state.lesson = 0;
                 state.motion_hints = None;
                 state.awaiting_reattach = false;
+                state.explorer_buffer = None;
+                state.terminal = None;
                 state.last_action = None;
                 self.reset_tutorial_scratch("", 0, true);
                 self.open_tutorial_motion_picker();
             }
             Some("sessions") => {
                 let state = self.tutorial.as_mut().unwrap();
-                state.lesson = 15;
+                state.lesson = crate::tutorial::LAST_LESSON;
                 state.motion_hints = Some(MotionHints::Both);
                 state.awaiting_reattach = false;
+                state.explorer_buffer = None;
+                state.terminal = None;
                 state.last_action = None;
                 self.list = None;
                 self.list_actions.clear();
@@ -90,6 +94,8 @@ impl App {
             exercise_pane,
             last_action: None,
             awaiting_reattach: false,
+            explorer_buffer: None,
+            terminal: None,
             scratch_selection: Selection::point(0),
             scratch_mode: Mode::Normal,
         });
@@ -118,23 +124,32 @@ impl App {
         let lesson = state.lesson;
         let scratch_selection = state.scratch_selection.clone();
         let scratch_mode = state.scratch_mode;
+        let explorer_buffer = state.explorer_buffer;
+        let tutorial_terminal = state.terminal;
 
         if self.panes[&instruction_pane].buffer != instruction_buffer {
             let pane = self.panes.get_mut(&instruction_pane).unwrap();
             pane.retarget(instruction_buffer);
             pane.replace_selection(Selection::point(0));
         }
-        if lesson == 10 {
-            self.prepare_tutorial_buffer_history();
-            return;
-        }
-        if lesson == 11 {
-            self.prepare_tutorial_buffer_history();
-            self.jump_in(true, true);
-            return;
-        }
-        if matches!(lesson, 13 | 14) {
+        if matches!(lesson, 16 | 17) {
             self.prepare_tutorial_jump_history(lesson);
+            return;
+        }
+        if lesson == 12
+            && let Some(explorer) = explorer_buffer
+        {
+            if self.panes[&exercise_pane].buffer != explorer {
+                self.prepare_tutorial_explorer_history(explorer);
+            }
+            return;
+        }
+        if lesson == 14
+            && let Some(terminal) = tutorial_terminal
+            && self.terminals.get(terminal).is_some()
+        {
+            self.activate_pane(exercise_pane);
+            self.show_terminal(terminal);
             return;
         }
         let expected_exercise_buffer = scratch_buffer;
@@ -205,7 +220,6 @@ impl App {
         }
         let lesson = state.lesson;
         let scratch = state.scratch_buffer;
-        let instruction = state.instruction_buffer;
         let instruction_pane = state.instruction_pane;
         let exercise_pane = state.exercise_pane;
         let action = state.last_action.as_ref().map(|(id, _)| *id);
@@ -214,6 +228,7 @@ impl App {
         let head = self.panes[&exercise_pane].head();
         let selections = self.panes[&exercise_pane].selection.len();
         let text = self.buffers[scratch].to_string();
+        let tutorial_terminal = state.terminal;
         if exercise_buffer == scratch {
             let selection = self.panes[&exercise_pane].selection.clone();
             let mode = self.mode;
@@ -221,46 +236,71 @@ impl App {
             state.scratch_selection = selection;
             state.scratch_mode = mode;
         }
-        if lesson != 10 && exercise_buffer != scratch {
+        if lesson != 11 && exercise_buffer != scratch {
             return;
         }
-        if lesson != 8 && self.active_pane != exercise_pane {
+        if lesson != 9 && self.active_pane != exercise_pane {
             return;
+        }
+        if lesson == 14
+            && action == Some(CommandId::Editor(EditorCommand::OpenTerminalList))
+            && let Some(terminal) = tutorial_terminal
+            && let Some(selected) = self
+                .list_actions
+                .iter()
+                .position(|action| matches!(action, ListAction::Terminal(id) if *id == terminal))
+            && let Some(list) = self.list.as_mut()
+        {
+            list.selected = selected;
         }
         let complete = match lesson {
             1 => text == "Hi hello\n" && self.mode == Mode::Normal,
             2 => head == 0 && action == Some(CommandId::Editor(EditorCommand::MoveLineStart)),
             3 => text == "red \n" && self.mode == Mode::Normal,
-            4 => text == "cat dog cat\n" && selections == 2 && self.mode == Mode::Select,
-            5 => text == "fox dog fox\n" && self.mode == Mode::Normal,
-            6 => text == "> one\n> two\n> three\n" && selections == 3 && self.mode == Mode::Normal,
-            7 => {
+            4 => {
+                text == "north\nsouth\n"
+                    && self.mode == Mode::Normal
+                    && action == Some(CommandId::Editor(EditorCommand::DeleteSelection))
+            }
+            5 => text == "cat dog cat\n" && selections == 2 && self.mode == Mode::Select,
+            6 => text == "fox dog fox\n" && self.mode == Mode::Normal,
+            7 => text == "> one\n> two\n> three\n" && selections == 3 && self.mode == Mode::Normal,
+            8 => {
                 selections == 1
                     && action == Some(CommandId::Editor(EditorCommand::KeepPrimarySelection))
             }
-            8 => {
+            9 => {
                 self.active_pane == instruction_pane
                     && action == Some(CommandId::Editor(EditorCommand::FocusWindowLeft))
             }
-            9 => {
+            10 => {
                 self.active_pane == exercise_pane
                     && action == Some(CommandId::Editor(EditorCommand::FocusWindowRight))
             }
-            10 => {
-                exercise_buffer == instruction
-                    && active_buffer == instruction
-                    && action == Some(CommandId::Editor(EditorCommand::JumpBackwardBuffer))
-            }
             11 => {
-                active_buffer == scratch
-                    && action == Some(CommandId::Editor(EditorCommand::JumpForwardBuffer))
+                exercise_buffer != scratch
+                    && active_buffer == exercise_buffer
+                    && self.buffers[exercise_buffer].is_directory()
+                    && action == Some(CommandId::Editor(EditorCommand::OpenExplorer))
             }
             12 => {
+                active_buffer == scratch
+                    && action == Some(CommandId::Editor(EditorCommand::JumpBackwardBuffer))
+            }
+            13 => {
+                self.terminal_of_pane(exercise_pane).is_some()
+                    && action == Some(CommandId::Editor(EditorCommand::OpenTerminal))
+            }
+            14 => {
+                tutorial_terminal.is_some_and(|terminal| self.terminals.get(terminal).is_none())
+                    && self.terminal_of_pane(exercise_pane).is_none()
+            }
+            15 => {
                 head == self.buffers[scratch].clamp_offset(self.buffers[scratch].len_chars(), false)
                     && action == Some(CommandId::Editor(EditorCommand::MoveFileEnd))
             }
-            13 => head == 0 && action == Some(CommandId::Editor(EditorCommand::JumpBackward)),
-            14 => {
+            16 => head == 0 && action == Some(CommandId::Editor(EditorCommand::JumpBackward)),
+            17 => {
                 head == self.buffers[scratch].clamp_offset(self.buffers[scratch].len_chars(), false)
                     && action == Some(CommandId::Editor(EditorCommand::JumpForward))
             }
@@ -268,6 +308,12 @@ impl App {
         };
         if !complete {
             return;
+        }
+        if lesson == 13 {
+            self.tutorial.as_mut().unwrap().terminal = self.terminal_of_pane(exercise_pane);
+        }
+        if lesson == 11 {
+            self.tutorial.as_mut().unwrap().explorer_buffer = Some(exercise_buffer);
         }
         self.advance_tutorial_lesson(lesson + 1);
     }
@@ -281,34 +327,38 @@ impl App {
         match lesson {
             2 => self.reset_tutorial_scratch("alpha beta\n", 6, true),
             3 => self.reset_tutorial_scratch("red blue\n", 4, true),
-            4 => self.reset_tutorial_scratch("cat dog cat\n", 0, true),
-            6 => self.reset_tutorial_scratch("one\ntwo\nthree\n", 0, true),
-            10 => self.prepare_tutorial_buffer_history(),
-            12 => self.reset_tutorial_scratch("first\nsecond\nthird\n", 0, true),
-            15 => self.reset_tutorial_scratch("persistent tutorial token\n", 0, true),
+            4 => self.reset_tutorial_scratch("north\ncenter\nsouth\n", 6, true),
+            5 => self.reset_tutorial_scratch("cat dog cat\n", 0, true),
+            7 => self.reset_tutorial_scratch("one\ntwo\nthree\n", 0, true),
+            15 => {
+                self.list = None;
+                self.terminal_action_menu = None;
+                self.reset_tutorial_scratch("first\nsecond\nthird\n", 0, true);
+            }
+            18 => self.reset_tutorial_scratch("persistent tutorial token\n", 0, true),
             _ => {}
         }
         self.refresh_tutorial_document();
     }
 
-    pub(super) fn prepare_tutorial_buffer_history(&mut self) {
+    fn prepare_tutorial_explorer_history(&mut self, explorer: usize) {
         let Some(state) = self.tutorial.as_ref() else {
             return;
         };
-        let instruction = state.instruction_buffer;
         let scratch = state.scratch_buffer;
         let exercise = state.exercise_pane;
+        let scratch_selection = state.scratch_selection.clone();
         self.activate_pane(exercise);
         let pane = self.panes.get_mut(&exercise).unwrap();
         pane.jumps = JumpList::default();
-        pane.retarget(instruction);
-        pane.replace_selection(Selection::point(0));
+        pane.retarget(scratch);
+        pane.replace_selection(scratch_selection);
         self.push_jump();
-        self.panes.get_mut(&exercise).unwrap().retarget(scratch);
+        self.panes.get_mut(&exercise).unwrap().retarget(explorer);
     }
 
     pub(super) fn prepare_tutorial_jump_history(&mut self, lesson: u8) {
-        debug_assert!(matches!(lesson, 13 | 14));
+        debug_assert!(matches!(lesson, 16 | 17));
         let Some(state) = self.tutorial.as_ref() else {
             return;
         };
@@ -325,7 +375,7 @@ impl App {
             .get_mut(&exercise)
             .unwrap()
             .replace_selection(Selection::point(end));
-        if lesson == 14 {
+        if lesson == 17 {
             self.jump_in(true, false);
         }
         let selection = self.panes[&exercise].selection.clone();
@@ -381,7 +431,7 @@ impl App {
         let Some(state) = self.tutorial.as_mut() else {
             return;
         };
-        if state.lesson == 15 && self.persistent_session {
+        if state.lesson == crate::tutorial::LAST_LESSON && self.persistent_session {
             state.awaiting_reattach = true;
             self.refresh_tutorial_document();
         }
@@ -391,9 +441,9 @@ impl App {
         let Some(state) = self.tutorial.as_mut() else {
             return;
         };
-        if state.lesson == 15 && state.awaiting_reattach {
+        if state.lesson == crate::tutorial::LAST_LESSON && state.awaiting_reattach {
             state.awaiting_reattach = false;
-            state.lesson = 16;
+            state.lesson = crate::tutorial::LAST_LESSON + 1;
             state.last_action = None;
             self.refresh_tutorial_document();
             self.status("persistent tutorial completed after reattachment");

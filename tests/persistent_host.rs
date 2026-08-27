@@ -555,7 +555,7 @@ async fn tutorial_persistent_lesson_completes_across_a_real_client_reattachment(
         HostResponse::Welcome { .. }
     ));
     let completed = response(&mut reattached).await;
-    assert!(frame_text(&completed).contains("COMPLETE"));
+    assert!(frame_text(&completed).contains("NEXT STEPS"));
     assert!(frame_text(&completed).contains("persistent tutorial token"));
 
     shutdown(&mut reattached, ClientRequest::ForceShutdown).await;
