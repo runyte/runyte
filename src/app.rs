@@ -17,8 +17,7 @@ use unicode_width::UnicodeWidthChar;
 
 #[cfg(unix)]
 use crate::workspace::{
-    MAX_WORKSPACE_NUMBER, SessionPreview, SessionPreviewPaneKind, WorkspaceEvent, WorkspaceRow,
-    WorkspaceServiceHandle,
+    MAX_WORKSPACE_NUMBER, SessionPreview, WorkspaceEvent, WorkspaceRow, WorkspaceServiceHandle,
 };
 
 use crate::{
@@ -912,11 +911,101 @@ struct GeneralWorktreeRow {
     worktree: Worktree,
 }
 
+/// A persistent session standing on something a deletion is about to remove.
+///
+/// A session is meaningless without the worktree it was opened on, and a
+/// worktree is meaningless without its branch, so removing either takes the
+/// session with it. This is what the confirmation names so the compound action
+/// is visible before it is accepted, rather than discovered afterwards as a
+/// host left running on a directory that is no longer there.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct AttachedSession {
+    name: String,
+    number: Option<u8>,
+    /// The project root as the catalog holds it, resolved while the directory
+    /// still exists. The record has to be reachable after the directory is
+    /// gone, and a path can no longer be canonicalized then.
+    root: PathBuf,
+}
+
+impl AttachedSession {
+    /// How the session is named in a confirmation: by its digit when it has
+    /// one, because that is the name the reader presses.
+    fn describe(&self) -> String {
+        match self.number {
+            Some(number) => format!("session {number} ({})", self.name),
+            None => format!("session {}", self.name),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct WorktreeRemovalConfirmation {
     plan: WorktreeRemovalPlan,
+    /// The running session on this worktree, when there is one.
+    session: Option<AttachedSession>,
     input: String,
     cursor: usize,
+}
+
+/// How far a compound worktree removal has got.
+///
+/// The host owns the worktree directory and the runtime state inside it, so it
+/// has to be down before Git is asked to remove that directory. Each stage
+/// therefore waits for the previous one's event rather than being issued
+/// together with it.
+#[cfg(unix)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum WorktreeTeardownStage {
+    /// Waiting for the session to stop. Nothing on disk has changed yet, so a
+    /// failure here leaves the worktree exactly as it was.
+    Stopping,
+    /// Waiting for Git to report that the directory is gone. With the Git
+    /// service attached the removal is queued rather than performed, and its
+    /// guarded re-check can still refuse; nothing below this level may happen
+    /// until it has actually succeeded.
+    Removing,
+    /// The worktree is gone; only its history record is still to follow.
+    Forgetting,
+}
+
+#[cfg(unix)]
+impl WorktreeTeardown {
+    /// Whether a stop result for `selector` belongs to this teardown. The
+    /// catalog answers with the selector it was given, which is the resolved
+    /// root the teardown asked to stop.
+    fn awaits_stop(&self, selector: &Path) -> bool {
+        self.stage == WorktreeTeardownStage::Stopping && self.root == selector
+    }
+
+    /// Whether a finished `git worktree remove` is this teardown's own. The
+    /// mutation is matched by the path it removed, which is the plan's, not the
+    /// resolved catalog root the stop and forget use.
+    fn awaits_removal(&self, path: &Path) -> bool {
+        self.stage == WorktreeTeardownStage::Removing && self.plan.path == path
+    }
+
+    fn awaits_forget(&self, path: &Path) -> bool {
+        self.stage == WorktreeTeardownStage::Forgetting && self.root == path
+    }
+}
+
+#[cfg(unix)]
+#[derive(Clone, Debug)]
+struct WorktreeTeardown {
+    plan: WorktreeRemovalPlan,
+    authorization: DeletionAuthorization,
+    /// The session being taken down, or `None` when the worktree had only a
+    /// history record and no running host.
+    session: Option<AttachedSession>,
+    /// The catalog identity to forget once the directory is gone. Always
+    /// present, because a worktree that was ever opened as a workspace holds a
+    /// number whether or not a host is running in it now.
+    root: PathBuf,
+    /// The branch to delete once its worktree is gone, when this teardown was
+    /// reached from the branch list rather than the worktree list.
+    branch: Option<BranchDeletionPlan>,
+    stage: WorktreeTeardownStage,
 }
 
 #[cfg(unix)]
@@ -928,6 +1017,11 @@ struct PendingWorktreeRemovalCheck {
     /// been accepted, the second health check belongs to that explicit action
     /// even though its overlay has closed.
     origin: Option<(usize, u64)>,
+    /// The branch whose deletion this removal is one level of, when it was
+    /// reached from the branch list. It also settles which list the origin
+    /// gate reads: the row still under the cursor is a branch there, not a
+    /// worktree.
+    branch: Option<BranchDeletionPlan>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -956,9 +1050,25 @@ impl GitDiscardConfirmation {
     }
 }
 
+/// The levels below a branch that deleting it has to take with it.
+///
+/// A worktree is meaningless without the branch it has checked out, so the
+/// branch list no longer refuses a checked-out branch and asks the reader to
+/// go and dismantle it by hand. It offers the whole cascade instead, named in
+/// full before it is accepted.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct BranchCascade {
+    worktree: WorktreeRemovalPlan,
+    /// The running session on that worktree, when there is one.
+    session: Option<AttachedSession>,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct BranchDeletionConfirmation {
     plan: BranchDeletionPlan,
+    /// The worktree and session that go with this branch, when it has one
+    /// checked out.
+    cascade: Option<BranchCascade>,
     input: String,
     cursor: usize,
 }
@@ -1004,12 +1114,25 @@ struct BranchSwitchConfirmation {
 }
 
 impl BranchDeletionConfirmation {
+    /// A cascade always asks for typed text. What the branch tip alone would
+    /// have settled for says nothing about the worktree and the session that
+    /// go with it.
     fn typed(&self) -> bool {
-        self.plan.required_authorization == DeletionAuthorization::Typed
+        self.plan.required_authorization == DeletionAuthorization::Typed || self.cascade.is_some()
     }
 
     fn message(&self) -> String {
         let mut sentences = vec![format!("Delete branch {}.", self.plan.branch)];
+        if let Some(cascade) = &self.cascade {
+            sentences.push("This also:".to_owned());
+            if let Some(session) = &cascade.session {
+                sentences.push(format!("  · stops and forgets {}", session.describe()));
+            }
+            sentences.push(format!(
+                "  · removes worktree {}",
+                crate::git::display_path(&cascade.worktree.path)
+            ));
+        }
         if !self.plan.retaining_branches.is_empty() {
             sentences.push(format!(
                 "Its commits are retained by local branch{} {}.",
@@ -1036,7 +1159,9 @@ impl BranchDeletionConfirmation {
                 upstream.name
             ));
         }
-        if self.typed() {
+        if self.cascade.is_some() {
+            sentences.push(format!("Type {} exactly to continue.", self.plan.branch));
+        } else if self.typed() {
             sentences.push(format!(
                 "Its tip is not retained by another known branch; type {} exactly to continue.",
                 self.plan.branch
@@ -1065,8 +1190,12 @@ struct ConfirmationOverlay {
 }
 
 impl WorktreeRemovalConfirmation {
+    /// A compound action always asks for typed text, whatever the worktree's
+    /// own Git state would have settled for on its own. Stopping somebody's
+    /// running editor is not a thing to agree to with one keystroke meant for
+    /// a clean directory.
     fn typed(&self) -> bool {
-        self.plan.required_authorization == DeletionAuthorization::Typed
+        self.plan.required_authorization == DeletionAuthorization::Typed || self.session.is_some()
     }
 
     fn expected(&self) -> String {
@@ -1081,13 +1210,17 @@ impl WorktreeRemovalConfirmation {
             || "No branch will be deleted".to_owned(),
             |branch| format!("Branch {branch} will remain"),
         );
-        let mut lines = vec![
-            format!(
-                "Remove worktree {}.",
-                crate::git::display_path(&self.plan.path)
-            ),
-            format!("{branch_note}."),
-        ];
+        let mut lines = vec![format!(
+            "Remove worktree {}.",
+            crate::git::display_path(&self.plan.path)
+        )];
+        if let Some(session) = &self.session {
+            lines.push(format!(
+                "This also stops and forgets {}.",
+                session.describe()
+            ));
+        }
+        lines.push(format!("{branch_note}."));
         if let Some(upstream) = &self.plan.upstream {
             let state = upstream.divergence.map_or_else(
                 || "is gone".to_owned(),
@@ -2236,6 +2369,9 @@ pub struct App {
     git_worktree_removal: Option<WorktreeRemovalConfirmation>,
     #[cfg(unix)]
     pending_worktree_removal: Option<PendingWorktreeRemovalCheck>,
+    /// A confirmed removal partway through taking its session down with it.
+    #[cfg(unix)]
+    worktree_teardown: Option<WorktreeTeardown>,
     #[cfg(unix)]
     worktree_removal_generation: u64,
     git_worktree_start: Option<String>,
@@ -2568,6 +2704,8 @@ impl App {
             #[cfg(unix)]
             pending_worktree_removal: None,
             #[cfg(unix)]
+            worktree_teardown: None,
+            #[cfg(unix)]
             worktree_removal_generation: 0,
             git_worktree_start: None,
             git_worktree_new_branch: None,
@@ -2783,114 +2921,102 @@ fn terminal_preview(session: &TerminalSession) -> String {
 }
 
 #[cfg(unix)]
+/// The manager's right column: what this session is, as a fixed set of fields.
+///
+/// Every row answers the same questions in the same order, so two sessions can
+/// be compared by reading down one place rather than across two sentences. A
+/// value nothing can answer is `-`, which is deliberately not the same as `0`:
+/// a host that did not reply to the bounded health request may still be
+/// holding unsaved work, and a row must not read as clean because it was
+/// quiet.
+///
+/// Buffer and terminal *contents* are not here. They were, and at this width a
+/// snippet of a pane is neither readable as text nor useful as identity.
 fn session_picker_preview(
     row: &WorkspaceRow,
     preview: Option<&Result<SessionPreview, String>>,
     loading: bool,
 ) -> String {
-    let mut lines = vec![
-        format!("{} · {}", row.display_name(), row.state_label()),
-        row.project_root.display().to_string(),
-    ];
-    let mut health = Vec::new();
-    if let Some(count) = row.unsaved_buffers.filter(|count| *count > 0) {
-        health.push(format!("{count} unsaved"));
+    // A successful health reply populates every live field, including
+    // confirmed zeroes. A timed-out reply leaves them unknown, and that is a
+    // different answer from zero.
+    let health_available = row.unsaved_buffers.is_some()
+        && row.open_buffers.is_some()
+        && row.pending_wait_requests.is_some()
+        && row.live_terminals.is_some()
+        && row.terminal_sessions.is_some()
+        && row.interactive_attached.is_some();
+    let mut status = row.state_label();
+    if row.missing_directory {
+        status.push_str(" · missing directory");
     }
-    if let Some(count) = row.live_terminals.filter(|count| *count > 0) {
-        health.push(format!(
-            "{count} live terminal{}",
-            if count == 1 { "" } else { "s" }
-        ));
+    if row.running && row.incompatible_protocol.is_none() && !health_available {
+        status.push_str(" · health unavailable");
     }
-    if let Some(count) = row.pending_wait_requests.filter(|count| *count > 0) {
-        health.push(format!("{count} waiting"));
-    }
-    if let Some(attached) = row.interactive_attached {
-        health.push(if attached {
-            "TUI attached".to_owned()
-        } else {
-            "detached".to_owned()
-        });
-    }
-    if !health.is_empty() {
-        lines.push(health.join(" · "));
-    }
-    lines.push(String::new());
 
-    if !row.running {
-        lines.push("No live editor state; opening this row starts the session.".to_owned());
-        return lines.join("\n");
+    let terminals = match (row.live_terminals, row.terminal_sessions) {
+        (Some(live), Some(total)) => {
+            let exited = total.saturating_sub(live);
+            if exited > 0 {
+                format!("{live} ({exited} exited)")
+            } else {
+                live.to_string()
+            }
+        }
+        _ => "-".to_owned(),
+    };
+    let count =
+        |value: Option<usize>| value.map_or_else(|| "-".to_owned(), |value| value.to_string());
+    let attached = row.interactive_attached.map_or_else(
+        || "-".to_owned(),
+        |attached| if attached { "yes" } else { "no" }.to_owned(),
+    );
+    // Panes are the one field a host answers only when asked, because the
+    // request that carries them is made for the selected row alone.
+    let panes = match (row.running, preview, loading) {
+        (false, _, _) => "-".to_owned(),
+        (true, Some(Ok(preview)), _) => preview.layout_panes.to_string(),
+        (true, Some(Err(_)), _) | (true, None, false) => "-".to_owned(),
+        (true, None, true) => "…".to_owned(),
+    };
+    let git = row.git.as_ref();
+    let branch = git
+        .and_then(|facts| facts.branch.clone())
+        .unwrap_or_else(|| "-".to_owned());
+    let worktree = git
+        .and_then(|facts| facts.worktree.as_ref())
+        .map_or_else(|| "-".to_owned(), |path| path.display().to_string());
+    let remote = git
+        .and_then(|facts| facts.remote.clone())
+        .unwrap_or_else(|| "-".to_owned());
+
+    let mut lines = vec![row.project_root.display().to_string(), String::new()];
+    for (field, value) in [
+        ("Status", status),
+        ("Panes", panes),
+        ("Terminals", terminals),
+        ("Buffers", count(row.open_buffers)),
+        ("Unsaved", count(row.unsaved_buffers)),
+        ("Waiting", count(row.pending_wait_requests)),
+        ("Attached", attached),
+        ("Branch", branch),
+        ("Worktree", worktree),
+        ("Repo", remote),
+    ] {
+        lines.push(format!("{field:<10}  {value}"));
     }
     if let Some(protocol) = row.incompatible_protocol {
-        lines.push(format!(
-            "Preview unavailable: this host uses protocol {protocol}."
-        ));
-        return lines.join("\n");
-    }
-    if loading {
-        lines.push("Loading live pane preview…".to_owned());
-        return lines.join("\n");
-    }
-    let Some(preview) = preview else {
-        lines.push("Select this session to load its live pane preview.".to_owned());
-        return lines.join("\n");
-    };
-    let preview = match preview {
-        Ok(preview) => preview,
-        Err(error) => {
-            lines.push(format!("Preview unavailable: {error}"));
-            return lines.join("\n");
-        }
-    };
-
-    let shown = preview.panes.len();
-    if shown == preview.layout_panes {
-        lines.push(format!("{shown} pane{}", if shown == 1 { "" } else { "s" }));
-    } else {
-        lines.push(format!(
-            "{shown} pane{} shown · {} in layout",
-            if shown == 1 { "" } else { "s" },
-            preview.layout_panes
-        ));
-    }
-    if preview.omitted_panes > 0 {
-        lines.push(format!("+ {} more visible panes", preview.omitted_panes));
-    }
-
-    for pane in &preview.panes {
         lines.push(String::new());
-        let marker = if pane.active { "●" } else { " " };
-        let state = match pane.kind {
-            SessionPreviewPaneKind::Buffer { dirty, read_only } => format!(
-                "{}{}",
-                if dirty { " [+]" } else { "" },
-                if read_only { " [RO]" } else { "" }
-            ),
-            SessionPreviewPaneKind::Terminal { live } => {
-                if live { " · running" } else { " · exited" }.to_owned()
-            }
-        };
-        lines.push(format!("{marker} {}{state}", pane.title));
-        if pane.lines.is_empty() {
-            lines.push("    (empty)".to_owned());
-            continue;
-        }
-        for (index, text) in pane.lines.iter().enumerate() {
-            if let Some(start) = pane.start_line {
-                lines.push(format!("  {:>4}  {text}", start + index));
-            } else {
-                lines.push(format!("    {text}"));
-            }
-        }
-    }
-
-    if !preview.other_resources.is_empty() || preview.omitted_resources > 0 {
+        lines.push(format!(
+            "This host speaks protocol {protocol}; nothing but stopping it can reach it."
+        ));
+    } else if !row.running {
         lines.push(String::new());
-        let mut other = preview.other_resources.join(" · ");
-        if preview.omitted_resources > 0 {
-            other.push_str(&format!(" · +{}", preview.omitted_resources));
-        }
-        lines.push(format!("Other: {other}"));
+        lines.push("No live editor state; opening this row starts the session.".to_owned());
+    }
+    if let Some(Err(error)) = preview {
+        lines.push(String::new());
+        lines.push(format!("Pane count unavailable: {error}"));
     }
     lines.join("\n")
 }

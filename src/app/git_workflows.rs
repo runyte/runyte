@@ -3,24 +3,25 @@
 //! Editor coordination for Git status, history, branches, worktrees, and mutations.
 
 #[cfg(unix)]
-use super::{PendingWorktreeRemovalCheck, WorkspaceRow};
+use super::{PendingWorktreeRemovalCheck, WorkspaceRow, WorktreeTeardown, WorktreeTeardownStage};
 
 // Application-module dependencies:
 use super::{
-    App, Axis, BindingTarget, BlameLine, BlameRequest, BlameSource, Branch,
-    BranchDeletionConfirmation, BranchDeletionPlan, BranchSwitch, BranchSwitchConfirmation, Buffer,
-    BufferKind, BufferRevisionGuard, COMMIT_INSTRUCTIONS, ColonCommand, CommitDetail,
-    CommitSearchResult, CommitSummary, DeletionAuthorization, DiffScope, DiffSession, DiffSide,
-    Duration, FileComparison, GeneralWorktreeRow, GeneratedViewIdentity, GitDiscardConfirmation,
-    GitMutation, GitOperation, GitProvider, GitRequestId, GitResponse, GitServiceEvent,
-    GitServiceHandle, GitServiceProgress, GitServiceState, GitStashConfirmation, GitTracker,
-    HashMap, HashSet, Instant, KeyCode, KeyStroke, LineChange, ListAction, ListPicker, LogCursor,
-    LogPage, LogRequest, LogViewRequest, MAX_BLAME_INPUT_BYTES, MAX_BLAME_LINES, MAX_DIFF_BYTES,
-    Mode, PartialStageSelection, PatchHunk, Path, PathBuf, PickerItem, PromptKind,
-    PullRebaseConfirmation, RefreshSpec, Repository, RepositoryGeneration, RepositorySnapshot,
-    Result, Selection, StashEntry, StashMutation, StashScope, StatusSide, WorkspaceSwitchRequest,
-    Worktree, WorktreeCreate, WorktreeRemovalConfirmation, WorktreeRemovalPlan, buffer_language,
-    commit_message_body, is_refreshed_projection, selection_is_deliberate,
+    App, AttachedSession, Axis, BindingTarget, BlameLine, BlameRequest, BlameSource, Branch,
+    BranchCascade, BranchDeletionConfirmation, BranchDeletionPlan, BranchSwitch,
+    BranchSwitchConfirmation, Buffer, BufferKind, BufferRevisionGuard, COMMIT_INSTRUCTIONS,
+    ColonCommand, CommitDetail, CommitSearchResult, CommitSummary, DeletionAuthorization,
+    DiffScope, DiffSession, DiffSide, Duration, FileComparison, GeneralWorktreeRow,
+    GeneratedViewIdentity, GitDiscardConfirmation, GitMutation, GitOperation, GitProvider,
+    GitRequestId, GitResponse, GitServiceEvent, GitServiceHandle, GitServiceProgress,
+    GitServiceState, GitStashConfirmation, GitTracker, HashMap, HashSet, Instant, KeyCode,
+    KeyStroke, LineChange, ListAction, ListPicker, LogCursor, LogPage, LogRequest, LogViewRequest,
+    MAX_BLAME_INPUT_BYTES, MAX_BLAME_LINES, MAX_DIFF_BYTES, Mode, PartialStageSelection, PatchHunk,
+    Path, PathBuf, PickerItem, PromptKind, PullRebaseConfirmation, RefreshSpec, Repository,
+    RepositoryGeneration, RepositorySnapshot, Result, Selection, StashEntry, StashMutation,
+    StashScope, StatusSide, WorkspaceSwitchRequest, Worktree, WorktreeCreate,
+    WorktreeRemovalConfirmation, WorktreeRemovalPlan, buffer_language, commit_message_body,
+    is_refreshed_projection, selection_is_deliberate,
 };
 
 /// Git-service bookkeeping and semantic row identities owned by the editor's
@@ -71,6 +72,15 @@ pub(super) struct GitWorkflowState {
     log_requests: HashMap<GitRequestId, LogViewRequest>,
     pub(super) branch_deletion_request: Option<DeletionPreflight<String>>,
     pub(super) worktree_removal_request: Option<DeletionPreflight<PathBuf>>,
+    /// A branch deletion reached through the checkout it has to remove first.
+    /// Set while that checkout's removal is being prepared, and consumed by
+    /// the branch preflight that follows it.
+    pub(super) branch_cascade: Option<DeletionPreflight<BranchCascadeTarget>>,
+    /// The reviewed removal of that checkout, held between the two preflights.
+    pub(super) branch_cascade_worktree: Option<WorktreeRemovalPlan>,
+    /// The one sentence a completed cascade leaves behind, held until the
+    /// branch mutation it belongs to reports.
+    pub(super) branch_cascade_summary: Option<String>,
     blame_rows: Vec<BlameLine>,
     stash_rows: Vec<StashEntry>,
     patch_hunks: HashMap<usize, Vec<PatchHunk>>,
@@ -104,6 +114,9 @@ impl Default for GitWorkflowState {
             log_requests: HashMap::new(),
             branch_deletion_request: None,
             worktree_removal_request: None,
+            branch_cascade: None,
+            branch_cascade_worktree: None,
+            branch_cascade_summary: None,
             blame_rows: Vec::new(),
             stash_rows: Vec::new(),
             patch_hunks: HashMap::new(),
@@ -119,6 +132,14 @@ impl Default for GitWorkflowState {
 /// the newest request, the originating projection remains active, and no later
 /// keyboard or text intent has happened. That prevents a delayed ordinary
 /// Enter confirmation from consuming Enter in an unrelated view.
+/// What a branch cascade's first preflight is about: the branch being deleted
+/// and the checkout that has to go before it can be.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct BranchCascadeTarget {
+    pub(super) branch: String,
+    pub(super) worktree: PathBuf,
+}
+
 #[derive(Clone, Debug)]
 pub(super) struct DeletionPreflight<T> {
     pub(super) id: GitRequestId,
@@ -548,6 +569,26 @@ impl App {
                     })
             }
             GitOperation::PrepareWorktreeRemoval { path, .. } => {
+                // The same operation serves two views. A cascade's removal is
+                // reviewed while a branch row is under the cursor, so it is
+                // matched against the branch list rather than the worktree one.
+                if let Some(pending) = self.git_state.branch_cascade.as_ref()
+                    && pending.id == id
+                {
+                    let pending = self.git_state.branch_cascade.take().unwrap();
+                    let valid = pending.target.worktree == *path
+                        && pending.interaction_generation == self.next_action_id
+                        && self.active().buffer == pending.source_buffer
+                        && self.selected_branch_name().as_deref()
+                            == Some(pending.target.branch.as_str())
+                        && response.is_none_or(|response| {
+                            matches!(response, GitResponse::PreparedWorktreeRemoval(plan) if plan.path == *path)
+                        });
+                    if valid {
+                        self.git_state.branch_cascade = Some(pending);
+                    }
+                    return valid;
+                }
                 let Some(pending) = self.git_state.worktree_removal_request.as_ref() else {
                     return false;
                 };
@@ -611,7 +652,12 @@ impl App {
                 self.open_branch_deletion_confirmation(plan);
             }
             GitResponse::PreparedWorktreeRemoval(plan) => {
-                self.open_worktree_removal_confirmation(plan);
+                match self.git_state.branch_cascade.take() {
+                    // The checkout is reviewed; now the branch above it is,
+                    // and the two plans meet in one confirmation.
+                    Some(pending) => self.request_cascaded_branch_deletion(pending, plan),
+                    None => self.open_worktree_removal_confirmation(plan),
+                }
             }
             GitResponse::Log { request, page } => {
                 if request.cursor.is_some()
@@ -795,6 +841,13 @@ impl App {
             GitMutation::CreateWorktree(request) => Some(request.destination.clone()),
             _ => None,
         };
+        // Captured before the message match consumes `mutation`, so a cascade
+        // waiting on this removal can be answered by either outcome below.
+        #[cfg(unix)]
+        let removed_worktree = match &mutation {
+            GitMutation::RemoveWorktree { plan, .. } => Some(plan.path.clone()),
+            _ => None,
+        };
         if let GitMutation::PartialStage(request) = &mutation
             && let (Some((buffer, _)), Some(guard)) = (request.buffer, request.guard.as_ref())
             && let Some(index) = buffer.index()
@@ -858,6 +911,16 @@ impl App {
                 }
             );
             self.mark_action_feedback_failed(action, &message);
+            // A refused or failed removal ends its cascade here. The directory
+            // is still there, so the record behind it is still true and the
+            // branch above it is still checked out.
+            #[cfg(unix)]
+            if removed_worktree
+                .as_deref()
+                .is_some_and(|path| self.awaits_worktree_removal(path))
+            {
+                self.abandon_worktree_teardown();
+            }
             self.error_from("Git", "Git mutation failed", message);
             return;
         }
@@ -879,9 +942,11 @@ impl App {
                 GitMutation::CreateBranch { branch, start } => {
                     format!("created {branch} from {start}")
                 }
-                GitMutation::DeleteBranch { plan, .. } => {
-                    format!("deleted branch {}", plan.branch)
-                }
+                GitMutation::DeleteBranch { plan, .. } => self
+                    .git_state
+                    .branch_cascade_summary
+                    .take()
+                    .unwrap_or_else(|| format!("deleted branch {}", plan.branch)),
                 GitMutation::Commit { .. } => "committed".to_owned(),
                 GitMutation::Pull => "pull completed".to_owned(),
                 GitMutation::RebaseOntoUpstream => "replayed onto the upstream".to_owned(),
@@ -917,6 +982,34 @@ impl App {
         {
             self.attach_created_worktree(destination);
         }
+        // Only a plainly completed removal takes the cascade further. An
+        // uncertain outcome has not established that the directory is gone,
+        // and forgetting its record on that basis would strand the number the
+        // record still holds.
+        #[cfg(unix)]
+        if state == GitServiceState::Completed
+            && removed_worktree
+                .as_deref()
+                .is_some_and(|path| self.awaits_worktree_removal(path))
+        {
+            self.finish_worktree_removal_step();
+        }
+        #[cfg(unix)]
+        if state != GitServiceState::Completed
+            && removed_worktree
+                .as_deref()
+                .is_some_and(|path| self.awaits_worktree_removal(path))
+        {
+            self.abandon_worktree_teardown();
+        }
+    }
+
+    /// Whether the cascade in flight is waiting on this exact removal.
+    #[cfg(unix)]
+    fn awaits_worktree_removal(&self, path: &Path) -> bool {
+        self.worktree_teardown
+            .as_ref()
+            .is_some_and(|teardown| teardown.awaits_removal(path))
     }
 
     fn reload_clean_repository_buffers(&mut self) {
@@ -2162,15 +2255,20 @@ impl App {
 
     fn open_worktree_removal_confirmation(&mut self, plan: WorktreeRemovalPlan) {
         #[cfg(unix)]
-        if self.request_worktree_session_check(plan.clone(), None) {
+        if self.request_worktree_session_check(plan.clone(), None, None) {
             return;
         }
-        self.show_worktree_removal_confirmation(plan);
+        self.show_worktree_removal_confirmation(plan, None);
     }
 
-    fn show_worktree_removal_confirmation(&mut self, plan: WorktreeRemovalPlan) {
+    fn show_worktree_removal_confirmation(
+        &mut self,
+        plan: WorktreeRemovalPlan,
+        session: Option<AttachedSession>,
+    ) {
         let confirmation = WorktreeRemovalConfirmation {
             plan,
+            session,
             input: String::new(),
             cursor: 0,
         };
@@ -2185,7 +2283,7 @@ impl App {
         authorization: DeletionAuthorization,
     ) {
         #[cfg(unix)]
-        if self.request_worktree_session_check(plan.clone(), Some(authorization)) {
+        if self.request_worktree_session_check(plan.clone(), Some(authorization), None) {
             return;
         }
         self.apply_guarded_worktree_removal(plan, authorization);
@@ -2241,6 +2339,7 @@ impl App {
         &mut self,
         plan: WorktreeRemovalPlan,
         authorization: Option<DeletionAuthorization>,
+        branch: Option<BranchDeletionPlan>,
     ) -> bool {
         let Some(service) = self.ports.workspace_service.as_ref() else {
             return false;
@@ -2256,6 +2355,7 @@ impl App {
                     plan,
                     authorization,
                     origin,
+                    branch,
                 });
                 self.status("checking the worktree session for unsaved buffers…");
             }
@@ -2278,6 +2378,7 @@ impl App {
             plan,
             authorization,
             origin,
+            branch,
         }) = self.pending_worktree_removal.take()
         else {
             return;
@@ -2285,12 +2386,21 @@ impl App {
         if plan.path != path {
             return;
         }
-        if let Some((source_buffer, interaction_generation)) = origin
-            && (self.active().buffer != source_buffer
+        if let Some((source_buffer, interaction_generation)) = origin {
+            // The row still under the cursor is a branch when the removal was
+            // reached from the branch list, and a worktree when it was not.
+            let still_selected = match &branch {
+                Some(branch) => {
+                    self.selected_branch_name().as_deref() == Some(branch.branch.as_str())
+                }
+                None => self.selected_worktree_path().as_deref() == Some(plan.path.as_path()),
+            };
+            if self.active().buffer != source_buffer
                 || self.next_action_id != interaction_generation
-                || self.selected_worktree_path().as_deref() != Some(plan.path.as_path()))
-        {
-            return;
+                || !still_selected
+            {
+                return;
+            }
         }
         match result {
             Err(error) => {
@@ -2310,11 +2420,182 @@ impl App {
                     if count == 1 { "" } else { "s" }
                 ));
             }
-            Ok(_) => match authorization {
-                Some(authorization) => self.apply_guarded_worktree_removal(plan, authorization),
-                None => self.show_worktree_removal_confirmation(plan),
-            },
+            Ok(row) => {
+                let session = row.and_then(|row| {
+                    row.running.then(|| AttachedSession {
+                        name: row.display_name(),
+                        number: row.number,
+                        // Resolved now, while the directory is still there: a
+                        // path cannot be canonicalized once Git has removed it,
+                        // and the catalog record has to stay reachable.
+                        root: row
+                            .project_root
+                            .canonicalize()
+                            .unwrap_or(row.project_root.clone()),
+                    })
+                });
+                match (authorization, branch) {
+                    (Some(authorization), branch) => {
+                        self.begin_worktree_teardown(plan, authorization, session, branch)
+                    }
+                    (None, Some(branch)) => self.show_branch_deletion_confirmation(
+                        branch,
+                        Some(BranchCascade {
+                            worktree: plan,
+                            session,
+                        }),
+                    ),
+                    (None, None) => self.show_worktree_removal_confirmation(plan, session),
+                }
+            }
         }
+    }
+
+    /// Takes a confirmed worktree down, session first.
+    ///
+    /// The order is not a preference. The host owns the worktree directory and
+    /// the runtime state under it, so `git worktree remove` would be asked to
+    /// delete a tree a live process is still writing into. Every stage waits
+    /// for the previous one to report, and a failure stops the cascade where it
+    /// happened rather than continuing into the level below.
+    #[cfg(unix)]
+    fn begin_worktree_teardown(
+        &mut self,
+        plan: WorktreeRemovalPlan,
+        authorization: DeletionAuthorization,
+        session: Option<AttachedSession>,
+        branch: Option<BranchDeletionPlan>,
+    ) {
+        let root = session.as_ref().map_or_else(
+            || {
+                plan.path
+                    .canonicalize()
+                    .unwrap_or_else(|_| plan.path.clone())
+            },
+            |session| session.root.clone(),
+        );
+        let teardown = WorktreeTeardown {
+            plan: plan.clone(),
+            authorization,
+            session: session.clone(),
+            root,
+            branch,
+            stage: WorktreeTeardownStage::Stopping,
+        };
+        match session {
+            Some(session) => {
+                self.worktree_teardown = Some(teardown);
+                self.request_session_stop(session.root, false);
+                // A stop that could not even be sent has no event coming, so
+                // the cascade is abandoned here rather than left waiting on a
+                // reply while the reader believes it is under way.
+                if self.status_error {
+                    self.worktree_teardown = None;
+                }
+            }
+            // Nothing is running, so the directory can go immediately. Its
+            // history record still follows: a worktree opened as a workspace
+            // holds a number whether or not a host is up in it now, and
+            // leaving that record behind is what stranded the number in the
+            // first place.
+            None => {
+                self.worktree_teardown = Some(WorktreeTeardown {
+                    stage: WorktreeTeardownStage::Forgetting,
+                    ..teardown
+                });
+                self.continue_worktree_teardown_after_stop();
+            }
+        }
+    }
+
+    /// Removes the directory and asks for its record to be forgotten.
+    ///
+    /// A refused or failed removal ends the cascade here: the directory is
+    /// still there, so its record is still true and must not be dropped.
+    #[cfg(unix)]
+    pub(super) fn continue_worktree_teardown_after_stop(&mut self) {
+        let Some(teardown) = self.worktree_teardown.clone() else {
+            return;
+        };
+        // With the Git service attached the removal is queued, not performed:
+        // its guarded re-check runs later and can still refuse. Nothing below
+        // this level may happen until that result says the directory is
+        // actually gone, so the cascade waits for the mutation rather than
+        // treating a successful hand-off as a successful removal.
+        let queued = self.ports.git_service.is_some();
+        self.apply_guarded_worktree_removal(teardown.plan, teardown.authorization);
+        if self.status_error {
+            self.worktree_teardown = None;
+            return;
+        }
+        if queued {
+            return;
+        }
+        self.finish_worktree_removal_step();
+    }
+
+    /// Takes the cascade past a removal that has actually happened.
+    #[cfg(unix)]
+    pub(super) fn finish_worktree_removal_step(&mut self) {
+        let Some(teardown) = self.worktree_teardown.clone() else {
+            return;
+        };
+        self.advance_worktree_teardown(WorktreeTeardownStage::Forgetting);
+        // Without a session service there is no record to forget and no event
+        // to wait for, so the cascade finishes here rather than stalling on a
+        // reply that will never come.
+        if self.ports.workspace_service.is_none() {
+            self.finish_worktree_teardown();
+            return;
+        }
+        self.forget_workspace(teardown.root);
+        if self.status_error {
+            // The directory is gone either way, so the cascade still reports
+            // what it did; only the record it could not reach is left behind.
+            let refusal = self.status.clone();
+            self.finish_worktree_teardown();
+            self.error(format!("{}; {refusal}", self.status));
+        }
+    }
+
+    /// Abandons a cascade whose worktree removal was refused or failed.
+    ///
+    /// The directory is still there, so its history record is still true and
+    /// the branch above it is still checked out; neither may be touched.
+    #[cfg(unix)]
+    pub(super) fn abandon_worktree_teardown(&mut self) {
+        self.worktree_teardown = None;
+        self.git_state.branch_cascade_summary = None;
+    }
+
+    /// The one message a completed cascade leaves behind, naming every level
+    /// it touched. The intermediate steps' own status lines are on the way to
+    /// this one, not the answer.
+    #[cfg(unix)]
+    pub(super) fn finish_worktree_teardown(&mut self) {
+        let Some(teardown) = self.worktree_teardown.take() else {
+            return;
+        };
+        let path = crate::git::display_path(&teardown.plan.path);
+        let stopped = teardown
+            .session
+            .as_ref()
+            .map(|session| format!(" and stopped {}", session.describe()))
+            .unwrap_or_default();
+        let Some(branch) = teardown.branch else {
+            self.status(format!(
+                "removed worktree {path}{stopped}; no branch was deleted"
+            ));
+            return;
+        };
+        // The branch is the last level, and its own report is the one worth
+        // leaving behind, so the cascade hands it the whole sentence rather
+        // than saying half of it here and being overwritten.
+        self.git_state.branch_cascade_summary = Some(format!(
+            "deleted branch {}, removed worktree {path}{stopped}",
+            branch.branch
+        ));
+        self.apply_branch_deletion(branch, teardown.authorization);
     }
 
     pub(super) fn create_worktree_prompt(&mut self, new_branch: bool) {
@@ -3576,7 +3857,11 @@ impl App {
             );
             return;
         }
-        if !branch.checkouts.is_empty() {
+        // Git allows a branch to be checked out in one worktree at a time, so
+        // a cascade has exactly one level below it. A repository that somehow
+        // reports more is refused rather than half-dismantled: the reader can
+        // still take the extra checkouts down themselves.
+        if branch.checkouts.len() > 1 {
             let paths = branch
                 .checkouts
                 .iter()
@@ -3584,9 +3869,17 @@ impl App {
                 .collect::<Vec<_>>()
                 .join(", ");
             self.error(format!(
-                "cannot delete {} because it is checked out at {paths}; remove that worktree from :git-worktrees first",
+                "cannot delete {} because it is checked out at {paths}; remove those worktrees from :git-worktrees first",
                 branch.name
             ));
+            return;
+        }
+        if let Some(checkout) = branch.checkouts.first()
+            && *checkout == self.project_root
+        {
+            self.error(
+                "cannot remove the worktree this Runyte workspace is using; check out another branch first",
+            );
             return;
         }
         if self.git.repository().is_none() {
@@ -3600,12 +3893,41 @@ impl App {
         let Some(repository) = self.git.repository().cloned() else {
             return;
         };
+        // Every deletion starts from a clean cascade. A preflight discarded
+        // because the view moved on leaves its half-built state behind, and an
+        // unrelated deletion must not pick it up as its own.
+        self.git_state.branch_cascade = None;
+        self.git_state.branch_cascade_worktree = None;
+        self.git_state.branch_cascade_summary = None;
+        let checkout = branch.checkouts.first().cloned();
         if self.ports.git_service.is_some() {
             let source_buffer = self.active().buffer;
+            // The checkout is reviewed first, because it is the level that
+            // decides whether the branch can be reached at all: a dirty or
+            // locked worktree refuses here, before anything is put to the
+            // reader as a choice.
+            if let Some(worktree) = checkout {
+                if let Some(id) = self.request_git(GitOperation::PrepareWorktreeRemoval {
+                    repository,
+                    path: worktree.clone(),
+                }) {
+                    self.git_state.branch_cascade = Some(DeletionPreflight {
+                        id,
+                        source_buffer,
+                        interaction_generation: self.next_action_id,
+                        target: BranchCascadeTarget {
+                            branch: branch.name,
+                            worktree,
+                        },
+                    });
+                }
+                return;
+            }
             let target = branch.name.clone();
             if let Some(id) = self.request_git(GitOperation::PrepareBranchDeletion {
                 repository,
                 branch: branch.name,
+                cascade_checkout: None,
             }) {
                 self.git_state.branch_deletion_request = Some(DeletionPreflight {
                     id,
@@ -3619,15 +3941,102 @@ impl App {
         let Some(provider) = self.ports.git.as_deref() else {
             return;
         };
-        match provider.prepare_branch_deletion(&repository, &branch.name) {
+        let review = match checkout {
+            Some(worktree) => match provider.prepare_worktree_removal(&repository, &worktree) {
+                Ok(plan) => {
+                    // Reviewed while the branch is still checked out there, so
+                    // the branch review is told about that one checkout.
+                    let review = provider.prepare_branch_deletion_through(
+                        &repository,
+                        &branch.name,
+                        &plan.path,
+                    );
+                    self.git_state.branch_cascade_worktree = Some(plan);
+                    review
+                }
+                Err(error) => {
+                    self.error(error.to_string());
+                    return;
+                }
+            },
+            None => provider.prepare_branch_deletion(&repository, &branch.name),
+        };
+        match review {
             Ok(plan) => self.open_branch_deletion_confirmation(plan),
-            Err(error) => self.error(error.to_string()),
+            Err(error) => {
+                self.git_state.branch_cascade_worktree = None;
+                self.error(error.to_string());
+            }
         }
     }
 
+    /// Reviews a prepared branch deletion, taking the levels below it first.
+    ///
+    /// A branch checked out somewhere is reached through that checkout, so its
+    /// removal is prepared and its session inspected before anything is put to
+    /// the reader. The confirmation then names every level at once instead of
+    /// revealing them one refusal at a time.
     fn open_branch_deletion_confirmation(&mut self, plan: BranchDeletionPlan) {
+        let Some(worktree) = self.git_state.branch_cascade_worktree.take() else {
+            self.show_branch_deletion_confirmation(plan, None);
+            return;
+        };
+        #[cfg(unix)]
+        if self.request_worktree_session_check(worktree.clone(), None, Some(plan.clone())) {
+            return;
+        }
+        self.show_branch_deletion_confirmation(
+            plan,
+            Some(BranchCascade {
+                worktree,
+                session: None,
+            }),
+        );
+    }
+
+    /// Prepares the branch above a reviewed checkout.
+    ///
+    /// The worktree plan is held rather than passed along, because the branch
+    /// preflight is an ordinary asynchronous request whose response carries
+    /// only the branch.
+    fn request_cascaded_branch_deletion(
+        &mut self,
+        pending: DeletionPreflight<BranchCascadeTarget>,
+        worktree: WorktreeRemovalPlan,
+    ) {
+        let Some(repository) = self.git.repository().cloned() else {
+            return;
+        };
+        let branch = pending.target.branch;
+        // The branch is still checked out at this point — the removal reviewed
+        // alongside it has not run yet — so the review is told which checkout
+        // it may see. Any other is still a reason to refuse.
+        let cascade_checkout = Some(worktree.path.clone());
+        self.git_state.branch_cascade_worktree = Some(worktree);
+        if let Some(id) = self.request_git(GitOperation::PrepareBranchDeletion {
+            repository,
+            branch: branch.clone(),
+            cascade_checkout,
+        }) {
+            self.git_state.branch_deletion_request = Some(DeletionPreflight {
+                id,
+                source_buffer: pending.source_buffer,
+                interaction_generation: pending.interaction_generation,
+                target: branch,
+            });
+        } else {
+            self.git_state.branch_cascade_worktree = None;
+        }
+    }
+
+    fn show_branch_deletion_confirmation(
+        &mut self,
+        plan: BranchDeletionPlan,
+        cascade: Option<BranchCascade>,
+    ) {
         let confirmation = BranchDeletionConfirmation {
             plan,
+            cascade,
             input: String::new(),
             cursor: 0,
         };
@@ -3635,6 +4044,37 @@ impl App {
         self.git_branch_deletion = Some(confirmation);
         self.confirmation_revision = self.confirmation_revision.wrapping_add(1);
         self.status(message);
+    }
+
+    /// Runs a confirmed branch cascade from the bottom up.
+    ///
+    /// The session goes first because it owns the worktree directory, the
+    /// worktree next because Git refuses to delete a branch that is checked
+    /// out, and the branch last. Each level's state is rechecked as it is
+    /// reached — the guarded removal and deletion both re-prepare their plans —
+    /// so a repository that moved during the confirmation is refused rather
+    /// than acted on with stale review.
+    pub(super) fn apply_branch_cascade(
+        &mut self,
+        plan: BranchDeletionPlan,
+        cascade: BranchCascade,
+        authorization: DeletionAuthorization,
+    ) {
+        #[cfg(unix)]
+        if self.request_worktree_session_check(
+            cascade.worktree.clone(),
+            Some(authorization),
+            Some(plan.clone()),
+        ) {
+            return;
+        }
+        #[cfg(unix)]
+        self.begin_worktree_teardown(cascade.worktree, authorization, None, Some(plan));
+        #[cfg(not(unix))]
+        {
+            let _ = cascade;
+            self.apply_branch_deletion(plan, authorization);
+        }
     }
 
     /// Removes the confirmed branch and re-reads the list.
@@ -3668,7 +4108,12 @@ impl App {
         // The deleted branch is gone from the list, so the caret is asked to
         // follow a name that is not there; the refresh keeps it where it was.
         self.refresh_git_branches_buffer(&plan.branch);
-        self.status(format!("deleted {}", plan.branch));
+        let message = self
+            .git_state
+            .branch_cascade_summary
+            .take()
+            .unwrap_or_else(|| format!("deleted {}", plan.branch));
+        self.status(message);
     }
 
     /// Reprojects the branch list, returning its text.

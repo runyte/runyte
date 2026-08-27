@@ -2435,20 +2435,37 @@ fn draw_list(frame: &mut Frame<'_>, app: &TuiApp<'_>, editor_area: Rect) {
                         .item_label_emphasis(item)
                         .into_iter()
                         .collect::<std::collections::HashSet<_>>();
-                    ListItem::new(Line::from(
-                        item.label
-                            .chars()
-                            .enumerate()
-                            .map(|(position, character)| {
-                                let style = if emphasized.contains(&position) {
-                                    Style::default().fg(app.theme.accent).bold()
+                    let mut spans = item
+                        .label
+                        .chars()
+                        .enumerate()
+                        .map(|(position, character)| {
+                            let style = if emphasized.contains(&position) {
+                                Style::default().fg(app.theme.accent).bold()
+                            } else {
+                                Style::default().fg(text_color)
+                            };
+                            Span::styled(character.to_string(), style)
+                        })
+                        .collect::<Vec<_>>();
+                    // A row's detail is the muted half of what it says, in
+                    // both layouts. The snapshot renderer an attached client
+                    // uses has always drawn it here; dropping it in this one
+                    // made the same list read differently depending on which
+                    // renderer happened to be in front of it.
+                    if !item.detail.is_empty() {
+                        spans.push(Span::styled(
+                            format!("  {}", item.detail),
+                            Style::default().fg(
+                                if item.is_dimmed() && selected != Some(position) {
+                                    app.theme.jump_text_muted
                                 } else {
-                                    Style::default().fg(text_color)
-                                };
-                                Span::styled(character.to_string(), style)
-                            })
-                            .collect::<Vec<_>>(),
-                    ))
+                                    app.theme.muted
+                                },
+                            ),
+                        ));
+                    }
+                    ListItem::new(Line::from(spans))
                 } else {
                     ListItem::new(Line::from(vec![
                         Span::styled(
@@ -5831,6 +5848,9 @@ mod tests {
                 live_terminals: None,
                 terminal_sessions: None,
                 interactive_attached: None,
+                open_buffers: None,
+                git: None,
+                missing_directory: false,
             }]),
         });
         app.handle_key(crate::input::KeyStroke::plain(crate::input::KeyCode::Tab))
@@ -5902,6 +5922,9 @@ mod tests {
                     live_terminals: None,
                     terminal_sessions: None,
                     interactive_attached: None,
+                    open_buffers: None,
+                    git: None,
+                    missing_directory: false,
                 },
                 crate::workspace::WorkspaceRow {
                     number: None,
@@ -5915,6 +5938,9 @@ mod tests {
                     live_terminals: None,
                     terminal_sessions: None,
                     interactive_attached: None,
+                    open_buffers: None,
+                    git: None,
+                    missing_directory: false,
                 },
             ]),
         });
@@ -5957,9 +5983,16 @@ mod tests {
                 .iter()
                 .map(|cell| cell.style().fg)
                 .collect::<Vec<_>>();
-            let detail = row[start + name.chars().count()..]
+            // The preview column shares the terminal row, so the detail is read
+            // only up to the rule that separates the two columns.
+            let detail_start = start + name.chars().count();
+            let separator = symbols[detail_start..]
                 .iter()
-                .filter(|cell| !cell.symbol().trim().is_empty() && cell.symbol() != "│")
+                .position(|symbol| symbol == "│")
+                .map_or(symbols.len(), |offset| detail_start + offset);
+            let detail = row[detail_start..separator]
+                .iter()
+                .filter(|cell| !cell.symbol().trim().is_empty())
                 .map(|cell| cell.style().fg)
                 .collect::<Vec<_>>();
             (label, detail)
@@ -5969,19 +6002,26 @@ mod tests {
         assert!(
             running
                 .iter()
-                .chain(&running_detail)
                 .all(|color| *color == Some(to_tui_color(theme.foreground))),
-            "the selected running session keeps the highlight's full weight: \
-             {running:?} {running_detail:?}"
+            "the selected running session keeps the highlight's full weight: {running:?}"
+        );
+        // The Git columns are the muted half of a row in either renderer, and
+        // a running row's are muted rather than dimmed.
+        assert!(
+            !running_detail.is_empty()
+                && running_detail
+                    .iter()
+                    .all(|color| *color == Some(to_tui_color(theme.muted))),
+            "a running row's Git columns use the muted role: {running_detail:?}"
         );
         let (stopped, stopped_detail) = row_colors("qqqq");
-        // A preview-layout manager keeps only the identifying name in the
-        // list column; its metadata moved to the semantic preview beside it.
-        // The dormant identity still recedes without dimming unrelated text
-        // that happens to occupy the same terminal row in that second column.
+        // A dormant row recedes whole: its name and its Git columns both take
+        // the dimming role, rather than the columns staying at full weight
+        // beside a receded name.
         assert!(
             stopped
                 .iter()
+                .chain(&stopped_detail)
                 .all(|color| *color == Some(to_tui_color(theme.jump_text_muted))),
             "a stopped session uses the dimming role: {stopped:?} {stopped_detail:?}"
         );

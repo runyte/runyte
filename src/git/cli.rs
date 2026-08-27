@@ -1127,6 +1127,82 @@ fn unclosed_output_error(directory: &Path) -> GitError {
     }
 }
 
+impl GitCliProvider {
+    /// Reviews a branch deletion, optionally tolerating the one checkout a
+    /// cascade is removing on the way to it.
+    ///
+    /// Git refuses to delete a branch that is checked out, so an ordinary
+    /// review refuses one too rather than preparing a deletion that cannot be
+    /// applied. `allowed_checkout` is the exception a cascade needs: that
+    /// checkout is being removed by the same confirmed action, and is gone
+    /// before anything reaches `delete_branch_guarded`, whose own re-review
+    /// carries no exception at all.
+    fn review_branch_deletion(
+        &self,
+        repository: &Repository,
+        branch: &str,
+        allowed_checkout: Option<&Path>,
+    ) -> Result<BranchDeletionPlan> {
+        let branches = self.branches(repository)?;
+        let target = branches
+            .iter()
+            .find(|candidate| candidate.name == branch)
+            .ok_or_else(|| GitError::Failed {
+                command: "git branch".to_owned(),
+                code: None,
+                stderr: format!("`{branch}` is not a local branch"),
+            })?;
+        let unexpected_checkout = target
+            .checkouts
+            .iter()
+            .any(|checkout| Some(checkout.as_path()) != allowed_checkout);
+        if target.current || unexpected_checkout {
+            return Err(GitError::Failed {
+                command: "git branch".to_owned(),
+                code: None,
+                stderr: format!("`{branch}` is checked out in a worktree"),
+            });
+        }
+        let reference = format!("refs/heads/{branch}");
+        let tip = self.run_text(
+            repository.workdir(),
+            &["rev-parse", "--verify", reference.as_str()],
+        )?;
+        let tip = tip.trim().to_owned();
+        let containing = self.run_text(
+            repository.workdir(),
+            &[
+                "for-each-ref",
+                "--format=%(refname:short)",
+                &format!("--contains={tip}"),
+                "refs/heads",
+            ],
+        )?;
+        let mut retaining_branches = containing
+            .lines()
+            .filter(|candidate| *candidate != branch)
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        retaining_branches.sort();
+        let upstream_retains = target.upstream.as_ref().is_some_and(|upstream| {
+            upstream
+                .divergence
+                .is_some_and(|divergence| divergence.ahead == 0)
+        });
+        Ok(BranchDeletionPlan {
+            branch: branch.to_owned(),
+            tip,
+            upstream: target.upstream.clone(),
+            required_authorization: if upstream_retains || !retaining_branches.is_empty() {
+                DeletionAuthorization::Enter
+            } else {
+                DeletionAuthorization::Typed
+            },
+            retaining_branches,
+        })
+    }
+}
+
 impl GitProvider for GitCliProvider {
     fn discover(&self, start: &Path) -> Result<Option<Repository>> {
         if !start.exists() {
@@ -2037,59 +2113,16 @@ impl GitProvider for GitCliProvider {
         repository: &Repository,
         branch: &str,
     ) -> Result<BranchDeletionPlan> {
-        let branches = self.branches(repository)?;
-        let target = branches
-            .iter()
-            .find(|candidate| candidate.name == branch)
-            .ok_or_else(|| GitError::Failed {
-                command: "git branch".to_owned(),
-                code: None,
-                stderr: format!("`{branch}` is not a local branch"),
-            })?;
-        if target.current || !target.checkouts.is_empty() {
-            return Err(GitError::Failed {
-                command: "git branch".to_owned(),
-                code: None,
-                stderr: format!("`{branch}` is checked out in a worktree"),
-            });
-        }
-        let reference = format!("refs/heads/{branch}");
-        let tip = self.run_text(
-            repository.workdir(),
-            &["rev-parse", "--verify", reference.as_str()],
-        )?;
-        let tip = tip.trim().to_owned();
-        let containing = self.run_text(
-            repository.workdir(),
-            &[
-                "for-each-ref",
-                "--format=%(refname:short)",
-                &format!("--contains={tip}"),
-                "refs/heads",
-            ],
-        )?;
-        let mut retaining_branches = containing
-            .lines()
-            .filter(|candidate| *candidate != branch)
-            .map(str::to_owned)
-            .collect::<Vec<_>>();
-        retaining_branches.sort();
-        let upstream_retains = target.upstream.as_ref().is_some_and(|upstream| {
-            upstream
-                .divergence
-                .is_some_and(|divergence| divergence.ahead == 0)
-        });
-        Ok(BranchDeletionPlan {
-            branch: branch.to_owned(),
-            tip,
-            upstream: target.upstream.clone(),
-            required_authorization: if upstream_retains || !retaining_branches.is_empty() {
-                DeletionAuthorization::Enter
-            } else {
-                DeletionAuthorization::Typed
-            },
-            retaining_branches,
-        })
+        self.review_branch_deletion(repository, branch, None)
+    }
+
+    fn prepare_branch_deletion_through(
+        &self,
+        repository: &Repository,
+        branch: &str,
+        checkout: &Path,
+    ) -> Result<BranchDeletionPlan> {
+        self.review_branch_deletion(repository, branch, Some(checkout))
     }
 
     fn delete_branch_guarded(

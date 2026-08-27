@@ -70,10 +70,14 @@ fn worktree_removal_refuses_unsaved_or_uninspectable_persistent_sessions() {
         live_terminals: Some(0),
         terminal_sessions: Some(0),
         interactive_attached: Some(false),
+        open_buffers: None,
+        git: None,
+        missing_directory: false,
     };
 
     app.worktree_removal_generation = 1;
     app.pending_worktree_removal = Some(PendingWorktreeRemovalCheck {
+        branch: None,
         plan: plan.clone(),
         authorization: None,
         origin: None,
@@ -89,6 +93,7 @@ fn worktree_removal_refuses_unsaved_or_uninspectable_persistent_sessions() {
 
     app.worktree_removal_generation = 2;
     app.pending_worktree_removal = Some(PendingWorktreeRemovalCheck {
+        branch: None,
         plan: plan.clone(),
         authorization: None,
         origin: None,
@@ -103,12 +108,418 @@ fn worktree_removal_refuses_unsaved_or_uninspectable_persistent_sessions() {
 
     app.worktree_removal_generation = 3;
     app.pending_worktree_removal = Some(PendingWorktreeRemovalCheck {
+        branch: None,
         plan,
         authorization: None,
         origin: None,
     });
     app.finish_worktree_session_check(3, target.clone(), Ok(Some(row(Some(0)))));
     assert!(app.git_worktree_removal.is_some());
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// A clean session on the worktree does not refuse the removal — it goes with
+/// it. The compound action is named in the confirmation and raises the bar to
+/// typed text, whatever the worktree's own Git state would have settled for.
+#[cfg(unix)]
+#[test]
+fn worktree_removal_names_its_session_and_takes_it_down_before_the_directory() {
+    let root = temporary("worktree-session-cascade");
+    fs::create_dir_all(&root).unwrap();
+    let root = root.canonicalize().unwrap();
+    let target = root.join("linked");
+    fs::create_dir_all(&target).unwrap();
+    let target = target.canonicalize().unwrap();
+    let mut app = App::new_in_isolated_project(
+        &root,
+        HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+            String::new(),
+        ))))),
+    )
+    .unwrap();
+    app.enable_persistent_session();
+    let plan = WorktreeRemovalPlan {
+        path: target.clone(),
+        head: Some("0123456789abcdef".to_owned()),
+        branch: Some("feature".to_owned()),
+        upstream: None,
+        // A clean worktree on a retained branch: Enter alone would have done.
+        required_authorization: DeletionAuthorization::Enter,
+        detached_retained: false,
+    };
+    app.worktree_removal_generation = 1;
+    app.pending_worktree_removal = Some(PendingWorktreeRemovalCheck {
+        branch: None,
+        plan,
+        authorization: None,
+        origin: None,
+    });
+    app.finish_worktree_session_check(
+        1,
+        target.clone(),
+        Ok(Some(WorkspaceRow {
+            id: "linked".to_owned(),
+            name: Some("runyte-feature".to_owned()),
+            number: Some(5),
+            project_root: target.clone(),
+            running: true,
+            incompatible_protocol: None,
+            unsaved_buffers: Some(0),
+            pending_wait_requests: Some(0),
+            live_terminals: Some(0),
+            terminal_sessions: Some(0),
+            interactive_attached: Some(false),
+            open_buffers: Some(3),
+            git: None,
+            missing_directory: false,
+        })),
+    );
+
+    let confirmation = app
+        .git_worktree_removal
+        .as_ref()
+        .expect("a clean session should be offered rather than refused");
+    let message = confirmation.message();
+    assert!(
+        message.contains("This also stops and forgets session 5 (runyte-feature)."),
+        "{message}"
+    );
+    // The session is what raises this from an Enter confirmation to a typed
+    // one; stopping somebody's running editor is not a one-keystroke decision.
+    assert!(
+        message.contains("Type feature exactly to continue."),
+        "{message}"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// The order is the whole point: the host owns the worktree directory, so Git
+/// is asked to remove it only after the stop has reported.
+#[cfg(unix)]
+#[test]
+fn a_confirmed_worktree_removal_waits_for_its_session_to_stop_before_removing_it() {
+    use crate::git::{MemoryGitProvider, Repository};
+
+    let root = temporary("worktree-session-order");
+    fs::create_dir_all(&root).unwrap();
+    let root = root.canonicalize().unwrap();
+    let target = root.join("linked");
+    fs::create_dir_all(&target).unwrap();
+    let target = target.canonicalize().unwrap();
+    let mut ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    let provider = Rc::new(
+        MemoryGitProvider::new(Repository::new(&root)).with_worktrees(vec![test_worktree(
+            target.clone(),
+            "feature",
+            &root,
+        )]),
+    );
+    ports.replace_git(Box::new(Rc::clone(&provider)));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    app.enable_persistent_session();
+    app.execute_command("git-worktrees").unwrap();
+    // The guarded removal re-prepares and compares its plan, so the teardown
+    // has to be holding the one Git would answer with now.
+    let plan = crate::git::GitProvider::prepare_worktree_removal(
+        provider.as_ref(),
+        &Repository::new(&root),
+        &target,
+    )
+    .unwrap();
+
+    // The confirmation has been accepted and the stop asked for; this is the
+    // state the cascade waits in.
+    app.worktree_teardown = Some(WorktreeTeardown {
+        plan,
+        authorization: DeletionAuthorization::Typed,
+        session: Some(AttachedSession {
+            name: "runyte-feature".to_owned(),
+            number: Some(5),
+            root: target.clone(),
+        }),
+        root: target.clone(),
+        branch: None,
+        stage: WorktreeTeardownStage::Stopping,
+    });
+    assert!(
+        provider.removed_worktrees().is_empty(),
+        "the directory went before its host did"
+    );
+
+    let generation = app.workspace_generation;
+    app.apply_workspace_event(WorkspaceEvent::Stopped {
+        generation,
+        selector: target.clone(),
+        result: Ok(()),
+    });
+
+    assert_eq!(
+        provider.removed_worktrees(),
+        vec![target.clone()],
+        "status: {}",
+        app.status
+    );
+    assert!(
+        app.status
+            .contains("and stopped session 5 (runyte-feature)"),
+        "{}",
+        app.status
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// A stop that fails leaves everything standing. The directory is still the
+/// host's, so removing it anyway would be the one outcome worse than refusing.
+#[cfg(unix)]
+#[test]
+fn a_session_that_will_not_stop_leaves_its_worktree_alone() {
+    use crate::git::{MemoryGitProvider, Repository};
+
+    let root = temporary("worktree-session-stop-failure");
+    fs::create_dir_all(&root).unwrap();
+    let root = root.canonicalize().unwrap();
+    let target = root.join("linked");
+    fs::create_dir_all(&target).unwrap();
+    let target = target.canonicalize().unwrap();
+    let mut ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    let provider = Rc::new(
+        MemoryGitProvider::new(Repository::new(&root)).with_worktrees(vec![test_worktree(
+            target.clone(),
+            "feature",
+            &root,
+        )]),
+    );
+    ports.replace_git(Box::new(Rc::clone(&provider)));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    app.enable_persistent_session();
+    app.execute_command("git-worktrees").unwrap();
+    app.worktree_teardown = Some(WorktreeTeardown {
+        plan: crate::git::GitProvider::prepare_worktree_removal(
+            provider.as_ref(),
+            &Repository::new(&root),
+            &target,
+        )
+        .unwrap(),
+        authorization: DeletionAuthorization::Typed,
+        session: Some(AttachedSession {
+            name: "runyte-feature".to_owned(),
+            number: None,
+            root: target.clone(),
+        }),
+        root: target.clone(),
+        branch: None,
+        stage: WorktreeTeardownStage::Stopping,
+    });
+
+    let generation = app.workspace_generation;
+    app.apply_workspace_event(WorkspaceEvent::Stopped {
+        generation,
+        selector: target.clone(),
+        result: Err("a live terminal child is running".to_owned()),
+    });
+
+    assert!(app.status_error);
+    assert!(
+        app.status.contains("could not be stopped"),
+        "{}",
+        app.status
+    );
+    assert!(provider.removed_worktrees().is_empty());
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// With the Git service attached, `apply_guarded_worktree_removal` only queues
+/// the mutation: its guarded re-check runs later and can still refuse. Nothing
+/// below the worktree may happen until Git has said the directory is gone.
+#[cfg(unix)]
+#[test]
+fn an_asynchronous_removal_takes_nothing_further_down_until_git_reports_success() {
+    use crate::git::{
+        GitMutation, GitServiceHandle, GitServiceState, MemoryGitProvider, Repository,
+    };
+
+    let run = |succeeds: bool| {
+        let root = temporary(if succeeds {
+            "async-removal-ok"
+        } else {
+            "async-removal-refused"
+        });
+        fs::create_dir_all(&root).unwrap();
+        let root = root.canonicalize().unwrap();
+        let target = root.join("linked");
+        fs::create_dir_all(&target).unwrap();
+        let target = target.canonicalize().unwrap();
+        let mut ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+            String::new(),
+        )))));
+        let provider = Rc::new(
+            MemoryGitProvider::new(Repository::new(&root))
+                .with_branches(&["feature", "main"], "main")
+                .with_worktrees(vec![test_worktree(target.clone(), "feature", &root)]),
+        );
+        ports.replace_git(Box::new(Rc::clone(&provider)));
+        let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+        app.enable_persistent_session();
+        app.execute_command("git-worktrees").unwrap();
+        let (service, operations) = GitServiceHandle::recording_for_test();
+        app.attach_git_service(service);
+
+        let plan = crate::git::GitProvider::prepare_worktree_removal(
+            provider.as_ref(),
+            &Repository::new(&root),
+            &target,
+        )
+        .unwrap();
+        let branch = crate::git::GitProvider::prepare_branch_deletion(
+            provider.as_ref(),
+            &Repository::new(&root),
+            "feature",
+        )
+        .unwrap();
+        app.worktree_teardown = Some(WorktreeTeardown {
+            plan: plan.clone(),
+            authorization: DeletionAuthorization::Typed,
+            session: None,
+            root: target.clone(),
+            branch: Some(branch),
+            stage: WorktreeTeardownStage::Stopping,
+        });
+
+        let generation = app.workspace_generation;
+        app.apply_workspace_event(WorkspaceEvent::Stopped {
+            generation,
+            selector: target.clone(),
+            result: Ok(()),
+        });
+
+        // The removal was handed to the service, not performed, and the
+        // cascade is waiting on it rather than treating the hand-off as done.
+        // Attaching the service also queues discovery and refresh work, so the
+        // mutation is looked for among everything sent rather than assumed to
+        // be first.
+        let drain = |operations: &std::sync::mpsc::Receiver<crate::git::GitOperation>| {
+            let mut sent = Vec::new();
+            while let Ok(operation) = operations.recv_timeout(std::time::Duration::from_millis(250))
+            {
+                sent.push(operation);
+            }
+            sent
+        };
+        assert!(
+            drain(&operations).iter().any(|operation| matches!(
+                operation,
+                crate::git::GitOperation::Mutate {
+                    mutation: GitMutation::RemoveWorktree { .. },
+                    ..
+                }
+            )),
+            "the removal should have been queued"
+        );
+        assert_eq!(
+            app.worktree_teardown
+                .as_ref()
+                .map(|teardown| teardown.stage),
+            Some(WorktreeTeardownStage::Removing)
+        );
+        assert!(
+            provider.deletions().is_empty(),
+            "the branch went before the worktree was known to be gone"
+        );
+
+        let mutation = GitMutation::RemoveWorktree {
+            plan: Box::new(plan),
+            authorization: DeletionAuthorization::Typed,
+        };
+        app.apply_git_mutation_result(
+            mutation,
+            Vec::new(),
+            None,
+            (!succeeds).then(|| crate::git::GitError::Failed {
+                command: "git worktree remove".to_owned(),
+                code: Some(1),
+                stderr: "the worktree changed after it was reviewed".to_owned(),
+            }),
+            GitServiceState::Completed,
+            None,
+        );
+
+        // The branch deletion, if it happened at all, went to the service too.
+        let deleted_branch = drain(&operations).iter().any(|operation| {
+            matches!(
+                operation,
+                crate::git::GitOperation::Mutate {
+                    mutation: GitMutation::DeleteBranch { .. },
+                    ..
+                }
+            )
+        });
+        let status = app.status.clone();
+        let teardown = app.worktree_teardown.is_some();
+        fs::remove_dir_all(root).unwrap();
+        (deleted_branch, status, teardown)
+    };
+
+    // A refused removal stops the cascade there: the directory is still
+    // present, so the branch checked out in it must not be deleted.
+    let (deleted_branch, status, teardown) = run(false);
+    assert!(
+        !deleted_branch,
+        "the branch went down with a failed removal"
+    );
+    assert!(
+        !teardown,
+        "the abandoned cascade should not still be pending"
+    );
+    assert!(status.contains("changed after it was reviewed"), "{status}");
+
+    // A successful one carries on into the branch above it.
+    let (deleted_branch, _status, teardown) = run(true);
+    assert!(deleted_branch, "a successful removal must reach its branch");
+    assert!(!teardown);
+}
+
+/// The session service is attached in either mode, so a standalone editor
+/// still finds a persistent session running on a worktree it is removing.
+/// Refusing to stop it there would abandon a confirmed removal halfway, for a
+/// reason that has nothing to do with the action.
+#[cfg(unix)]
+#[test]
+fn a_standalone_teardown_may_stop_a_session_the_session_commands_would_refuse() {
+    let root = temporary("standalone-teardown-stop");
+    fs::create_dir_all(&root).unwrap();
+    let root = root.canonicalize().unwrap();
+    let mut app = App::new_in_isolated_project(
+        &root,
+        HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+            String::new(),
+        ))))),
+    )
+    .unwrap();
+    assert!(!app.persistent_session, "this app is standalone");
+
+    // The typed command still refuses, because it addresses a host this
+    // workspace does not have.
+    app.execute_command("session-stop").unwrap();
+    assert_eq!(app.status, "needs workspace.mode: persistent");
+
+    // The teardown's own stop is not that command, and gets as far as the
+    // service. This app has none attached, which is how far it can get here;
+    // what matters is that the mode is no longer what turns it back.
+    app.status.clear();
+    app.status_error = false;
+    app.request_session_stop(root.clone(), false);
+    assert_eq!(
+        app.status, "session service is unavailable",
+        "an internal teardown stop must not be refused for the mode"
+    );
 
     fs::remove_dir_all(root).unwrap();
 }
@@ -146,6 +557,7 @@ fn app_with_confirmation(root: &Path, branch: &str, inspect: impl FnOnce(&mut Ap
     )
     .unwrap();
     app.git_worktree_removal = Some(WorktreeRemovalConfirmation {
+        session: None,
         plan: WorktreeRemovalPlan {
             path: root.join("linked"),
             head: Some("1".repeat(40)),
@@ -280,6 +692,7 @@ fn stale_initial_session_inspection_never_opens_a_worktree_confirmation() {
     };
     app.worktree_removal_generation = 11;
     app.pending_worktree_removal = Some(PendingWorktreeRemovalCheck {
+        branch: None,
         plan,
         authorization: None,
         origin: Some((source_buffer, app.next_action_id)),
@@ -309,7 +722,7 @@ fn test_worktree(path: PathBuf, branch: &str, root: &Path) -> Worktree {
 
 #[cfg(unix)]
 #[test]
-fn standalone_can_list_sessions_but_cannot_attach_start_or_stop_them() {
+fn standalone_refuses_every_session_command_including_the_manager() {
     let root = temporary("standalone-session-list");
     fs::create_dir_all(&root).unwrap();
     let root = root.canonicalize().unwrap();
@@ -321,79 +734,41 @@ fn standalone_can_list_sessions_but_cannot_attach_start_or_stop_them() {
     )
     .unwrap();
 
+    // The manager addresses a host a standalone workspace does not have, so it
+    // is inert rather than a list whose every row refuses.
     app.execute_command("sl").unwrap();
-    assert!(app.list.is_some(), "standalone listing was refused");
-    assert_eq!(
-        app.list.as_ref().map(|picker| picker.title.as_str()),
-        Some("Sessions · Enter cannot attach in standalone mode · loading…")
-    );
-    let generation = app.workspace_generation;
-    app.apply_workspace_event(WorkspaceEvent::Refreshed {
-        generation,
-        result: Ok(vec![WorkspaceRow {
-            id: "aaaaaaaaaaaaaaaa".to_owned(),
-            name: Some("history".to_owned()),
-            number: None,
-            project_root: root.clone(),
-            running: false,
-            incompatible_protocol: None,
-            unsaved_buffers: None,
-            pending_wait_requests: None,
-            live_terminals: None,
-            terminal_sessions: None,
-            interactive_attached: None,
-        }]),
-    });
-    let picker = app.list.as_ref().unwrap();
-    assert_eq!(
-        picker.items[0].detail,
-        format!("{} · stopped", root.display())
-    );
-    assert_eq!(
-        picker.title,
-        "Sessions · Enter cannot attach in standalone mode · Tab actions"
-    );
-    assert_eq!(picker.primary_action, None);
-    let overlay = app
-        .overlay_snapshots()
-        .into_iter()
-        .find(|overlay| overlay.title.starts_with("Sessions"))
-        .expect("the session picker has a semantic overlay");
-    assert_eq!(
-        overlay.title,
-        "Sessions · Enter cannot attach in standalone mode · Tab actions"
-    );
-    assert!(
-        overlay
-            .actions
-            .iter()
-            .all(|action| action.key_hint != "Enter")
-    );
-
-    key(&mut app, KeyCode::Enter, Modifiers::NONE);
-    assert_eq!(
-        app.status,
-        "attaching sessions needs workspace.mode: persistent"
-    );
-    assert!(app.list.is_some(), "the refused row should remain visible");
-    assert!(app.take_workspace_switch().is_none());
+    assert_eq!(app.status, "needs workspace.mode: persistent");
+    assert!(app.list.is_none(), "standalone opened the session manager");
 
     app.execute_command(&format!("session-attach {}", root.display()))
         .unwrap();
-    assert_eq!(
-        app.status,
-        "attaching sessions needs workspace.mode: persistent"
-    );
+    assert_eq!(app.status, "needs workspace.mode: persistent");
+    assert!(app.take_workspace_switch().is_none());
     app.execute_command("session-start elsewhere").unwrap();
-    assert_eq!(
-        app.status,
-        "starting sessions needs workspace.mode: persistent"
-    );
+    assert_eq!(app.status, "needs workspace.mode: persistent");
     app.execute_command("session-stop").unwrap();
-    assert_eq!(
-        app.status,
-        "stopping sessions needs workspace.mode: persistent"
-    );
+    assert_eq!(app.status, "needs workspace.mode: persistent");
+    app.execute_command(&format!("session-rename {} other", root.display()))
+        .unwrap();
+    assert_eq!(app.status, "needs workspace.mode: persistent");
+
+    // The whole namespace reads as unavailable wherever it is discovered,
+    // rather than only answering once a key has been pressed.
+    let capabilities = app.command_capabilities();
+    for name in [
+        "session-list",
+        "session-attach",
+        "session-start",
+        "session-stop",
+        "session-rename",
+    ] {
+        let spec = crate::command::resolve_command(name).unwrap();
+        assert_eq!(
+            capabilities.command_availability(spec).reason(),
+            Some("needs workspace.mode: persistent"),
+            "{name} should be unavailable in standalone mode"
+        );
+    }
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -429,6 +804,9 @@ fn session_picker_keeps_filter_and_routes_enter_and_tab_by_workspace_identity() 
             live_terminals: Some(1),
             terminal_sessions: Some(1),
             interactive_attached: Some(true),
+            open_buffers: None,
+            git: None,
+            missing_directory: false,
         },
         WorkspaceRow {
             id: "bbbbbbbbbbbbbbbb".to_owned(),
@@ -442,23 +820,29 @@ fn session_picker_keeps_filter_and_routes_enter_and_tab_by_workspace_identity() 
             live_terminals: None,
             terminal_sessions: None,
             interactive_attached: Some(false),
+            open_buffers: None,
+            git: Some(crate::git::WorkspaceGitFacts {
+                branch: Some("main".to_owned()),
+                worktree: None,
+                remote: None,
+            }),
+            missing_directory: false,
         },
     ];
     app.apply_workspace_event(WorkspaceEvent::Refreshed {
         generation: 4,
         result: Ok(rows.clone()),
     });
-    assert_eq!(
-        app.list.as_ref().unwrap().items[0].detail,
-        format!(
-            "{} · running · unsaved 2 · terminals 1 · TUI attached",
-            current.display()
-        )
-    );
-    assert_eq!(
-        app.list.as_ref().unwrap().primary_action.as_deref(),
-        Some("attach")
-    );
+    // Four columns: number, name, branch, worktree. Both rows pay for the
+    // name column at its widest so the branch column starts in one place, and
+    // a row with nothing to say in a Git column says `-` rather than going
+    // blank and letting the next column slide left.
+    let picker = app.list.as_ref().unwrap();
+    assert_eq!(picker.items[0].label, "  * current");
+    assert_eq!(picker.items[1].label, "    archive");
+    assert_eq!(picker.items[0].detail, "-     -");
+    assert_eq!(picker.items[1].detail, "main  -");
+    assert_eq!(picker.primary_action.as_deref(), Some("attach"));
     app.list.as_mut().unwrap().filter = "archive".to_owned();
     app.apply_workspace_event(WorkspaceEvent::Refreshed {
         generation: 4,
@@ -486,6 +870,9 @@ fn session_picker_keeps_filter_and_routes_enter_and_tab_by_workspace_identity() 
             live_terminals: Some(0),
             terminal_sessions: Some(0),
             interactive_attached: Some(true),
+            open_buffers: None,
+            git: None,
+            missing_directory: false,
         }]),
     });
     key(&mut app, KeyCode::Tab, Modifiers::NONE);
@@ -531,6 +918,9 @@ fn session_picker_omits_counts_a_running_host_answers_with_zero() {
                 live_terminals: Some(0),
                 terminal_sessions: Some(0),
                 interactive_attached: Some(true),
+                open_buffers: None,
+                git: None,
+                missing_directory: false,
             },
             WorkspaceRow {
                 id: "bbbbbbbbbbbbbbbb".to_owned(),
@@ -544,23 +934,29 @@ fn session_picker_omits_counts_a_running_host_answers_with_zero() {
                 live_terminals: Some(0),
                 terminal_sessions: Some(2),
                 interactive_attached: Some(true),
+                open_buffers: None,
+                git: None,
+                missing_directory: false,
             },
         ]),
     });
-    // A host answering zero everywhere leaves the row reading as its path
-    // and state; nothing is blank because the host failed to answer.
-    assert_eq!(
-        app.list.as_ref().unwrap().items[0].detail,
-        format!("{} · running · TUI attached", quiet.display())
+    // A confirmed zero is an answer, so the preview states it rather than
+    // leaving the field reading `-` as an unanswered host's would.
+    let picker = app.list.as_ref().unwrap();
+    let quiet_preview = picker.items[0].preview().unwrap();
+    assert!(
+        quiet_preview.contains("Status      running"),
+        "{quiet_preview}"
     );
-    // Retained screens whose children have exited are still worth naming,
-    // and they do not bring `terminals 0` back with them.
-    assert_eq!(
-        app.list.as_ref().unwrap().items[1].detail,
-        format!(
-            "{} · running · exited terminals 2 · TUI attached",
-            exited.display()
-        )
+    assert!(quiet_preview.contains("Terminals   0"), "{quiet_preview}");
+    assert!(quiet_preview.contains("Unsaved     0"), "{quiet_preview}");
+    assert!(quiet_preview.contains("Attached    yes"), "{quiet_preview}");
+    // Retained screens whose children have exited are still worth naming, and
+    // they are named beside the live count rather than instead of it.
+    let exited_preview = picker.items[1].preview().unwrap();
+    assert!(
+        exited_preview.contains("Terminals   0 (2 exited)"),
+        "{exited_preview}"
     );
     fs::remove_dir_all(root).unwrap();
 }
@@ -594,19 +990,37 @@ fn session_picker_marks_a_running_hosts_unanswered_health_as_unavailable() {
             live_terminals: None,
             terminal_sessions: None,
             interactive_attached: None,
+            open_buffers: None,
+            git: None,
+            missing_directory: false,
         }]),
     });
 
-    assert_eq!(
-        app.list.as_ref().unwrap().items[0].detail,
-        format!("{} · running · health unavailable", root.display())
+    // A row whose bounded health request went unanswered must not read as a
+    // clean session: every host-owned field is unknown, and the status says so
+    // rather than the counts quietly reading zero.
+    let preview = app.list.as_ref().unwrap().items[0].preview().unwrap();
+    assert!(
+        preview.contains("Status      running · health unavailable"),
+        "{preview}"
     );
+    for unknown in [
+        "Terminals   -",
+        "Buffers     -",
+        "Unsaved     -",
+        "Attached    -",
+    ] {
+        assert!(
+            preview.contains(unknown),
+            "{unknown:?} missing from {preview}"
+        );
+    }
     fs::remove_dir_all(root).unwrap();
 }
 
 #[cfg(unix)]
 #[test]
-fn session_picker_rebuilds_with_the_selected_hosts_semantic_preview() {
+fn session_picker_states_the_session_as_fields_rather_than_pane_contents() {
     let root = temporary("session-picker-preview");
     fs::create_dir_all(&root).unwrap();
     let root = root.canonicalize().unwrap();
@@ -628,17 +1042,47 @@ fn session_picker_rebuilds_with_the_selected_hosts_semantic_preview() {
             project_root: root.clone(),
             running: true,
             incompatible_protocol: None,
-            unsaved_buffers: Some(1),
+            unsaved_buffers: Some(0),
             pending_wait_requests: Some(0),
-            live_terminals: Some(1),
-            terminal_sessions: Some(1),
+            live_terminals: Some(2),
+            terminal_sessions: Some(3),
             interactive_attached: Some(false),
+            open_buffers: Some(9),
+            git: Some(crate::git::WorkspaceGitFacts {
+                branch: Some("enh/render-space".to_owned()),
+                worktree: Some(root.clone()),
+                remote: Some("git@example.com:me/runyte.git".to_owned()),
+            }),
+            missing_directory: false,
         }]),
     });
 
+    let picker = app.list.as_ref().unwrap();
+    assert!(picker.has_preview());
+    assert_eq!(picker.preview_title(), Some("Session"));
+    let preview = picker.selected_preview().unwrap().to_owned();
+    for field in [
+        "Status      running",
+        "Terminals   2 (1 exited)",
+        "Buffers     9",
+        "Unsaved     0",
+        "Attached    no",
+        "Branch      enh/render-space",
+        "Repo        git@example.com:me/runyte.git",
+    ] {
+        assert!(preview.contains(field), "{field:?} missing from {preview}");
+    }
+    assert!(
+        preview.contains(&format!("Worktree    {}", root.display())),
+        "{preview}"
+    );
+    // The pane count is the one field the lazy control request answers, so it
+    // is unknown until that request returns.
+    assert!(preview.contains("Panes       -"), "{preview}");
+
     // The isolated app has no socket service. Model the same result a
-    // selected live host returns and verify that applying it preserves the
-    // manager while replacing its loading/error text.
+    // selected live host returns and verify that applying it fills the pane
+    // count without bringing any pane text back into the preview.
     app.workspace_previews.clear();
     app.workspace_preview_generation = 7;
     app.workspace_preview_target = Some(root.clone());
@@ -650,7 +1094,7 @@ fn session_picker_rebuilds_with_the_selected_hosts_semantic_preview() {
             panes: vec![crate::workspace::SessionPreviewPane {
                 active: true,
                 title: "[file] src/app.rs".to_owned(),
-                kind: SessionPreviewPaneKind::Buffer {
+                kind: crate::workspace::SessionPreviewPaneKind::Buffer {
                     dirty: true,
                     read_only: false,
                 },
@@ -663,20 +1107,17 @@ fn session_picker_rebuilds_with_the_selected_hosts_semantic_preview() {
         }),
     });
 
-    let picker = app.list.as_ref().unwrap();
-    assert!(picker.has_preview());
-    assert_eq!(picker.preview_title(), Some("Session"));
-    let preview = picker.selected_preview().unwrap();
-    assert!(preview.contains("1 pane shown · 2 in layout"), "{preview}");
-    assert!(preview.contains("● [file] src/app.rs [+]"), "{preview}");
-    assert!(
-        preview.contains("4381  fn rebuild_workspace_picker"),
-        "{preview}"
-    );
-    assert!(
-        preview.contains("Other: [terminal] cargo test"),
-        "{preview}"
-    );
+    let preview = app
+        .list
+        .as_ref()
+        .unwrap()
+        .selected_preview()
+        .unwrap()
+        .to_owned();
+    assert!(preview.contains("Panes       2"), "{preview}");
+    assert!(!preview.contains("src/app.rs"), "{preview}");
+    assert!(!preview.contains("rebuild_workspace_picker"), "{preview}");
+    assert!(!preview.contains("cargo test"), "{preview}");
 
     let overlay = app
         .overlay_snapshots()
@@ -685,11 +1126,6 @@ fn session_picker_rebuilds_with_the_selected_hosts_semantic_preview() {
         .unwrap();
     assert_eq!(overlay.layout, crate::snapshot::OverlayLayout::Preview);
     assert!(overlay.show_preview);
-    assert!(matches!(
-        overlay.preview,
-        Some(crate::snapshot::OverlayPreview::MatchedText { lines, .. })
-            if lines.iter().any(|line| line.contains("src/app.rs"))
-    ));
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -727,6 +1163,9 @@ fn the_session_list_marks_stopped_rows_dormant_without_hiding_or_reordering_them
                 live_terminals: None,
                 terminal_sessions: None,
                 interactive_attached: Some(true),
+                open_buffers: None,
+                git: None,
+                missing_directory: false,
             },
             WorkspaceRow {
                 id: "bbbbbbbbbbbbbbbb".to_owned(),
@@ -740,6 +1179,9 @@ fn the_session_list_marks_stopped_rows_dormant_without_hiding_or_reordering_them
                 live_terminals: None,
                 terminal_sessions: None,
                 interactive_attached: None,
+                open_buffers: None,
+                git: None,
+                missing_directory: false,
             },
         ]),
     });
@@ -802,6 +1244,9 @@ fn numbered_sessions(label: &str) -> (App, PathBuf, Vec<PathBuf>) {
                 live_terminals: None,
                 terminal_sessions: None,
                 interactive_attached: Some(false),
+                open_buffers: None,
+                git: None,
+                missing_directory: false,
             })
             .collect()),
     });
@@ -955,6 +1400,9 @@ fn workspace_actions_match_the_selected_session_state() {
                 live_terminals: None,
                 terminal_sessions: None,
                 interactive_attached: Some(true),
+                open_buffers: None,
+                git: None,
+                missing_directory: false,
             },
             WorkspaceRow {
                 id: "bbbbbbbbbbbbbbbb".to_owned(),
@@ -968,6 +1416,9 @@ fn workspace_actions_match_the_selected_session_state() {
                 live_terminals: None,
                 terminal_sessions: None,
                 interactive_attached: Some(false),
+                open_buffers: None,
+                git: None,
+                missing_directory: false,
             },
         ]),
     });
@@ -1082,6 +1533,9 @@ fn session_actions_confirm_force_close_and_recheck_state_at_enter() {
                 live_terminals: None,
                 terminal_sessions: None,
                 interactive_attached: Some(true),
+                open_buffers: None,
+                git: None,
+                missing_directory: false,
             },
             WorkspaceRow {
                 id: "bbbbbbbbbbbbbbbb".to_owned(),
@@ -1095,6 +1549,9 @@ fn session_actions_confirm_force_close_and_recheck_state_at_enter() {
                 live_terminals: None,
                 terminal_sessions: None,
                 interactive_attached: Some(false),
+                open_buffers: None,
+                git: None,
+                missing_directory: false,
             },
         ]
     };

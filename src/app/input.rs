@@ -204,7 +204,10 @@ impl App {
             lsp_manager,
             lsp_document,
             git_project,
-            persistent_session: persistent_session_availability(cfg!(unix)),
+            persistent_session: persistent_session_availability(
+                cfg!(unix),
+                self.persistent_session,
+            ),
         }
     }
 
@@ -2216,7 +2219,12 @@ impl App {
                 } else {
                     DeletionAuthorization::Enter
                 };
-                self.apply_branch_deletion(confirmation.plan, authorization);
+                match confirmation.cascade {
+                    Some(cascade) => {
+                        self.apply_branch_cascade(confirmation.plan, cascade, authorization)
+                    }
+                    None => self.apply_branch_deletion(confirmation.plan, authorization),
+                }
             }
             _ => {
                 if let Some(confirmation) = self.git_branch_deletion.as_mut()
@@ -4332,41 +4340,40 @@ impl App {
                 self.change_directory(path)
             }
             (Colon::SessionAttach, InvocationParameters::Path(path)) => {
-                if self.reject_unsupported_persistent_session(platform_supports_persistent_sessions)
-                {
+                if self.reject_unavailable_persistent_session(
+                    platform_supports_persistent_sessions,
+                    true,
+                ) {
                     return Ok(());
                 }
-                if !self.persistent_session {
-                    self.error("attaching sessions needs workspace.mode: persistent");
-                } else if self.request_workspace_switch(path) {
+                if self.request_workspace_switch(path) {
                     self.should_quit = true;
                 }
                 Ok(())
             }
             (Colon::SessionList, InvocationParameters::None) => {
-                if self.reject_unsupported_persistent_session(platform_supports_persistent_sessions)
-                {
+                if self.reject_unavailable_persistent_session(
+                    platform_supports_persistent_sessions,
+                    true,
+                ) {
                     return Ok(());
                 }
                 #[cfg(unix)]
                 {
                     self.workspace_previews.clear();
                     self.workspace_preview_target = None;
-                    let title = if self.persistent_session {
-                        "Sessions · loading…"
-                    } else {
-                        "Sessions · Enter cannot attach in standalone mode · loading…"
-                    };
-                    let mut picker = ListPicker::new(title, Vec::new());
-                    picker.primary_action = self.persistent_session.then(|| "attach".to_owned());
+                    let mut picker = ListPicker::new("Sessions · loading…", Vec::new());
+                    picker.primary_action = Some("attach".to_owned());
                     self.list = Some(picker);
                     self.request_workspace_refresh();
                 }
                 Ok(())
             }
             (Colon::SessionStart, InvocationParameters::OptionalPath(workspace)) => {
-                if self.reject_unsupported_persistent_session(platform_supports_persistent_sessions)
-                {
+                if self.reject_unavailable_persistent_session(
+                    platform_supports_persistent_sessions,
+                    true,
+                ) {
                     return Ok(());
                 }
                 #[cfg(unix)]
@@ -4376,8 +4383,10 @@ impl App {
                 Ok(())
             }
             (Colon::SessionStop, InvocationParameters::OptionalPath(selector)) => {
-                if self.reject_unsupported_persistent_session(platform_supports_persistent_sessions)
-                {
+                if self.reject_unavailable_persistent_session(
+                    platform_supports_persistent_sessions,
+                    true,
+                ) {
                     return Ok(());
                 }
                 #[cfg(unix)]
@@ -4387,8 +4396,10 @@ impl App {
                 Ok(())
             }
             (Colon::SessionRename, InvocationParameters::SessionRename { workspace, name }) => {
-                if self.reject_unsupported_persistent_session(platform_supports_persistent_sessions)
-                {
+                if self.reject_unavailable_persistent_session(
+                    platform_supports_persistent_sessions,
+                    true,
+                ) {
                     return Ok(());
                 }
                 #[cfg(unix)]
@@ -4616,13 +4627,22 @@ impl App {
         }
     }
 
-    pub(super) fn reject_unsupported_persistent_session(
+    /// Refuses a command that needs a persistent session host.
+    ///
+    /// `require_persistent_mode` separates the two callers. A `session`
+    /// command addresses the host and nothing else, so standalone mode refuses
+    /// it outright. The worktree list's `Enter` is a Git view's action that
+    /// only its attachment half needs a host for, so it passes `false` and
+    /// keeps its own message about what was refused.
+    pub(super) fn reject_unavailable_persistent_session(
         &mut self,
         platform_supports_persistent_sessions: bool,
+        require_persistent_mode: bool,
     ) -> bool {
-        let CommandAvailability::Unavailable(reason) =
-            persistent_session_availability(platform_supports_persistent_sessions)
-        else {
+        let CommandAvailability::Unavailable(reason) = persistent_session_availability(
+            platform_supports_persistent_sessions,
+            !require_persistent_mode || self.persistent_session,
+        ) else {
             return false;
         };
         self.error(reason);

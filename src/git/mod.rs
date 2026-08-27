@@ -57,7 +57,9 @@ pub use stash::{MAX_STASH_ENTRIES, StashEntry, StashMutation, StashScope, parse_
 pub use stats::{LineStats, StatusStats, count_new_lines, parse_numstat};
 pub use tracker::GitTracker;
 pub use view::{CountColumns, CountKind, StatusEntry, StatusRow, StatusSide, status_rows};
-pub use worktree::{Worktree, WorktreeCreate, parse_worktree_porcelain};
+pub use worktree::{
+    WorkspaceGitFacts, Worktree, WorktreeCreate, parse_worktree_porcelain, read_workspace_git_facts,
+};
 
 pub type Result<T> = std::result::Result<T, GitError>;
 
@@ -831,6 +833,26 @@ pub trait GitProvider {
             },
             retaining_branches,
         })
+    }
+
+    /// Prepares a branch deletion that a cascade is about to reach through the
+    /// one checkout it is removing on the way.
+    ///
+    /// The ordinary review refuses a branch checked out anywhere, because Git
+    /// refuses to delete one. A cascade removes that checkout first, so by the
+    /// time anything is deleted the branch is not checked out; what it needs
+    /// here is the review, alongside the removal rather than after it. Only the
+    /// named checkout is tolerated — any other is still a reason to refuse.
+    ///
+    /// The default is the ordinary review, which is already correct for a
+    /// provider whose review carries no checkout guard.
+    fn prepare_branch_deletion_through(
+        &self,
+        repository: &Repository,
+        branch: &str,
+        _checkout: &Path,
+    ) -> Result<BranchDeletionPlan> {
+        self.prepare_branch_deletion(repository, branch)
     }
 
     /// Deletes only the exact branch tip that was reviewed.
@@ -1639,6 +1661,16 @@ impl GitProvider for std::rc::Rc<MemoryGitProvider> {
 
     fn worktrees(&self, repository: &Repository) -> Result<Vec<Worktree>> {
         self.as_ref().worktrees(repository)
+    }
+
+    fn prepare_branch_deletion_through(
+        &self,
+        repository: &Repository,
+        branch: &str,
+        checkout: &Path,
+    ) -> Result<BranchDeletionPlan> {
+        self.as_ref()
+            .prepare_branch_deletion_through(repository, branch, checkout)
     }
 
     fn remove_worktree(&self, repository: &Repository, path: &Path) -> Result<()> {

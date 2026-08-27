@@ -94,6 +94,28 @@ impl App {
                     return;
                 }
                 self.session_action_menu = None;
+                // A stop that belongs to a compound worktree removal is one
+                // step of it, not an answer: reporting "stopped session" and
+                // stopping there would leave the worktree standing.
+                if self
+                    .worktree_teardown
+                    .as_ref()
+                    .is_some_and(|teardown| teardown.awaits_stop(&selector))
+                {
+                    match result {
+                        Ok(()) => {
+                            self.advance_worktree_teardown(super::WorktreeTeardownStage::Removing);
+                            self.continue_worktree_teardown_after_stop();
+                        }
+                        Err(error) => {
+                            self.worktree_teardown = None;
+                            self.error(format!(
+                                "cannot remove this worktree because its session could not be stopped: {error}"
+                            ));
+                        }
+                    }
+                    return;
+                }
                 match result {
                     Ok(()) => {
                         self.status(format!("stopped session for {}", selector.display()));
@@ -111,6 +133,30 @@ impl App {
                     return;
                 }
                 self.session_action_menu = None;
+                // The record is the last level of a compound removal. Whether
+                // one was there to remove says nothing about whether the
+                // worktree went, which has already happened by now, so the
+                // cascade reports what it did either way.
+                if self
+                    .worktree_teardown
+                    .as_ref()
+                    .is_some_and(|teardown| teardown.awaits_forget(&path))
+                {
+                    if let Err(error) = result {
+                        // The directory is already gone; a stranded record is
+                        // worth saying out loud, because it is what keeps a
+                        // number claimed.
+                        self.finish_worktree_teardown();
+                        self.error(format!(
+                            "{}; its session record could not be forgotten: {error}",
+                            self.status
+                        ));
+                    } else {
+                        self.finish_worktree_teardown();
+                    }
+                    self.request_workspace_refresh();
+                    return;
+                }
                 match result {
                     Ok(true) => {
                         self.status(format!("forgot session record for {}", path.display()));
@@ -190,7 +236,8 @@ impl App {
         path: PathBuf,
         platform_supports_persistent_sessions: bool,
     ) -> bool {
-        if self.reject_unsupported_persistent_session(platform_supports_persistent_sessions) {
+        if self.reject_unavailable_persistent_session(platform_supports_persistent_sessions, false)
+        {
             return false;
         }
         if !self.persistent_session {
@@ -220,6 +267,8 @@ impl App {
 
     #[cfg(unix)]
     pub(super) fn rebuild_workspace_picker(&mut self) {
+        use unicode_width::UnicodeWidthStr as _;
+
         let (filter, selected) = self
             .list
             .as_ref()
@@ -231,11 +280,39 @@ impl App {
         self.list_actions = (0..self.workspace_rows.len())
             .map(ListAction::Workspace)
             .collect();
+        // The manager reads as four columns — number, name, branch, worktree —
+        // padded to the widest value in the list so they line up down it, the
+        // way the contextual action menu already lines its own columns up. A
+        // row that is not in a Git repository, or is the repository's main
+        // checkout, still pays for its columns and says `-` in them, so a
+        // column means the same thing on every line.
+        let columns = self
+            .workspace_rows
+            .iter()
+            .map(|row| {
+                (
+                    row.display_name(),
+                    Self::session_branch_cell(row),
+                    self.session_worktree_cell(row),
+                )
+            })
+            .collect::<Vec<_>>();
+        let name_width = columns
+            .iter()
+            .map(|(name, _, _)| name.width())
+            .max()
+            .unwrap_or(0);
+        let branch_width = columns
+            .iter()
+            .map(|(_, branch, _)| branch.width())
+            .max()
+            .unwrap_or(0);
         let items = self
             .workspace_rows
             .iter()
+            .zip(columns.iter())
             .enumerate()
-            .map(|(index, row)| {
+            .map(|(index, (row, (name, branch, worktree)))| {
                 let marker = if row.project_root == self.project_root {
                     "* "
                 } else {
@@ -247,73 +324,72 @@ impl App {
                 let number = row
                     .number
                     .map_or_else(|| "  ".to_owned(), |number| format!("{number} "));
-                let state = row.state_label();
-                let mut details = vec![row.project_root.display().to_string(), state.to_owned()];
-                // A successful health reply populates every live field,
-                // including confirmed zeroes. Keep a timed-out reply distinct
-                // from those omitted zeroes: this host may still own protected
-                // state even though the bounded inspection did not answer.
-                let health_available = row.unsaved_buffers.is_some()
-                    && row.pending_wait_requests.is_some()
-                    && row.live_terminals.is_some()
-                    && row.terminal_sessions.is_some()
-                    && row.interactive_attached.is_some();
-                if row.running && row.incompatible_protocol.is_none() && !health_available {
-                    details.push("health unavailable".to_owned());
-                }
-                // A confirmed count of zero is the uninteresting answer, and
-                // the detail line is the only room a row has for anything
-                // beyond its name. Dropping it leaves a quiet session reading
-                // as its path and state, so a shown count is worth reading.
-                if let Some(count) = row.unsaved_buffers.filter(|count| *count > 0) {
-                    details.push(format!("unsaved {count}"));
-                }
-                if let Some(count) = row.live_terminals.filter(|count| *count > 0) {
-                    details.push(format!("terminals {count}"));
-                }
-                if let Some(count) = row.pending_wait_requests.filter(|count| *count > 0) {
-                    details.push(format!("waiting {count}"));
-                }
-                if let (Some(total), Some(live)) = (row.terminal_sessions, row.live_terminals) {
-                    let exited = total.saturating_sub(live);
-                    if exited > 0 {
-                        details.push(format!("exited terminals {exited}"));
-                    }
-                }
-                if let Some(attached) = row.interactive_attached {
-                    details.push(if attached {
-                        "TUI attached".to_owned()
-                    } else {
-                        "no TUI".to_owned()
-                    });
-                }
-                PickerItem::new(
-                    format!("{number}{marker}{}", row.display_name()),
-                    details.join(" · "),
-                    index,
-                )
-                .with_preview(session_picker_preview(
-                    row,
-                    self.workspace_previews.get(&row.project_root),
-                    self.workspace_preview_target.as_ref() == Some(&row.project_root),
-                ))
-                // A stopped session is still worth listing and still starts
-                // on Enter, so it stays in place rather than being hidden or
-                // sorted away; dimming is what separates it from the hosts
-                // that are actually up.
-                .dimmed(!row.running)
+                let label = format!(
+                    "{number}{marker}{name}{}",
+                    " ".repeat(name_width.saturating_sub(name.width()))
+                );
+                let detail = format!(
+                    "{branch}{}  {worktree}",
+                    " ".repeat(branch_width.saturating_sub(branch.width()))
+                );
+                // The padding is presentation, so it is kept out of the
+                // haystack: filtering answers to what the row says, not to how
+                // wide the widest other row happened to be.
+                let search = format!("{name} {} {branch} {worktree}", row.project_root.display());
+                PickerItem::searchable(label, detail, search, index)
+                    .with_preview(session_picker_preview(
+                        row,
+                        self.workspace_previews.get(&row.project_root),
+                        self.workspace_preview_target.as_ref() == Some(&row.project_root),
+                    ))
+                    // A stopped session is still worth listing and still starts
+                    // on Enter, so it stays in place rather than being hidden or
+                    // sorted away; dimming is what separates it from the hosts
+                    // that are actually up.
+                    .dimmed(!row.running)
             })
             .collect();
-        let title = if self.persistent_session {
-            "Sessions · 1-9 attach · Tab actions"
-        } else {
-            "Sessions · Enter cannot attach in standalone mode · Tab actions"
-        };
-        let mut picker = ListPicker::new(title, items).with_preview("Session");
-        picker.primary_action = self.persistent_session.then(|| "attach".to_owned());
+        let mut picker =
+            ListPicker::new("Sessions · 1-9 attach · Tab actions", items).with_preview("Session");
+        picker.primary_action = Some("attach".to_owned());
         picker.filter = filter;
         picker.selected = selected.min(self.workspace_rows.len().saturating_sub(1));
         self.list = Some(picker);
+    }
+
+    /// The branch column: the checked-out branch, or `-` for a detached
+    /// checkout and for a workspace that is not a Git working tree at all.
+    #[cfg(unix)]
+    fn session_branch_cell(row: &crate::workspace::WorkspaceRow) -> String {
+        row.git
+            .as_ref()
+            .and_then(|facts| facts.branch.clone())
+            .unwrap_or_else(|| "-".to_owned())
+    }
+
+    /// The worktree column: this workspace's own path when it is a linked
+    /// worktree, and `-` when it is a main checkout or not a repository. The
+    /// path is deliberately repeated from the preview here, because it is what
+    /// distinguishes a worktree session from the project it was cut from.
+    ///
+    /// It is the last column and the widest thing on the row, so a path under
+    /// the home directory is written with `~`. That is the difference between
+    /// the distinguishing tail of a path surviving the row's width and being
+    /// cut off it; the preview keeps the full path either way.
+    #[cfg(unix)]
+    fn session_worktree_cell(&self, row: &crate::workspace::WorkspaceRow) -> String {
+        let Some(path) = row.git.as_ref().and_then(|facts| facts.worktree.as_ref()) else {
+            return "-".to_owned();
+        };
+        let relative = self
+            .home_directory
+            .as_deref()
+            .and_then(|home| path.strip_prefix(home).ok());
+        match relative {
+            Some(relative) if relative.as_os_str().is_empty() => "~".to_owned(),
+            Some(relative) => format!("~/{}", relative.display()),
+            None => path.display().to_string(),
+        }
     }
 
     /// Starts one coalesced control request for the selected running session.
@@ -352,6 +428,15 @@ impl App {
         self.rebuild_workspace_picker();
     }
 
+    /// Moves a confirmed teardown on, so the events that follow are read
+    /// against the stage they belong to.
+    #[cfg(unix)]
+    pub(super) fn advance_worktree_teardown(&mut self, stage: super::WorktreeTeardownStage) {
+        if let Some(teardown) = self.worktree_teardown.as_mut() {
+            teardown.stage = stage;
+        }
+    }
+
     #[cfg(unix)]
     pub(super) fn start_session(&mut self, workspace: PathBuf) {
         if !self.persistent_session {
@@ -386,6 +471,18 @@ impl App {
             self.error("stopping sessions needs workspace.mode: persistent");
             return;
         }
+        self.request_session_stop(selector, force);
+    }
+
+    /// Stops a session without the `session` namespace's mode gate.
+    ///
+    /// That gate belongs to the commands somebody types, not to the host. A
+    /// standalone editor still finds a persistent session running on a worktree
+    /// it is removing — the session service is attached in either mode — and
+    /// refusing to stop it there would abandon a removal already confirmed,
+    /// halfway, for a reason that has nothing to do with the action.
+    #[cfg(unix)]
+    pub(super) fn request_session_stop(&mut self, selector: PathBuf, force: bool) {
         self.workspace_generation = self.workspace_generation.wrapping_add(1).max(1);
         let generation = self.workspace_generation;
         let Some(service) = self.ports.workspace_service.as_ref() else {

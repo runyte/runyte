@@ -434,6 +434,151 @@ fn removing_a_clean_worktree_keeps_its_branch_and_clears_checkout_annotation() {
     assert!(branch.checkouts.is_empty());
 }
 
+/// The branch cascade reviews a branch while it is still checked out in the
+/// worktree the same action is about to remove. The ordinary review refuses
+/// exactly that, so a cascade that used it could never reach its confirmation.
+#[test]
+fn a_cascade_reviews_a_checked_out_branch_and_deletes_it_once_the_checkout_is_gone() {
+    let repository = TempRepository::new("branch-cascade");
+    repository.write("source.rs", "base\n");
+    repository.commit("base");
+    let provider = provider();
+    let git_repository = repository.repository();
+    let checkout = repository.path().join("linked");
+    provider
+        .create_worktree(
+            &git_repository,
+            &WorktreeCreate {
+                destination: checkout.clone(),
+                start: "HEAD".to_owned(),
+                new_branch: Some("cascaded".to_owned()),
+            },
+        )
+        .unwrap();
+
+    // The ordinary review refuses, because Git refuses to delete a branch that
+    // is checked out.
+    let refused = provider
+        .prepare_branch_deletion(&git_repository, "cascaded")
+        .unwrap_err();
+    assert!(format!("{refused}").contains("checked out"), "{refused:?}");
+
+    // Only the checkout the cascade is removing is tolerated.
+    let elsewhere = repository.path().join("somewhere-else");
+    let still_refused = provider
+        .prepare_branch_deletion_through(&git_repository, "cascaded", &elsewhere)
+        .unwrap_err();
+    assert!(
+        format!("{still_refused}").contains("checked out"),
+        "{still_refused:?}"
+    );
+
+    let plan = provider
+        .prepare_branch_deletion_through(&git_repository, "cascaded", &checkout)
+        .expect("a cascade must be able to review the branch it is reaching through");
+    assert_eq!(plan.branch, "cascaded");
+
+    let removal = provider
+        .prepare_worktree_removal(&git_repository, &checkout)
+        .unwrap();
+    provider
+        .remove_worktree_guarded(&git_repository, &removal, DeletionAuthorization::Typed)
+        .unwrap();
+
+    // The plan reviewed through the checkout must still match what the guarded
+    // deletion re-derives now that the checkout is gone: removing a worktree
+    // moves no ref, so the review taken alongside it is not stale.
+    provider
+        .delete_branch_guarded(&git_repository, &plan, DeletionAuthorization::Typed)
+        .expect("the plan reviewed alongside the removal must survive it");
+    assert!(
+        provider
+            .branches(&git_repository)
+            .unwrap()
+            .iter()
+            .all(|branch| branch.name != "cascaded")
+    );
+}
+
+/// The session manager reads a workspace's branch, worktree, and remote from
+/// files rather than by running `git`, so what real Git writes has to be what
+/// that reader expects.
+#[test]
+fn workspace_git_facts_match_what_git_writes_for_a_worktree_and_a_main_checkout() {
+    use runyte::git::read_workspace_git_facts;
+
+    let repository = TempRepository::new("workspace-facts");
+    repository.write("source.rs", "base\n");
+    repository.commit("base");
+    repository.git(&["branch", "-M", "main"]);
+    repository.git(&[
+        "remote",
+        "add",
+        "origin",
+        "https://example.invalid/project.git",
+    ]);
+    let provider = provider();
+    let checkout = repository.path().join("linked");
+    provider
+        .create_worktree(
+            &repository.repository(),
+            &WorktreeCreate {
+                destination: checkout.clone(),
+                start: "HEAD".to_owned(),
+                new_branch: Some("enh/facts".to_owned()),
+            },
+        )
+        .unwrap();
+
+    let main = read_workspace_git_facts(repository.path()).expect("the main checkout has facts");
+    assert_eq!(main.branch.as_deref(), Some("main"));
+    assert_eq!(main.worktree, None, "a main checkout is not a worktree");
+    assert_eq!(
+        main.remote.as_deref(),
+        Some("https://example.invalid/project.git")
+    );
+
+    let linked = read_workspace_git_facts(&checkout).expect("a linked worktree has facts");
+    assert_eq!(linked.branch.as_deref(), Some("enh/facts"));
+    assert_eq!(linked.worktree.as_deref(), Some(checkout.as_path()));
+    // The remote lives in the shared repository, which the worktree reaches
+    // through its `commondir`.
+    assert_eq!(
+        linked.remote.as_deref(),
+        Some("https://example.invalid/project.git")
+    );
+}
+
+/// A repository whose Git directory lives elsewhere still has a `.git` file,
+/// and is still a main checkout rather than a linked worktree.
+#[test]
+fn a_separate_git_directory_is_not_reported_as_a_linked_worktree() {
+    use runyte::git::read_workspace_git_facts;
+
+    let scratch = TempRepository::new("separate-git-dir");
+    let work = scratch.path().join("work");
+    let git_dir = scratch.path().join("elsewhere.git");
+    fs::create_dir_all(&work).unwrap();
+    let output = Command::new("git")
+        .args(["init", "-q", "--separate-git-dir"])
+        .arg(&git_dir)
+        .arg(&work)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "git init --separate-git-dir: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    assert!(work.join(".git").is_file(), "the checkout uses a gitfile");
+    let facts = read_workspace_git_facts(&work).expect("the checkout has facts");
+    assert_eq!(
+        facts.worktree, None,
+        "a separate Git directory is still a main checkout"
+    );
+}
+
 #[test]
 fn removing_a_dirty_or_locked_worktree_never_forces_it() {
     let repository = TempRepository::new("worktree-remove-refuse");

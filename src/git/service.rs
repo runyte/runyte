@@ -226,6 +226,10 @@ pub enum GitOperation {
     PrepareBranchDeletion {
         repository: Repository,
         branch: String,
+        /// The one checkout a cascade is removing on the way to this branch,
+        /// which the review tolerates for that reason. `None` is the ordinary
+        /// review, which refuses any checkout at all.
+        cascade_checkout: Option<PathBuf>,
     },
     PrepareWorktreeRemoval {
         repository: Repository,
@@ -1099,9 +1103,17 @@ fn execute(
         GitOperation::Worktrees { repository } => {
             provider.worktrees(repository).map(GitResponse::Worktrees)
         }
-        GitOperation::PrepareBranchDeletion { repository, branch } => provider
-            .prepare_branch_deletion(repository, branch)
-            .map(GitResponse::PreparedBranchDeletion),
+        GitOperation::PrepareBranchDeletion {
+            repository,
+            branch,
+            cascade_checkout,
+        } => match cascade_checkout {
+            Some(checkout) => {
+                provider.prepare_branch_deletion_through(repository, branch, checkout)
+            }
+            None => provider.prepare_branch_deletion(repository, branch),
+        }
+        .map(GitResponse::PreparedBranchDeletion),
         GitOperation::PrepareWorktreeRemoval { repository, path } => provider
             .prepare_worktree_removal(repository, path)
             .map(GitResponse::PreparedWorktreeRemoval),
