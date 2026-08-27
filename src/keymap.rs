@@ -1806,6 +1806,8 @@ fn built_in_bindings() -> Vec<Binding> {
         terminal_insert([Key::ctrl('w'), Key::ctrl('v')], Command::SplitVertical),
         terminal_insert([Key::ctrl('w'), Key::char('s')], Command::SplitHorizontal),
         terminal_insert([Key::ctrl('w'), Key::ctrl('s')], Command::SplitHorizontal),
+        terminal_insert([Key::ctrl('w'), Key::char('f')], Command::ToggleFullscreen),
+        terminal_insert([Key::ctrl('w'), Key::char('z')], Command::ToggleZen),
         modal(
             [Key::char(' '), Key::char('w'), Key::char('w')],
             Command::NextWindow,
@@ -2775,11 +2777,13 @@ mod tests {
     }
 
     #[test]
-    fn terminal_insert_ctrl_w_registers_splits_only_in_the_terminal_scope() {
+    fn terminal_insert_ctrl_w_registers_terminal_window_actions() {
         let keymap = default_keymap();
         for (suffix, command) in [
             ('v', EditorCommand::SplitVertical),
             ('s', EditorCommand::SplitHorizontal),
+            ('f', EditorCommand::ToggleFullscreen),
+            ('z', EditorCommand::ToggleZen),
         ] {
             let sequence = KeySequence::from([Key::ctrl('w'), Key::char(suffix)]);
             assert!(matches!(

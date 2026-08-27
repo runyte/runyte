@@ -543,10 +543,13 @@ terminal destination in Insert mode. A terminal that already owns a captured
 review stays in Normal/review mode until `i`, `a`, `o`, or another terminal
 insert key returns it to the live screen; a document reached from Terminal
 Insert starts in Normal. `Ctrl-w v/s` and their control-key aliases split the
-only pane while leaving the child live in the original pane. Directional
-navigation and splitting never capture a terminal review snapshot. Canceling
-the prefix leaves the terminal in Insert mode. `Escape`, `Ctrl-c`, `Ctrl-o`,
-`Space`, and ordinary keys still reach the child unchanged.
+only pane while leaving the child live in the original pane. `Ctrl-w f/z`
+toggle full-screen and zen presentation from terminal Insert, live Normal,
+Normal/review, and Select without changing that mode. Bare `Ctrl-w` likewise
+keeps the current mode. Window actions never capture or discard a terminal
+review snapshot. Canceling the prefix leaves the terminal in Insert mode.
+`Escape`, `Ctrl-c`, `Ctrl-o`, `Space`, and ordinary keys still reach the child
+unchanged.
 
 Turning on `editor.fast_pane_keys` adds `Ctrl-h/j/k/l` to that short list of
 keys the terminal does not own, so a pane move costs one keystroke instead of
@@ -893,10 +896,11 @@ native text selection; set `editor.mouse: false` when native selection is
 preferred and restart Runyte. Passive pointer motion never clears key hints or
 status and does not schedule a redraw.
 
-Pending compound bindings open a key-hint popup. Up and Down are reserved for
-scrolling it unless that arrow completes a binding under the pending prefix;
-`Alt-j` and `Alt-k` always scroll as a fallback. Scroll controls appear in the
-title when the entries exceed the available space.
+Pending compound bindings open a key-hint popup. `Ctrl-n` and `Ctrl-p` scroll
+its commands without participating in the pending binding. Up and Down also
+scroll unless that arrow completes a binding under the pending prefix;
+`Alt-j` and `Alt-k` remain alternatives. Scroll controls appear in the title
+when the entries exceed the available space.
 
 `build.sh` wraps `cargo build --bins` and forwards any extra arguments. A local
 Cargo installation installs the editor:

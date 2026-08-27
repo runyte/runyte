@@ -362,6 +362,7 @@ fn narrow_popup_is_bounded_and_scrollable() {
 
     let first = render(40, 10, &mut app, &hints);
     assert!(first.contains("1-6/"));
+    assert!(first.contains("Ctrl-n/p"));
     assert!(first.contains("↑/↓"));
     assert!(!first.contains("Alt-j/k"));
 
@@ -388,6 +389,7 @@ fn popup_keeps_alt_scroll_fallback_when_arrows_are_bindings() {
     );
 
     let first = render(36, 10, &mut app, &hints);
+    assert!(first.contains("Ctrl-n/p"));
     assert!(first.contains("Alt-j/k"));
     assert!(!first.contains("↑/↓"));
 
@@ -400,6 +402,29 @@ fn popup_keeps_alt_scroll_fallback_when_arrows_are_bindings() {
         HintEventResult::Consumed
     );
     assert_eq!(hints.scroll_offset(), 1);
+}
+
+#[cfg(unix)]
+#[test]
+fn terminal_ctrl_w_hint_scrolls_with_control_n_and_p_without_dispatching() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    let mut hints = KeyHintState::default();
+    render(40, 10, &mut app, &hints);
+    type_colon(&mut app, "terminal /bin/cat");
+
+    dispatch_with_hints(&mut app, &mut hints, KeyStroke::ctrl('w'));
+    hints.note_scroll_limit(10);
+    dispatch_with_hints(&mut app, &mut hints, KeyStroke::ctrl('n'));
+
+    assert_eq!(app.mode, Mode::Insert);
+    assert_eq!(app.pending_sequence().to_string(), "Ctrl-w");
+    assert_eq!(hints.pending().to_string(), "Ctrl-w");
+    assert_eq!(hints.scroll_offset(), 1);
+
+    dispatch_with_hints(&mut app, &mut hints, KeyStroke::ctrl('p'));
+    assert_eq!(app.pending_sequence().to_string(), "Ctrl-w");
+    assert_eq!(hints.pending().to_string(), "Ctrl-w");
+    assert_eq!(hints.scroll_offset(), 0);
 }
 
 #[test]

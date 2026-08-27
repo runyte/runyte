@@ -92,7 +92,7 @@ pub enum HintEventResult {
     Consumed,
 }
 
-/// Presentation-neutral state for normal/select key discovery.
+/// Presentation-neutral state for modal key discovery.
 ///
 /// Discovery is an exploration tool, not a report of what just ran: the popup
 /// is open only while a prefix is pending and more keys are expected. A
@@ -246,7 +246,7 @@ impl KeyHintState {
     ) -> HintEventResult {
         let key = key.into();
         self.expire_at(now);
-        if mode == Mode::Insert && key != KeyStroke::ctrl('w') {
+        if mode == Mode::Insert && !self.is_pending() && key != KeyStroke::ctrl('w') {
             self.clear();
             return HintEventResult::Forward;
         }
@@ -256,6 +256,11 @@ impl KeyHintState {
         }
 
         let scroll_down = if self.is_pending()
+            && key.modifiers == Modifiers::CONTROL
+            && matches!(key.code, KeyCode::Char('n') | KeyCode::Char('p'))
+        {
+            Some(key.code == KeyCode::Char('n'))
+        } else if self.is_pending()
             && key.modifiers.contains(Modifiers::ALT)
             && matches!(key.code, KeyCode::Char('j') | KeyCode::Char('k'))
         {
@@ -800,6 +805,40 @@ mod tests {
         );
         assert_eq!(hints.scroll_offset(), 0);
         assert_eq!(hints.pending().to_string(), "Space");
+    }
+
+    #[test]
+    fn control_n_and_p_scroll_a_terminal_insert_prefix() {
+        let mut hints = KeyHintState::default();
+        hints.observe_in(
+            KeyStroke::ctrl('w'),
+            Mode::Insert,
+            BindingScope::Terminal,
+            default_keymap(),
+        );
+
+        assert_eq!(
+            hints.observe_in(
+                KeyStroke::ctrl('n'),
+                Mode::Insert,
+                BindingScope::Terminal,
+                default_keymap(),
+            ),
+            HintEventResult::Consumed
+        );
+        assert_eq!(hints.scroll_offset(), 1);
+        assert_eq!(hints.pending().to_string(), "Ctrl-w");
+        assert_eq!(
+            hints.observe_in(
+                KeyStroke::ctrl('p'),
+                Mode::Insert,
+                BindingScope::Terminal,
+                default_keymap(),
+            ),
+            HintEventResult::Consumed
+        );
+        assert_eq!(hints.scroll_offset(), 0);
+        assert_eq!(hints.pending().to_string(), "Ctrl-w");
     }
 
     #[test]

@@ -117,7 +117,9 @@ impl App {
 
     /// Registry mode a frontend should use while observing this key.
     pub fn key_hint_mode_for_key(&self, key: KeyStroke) -> Option<Mode> {
-        if self.mode == Mode::Insert && key == KeyStroke::ctrl('w') {
+        if self.mode == Mode::Insert
+            && (key == KeyStroke::ctrl('w') || !self.grammar.pending_sequence().is_empty())
+        {
             return Some(Mode::Insert);
         }
         self.key_hint_mode()

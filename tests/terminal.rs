@@ -266,6 +266,61 @@ fn control_w_starts_pane_navigation_without_leaving_terminal_input() {
 }
 
 #[test]
+fn control_w_fullscreen_and_zen_preserve_every_terminal_mode() {
+    let mut session = Session::start("/bin/cat");
+    let terminal = session.app.active_terminal().unwrap();
+
+    // Insert uses the terminal-scoped window bindings without first entering
+    // Normal or sending either key to the child.
+    session.app.handle_key(KeyStroke::ctrl('w')).unwrap();
+    assert_eq!(session.app.mode, Mode::Insert);
+    session.type_text("f");
+    assert_eq!(session.app.mode, Mode::Insert);
+    assert_eq!(session.app.status, "full-screen view enabled");
+    assert!(!session.app.terminals.get(terminal).unwrap().reviewing());
+
+    session.app.handle_key(KeyStroke::ctrl('w')).unwrap();
+    session.type_text("f");
+    assert_eq!(session.app.status, "full-screen view disabled");
+
+    // Live Normal keeps output live, and opening the prefix itself does not
+    // capture a review snapshot.
+    session
+        .app
+        .handle_key(KeyStroke::new(KeyCode::Char('\\'), Modifiers::CONTROL))
+        .unwrap();
+    assert_eq!(session.app.mode, Mode::Normal);
+    session.app.handle_key(KeyStroke::ctrl('w')).unwrap();
+    assert_eq!(session.app.mode, Mode::Normal);
+    assert!(!session.app.terminals.get(terminal).unwrap().reviewing());
+    session.type_text("z");
+    assert_eq!(session.app.mode, Mode::Normal);
+    assert_eq!(session.app.status, "zen mode enabled at 100 columns");
+    assert!(!session.app.terminals.get(terminal).unwrap().reviewing());
+
+    // Captured Normal/review and Select retain both the snapshot and mode.
+    session
+        .app
+        .handle_key(KeyStroke::new(KeyCode::Char('\\'), Modifiers::CONTROL))
+        .unwrap();
+    assert!(session.app.terminals.get(terminal).unwrap().reviewing());
+    session.app.handle_key(KeyStroke::ctrl('w')).unwrap();
+    session.type_text("f");
+    assert_eq!(session.app.mode, Mode::Normal);
+    assert_eq!(session.app.status, "full-screen view enabled");
+    assert!(session.app.terminals.get(terminal).unwrap().reviewing());
+
+    session.type_text("v");
+    assert_eq!(session.app.mode, Mode::Select);
+    session.app.handle_key(KeyStroke::ctrl('w')).unwrap();
+    assert_eq!(session.app.mode, Mode::Select);
+    session.type_text("z");
+    assert_eq!(session.app.mode, Mode::Select);
+    assert_eq!(session.app.status, "zen mode enabled at 100 columns");
+    assert!(session.app.terminals.get(terminal).unwrap().reviewing());
+}
+
+#[test]
 fn control_w_focus_moves_directly_from_terminal_insert_without_sending_input() {
     let mut session = Session::start("/bin/sh -c 'stty raw -echo; printf ready; cat -v'");
     assert!(session.settle(|app| terminal_text(app).contains("ready")));
