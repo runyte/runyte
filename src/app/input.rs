@@ -698,7 +698,14 @@ impl App {
                 }
                 self.jump = None;
                 self.grammar.reset();
+                let state = CommandState::capture(self);
                 self.execute_editor_command(EditorCommand::ClipboardYank)?;
+                let outcome = state.outcome(self, CommandOutcomeHint::Infer);
+                self.report_completed_action(
+                    "right mouse click",
+                    "Yank to the system clipboard",
+                    outcome,
+                );
             }
             PointerEventKind::Down(PointerButton::Middle)
             | PointerEventKind::Drag(PointerButton::Middle | PointerButton::Right)

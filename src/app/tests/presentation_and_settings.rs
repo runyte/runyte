@@ -400,6 +400,10 @@ fn right_click_on_any_selection_yanks_all_selections_to_the_system_clipboard() {
     assert_eq!(app.active().selection, selection);
     assert_eq!(app.mode, Mode::Select);
     assert_eq!(app.status, "yanked to system clipboard");
+    assert_eq!(
+        app.snapshot(&view).status.interaction_line,
+        "right mouse click (yanked to system clipboard)"
+    );
 
     *shared.lock().unwrap() = "unchanged".to_owned();
     app.handle_pointer(

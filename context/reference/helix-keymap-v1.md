@@ -221,10 +221,12 @@ Mouse input is grammar-independent application input rather than a hidden key
 binding table. Left click focuses/places, Shift-click extends, left drag
 selects, wheel events scroll the pane under the pointer, and a drag on a shared
 border resizes that split. Right click over any current selection runs the
-system-clipboard yank for all current selections without moving them. A click
-that focuses another pane leaves Insert mode, while a following drag still
-selects and enters Select mode. All coordinates resolve through the prepared
-fold/wrap row projection; keyboard overlays retain input ownership while open.
+system-clipboard yank for all current selections without moving them and
+echoes `right mouse click (yanked to system clipboard)` on the interaction
+line. A click that focuses another pane leaves Insert mode, while a following
+drag still selects and enters Select mode. All coordinates resolve through the
+prepared fold/wrap row projection; keyboard overlays retain input ownership
+while open.
 
 | Sequence | Helix command | Runyte command | Status | Notes |
 | --- | --- | --- | --- | --- |

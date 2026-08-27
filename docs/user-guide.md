@@ -825,6 +825,8 @@ and place the caret, Shift-click to extend, drag to select, scroll the pane
 under the pointer, and drag a shared pane border to resize the split.
 Right-clicking any current selection copies all current selections to the
 system clipboard, exactly like `Space c y`, without moving or replacing them.
+The interaction line reports
+`right mouse click (yanked to system clipboard)` after the copy succeeds.
 Clicking a live terminal pane focuses it in Insert mode; clicking a reviewed
 terminal keeps it in Normal/review mode until a terminal insert key returns to
 the live screen. Clicking another pane focuses it in Normal mode. Dragging on
