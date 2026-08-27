@@ -55,10 +55,11 @@ themes:
     # jump_text_muted: "#65737e"
     accent: "#88c0d0"
     # Carets and the status line distinguish modes. Omitted values use accent,
-    # error, change_added, warning, and info respectively.
+    # error, Runyte's neon Replace accent, warning, and info respectively; the
+    # Replace accent switches to magenta if another mode already uses green.
     cursor_normal: "#ff5555"
     cursor_insert: "#ff79c6"
-    cursor_replace: "#50fa7b"
+    cursor_replace: "#39ff14"
     cursor_select: "#ffb86c"
     cursor_command: "#bd93f9"
     directory: "#8be9fd"

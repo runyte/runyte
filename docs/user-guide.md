@@ -788,8 +788,9 @@ The canonical definitions live in
 ### Global status line
 
 The leftmost mode label in the global status line uses the current mode's caret
-colour — blue for Normal, red for Insert, the palette's added-text colour for
-Replace (usually green), orange for Select, and purple for Command. The rest of the row keeps the
+colour — blue for Normal, red for Insert, neon green for Replace (neon magenta
+when another mode already uses green), orange for Select, and purple for
+Command. The rest of the row keeps the
 theme's ordinary background. Its left side
 then names the workspace mode and current workspace directory, marking the
 active buffer `[+]` when it has unsaved changes and `[RO]` when it is read-only.
@@ -2544,7 +2545,7 @@ themes:
     accent: "#88c0d0"
     cursor_normal: "#ff5555"
     cursor_insert: "#ff79c6"
-    cursor_replace: "#50fa7b"
+    cursor_replace: "#39ff14"
     cursor_select: "#ffb86c"
     cursor_command: "#bd93f9"
     directory: "#8be9fd"
@@ -2632,10 +2633,11 @@ yellow), while omitted `info` uses `change_added` (then terminal green).
 `cursor_normal`, `cursor_insert`, `cursor_replace`, `cursor_select`, and
 `cursor_command` colour both carets and the global status line's mode label in
 Normal, Insert, Replace, Select, and Command modes respectively. When omitted
-they fall back to `accent`, `error`, `change_added`, `warning`, and `info`.
-The built-in themes use blue for Normal, red for Insert, their palette's
-added-text colour for Replace (usually green), orange for Select, and purple
-for Command.
+they fall back to `accent`, `error`, Runyte's neon Replace accent, `warning`,
+and `info`. The Replace fallback is saturated green against both dark and
+light grounds; it switches to neon magenta when another resolved mode colour
+is green. The built-in themes use blue for Normal, red for Insert, neon green
+for Replace, orange for Select, and purple for Command.
 
 `selection` colours secondary ranges in a multi-selection.
 `selection_primary` colours the primary range and ordinary Select-mode ranges;

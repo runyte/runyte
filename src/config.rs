@@ -68,6 +68,16 @@ const JUMP_LABEL_DARK_SECONDARY: &str = "#4ab7c6";
 const JUMP_LABEL_LIGHT_PRIMARY: &str = "#00616e";
 const JUMP_LABEL_LIGHT_SECONDARY: &str = "#007583";
 
+// Replace is deliberately louder than a palette's ordinary added-text green:
+// entering an overwrite mode should be impossible to overlook. A light ground
+// needs the same saturated hue at a darker value to keep the caret glyph
+// legible. Magenta is the escape hatch for a theme that already gives green to
+// another mode.
+const CURSOR_REPLACE_DARK: Color = Color::Rgb(0x39, 0xff, 0x14);
+const CURSOR_REPLACE_LIGHT: Color = Color::Rgb(0x00, 0x8f, 0x11);
+const CURSOR_REPLACE_DARK_ALTERNATE: Color = Color::Rgb(0xff, 0x2b, 0xd6);
+const CURSOR_REPLACE_LIGHT_ALTERNATE: Color = Color::Rgb(0xa0, 0x00, 0x8f);
+
 /// Language server configuration.
 ///
 /// Servers are keyed by the language names in `syntax::grammars`, which is what
@@ -195,7 +205,8 @@ pub struct ThemeDefinition {
     pub cursor_normal: Option<String>,
     /// Insert-mode caret colour. An omitted value uses `error`.
     pub cursor_insert: Option<String>,
-    /// Replace-mode caret colour. An omitted value uses `change_added`.
+    /// Replace-mode caret colour. An omitted value uses Runyte's neon green,
+    /// or neon magenta when another mode already uses green.
     pub cursor_replace: Option<String>,
     /// Select-mode caret colour. An omitted value uses `warning`.
     pub cursor_select: Option<String>,
@@ -413,6 +424,35 @@ pub struct Theme {
 }
 
 impl Theme {
+    /// Whether a colour reads as green rather than as a neutral or a nearby
+    /// yellow/cyan. The spread guard keeps tiny channel differences in grays
+    /// from claiming the hue.
+    fn is_green_hued(color: Color) -> bool {
+        let Some((red, green, blue)) = color.channels() else {
+            return false;
+        };
+        green > red && green > blue && green.saturating_sub(red.min(blue)) >= 0x20
+    }
+
+    /// The emphatic Replace colour for a theme that did not name one.
+    ///
+    /// The terminal-owned fallback remains terminal-owned because the actual
+    /// ground is unknowable; otherwise the appearance chooses a neon value
+    /// designed for that ground. A green mode diverts Replace to magenta so
+    /// the two modes cannot be mistaken for one another.
+    fn default_replace_color(background: Color, other_modes: [Color; 4]) -> Color {
+        let green_is_occupied = other_modes.into_iter().any(Self::is_green_hued);
+        let candidate = match (background.relative_luminance(), green_is_occupied) {
+            (Some(luminance), false) if luminance < 0.5 => CURSOR_REPLACE_DARK,
+            (Some(_), false) => CURSOR_REPLACE_LIGHT,
+            (Some(luminance), true) if luminance < 0.5 => CURSOR_REPLACE_DARK_ALTERNATE,
+            (Some(_), true) => CURSOR_REPLACE_LIGHT_ALTERNATE,
+            (None, false) => Color::Green,
+            (None, true) => Color::Magenta,
+        };
+        Self::legible_mode_color(background, candidate)
+    }
+
     /// Keeps a mode caret legible while retaining the candidate palette hue.
     fn legible_mode_color(background: Color, mut candidate: Color) -> Color {
         let Some(background_luminance) = background.relative_luminance() else {
@@ -842,16 +882,37 @@ impl TryFrom<&ThemeDefinition> for Theme {
             value.info.as_deref().or(value.change_added.as_deref()),
             Color::Green,
         )?;
-        let cursor_replace = Theme::legible_mode_color(
-            background,
-            optional_color(
-                value
-                    .cursor_replace
-                    .as_deref()
-                    .or(value.change_added.as_deref()),
-                Color::Green,
-            )?,
-        );
+        let cursor_normal = value
+            .cursor_normal
+            .as_deref()
+            .map(parse_color)
+            .transpose()?
+            .unwrap_or(accent);
+        let cursor_insert = value
+            .cursor_insert
+            .as_deref()
+            .map(parse_color)
+            .transpose()?
+            .unwrap_or(error);
+        let cursor_select = value
+            .cursor_select
+            .as_deref()
+            .map(parse_color)
+            .transpose()?
+            .unwrap_or(warning);
+        let cursor_command = value
+            .cursor_command
+            .as_deref()
+            .map(parse_color)
+            .transpose()?
+            .unwrap_or(info);
+        let cursor_replace = match value.cursor_replace.as_deref() {
+            Some(color) => Theme::legible_mode_color(background, parse_color(color)?),
+            None => Theme::default_replace_color(
+                background,
+                [cursor_normal, cursor_insert, cursor_select, cursor_command],
+            ),
+        };
         Ok(Self {
             background,
             foreground: parse_color(&value.foreground)?,
@@ -864,31 +925,11 @@ impl TryFrom<&ThemeDefinition> for Theme {
                 .transpose()?
                 .unwrap_or(muted),
             accent,
-            cursor_normal: value
-                .cursor_normal
-                .as_deref()
-                .map(parse_color)
-                .transpose()?
-                .unwrap_or(accent),
-            cursor_insert: value
-                .cursor_insert
-                .as_deref()
-                .map(parse_color)
-                .transpose()?
-                .unwrap_or(error),
+            cursor_normal,
+            cursor_insert,
             cursor_replace,
-            cursor_select: value
-                .cursor_select
-                .as_deref()
-                .map(parse_color)
-                .transpose()?
-                .unwrap_or(warning),
-            cursor_command: value
-                .cursor_command
-                .as_deref()
-                .map(parse_color)
-                .transpose()?
-                .unwrap_or(info),
+            cursor_select,
+            cursor_command,
             directory: value
                 .directory
                 .as_deref()
@@ -2347,9 +2388,9 @@ mod tests {
     #[test]
     fn every_built_in_command_cursor_is_legible_against_its_own_ground() {
         // The caret paints its glyph in the theme background, so the colour
-        // behind it has to stand off that ground. Command is the only mode
-        // colour Runyte chose for every bundled theme rather than lifting from
-        // the palette, which is exactly why it is the one worth pinning here.
+        // behind it has to stand off that ground. Command is a mode colour
+        // Runyte chose for every bundled theme rather than lifting from the
+        // palette, which is why it is worth pinning here.
         let config = Config::default();
         for name in config.theme_names() {
             let theme = config.resolve_theme(name).unwrap();
@@ -2407,10 +2448,29 @@ mod tests {
                 replace_contrast >= 3.0,
                 "{name} Replace cursor obscures its glyph: {replace_contrast}"
             );
-            // Command mode is the one mode whose colour is a Runyte decision
-            // rather than an upstream one, so every theme is held to the hue
-            // the mode vocabulary promises: blue, red, added-text, orange,
-            // purple.
+            let green_is_occupied = [
+                theme.cursor_normal,
+                theme.cursor_insert,
+                theme.cursor_select,
+                theme.cursor_command,
+            ]
+            .into_iter()
+            .any(Theme::is_green_hued);
+            if green_is_occupied {
+                let (red, green, blue) = theme.cursor_replace.channels().unwrap();
+                assert!(
+                    red > green && blue > green,
+                    "{name}: REP should switch to magenta because another mode uses green"
+                );
+            } else {
+                assert!(
+                    Theme::is_green_hued(theme.cursor_replace),
+                    "{name}: REP should read as neon green"
+                );
+            }
+            // Command mode is also a Runyte colour rather than an upstream
+            // one, so every theme is held to the purple hue its mode
+            // vocabulary promises.
             let (red, green, blue) = theme.cursor_command.channels().unwrap();
             assert!(
                 red > green && blue > green,
@@ -2420,8 +2480,12 @@ mod tests {
         let light = config.resolve_theme("light").unwrap();
         assert_eq!(light.cursor_normal, Color::Rgb(0x05, 0x50, 0xae));
         assert_eq!(light.cursor_insert, Color::Rgb(0xcf, 0x22, 0x2e));
+        assert_eq!(light.cursor_replace, CURSOR_REPLACE_LIGHT);
         assert_eq!(light.cursor_select, Color::Rgb(0x95, 0x38, 0x00));
         assert_eq!(light.cursor_command, Color::Rgb(0x82, 0x50, 0xdf));
+
+        let dark = config.resolve_theme("dark").unwrap();
+        assert_eq!(dark.cursor_replace, CURSOR_REPLACE_DARK);
 
         let paper = config.resolve_theme("paper").unwrap();
         assert_eq!(paper.cursor_normal, Color::Rgb(0x00, 0x5f, 0xaf));
@@ -2596,18 +2660,35 @@ mod tests {
     }
 
     #[test]
-    fn custom_theme_cursor_colors_fall_back_to_semantic_mode_colors() {
+    fn custom_theme_cursor_colors_use_mode_specific_fallbacks() {
         let config: Config =
             serde_yaml::from_str("themes:\n  custom:\n    accent: '#123456'\n").unwrap();
         let theme = config.resolve_theme("custom").unwrap();
 
         assert_eq!(theme.cursor_normal, Color::Rgb(0x12, 0x34, 0x56));
         assert_eq!(theme.cursor_insert, theme.error);
+        assert_eq!(theme.cursor_replace, CURSOR_REPLACE_DARK_ALTERNATE);
         assert_eq!(theme.cursor_select, theme.warning);
         assert_eq!(theme.directory, Color::Rgb(0x12, 0x34, 0x56));
         assert_eq!(theme.selection_primary, theme.selection);
         assert_eq!(theme.fuzzy_match_secondary, theme.selection);
         assert_eq!(theme.fuzzy_match_primary, theme.selection_primary);
+
+        let configured: Config =
+            serde_yaml::from_str("themes:\n  custom:\n    cursor_command: '#ba8baf'\n").unwrap();
+        assert_eq!(
+            configured.resolve_theme("custom").unwrap().cursor_replace,
+            CURSOR_REPLACE_DARK
+        );
+
+        let configured: Config = serde_yaml::from_str(
+            "themes:\n  custom:\n    cursor_command: '#ba8baf'\n    cursor_replace: '#12ef34'\n",
+        )
+        .unwrap();
+        assert_eq!(
+            configured.resolve_theme("custom").unwrap().cursor_replace,
+            Color::Rgb(0x12, 0xef, 0x34)
+        );
 
         let configured: Config = serde_yaml::from_str(
             "themes:\n  custom:\n    accent: '#123456'\n    cursor_select: '#654321'\n",
