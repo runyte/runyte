@@ -2503,9 +2503,14 @@ high-volume trace. Each `-v` raises the level and the cap is trace:
 
 `--log PATH` selects an explicit destination. Failing to honour it is a startup
 error, because silently choosing another file would make the requested capture
-misleading. An unwritable *default* destination only degrades logging: editing
-continues, a persistent host still serves, and the failure appears on stderr,
-as a notification, and in `:service-health`.
+misleading. On Unix, a path already owned by another running Runyte process is
+refused after a two-second handover window; choose a different path or let the
+first process exit. An unwritable *default* destination only degrades logging:
+editing continues, a persistent host still serves, and the failure appears on
+stderr, as a notification, and in `:service-health`. If a destination stops
+accepting writes after startup, editing likewise continues and one warning is
+retained in `:notifications` as well as the standing failure in
+`:service-health`.
 
 In persistent mode, verbosity and destination are properties of host startup.
 `--serve`, `--session-start`, `--session-restart`, and the launch that creates
@@ -2557,6 +2562,12 @@ At most 4 MiB is kept in the active file, with one previous 4 MiB file beside
 it, named by appending `.1`. Rotation is owned by the same process that owns
 the file and happens both while a host runs and at startup when it inherits a
 full file, so a long-lived or often-restarted host cannot grow without bound.
+
+Standalone names are unique, but every launch would otherwise leave another
+file behind. Before opening its own default log, a standalone process keeps the
+four newest logs belonging to exited standalone processes and removes older
+ones together with their `.1` files. Logs belonging to live processes are
+never pruned.
 
 Producers never wait for disk. Records go through a bounded queue to a single
 background writer, and are dropped rather than delaying input, rendering,

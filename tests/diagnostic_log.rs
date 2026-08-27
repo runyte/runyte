@@ -6,8 +6,10 @@
 //! record shape, and queue saturation without globals. These cover what only a
 //! process can show: which file a role owns, that a detached host keeps
 //! writing, that an attachment leaves a running host's logger alone, that a
-//! client never appends to a host's file, and that no document text,
-//! clipboard value, terminal output, or environment value reaches a record.
+//! client never appends to a host's file, that an explicit destination has one
+//! live owner, that framing failures reach the host log, and that no document
+//! text, clipboard value, terminal output, environment value, or propagated
+//! top-level error chain reaches a record.
 
 #![cfg(unix)]
 
@@ -24,8 +26,12 @@ use runyte::{
     input::InputEvent,
     layout::Rect,
     log::{HOST_LOG_NAME, Level, MAX_LOG_BYTES, Role, Settings, Sink, default_path, previous_path},
-    workspace::transport::{ClientRequest, HostResponse, LocalClient, LocalEndpoint},
+    workspace::transport::{
+        CLIENT_VERSION, ClientKind, ClientRequest, ClientRole, FeatureGroup, HostResponse,
+        LocalClient, LocalEndpoint, PROTOCOL_VERSION, encode_path,
+    },
 };
+use tokio::{io::AsyncWriteExt, net::UnixStream};
 
 /// A private runtime directory for every Runyte process this binary spawns, so
 /// nothing publishes an endpoint or a recent workspace into the person's own.
@@ -423,6 +429,71 @@ fn concurrent_standalone_processes_never_share_a_writable_log() {
     }
 }
 
+#[cfg(debug_assertions)]
+#[tokio::test]
+async fn a_second_process_is_refused_when_an_explicit_log_is_owned() {
+    use std::{ffi::CString, os::unix::ffi::OsStrExt};
+
+    let root = project("explicit-owner");
+    let destination = root.join("shared.log");
+    // Opening this FIFO for writing blocks after logger initialization. That
+    // gives the test one real Runyte process which demonstrably holds the
+    // explicit destination without needing a terminal or local socket.
+    let trace = root.join("hold-open.fifo");
+    let trace_bytes = CString::new(trace.as_os_str().as_bytes()).unwrap();
+    // SAFETY: `trace_bytes` is a live, NUL-terminated path and the mode is a
+    // conventional private FIFO mode.
+    assert_eq!(unsafe { libc::mkfifo(trace_bytes.as_ptr(), 0o600) }, 0);
+    let mut command = Command::new(env!("CARGO_BIN_EXE_runyte"));
+    command
+        .args([
+            "--standalone",
+            "--project-root",
+            root.to_str().unwrap(),
+            "-v",
+            "--log",
+            destination.to_str().unwrap(),
+        ])
+        .current_dir(&root)
+        .env("XDG_RUNTIME_DIR", test_runtime_dir())
+        .env("XDG_CACHE_HOME", test_cache_dir())
+        .env("RUNYTE_INPUT_TRACE", &trace)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped());
+    let mut owner = ChildGuard(Some(command.spawn().unwrap()));
+    assert!(
+        wait_until(|| destination.exists() && read_log(&destination).contains("runyte ")).await,
+        "the first process must demonstrably own and write the destination"
+    );
+    assert!(
+        owner.0.as_mut().unwrap().try_wait().unwrap().is_none(),
+        "the first owner exited before the competing process started"
+    );
+
+    let output = standalone_that_fails(&root, &["--log", destination.to_str().unwrap()]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("already owned by another running Runyte process"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("choose a different --log path"), "{stderr}");
+
+    let text = read_log(&destination);
+    let owner_pid = owner.0.as_ref().unwrap().id();
+    assert!(
+        text.contains(&format!("standalone[{owner_pid}]")),
+        "the owning process left no record:\n{text}"
+    );
+    assert!(
+        text.lines()
+            .all(|line| line.contains(&format!("standalone[{owner_pid}]"))),
+        "the refused process wrote to the shared destination:\n{text}"
+    );
+
+    drop(owner);
+}
+
 #[test]
 fn an_invalid_explicit_destination_fails_startup_clearly() {
     let root = project("explicit-failure");
@@ -562,6 +633,54 @@ async fn a_host_owns_host_log_and_records_client_lifecycle_while_detached() {
     );
 
     drop(reattached);
+    drop(child);
+}
+
+#[tokio::test]
+async fn a_malformed_frame_is_recorded_in_host_log_at_the_default_level() {
+    let root = project("malformed-frame");
+    let mut child = serve(&root, &[]);
+    let endpoint = endpoint_for(&root);
+    if !wait_for_endpoint(&mut child, &endpoint).await {
+        return;
+    }
+    let log = root.join(".runyte").join(HOST_LOG_NAME);
+    assert!(wait_until(|| log.exists()).await);
+
+    let mut stream = UnixStream::connect(endpoint.socket()).await.unwrap();
+    let hello = ClientRequest::Hello {
+        protocol: PROTOCOL_VERSION,
+        directory_handoff: false,
+        features: vec![
+            FeatureGroup::Control,
+            FeatureGroup::Buffers,
+            FeatureGroup::Wait,
+        ],
+        project_root_bytes: encode_path(&root),
+        client_kind: ClientKind::Control,
+        client_version: CLIENT_VERSION.to_owned(),
+        role: ClientRole::Control,
+        geometry: geometry().into(),
+    };
+    let mut frame = serde_json::to_vec(&hello).unwrap();
+    frame.push(b'\n');
+    stream.write_all(&frame).await.unwrap();
+    stream.write_all(b"{not-json}\n").await.unwrap();
+    stream.shutdown().await.unwrap();
+
+    assert!(
+        wait_until(|| {
+            read_log(&log).lines().any(|line| {
+                line.contains("WARN")
+                    && line.contains("transport: client connection failed")
+                    && line.contains("malformed workspace transport message")
+            })
+        })
+        .await,
+        "the framing failure was not retained at the default level:\n{}",
+        read_log(&log)
+    );
+
     drop(child);
 }
 
@@ -814,6 +933,54 @@ async fn no_document_clipboard_terminal_or_environment_value_reaches_a_record() 
     drop(child);
 }
 
+#[cfg(debug_assertions)]
+#[test]
+fn the_top_level_failure_record_never_carries_a_propagated_error_chain() {
+    const SECRET: &str = "SECRET_FROM_RUNYTE_INPUT_TRACE";
+
+    let root = project("top-level-redaction");
+    let destination = root.join("explicit.log");
+    let trace = root.join(SECRET).join("input.trace");
+    let output = Command::new(env!("CARGO_BIN_EXE_runyte"))
+        .args([
+            "--standalone",
+            "--project-root",
+            root.to_str().unwrap(),
+            "--log",
+            destination.to_str().unwrap(),
+        ])
+        .current_dir(&root)
+        .env("XDG_RUNTIME_DIR", test_runtime_dir())
+        .env("XDG_CACHE_HOME", test_cache_dir())
+        .env("RUNYTE_INPUT_TRACE", &trace)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .unwrap();
+
+    assert!(
+        !output.status.success(),
+        "the invalid trace path must fail startup"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains(SECRET),
+        "the test did not provoke the propagated path-bearing chain:\n{stderr}"
+    );
+
+    let text = read_log(&destination);
+    assert!(
+        text.lines()
+            .any(|line| line.ends_with("process: runyte exited with an error")),
+        "the generic process failure record is missing:\n{text}"
+    );
+    assert!(
+        !text.contains(SECRET),
+        "an environment-derived path reached the durable log:\n{text}"
+    );
+}
+
 /// A panic in the process that owns editor state leaves its thread, location,
 /// and message in the log, and still fails the process the ordinary way.
 ///
@@ -827,7 +994,7 @@ fn a_panic_leaves_its_location_and_message_without_changing_process_failure() {
     if let Some(destination) = std::env::var_os(CHILD) {
         let logger = runyte::log::Logger::start(
             Settings::new(Level::Warn, Role::Host),
-            Sink::File(PathBuf::from(destination)),
+            Sink::file(PathBuf::from(destination)),
         )
         .unwrap();
         runyte::log::install(logger);

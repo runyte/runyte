@@ -1462,7 +1462,7 @@ mod tests {
                             let _ = responses.send(HostResponse::Error { message }).await;
                         }
                     }
-                    ServerEvent::Request { .. } => {}
+                    ServerEvent::Request { .. } | ServerEvent::TransportFailure { .. } => {}
                 }
             }
         });

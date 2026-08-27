@@ -10,8 +10,9 @@
 //!
 //! Ownership follows editor-state ownership. The process that owns `App` owns
 //! one file: a standalone editor writes `standalone-<pid>.log`, a persistent
-//! host writes `host.log`. Nothing appends to a file another process owns, so
-//! no cross-process append lock or shared rotation owner is ever needed.
+//! host writes `host.log`. Default names cannot collide; on Unix, an explicit
+//! path takes an advisory ownership lock so two processes cannot append or
+//! rotate the same destination.
 //!
 //! Producers never wait for disk. A record is formatted, handed to a bounded
 //! queue, and dropped if that queue is full; one background writer owns the
@@ -27,7 +28,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex, OnceLock, PoisonError,
-        atomic::{AtomicU8, AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering},
         mpsc::{self, Receiver, SyncSender, TrySendError},
     },
     time::{Duration, Instant},
@@ -54,6 +55,25 @@ const MAX_BACKTRACE_LINES: usize = 64;
 
 /// The canonical file name a persistent host owns.
 pub const HOST_LOG_NAME: &str = "host.log";
+
+/// Prefix of the per-process file a standalone editor owns.
+pub const STANDALONE_LOG_PREFIX: &str = "standalone-";
+
+/// How many standalone logs of processes that have exited are kept.
+///
+/// A crashed editor's log is the one somebody comes back to read, so stale
+/// logs are not simply deleted; without a bound, though, every launch would
+/// leave one behind forever and the workspace's diagnostic storage would not
+/// actually be bounded. Retaining the newest few bounds stale history to this
+/// many active/previous file pairs.
+pub const RETAINED_STANDALONE_LOGS: usize = 4;
+
+/// How long an explicit destination waits for a previous owner to release it.
+///
+/// A restart hands one path from an exiting process to its replacement, and
+/// the old process still holds its log while it flushes and unwinds. Waiting
+/// this long absorbs that handover; anything longer is a genuine second owner.
+const OWNERSHIP_HANDOVER_BUDGET: Duration = Duration::from_secs(2);
 
 /// How long a shutdown or panic flush waits before giving up. Both paths are
 /// best effort and must never wait indefinitely.
@@ -146,7 +166,7 @@ impl Display for Role {
 pub fn default_path(state_root: &Path, role: Role, pid: u32) -> PathBuf {
     match role {
         Role::Host => state_root.join(HOST_LOG_NAME),
-        Role::Standalone => state_root.join(format!("standalone-{pid}.log")),
+        Role::Standalone => state_root.join(format!("{STANDALONE_LOG_PREFIX}{pid}.log")),
     }
 }
 
@@ -186,11 +206,38 @@ impl Settings {
 
 /// Where a logger's records go.
 pub enum Sink {
-    /// A rotating file this process owns exclusively.
-    File(PathBuf),
+    /// A rotating file.
+    ///
+    /// `exclusive` asks for the ownership the rotation model assumes. A
+    /// default path does not need it — a host has one per workspace and a
+    /// standalone name carries its PID — but an explicit `--log` is a path
+    /// somebody typed, and two processes given the same one would interleave
+    /// records and rotate over each other's files. Set it there, where
+    /// refusing is already the specified behaviour for a destination that
+    /// cannot be honoured.
+    File { path: PathBuf, exclusive: bool },
     /// An in-memory or otherwise caller-owned destination. Not rotated: the
     /// caller owns whatever bound applies to it.
     Writer(Box<dyn Write + Send>),
+}
+
+impl Sink {
+    /// A default destination, unique to this process by construction.
+    pub fn file(path: impl Into<PathBuf>) -> Self {
+        Self::File {
+            path: path.into(),
+            exclusive: false,
+        }
+    }
+
+    /// A destination named on the command line, which must not already be
+    /// owned by another live process.
+    pub fn exclusive_file(path: impl Into<PathBuf>) -> Self {
+        Self::File {
+            path: path.into(),
+            exclusive: true,
+        }
+    }
 }
 
 /// What `:service-health` reports about logging.
@@ -263,10 +310,18 @@ impl Logger {
     /// discovered later by a background thread.
     pub fn start(settings: Settings, sink: Sink) -> Result<Self, String> {
         let (path, mut destination) = match sink {
-            Sink::File(path) => {
-                let file = open_log_file(&path)?;
+            Sink::File { path, exclusive } => {
+                let file = open_log_file(&path, exclusive)?;
                 let size = file.metadata().map(|metadata| metadata.len()).unwrap_or(0);
-                (Some(path.clone()), Destination::File { file, path, size })
+                (
+                    Some(path.clone()),
+                    Destination::File {
+                        file,
+                        path,
+                        size,
+                        exclusive,
+                    },
+                )
             }
             Sink::Writer(writer) => (None, Destination::Writer(writer)),
         };
@@ -385,6 +440,7 @@ enum Destination {
         file: File,
         path: PathBuf,
         size: u64,
+        exclusive: bool,
     },
     Writer(Box<dyn Write + Send>),
 }
@@ -392,10 +448,15 @@ enum Destination {
 impl Destination {
     fn write(&mut self, line: &str) -> std::io::Result<()> {
         match self {
-            Self::File { file, path, size } => {
+            Self::File {
+                file,
+                path,
+                size,
+                exclusive,
+            } => {
                 let bytes = line.as_bytes();
                 if *size > 0 && *size + bytes.len() as u64 > MAX_LOG_BYTES {
-                    rotate(file, path)?;
+                    rotate(file, path, *exclusive)?;
                     *size = 0;
                 }
                 file.write_all(bytes)?;
@@ -456,7 +517,7 @@ fn record_failure(failure: &Mutex<Option<String>>, result: std::io::Result<()>) 
     }
 }
 
-fn open_log_file(path: &Path) -> Result<File, String> {
+fn open_log_file(path: &Path, exclusive: bool) -> Result<File, String> {
     if let Some(parent) = path.parent()
         && !parent.as_os_str().is_empty()
     {
@@ -472,13 +533,16 @@ fn open_log_file(path: &Path) -> Result<File, String> {
         .append(true)
         .open(path)
         .map_err(|error| format!("cannot open the diagnostic log {}: {error}", path.display()))?;
+    if exclusive {
+        claim_ownership(&file, path)?;
+    }
     // A file inherited from an earlier process of the same identity is
     // rotated here rather than left to grow: rotation is owned by whichever
     // process owns the file, and a host that restarts often would otherwise
     // never reach the in-flight bound.
     let size = file.metadata().map(|metadata| metadata.len()).unwrap_or(0);
     if size >= MAX_LOG_BYTES {
-        rotate(&mut file, path).map_err(|error| {
+        rotate(&mut file, path, exclusive).map_err(|error| {
             format!(
                 "cannot rotate the diagnostic log {}: {error}",
                 path.display()
@@ -489,11 +553,144 @@ fn open_log_file(path: &Path) -> Result<File, String> {
 }
 
 /// Moves the active file aside and reopens an empty one in its place.
-fn rotate(file: &mut File, path: &Path) -> std::io::Result<()> {
+fn rotate(file: &mut File, path: &Path, exclusive: bool) -> std::io::Result<()> {
     let _ = file.flush();
-    fs::rename(path, previous_path(path))?;
-    *file = OpenOptions::new().create(true).append(true).open(path)?;
+    if exclusive {
+        // Keep the locked inode at the active path. Replacing the descriptor
+        // would create a window in which another process could lock the new
+        // file between its creation and our re-lock attempt.
+        fs::copy(path, previous_path(path))?;
+        file.set_len(0)?;
+    } else {
+        fs::rename(path, previous_path(path))?;
+        *file = OpenOptions::new().create(true).append(true).open(path)?;
+    }
     Ok(())
+}
+
+/// Takes the advisory exclusive lock that makes process-owned rotation true.
+///
+/// A restart hands one explicit path from an exiting process to its
+/// replacement, and the old one holds its log until it has finished flushing,
+/// so a single refused attempt would turn an ordinary handover into a startup
+/// failure. This waits out that window and only then reports a second owner.
+fn claim_ownership(file: &File, path: &Path) -> Result<(), String> {
+    let deadline = Instant::now() + OWNERSHIP_HANDOVER_BUDGET;
+    loop {
+        match try_lock_exclusive(file) {
+            Ok(true) => return Ok(()),
+            Ok(false) => {
+                if Instant::now() >= deadline {
+                    return Err(format!(
+                        "the diagnostic log {} is already owned by another running Runyte \
+process; choose a different --log path",
+                        path.display()
+                    ));
+                }
+                std::thread::sleep(Duration::from_millis(25));
+            }
+            Err(error) => {
+                return Err(format!(
+                    "cannot claim the diagnostic log {}: {error}",
+                    path.display()
+                ));
+            }
+        }
+    }
+}
+
+/// `Ok(false)` means another process holds the lock.
+///
+/// Advisory locking is a Unix facility here. On other platforms an explicit
+/// destination is opened without one, so two processes given the same `--log`
+/// path there still share it.
+#[cfg(unix)]
+fn try_lock_exclusive(file: &File) -> std::io::Result<bool> {
+    use std::os::fd::AsRawFd;
+
+    // SAFETY: `file` owns a live descriptor for the duration of this call.
+    if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
+        return Ok(true);
+    }
+    let error = std::io::Error::last_os_error();
+    match error.raw_os_error() {
+        Some(code) if code == libc::EWOULDBLOCK || code == libc::EINTR => Ok(false),
+        _ => Err(error),
+    }
+}
+
+#[cfg(not(unix))]
+fn try_lock_exclusive(_file: &File) -> std::io::Result<bool> {
+    Ok(true)
+}
+
+/// Removes standalone logs left by processes that have exited, newest first,
+/// and returns how many files it deleted.
+///
+/// A standalone name carries its owner's PID so two live editors cannot share
+/// a file, which also means every launch leaves one behind. The newest few are
+/// kept because a crashed editor's log is exactly what somebody comes back to
+/// read; everything older goes, along with the previous file beside it.
+///
+/// A live owner is never touched. On Unix that is checked directly; elsewhere
+/// the platform refuses to delete an open file, which has the same effect.
+pub fn prune_standalone_logs(directory: &Path, own_pid: u32, retain: usize) -> usize {
+    let Ok(entries) = fs::read_dir(directory) else {
+        return 0;
+    };
+    let mut stale = Vec::new();
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(pid) = name
+            .to_str()
+            .and_then(|name| name.strip_prefix(STANDALONE_LOG_PREFIX))
+            .and_then(|rest| rest.strip_suffix(".log"))
+            .and_then(|pid| pid.parse::<u32>().ok())
+        else {
+            continue;
+        };
+        if pid == own_pid || process_is_live(pid) {
+            continue;
+        }
+        let modified = entry
+            .metadata()
+            .and_then(|metadata| metadata.modified())
+            .unwrap_or(std::time::UNIX_EPOCH);
+        stale.push((modified, entry.path()));
+    }
+    stale.sort_by_key(|entry| std::cmp::Reverse(entry.0));
+    let mut removed = 0;
+    for (_, path) in stale.into_iter().skip(retain) {
+        if fs::remove_file(&path).is_ok() {
+            removed += 1;
+        }
+        if fs::remove_file(previous_path(&path)).is_ok() {
+            removed += 1;
+        }
+    }
+    removed
+}
+
+/// Whether a process ID still names a running process.
+///
+/// Only ever used to decide against deleting somebody else's live log, so a
+/// platform that cannot answer says yes.
+#[cfg(unix)]
+fn process_is_live(pid: u32) -> bool {
+    let Ok(pid) = i32::try_from(pid) else {
+        return true;
+    };
+    // SAFETY: signal 0 performs the existence and permission checks without
+    // delivering anything.
+    if unsafe { libc::kill(pid, 0) } == 0 {
+        return true;
+    }
+    std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
+}
+
+#[cfg(not(unix))]
+fn process_is_live(_pid: u32) -> bool {
+    true
 }
 
 /// Collapses a record onto one line.
@@ -520,6 +717,8 @@ pub fn append_field(message: &mut String, key: &str, value: &dyn Display) {
 static LEVEL: AtomicU8 = AtomicU8::new(0);
 static LOGGER: OnceLock<Logger> = OnceLock::new();
 static INITIALIZATION: Mutex<Option<Status>> = Mutex::new(None);
+/// Whether the failure in `status()` has already reached the person.
+static FAILURE_REPORTED: AtomicBool = AtomicBool::new(false);
 
 /// Installs the process-wide logger. Later calls are ignored: a process owns
 /// exactly one log for its lifetime, and no runtime reconfiguration exists.
@@ -570,6 +769,25 @@ pub fn emit(level: Level, target: &str, message: &str) {
     if let Some(logger) = LOGGER.get() {
         logger.emit(level, target, message);
     }
+}
+
+/// Returns a logger failure the person has not been told about yet.
+///
+/// Startup failures are reported by the caller that saw them. A destination
+/// that becomes unwritable later — a full disk, a changed permission, a
+/// rotation that fails — is observed only by the background writer, and
+/// without this the log would stop silently until somebody happened to open
+/// `:service-health`. Returns each failure once, so an event loop can call it
+/// on an ordinary tick.
+pub fn unreported_failure() -> Option<String> {
+    let failure = status()?.failure?;
+    (!FAILURE_REPORTED.swap(true, Ordering::Relaxed)).then_some(failure)
+}
+
+/// Marks the current failure as already reported, for a caller that surfaced
+/// it itself.
+pub fn note_failure_reported() {
+    FAILURE_REPORTED.store(true, Ordering::Relaxed);
 }
 
 /// Records dropped by the installed logger because its queue was full.
@@ -878,7 +1096,7 @@ mod tests {
 
         let logger = Logger::start(
             Settings::new(Level::Warn, Role::Host),
-            Sink::File(path.clone()),
+            Sink::file(path.clone()),
         )
         .unwrap();
         logger.emit(Level::Warn, "test", "after restart");
@@ -903,7 +1121,7 @@ mod tests {
         let path = directory.join("host.log");
         let logger = Logger::start(
             Settings::new(Level::Warn, Role::Host),
-            Sink::File(path.clone()),
+            Sink::file(path.clone()),
         )
         .unwrap();
 
@@ -976,7 +1194,7 @@ mod tests {
 
         let failure = match Logger::start(
             Settings::new(Level::Warn, Role::Standalone),
-            Sink::File(occupied.join("host.log")),
+            Sink::file(occupied.join("host.log")),
         ) {
             Ok(_) => panic!("an unusable destination must be reported"),
             Err(failure) => failure,
@@ -984,5 +1202,86 @@ mod tests {
         assert!(failure.contains("diagnostic log"), "{failure}");
 
         fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stale_standalone_logs_are_bounded_without_touching_a_live_owner() {
+        let directory = temporary("standalone-retention");
+        fs::create_dir_all(&directory).unwrap();
+
+        let mut candidate = 1_500_000_000_u32;
+        let stale_pids = (0..6)
+            .map(|_| {
+                while process_is_live(candidate) {
+                    candidate -= 1;
+                }
+                let pid = candidate;
+                candidate -= 1;
+                pid
+            })
+            .collect::<Vec<_>>();
+        for (age, pid) in stale_pids.iter().enumerate() {
+            let path = default_path(&directory, Role::Standalone, *pid);
+            fs::write(&path, format!("stale {age}")).unwrap();
+            fs::write(previous_path(&path), format!("previous {age}")).unwrap();
+            let modified = UNIX_EPOCH + Duration::from_secs(age as u64 + 1);
+            let times = fs::FileTimes::new().set_modified(modified);
+            File::open(&path).unwrap().set_times(times).unwrap();
+            File::open(previous_path(&path))
+                .unwrap()
+                .set_times(times)
+                .unwrap();
+        }
+
+        let live = default_path(&directory, Role::Standalone, std::process::id());
+        fs::write(&live, "live").unwrap();
+        fs::write(previous_path(&live), "live previous").unwrap();
+        let unrelated = directory.join("notes.log");
+        fs::write(&unrelated, "not a standalone log").unwrap();
+
+        let removed = prune_standalone_logs(&directory, candidate, RETAINED_STANDALONE_LOGS);
+
+        assert_eq!(removed, 4, "two stale logs and their rotations are pruned");
+        for pid in &stale_pids[..2] {
+            let path = default_path(&directory, Role::Standalone, *pid);
+            assert!(!path.exists(), "the oldest stale log survived: {path:?}");
+            assert!(!previous_path(&path).exists());
+        }
+        for pid in &stale_pids[2..] {
+            let path = default_path(&directory, Role::Standalone, *pid);
+            assert!(path.exists(), "a retained stale log was removed: {path:?}");
+            assert!(previous_path(&path).exists());
+        }
+        assert!(live.exists(), "a live process's active log was removed");
+        assert!(
+            previous_path(&live).exists(),
+            "a live process's rotated log was removed"
+        );
+        assert!(unrelated.exists(), "an unrelated file was removed");
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn a_logger_failure_is_reported_once() {
+        *lock(&INITIALIZATION) = Some(Status {
+            role: Role::Standalone,
+            level: Some(Level::Warn),
+            path: Some(PathBuf::from("diagnostic.log")),
+            failure: Some("cannot write the diagnostic log: disk full".to_owned()),
+        });
+        FAILURE_REPORTED.store(false, Ordering::Relaxed);
+
+        assert_eq!(
+            unreported_failure().as_deref(),
+            Some("cannot write the diagnostic log: disk full")
+        );
+        assert_eq!(unreported_failure(), None, "the same failure was repeated");
+        note_failure_reported();
+        assert_eq!(unreported_failure(), None);
+
+        *lock(&INITIALIZATION) = None;
+        FAILURE_REPORTED.store(false, Ordering::Relaxed);
     }
 }

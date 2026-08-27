@@ -168,8 +168,11 @@ runyte --session-restart -vv   # a running host keeps its logger until restarted
 ```
 
 The default level records warnings and errors. A path that cannot be written is
-a startup error for `--log` and a degraded log for the default. At most 4 MiB is
-kept in the active file, with one previous 4 MiB file beside it.
+a startup error for `--log` and a degraded log for the default. On Unix, an
+explicit path already owned by another running Runyte process is refused. At
+most 4 MiB is kept in the active file, with one previous 4 MiB file beside it;
+each standalone launch also removes all but the four newest logs left by
+earlier exited standalone processes.
 
 Records never contain document text, selections, clipboard or terminal
 contents, environment values, or language-server message bodies. They do contain

@@ -119,17 +119,80 @@ shared record prefix, records forced termination and a terminal session that
 fails to start, and corrects three assertions in `tests/diagnostic_log.rs` that
 compared an empty file with an empty file or named the wrong default path.
 
+A second review follow-up, committed with this record, closes five more
+boundaries that the initial coverage did not exercise. `main` no longer writes
+an arbitrary propagated `anyhow` chain into the durable file: its final record
+states only that Runyte exited with an error, while `run_host_server` now
+records listener loss and endpoint-cleanup failure at the boundaries that can
+classify them. This keeps an environment-derived `RUNYTE_INPUT_TRACE` path out
+of the log without losing the useful detail of a detached persistent-session
+failure.
+
+`serve_connection` had discarded its own error after an established stream
+ended on malformed JSON, a truncated frame, or a failed write. It now emits a
+transport-owned `ServerEvent::TransportFailure` before `Disconnected`;
+`run_host_server` records that reason at warning level and sends no response on
+the stream that just failed. This is deliberately a transport event carrying a
+bounded reason, not a logging type or a new protocol message. The connection
+loop is generic over its asynchronous stream only so the framing regression
+test can use an in-memory duplex stream rather than silently skip when Unix
+socket creation is unavailable.
+
+The writer's first post-startup failure was already retained in `Status`, but
+nothing surfaced it unless the person opened `:service-health`.
+`unreported_failure` and `note_failure_reported` give the standalone and host
+event loops a one-shot check on their existing periodic tick, which adds one
+warning notification while editing or serving continues.
+
+The original process-owned rotation argument applied only to default names.
+Two processes given the same explicit `--log` path could still maintain
+independent byte counts and rotate over one another. On Unix, an explicit sink
+now takes a non-blocking advisory `flock`, with a two-second budget for an
+exiting owner to hand the destination to its replacement; a concurrent owner
+is refused with an actionable startup error. Explicit rotation copies the
+completed file aside and truncates the still-locked active inode, avoiding a
+re-lock window in which a second owner could slip in. Default files do not take
+this lock because standalone names are unique and locking `host.log` would
+obstruct the existing persistent-host restart handoff. This is the one
+deliberate cross-process ownership mechanism beyond the report's default-path
+design.
+
+Finally, `prune_standalone_logs` bounds the files left by repeated standalone
+launches. Each default standalone initialization retains the four newest logs
+of exited processes, removes older active files and their `.1` siblings, and
+never touches a live owner's files. Runtime state remains under the configured
+workspace state root.
+
+Tests. `tests/diagnostic_log.rs` adds
+`a_second_process_is_refused_when_an_explicit_log_is_owned`, which holds one
+real Runyte process after logger initialization and proves a second cannot
+write the same `--log` destination;
+`a_malformed_frame_is_recorded_in_host_log_at_the_default_level`; and
+`the_top_level_failure_record_never_carries_a_propagated_error_chain`, which
+first proves the environment-derived trace path reached stderr. Unit tests in
+`src/log.rs` add
+`stale_standalone_logs_are_bounded_without_touching_a_live_owner` and
+`a_logger_failure_is_reported_once`. The existing
+`malformed_established_messages_always_disconnect_host_state` test in
+`src/workspace/transport.rs` now asserts the framing failure and the subsequent
+disconnection in order, and
+`an_established_stalled_peer_disconnects_and_releases_its_slot` asserts the
+same ordering for a failed framed write. Each new assertion was also run
+against its reverted behavior and failed at the intended boundary rather than
+passing on an empty file, an impossible path, or a skipped socket.
+
 Known limitations. An explicit `--log` is honoured only by processes that own
 editor state. Passing it to a session-management command that neither starts
 nor attaches to a session — `--session-list`, `--session-stop`,
-`--session-clear-all` — is accepted and ignored without comment. The retention
-report is an `eprintln!`, so on an ordinary `runyte --persistent -v` it is
-printed immediately before the alternate screen opens and the person is
-unlikely to see it; it is visible on `--session-start` and `--wait`.
-Filesystem-watcher lifecycle beyond its channel closing, and a host restart as
-distinct from a stop followed by a start, are not instrumented. The shared
-per-test-binary runtime directory under the temporary directory is not removed
-after a run, matching the existing convention in `tests/persistent_host.rs`.
+`--session-clear-all` — is accepted and ignored without comment. The report
+that a running session retained its logging configuration is an `eprintln!`,
+so on an ordinary `runyte --persistent -v` it is printed immediately before
+the alternate screen opens and the person is unlikely to see it; it is visible
+on `--session-start` and `--wait`. Filesystem-watcher lifecycle beyond its
+channel closing, and a host restart as distinct from a stop followed by a
+start, are not instrumented. The shared per-test-binary runtime directory under
+the temporary directory is not removed after a run, matching the existing
+convention in `tests/persistent_host.rs`.
 
 ## Report
 

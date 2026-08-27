@@ -83,12 +83,15 @@ fn main() -> Result<()> {
         .context("failed to start the async runtime")?;
     let result = runtime.block_on(run(&mut startup));
     drop(runtime);
-    // The last boundary that still has the whole error chain. Every layer
-    // below reports its own failure to the person; only this one knows the
-    // process is ending because of it.
+    // Only that the process is ending, never the chain that ended it. An
+    // arbitrary propagated error is unclassified text — an option's value, a
+    // path taken from the environment, whatever a future layer attaches — and
+    // this is a durable file. The boundaries that know what a failure means
+    // record it themselves, and a startup failure still reaches stderr, which
+    // is where a launcher reads a detached session's exit.
     match &result {
         Ok(()) => log_info!("process", "runyte exited"),
-        Err(error) => log_error!("process", "runyte exited with an error: {error:#}"),
+        Err(_) => log_error!("process", "runyte exited with an error"),
     }
     runyte::log::shutdown();
     #[cfg(unix)]
@@ -805,6 +808,7 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
                 }
             }
             _ = git_refresh_tick.tick() => {
+                report_logging_failure(app.app_mut());
                 services.file_monitor.sync(app.file_monitor_requests());
                 if !app.refresh_git_if_due(Instant::now()) {
                     continue;
@@ -996,6 +1000,7 @@ async fn run_host_server(
         tokio::select! {
             event = server.recv() => {
                 let Some(event) = event else {
+                    log_error!("host", "the connection listener stopped; this session cannot be reached again");
                     anyhow::bail!("workspace host listener stopped unexpectedly");
                 };
                 match event {
@@ -1271,6 +1276,19 @@ async fn run_host_server(
                             send_control_response(&mut controls, id, response);
                         }
                     }
+                    ServerEvent::TransportFailure { id, message } => {
+                        // A framing error ends the connection, so no response
+                        // is sent and no further request will arrive. This is
+                        // the only place a malformed or truncated frame is
+                        // named; the `Disconnected` that follows only says the
+                        // connection went away.
+                        log_warn!(
+                            "transport",
+                            "client connection failed: {message}";
+                            "connection" => id,
+                            "interactive" => active.as_ref().is_some_and(|client| client.id == id)
+                        );
+                    }
                     ServerEvent::Disconnected { id } => {
                         let control = controls.remove(&id).is_some();
                         if active.as_ref().is_some_and(|client| client.id == id) {
@@ -1351,6 +1369,7 @@ async fn run_host_server(
                 }
             }
             _ = refresh_tick.tick() => {
+                report_logging_failure(host.app_mut());
                 services.file_monitor.sync(host.file_monitor_requests());
                 changed = host.refresh_git_if_due(Instant::now());
             }
@@ -1436,6 +1455,9 @@ async fn run_host_server(
     // and a client that discovered this endpoint in that window would attach
     // to a host with no loop left to answer it.
     let unpublished = endpoint.cleanup();
+    if let Err(error) = &unpublished {
+        log_error!("host", "could not retire the published endpoint: {error}");
+    }
     flush_connections(&mut server, active, controls).await;
     log_info!("host", "connections flushed and endpoint retired");
     diagnostic_log::flush(diagnostic_log::FLUSH_BUDGET);
@@ -3336,6 +3358,23 @@ impl Drop for TerminalGuard {
     }
 }
 
+/// Tells the person, once, that the diagnostic log stopped working.
+///
+/// A destination that becomes unwritable after startup is seen only by the
+/// background writer. Editing and serving continue either way, so this is a
+/// notification rather than an error: stderr belongs to the terminal the TUI
+/// is drawing on, and `:service-health` already carries the standing state.
+fn report_logging_failure(app: &mut App) {
+    if let Some(failure) = diagnostic_log::unreported_failure() {
+        app.push_notification(NotificationDraft::new(
+            NotificationSeverity::Warning,
+            "Logging",
+            "Diagnostic log stopped recording",
+            format!("{failure} · editing continues without a durable log"),
+        ));
+    }
+}
+
 /// Records a background service ending exactly once.
 ///
 /// The editor keeps working without it, so nothing else reports the loss; a
@@ -3399,13 +3438,27 @@ fn initialize_logging(
         .log
         .clone()
         .unwrap_or_else(|| diagnostic_log::default_path(state_root, role, std::process::id()));
+    // Every launch leaves a standalone log behind, so the directory is swept
+    // before this one is opened. Live owners are never touched.
+    if role == LogRole::Standalone && arguments.log.is_none() {
+        diagnostic_log::prune_standalone_logs(
+            state_root,
+            std::process::id(),
+            diagnostic_log::RETAINED_STANDALONE_LOGS,
+        );
+    }
     let workspace = workspace_id(project_root);
     let abbreviated = workspace
         .get(..ABBREVIATED_LOG_WORKSPACE_ID)
         .unwrap_or(&workspace)
         .to_owned();
     let settings = diagnostic_log::Settings::new(level, role).with_workspace(Some(abbreviated));
-    match diagnostic_log::Logger::start(settings, diagnostic_log::Sink::File(path.clone())) {
+    let sink = if arguments.log.is_some() {
+        diagnostic_log::Sink::exclusive_file(path.clone())
+    } else {
+        diagnostic_log::Sink::file(path.clone())
+    };
+    match diagnostic_log::Logger::start(settings, sink) {
         Ok(logger) => {
             diagnostic_log::install(logger);
             diagnostic_log::install_panic_hook();
@@ -3414,6 +3467,9 @@ fn initialize_logging(
         Err(failure) => {
             anyhow::ensure!(arguments.log.is_none(), "{failure}");
             diagnostic_log::note_unavailable(role, Some(path), failure.clone());
+            // Reported here, so the periodic check does not repeat it as a
+            // second notification once an `App` exists.
+            diagnostic_log::note_failure_reported();
             eprintln!("runyte: {failure}");
             Ok(Some(failure))
         }
@@ -3488,12 +3544,15 @@ DIAGNOSTICS:
     detailed lifecycle events. The process that owns editor state owns the
     file: a standalone editor writes .runyte/standalone-<pid>.log, a persistent
     session writes .runyte/host.log. At most 4 MiB is kept in the active file
-    and 4 MiB in one previous file beside it.
+    and 4 MiB in one previous file beside it. A standalone launch keeps the
+    four newest logs left by exited standalone processes and removes older
+    active and previous files without touching a live owner's log.
 
     The default level records warnings and errors. Each -v raises it through
     info, debug, and trace, and stops at trace. --log PATH selects another
     destination; a path that cannot be written is a startup error, while an
-    unwritable default only degrades logging.
+    unwritable default only degrades logging. On Unix, a path already owned by
+    another running Runyte process is refused.
 
     In persistent mode these are properties of session startup. --serve,
     --session-start, --session-restart, and the launch that starts a missing
