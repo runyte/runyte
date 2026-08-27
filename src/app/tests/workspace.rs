@@ -243,6 +243,8 @@ fn a_confirmed_worktree_removal_waits_for_its_session_to_stop_before_removing_it
         }),
         root: target.clone(),
         branch: None,
+        workspace_request_generation: Some(app.workspace_generation),
+        git_request: None,
         stage: WorktreeTeardownStage::Stopping,
     });
     assert!(
@@ -251,6 +253,9 @@ fn a_confirmed_worktree_removal_waits_for_its_session_to_stop_before_removing_it
     );
 
     let generation = app.workspace_generation;
+    // An unrelated session-list refresh may be requested while the host is
+    // stopping. Its newer generation must not orphan this teardown reply.
+    app.workspace_generation = app.workspace_generation.wrapping_add(1);
     app.apply_workspace_event(WorkspaceEvent::Stopped {
         generation,
         selector: target.clone(),
@@ -315,6 +320,8 @@ fn a_session_that_will_not_stop_leaves_its_worktree_alone() {
         }),
         root: target.clone(),
         branch: None,
+        workspace_request_generation: Some(app.workspace_generation),
+        git_request: None,
         stage: WorktreeTeardownStage::Stopping,
     });
 
@@ -390,6 +397,8 @@ fn an_asynchronous_removal_takes_nothing_further_down_until_git_reports_success(
             session: None,
             root: target.clone(),
             branch: Some(branch),
+            workspace_request_generation: Some(app.workspace_generation),
+            git_request: None,
             stage: WorktreeTeardownStage::Stopping,
         });
 
@@ -438,7 +447,11 @@ fn an_asynchronous_removal_takes_nothing_further_down_until_git_reports_success(
             plan: Box::new(plan),
             authorization: DeletionAuthorization::Typed,
         };
-        app.apply_git_mutation_result(
+        let request = app
+            .worktree_teardown
+            .as_ref()
+            .and_then(|teardown| teardown.git_request);
+        app.apply_git_mutation_result_for_request(
             mutation,
             Vec::new(),
             None,
@@ -447,7 +460,7 @@ fn an_asynchronous_removal_takes_nothing_further_down_until_git_reports_success(
                 code: Some(1),
                 stderr: "the worktree changed after it was reviewed".to_owned(),
             }),
-            GitServiceState::Completed,
+            (request, GitServiceState::Completed),
             None,
         );
 
@@ -483,7 +496,574 @@ fn an_asynchronous_removal_takes_nothing_further_down_until_git_reports_success(
     // A successful one carries on into the branch above it.
     let (deleted_branch, _status, teardown) = run(true);
     assert!(deleted_branch, "a successful removal must reach its branch");
-    assert!(!teardown);
+    assert!(
+        teardown,
+        "the cascade must keep owning the queued branch deletion"
+    );
+}
+
+/// A worktree with no running session skips the stop stage, but it still has
+/// to wait in the removal stage while the production Git service performs the
+/// guarded mutation. Marking it as already forgetting would make the matching
+/// completion invisible and strand both the history record and branch.
+#[cfg(unix)]
+#[test]
+fn an_asynchronous_removal_without_a_session_waits_in_the_removal_stage() {
+    use crate::git::{GitMutation, GitServiceHandle, MemoryGitProvider, Repository};
+
+    let root = temporary("async-removal-no-session");
+    fs::create_dir_all(&root).unwrap();
+    let root = root.canonicalize().unwrap();
+    let target = root.join("linked");
+    fs::create_dir_all(&target).unwrap();
+    let target = target.canonicalize().unwrap();
+    let mut ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    let provider = Rc::new(
+        MemoryGitProvider::new(Repository::new(&root))
+            .with_branches(&["feature", "main"], "main")
+            .with_worktrees(vec![test_worktree(target.clone(), "feature", &root)]),
+    );
+    ports.replace_git(Box::new(Rc::clone(&provider)));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    app.execute_command("git-worktrees").unwrap();
+    let (service, operations) = GitServiceHandle::recording_for_test();
+    app.attach_git_service(service);
+
+    let plan = crate::git::GitProvider::prepare_worktree_removal(
+        provider.as_ref(),
+        &Repository::new(&root),
+        &target,
+    )
+    .unwrap();
+    let branch = crate::git::GitProvider::prepare_branch_deletion(
+        provider.as_ref(),
+        &Repository::new(&root),
+        "feature",
+    )
+    .unwrap();
+    app.begin_worktree_teardown(plan, DeletionAuthorization::Typed, None, Some(branch));
+
+    assert_eq!(
+        app.worktree_teardown
+            .as_ref()
+            .map(|teardown| teardown.stage),
+        Some(WorktreeTeardownStage::Removing)
+    );
+    let mut removal_queued = false;
+    while let Ok(operation) = operations.recv_timeout(std::time::Duration::from_millis(250)) {
+        if matches!(
+            operation,
+            crate::git::GitOperation::Mutate {
+                mutation: GitMutation::RemoveWorktree { .. },
+                ..
+            }
+        ) {
+            removal_queued = true;
+        }
+    }
+    assert!(
+        removal_queued,
+        "the guarded removal should have been queued"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// The catalog forget is part of the teardown even when a manager refresh is
+/// requested after it. Its own generation must remain sufficient to finish
+/// the cascade instead of being discarded as an obsolete list request.
+#[cfg(unix)]
+#[test]
+fn a_teardown_forget_reply_survives_a_newer_workspace_refresh() {
+    use crate::git::{MemoryGitProvider, Repository};
+
+    let root = temporary("teardown-forget-generation");
+    fs::create_dir_all(&root).unwrap();
+    let root = root.canonicalize().unwrap();
+    let target = root.join("linked");
+    fs::create_dir_all(&target).unwrap();
+    let target = target.canonicalize().unwrap();
+    let provider = MemoryGitProvider::new(Repository::new(&root))
+        .with_worktrees(vec![test_worktree(target.clone(), "feature", &root)]);
+    let mut app = App::new_in_isolated_project(
+        &root,
+        HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+            String::new(),
+        ))))),
+    )
+    .unwrap();
+    let request_generation = 7;
+    app.workspace_generation = request_generation + 1;
+    app.worktree_teardown = Some(WorktreeTeardown {
+        plan: crate::git::GitProvider::prepare_worktree_removal(
+            &provider,
+            &Repository::new(&root),
+            &target,
+        )
+        .unwrap(),
+        authorization: DeletionAuthorization::Typed,
+        session: None,
+        root: target.clone(),
+        branch: None,
+        workspace_request_generation: Some(request_generation),
+        git_request: None,
+        stage: WorktreeTeardownStage::Forgetting,
+    });
+
+    app.apply_workspace_event(WorkspaceEvent::Forgotten {
+        generation: request_generation,
+        path: target,
+        result: Ok(false),
+    });
+
+    assert!(
+        app.worktree_teardown.is_none(),
+        "the newer refresh must not orphan the completed teardown"
+    );
+    assert!(app.status.contains("removed worktree"), "{}", app.status);
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// Forgetting the catalog record is a real cascade level. Once it fails the
+/// removed directory can only be reported as partial success; the branch
+/// above it must remain intact.
+#[cfg(unix)]
+#[test]
+fn a_failed_teardown_forget_leaves_the_branch_intact() {
+    use crate::git::{MemoryGitProvider, Repository};
+
+    let root = temporary("teardown-forget-failure");
+    fs::create_dir_all(&root).unwrap();
+    let root = root.canonicalize().unwrap();
+    let target = root.join("linked");
+    fs::create_dir_all(&target).unwrap();
+    let target = target.canonicalize().unwrap();
+    let provider = Rc::new(
+        MemoryGitProvider::new(Repository::new(&root))
+            .with_branches(&["feature", "main"], "main")
+            .with_worktrees(vec![test_worktree(target.clone(), "feature", &root)]),
+    );
+    let mut ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    ports.replace_git(Box::new(Rc::clone(&provider)));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    let request_generation = 9;
+    app.workspace_generation = request_generation;
+    app.worktree_teardown = Some(WorktreeTeardown {
+        plan: crate::git::GitProvider::prepare_worktree_removal(
+            provider.as_ref(),
+            &Repository::new(&root),
+            &target,
+        )
+        .unwrap(),
+        authorization: DeletionAuthorization::Typed,
+        session: None,
+        root: target.clone(),
+        branch: Some(
+            crate::git::GitProvider::prepare_branch_deletion(
+                provider.as_ref(),
+                &Repository::new(&root),
+                "feature",
+            )
+            .unwrap(),
+        ),
+        workspace_request_generation: Some(request_generation),
+        git_request: None,
+        stage: WorktreeTeardownStage::Forgetting,
+    });
+
+    app.apply_workspace_event(WorkspaceEvent::Forgotten {
+        generation: request_generation,
+        path: target,
+        result: Err("catalog is read-only".to_owned()),
+    });
+
+    assert!(app.worktree_teardown.is_none());
+    assert!(provider.deletions().is_empty());
+    assert!(
+        app.status.contains("catalog is read-only"),
+        "{}",
+        app.status
+    );
+    assert!(
+        app.status.contains("branch feature was not deleted"),
+        "{}",
+        app.status
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// Only one destructive teardown may own the service replies at a time. A
+/// second confirmation is refused instead of replacing the first cascade's
+/// path and request identities.
+#[cfg(unix)]
+#[test]
+fn a_second_worktree_teardown_cannot_replace_the_first() {
+    use crate::git::{MemoryGitProvider, Repository};
+
+    let root = temporary("serialized-worktree-teardown");
+    fs::create_dir_all(&root).unwrap();
+    let root = root.canonicalize().unwrap();
+    let first = root.join("first");
+    let second = root.join("second");
+    fs::create_dir_all(&first).unwrap();
+    fs::create_dir_all(&second).unwrap();
+    let first = first.canonicalize().unwrap();
+    let second = second.canonicalize().unwrap();
+    let provider = Rc::new(
+        MemoryGitProvider::new(Repository::new(&root)).with_worktrees(vec![
+            test_worktree(first.clone(), "first", &root),
+            test_worktree(second.clone(), "second", &root),
+        ]),
+    );
+    let mut ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    ports.replace_git(Box::new(Rc::clone(&provider)));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    let first_plan = crate::git::GitProvider::prepare_worktree_removal(
+        provider.as_ref(),
+        &Repository::new(&root),
+        &first,
+    )
+    .unwrap();
+    let second_plan = crate::git::GitProvider::prepare_worktree_removal(
+        provider.as_ref(),
+        &Repository::new(&root),
+        &second,
+    )
+    .unwrap();
+    app.worktree_teardown = Some(WorktreeTeardown {
+        plan: first_plan,
+        authorization: DeletionAuthorization::Typed,
+        session: None,
+        root: first.clone(),
+        branch: None,
+        workspace_request_generation: None,
+        git_request: None,
+        stage: WorktreeTeardownStage::Removing,
+    });
+
+    app.begin_worktree_teardown(second_plan, DeletionAuthorization::Typed, None, None);
+
+    assert!(app.status_error);
+    assert!(app.status.contains("still in progress"), "{}", app.status);
+    assert_eq!(
+        app.worktree_teardown
+            .as_ref()
+            .map(|teardown| teardown.plan.path.as_path()),
+        Some(first.as_path())
+    );
+    assert!(provider.removed_worktrees().is_empty());
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// A confirmed deletion owns its second session inspection. A new preflight
+/// cannot replace that pending check and make the accepted action disappear.
+#[cfg(unix)]
+#[test]
+fn a_second_session_check_cannot_replace_a_confirmed_worktree_removal() {
+    let root = temporary("serialized-worktree-session-check");
+    fs::create_dir_all(&root).unwrap();
+    let first = root.join("first");
+    let second = root.join("second");
+    let plan = |path: PathBuf| WorktreeRemovalPlan {
+        path,
+        head: Some("0123456789abcdef".to_owned()),
+        branch: Some("feature".to_owned()),
+        upstream: None,
+        detached_retained: false,
+        required_authorization: DeletionAuthorization::Typed,
+    };
+    let first_plan = plan(first.clone());
+    let mut app = App::new_in_isolated_project(
+        &root,
+        HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+            String::new(),
+        ))))),
+    )
+    .unwrap();
+    app.worktree_removal_generation = 11;
+    app.pending_worktree_removal = Some(PendingWorktreeRemovalCheck {
+        plan: first_plan,
+        authorization: Some(DeletionAuthorization::Typed),
+        origin: None,
+        branch: None,
+    });
+
+    assert!(app.request_worktree_session_check(
+        plan(second),
+        Some(DeletionAuthorization::Typed),
+        None,
+    ));
+
+    assert_eq!(app.worktree_removal_generation, 11);
+    assert_eq!(
+        app.pending_worktree_removal
+            .as_ref()
+            .map(|pending| pending.plan.path.as_path()),
+        Some(first.as_path())
+    );
+    assert!(app.status_error);
+    assert!(app.status.contains("still in progress"), "{}", app.status);
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// The final branch mutation remains part of the serialized cascade until its
+/// exact request reports. Its completion restores the full compound summary.
+#[cfg(unix)]
+#[test]
+fn a_cascade_owns_its_final_branch_request_until_completion() {
+    use crate::git::{
+        GitMutation, GitServiceHandle, GitServiceState, MemoryGitProvider, Repository,
+    };
+
+    let root = temporary("serialized-final-branch");
+    fs::create_dir_all(&root).unwrap();
+    let root = root.canonicalize().unwrap();
+    let target = root.join("removed-linked");
+    let repository = Repository::new(&root);
+    let provider = Rc::new(
+        MemoryGitProvider::new(repository.clone()).with_branches(&["feature", "main"], "main"),
+    );
+    let mut ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    ports.replace_git(Box::new(Rc::clone(&provider)));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    app.git.attach(Some(repository.clone()));
+    let (service, _operations) = GitServiceHandle::recording_for_test();
+    app.attach_git_service(service);
+    let branch =
+        crate::git::GitProvider::prepare_branch_deletion(provider.as_ref(), &repository, "feature")
+            .unwrap();
+    app.worktree_teardown = Some(WorktreeTeardown {
+        plan: WorktreeRemovalPlan {
+            path: target.clone(),
+            head: Some("0123456789abcdef".to_owned()),
+            branch: Some("feature".to_owned()),
+            upstream: None,
+            detached_retained: false,
+            required_authorization: DeletionAuthorization::Typed,
+        },
+        authorization: DeletionAuthorization::Typed,
+        session: None,
+        root: target.clone(),
+        branch: Some(branch.clone()),
+        workspace_request_generation: None,
+        git_request: None,
+        stage: WorktreeTeardownStage::Forgetting,
+    });
+
+    app.finish_worktree_teardown();
+
+    let request = app
+        .worktree_teardown
+        .as_ref()
+        .and_then(|teardown| teardown.git_request)
+        .expect("the final branch request remains correlated");
+    assert_eq!(
+        app.worktree_teardown
+            .as_ref()
+            .map(|teardown| teardown.stage),
+        Some(WorktreeTeardownStage::BranchDeleting)
+    );
+    app.apply_git_mutation_result_for_request(
+        GitMutation::DeleteBranch {
+            plan: Box::new(branch.clone()),
+            authorization: DeletionAuthorization::Typed,
+        },
+        Vec::new(),
+        None,
+        None,
+        (
+            Some(crate::git::GitRequestId::from_raw(request.get() + 100)),
+            GitServiceState::Completed,
+        ),
+        None,
+    );
+    assert!(
+        app.worktree_teardown.is_some(),
+        "a different branch request must not complete this cascade"
+    );
+    app.apply_git_mutation_result_for_request(
+        GitMutation::DeleteBranch {
+            plan: Box::new(branch),
+            authorization: DeletionAuthorization::Typed,
+        },
+        Vec::new(),
+        Some("provider summary must not hide the compound result".to_owned()),
+        None,
+        (Some(request), GitServiceState::Completed),
+        None,
+    );
+
+    assert!(app.worktree_teardown.is_none());
+    assert!(
+        app.status
+            .contains("deleted branch feature, removed worktree"),
+        "{}",
+        app.status
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// Cancelling a branch command after it started cannot establish whether the
+/// ref changed. The cascade may report its completed lower levels, but it must
+/// leave the branch outcome explicitly uncertain.
+#[cfg(unix)]
+#[test]
+fn a_running_cancelled_branch_cascade_does_not_claim_the_branch_survived() {
+    use crate::git::{GitMutation, GitServiceHandle, GitServiceState, Repository};
+
+    let root = temporary("uncertain-final-branch");
+    fs::create_dir_all(&root).unwrap();
+    let root = root.canonicalize().unwrap();
+    let target = root.join("removed-linked");
+    let repository = Repository::new(&root);
+    let mut app = App::new_in_isolated_project(
+        &root,
+        HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+            String::new(),
+        ))))),
+    )
+    .unwrap();
+    app.git.attach(Some(repository));
+    let (service, _operations) = GitServiceHandle::recording_for_test();
+    app.attach_git_service(service);
+    let branch = crate::git::BranchDeletionPlan {
+        branch: "feature".to_owned(),
+        tip: "0123456789abcdef".to_owned(),
+        upstream: None,
+        retaining_branches: vec!["main".to_owned()],
+        required_authorization: DeletionAuthorization::Typed,
+    };
+    app.worktree_teardown = Some(WorktreeTeardown {
+        plan: WorktreeRemovalPlan {
+            path: target.clone(),
+            head: Some("0123456789abcdef".to_owned()),
+            branch: Some("feature".to_owned()),
+            upstream: None,
+            detached_retained: false,
+            required_authorization: DeletionAuthorization::Typed,
+        },
+        authorization: DeletionAuthorization::Typed,
+        session: None,
+        root: target,
+        branch: Some(branch.clone()),
+        workspace_request_generation: None,
+        git_request: None,
+        stage: WorktreeTeardownStage::Forgetting,
+    });
+    app.finish_worktree_teardown();
+    let request = app
+        .worktree_teardown
+        .as_ref()
+        .and_then(|teardown| teardown.git_request)
+        .unwrap();
+
+    app.apply_git_mutation_result_for_request(
+        GitMutation::DeleteBranch {
+            plan: Box::new(branch),
+            authorization: DeletionAuthorization::Typed,
+        },
+        Vec::new(),
+        None,
+        Some(crate::git::GitError::Cancelled {
+            command: "git branch -D feature".to_owned(),
+        }),
+        (Some(request), GitServiceState::CompletedWithUncertainState),
+        None,
+    );
+
+    assert!(app.worktree_teardown.is_none());
+    assert!(app.status_error);
+    assert!(app.status.contains("removed worktree"), "{}", app.status);
+    assert!(
+        app.status.contains("deletion outcome is uncertain"),
+        "{}",
+        app.status
+    );
+    assert!(!app.status.contains("was not deleted"), "{}", app.status);
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// Cancellation and duplicate rejection are outer service errors rather than
+/// mutation responses with an inner failure. They still terminate the exact
+/// removal that was waiting for that request ID.
+#[cfg(unix)]
+#[test]
+fn an_outer_git_removal_error_abandons_the_matching_teardown() {
+    use crate::git::{
+        GitServiceEvent, GitServiceHandle, GitServiceState, MemoryGitProvider, Repository,
+    };
+
+    let root = temporary("outer-removal-error");
+    fs::create_dir_all(&root).unwrap();
+    let root = root.canonicalize().unwrap();
+    let target = root.join("linked");
+    fs::create_dir_all(&target).unwrap();
+    let target = target.canonicalize().unwrap();
+    let mut ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    let provider = Rc::new(
+        MemoryGitProvider::new(Repository::new(&root)).with_worktrees(vec![test_worktree(
+            target.clone(),
+            "feature",
+            &root,
+        )]),
+    );
+    ports.replace_git(Box::new(Rc::clone(&provider)));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    let (service, operations) = GitServiceHandle::recording_for_test();
+    app.attach_git_service(service);
+    let plan = crate::git::GitProvider::prepare_worktree_removal(
+        provider.as_ref(),
+        &Repository::new(&root),
+        &target,
+    )
+    .unwrap();
+    app.begin_worktree_teardown(plan, DeletionAuthorization::Typed, None, None);
+    let request = app
+        .worktree_teardown
+        .as_ref()
+        .and_then(|teardown| teardown.git_request)
+        .expect("the teardown records its removal request");
+    let mut removal = None;
+    while let Ok(operation) = operations.recv_timeout(std::time::Duration::from_millis(250)) {
+        if matches!(
+            operation,
+            crate::git::GitOperation::Mutate {
+                mutation: crate::git::GitMutation::RemoveWorktree { .. },
+                ..
+            }
+        ) {
+            removal = Some(operation);
+            break;
+        }
+    }
+    let operation = removal.expect("the guarded removal was queued");
+
+    app.apply_git_service_event(GitServiceEvent::Completed {
+        id: request,
+        operation,
+        result: Box::new(Err(crate::git::GitError::Failed {
+            command: "remove worktree".to_owned(),
+            code: None,
+            stderr: "cancelled before the Git operation started".to_owned(),
+        })),
+        state: GitServiceState::Cancelled,
+        coalesced: false,
+    });
+
+    assert!(app.worktree_teardown.is_none());
+    assert!(app.status_error);
+    assert!(app.status.contains("cancelled before"), "{}", app.status);
+    fs::remove_dir_all(root).unwrap();
 }
 
 /// The session service is attached in either mode, so a standalone editor
@@ -515,7 +1095,7 @@ fn a_standalone_teardown_may_stop_a_session_the_session_commands_would_refuse() 
     // what matters is that the mode is no longer what turns it back.
     app.status.clear();
     app.status_error = false;
-    app.request_session_stop(root.clone(), false);
+    let _ = app.request_session_stop(root.clone(), false);
     assert_eq!(
         app.status, "session service is unavailable",
         "an internal teardown stop must not be refused for the mode"
@@ -1126,6 +1706,60 @@ fn session_picker_states_the_session_as_fields_rather_than_pane_contents() {
         .unwrap();
     assert_eq!(overlay.layout, crate::snapshot::OverlayLayout::Preview);
     assert!(overlay.show_preview);
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// Workspace paths are operating-system identities and may contain control
+/// characters on Unix. The four-column manager must keep one workspace per
+/// visual row just like the branch and worktree buffers do.
+#[cfg(unix)]
+#[test]
+fn session_worktree_paths_cannot_manufacture_manager_rows() {
+    let root = temporary("session-picker-control-path");
+    fs::create_dir_all(&root).unwrap();
+    let root = root.canonicalize().unwrap();
+    let mut app = App::new_in_isolated_project(
+        &root,
+        HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+            String::new(),
+        ))))),
+    )
+    .unwrap();
+    app.enable_persistent_session();
+    app.workspace_generation = 1;
+    app.apply_workspace_event(WorkspaceEvent::Refreshed {
+        generation: 1,
+        result: Ok(vec![WorkspaceRow {
+            id: "aaaaaaaaaaaaaaaa".to_owned(),
+            name: Some("linked".to_owned()),
+            number: Some(1),
+            project_root: PathBuf::from("/tmp/project\nforged\rroot"),
+            running: false,
+            incompatible_protocol: None,
+            unsaved_buffers: None,
+            pending_wait_requests: None,
+            live_terminals: None,
+            terminal_sessions: None,
+            interactive_attached: None,
+            open_buffers: None,
+            git: Some(crate::git::WorkspaceGitFacts {
+                branch: Some("feature".to_owned()),
+                worktree: Some(PathBuf::from("/tmp/linked\nforged\trow")),
+                remote: None,
+            }),
+            missing_directory: false,
+        }]),
+    });
+
+    let detail = &app.list.as_ref().unwrap().items[0].detail;
+    assert_eq!(detail, "feature  /tmp/linked\\nforged\\trow");
+    assert!(!detail.contains('\n'));
+    assert!(!detail.contains('\t'));
+    let preview = app.list.as_ref().unwrap().items[0].preview().unwrap();
+    assert!(preview.starts_with("/tmp/project\\nforged\\rroot\n"));
+    assert!(preview.contains("Worktree    /tmp/linked\\nforged\\trow"));
+    assert!(!preview.contains('\r'));
+    assert!(!preview.contains('\t'));
     fs::remove_dir_all(root).unwrap();
 }
 

@@ -967,6 +967,9 @@ pub(super) enum WorktreeTeardownStage {
     Removing,
     /// The worktree is gone; only its history record is still to follow.
     Forgetting,
+    /// The session record and worktree are gone; the exact final branch
+    /// mutation still owns this cascade until Git reports its outcome.
+    BranchDeleting,
 }
 
 #[cfg(unix)]
@@ -974,19 +977,34 @@ impl WorktreeTeardown {
     /// Whether a stop result for `selector` belongs to this teardown. The
     /// catalog answers with the selector it was given, which is the resolved
     /// root the teardown asked to stop.
-    fn awaits_stop(&self, selector: &Path) -> bool {
-        self.stage == WorktreeTeardownStage::Stopping && self.root == selector
+    fn awaits_stop(&self, generation: u64, selector: &Path) -> bool {
+        self.stage == WorktreeTeardownStage::Stopping
+            && self.workspace_request_generation == Some(generation)
+            && self.root == selector
     }
 
     /// Whether a finished `git worktree remove` is this teardown's own. The
     /// mutation is matched by the path it removed, which is the plan's, not the
     /// resolved catalog root the stop and forget use.
-    fn awaits_removal(&self, path: &Path) -> bool {
-        self.stage == WorktreeTeardownStage::Removing && self.plan.path == path
+    fn awaits_removal(&self, request: Option<GitRequestId>, path: &Path) -> bool {
+        self.stage == WorktreeTeardownStage::Removing
+            && self.git_request == request
+            && self.plan.path == path
     }
 
-    fn awaits_forget(&self, path: &Path) -> bool {
-        self.stage == WorktreeTeardownStage::Forgetting && self.root == path
+    fn awaits_forget(&self, generation: u64, path: &Path) -> bool {
+        self.stage == WorktreeTeardownStage::Forgetting
+            && self.workspace_request_generation == Some(generation)
+            && self.root == path
+    }
+
+    fn awaits_branch_deletion(&self, request: Option<GitRequestId>, branch: &str) -> bool {
+        self.stage == WorktreeTeardownStage::BranchDeleting
+            && self.git_request == request
+            && self
+                .branch
+                .as_ref()
+                .is_some_and(|plan| plan.branch == branch)
     }
 }
 
@@ -1005,6 +1023,14 @@ struct WorktreeTeardown {
     /// The branch to delete once its worktree is gone, when this teardown was
     /// reached from the branch list rather than the worktree list.
     branch: Option<BranchDeletionPlan>,
+    /// The stop or forget request this stage is waiting for. Workspace list
+    /// refreshes have their own generations and must not make a destructive
+    /// cascade ignore the reply to a request it already sent.
+    workspace_request_generation: Option<u64>,
+    /// The exact asynchronous Git removal this cascade is waiting for. Path
+    /// equality alone cannot distinguish a stale or duplicate completion from
+    /// the mutation that belongs to this confirmed action.
+    git_request: Option<GitRequestId>,
     stage: WorktreeTeardownStage,
 }
 
@@ -2985,12 +3011,12 @@ fn session_picker_preview(
         .unwrap_or_else(|| "-".to_owned());
     let worktree = git
         .and_then(|facts| facts.worktree.as_ref())
-        .map_or_else(|| "-".to_owned(), |path| path.display().to_string());
+        .map_or_else(|| "-".to_owned(), |path| crate::git::display_path(path));
     let remote = git
         .and_then(|facts| facts.remote.clone())
         .unwrap_or_else(|| "-".to_owned());
 
-    let mut lines = vec![row.project_root.display().to_string(), String::new()];
+    let mut lines = vec![crate::git::display_path(&row.project_root), String::new()];
     for (field, value) in [
         ("Status", status),
         ("Panes", panes),

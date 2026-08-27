@@ -90,18 +90,18 @@ impl App {
                 selector,
                 result,
             } => {
-                if generation != self.workspace_generation {
-                    return;
-                }
-                self.session_action_menu = None;
                 // A stop that belongs to a compound worktree removal is one
                 // step of it, not an answer: reporting "stopped session" and
-                // stopping there would leave the worktree standing.
+                // stopping there would leave the worktree standing. Match its
+                // own request before the manager's latest-generation gate: a
+                // refresh requested while the host is stopping must not make
+                // this reply disappear.
                 if self
                     .worktree_teardown
                     .as_ref()
-                    .is_some_and(|teardown| teardown.awaits_stop(&selector))
+                    .is_some_and(|teardown| teardown.awaits_stop(generation, &selector))
                 {
+                    self.session_action_menu = None;
                     match result {
                         Ok(()) => {
                             self.advance_worktree_teardown(super::WorktreeTeardownStage::Removing);
@@ -116,6 +116,10 @@ impl App {
                     }
                     return;
                 }
+                if generation != self.workspace_generation {
+                    return;
+                }
+                self.session_action_menu = None;
                 match result {
                     Ok(()) => {
                         self.status(format!("stopped session for {}", selector.display()));
@@ -129,34 +133,39 @@ impl App {
                 path,
                 result,
             } => {
+                // The record is the last level of a compound removal. Whether
+                // one was there to remove says nothing about whether the
+                // worktree went, which has already happened by now, so the
+                // cascade reports what it did either way. As with its stop,
+                // this request remains authoritative if an unrelated manager
+                // refresh has since advanced the shared generation.
+                if self
+                    .worktree_teardown
+                    .as_ref()
+                    .is_some_and(|teardown| teardown.awaits_forget(generation, &path))
+                {
+                    self.session_action_menu = None;
+                    // Queue the projection refresh before producing the
+                    // compound action's final answer. Refresh submission has
+                    // its own progress message; doing it afterwards would
+                    // overwrite both a successful teardown summary and a
+                    // failure to forget the now-removed workspace's record.
+                    self.request_workspace_refresh();
+                    if let Err(error) = result {
+                        // The directory is already gone; a stranded record is
+                        // worth saying out loud, because it is what keeps a
+                        // number claimed. A branch above it is left intact:
+                        // failure at this level stops the cascade here.
+                        self.fail_worktree_teardown_after_removal(error);
+                    } else {
+                        self.finish_worktree_teardown();
+                    }
+                    return;
+                }
                 if generation != self.workspace_generation {
                     return;
                 }
                 self.session_action_menu = None;
-                // The record is the last level of a compound removal. Whether
-                // one was there to remove says nothing about whether the
-                // worktree went, which has already happened by now, so the
-                // cascade reports what it did either way.
-                if self
-                    .worktree_teardown
-                    .as_ref()
-                    .is_some_and(|teardown| teardown.awaits_forget(&path))
-                {
-                    if let Err(error) = result {
-                        // The directory is already gone; a stranded record is
-                        // worth saying out loud, because it is what keeps a
-                        // number claimed.
-                        self.finish_worktree_teardown();
-                        self.error(format!(
-                            "{}; its session record could not be forgotten: {error}",
-                            self.status
-                        ));
-                    } else {
-                        self.finish_worktree_teardown();
-                    }
-                    self.request_workspace_refresh();
-                    return;
-                }
                 match result {
                     Ok(true) => {
                         self.status(format!("forgot session record for {}", path.display()));
@@ -387,8 +396,8 @@ impl App {
             .and_then(|home| path.strip_prefix(home).ok());
         match relative {
             Some(relative) if relative.as_os_str().is_empty() => "~".to_owned(),
-            Some(relative) => format!("~/{}", relative.display()),
-            None => path.display().to_string(),
+            Some(relative) => format!("~/{}", crate::git::display_path(relative)),
+            None => crate::git::display_path(path),
         }
     }
 
@@ -471,7 +480,7 @@ impl App {
             self.error("stopping sessions needs workspace.mode: persistent");
             return;
         }
-        self.request_session_stop(selector, force);
+        let _ = self.request_session_stop(selector, force);
     }
 
     /// Stops a session without the `session` namespace's mode gate.
@@ -482,35 +491,47 @@ impl App {
     /// refusing to stop it there would abandon a removal already confirmed,
     /// halfway, for a reason that has nothing to do with the action.
     #[cfg(unix)]
-    pub(super) fn request_session_stop(&mut self, selector: PathBuf, force: bool) {
+    pub(super) fn request_session_stop(&mut self, selector: PathBuf, force: bool) -> Option<u64> {
         self.workspace_generation = self.workspace_generation.wrapping_add(1).max(1);
         let generation = self.workspace_generation;
         let Some(service) = self.ports.workspace_service.as_ref() else {
             self.error("session service is unavailable");
-            return;
+            return None;
         };
         match service.try_stop(generation, selector, self.working_directory.clone(), force) {
-            Ok(()) => self.status(if force {
-                "force-stopping session and its protected live state…"
-            } else {
-                "stopping session…"
-            }),
-            Err(error) => self.error(error),
+            Ok(()) => {
+                self.status(if force {
+                    "force-stopping session and its protected live state…"
+                } else {
+                    "stopping session…"
+                });
+                Some(generation)
+            }
+            Err(error) => {
+                self.error(error);
+                None
+            }
         }
     }
 
     /// Drops a stopped session from the visited history behind the picker.
     #[cfg(unix)]
-    pub(super) fn forget_workspace(&mut self, path: PathBuf) {
+    pub(super) fn forget_workspace(&mut self, path: PathBuf) -> Option<u64> {
         self.workspace_generation = self.workspace_generation.wrapping_add(1).max(1);
         let generation = self.workspace_generation;
         let Some(service) = self.ports.workspace_service.as_ref() else {
             self.error("session service is unavailable");
-            return;
+            return None;
         };
         match service.try_forget(generation, path) {
-            Ok(()) => self.status("forgetting session record…"),
-            Err(error) => self.error(error),
+            Ok(()) => {
+                self.status("forgetting session record…");
+                Some(generation)
+            }
+            Err(error) => {
+                self.error(error);
+                None
+            }
         }
     }
 
