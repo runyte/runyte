@@ -7,7 +7,7 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
 
 use crate::command::GrammarKind;
 use crate::notification::DEFAULT_HISTORY_LIMIT;
@@ -83,11 +83,83 @@ const CURSOR_REPLACE_LIGHT_ALTERNATE: Color = Color::Rgb(0xa0, 0x00, 0x8f);
 /// Servers are keyed by the language names in `syntax::grammars`, which is what
 /// makes a buffer's language the same question for highlighting and for LSP.
 /// An unlisted language simply has no server, which is the offline default.
-#[derive(Clone, Debug, Deserialize)]
-#[serde(default)]
+#[derive(Clone, Debug)]
 pub struct LspConfig {
     pub enable: bool,
     pub servers: HashMap<String, LanguageServerConfig>,
+}
+
+/// On disk, language names live directly below `lsp`. The former `servers`
+/// wrapper remains readable so existing configurations do not break, but it
+/// is not part of the preferred shape.
+#[derive(Deserialize)]
+struct LspConfigDocument {
+    #[serde(default)]
+    enable: LspConfigField<bool>,
+    #[serde(default)]
+    servers: LspConfigField<HashMap<String, LanguageServerConfig>>,
+    #[serde(flatten)]
+    languages: HashMap<String, serde_yaml::Value>,
+}
+
+/// Distinguishes an omitted field from an explicit YAML null. `Option<T>`
+/// treats both as `None`, but the typed schema rejected null before the flat
+/// compatibility reader existed and must not silently enable default servers.
+#[derive(Default)]
+enum LspConfigField<T> {
+    #[default]
+    Missing,
+    Value(T),
+}
+
+impl<'de, T> Deserialize<'de> for LspConfigField<T>
+where
+    T: Deserialize<'de>,
+{
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        T::deserialize(deserializer).map(Self::Value)
+    }
+}
+
+impl<'de> Deserialize<'de> for LspConfig {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let document = LspConfigDocument::deserialize(deserializer)?;
+        let legacy_shape = matches!(&document.servers, LspConfigField::Value(_));
+        let defaults = Self::default();
+        let mut servers = match document.servers {
+            LspConfigField::Missing => defaults.servers,
+            LspConfigField::Value(servers) => servers,
+        };
+
+        for (language, value) in document.languages {
+            if !crate::syntax::is_builtin_language_name(&language) {
+                return Err(D::Error::custom(format!(
+                    "unknown LSP language {language:?}"
+                )));
+            }
+            let server = serde_yaml::from_value(value).map_err(D::Error::custom)?;
+            if legacy_shape && servers.contains_key(&language) {
+                return Err(D::Error::custom(format!(
+                    "lsp.{language} is declared both directly and under lsp.servers"
+                )));
+            }
+            servers.insert(language, server);
+        }
+
+        Ok(Self {
+            enable: match document.enable {
+                LspConfigField::Missing => defaults.enable,
+                LspConfigField::Value(enable) => enable,
+            },
+            servers,
+        })
+    }
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -797,6 +869,16 @@ impl Config {
                 "git.refresh_interval_seconds must be between 0 and {MAX_GIT_REFRESH_INTERVAL_SECONDS}"
             ));
         }
+        let mut servers = self.lsp.servers.iter().collect::<Vec<_>>();
+        servers.sort_unstable_by_key(|(language, _)| language.as_str());
+        for (language, server) in servers {
+            if !crate::syntax::is_builtin_language_name(language) {
+                return Err(format!("unknown LSP language {language:?}"));
+            }
+            if server.command.as_os_str().is_empty() {
+                return Err(format!("lsp.{language}.command must not be empty"));
+            }
+        }
         Ok(())
     }
 
@@ -1399,6 +1481,124 @@ mod tests {
             PathBuf::from("rust-analyzer"),
             "adding one server must not remove the defaults"
         );
+    }
+
+    #[test]
+    fn language_servers_can_be_declared_directly_below_lsp() {
+        let config: Config =
+            serde_yaml::from_str("lsp:\n  markdown:\n    command: marksman\n    args: [server]\n")
+                .unwrap();
+
+        assert_eq!(
+            config.lsp.servers["markdown"].command,
+            PathBuf::from("marksman")
+        );
+        assert_eq!(config.lsp.servers["markdown"].args, ["server"]);
+        assert_eq!(
+            config.lsp.servers["rust"].command,
+            PathBuf::from("rust-analyzer"),
+            "the flat form must retain built-in servers"
+        );
+    }
+
+    #[test]
+    fn legacy_and_flat_lsp_declarations_cannot_disagree() {
+        let error = serde_yaml::from_str::<Config>(
+            "lsp:\n  servers:\n    markdown:\n      command: old\n  markdown:\n    command: new\n",
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(
+            error.contains("lsp.markdown is declared both directly and under lsp.servers"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn a_language_server_needs_a_command() {
+        let config: Config =
+            serde_yaml::from_str("lsp:\n  markdown:\n    args: [server]\n").unwrap();
+
+        assert_eq!(
+            config.validate_settings().unwrap_err(),
+            "lsp.markdown.command must not be empty"
+        );
+    }
+
+    #[test]
+    fn a_misspelled_flat_language_is_rejected() {
+        let error = serde_yaml::from_str::<Config>(
+            "lsp:\n  markdwon:\n    command: marksman\n    args: [server]\n",
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(
+            error.contains("unknown LSP language \"markdwon\""),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn unknown_lsp_keys_are_rejected_consistently() {
+        for source in [
+            "lsp:\n  timeout: 5\n",
+            "lsp:\n  launcher:\n    command: wrapper\n",
+            "lsp:\n  markdwon:\n    executable: marksman\n",
+        ] {
+            let error = serde_yaml::from_str::<Config>(source)
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains("unknown LSP language"), "{error}");
+        }
+    }
+
+    #[test]
+    fn explicit_null_lsp_fields_are_rejected_instead_of_defaulted() {
+        for source in ["lsp:\n  enable:\n", "lsp:\n  servers: null\n"] {
+            assert!(serde_yaml::from_str::<Config>(source).is_err(), "{source}");
+        }
+    }
+
+    #[test]
+    fn a_misspelled_legacy_language_is_rejected_during_validation() {
+        let config: Config =
+            serde_yaml::from_str("lsp:\n  servers:\n    markdwon:\n      command: marksman\n")
+                .unwrap();
+
+        assert_eq!(
+            config.validate_settings().unwrap_err(),
+            "unknown LSP language \"markdwon\""
+        );
+    }
+
+    #[test]
+    fn documented_language_server_snippets_are_valid_configurations() {
+        for (name, source) in [
+            (
+                "rust-analyzer",
+                include_str!("../docs/lsp/rust-analyzer.yaml"),
+            ),
+            ("pyright", include_str!("../docs/lsp/pyright.yaml")),
+            (
+                "sourcekit-lsp",
+                include_str!("../docs/lsp/sourcekit-lsp.yaml"),
+            ),
+            ("clangd", include_str!("../docs/lsp/clangd.yaml")),
+            (
+                "typescript-language-server",
+                include_str!("../docs/lsp/typescript-language-server.yaml"),
+            ),
+            ("gopls", include_str!("../docs/lsp/gopls.yaml")),
+            ("marksman", include_str!("../docs/lsp/marksman.yaml")),
+        ] {
+            let config = serde_yaml::from_str::<Config>(source)
+                .unwrap_or_else(|error| panic!("{name} example does not parse: {error}"));
+            config
+                .validate_settings()
+                .unwrap_or_else(|error| panic!("{name} example is invalid: {error}"));
+        }
     }
 
     #[test]

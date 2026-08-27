@@ -39,6 +39,16 @@ use tree_house_bindings::{Grammar, InputEdit, Node, Point, Query, query::Invalid
 
 use crate::text::{Change, Offset, Text, Transaction};
 
+/// Whether a name is a public, built-in document language.
+///
+/// LSP configuration uses the same inventory as path and document detection,
+/// so a misspelled server key cannot become valid-looking dead configuration.
+pub(crate) fn is_builtin_language_name(name: &str) -> bool {
+    grammars::BUILTIN_LANGUAGES
+        .iter()
+        .any(|language| language.name == name)
+}
+
 /// Stable identity of a language within a [`Registry`].
 ///
 /// The corresponding tree-house language handle is deliberately kept private

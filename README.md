@@ -216,6 +216,7 @@ for persistent-mode behavior and the `:quit-here!` force variant.
 - [User guide and complete feature reference](docs/user-guide.md)
 - [Keybindings and command reference](docs/user-guide.md#key-bindings)
 - [Configuration](docs/user-guide.md#configuration)
+- [Language-server setup and examples](docs/lsp/README.md)
 - [Runyte and Helix keymap differences](context/reference/helix-keymap-v1.md)
 - [Example configuration](config.example.yaml)
 - [Third-party notices](THIRD_PARTY_NOTICES.md)

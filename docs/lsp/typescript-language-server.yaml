@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: MPL-2.0
+
+lsp:
+  javascript:
+    command: typescript-language-server
+    args: ["--stdio"]
