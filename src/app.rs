@@ -3009,14 +3009,17 @@ fn session_picker_preview(
     let branch = git
         .and_then(|facts| facts.branch.clone())
         .unwrap_or_else(|| "-".to_owned());
-    let worktree = git
-        .and_then(|facts| facts.worktree.as_ref())
-        .map_or_else(|| "-".to_owned(), |path| crate::git::display_path(path));
+    let directory = crate::git::display_path(&row.project_root);
+    let worktree = if git.is_some_and(|facts| facts.worktree.is_some()) {
+        "yes".to_owned()
+    } else {
+        "no".to_owned()
+    };
     let remote = git
         .and_then(|facts| facts.remote.clone())
         .unwrap_or_else(|| "-".to_owned());
 
-    let mut lines = vec![crate::git::display_path(&row.project_root), String::new()];
+    let mut lines = Vec::new();
     for (field, value) in [
         ("Status", status),
         ("Panes", panes),
@@ -3026,6 +3029,7 @@ fn session_picker_preview(
         ("Waiting", count(row.pending_wait_requests)),
         ("Attached", attached),
         ("Branch", branch),
+        ("Directory", directory),
         ("Worktree", worktree),
         ("Repo", remote),
     ] {

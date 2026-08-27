@@ -1370,6 +1370,7 @@ fn session_picker_keeps_filter_and_routes_enter_and_tab_by_workspace_identity() 
     )
     .unwrap();
     app.enable_persistent_session();
+    app.home_directory = Some(root.clone());
     app.workspace_generation = 4;
     let rows = vec![
         WorkspaceRow {
@@ -1413,16 +1414,20 @@ fn session_picker_keeps_filter_and_routes_enter_and_tab_by_workspace_identity() 
         generation: 4,
         result: Ok(rows.clone()),
     });
-    // Four columns: number, name, branch, worktree. Both rows pay for the
+    // Four columns: number, name, branch, directory. Both rows pay for the
     // name column at its widest so the branch column starts in one place, and
-    // a row with nothing to say in a Git column says `-` rather than going
-    // blank and letting the next column slide left.
+    // a row with nothing to say in the branch column says `-` rather than
+    // going blank and letting the directory slide left.
     let picker = app.list.as_ref().unwrap();
     assert_eq!(picker.items[0].label, "  * current");
     assert_eq!(picker.items[1].label, "    archive");
-    assert_eq!(picker.items[0].detail, "-     -");
-    assert_eq!(picker.items[1].detail, "main  -");
+    assert_eq!(picker.items[0].detail, "-     ~/current");
+    assert_eq!(picker.items[1].detail, "main  ~/stopped");
     assert_eq!(picker.primary_action.as_deref(), Some("attach"));
+    // Shortening belongs only to presentation: the absolute directory remains
+    // a filterable session identity.
+    app.list.as_mut().unwrap().filter = crate::git::display_path(&current);
+    assert_eq!(app.list.as_ref().unwrap().visible_indices(), vec![0]);
     app.list.as_mut().unwrap().filter = "archive".to_owned();
     app.apply_workspace_event(WorkspaceEvent::Refreshed {
         generation: 4,
@@ -1531,6 +1536,11 @@ fn session_picker_omits_counts_a_running_host_answers_with_zero() {
     assert!(quiet_preview.contains("Terminals   0"), "{quiet_preview}");
     assert!(quiet_preview.contains("Unsaved     0"), "{quiet_preview}");
     assert!(quiet_preview.contains("Attached    yes"), "{quiet_preview}");
+    assert!(
+        quiet_preview.contains(&format!("Directory   {}", quiet.display())),
+        "{quiet_preview}"
+    );
+    assert!(quiet_preview.contains("Worktree    no"), "{quiet_preview}");
     // Retained screens whose children have exited are still worth naming, and
     // they are named beside the live count rather than instead of it.
     let exited_preview = picker.items[1].preview().unwrap();
@@ -1648,14 +1658,12 @@ fn session_picker_states_the_session_as_fields_rather_than_pane_contents() {
         "Unsaved     0",
         "Attached    no",
         "Branch      enh/render-space",
+        &format!("Directory   {}", root.display()),
+        "Worktree    yes",
         "Repo        git@example.com:me/runyte.git",
     ] {
         assert!(preview.contains(field), "{field:?} missing from {preview}");
     }
-    assert!(
-        preview.contains(&format!("Worktree    {}", root.display())),
-        "{preview}"
-    );
     // The pane count is the one field the lazy control request answers, so it
     // is unknown until that request returns.
     assert!(preview.contains("Panes       -"), "{preview}");
@@ -1714,7 +1722,7 @@ fn session_picker_states_the_session_as_fields_rather_than_pane_contents() {
 /// visual row just like the branch and worktree buffers do.
 #[cfg(unix)]
 #[test]
-fn session_worktree_paths_cannot_manufacture_manager_rows() {
+fn session_directory_paths_cannot_manufacture_manager_rows() {
     let root = temporary("session-picker-control-path");
     fs::create_dir_all(&root).unwrap();
     let root = root.canonicalize().unwrap();
@@ -1733,7 +1741,7 @@ fn session_worktree_paths_cannot_manufacture_manager_rows() {
             id: "aaaaaaaaaaaaaaaa".to_owned(),
             name: Some("linked".to_owned()),
             number: Some(1),
-            project_root: PathBuf::from("/tmp/project\nforged\rroot"),
+            project_root: PathBuf::from("/tmp/project\nforged\rroot\tcell"),
             running: false,
             incompatible_protocol: None,
             unsaved_buffers: None,
@@ -1752,12 +1760,12 @@ fn session_worktree_paths_cannot_manufacture_manager_rows() {
     });
 
     let detail = &app.list.as_ref().unwrap().items[0].detail;
-    assert_eq!(detail, "feature  /tmp/linked\\nforged\\trow");
+    assert_eq!(detail, "feature  /tmp/project\\nforged\\rroot\\tcell");
     assert!(!detail.contains('\n'));
     assert!(!detail.contains('\t'));
     let preview = app.list.as_ref().unwrap().items[0].preview().unwrap();
-    assert!(preview.starts_with("/tmp/project\\nforged\\rroot\n"));
-    assert!(preview.contains("Worktree    /tmp/linked\\nforged\\trow"));
+    assert!(preview.contains("Directory   /tmp/project\\nforged\\rroot\\tcell"));
+    assert!(preview.contains("Worktree    yes"));
     assert!(!preview.contains('\r'));
     assert!(!preview.contains('\t'));
     fs::remove_dir_all(root).unwrap();

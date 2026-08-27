@@ -340,24 +340,20 @@ Each row reads as four columns, padded to the widest value in the list so they
 line up down it:
 
 ```text
-  2 * runyte-dev              dev               -
-  1   main                    main              -
-  4   runyte.github.io        main              -
-  3   Brain                   -                 -
+  2 * runyte-dev              dev               ~/code/runyte-dev
+  1   main                    main              ~/code/runyte
+  4   runyte.github.io        main              ~/code/runyte.github.io
+  3   Brain                   -                 ~/Brain
   5   runyte-enh-render-space enh/render-space  ~/code/runyte-enh-render-space
 ```
 
 The number is the digit that attaches to the row, then the session name, then
-the checked-out branch, then this workspace's own path when it is a linked
-worktree. That last column is the widest thing on a row, so a path under your
-home directory is written with `~`; the preview keeps the full path. Only a
-checkout that shares a repository with others counts as a worktree there: a
-`.git` file alone does not make one, since a submodule and a repository created
-with `--separate-git-dir` both have one for their own main checkout. A column with nothing to say holds `-`: a workspace that is not a Git
-working tree has no branch, and a repository's main checkout is not a worktree
-in the sense the column means. The Git columns are read from the workspace
-directory itself rather than answered by a host, so a stopped session states its
-branch exactly as a running one does.
+the checked-out branch, then the workspace directory. That last column is the
+widest thing on a row, so a path under your home directory is written with
+`~`; the preview keeps the full path. A workspace that is not a Git working
+tree has no branch, so that column holds `-`. The branch is read from the
+workspace directory itself rather than answered by a host, so a stopped
+session states its branch exactly as a running one does.
 
 The selected session's preview, shown in the picker's right column and toggled
 with `Ctrl-t`, states the session as a fixed set of fields:
@@ -371,7 +367,8 @@ Unsaved     0
 Waiting     0
 Attached    yes
 Branch      enh/render-space
-Worktree    /home/me/code/runyte-enh-render-space
+Directory   /home/me/code/runyte-enh-render-space
+Worktree    yes
 Repo        git@github.com:me/runyte.git
 ```
 
@@ -382,7 +379,11 @@ pane count comes from a bounded, read-only control request made for the selected
 row alone, which never becomes a second interactive attachment; it reads `…`
 while that request is in flight and `-` for a stopped session or a host using
 another protocol version. Nothing in the preview is persisted for later
-listings.
+listings. `Worktree` is `yes` only for a linked Git worktree; it is `no` for a
+repository's main checkout and for a directory that is not a Git repository.
+Only a checkout that shares a repository with others counts as a worktree: a
+`.git` file alone does not make one, since a submodule and a repository created
+with `--separate-git-dir` both have one for their own main checkout.
 
 The manager does not show the contents of the session's buffers and terminals.
 It did, and at this width a snippet of a pane is neither readable as text nor

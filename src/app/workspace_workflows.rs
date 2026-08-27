@@ -289,12 +289,12 @@ impl App {
         self.list_actions = (0..self.workspace_rows.len())
             .map(ListAction::Workspace)
             .collect();
-        // The manager reads as four columns — number, name, branch, worktree —
+        // The manager reads as four columns — number, name, branch, directory —
         // padded to the widest value in the list so they line up down it, the
         // way the contextual action menu already lines its own columns up. A
-        // row that is not in a Git repository, or is the repository's main
-        // checkout, still pays for its columns and says `-` in them, so a
-        // column means the same thing on every line.
+        // row that is not in a Git repository still pays for its branch column
+        // and says `-` there. Its directory is always useful session identity,
+        // whether or not Git considers that directory a linked worktree.
         let columns = self
             .workspace_rows
             .iter()
@@ -302,7 +302,7 @@ impl App {
                 (
                     row.display_name(),
                     Self::session_branch_cell(row),
-                    self.session_worktree_cell(row),
+                    self.session_directory_cell(row),
                 )
             })
             .collect::<Vec<_>>();
@@ -321,7 +321,7 @@ impl App {
             .iter()
             .zip(columns.iter())
             .enumerate()
-            .map(|(index, (row, (name, branch, worktree)))| {
+            .map(|(index, (row, (name, branch, directory)))| {
                 let marker = if row.project_root == self.project_root {
                     "* "
                 } else {
@@ -338,13 +338,18 @@ impl App {
                     " ".repeat(name_width.saturating_sub(name.width()))
                 );
                 let detail = format!(
-                    "{branch}{}  {worktree}",
+                    "{branch}{}  {directory}",
                     " ".repeat(branch_width.saturating_sub(branch.width()))
                 );
                 // The padding is presentation, so it is kept out of the
                 // haystack: filtering answers to what the row says, not to how
                 // wide the widest other row happened to be.
-                let search = format!("{name} {} {branch} {worktree}", row.project_root.display());
+                // Keep the absolute identity searchable even when the visible
+                // directory is shortened through the configured home path.
+                let search = format!(
+                    "{name} {} {branch} {directory}",
+                    crate::git::display_path(&row.project_root)
+                );
                 PickerItem::searchable(label, detail, search, index)
                     .with_preview(session_picker_preview(
                         row,
@@ -376,20 +381,16 @@ impl App {
             .unwrap_or_else(|| "-".to_owned())
     }
 
-    /// The worktree column: this workspace's own path when it is a linked
-    /// worktree, and `-` when it is a main checkout or not a repository. The
-    /// path is deliberately repeated from the preview here, because it is what
-    /// distinguishes a worktree session from the project it was cut from.
+    /// The directory column: this workspace's own path, whether it is a linked
+    /// Git worktree, a repository's main checkout, or not a repository at all.
     ///
     /// It is the last column and the widest thing on the row, so a path under
     /// the home directory is written with `~`. That is the difference between
     /// the distinguishing tail of a path surviving the row's width and being
     /// cut off it; the preview keeps the full path either way.
     #[cfg(unix)]
-    fn session_worktree_cell(&self, row: &crate::workspace::WorkspaceRow) -> String {
-        let Some(path) = row.git.as_ref().and_then(|facts| facts.worktree.as_ref()) else {
-            return "-".to_owned();
-        };
+    fn session_directory_cell(&self, row: &crate::workspace::WorkspaceRow) -> String {
+        let path = &row.project_root;
         let relative = self
             .home_directory
             .as_deref()
