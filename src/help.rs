@@ -270,7 +270,8 @@ pub fn render(
     let _ = writeln!(
         out,
         ":help opens the general Runyte manual; :help <topic> jumps to one of\n\
-         its sections. This contextual page remains available through Space ?.\n"
+         its sections. This contextual page remains available through Space ?.\n\
+         :tutorial opens a guided two-pane introduction with disposable scratch text.\n"
     );
 
     let _ = writeln!(out, "Mouse");

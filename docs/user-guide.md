@@ -1049,6 +1049,18 @@ the view and the page moves with it, without a character of it being rewritten.
 The space around it is drawn, not stored, so searching, scrolling, and clicking
 land on the text itself. A page taller than its pane is shown from its first
 row and scrolls like any other read-only buffer.
+
+`:tutorial` opens a guided introduction in two ordinary panes: read-only
+instructions and disposable scratch text. The first picker asks whether lesson
+prose should show Vim-like motion spellings, Helix-like motion spellings, or
+both. That preference changes only the spellings displayed by the tutorial;
+Runyte's selection behavior and keymap do not change. Lessons cover modes,
+selection-first editing, search, multiple carets, `Space` discovery,
+`Ctrl-w` pane commands, `Alt-o`/`Alt-i` buffer history,
+`Ctrl-o`/`Ctrl-i` jump history, and the standalone/persistent boundary.
+Reopening `:tutorial` resumes the live lesson, `:tutorial reset` starts over,
+and `:tutorial sessions` opens the persistent-session lesson directly.
+
 `:zen` applies the same presentation boundary to an editable writing view. It
 temporarily maximizes the active pane and centers a text viewport up to
 `editor.zen_width` cells wide (100 by default); a narrower terminal uses all
@@ -2286,6 +2298,9 @@ are enabled.
 ```text
 :cd <path>               change the working directory; retarget an active explorer
 :about                   show Runyte's logo, version, and getting-started guide
+:tutorial [reset|sessions]
+                        open or resume the interactive tutorial; reset starts
+                        over and sessions opens its persistent-session lesson
 :zen                     toggle a centered, maximized editable writing viewport
 :fullscreen              toggle the active pane across the whole editor area, at its ordinary width
 :close                  close the active buffer in place (aliases: c, buffer-close, bc, close-buffer, cb)

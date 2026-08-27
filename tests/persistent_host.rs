@@ -494,6 +494,80 @@ async fn detach_reattach_preserves_live_editor_and_refuses_a_second_tui() {
 }
 
 #[tokio::test]
+async fn tutorial_persistent_lesson_completes_across_a_real_client_reattachment() {
+    let root = project();
+    let executable = env!("CARGO_BIN_EXE_runyte");
+    let child = Command::new(executable)
+        .arg("--serve")
+        .arg("note.txt")
+        .current_dir(&root)
+        .env("XDG_RUNTIME_DIR", test_runtime_dir())
+        .env("XDG_CACHE_HOME", test_cache_dir())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut child = ChildGuard(Some(child));
+    let endpoint = LocalEndpoint::discover_with_runtime(
+        &root.join(".runyte"),
+        &root,
+        Some(test_runtime_dir()),
+    )
+    .unwrap();
+    if !wait_for_endpoint(&mut child, &endpoint).await {
+        fs::remove_dir_all(root).unwrap();
+        return;
+    }
+
+    let mut first = LocalClient::connect(&endpoint, geometry(), true)
+        .await
+        .unwrap();
+    assert!(matches!(
+        response(&mut first).await,
+        HostResponse::Welcome { .. }
+    ));
+    let _ = response(&mut first).await;
+    let _ = send_input(&mut first, KeyStroke::plain(KeyCode::Char(':'))).await;
+    let _ = send_input(&mut first, InputEvent::Text("tutorial sessions".to_owned())).await;
+    let tutorial = send_input(&mut first, KeyStroke::plain(KeyCode::Enter)).await;
+    assert!(frame_text(&tutorial).contains("PERSISTENT SESSIONS"));
+    assert!(frame_text(&tutorial).contains("persistent tutorial token"));
+
+    let _ = send_input(&mut first, KeyStroke::plain(KeyCode::Char(':'))).await;
+    let _ = send_input(&mut first, InputEvent::Text("detach".to_owned())).await;
+    let mut detached = send_input(&mut first, KeyStroke::plain(KeyCode::Enter)).await;
+    while !matches!(detached, HostResponse::Detached { .. }) {
+        detached = response(&mut first).await;
+    }
+    assert_eq!(
+        detached,
+        HostResponse::Detached {
+            directory_bytes: None,
+        }
+    );
+
+    let mut reattached = LocalClient::connect(&endpoint, geometry(), true)
+        .await
+        .unwrap();
+    assert!(matches!(
+        response(&mut reattached).await,
+        HostResponse::Welcome { .. }
+    ));
+    let completed = response(&mut reattached).await;
+    assert!(frame_text(&completed).contains("COMPLETE"));
+    assert!(frame_text(&completed).contains("persistent tutorial token"));
+
+    shutdown(&mut reattached, ClientRequest::ForceShutdown).await;
+    let status = tokio::task::spawn_blocking(move || child.0.take().unwrap().wait())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(status.success());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
 async fn terminal_pid_output_and_input_survive_detach_disconnect_and_reattach() {
     let root = project();
     let executable = env!("CARGO_BIN_EXE_runyte");

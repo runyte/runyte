@@ -559,6 +559,7 @@ impl App {
             self.error(":detach is available only in persistent mode");
             return;
         }
+        self.tutorial_requested_detach();
         self.quit_directory = None;
         self.should_quit = true;
     }

@@ -3303,6 +3303,10 @@ impl App {
             self.persist_selected_setting(setting, value);
             return Ok(());
         }
+        if let Some(ListAction::TutorialMotionHints(hints)) = chosen {
+            self.choose_tutorial_motion_hints(hints);
+            return Ok(());
+        }
         #[cfg(unix)]
         if matches!(chosen, Some(ListAction::Workspace(_))) && !self.persistent_session {
             self.error("attaching sessions needs workspace.mode: persistent");
@@ -3320,6 +3324,9 @@ impl App {
             Some(ListAction::Macro(register)) => self.replay_macro(register, 1)?,
             Some(ListAction::GitCommit(oid)) => self.open_git_commit_oid(oid),
             Some(ListAction::Terminal(id)) => self.show_terminal(id),
+            Some(ListAction::TutorialMotionHints(_)) => {
+                unreachable!("tutorial choices return before closing the shared picker")
+            }
             #[cfg(unix)]
             Some(ListAction::Workspace(row)) => {
                 if let Some(path) = self

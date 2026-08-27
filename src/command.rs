@@ -692,6 +692,7 @@ editor_commands! {
     // decision, so `:quit[!]` and `:q[!]` are the whole surface for it.
     ShowHelp => ("show-help", "Open general or contextual Runyte help"),
     ShowAbout => ("show-about", "Introduce Runyte and show its version"),
+    ShowTutorial => ("show-tutorial", "Open the interactive Runyte tutorial"),
     FocusWindowLeft => ("focus-window-left", "Focus the pane to the left"),
     FocusWindowDown => ("focus-window-down", "Focus the pane below"),
     FocusWindowUp => ("focus-window-up", "Focus the pane above"),
@@ -1112,7 +1113,7 @@ impl EditorCommand {
                 CommandCategory::Configuration
             }
             Self::OpenWorkspaceSearchResult => CommandCategory::View,
-            Self::ShowHelp | Self::ShowAbout => CommandCategory::Help,
+            Self::ShowHelp | Self::ShowAbout | Self::ShowTutorial => CommandCategory::Help,
             Self::OpenTerminal
             | Self::OpenTerminalFileDirectory
             | Self::OpenTerminalDirectoryRoot
@@ -1413,6 +1414,13 @@ pub const COMMANDS: &[CommandSpec] = &[
         Optional(FreeText)
     ),
     editor_spec!(Editor::ShowAbout, "about", [], "about", NoArguments),
+    editor_spec!(
+        Editor::ShowTutorial,
+        "tutorial",
+        [],
+        "tutorial [reset|sessions]",
+        Optional(FreeText)
+    ),
     editor_spec!(
         Editor::OpenTerminal,
         "terminal",
@@ -2065,9 +2073,11 @@ impl CommandInvocation {
                 matches!(parameters, InvocationParameters::Help(_))
                     && execution == CommandExecutionContext::default()
             }
-            CommandId::Editor(EditorCommand::OpenThemeSettings) => {
+            CommandId::Editor(
+                command @ (EditorCommand::OpenThemeSettings | EditorCommand::ShowTutorial),
+            ) => {
                 if matches!(parameters, InvocationParameters::OptionalText(_)) {
-                    validate_editor_execution(EditorCommand::OpenThemeSettings, execution)?;
+                    validate_editor_execution(command, execution)?;
                     true
                 } else {
                     false
@@ -2131,7 +2141,9 @@ impl CommandInvocation {
             | EditorCommand::SplitHorizontal
             | EditorCommand::Save
             | EditorCommand::ForceSave => InvocationParameters::OptionalPath(None),
-            EditorCommand::OpenThemeSettings => InvocationParameters::OptionalText(None),
+            EditorCommand::OpenThemeSettings | EditorCommand::ShowTutorial => {
+                InvocationParameters::OptionalText(None)
+            }
             _ => InvocationParameters::None,
         };
         Ok(Self {
@@ -2153,6 +2165,9 @@ impl CommandInvocation {
             | EditorCommand::SplitHorizontal
             | EditorCommand::Save
             | EditorCommand::ForceSave => InvocationParameters::OptionalPath(None),
+            EditorCommand::OpenThemeSettings | EditorCommand::ShowTutorial => {
+                InvocationParameters::OptionalText(None)
+            }
             _ => InvocationParameters::None,
         };
         Self {
@@ -2535,6 +2550,9 @@ fn invocation_from_parts(
             ),
             (EditorCommand::OpenThemeSettings, ParsedArgument::Text(name)) => Ok(
                 CommandInvocation::new(id, InvocationParameters::OptionalText(name)),
+            ),
+            (EditorCommand::ShowTutorial, ParsedArgument::Text(request)) => Ok(
+                CommandInvocation::new(id, InvocationParameters::OptionalText(request)),
             ),
             (EditorCommand::ShowHelp, ParsedArgument::Text(topic)) => {
                 Ok(CommandInvocation::help(HelpInvocation::Manual(topic)))
