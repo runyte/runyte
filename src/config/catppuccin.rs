@@ -44,6 +44,7 @@ fn catppuccin_theme(palette: CatppuccinPalette) -> ThemeDefinition {
         background: palette.base.into(),
         foreground: palette.text.into(),
         muted: palette.overlay0.into(),
+        whitespace: None,
         jump_text_muted: None,
         accent: palette.blue.into(),
         cursor_normal: Some(palette.blue.into()),

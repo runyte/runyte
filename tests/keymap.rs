@@ -448,6 +448,7 @@ fn nested_space_tree_is_exact_primary_and_keeps_fast_compatibility_paths() {
         (" /g", Editor(EditorCommand::OpenFuzzyGrep)),
         (" //", Editor(EditorCommand::GlobalSearchRegex)),
         (" /s", Editor(EditorCommand::GlobalSearch)),
+        (" p.", Editor(EditorCommand::ToggleWhitespace)),
         (" g/", Colon(ColonCommand::GitSearchCommits)),
         (" gw", Colon(ColonCommand::GitWorktrees)),
         (" xe", Editor(EditorCommand::ExpandSyntaxSelection)),

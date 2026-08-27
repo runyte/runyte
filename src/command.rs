@@ -615,6 +615,7 @@ editor_commands! {
         "Label visible words by proximity and jump to one"
     ),
     ToggleSoftWrap => ("toggle-soft-wrap", "Toggle soft wrapping"),
+    ToggleWhitespace => ("toggle-whitespace", "Toggle whitespace markers"),
     ToggleZen => ("toggle-zen", "Toggle the centred, maximized writing view"),
     ToggleFullscreen => (
         "toggle-fullscreen",
@@ -1032,9 +1033,10 @@ impl EditorCommand {
             | Self::AlignViewMiddle
             | Self::ScrollViewDown
             | Self::ScrollViewUp => CommandCategory::View,
-            Self::ToggleSoftWrap | Self::ToggleZen | Self::ToggleFullscreen => {
-                CommandCategory::View
-            }
+            Self::ToggleSoftWrap
+            | Self::ToggleWhitespace
+            | Self::ToggleZen
+            | Self::ToggleFullscreen => CommandCategory::View,
             Self::OpenExplorer
             | Self::OpenWorkingDirectoryExplorer
             | Self::OpenFilePicker

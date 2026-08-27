@@ -986,6 +986,10 @@ fn built_in_bindings() -> Vec<Binding> {
             [Key::char(' '), Key::char('p'), Key::char('s')],
             Command::ToggleSoftWrap,
         ),
+        primary_modal(
+            [Key::char(' '), Key::char('p'), Key::char('.')],
+            Command::ToggleWhitespace,
+        ),
         // Joining is the inverse of `Space p w`, so it lives beside it rather
         // than on Helix's `J`: the delimiter prompt is part of the command, and
         // a bare letter cannot say that it is coming.
@@ -1882,9 +1886,8 @@ fn built_in_bindings() -> Vec<Binding> {
         directory(Key::plain(KeyCode::Enter), Command::OpenDirectoryEntry),
         directory(Key::plain(KeyCode::Backspace), Command::OpenParentDirectory),
         directory(Key::char('-'), Command::OpenParentDirectory),
-        // `.` names the dotfiles it reveals. Nothing else claims it: Runyte
-        // has no repeat-dot, and the Vim grammar rejects it rather than
-        // approximating it.
+        // The global dot now toggles visible whitespace. Keep dotfile
+        // discovery on the same mnemonic behind Space in explorer buffers.
         directory(Key::char('.'), Command::ToggleHiddenFiles),
         // A directory buffer deliberately leaves the split sequences to the
         // global bindings: splitting an explorer shows the same listing twice,
@@ -2042,7 +2045,7 @@ fn build_keymap(bindings: Vec<Binding>) -> Keymap {
         BindingNamespace::global(
             MODAL,
             [Key::char(' '), Key::char('p')],
-            "Wrapping, joining, and tables",
+            "Text layout and whitespace",
         ),
         BindingNamespace::global(
             MODAL,
@@ -2886,27 +2889,26 @@ mod tests {
         );
     }
 
-    /// `.` belongs to the explorer alone: elsewhere it must stay unbound, so
-    /// no text buffer acquires a hidden-file toggle it has no listing for.
     #[test]
-    fn the_hidden_file_toggle_is_scoped_to_the_explorer() {
-        let sequence = KeySequence::from(Key::char('.'));
+    fn dot_keeps_the_explorer_action_and_whitespace_stays_in_its_namespace() {
+        let dot = KeySequence::from(Key::char('.'));
+        let space_p_dot = KeySequence::from([Key::char(' '), Key::char('p'), Key::char('.')]);
         assert!(matches!(
-            default_keymap().lookup_in(Mode::Normal, BindingScope::Directory, &sequence),
+            default_keymap().lookup_in(Mode::Normal, BindingScope::Directory, &dot),
             Lookup::Exact(binding)
                 if binding.target == BindingTarget::Editor(EditorCommand::ToggleHiddenFiles)
         ));
         assert!(matches!(
-            default_keymap().lookup_in(Mode::Select, BindingScope::Directory, &sequence),
-            Lookup::Exact(binding)
-                if binding.target == BindingTarget::Editor(EditorCommand::ToggleHiddenFiles)
-        ));
-        assert!(matches!(
-            default_keymap().lookup(Mode::Normal, &sequence),
+            default_keymap().lookup(Mode::Select, &dot),
             Lookup::NoMatch
         ));
         assert!(matches!(
-            default_keymap().lookup_in(Mode::Insert, BindingScope::Directory, &sequence),
+            default_keymap().lookup_in(Mode::Normal, BindingScope::Directory, &space_p_dot),
+            Lookup::Exact(binding)
+                if binding.target == BindingTarget::Editor(EditorCommand::ToggleWhitespace)
+        ));
+        assert!(matches!(
+            default_keymap().lookup_in(Mode::Insert, BindingScope::Directory, &dot),
             Lookup::NoMatch
         ));
     }

@@ -12,6 +12,7 @@ fn nordfox_theme() -> ThemeDefinition {
         background: "#2e3440".into(),
         foreground: "#cdcecf".into(),
         muted: "#60728a".into(),
+        whitespace: None,
         jump_text_muted: None,
         accent: "#8cafd2".into(),
         cursor_normal: None,
@@ -81,6 +82,7 @@ fn terafox_theme() -> ThemeDefinition {
         background: "#152528".into(),
         foreground: "#e6eaea".into(),
         muted: "#6d7f8b".into(),
+        whitespace: None,
         // Terafox's own selection grounds are read against dimmed text as well
         // as ordinary text: an unfocused pane draws every cell in
         // `jump_text_muted` while a terminal review selection still fills whole

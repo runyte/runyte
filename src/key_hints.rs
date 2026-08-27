@@ -610,6 +610,10 @@ mod tests {
             Some(KeySequence::new([Key::char(' '), Key::char('f')]))
         );
         assert_eq!(alias_of(&project, EditorCommand::GlobalSearchRegex), None);
+        assert_eq!(
+            alias_of(&rows_under('p'), EditorCommand::ToggleWhitespace),
+            None
+        );
     }
 
     #[test]

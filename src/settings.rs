@@ -45,6 +45,7 @@ pub enum SettingId {
     EditorMotionRepeatMultiplier,
     EditorShowHiddenFiles,
     EditorSoftWrap,
+    EditorRenderWhitespace,
     EditorZenWidth,
     EditorHardWrapWidth,
     EditorTrimTrailingWhitespace,
@@ -185,6 +186,15 @@ const DESCRIPTORS: &[SettingDescriptor] = &[
         key: "editor.soft_wrap",
         title: "Soft wrap",
         description: "Wrap long visual lines without changing the buffer",
+        value_type: SettingType::Boolean,
+        preview: PreviewPolicy::Immediate,
+        persistence: PersistencePolicy::ConfigFile,
+    },
+    SettingDescriptor {
+        id: SettingId::EditorRenderWhitespace,
+        key: "editor.render_whitespace",
+        title: "Whitespace markers",
+        description: "Show spaces, tabs, and line terminators",
         value_type: SettingType::Boolean,
         preview: PreviewPolicy::Immediate,
         persistence: PersistencePolicy::ConfigFile,
@@ -347,6 +357,7 @@ impl SettingId {
         Self::EditorMotionRepeatMultiplier,
         Self::EditorShowHiddenFiles,
         Self::EditorSoftWrap,
+        Self::EditorRenderWhitespace,
         Self::EditorZenWidth,
         Self::EditorHardWrapWidth,
         Self::EditorTrimTrailingWhitespace,
@@ -387,6 +398,7 @@ impl SettingId {
             }
             Self::EditorShowHiddenFiles => SettingValue::Boolean(config.editor.show_hidden_files),
             Self::EditorSoftWrap => SettingValue::Boolean(config.editor.soft_wrap),
+            Self::EditorRenderWhitespace => SettingValue::Boolean(config.editor.render_whitespace),
             Self::EditorZenWidth => SettingValue::Integer(config.editor.zen_width),
             Self::EditorHardWrapWidth => SettingValue::Integer(config.editor.hard_wrap_width),
             Self::EditorTrimTrailingWhitespace => {
@@ -499,6 +511,9 @@ impl SettingId {
             }
             (Self::EditorSoftWrap, SettingValue::Boolean(value)) => {
                 config.editor.soft_wrap = *value;
+            }
+            (Self::EditorRenderWhitespace, SettingValue::Boolean(value)) => {
+                config.editor.render_whitespace = *value;
             }
             (Self::EditorZenWidth, SettingValue::Integer(value)) => {
                 config.editor.zen_width = *value;

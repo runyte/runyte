@@ -52,6 +52,7 @@ struct TuiTheme {
     overlay_background: ratatui::style::Color,
     foreground: ratatui::style::Color,
     muted: ratatui::style::Color,
+    whitespace: ratatui::style::Color,
     jump_text_muted: ratatui::style::Color,
     accent: ratatui::style::Color,
     cursor_normal: ratatui::style::Color,
@@ -86,6 +87,7 @@ impl TuiTheme {
             overlay_background: to_tui_color(theme.overlay_background()),
             foreground: to_tui_color(theme.foreground),
             muted: to_tui_color(theme.muted),
+            whitespace: to_tui_color(theme.whitespace),
             jump_text_muted: to_tui_color(theme.jump_text_muted),
             accent: to_tui_color(theme.accent),
             cursor_normal: to_tui_color(theme.cursor_normal),
@@ -1206,6 +1208,7 @@ fn snapshot_line(
                 scope,
                 diagnostic,
                 directory,
+                whitespace,
                 count,
             } => {
                 let style = text_run_style(
@@ -1215,6 +1218,7 @@ fn snapshot_line(
                     scope,
                     diagnostic,
                     directory,
+                    whitespace,
                     count,
                     row.diff,
                     row.compared,
@@ -1224,7 +1228,7 @@ fn snapshot_line(
                 } else {
                     style
                 };
-                let style = if role == TextRole::Plain {
+                let style = if role == TextRole::Plain && !whitespace {
                     match row.notification_severity {
                         Some(NotificationSeverity::Error) => style.fg(theme.error),
                         Some(NotificationSeverity::Warning) => style.fg(theme.warning),
@@ -1320,6 +1324,7 @@ fn text_run_style(
     scope: Option<crate::syntax::Scope>,
     diagnostic: Option<crate::lsp::Severity>,
     directory: bool,
+    whitespace: bool,
     count: Option<CountKind>,
     diff: Option<DiffLine>,
     compared: Option<Change>,
@@ -1329,19 +1334,23 @@ fn text_run_style(
     // green wherever the reader meets it. The changed-file list's two counts
     // are the same claim in a narrower place, so they are painted from the
     // same two theme colours rather than from any of their own.
-    let foreground = match count {
-        Some(CountKind::Added) => theme.change_added,
-        Some(CountKind::Removed) => theme.change_removed,
-        None => match diff {
-            Some(DiffLine::Added) => theme.change_added,
-            Some(DiffLine::Removed) => theme.change_removed,
-            Some(DiffLine::Hunk) => theme.accent,
-            Some(DiffLine::Meta) => theme.muted,
-            None if directory => theme.directory,
-            None => scope
-                .and_then(|scope| theme.syntax_color(scope))
-                .unwrap_or(theme.foreground),
-        },
+    let foreground = if whitespace {
+        theme.whitespace
+    } else {
+        match count {
+            Some(CountKind::Added) => theme.change_added,
+            Some(CountKind::Removed) => theme.change_removed,
+            None => match diff {
+                Some(DiffLine::Added) => theme.change_added,
+                Some(DiffLine::Removed) => theme.change_removed,
+                Some(DiffLine::Hunk) => theme.accent,
+                Some(DiffLine::Meta) => theme.muted,
+                None if directory => theme.directory,
+                None => scope
+                    .and_then(|scope| theme.syntax_color(scope))
+                    .unwrap_or(theme.foreground),
+            },
+        }
     };
     // The fill says which side of a comparison a line belongs to, and it sits
     // underneath everything: a selection or a caret still paints over it, so
@@ -3466,6 +3475,7 @@ mod tests {
         assert_role!(background);
         assert_role!(foreground);
         assert_role!(muted);
+        assert_role!(whitespace);
         assert_role!(jump_text_muted);
         assert_role!(accent);
         assert_role!(cursor_normal);
@@ -3520,6 +3530,7 @@ mod tests {
                 TextRole::Caret,
                 None,
                 None,
+                false,
                 false,
                 None,
                 None,
@@ -4523,6 +4534,7 @@ mod tests {
                         scope: None,
                         diagnostic: None,
                         directory: false,
+                        whitespace: false,
                         count: None,
                     },
                 }],
@@ -4558,6 +4570,7 @@ mod tests {
                 None,
                 None,
                 false,
+                false,
                 count,
                 None,
                 None,
@@ -4586,6 +4599,7 @@ mod tests {
                 None,
                 None,
                 true,
+                false,
                 None,
                 None,
                 None,
@@ -4601,12 +4615,29 @@ mod tests {
                 None,
                 None,
                 false,
+                false,
                 None,
                 None,
                 None,
             )
             .fg,
             Some(theme.foreground)
+        );
+        assert_eq!(
+            text_run_style(
+                &theme,
+                Mode::Normal,
+                TextRole::Plain,
+                None,
+                None,
+                false,
+                true,
+                None,
+                None,
+                None,
+            )
+            .fg,
+            Some(theme.whitespace)
         );
     }
 
@@ -5043,6 +5074,7 @@ mod tests {
                 None,
                 None,
                 false,
+                false,
                 None,
                 None,
                 None,
@@ -5058,6 +5090,7 @@ mod tests {
                 None,
                 None,
                 false,
+                false,
                 None,
                 None,
                 None,
@@ -5072,6 +5105,7 @@ mod tests {
                 TextRole::ReplaceCaret,
                 None,
                 None,
+                false,
                 false,
                 None,
                 None,

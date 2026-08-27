@@ -142,6 +142,8 @@ pub struct EditorConfig {
     pub motion_repeat_multiplier: usize,
     pub show_hidden_files: bool,
     pub soft_wrap: bool,
+    /// Draw visible markers for spaces, tabs, and line terminators.
+    pub render_whitespace: bool,
     /// Maximum text width of the centred viewport used by `:zen`.
     pub zen_width: usize,
     /// Default character width used by hard-wrap and reflow.
@@ -180,6 +182,10 @@ pub struct ThemeDefinition {
     pub background: String,
     pub foreground: String,
     pub muted: String,
+    /// Visible whitespace markers. An omitted value is derived one small step
+    /// away from `background`, preserving custom themes written before the
+    /// role existed.
+    pub whitespace: Option<String>,
     /// Ordinary buffer text while `goto-word` labels are active. An omitted
     /// value uses `muted`, preserving themes written before jump dimming had
     /// its own role.
@@ -367,6 +373,7 @@ pub struct Theme {
     pub background: Color,
     pub foreground: Color,
     pub muted: Color,
+    pub whitespace: Color,
     pub jump_text_muted: Color,
     pub accent: Color,
     pub cursor_normal: Color,
@@ -403,6 +410,22 @@ pub struct Theme {
 }
 
 impl Theme {
+    /// A marker colour only slightly separated from the editor ground.
+    ///
+    /// Whitespace is structural information rather than ordinary text, so it
+    /// should remain visible without competing with syntax. A terminal-owned
+    /// background cannot be derived from; those themes fall back to `muted`.
+    fn derived_whitespace(background: Color, muted: Color) -> Color {
+        const STEP: f64 = 0.12;
+
+        let luminance = background.relative_luminance();
+        match luminance {
+            Some(value) if value < 0.5 => background.stepped_off(ThemeAppearance::Dark, STEP),
+            Some(_) => background.stepped_off(ThemeAppearance::Light, STEP),
+            None => muted,
+        }
+    }
+
     /// The ground an inactive pane paints on.
     ///
     /// It sits halfway between the active pane and an overlay, keeping the
@@ -549,6 +572,7 @@ impl Default for EditorConfig {
             motion_repeat_multiplier: 2,
             show_hidden_files: false,
             soft_wrap: false,
+            render_whitespace: false,
             zen_width: 100,
             hard_wrap_width: 80,
             trim_trailing_whitespace: true,
@@ -567,6 +591,7 @@ impl Default for ThemeDefinition {
             background: "#181818".into(),
             foreground: "#d8d8d8".into(),
             muted: "#585858".into(),
+            whitespace: None,
             jump_text_muted: None,
             accent: "#7cafc2".into(),
             cursor_normal: None,
@@ -761,6 +786,7 @@ impl TryFrom<&ThemeDefinition> for Theme {
     type Error = anyhow::Error;
 
     fn try_from(value: &ThemeDefinition) -> Result<Self> {
+        let background = parse_color(&value.background)?;
         let accent = parse_color(&value.accent)?;
         let selection = parse_color(&value.selection)?;
         let selection_primary = value
@@ -771,6 +797,12 @@ impl TryFrom<&ThemeDefinition> for Theme {
             .unwrap_or(selection);
         let error = parse_color(&value.error)?;
         let muted = parse_color(&value.muted)?;
+        let whitespace = value
+            .whitespace
+            .as_deref()
+            .map(parse_color)
+            .transpose()?
+            .unwrap_or_else(|| Theme::derived_whitespace(background, muted));
         let warning = optional_color(
             value
                 .warning
@@ -783,9 +815,10 @@ impl TryFrom<&ThemeDefinition> for Theme {
             Color::Green,
         )?;
         Ok(Self {
-            background: parse_color(&value.background)?,
+            background,
             foreground: parse_color(&value.foreground)?,
             muted,
+            whitespace,
             jump_text_muted: value
                 .jump_text_muted
                 .as_deref()
@@ -1393,6 +1426,33 @@ mod tests {
         let mut definition = Config::default().themes.remove("dark").unwrap();
         definition.background = "reset".to_owned();
         assert_eq!(Theme::try_from(&definition).unwrap().appearance(), None);
+    }
+
+    #[test]
+    fn every_theme_has_a_near_background_whitespace_color() {
+        let config = Config::default();
+        for name in config.theme_names() {
+            let theme = config.resolve_theme(name).unwrap();
+            let background = theme.background.channels().unwrap();
+            let whitespace = theme.whitespace.channels().unwrap();
+            assert_ne!(whitespace, background, "{name}");
+            for (marker, ground) in [
+                (whitespace.0, background.0),
+                (whitespace.1, background.1),
+                (whitespace.2, background.2),
+            ] {
+                assert!(marker.abs_diff(ground) <= 31, "{name}");
+            }
+        }
+
+        let custom: Config = serde_yaml::from_str(
+            "themes:\n  custom:\n    background: '#101010'\n    whitespace: '#232425'\n",
+        )
+        .unwrap();
+        assert_eq!(
+            custom.resolve_theme("custom").unwrap().whitespace,
+            Color::Rgb(0x23, 0x24, 0x25)
+        );
     }
 
     #[test]
@@ -2530,6 +2590,13 @@ mod tests {
         let config: Config =
             serde_yaml::from_str("editor:\n  trim_trailing_whitespace: false\n").unwrap();
         assert!(!config.editor.trim_trailing_whitespace);
+    }
+
+    #[test]
+    fn whitespace_rendering_is_default_off_and_configurable() {
+        assert!(!Config::default().editor.render_whitespace);
+        let config: Config = serde_yaml::from_str("editor:\n  render_whitespace: true\n").unwrap();
+        assert!(config.editor.render_whitespace);
     }
 
     #[test]
