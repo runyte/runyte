@@ -2009,6 +2009,16 @@ impl Default for TerminalSessions {
     }
 }
 
+impl Drop for TerminalSessions {
+    fn drop(&mut self) {
+        // A noisy child can leave its PTY reader blocked on a full per-session
+        // queue. Remove every registration first so those readers wake and
+        // release their descriptors before dropping the PTYs kills and reaps
+        // the children.
+        self.close_all();
+    }
+}
+
 impl TerminalSessions {
     pub fn new() -> Self {
         let shared = Arc::new(OutputShared {

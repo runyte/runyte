@@ -155,6 +155,16 @@ payload is data that a program reading raw input can tell apart, so a
 multi-line selection sent to a TUI editor arrived as carriage returns instead
 of the line breaks it had. Bracketed payloads now cross unchanged.
 
+A later macOS CI run exposed one more lifetime defect. Dropping
+`TerminalSessions` let Rust drop the session map before the output registry,
+so a child that had filled its bounded queue could still have a PTY reader
+blocked on that registration while the child was being killed and reaped.
+Linux happened to complete that teardown; macOS could leave the test waiting
+on the deliberately endless child. `TerminalSessions::drop` now uses the same
+`close_all` ordering as an explicit shutdown: remove and wake every output
+registration first, then drop the PTYs. The runaway-child integration test
+keeps its queue saturated through that owner-drop boundary.
+
 Covered by `tests/terminal.rs`, which runs real children on real
 pseudoterminals through the ordinary input and frame paths:
 `a_child_runs_in_the_pane_and_its_output_is_drawn`,

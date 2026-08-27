@@ -12,7 +12,7 @@
 
 use std::{
     path::PathBuf,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, mpsc},
     time::{Duration, Instant},
 };
 
@@ -1575,6 +1575,21 @@ fn a_child_that_never_stops_writing_cannot_starve_the_editor() {
         .lines()
         .count();
     assert!(lines <= 5_100, "scrollback grew to {lines} lines");
+
+    // Keep the queue saturated through shutdown. Dropping the terminal owner
+    // must unregister and wake its blocked PTY reader before reaping the
+    // deliberately endless child. Bound this separately so a regression
+    // fails here instead of consuming the CI job's complete timeout.
+    let terminals = std::mem::take(&mut session.app.terminals);
+    let (finished, completion) = mpsc::sync_channel(1);
+    let shutdown = std::thread::spawn(move || {
+        drop(terminals);
+        let _ = finished.send(());
+    });
+    completion
+        .recv_timeout(Duration::from_secs(5))
+        .expect("saturated terminal shutdown timed out");
+    shutdown.join().unwrap();
 }
 
 #[test]
