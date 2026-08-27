@@ -62,6 +62,7 @@ fn worktree_removal_refuses_unsaved_or_uninspectable_persistent_sessions() {
         id: "linked".to_owned(),
         name: None,
         number: None,
+        last_active_unix_seconds: None,
         project_root: target.clone(),
         running: true,
         incompatible_protocol: None,
@@ -162,6 +163,7 @@ fn worktree_removal_names_its_session_and_takes_it_down_before_the_directory() {
             id: "linked".to_owned(),
             name: Some("runyte-feature".to_owned()),
             number: Some(5),
+            last_active_unix_seconds: None,
             project_root: target.clone(),
             running: true,
             incompatible_protocol: None,
@@ -1354,6 +1356,38 @@ fn standalone_refuses_every_session_command_including_the_manager() {
 
 #[cfg(unix)]
 #[test]
+fn session_activity_uses_one_rounded_up_compact_unit() {
+    const NOW: u64 = 10 * 24 * 60 * 60;
+
+    assert_eq!(compact_session_elapsed(None, NOW), "-");
+    assert_eq!(compact_session_elapsed(Some(NOW), NOW), "0min ago");
+    assert_eq!(compact_session_elapsed(Some(NOW - 1), NOW), "1min ago");
+    assert_eq!(compact_session_elapsed(Some(NOW - 5 * 60), NOW), "5min ago");
+    assert_eq!(
+        compact_session_elapsed(Some(NOW - 59 * 60), NOW),
+        "59min ago"
+    );
+    assert_eq!(
+        compact_session_elapsed(Some(NOW - (59 * 60 + 1)), NOW),
+        "1h ago"
+    );
+    assert_eq!(
+        compact_session_elapsed(Some(NOW - 3 * 60 * 60), NOW),
+        "3h ago"
+    );
+    assert_eq!(
+        compact_session_elapsed(Some(NOW - (23 * 60 * 60 + 1)), NOW),
+        "1day ago"
+    );
+    assert_eq!(
+        compact_session_elapsed(Some(NOW - 5 * 24 * 60 * 60), NOW),
+        "5days ago"
+    );
+    assert_eq!(compact_session_elapsed(Some(NOW + 60), NOW), "0min ago");
+}
+
+#[cfg(unix)]
+#[test]
 fn session_picker_keeps_filter_and_routes_enter_and_tab_by_workspace_identity() {
     let root = temporary("session-picker");
     let current = root.join("current");
@@ -1372,11 +1406,16 @@ fn session_picker_keeps_filter_and_routes_enter_and_tab_by_workspace_identity() 
     app.enable_persistent_session();
     app.home_directory = Some(root.clone());
     app.workspace_generation = 4;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
     let rows = vec![
         WorkspaceRow {
             id: "aaaaaaaaaaaaaaaa".to_owned(),
             name: Some("current".to_owned()),
             number: None,
+            last_active_unix_seconds: None,
             project_root: current.clone(),
             running: true,
             incompatible_protocol: None,
@@ -1393,6 +1432,9 @@ fn session_picker_keeps_filter_and_routes_enter_and_tab_by_workspace_identity() 
             id: "bbbbbbbbbbbbbbbb".to_owned(),
             name: Some("archive".to_owned()),
             number: None,
+            // Thirty seconds inside the five-day ceiling leaves this stable
+            // if the test crosses a wall-clock second while rebuilding.
+            last_active_unix_seconds: Some(now - 5 * 24 * 60 * 60 + 30),
             project_root: stopped.clone(),
             running: false,
             incompatible_protocol: None,
@@ -1414,16 +1456,30 @@ fn session_picker_keeps_filter_and_routes_enter_and_tab_by_workspace_identity() 
         generation: 4,
         result: Ok(rows.clone()),
     });
-    // Four columns: number, name, branch, directory. Both rows pay for the
-    // name column at its widest so the branch column starts in one place, and
-    // a row with nothing to say in the branch column says `-` rather than
-    // going blank and letting the directory slide left.
+    // Five columns: number, name, branch, directory, activity. Both rows pay
+    // for the name column at its widest so the branch column starts in one
+    // place, and a row with nothing to say in the branch column says `-`
+    // rather than going blank and letting the directory slide left.
     let picker = app.list.as_ref().unwrap();
     assert_eq!(picker.items[0].label, "  * current");
     assert_eq!(picker.items[1].label, "    archive");
     assert_eq!(picker.items[0].detail, "-     ~/current");
+    assert_eq!(picker.items[0].trailing_detail, "0min ago");
     assert_eq!(picker.items[1].detail, "main  ~/stopped");
+    assert_eq!(picker.items[1].trailing_detail, "5days ago");
+    assert!(
+        picker.items[1]
+            .preview()
+            .unwrap()
+            .contains("Active: 5days ago")
+    );
     assert_eq!(picker.primary_action.as_deref(), Some("attach"));
+    assert!(!app.refresh_workspace_activity_at(now));
+    assert!(app.refresh_workspace_activity_at(now + 31));
+    assert_eq!(
+        app.list.as_ref().unwrap().items[1].trailing_detail,
+        "6days ago"
+    );
     // Shortening belongs only to presentation: the absolute directory remains
     // a filterable session identity.
     app.list.as_mut().unwrap().filter = crate::git::display_path(&current);
@@ -1447,6 +1503,7 @@ fn session_picker_keeps_filter_and_routes_enter_and_tab_by_workspace_identity() 
             id: "aaaaaaaaaaaaaaaa".to_owned(),
             name: Some("current".to_owned()),
             number: None,
+            last_active_unix_seconds: None,
             project_root: current,
             running: true,
             incompatible_protocol: None,
@@ -1495,6 +1552,7 @@ fn session_picker_omits_counts_a_running_host_answers_with_zero() {
                 id: "aaaaaaaaaaaaaaaa".to_owned(),
                 name: Some("quiet".to_owned()),
                 number: None,
+                last_active_unix_seconds: None,
                 project_root: quiet.clone(),
                 running: true,
                 incompatible_protocol: None,
@@ -1511,6 +1569,7 @@ fn session_picker_omits_counts_a_running_host_answers_with_zero() {
                 id: "bbbbbbbbbbbbbbbb".to_owned(),
                 name: Some("exited".to_owned()),
                 number: None,
+                last_active_unix_seconds: None,
                 project_root: exited.clone(),
                 running: true,
                 incompatible_protocol: None,
@@ -1572,6 +1631,7 @@ fn session_picker_marks_a_running_hosts_unanswered_health_as_unavailable() {
             id: "aaaaaaaaaaaaaaaa".to_owned(),
             name: Some("unanswered".to_owned()),
             number: None,
+            last_active_unix_seconds: None,
             project_root: root.clone(),
             running: true,
             incompatible_protocol: None,
@@ -1629,6 +1689,7 @@ fn session_picker_states_the_session_as_fields_rather_than_pane_contents() {
             id: "aaaaaaaaaaaaaaaa".to_owned(),
             name: Some("current".to_owned()),
             number: Some(1),
+            last_active_unix_seconds: None,
             project_root: root.clone(),
             running: true,
             incompatible_protocol: None,
@@ -1652,6 +1713,7 @@ fn session_picker_states_the_session_as_fields_rather_than_pane_contents() {
     assert_eq!(picker.preview_title(), Some("Session"));
     let preview = picker.selected_preview().unwrap().to_owned();
     for field in [
+        "Active: 0min ago",
         "Status      running",
         "Terminals   2 (1 exited)",
         "Buffers     9",
@@ -1718,7 +1780,7 @@ fn session_picker_states_the_session_as_fields_rather_than_pane_contents() {
 }
 
 /// Workspace paths are operating-system identities and may contain control
-/// characters on Unix. The four-column manager must keep one workspace per
+/// characters on Unix. The five-column manager must keep one workspace per
 /// visual row just like the branch and worktree buffers do.
 #[cfg(unix)]
 #[test]
@@ -1741,6 +1803,7 @@ fn session_directory_paths_cannot_manufacture_manager_rows() {
             id: "aaaaaaaaaaaaaaaa".to_owned(),
             name: Some("linked".to_owned()),
             number: Some(1),
+            last_active_unix_seconds: None,
             project_root: PathBuf::from("/tmp/project\nforged\rroot\tcell"),
             running: false,
             incompatible_protocol: None,
@@ -1761,6 +1824,7 @@ fn session_directory_paths_cannot_manufacture_manager_rows() {
 
     let detail = &app.list.as_ref().unwrap().items[0].detail;
     assert_eq!(detail, "feature  /tmp/project\\nforged\\rroot\\tcell");
+    assert_eq!(app.list.as_ref().unwrap().items[0].trailing_detail, "-");
     assert!(!detail.contains('\n'));
     assert!(!detail.contains('\t'));
     let preview = app.list.as_ref().unwrap().items[0].preview().unwrap();
@@ -1797,6 +1861,7 @@ fn the_session_list_marks_stopped_rows_dormant_without_hiding_or_reordering_them
                 id: "aaaaaaaaaaaaaaaa".to_owned(),
                 name: Some("current".to_owned()),
                 number: None,
+                last_active_unix_seconds: None,
                 project_root: current,
                 running: true,
                 incompatible_protocol: None,
@@ -1813,6 +1878,7 @@ fn the_session_list_marks_stopped_rows_dormant_without_hiding_or_reordering_them
                 id: "bbbbbbbbbbbbbbbb".to_owned(),
                 name: Some("archive".to_owned()),
                 number: None,
+                last_active_unix_seconds: None,
                 project_root: stopped,
                 running: false,
                 incompatible_protocol: None,
@@ -1878,6 +1944,7 @@ fn numbered_sessions(label: &str) -> (App, PathBuf, Vec<PathBuf>) {
                 id: format!("{name}00000000000000"),
                 name: Some(name.to_owned()),
                 number,
+                last_active_unix_seconds: None,
                 project_root: project_root.clone(),
                 running: true,
                 incompatible_protocol: None,
@@ -2034,6 +2101,7 @@ fn workspace_actions_match_the_selected_session_state() {
                 id: "aaaaaaaaaaaaaaaa".to_owned(),
                 name: Some("current".to_owned()),
                 number: None,
+                last_active_unix_seconds: None,
                 project_root: current,
                 running: true,
                 incompatible_protocol: None,
@@ -2050,6 +2118,7 @@ fn workspace_actions_match_the_selected_session_state() {
                 id: "bbbbbbbbbbbbbbbb".to_owned(),
                 name: Some("archive".to_owned()),
                 number: None,
+                last_active_unix_seconds: None,
                 project_root: stopped.clone(),
                 running: false,
                 incompatible_protocol: None,
@@ -2167,6 +2236,7 @@ fn session_actions_confirm_force_close_and_recheck_state_at_enter() {
                 id: "aaaaaaaaaaaaaaaa".to_owned(),
                 name: Some("current".to_owned()),
                 number: None,
+                last_active_unix_seconds: None,
                 project_root: current.clone(),
                 running,
                 incompatible_protocol: None,
@@ -2183,6 +2253,7 @@ fn session_actions_confirm_force_close_and_recheck_state_at_enter() {
                 id: "bbbbbbbbbbbbbbbb".to_owned(),
                 name: Some("archive".to_owned()),
                 number: None,
+                last_active_unix_seconds: None,
                 project_root: stopped.clone(),
                 running: !running,
                 incompatible_protocol: None,

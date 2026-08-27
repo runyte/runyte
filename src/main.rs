@@ -67,9 +67,9 @@ use runyte::workspace::transport::{
 };
 #[cfg(unix)]
 use runyte::workspace::{
-    WorkspaceService, abbreviated_id_width, clear_stopped_sessions, known_workspaces,
-    record_recent_workspace, rename_known_workspace, resolve_known_workspace,
-    resolve_known_workspace_from_directory,
+    WorkspaceService, abbreviated_id_width, clear_stopped_sessions, ensure_recent_workspace,
+    known_workspaces, record_recent_workspace, record_workspace_activity, rename_known_workspace,
+    resolve_known_workspace, resolve_known_workspace_from_directory,
 };
 
 fn main() -> Result<()> {
@@ -414,7 +414,11 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
         })?;
     }
     #[cfg(unix)]
-    let recorded_workspace = record_recent_workspace(&project_root).ok().flatten();
+    let recorded_workspace = if arguments.mode == LaunchMode::Standalone {
+        record_recent_workspace(&project_root).ok().flatten()
+    } else {
+        ensure_recent_workspace(&project_root).ok().flatten()
+    };
     let mouse_enabled = config.editor.mouse;
     if matches!(
         arguments.mode,
@@ -718,7 +722,9 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
             }
             _ = git_refresh_tick.tick() => {
                 services.file_monitor.sync(app.file_monitor_requests());
-                if !app.refresh_git_if_due(Instant::now()) {
+                let changed = app.refresh_git_if_due(Instant::now());
+                let activity_changed = app.refresh_session_activity();
+                if !changed && !activity_changed {
                     continue;
                 }
             }
@@ -1203,6 +1209,7 @@ async fn run_host_server(
             _ = refresh_tick.tick() => {
                 services.file_monitor.sync(host.file_monitor_requests());
                 changed = host.refresh_git_if_due(Instant::now());
+                changed |= host.refresh_session_activity();
             }
             _ = idle_tick.tick() => {
                 // Read per tick rather than once at startup: the settings view
@@ -1831,10 +1838,6 @@ async fn run_workspace_switcher(
     let mut previous: Option<LocalEndpoint> = None;
     let mut notice: Option<String> = None;
     loop {
-        // Visiting a workspace is what makes it recent, and switching here
-        // never restarts this process, so recording only at launch would leave
-        // the history frozen at whichever workspace the session began in.
-        let _ = record_recent_workspace(current.project_root());
         let attachment = tokio::select! {
             attachment = run_attached(
                 &current,
@@ -2044,6 +2047,40 @@ enum AttachOutcome {
     Refused(String),
 }
 
+/// Records both ends of one successfully established interactive attachment.
+///
+/// Created only after the host accepts the handshake. Drop covers ordinary
+/// detach, switching, transport errors, and cancellation of `run_attached` by
+/// a termination signal, so no exit path can leave a long attachment looking
+/// idle since its arrival.
+#[cfg(unix)]
+struct AttachedWorkspaceActivity {
+    project_root: PathBuf,
+    record: fn(&Path) -> Result<()>,
+}
+
+#[cfg(unix)]
+impl AttachedWorkspaceActivity {
+    fn begin(project_root: &Path) -> Self {
+        Self::begin_with(project_root, record_workspace_activity)
+    }
+
+    fn begin_with(project_root: &Path, record: fn(&Path) -> Result<()>) -> Self {
+        let _ = record(project_root);
+        Self {
+            project_root: project_root.to_path_buf(),
+            record,
+        }
+    }
+}
+
+#[cfg(unix)]
+impl Drop for AttachedWorkspaceActivity {
+    fn drop(&mut self) {
+        let _ = (self.record)(&self.project_root);
+    }
+}
+
 /// Runs one attachment to completion, drawing into a terminal it does not own.
 ///
 /// The caller keeps the terminal and the event stream across attachments:
@@ -2070,6 +2107,7 @@ async fn run_attached(
         Some(response) => anyhow::bail!("unexpected workspace handshake response: {response:?}"),
         None => anyhow::bail!("workspace host disconnected during handshake"),
     }
+    let _activity = AttachedWorkspaceActivity::begin(endpoint.project_root());
     if let Some(message) = notice {
         client.send(&ClientRequest::Notify { message }).await?;
     }
@@ -3223,9 +3261,9 @@ mod tests {
     use super::keyboard_enhancement_flags_for;
     #[cfg(unix)]
     use super::{
-        AttachedClient, HostResponse, PointerBatcher, WaitStatus, WaitToken,
-        atomic_write_cwd_file_with, dispatch_host_key_or_text, recover_switched_attachment,
-        send_active_response, workspace_response_publishes_frame,
+        AttachedClient, AttachedWorkspaceActivity, HostResponse, PointerBatcher, WaitStatus,
+        WaitToken, atomic_write_cwd_file_with, dispatch_host_key_or_text,
+        recover_switched_attachment, send_active_response, workspace_response_publishes_frame,
     };
     use super::{
         KeyRepeatDetector, is_passive_pointer, is_redraw_only_event, motion_repeat_dispatches,
@@ -3259,6 +3297,27 @@ mod tests {
         };
 
         assert!(!workspace_response_publishes_frame(&response));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn established_attachment_activity_records_arrival_and_every_kind_of_departure() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        static RECORDS: AtomicUsize = AtomicUsize::new(0);
+        fn record(_: &Path) -> anyhow::Result<()> {
+            RECORDS.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+
+        RECORDS.store(0, Ordering::SeqCst);
+        {
+            let _activity = AttachedWorkspaceActivity::begin_with(Path::new("/workspace"), record);
+            assert_eq!(RECORDS.load(Ordering::SeqCst), 1, "arrival is recorded");
+            // Dropping the guard models every return as well as cancellation
+            // of the attachment future by a signal.
+        }
+        assert_eq!(RECORDS.load(Ordering::SeqCst), 2, "departure is recorded");
     }
 
     #[cfg(unix)]

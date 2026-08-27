@@ -482,6 +482,8 @@ pub struct OverlayRow {
     pub identity: OverlayIdentity,
     pub label: String,
     pub detail: String,
+    #[serde(default)]
+    pub trailing_detail: String,
     pub available: bool,
     pub dimmed: bool,
     #[serde(default)]
@@ -495,6 +497,7 @@ impl From<core::OverlayRow> for OverlayRow {
             identity: value.identity.into(),
             label: value.label,
             detail: value.detail,
+            trailing_detail: value.trailing_detail,
             available: value.available,
             dimmed: value.dimmed,
             muted: value.muted,
@@ -508,6 +511,7 @@ impl From<OverlayRow> for core::OverlayRow {
             identity: value.identity.into(),
             label: value.label,
             detail: value.detail,
+            trailing_detail: value.trailing_detail,
             available: value.available,
             dimmed: value.dimmed,
             muted: value.muted,
@@ -526,6 +530,7 @@ mod tests {
             identity: core::OverlayIdentity::Text("Space l".to_owned()),
             label: "Space l".to_owned(),
             detail: "Language (LSP) · unavailable: no server".to_owned(),
+            trailing_detail: "5min ago".to_owned(),
             available: false,
             dimmed: true,
             muted: vec![0, 1],

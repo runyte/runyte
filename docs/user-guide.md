@@ -358,29 +358,40 @@ Number, and Forget. Open is identical to Enter. Close stops the host and leaves
 the workspace listed as a stopped row; nothing below the session is touched,
 because a session is the only level that means nothing on its own.
 
-Each row reads as four columns, padded to the widest value in the list so they
+Each row reads as five columns, padded to the widest value in the list so they
 line up down it:
 
 ```text
-  2 * runyte-dev              dev               ~/code/runyte-dev
-  1   main                    main              ~/code/runyte
-  4   runyte.github.io        main              ~/code/runyte.github.io
-  3   Brain                   -                 ~/Brain
-  5   runyte-enh-render-space enh/render-space  ~/code/runyte-enh-render-space
+  2 * runyte-dev              dev               ~/code/runyte-dev               0min ago
+  1   main                    main              ~/code/runyte                   3h ago
+  4   runyte.github.io        main              ~/code/runyte.github.io         5days ago
+  3   Brain                   -                 ~/Brain                         12days ago
+  5   runyte-enh-render-space enh/render-space  ~/code/runyte-enh-render-space  1min ago
 ```
 
 The number is the digit that attaches to the row, then the session name, then
-the checked-out branch, then the workspace directory. That last column is the
-widest thing on a row, so a path under your home directory is written with
-`~`; the preview keeps the full path. A workspace that is not a Git working
-tree has no branch, so that column holds `-`. The branch is read from the
-workspace directory itself rather than answered by a host, so a stopped
-session states its branch exactly as a running one does.
+the checked-out branch, the workspace directory, and the last-active age. The
+directory is the widest identity column, so a path under your home directory
+is written with `~`; the preview keeps the full path. A workspace that is not
+a Git working tree has no branch, so that column holds `-`. The branch is read
+from the workspace directory itself rather than answered by a host, so a
+stopped session states its branch exactly as a running one does.
+
+Activity uses one short unit at a time: minutes below an hour, hours below a
+day, then days, written as `5min ago`, `3h ago`, or `5days ago`. Partial units
+round up, including across a boundary, so 59 minutes and one second reads
+`1h ago`. The current session reads `0min ago`; leaving or switching away
+records the end of that visit, and elapsed values continue advancing while the
+manager remains open. When a row is too wide beside the preview, Runyte clips
+its middle identity columns while preserving the final activity column. A
+history entry written by an older Runyte has no timestamp and reads `-` until
+that workspace is visited again.
 
 The selected session's preview, shown in the picker's right column and toggled
 with `Ctrl-t`, states the session as a fixed set of fields:
 
 ```text
+Active: 0min ago
 Status      running
 Panes       2
 Terminals   2 (1 exited)

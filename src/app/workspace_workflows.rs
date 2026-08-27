@@ -7,7 +7,7 @@ use super::{App, PathBuf, WorkspaceSwitchRequest};
 #[cfg(unix)]
 use super::{
     ListAction, ListPicker, PickerItem, WorkspaceEvent, WorkspaceServiceHandle,
-    session_picker_preview,
+    compact_session_elapsed, session_picker_preview,
 };
 
 impl App {
@@ -276,6 +276,11 @@ impl App {
 
     #[cfg(unix)]
     pub(super) fn rebuild_workspace_picker(&mut self) {
+        self.rebuild_workspace_picker_at(session_activity_now());
+    }
+
+    #[cfg(unix)]
+    fn rebuild_workspace_picker_at(&mut self, now: u64) {
         use unicode_width::UnicodeWidthStr as _;
 
         let (filter, selected) = self
@@ -289,7 +294,8 @@ impl App {
         self.list_actions = (0..self.workspace_rows.len())
             .map(ListAction::Workspace)
             .collect();
-        // The manager reads as four columns — number, name, branch, directory —
+        // The manager reads as five columns — number, name, branch, directory,
+        // activity —
         // padded to the widest value in the list so they line up down it, the
         // way the contextual action menu already lines its own columns up. A
         // row that is not in a Git repository still pays for its branch column
@@ -299,21 +305,32 @@ impl App {
             .workspace_rows
             .iter()
             .map(|row| {
+                let last_active = if row.project_root == self.project_root {
+                    Some(now)
+                } else {
+                    row.last_active_unix_seconds
+                };
                 (
                     row.display_name(),
                     Self::session_branch_cell(row),
                     self.session_directory_cell(row),
+                    compact_session_elapsed(last_active, now),
                 )
             })
             .collect::<Vec<_>>();
         let name_width = columns
             .iter()
-            .map(|(name, _, _)| name.width())
+            .map(|(name, _, _, _)| name.width())
             .max()
             .unwrap_or(0);
         let branch_width = columns
             .iter()
-            .map(|(_, branch, _)| branch.width())
+            .map(|(_, branch, _, _)| branch.width())
+            .max()
+            .unwrap_or(0);
+        let directory_width = columns
+            .iter()
+            .map(|(_, _, directory, _)| directory.width())
             .max()
             .unwrap_or(0);
         let items = self
@@ -321,7 +338,7 @@ impl App {
             .iter()
             .zip(columns.iter())
             .enumerate()
-            .map(|(index, (row, (name, branch, directory)))| {
+            .map(|(index, (row, (name, branch, directory, active)))| {
                 let marker = if row.project_root == self.project_root {
                     "* "
                 } else {
@@ -338,8 +355,9 @@ impl App {
                     " ".repeat(name_width.saturating_sub(name.width()))
                 );
                 let detail = format!(
-                    "{branch}{}  {directory}",
-                    " ".repeat(branch_width.saturating_sub(branch.width()))
+                    "{branch}{}  {directory}{}",
+                    " ".repeat(branch_width.saturating_sub(branch.width())),
+                    " ".repeat(directory_width.saturating_sub(directory.width()))
                 );
                 // The padding is presentation, so it is kept out of the
                 // haystack: filtering answers to what the row says, not to how
@@ -351,10 +369,12 @@ impl App {
                     crate::git::display_path(&row.project_root)
                 );
                 PickerItem::searchable(label, detail, search, index)
+                    .with_trailing_detail(active)
                     .with_preview(session_picker_preview(
                         row,
                         self.workspace_previews.get(&row.project_root),
                         self.workspace_preview_target.as_ref() == Some(&row.project_root),
+                        active,
                     ))
                     // A stopped session is still worth listing and still starts
                     // on Enter, so it stays in place rather than being hidden or
@@ -371,6 +391,41 @@ impl App {
         self.list = Some(picker);
     }
 
+    /// Advances visible elapsed values without rebuilding the manager on
+    /// every host tick. Returns whether the snapshot changed.
+    #[cfg(unix)]
+    pub(crate) fn refresh_workspace_activity(&mut self) -> bool {
+        self.refresh_workspace_activity_at(session_activity_now())
+    }
+
+    #[cfg(unix)]
+    pub(super) fn refresh_workspace_activity_at(&mut self, now: u64) -> bool {
+        let Some(picker) = self
+            .list
+            .as_ref()
+            .filter(|picker| picker.title.starts_with("Sessions"))
+        else {
+            return false;
+        };
+        let changed = picker.items.len() != self.workspace_rows.len()
+            || picker
+                .items
+                .iter()
+                .zip(&self.workspace_rows)
+                .any(|(item, row)| {
+                    let last_active = if row.project_root == self.project_root {
+                        Some(now)
+                    } else {
+                        row.last_active_unix_seconds
+                    };
+                    item.trailing_detail != compact_session_elapsed(last_active, now)
+                });
+        if changed {
+            self.rebuild_workspace_picker_at(now);
+        }
+        changed
+    }
+
     /// The branch column: the checked-out branch, or `-` for a detached
     /// checkout and for a workspace that is not a Git working tree at all.
     #[cfg(unix)]
@@ -384,10 +439,9 @@ impl App {
     /// The directory column: this workspace's own path, whether it is a linked
     /// Git worktree, a repository's main checkout, or not a repository at all.
     ///
-    /// It is the last column and the widest thing on the row, so a path under
-    /// the home directory is written with `~`. That is the difference between
-    /// the distinguishing tail of a path surviving the row's width and being
-    /// cut off it; the preview keeps the full path either way.
+    /// It remains the widest identity column even though the short activity
+    /// column now follows it, so a path under the home directory is written
+    /// with `~`. The preview keeps the full path either way.
     #[cfg(unix)]
     fn session_directory_cell(&self, row: &crate::workspace::WorkspaceRow) -> String {
         let path = &row.project_root;
@@ -585,4 +639,11 @@ impl App {
     pub fn enable_persistent_session(&mut self) {
         self.persistent_session = true;
     }
+}
+
+#[cfg(unix)]
+fn session_activity_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_secs())
 }

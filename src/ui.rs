@@ -299,6 +299,41 @@ fn fit_row(spans: Vec<Span<'static>>, width: usize, ground: Option<Style>) -> Li
     Line::from(fitted)
 }
 
+/// Fits a row while reserving its right edge for one short final column.
+///
+/// Session identity may be much wider than the list beside a preview. Clipping
+/// the middle keeps the final activity value visible without changing the
+/// semantic five-column order or making every picker adopt session-specific
+/// width rules.
+fn fit_row_with_trailing(
+    spans: Vec<Span<'static>>,
+    trailing: Option<Span<'static>>,
+    width: usize,
+    ground: Option<Style>,
+) -> Line<'static> {
+    let Some(trailing) = trailing.filter(|span| !span.content.is_empty()) else {
+        return fit_row(spans, width, ground);
+    };
+    let trailing_width = UnicodeWidthStr::width(trailing.content.as_ref()).min(width);
+    let main_width = width.saturating_sub(trailing_width);
+    let mut fitted = fit_row(spans, main_width, None).spans;
+    let used = fitted
+        .iter()
+        .map(|span| UnicodeWidthStr::width(span.content.as_ref()))
+        .sum::<usize>();
+    fitted.extend(fit_row(vec![trailing], width.saturating_sub(used), None).spans);
+    let used = fitted
+        .iter()
+        .map(|span| UnicodeWidthStr::width(span.content.as_ref()))
+        .sum::<usize>();
+    if let Some(ground) = ground
+        && used < width
+    {
+        fitted.push(Span::styled(" ".repeat(width - used), ground));
+    }
+    Line::from(fitted)
+}
+
 /// Whether an overlay kind draws the selection marker gutter.
 ///
 /// Choose-one row lists do. Caret-anchored context overlays do not: they are
@@ -738,7 +773,14 @@ fn draw_snapshot_overlay(
             detail_style = detail_style.fg(theme.muted).add_modifier(Modifier::DIM);
         }
         spans.push(Span::styled(detail, detail_style));
-        lines.push(fit_row(spans, row_width, selected.then_some(ground)));
+        let trailing = (!row.trailing_detail.is_empty())
+            .then(|| Span::styled(format!("  {}", row.trailing_detail), detail_style));
+        lines.push(fit_row_with_trailing(
+            spans,
+            trailing,
+            row_width,
+            selected.then_some(ground),
+        ));
     }
     if let Some(message) = &overlay.message {
         let style = Style::default().fg(match overlay.purpose {
@@ -2442,6 +2484,12 @@ fn draw_list(frame: &mut Frame<'_>, app: &TuiApp<'_>, editor_area: Rect) {
                 } else {
                     (app.theme.accent, app.theme.foreground)
                 };
+                let detail_color = if item.is_dimmed() && selected != Some(position) {
+                    app.theme.jump_text_muted
+                } else {
+                    app.theme.muted
+                };
+                let row_width = usize::from(columns[0].width.saturating_sub(2));
                 if preview_layout {
                     let emphasized = picker
                         .item_label_emphasis(item)
@@ -2468,24 +2516,31 @@ fn draw_list(frame: &mut Frame<'_>, app: &TuiApp<'_>, editor_area: Rect) {
                     if !item.detail.is_empty() {
                         spans.push(Span::styled(
                             format!("  {}", item.detail),
-                            Style::default().fg(
-                                if item.is_dimmed() && selected != Some(position) {
-                                    app.theme.jump_text_muted
-                                } else {
-                                    app.theme.muted
-                                },
-                            ),
+                            Style::default().fg(detail_color),
                         ));
                     }
-                    ListItem::new(Line::from(spans))
+                    let trailing = (!item.trailing_detail.is_empty()).then(|| {
+                        Span::styled(
+                            format!("  {}", item.trailing_detail),
+                            Style::default().fg(detail_color),
+                        )
+                    });
+                    ListItem::new(fit_row_with_trailing(spans, trailing, row_width, None))
                 } else {
-                    ListItem::new(Line::from(vec![
+                    let spans = vec![
                         Span::styled(
                             format!("{:<40}", short_identifier(&item.label, 39)),
                             Style::default().fg(label_color),
                         ),
                         Span::styled(item.detail.clone(), Style::default().fg(text_color)),
-                    ]))
+                    ];
+                    let trailing = (!item.trailing_detail.is_empty()).then(|| {
+                        Span::styled(
+                            format!("  {}", item.trailing_detail),
+                            Style::default().fg(text_color),
+                        )
+                    });
+                    ListItem::new(fit_row_with_trailing(spans, trailing, row_width, None))
                 }
             })
             .collect()
@@ -3329,7 +3384,12 @@ fn snapshot_row_width(kind: OverlayKind, row: &crate::snapshot::OverlayRow) -> u
     } else {
         2 + UnicodeWidthStr::width(row.detail.as_str())
     };
-    let total = gutter + UnicodeWidthStr::width(row.label.as_str()) + detail;
+    let trailing = if row.trailing_detail.is_empty() {
+        0
+    } else {
+        2 + UnicodeWidthStr::width(row.trailing_detail.as_str())
+    };
+    let total = gutter + UnicodeWidthStr::width(row.label.as_str()) + detail + trailing;
     total.min(usize::from(u16::MAX)) as u16
 }
 
@@ -5324,6 +5384,7 @@ mod tests {
                 identity: label.into(),
                 label: label.to_owned(),
                 detail: detail.to_owned(),
+                trailing_detail: String::new(),
                 available: true,
                 dimmed: false,
                 muted: Vec::new(),
@@ -5884,6 +5945,7 @@ mod tests {
             generation: 1,
             result: Ok(vec![crate::workspace::WorkspaceRow {
                 number: None,
+                last_active_unix_seconds: None,
                 id: "aaaaaaaaaaaaaaaa".to_owned(),
                 name: Some("project".to_owned()),
                 project_root: root.clone(),
@@ -5929,6 +5991,84 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn session_activity_survives_preview_width_clipping() {
+        let root = std::env::temp_dir().join(format!(
+            "runyte-ui-session-activity-width-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let current = root.join("current");
+        std::fs::create_dir_all(&current).unwrap();
+        let current = current.canonicalize().unwrap();
+        let other = root.join("a-very-long-workspace-directory-that-would-clip-the-final-column");
+        std::fs::create_dir_all(&other).unwrap();
+        let other = other.canonicalize().unwrap();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let mut app = App::new(Config::default(), Some(current.clone())).unwrap();
+        app.enable_persistent_session();
+        app.execute(crate::command::parse_named_command("sl", None).unwrap())
+            .unwrap();
+        app.apply_workspace_event(crate::workspace::WorkspaceEvent::Refreshed {
+            generation: 1,
+            result: Ok(vec![
+                crate::workspace::WorkspaceRow {
+                    number: None,
+                    last_active_unix_seconds: None,
+                    id: "aaaaaaaaaaaaaaaa".to_owned(),
+                    name: Some("current-workspace-with-a-long-name".to_owned()),
+                    project_root: current,
+                    running: true,
+                    incompatible_protocol: None,
+                    unsaved_buffers: None,
+                    pending_wait_requests: None,
+                    live_terminals: None,
+                    terminal_sessions: None,
+                    interactive_attached: None,
+                    open_buffers: None,
+                    git: Some(crate::git::WorkspaceGitFacts {
+                        branch: Some("feature/current-branch-is-long".to_owned()),
+                        worktree: None,
+                        remote: None,
+                    }),
+                    missing_directory: false,
+                },
+                crate::workspace::WorkspaceRow {
+                    number: None,
+                    last_active_unix_seconds: Some(now - 5 * 24 * 60 * 60 + 30),
+                    id: "bbbbbbbbbbbbbbbb".to_owned(),
+                    name: Some("archived-workspace-with-a-long-name".to_owned()),
+                    project_root: other,
+                    running: false,
+                    incompatible_protocol: None,
+                    unsaved_buffers: None,
+                    pending_wait_requests: None,
+                    live_terminals: None,
+                    terminal_sessions: None,
+                    interactive_attached: None,
+                    open_buffers: None,
+                    git: Some(crate::git::WorkspaceGitFacts {
+                        branch: Some("feature/archived-branch-is-long".to_owned()),
+                        worktree: None,
+                        remote: None,
+                    }),
+                    missing_directory: false,
+                },
+            ]),
+        });
+
+        let screen = rendered(&mut app, 120, 24);
+        assert!(screen.contains("5days ago"), "{screen}");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn the_session_list_grays_out_stopped_rows_and_leaves_running_ones_bright() {
         let root = std::env::temp_dir().join(format!(
             "runyte-ui-stopped-sessions-{}-{}",
@@ -5958,6 +6098,7 @@ mod tests {
             result: Ok(vec![
                 crate::workspace::WorkspaceRow {
                     number: None,
+                    last_active_unix_seconds: None,
                     id: "aaaaaaaaaaaaaaaa".to_owned(),
                     name: Some("zzzz".to_owned()),
                     project_root: root.clone(),
@@ -5974,6 +6115,7 @@ mod tests {
                 },
                 crate::workspace::WorkspaceRow {
                     number: None,
+                    last_active_unix_seconds: None,
                     id: "bbbbbbbbbbbbbbbb".to_owned(),
                     name: Some("qqqq".to_owned()),
                     project_root: root.join("archive"),

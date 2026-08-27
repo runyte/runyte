@@ -117,7 +117,10 @@ signals, and each one answers a different question.
   gutter to the far edge of the surface, including the detail column and the
   empty space past the last character. It answers *how far the row reaches*.
   A row is one line: content too wide for the surface is truncated, never
-  wrapped, so the ground always squares off a single rectangle.
+  wrapped, so the ground always squares off a single rectangle. A row may
+  declare one short trailing-detail column that stays pinned to the visible
+  right edge while overlong identity text in its middle is clipped; the
+  session manager's last-active age is the reference use.
 - **Row emphasis** — the colours a row assigns to its own parts: the matched
   characters of a fuzzy query, the active parameter of a signature, an
   available command's accented name against its muted category, an action's

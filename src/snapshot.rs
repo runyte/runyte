@@ -169,6 +169,8 @@ pub struct OverlayRow {
     pub identity: OverlayIdentity,
     pub label: String,
     pub detail: String,
+    /// A short final column frontends preserve when clipping an overlong row.
+    pub trailing_detail: String,
     /// Whether this row's contextual capability is currently available.
     /// Frontends retain unavailable rows for discovery but render them with
     /// reduced emphasis.

@@ -880,6 +880,7 @@ impl WorkspaceHost {
                             None => hint.sequence.to_string(),
                         },
                         detail: format!("{}{markers}{availability}", hint.description),
+                        trailing_detail: String::new(),
                         available,
                         dimmed: false,
                         muted: Vec::new(),
@@ -1070,6 +1071,19 @@ impl WorkspaceHost {
             self.last_git_refresh = now;
             true
         } else {
+            false
+        }
+    }
+
+    /// Refreshes the session manager only when one of its rounded activity
+    /// values crossed a visible boundary.
+    pub fn refresh_session_activity(&mut self) -> bool {
+        #[cfg(unix)]
+        {
+            self.app.refresh_workspace_activity()
+        }
+        #[cfg(not(unix))]
+        {
             false
         }
     }
