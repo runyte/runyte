@@ -22,7 +22,7 @@ use runyte::{
     clipboard::SystemClipboard,
     command::Mode,
     config::Config,
-    input::{KeyCode, KeyStroke, Modifiers},
+    input::{KeyCode, KeyStroke, Modifiers, PointerButton, PointerEvent, PointerEventKind},
     key_hints::KeyHintState,
     snapshot::OverlayKind,
     terminal::{self, OUTPUT_QUEUE, TerminalEvents, TerminalOutput},
@@ -823,7 +823,7 @@ fn normal_mode_has_a_movable_caret_and_selects_and_copies_terminal_text() {
 
     session.press(KeyCode::Home);
     session.press(KeyCode::Char('v'));
-    session.type_text("llll");
+    session.type_text("lll");
     assert_eq!(
         session
             .app
@@ -834,8 +834,109 @@ fn normal_mode_has_a_movable_caret_and_selects_and_copies_terminal_text() {
         "beta"
     );
 
+    session.press(KeyCode::Escape);
+    session.press(KeyCode::End);
+    session.press(KeyCode::Char('v'));
+    session.type_text("hhh");
+    assert_eq!(review_selection(&mut session.app, id), "beta");
+
     session.type_text(" cy");
     assert_eq!(&*clipboard.lock().unwrap(), "beta");
+}
+
+#[test]
+fn pointer_drag_selects_terminal_review_and_right_click_copies_it() {
+    let mut session = Session::start(r#"/bin/sh -c 'printf "alpha\r\nbeta"; sleep 30'"#);
+    assert!(session.settle(|app| terminal_text(app).contains("beta")));
+    let clipboard = Arc::new(Mutex::new(String::new()));
+    session
+        .app
+        .set_system_clipboard(Box::new(MemoryClipboard(Arc::clone(&clipboard))));
+    session.leave_input();
+    let id = session.app.active_terminal().unwrap();
+
+    let geometry = ui::frame_geometry(ratatui::layout::Rect::new(0, 0, 60, 12));
+    let view = session.app.prepare_view(geometry);
+    let body = view.pane(session.app.active_pane).unwrap().body;
+    let terminal = session
+        .app
+        .terminals
+        .get(id)
+        .unwrap()
+        .view(usize::from(body.height));
+    let review_row = terminal
+        .rows
+        .iter()
+        .position(|cells| {
+            cells
+                .iter()
+                .map(|cell| cell.character)
+                .collect::<String>()
+                .starts_with("alpha")
+        })
+        .expect("alpha is visible in the review");
+
+    let pointer = |kind, column| PointerEvent {
+        kind,
+        column: body.x + column,
+        row: body.y + u16::try_from(review_row).unwrap(),
+        modifiers: Modifiers::NONE,
+    };
+    session
+        .app
+        .handle_pointer(
+            pointer(PointerEventKind::Down(PointerButton::Left), 0),
+            &view,
+        )
+        .unwrap();
+    session
+        .app
+        .handle_pointer(
+            pointer(PointerEventKind::Drag(PointerButton::Left), 4),
+            &view,
+        )
+        .unwrap();
+    session
+        .app
+        .handle_pointer(pointer(PointerEventKind::Up(PointerButton::Left), 4), &view)
+        .unwrap();
+
+    assert_eq!(session.app.mode, Mode::Select);
+    assert_eq!(review_selection(&mut session.app, id), "alpha");
+
+    session
+        .app
+        .handle_pointer(
+            pointer(PointerEventKind::Down(PointerButton::Left), 4),
+            &view,
+        )
+        .unwrap();
+    session
+        .app
+        .handle_pointer(
+            pointer(PointerEventKind::Drag(PointerButton::Left), 0),
+            &view,
+        )
+        .unwrap();
+    session
+        .app
+        .handle_pointer(pointer(PointerEventKind::Up(PointerButton::Left), 0), &view)
+        .unwrap();
+    assert_eq!(review_selection(&mut session.app, id), "alpha");
+
+    session
+        .app
+        .handle_pointer(
+            pointer(PointerEventKind::Down(PointerButton::Right), 2),
+            &view,
+        )
+        .unwrap();
+    assert_eq!(&*clipboard.lock().unwrap(), "alpha");
+    assert_eq!(review_selection(&mut session.app, id), "alpha");
+    assert_eq!(
+        session.app.snapshot(&view).status.interaction_line,
+        "right mouse click (yanked to system clipboard)"
+    );
 }
 
 #[test]
@@ -897,7 +998,7 @@ fn escape_cancels_a_terminal_review_selection_from_both_v_and_x() {
 
     session.type_text("ggvll");
     assert_eq!(session.app.mode, Mode::Select);
-    assert_eq!(review_selection(&mut session.app, id), "al");
+    assert_eq!(review_selection(&mut session.app, id), "alp");
 
     session.press(KeyCode::Escape);
     assert_eq!(session.app.mode, Mode::Normal);
@@ -1084,7 +1185,7 @@ fn terminal_review_comma_and_semicolon_manage_copied_selections() {
             .get_mut(id)
             .unwrap()
             .review_selection_text(),
-        "al\nbe\nga"
+        "alp\nbet\ngam"
     );
 
     session.type_text(";");

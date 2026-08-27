@@ -1360,6 +1360,11 @@ enum PointerDrag {
         buffer: usize,
         anchor: Offset,
     },
+    TerminalSelection {
+        pane: usize,
+        terminal: TerminalId,
+        anchor: Offset,
+    },
     Resize {
         first: usize,
         second: usize,

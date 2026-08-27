@@ -631,7 +631,7 @@ impl TerminalSession {
         review.selection = if end == 0 {
             Selection::point(0)
         } else {
-            Selection::single(Range::new(0, end))
+            Selection::single(Range::new(0, end - 1))
         };
         review.matches.clear();
         review.active_match = None;
@@ -684,8 +684,9 @@ impl TerminalSession {
             }
             review.active_match = (!review.matches.is_empty()).then_some(0);
             if let Some(range) = review.matches.first().copied() {
-                review.selection = Selection::single(range);
-                focus_review_range(review, range, viewport_rows);
+                let selection = inclusive_review_range(range);
+                review.selection = Selection::single(selection);
+                focus_review_range(review, selection, viewport_rows);
             }
             review.matches.len()
         };
@@ -708,7 +709,7 @@ impl TerminalSession {
             (active + review.matches.len() - 1) % review.matches.len()
         };
         review.active_match = Some(next);
-        let range = review.matches[next];
+        let range = inclusive_review_range(review.matches[next]);
         review.selection = Selection::single(range);
         focus_review_range(review, range, viewport_rows);
         self.revision = self.revision.wrapping_add(1);
@@ -733,7 +734,7 @@ impl TerminalSession {
                 } else if range.is_empty() {
                     (from + 1).min(text.len())
                 } else {
-                    range.to()
+                    range.to().saturating_add(1).min(text.len())
                 };
                 text[from.min(text.len())..to.min(text.len())]
                     .iter()
@@ -758,6 +759,49 @@ impl TerminalSession {
         review.matches.clear();
         review.active_match = None;
         focus_review_range(review, review.selection.primary(), viewport_rows);
+        self.revision = self.revision.wrapping_add(1);
+        true
+    }
+
+    /// Resolves one cell in the visible immutable review to the character it
+    /// displays. Trailing cells clamp to the row's last character, matching
+    /// keyboard motion and document pointer selection; top/bottom padding has
+    /// no review coordinate and therefore returns no target.
+    pub fn review_offset_at_view_cell(
+        &self,
+        viewport_rows: usize,
+        row: usize,
+        column: usize,
+    ) -> Option<usize> {
+        let review = self.review.as_ref()?;
+        let (start, end, padding) = review_visible_bounds(review, viewport_rows);
+        let line_index = row.checked_sub(padding)?.saturating_add(start);
+        if line_index >= end {
+            return None;
+        }
+        let line = &review.lines[line_index];
+        review_offset_at_column(line, column)
+            .or_else(|| (line.text_start < line.text_end).then(|| line.text_end - 1))
+    }
+
+    /// The fixed end a Shift-click or drag extends from in review mode.
+    pub fn review_selection_anchor(&self) -> Option<usize> {
+        self.review
+            .as_ref()
+            .map(|review| review.selection.primary().anchor)
+    }
+
+    /// Installs an inclusive character selection on the immutable review.
+    /// Terminal review follows Runyte's selection model: both the pressed and
+    /// current cells are covered, whichever direction the drag takes.
+    pub fn set_review_selection(&mut self, anchor: usize, head: usize) -> bool {
+        let Some(review) = self.review.as_mut() else {
+            return false;
+        };
+        let end = review_document_end(review);
+        review.selection = Selection::single(Range::new(anchor.min(end), head.min(end)));
+        review.matches.clear();
+        review.active_match = None;
         self.revision = self.revision.wrapping_add(1);
         true
     }
@@ -973,11 +1017,11 @@ impl TerminalSession {
             if head_row >= anchor_row {
                 Range::new(
                     review.lines[anchor_row].text_start,
-                    review.lines[head_row].text_end,
+                    review.lines[head_row].text_end.saturating_sub(1),
                 )
             } else {
                 Range::new(
-                    review.lines[anchor_row].text_end,
+                    review.lines[anchor_row].text_end.saturating_sub(1),
                     review.lines[head_row].text_start,
                 )
             }
@@ -1586,6 +1630,16 @@ fn review_line_for_offset(review: &TerminalReview, offset: usize) -> usize {
         .unwrap_or_else(|| review.lines.len().saturating_sub(1))
 }
 
+fn inclusive_review_range(range: Range) -> Range {
+    if range.is_empty() {
+        range
+    } else if range.anchor <= range.head {
+        Range::new(range.anchor, range.head.saturating_sub(1))
+    } else {
+        Range::new(range.anchor.saturating_sub(1), range.head)
+    }
+}
+
 fn review_column_for_offset(line: &ReviewLine, offset: usize) -> usize {
     line.char_columns
         .get(offset.saturating_sub(line.text_start))
@@ -1688,15 +1742,21 @@ fn review_motion_target(
     motion: ReviewMotion,
     viewport_rows: usize,
 ) -> usize {
-    let text_len = review.text.chars().count();
+    let characters = review.text.chars().collect::<Vec<_>>();
+    let text_len = characters.len();
     let head = head.min(text_len);
     let line_index = review_line_for_offset(review, head);
     let line = review.lines.get(line_index);
     match motion {
-        ReviewMotion::Left => head.saturating_sub(1),
-        ReviewMotion::Right => (head + 1).min(text_len),
+        ReviewMotion::Left => (0..head.min(text_len))
+            .rev()
+            .find(|offset| characters[*offset] != '\n')
+            .unwrap_or(head),
+        ReviewMotion::Right => (head.saturating_add(1)..text_len)
+            .find(|offset| characters[*offset] != '\n')
+            .unwrap_or(head),
         ReviewMotion::LineStart => line.map_or(0, |line| line.text_start),
-        ReviewMotion::LineEnd => line.map_or(0, |line| line.text_end),
+        ReviewMotion::LineEnd => line.map_or(0, |line| line.text_end.saturating_sub(1)),
         ReviewMotion::FirstNonWhitespace => line.map_or(0, |line| {
             let relative = review
                 .text
@@ -1905,12 +1965,13 @@ fn review_view(
                     });
                 }
             } else {
+                let highlighted = Range::new(range.from(), range.to().saturating_add(1));
                 push_review_highlights(
                     &mut highlights,
                     review,
                     start..end,
                     padding,
-                    range,
+                    highlighted,
                     TerminalHighlightKind::Selection,
                 );
             }
@@ -2694,9 +2755,9 @@ mod tests {
         assert!(session.move_review(ReviewMotion::Right, false));
         assert_eq!(session.review_selection_text(), "t");
         assert!(session.move_review(ReviewMotion::Right, true));
-        assert_eq!(session.review_selection_text(), "t");
-        assert!(session.move_review(ReviewMotion::Right, true));
         assert_eq!(session.review_selection_text(), "th");
+        assert!(session.move_review(ReviewMotion::Right, true));
+        assert_eq!(session.review_selection_text(), "thr");
         assert!(session.move_review(ReviewMotion::Up, false));
         assert_eq!(session.review_selection_text(), "o");
     }
@@ -2739,10 +2800,10 @@ mod tests {
         assert_eq!(session.search_review("a", false).unwrap(), 1);
 
         assert!(session.move_review(ReviewMotion::Left, false));
-        assert_eq!(session.review_selection_text(), "a");
+        assert_eq!(session.review_selection_text(), "界");
         assert!(session.move_review(ReviewMotion::Down, false));
 
-        assert_eq!(session.review_selection_text(), "z");
+        assert_eq!(session.review_selection_text(), "x");
     }
 
     #[test]
@@ -2922,7 +2983,6 @@ mod tests {
         let mut session = session(12, 4);
         session.feed(b"ab\r\nx\r\ncd");
         assert_eq!(session.search_review("b", false).unwrap(), 1);
-        assert!(session.move_review(ReviewMotion::Left, false));
 
         assert!(session.copy_review_selection(true));
         assert_eq!(session.review_selection_count(), 2);

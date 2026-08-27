@@ -540,12 +540,44 @@ impl App {
                     return Ok(PointerOutcome::Changed);
                 };
                 self.activate_pane_from_pointer(pane_id);
-                // A click in a terminal focuses the pane and stops there. The
-                // cells under the pointer belong to the child, not to a
-                // document with offsets, so there is nothing to place a caret
-                // in — and the buffer that does have one is not on screen.
-                if self.terminal_of_pane(pane_id).is_some() {
-                    self.pointer_drag = None;
+                if let Some(terminal) = self.terminal_of_pane(pane_id) {
+                    // Live cells still belong to the child. Once review has
+                    // captured them, however, they are an immutable
+                    // Runyte-owned surface and accept the same character-cell
+                    // selection gesture as a document.
+                    let rows = usize::from(view.pane(pane_id).unwrap().body.height);
+                    let screen_row = usize::from(event.row - view.pane(pane_id).unwrap().body.y);
+                    let screen_column =
+                        usize::from(event.column - view.pane(pane_id).unwrap().body.x);
+                    let extend = event.modifiers.contains(Modifiers::SHIFT);
+                    let Some(offset) = self.terminals.get(terminal).and_then(|session| {
+                        session.review_offset_at_view_cell(rows, screen_row, screen_column)
+                    }) else {
+                        self.pointer_drag = None;
+                        return Ok(PointerOutcome::Changed);
+                    };
+                    let anchor = if extend {
+                        self.terminals
+                            .get(terminal)
+                            .and_then(|session| session.review_selection_anchor())
+                            .unwrap_or(offset)
+                    } else {
+                        offset
+                    };
+                    if let Some(session) = self.terminals.get_mut(terminal) {
+                        session.set_review_selection(anchor, offset);
+                    }
+                    self.pointer_drag = Some(PointerDrag::TerminalSelection {
+                        pane: pane_id,
+                        terminal,
+                        anchor,
+                    });
+                    self.mode = if anchor == offset {
+                        Mode::Normal
+                    } else {
+                        Mode::Select
+                    };
+                    self.dismiss_popups();
                     return Ok(PointerOutcome::Changed);
                 }
                 // Focus has already settled, so this mode is the one the
@@ -612,6 +644,43 @@ impl App {
                     let candidate = self.panes.get_mut(&pane).unwrap();
                     candidate.replace_selection(selection);
                     candidate.mark_selection_semantics(semantics);
+                    self.mode = if anchor == offset {
+                        Mode::Normal
+                    } else {
+                        Mode::Select
+                    };
+                }
+                Some(PointerDrag::TerminalSelection {
+                    pane,
+                    terminal,
+                    anchor,
+                }) => {
+                    if self.terminal_of_pane(pane) != Some(terminal) {
+                        self.pointer_drag = None;
+                        return Ok(PointerOutcome::Changed);
+                    }
+                    let Some(prepared) = view.pane(pane) else {
+                        self.pointer_drag = None;
+                        return Ok(PointerOutcome::Changed);
+                    };
+                    if !rect_contains(prepared.body, event.column, event.row) {
+                        return Ok(PointerOutcome::Changed);
+                    }
+                    let screen_row = usize::from(event.row.saturating_sub(prepared.body.y));
+                    let screen_column = usize::from(event.column.saturating_sub(prepared.body.x));
+                    let Some(offset) = self.terminals.get(terminal).and_then(|session| {
+                        session.review_offset_at_view_cell(
+                            usize::from(prepared.body.height),
+                            screen_row,
+                            screen_column,
+                        )
+                    }) else {
+                        return Ok(PointerOutcome::Changed);
+                    };
+                    self.activate_pane(pane);
+                    if let Some(session) = self.terminals.get_mut(terminal) {
+                        session.set_review_selection(anchor, offset);
+                    }
                     self.mode = if anchor == offset {
                         Mode::Normal
                     } else {
@@ -704,9 +773,16 @@ impl App {
                 }
                 self.jump = None;
                 self.grammar.reset();
+                let terminal_review = self
+                    .terminal_of_pane(self.active_pane)
+                    .and_then(|terminal| self.terminals.get(terminal))
+                    .is_some_and(|session| session.reviewing());
                 let state = CommandState::capture(self);
                 self.execute_editor_command(EditorCommand::ClipboardYank)?;
-                let outcome = state.outcome(self, CommandOutcomeHint::Infer);
+                let mut outcome = state.outcome(self, CommandOutcomeHint::Infer);
+                if terminal_review && matches!(outcome, CommandOutcome::Status(_)) {
+                    outcome = CommandOutcome::Status("yanked to system clipboard".to_owned());
+                }
                 self.report_completed_action(
                     "right mouse click",
                     "Yank to the system clipboard",

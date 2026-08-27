@@ -573,8 +573,9 @@ captures the bounded output as an immutable review snapshot while new child
 output continues behind it. Ordinary
 character, word, line, vertical, paragraph, and page motions move a visible
 review caret and keep it inside the configured viewport margin; `v` enters
-Select mode, where those motions extend the selection, and `Escape` cancels a
-selection made either way. `f`/`F`/`t`/`T` find
+Select mode, where those motions extend the selection inclusively through both
+the character where it began and the character they land on, in either
+direction. `Escape` cancels a selection made either way. `f`/`F`/`t`/`T` find
 characters in the snapshot, and `gw` labels its visible words and jumps to the
 chosen one. `%` selects all retained review text. `s` searches it
 case-insensitively, `/` searches it with a regular
@@ -881,8 +882,11 @@ The interaction line reports
 `right mouse click (yanked to system clipboard)` after the copy succeeds.
 Clicking a live terminal pane focuses it in Insert mode; clicking a reviewed
 terminal keeps it in Normal/review mode until a terminal insert key returns to
-the live screen. Clicking another pane focuses it in Normal mode. Dragging on
-from a document press still creates a selection and enters Select mode. The
+the live screen. A left-button drag in that immutable review selects terminal
+cells and enters Select mode; right-clicking that selection copies it to the
+system clipboard by the same rule above. Clicking another pane focuses it in
+Normal mode. Dragging on from a document press still creates a selection and
+enters Select mode. The
 pointer names the character it sits over rather than the boundary before it,
 so a drag covers both the character it started on and the one it ended on,
 whichever way it ran. Pressing past the end of a line places the caret on that
@@ -1647,7 +1651,7 @@ message without affecting the internal registers.
 | `Ctrl-w v/s` in Terminal Insert | Create a vertical/horizontal document split while leaving the terminal child live without review |
 | `Ctrl-\` in a terminal | First leave INSERT for live NORMAL, then enter review on the second press. Reported as `Ctrl-4` by terminals without the enhanced keyboard protocol, and both work |
 | `i` / `a` in a terminal | Type again, returning to the live screen first |
-| `h` / `j` / `k` / `l`, word, line, paragraph, and character-find motions | Move the terminal review caret; after `v`, extend the selection |
+| `h` / `j` / `k` / `l`, word, line, paragraph, and character-find motions | Move the terminal review caret; after `v`, extend an inclusive character selection in either direction |
 | `%` in terminal review | Select all retained review text |
 | `x` / `X` in terminal review | Select the current line, then extend the moving edge down / up on repeated presses |
 | `C` / `Alt-C` in terminal review | Add carets below / above at the same occupied terminal-cell column, skipping short rows |
