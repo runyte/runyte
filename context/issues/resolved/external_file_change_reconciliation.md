@@ -1,4 +1,47 @@
-# Externally changed file buffers are not reported until save
+---
+title: "Externally changed file buffers are not reported until save"
+status: resolved
+reported: 2026-08-27
+resolved: 2026-08-27
+commit: b933548
+---
+
+## Resolution
+
+Commit `b933548` (`Reconcile externally changed file buffers`) fixed the
+problem. `Buffer` previously retained a disk baseline only for save-time
+conflict detection, so changes at the file path had no application-visible
+state and dirty reloads bypassed confirmation. The fix adds generation-tagged
+file observations and reconciliation to `src/buffer.rs`, plus the host-owned
+`src/file_monitor.rs` service. The service treats native directory events as
+hints, debounces them, falls back to periodic metadata checks, and constructs
+each observation from one open file handle. Buffer reconciliation preserves
+text, selections, and undo while marking distinct changed, deleted, binary,
+and unreadable revisions; matching buffer and disk text converges without
+discarding undo.
+
+The application now exposes semantic external-file state through core and
+protocol snapshots, renders `[STALE]` in pane titles, status, and the buffer
+manager, and retains one warning per distinct observation. Dirty ordinary-file
+reloads use an exact-revision confirmation, known-stale saves stop before save
+hooks, and `:write!` remains the explicit verified overwrite. The new shared
+registry command `:diff-disk`, bound to `Space b d`, opens a fresh immutable
+disk snapshot on the left of the existing live diff view while preserving the
+editable source on the right. Protocol version 40 carries the new semantic
+status. This is deliberately a Runyte buffer command rather than a claim of
+Helix compatibility.
+
+Coverage lives in `src/buffer.rs` for reconciliation, convergence, and late
+generation rejection; `src/file_monitor.rs` for complete observations and
+directory-event matching; `src/app/tests/navigation_and_files.rs` for dirty
+reload confirmation, exact-revision rejection, shared stale presentation, and
+notification deduplication; `src/app/tests/comparisons.rs` for disk comparison
+creation and refresh; `src/app/tests/commands.rs` and `src/keymap.rs` for the
+registered command and binding; `src/protocol/mod.rs` for the protocol version;
+and `src/ui.rs` for marker ordering. The full `cargo fmt --check`, `cargo
+clippy --all-targets -- -D warnings`, and `cargo test` checks pass.
+
+## Report
 
 Runyte records enough information to prevent an ordinary save from silently
 overwriting a file that changed after the buffer was opened or last saved.
@@ -14,7 +57,7 @@ Furthermore, `:reload` currently replaces a dirty file buffer immediately and
 clears its undo history. A mistaken `Space r` can therefore discard unsaved
 buffer text without confirmation.
 
-## Expected behavior
+### Expected behavior
 
 Runyte detects when an open file buffer no longer agrees with its path and
 reports the condition without modifying the buffer. Every pane showing that
@@ -43,7 +86,7 @@ buffer clean, or write to disk. The existing save-time `DiskState` and atomic
 replacement checks remain the final authority even after proactive monitoring
 is added.
 
-## Reconciliation model
+### Reconciliation model
 
 Reconciliation compares three values:
 
@@ -74,9 +117,9 @@ Metadata or identity may change while text remains equal. The observed
 reload, because a later save must not overwrite a permission, ACL, identity,
 or symlink-target change using an obsolete expectation.
 
-## Monitoring architecture
+### Monitoring architecture
 
-Add a host-owned file-monitor service. It belongs beside the existing
+A host-owned file-monitor service belongs beside the existing
 asynchronous syntax, file-picker, Git, and workspace services rather than in a
 frontend or renderer. Both the standalone loop and the persistent-session
 host drive it. A persistent host continues monitoring open file buffers while
@@ -90,8 +133,8 @@ a change. After a short debounce, the worker reads every affected open path
 and constructs text and `DiskState` from one file handle using the same
 complete binary classification as `Buffer::open` and `Buffer::reload`.
 
-Use a native cross-platform watcher suitable for the currently supported
-Linux and macOS targets. Add a periodic metadata reconciliation pass as a
+The monitor uses a native cross-platform watcher suitable for the supported
+Linux and macOS targets, with a periodic metadata reconciliation pass as a
 fallback for lost watcher events and perform an immediate observation before
 an explicit disk comparison. The periodic pass should inspect metadata first
 and read content only for candidates whose metadata or identity changed;
@@ -114,7 +157,7 @@ reloaded buffer stale. Watcher events caused by Runyte's own atomic save are
 therefore harmless: their observation either matches the new baseline or is
 rejected as an old generation.
 
-Coalesce queued work per buffer and bound event queues. Repeated observations
+Queued work is coalesced per buffer and event queues are bounded. Repeated observations
 of the same external `DiskState` do not create repeated notifications or
 snapshot buffers. Closing the last live owner unregisters its path, while
 several panes showing the same buffer never create duplicate watches.
@@ -125,14 +168,14 @@ revision without duplicating large strings. Compact external state belongs to
 the file buffer or application buffer-state arena; full observation and
 comparison lifecycle belongs to the application rather than the renderer.
 
-## Presentation and protocol
+### Presentation and protocol
 
-Add a presentation-neutral external-file status enum rather than asking a
+A presentation-neutral external-file status enum avoids asking a
 frontend to infer staleness from display text. `PaneTitle` and `StatusSnapshot`
 carry the state needed to render `[STALE]`. The open-buffer manager also marks
-stale buffers so a changed hidden buffer remains discoverable. Update the
-private protocol DTOs and conversions together with the core snapshots, and
-bump or extend the bundled protocol version according to its existing
+stale buffers so a changed hidden buffer remains discoverable. The private
+protocol DTOs and conversions change together with the core snapshots, with
+the bundled protocol version advanced according to its existing
 compatibility rules.
 
 The `[STALE]` marker persists after the interaction-line message is replaced
@@ -141,16 +184,16 @@ baseline, convergence, successful reload, or a successfully verified save can
 clear it. Merely dismissing an overlay or opening and closing a comparison is
 not reconciliation.
 
-Update `context/reference/ui-vocabulary.md` so pane titles and the global
-status line own this marker. Update `context/reference/helix-keymap-v1.md`
-because the implementation adds a buffer command and binding. Document the
+The UI vocabulary assigns this marker to pane titles and the global status
+line. The Helix keymap register records the added buffer command and binding.
+The user guide covers the
 behavior, marker, destructive-reload confirmation, comparison, binary and
 deleted-file cases, and force-save boundary in `docs/user-guide.md`.
 
-## Reload safety
+### Reload safety
 
-Change `:reload` for every dirty ordinary file buffer, not only a buffer known
-to be stale. A dirty reload opens a confirmation overlay and changes nothing
+For every dirty ordinary file buffer, not only one known to be stale,
+`:reload` opens a confirmation overlay and changes nothing
 until Enter. Escape and `Ctrl-c` cancel. The overlay names the path and says
 that reloading discards unsaved Runyte changes and clears their undo history.
 When `[STALE]` is present it additionally points to `Space b d` as the
@@ -180,19 +223,19 @@ error.
 file with the buffer. It does not need a second confirmation, but it clears
 `[STALE]` only after the installed contents and new `DiskState` are verified.
 
-## Disk comparison
+### Disk comparison
 
-Add `:diff-disk` and bind it to `Space b d` in the existing Buffers namespace.
+The disk comparison command is `:diff-disk`, bound to `Space b d` in the existing Buffers namespace.
 The command is available only for an ordinary file buffer. It requests a fresh
 complete disk observation, then compares that immutable observation with the
 authoritative in-memory buffer. A changed file is not required; invoking the
 command on a synchronized file may report that the two sides are identical.
 
-Represent the observed disk contents as a read-only generated buffer with a
+The observed disk contents are represented as a read-only generated buffer with a
 stable identity tied to the source buffer and observed disk revision. Its pane
-title is `[disk] <path> [RO]`. Reuse the existing side-by-side `DiffSession`
-and alignment implementation instead of generating a separate patch or
-building a second comparison renderer. Put the disk snapshot on the left and
+title is `[disk] <path> [RO]`. The existing side-by-side `DiffSession` and
+alignment implementation provide the comparison instead of a separate patch
+or second renderer. The disk snapshot is on the left and
 the editable Runyte buffer on the right, so right-side additions and changes
 describe the text the user is protecting. The source remains the same buffer:
 it keeps selections, undo history, dirty state, LSP ownership, and normal edit
@@ -216,9 +259,9 @@ or explicit closure removes it; it is useful recovery material.
 disk-snapshot buffer follows the ordinary bounded special-buffer retention
 rule and is never allowed to evict a visible or dirty buffer.
 
-## Implementation boundaries
+### Implementation boundaries
 
-Expected areas of change are:
+The relevant implementation boundaries are:
 
 - `src/buffer.rs` for disk-baseline generations, observation construction or
   classification, convergence, and reload-from-observation checks;
@@ -240,9 +283,9 @@ The monitor and core application decide state; no frontend reads paths or file
 metadata directly. Buffer text replacements continue to use the existing
 buffer and application lifecycle methods rather than direct rope mutation.
 
-## Regression coverage
+### Regression coverage
 
-Add behavior-boundary tests covering at least:
+The required behavior-boundary coverage includes:
 
 - a clean visible file changed externally becomes `[STALE]` without changing
   its text, selection, undo history, or LSP document;
@@ -275,15 +318,7 @@ Add behavior-boundary tests covering at least:
 - core and transported snapshots render `[STALE]` consistently in pane titles,
   the active status line, and the buffer manager.
 
-Use temporary directories for every filesystem test. Tests must not write to
+Filesystem tests use temporary directories and must not write to
 the repository, `.runyte/`, configuration paths, or platform cache paths. Keep
 monitor timing deterministic through injectable events or a controllable
 worker rather than sleep-based assertions.
-
-Before handoff, run:
-
-```sh
-cargo fmt --check
-cargo clippy --all-targets -- -D warnings
-cargo test
-```
