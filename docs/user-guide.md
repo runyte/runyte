@@ -2522,19 +2522,31 @@ There is no runtime log-level command and no protocol message for logging.
 ### What is recorded, and what never is
 
 Recorded: process startup, version, role, workspace identity, and orderly
-shutdown; host publication, retirement, and forced termination; client
-attachment, detachment, incompatibility, closure, and malformed or truncated
-frames; optional-service start, readiness, stop, restart, and failure,
-including language servers and filesystem watchers; terminal child exits; Git
-failures already converted into typed results; background services that end;
-and panics, including the thread, location, message, and backtrace when
-backtraces are enabled.
+shutdown; session publication, idle retirement, signal termination, and forced
+termination; client attachment, detachment, refusal, closure, a client that
+stops reading, and malformed or truncated frames; language servers becoming
+ready, restarting, and stopping; terminal sessions that fail to start and
+children that exit; Git failures already converted into typed results;
+background services whose channel closes; and panics, including the thread,
+location, message, and backtrace when backtraces are enabled.
+
+Not yet recorded, though the surrounding events are: filesystem-watcher
+lifecycle beyond its channel closing, and a host restart as distinct from a
+start followed by a stop.
 
 Never recorded: routine keystrokes, rendered frames, successful editor
 commands, buffer edits, and complete language-server request or response
 bodies. Default and verbose logging never contains buffer text, selections,
 clipboard contents, typed or pasted text, terminal contents, credentials,
 environment-variable values, unrestricted subprocess output, or full LSP JSON.
+
+Two records are deliberately thinner than the message the person sees. A
+failed Git operation records the refusal and its exit status but not the
+argument vector or Git's stderr, because a failing commit's argument vector
+holds the message that was just typed. A stopped language server records the
+language but not the composed reason, because a server closed by its own
+process carries its stderr tail in that text. Both remain available in full
+through `:notifications`, `:lsp-status`, and the interaction line.
 
 Records **do** contain local paths and process metadata, because those are what
 identify a failing local operation. Review a log before sharing it.

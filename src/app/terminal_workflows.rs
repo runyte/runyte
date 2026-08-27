@@ -68,7 +68,13 @@ impl App {
                     self.binding_label(EditorCommand::LeaveTerminal)
                 ));
             }
-            Err(error) => self.error(format!("cannot start {label}: {error}")),
+            Err(error) => {
+                // A session that never started is the terminal failure the
+                // exit record cannot cover, because there is no child to exit.
+                // The message names the program, not its arguments.
+                crate::log_warn!("terminal", "cannot start a terminal session: {error}");
+                self.error(format!("cannot start {label}: {error}"));
+            }
         }
     }
 

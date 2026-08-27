@@ -1039,25 +1039,28 @@ fn logging_health_entry(status: Option<crate::log::Status>) -> ServiceHealthEntr
         || "no destination".to_owned(),
         |path| path.display().to_string(),
     );
+    let level = status.level.map_or_else(
+        || "not recording".to_owned(),
+        |level| level.label().to_ascii_lowercase(),
+    );
     match (status.failure, status.level) {
         (Some(failure), _) => ServiceHealthEntry::new(
             "log",
             ServiceState::Degraded,
-            format!("{} owner · {destination} · {failure}", status.role),
+            format!(
+                "{} owner · {level} · {destination} · {failure}",
+                status.role
+            ),
         ),
-        (None, Some(level)) => ServiceHealthEntry::new(
+        (None, Some(_)) => ServiceHealthEntry::new(
             "log",
             ServiceState::Ready,
-            format!(
-                "{} owner · {} · {destination}",
-                status.role,
-                level.label().to_ascii_lowercase()
-            ),
+            format!("{} owner · {level} · {destination}", status.role),
         ),
         (None, None) => ServiceHealthEntry::new(
             "log",
             ServiceState::Disabled,
-            format!("{} owner · {destination} · not recording", status.role),
+            format!("{} owner · {level} · {destination}", status.role),
         ),
     }
 }

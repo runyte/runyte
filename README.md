@@ -154,9 +154,10 @@ detailed lifecycle events, so a failure can still be read after the process is
 gone. It complements the interaction line, `:notifications`, and
 `:service-health` rather than replacing any of them.
 
-The process that owns editor state owns its log. A standalone editor writes
-`.runyte/standalone-<pid>.log`; a persistent host writes `.runyte/host.log` and
-keeps writing while no TUI is attached. `:log-open` opens whichever of those
+The process that owns editor state owns its log. Beneath the configured
+workspace state directory, normally `.runyte/`, a standalone editor writes
+`standalone-<pid>.log` and a persistent host writes `host.log`, which keeps
+growing while no TUI is attached. `:log-open` opens whichever of those
 belongs to the process holding the workspace, and `:service-health` names its
 owner, level, and resolved path.
 

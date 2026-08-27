@@ -1081,6 +1081,11 @@ async fn run_host_server(
                                     shutting_down = true;
                                 }
                             } else if matches!(request, ClientRequest::ForceShutdown) {
+                                log_warn!(
+                                    "host",
+                                    "forced termination discarded protected state";
+                                    "connection" => id
+                                );
                                 if let Some(responses) = controls.get(&id) {
                                     let _ = responses.try_send(HostResponse::ShuttingDown);
                                 }
@@ -1214,6 +1219,11 @@ async fn run_host_server(
                                 }
                             }
                             ClientRequest::ForceShutdown => {
+                                log_warn!(
+                                    "host",
+                                    "forced termination discarded protected state";
+                                    "connection" => id
+                                );
                                 if let Some(client) = active.take() {
                                     let _ = client.responses.try_send(HostResponse::ShuttingDown);
                                 }
@@ -1871,15 +1881,37 @@ fn send_active_response(active: &mut Option<AttachedClient>, response: HostRespo
     // latter ends the attachment; treating momentary backpressure as a
     // disconnect closed live sessions during bursts of frames.
     if let Err(error) = client.responses.try_send(response) {
+        let connection = client.id;
         match error {
-            tokio::sync::mpsc::error::TrySendError::Closed(_) => *active = None,
+            tokio::sync::mpsc::error::TrySendError::Closed(_) => {
+                // Recorded here, where the failing write observed it. The
+                // `Disconnected` event that follows finds no attachment and
+                // stays quiet rather than reporting the same departure twice.
+                log_info!(
+                    "client",
+                    "interactive client disconnected";
+                    "connection" => connection,
+                    "observed" => "control response"
+                );
+                *active = None;
+            }
             // A frame is a whole snapshot, so skipping one costs nothing: the
             // next publish supersedes it. Anything else carries state the
             // client cannot reconstruct, and a channel this full means it is
             // not draining at all, so detaching says so rather than losing a
             // control message in silence.
             tokio::sync::mpsc::error::TrySendError::Full(HostResponse::Frame { .. }) => {}
-            tokio::sync::mpsc::error::TrySendError::Full(_) => *active = None,
+            tokio::sync::mpsc::error::TrySendError::Full(_) => {
+                // The client is still connected, so no `Disconnected` event
+                // will follow: this is the only record a stalled reader
+                // produces.
+                log_warn!(
+                    "client",
+                    "interactive client stopped reading; ending the attachment";
+                    "connection" => connection
+                );
+                *active = None;
+            }
         }
     }
 }
@@ -3368,8 +3400,11 @@ fn initialize_logging(
         .clone()
         .unwrap_or_else(|| diagnostic_log::default_path(state_root, role, std::process::id()));
     let workspace = workspace_id(project_root);
-    let settings = diagnostic_log::Settings::new(level, role)
-        .with_workspace(Some(workspace[..ABBREVIATED_LOG_WORKSPACE_ID].to_owned()));
+    let abbreviated = workspace
+        .get(..ABBREVIATED_LOG_WORKSPACE_ID)
+        .unwrap_or(&workspace)
+        .to_owned();
+    let settings = diagnostic_log::Settings::new(level, role).with_workspace(Some(abbreviated));
     match diagnostic_log::Logger::start(settings, diagnostic_log::Sink::File(path.clone())) {
         Ok(logger) => {
             diagnostic_log::install(logger);

@@ -16,8 +16,7 @@ them, regardless of which extensibility direction is chosen.
   `[STALE]`, and `[RO]`, in that order, and finally `[zen]` or `[fullscreen]`
   while the pane is the maximized one. `[STALE]` means an ordinary file's path
   no longer agrees with the disk baseline Runyte accepted; it is independent
-  of `[+]`,
-  which means the buffer text differs from its baseline.
+  of `[+]`, which means the buffer text differs from its baseline.
   The first markers describe the buffer; the last describes how this pane is
   presented, and is absent in an ordinary layout.
 - **Pane body** — the complete drawable interior of a pane border.

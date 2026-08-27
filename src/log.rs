@@ -204,8 +204,41 @@ pub struct Status {
 }
 
 enum Message {
-    Record(String),
+    /// A formatted record, and the level and target it was formatted with, so
+    /// the writer can compose a summary in the same shape.
+    Record {
+        line: String,
+        prefix: Arc<RecordPrefix>,
+    },
     Flush(SyncSender<()>),
+}
+
+/// The identity every record of one process shares.
+struct RecordPrefix {
+    role: Role,
+    pid: u32,
+    workspace: Option<String>,
+}
+
+impl RecordPrefix {
+    fn compose(&self, level: Level, target: &str, message: &str) -> String {
+        let mut line = String::with_capacity(message.len() + 64);
+        let _ = write!(
+            line,
+            "{} {:<5} {}[{}]",
+            Local::now().to_rfc3339_opts(SecondsFormat::Millis, false),
+            level.label(),
+            self.role.label(),
+            self.pid,
+        );
+        if let Some(workspace) = &self.workspace {
+            let _ = write!(line, " ws={workspace}");
+        }
+        let _ = write!(line, " {target}: ");
+        append_sanitized(&mut line, message);
+        line.push('\n');
+        line
+    }
 }
 
 /// One process's bounded queue and its single background writer.
@@ -216,6 +249,7 @@ pub struct Logger {
     sender: SyncSender<Message>,
     dropped: Arc<AtomicU64>,
     failure: Arc<Mutex<Option<String>>>,
+    prefix: Arc<RecordPrefix>,
     settings: Settings,
     path: Option<PathBuf>,
 }
@@ -239,6 +273,11 @@ impl Logger {
         let (sender, receiver) = mpsc::sync_channel(QUEUE_CAPACITY);
         let dropped = Arc::new(AtomicU64::new(0));
         let failure = Arc::new(Mutex::new(None));
+        let prefix = Arc::new(RecordPrefix {
+            role: settings.role,
+            pid: settings.pid,
+            workspace: settings.workspace.clone(),
+        });
         std::thread::Builder::new()
             .name("runyte-log".to_owned())
             .spawn({
@@ -251,6 +290,7 @@ impl Logger {
             sender,
             dropped,
             failure,
+            prefix,
             settings,
             path,
         })
@@ -288,33 +328,27 @@ impl Logger {
         if !self.enabled(level) {
             return;
         }
-        let line = self.format(level, target, message);
-        match self.sender.try_send(Message::Record(line)) {
+        let line = self.prefix.compose(level, target, message);
+        let record = Message::Record {
+            line,
+            prefix: Arc::clone(&self.prefix),
+        };
+        match self.sender.try_send(record) {
             Ok(()) => {}
             Err(TrySendError::Full(_)) => {
                 self.dropped.fetch_add(1, Ordering::Relaxed);
             }
-            Err(TrySendError::Disconnected(_)) => {}
+            Err(TrySendError::Disconnected(_)) => {
+                // The writer thread is gone, so every later record is lost
+                // too. Recording that as a failure is what stops
+                // `:service-health` from reporting a log nothing is writing
+                // as healthy.
+                let mut failure = lock(&self.failure);
+                if failure.is_none() {
+                    *failure = Some("the diagnostic log writer stopped".to_owned());
+                }
+            }
         }
-    }
-
-    fn format(&self, level: Level, target: &str, message: &str) -> String {
-        let mut line = String::with_capacity(message.len() + 64);
-        let _ = write!(
-            line,
-            "{} {:<5} {}[{}]",
-            Local::now().to_rfc3339_opts(SecondsFormat::Millis, false),
-            level.label(),
-            self.settings.role.label(),
-            self.settings.pid,
-        );
-        if let Some(workspace) = &self.settings.workspace {
-            let _ = write!(line, " ws={workspace}");
-        }
-        let _ = write!(line, " {target}: ");
-        append_sanitized(&mut line, message);
-        line.push('\n');
-        line
     }
 
     /// Waits, at most `budget`, for everything already queued to reach disk.
@@ -386,13 +420,19 @@ fn write_records(
     let mut reported_drops = 0;
     while let Ok(message) = receiver.recv() {
         match message {
-            Message::Record(line) => {
+            Message::Record { line, prefix } => {
                 let observed = dropped.load(Ordering::Relaxed);
                 if observed > reported_drops {
-                    let summary = format!(
-                        "{} WARN  log: dropped {} diagnostic record(s) while the writer was behind\n",
-                        Local::now().to_rfc3339_opts(SecondsFormat::Millis, false),
-                        observed - reported_drops,
+                    // Composed through the same prefix as every other record,
+                    // so a summary is one ordinary line rather than a second
+                    // record format nothing else produces.
+                    let summary = prefix.compose(
+                        Level::Warn,
+                        "log",
+                        &format!(
+                            "dropped {} diagnostic record(s) while the writer was behind",
+                            observed - reported_drops
+                        ),
                     );
                     reported_drops = observed;
                     record_failure(failure, destination.write(&summary));

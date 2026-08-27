@@ -71,7 +71,32 @@ impl Drop for ChildGuard {
     }
 }
 
-fn project(name: &str) -> PathBuf {
+/// A project directory that is removed even when an assertion unwinds past
+/// it. Explicit removal at the end of each test left one tree per failure
+/// behind in the temporary directory.
+struct Project(PathBuf);
+
+impl std::ops::Deref for Project {
+    type Target = Path;
+
+    fn deref(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl AsRef<Path> for Project {
+    fn as_ref(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for Project {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+fn project(name: &str) -> Project {
     static NEXT: AtomicU64 = AtomicU64::new(0);
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -84,7 +109,7 @@ fn project(name: &str) -> PathBuf {
     ));
     fs::create_dir_all(root.join(".runyte")).unwrap();
     fs::write(root.join("note.txt"), "base\n").unwrap();
-    root.canonicalize().unwrap()
+    Project(root.canonicalize().unwrap())
 }
 
 fn runyte(root: &Path, arguments: &[&str]) -> std::process::Output {
@@ -236,6 +261,20 @@ async fn type_command(client: &mut LocalClient, command: &str) -> HostResponse {
     last.expect("one response per event")
 }
 
+/// Whether a frame shows `needle`, regardless of where its pane wrapped.
+///
+/// A rendered row is a slice of a logical line, and the wrap point moves with
+/// the temporary directory's name, so a plain substring search over joined
+/// rows is a portability trap rather than an assertion.
+fn frame_shows(response: &HostResponse, needle: &str) -> bool {
+    let strip = |text: &str| {
+        text.chars()
+            .filter(|character| !character.is_whitespace())
+            .collect::<String>()
+    };
+    strip(&frame_text(response)).contains(&strip(needle))
+}
+
 fn frame_text(response: &HostResponse) -> String {
     let HostResponse::Frame { frame } = response else {
         return String::new();
@@ -295,8 +334,6 @@ fn a_standalone_process_keeps_warnings_and_errors_and_omits_the_rest() {
         );
     }
     assert!(text.contains("standalone["), "{text}");
-
-    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
@@ -384,8 +421,6 @@ fn concurrent_standalone_processes_never_share_a_writable_log() {
     for name in &logs {
         assert!(read_log(&root.join(".runyte").join(name)).contains("ERROR"));
     }
-
-    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
@@ -410,12 +445,17 @@ fn an_invalid_explicit_destination_fails_startup_clearly() {
     assert!(stderr.contains("diagnostic log"), "{stderr}");
     assert!(stderr.contains("blocker"), "{stderr}");
     // A refused explicit destination must not silently become another file.
-    assert!(
-        !root.join(".runyte").join("host.log").exists(),
-        "a refused --log fell back to the default path"
-    );
-
-    fs::remove_dir_all(root).unwrap();
+    // The default this process would otherwise have chosen is the standalone
+    // one, so that is the name a fallback would leave behind.
+    let fallbacks = fs::read_dir(root.join(".runyte"))
+        .unwrap()
+        .filter(|entry| {
+            let name = entry.as_ref().unwrap().file_name();
+            let name = name.to_string_lossy();
+            name.starts_with("standalone-") || name == HOST_LOG_NAME
+        })
+        .count();
+    assert_eq!(fallbacks, 0, "a refused --log fell back to a default path");
 }
 
 #[tokio::test]
@@ -428,7 +468,6 @@ async fn an_unusable_default_destination_leaves_the_host_serving() {
     let mut child = serve(&root, &[]);
     let endpoint = endpoint_for(&root);
     if !wait_for_endpoint(&mut child, &endpoint).await {
-        fs::remove_dir_all(root).unwrap();
         return;
     }
 
@@ -447,7 +486,6 @@ async fn an_unusable_default_destination_leaves_the_host_serving() {
 
     drop(client);
     drop(child);
-    fs::remove_dir_all(root).unwrap();
 }
 
 #[tokio::test]
@@ -456,7 +494,6 @@ async fn a_host_owns_host_log_and_records_client_lifecycle_while_detached() {
     let mut child = serve(&root, &["-v"]);
     let endpoint = endpoint_for(&root);
     if !wait_for_endpoint(&mut child, &endpoint).await {
-        fs::remove_dir_all(root).unwrap();
         return;
     }
 
@@ -514,28 +551,29 @@ async fn a_host_owns_host_log_and_records_client_lifecycle_while_detached() {
     assert!(read_log(&log).contains("persistent session published"));
 
     let mut frame = type_command(&mut reattached, "log-open").await;
-    while !frame_text(&frame).contains("host owner") {
+    while !frame_shows(&frame, "host owner") {
         frame = response(&mut reattached).await;
     }
-    let shown = frame_text(&frame);
-    assert!(shown.contains(HOST_LOG_NAME), "{shown}");
+    assert!(frame_shows(&frame, HOST_LOG_NAME), "{}", frame_text(&frame));
     assert!(
-        shown.contains("persistent session published"),
-        "the buffer shows the host's own records:\n{shown}"
+        frame_shows(&frame, "persistent session published"),
+        "the buffer shows the host's own records:\n{}",
+        frame_text(&frame)
     );
 
     drop(reattached);
     drop(child);
-    fs::remove_dir_all(root).unwrap();
 }
 
 #[tokio::test]
 async fn attaching_with_logging_flags_reports_the_retained_configuration() {
     let root = project("retained");
+    // The host runs at the default level; the attaching command asks for
+    // debug. A host that had adopted the attachment's flags would start
+    // emitting DEBUG records into this same file.
     let mut child = serve(&root, &[]);
     let endpoint = endpoint_for(&root);
     if !wait_for_endpoint(&mut child, &endpoint).await {
-        fs::remove_dir_all(root).unwrap();
         return;
     }
     let log = root.join(".runyte").join(HOST_LOG_NAME);
@@ -568,35 +606,42 @@ async fn attaching_with_logging_flags_reports_the_retained_configuration() {
         !root.join("elsewhere.log").exists(),
         "an attachment must not open a second destination for a running host"
     );
+    // Provoke records the raised level would have admitted, then confirm the
+    // host still admits none of them.
+    let mut client = LocalClient::connect(&endpoint, geometry(), true)
+        .await
+        .unwrap();
+    let _welcome = response(&mut client).await;
+    client.send(&ClientRequest::Detach).await.unwrap();
+    drop(client);
+    tokio::time::sleep(Duration::from_millis(250)).await;
+
     let after = read_log(&log);
-    assert_eq!(
-        levels(&after)
-            .into_iter()
-            .filter(|level| *level == "INFO")
-            .count(),
-        levels(&before)
-            .into_iter()
-            .filter(|level| *level == "INFO")
-            .count(),
-        "the running host kept its own level:\n{after}"
-    );
+    assert_eq!(after, before, "the running session kept its own level");
+    for raised in ["INFO", "DEBUG", "TRACE"] {
+        assert!(
+            !levels(&after).contains(&raised),
+            "the attachment's flags reached the running session:\n{after}"
+        );
+    }
 
     drop(child);
-    fs::remove_dir_all(root).unwrap();
 }
 
 #[tokio::test]
 async fn client_side_failures_never_append_to_the_host_log() {
     let root = project("client-failure");
-    let mut child = serve(&root, &[]);
+    // `-v` so the host has records of its own: comparing an empty file with an
+    // empty file would prove nothing about what a client can append.
+    let mut child = serve(&root, &["-v"]);
     let endpoint = endpoint_for(&root);
     if !wait_for_endpoint(&mut child, &endpoint).await {
-        fs::remove_dir_all(root).unwrap();
         return;
     }
     let log = root.join(".runyte").join(HOST_LOG_NAME);
-    assert!(wait_until(|| log.exists()).await);
+    assert!(wait_until(|| read_log(&log).contains("persistent session published")).await);
     let before = read_log(&log);
+    assert!(!before.is_empty(), "the host must have records to preserve");
 
     // A client command that fails entirely on its own side.
     let output = runyte(&root, &["--session-stop", "no-such-workspace"]);
@@ -609,9 +654,12 @@ async fn client_side_failures_never_append_to_the_host_log() {
         before,
         "a client's own failure must not reach the host's log"
     );
+    assert!(
+        !read_log(&log).contains("standalone["),
+        "only the owning host appends to its log"
+    );
 
     drop(child);
-    fs::remove_dir_all(root).unwrap();
 }
 
 #[tokio::test]
@@ -626,7 +674,6 @@ async fn rotation_bounds_the_host_log_across_a_restart() {
     let mut child = serve(&root, &["-v"]);
     let endpoint = endpoint_for(&root);
     if !wait_for_endpoint(&mut child, &endpoint).await {
-        fs::remove_dir_all(root).unwrap();
         return;
     }
     assert!(
@@ -641,7 +688,6 @@ async fn rotation_bounds_the_host_log_across_a_restart() {
     assert!(read_log(&log).contains("persistent session published"));
 
     drop(child);
-    fs::remove_dir_all(root).unwrap();
 }
 
 #[tokio::test]
@@ -650,18 +696,37 @@ async fn no_document_clipboard_terminal_or_environment_value_reaches_a_record() 
     const TYPED: &str = "SECRETtypedBYtheperson";
     const ENVIRONMENT: &str = "SECRETinTHEenvironment";
     const TERMINAL: &str = "SECRETfromTHEterminal";
+    const SERVER_STDERR: &str = "SECRETonSERVERstderr";
 
     let root = project("redaction");
     fs::write(root.join("note.txt"), format!("{IN_FILE}\n")).unwrap();
+    // A "language server" that dies immediately with a secret on its stderr.
+    // A real one is not needed: what matters is that the stderr tail the
+    // editor retains for `:lsp-status` never reaches the durable file.
+    fs::write(root.join("leak.rs"), format!("// {IN_FILE}\n")).unwrap();
+    // Outside the project: a config directory is reserved storage, and one
+    // containing the project root would be refused as overlapping it.
+    let config_directory = test_runtime_dir().join(format!("cfg-{}", std::process::id()));
+    fs::create_dir_all(&config_directory).unwrap();
+    let config = config_directory.join("config.yaml");
+    fs::write(
+        &config,
+        format!(
+            "lsp:\n  rust:\n    command: /bin/sh\n    args: [\"-c\", \"echo {SERVER_STDERR} >&2; exit 3\"]\n"
+        ),
+    )
+    .unwrap();
 
     let mut command = Command::new(env!("CARGO_BIN_EXE_runyte"));
     command
         .arg("--serve")
         .arg("--project-root")
-        .arg(&root)
+        .arg(&*root)
+        .arg("--config")
+        .arg(&config)
         // The most detailed level there is: nothing below it may leak either.
         .arg("-vvv")
-        .arg("note.txt")
+        .arg("leak.rs")
         .current_dir(&root)
         .env("XDG_RUNTIME_DIR", test_runtime_dir())
         .env("XDG_CACHE_HOME", test_cache_dir())
@@ -672,7 +737,6 @@ async fn no_document_clipboard_terminal_or_environment_value_reaches_a_record() 
     let mut child = ChildGuard(Some(command.spawn().unwrap()));
     let endpoint = endpoint_for(&root);
     if !wait_for_endpoint(&mut child, &endpoint).await {
-        fs::remove_dir_all(root).unwrap();
         return;
     }
     let log = root.join(".runyte").join(HOST_LOG_NAME);
@@ -707,10 +771,35 @@ async fn no_document_clipboard_terminal_or_environment_value_reaches_a_record() 
     // command itself is typed into the prompt, so the prompt text is covered
     // by the same assertion.
     let _ = type_command(&mut client, &format!("terminal echo {TERMINAL}")).await;
+
+    // Yanking puts the secret in a register, which is where a clipboard value
+    // would also live.
+    for key in ['%', 'y'] {
+        client
+            .send(&ClientRequest::Input {
+                event: InputEvent::from(runyte::input::KeyStroke::new(
+                    runyte::input::KeyCode::Char(key),
+                    runyte::input::Modifiers::NONE,
+                ))
+                .into(),
+                repeated: false,
+            })
+            .await
+            .unwrap();
+        let _ = response(&mut client).await;
+    }
+
+    // The configured server has had every chance to start, fail, and have its
+    // stderr tail composed into the editor's stop message.
+    assert!(
+        wait_until(|| read_log(&log).contains("language server stopped")).await,
+        "the language server never reported a stop:\n{}",
+        read_log(&log)
+    );
     tokio::time::sleep(Duration::from_millis(750)).await;
 
     let text = read_log(&log);
-    for secret in [IN_FILE, TYPED, ENVIRONMENT, TERMINAL] {
+    for secret in [IN_FILE, TYPED, ENVIRONMENT, TERMINAL, SERVER_STDERR] {
         assert!(
             !text.contains(secret),
             "{secret} reached a diagnostic record:\n{text}"
@@ -723,7 +812,6 @@ async fn no_document_clipboard_terminal_or_environment_value_reaches_a_record() 
 
     drop(client);
     drop(child);
-    fs::remove_dir_all(root).unwrap();
 }
 
 /// A panic in the process that owns editor state leaves its thread, location,
@@ -756,7 +844,10 @@ fn a_panic_leaves_its_location_and_message_without_changing_process_failure() {
             "--nocapture",
         ])
         .env(CHILD, &destination)
+        // `Backtrace::capture` prefers RUST_LIB_BACKTRACE, so clearing only
+        // RUST_BACKTRACE would still capture one for anybody who exports it.
         .env("RUST_BACKTRACE", "0")
+        .env("RUST_LIB_BACKTRACE", "0")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .output()
@@ -777,6 +868,4 @@ fn a_panic_leaves_its_location_and_message_without_changing_process_failure() {
     assert!(text.contains("host loop stopped unexpectedly"), "{text}");
     assert!(text.contains("tests/diagnostic_log.rs:"), "{text}");
     assert_eq!(text.lines().count(), 1, "one panic, one record:\n{text}");
-
-    fs::remove_dir_all(root).unwrap();
 }
