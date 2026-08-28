@@ -13,7 +13,7 @@ use runyte::{
     app::FrameGeometry,
     input::{InputEvent, KeyCode, KeyStroke, Modifiers},
     layout::Rect,
-    protocol::SnapshotRow,
+    protocol::{HostFrame, SnapshotRow},
     workspace::ABBREVIATED_WORKSPACE_ID,
     workspace::lifecycle::{HostStartup, start_detached_host},
     workspace::transport::{ClientRequest, HostResponse, LocalClient, LocalEndpoint},
@@ -128,6 +128,8 @@ fn plain_project() -> PathBuf {
 }
 
 const HOST_RESPONSE_TIMEOUT: Duration = Duration::from_secs(5);
+const EDITOR_STATE_TIMEOUT: Duration = Duration::from_secs(30);
+const EDITOR_STATE_POLL: Duration = Duration::from_millis(250);
 const TERMINAL_STATE_TIMEOUT: Duration = Duration::from_secs(30);
 const TERMINAL_STATE_POLL: Duration = Duration::from_millis(250);
 
@@ -214,6 +216,10 @@ fn frame_text(response: &HostResponse) -> String {
     let HostResponse::Frame { frame } = response else {
         panic!("expected frame, got {response:?}")
     };
+    editor_frame_text(frame)
+}
+
+fn editor_frame_text(frame: &HostFrame) -> String {
     frame
         .editor
         .panes
@@ -230,6 +236,93 @@ fn frame_text(response: &HostResponse) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+fn frame_diagnostic(frame: Option<&HostFrame>) -> String {
+    frame.map_or_else(
+        || "last complete frame: none".to_owned(),
+        |frame| {
+            format!(
+                "last complete frame id: {:?}, active buffer: {:?}, revision: {:?}, text:\n{}",
+                frame.id,
+                frame.active_buffer,
+                frame.active_revision,
+                editor_frame_text(frame),
+            )
+        },
+    )
+}
+
+/// Waits for an observable editor transition without attributing a frame to
+/// the input that happened to precede it on the transport.
+///
+/// Visual responses are asynchronous and replaceable. The response already
+/// received by the caller can therefore be current, or it can be an older
+/// frame or terminal damage. Resynchronization converges either case on a
+/// complete snapshot while the absolute deadline bounds the whole state wait.
+async fn wait_for_editor_frame(
+    client: &mut LocalClient,
+    first: HostResponse,
+    waiting_for: &str,
+    matches: impl Fn(&HostFrame) -> bool,
+) -> HostFrame {
+    let deadline = Instant::now() + EDITOR_STATE_TIMEOUT;
+    let mut pending = Some(first);
+    let mut last_complete = None;
+    let mut next_resynchronize = Instant::now();
+
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        assert!(
+            !remaining.is_zero(),
+            "editor state timed out after {EDITOR_STATE_TIMEOUT:?} while {waiting_for}; {}",
+            frame_diagnostic(last_complete.as_ref()),
+        );
+
+        let message = if let Some(message) = pending.take() {
+            message
+        } else {
+            match tokio::time::timeout(remaining.min(EDITOR_STATE_POLL), client.recv()).await {
+                Ok(Ok(Some(message))) => message,
+                Ok(Ok(None)) => panic!(
+                    "host disconnected while {waiting_for}; {}",
+                    frame_diagnostic(last_complete.as_ref()),
+                ),
+                Ok(Err(error)) => panic!(
+                    "host protocol failed while {waiting_for}: {error}; {}",
+                    frame_diagnostic(last_complete.as_ref()),
+                ),
+                Err(_) if Instant::now() < deadline => {
+                    client.send(&ClientRequest::Resynchronize).await.unwrap();
+                    next_resynchronize = Instant::now() + EDITOR_STATE_POLL;
+                    continue;
+                }
+                Err(_) => panic!(
+                    "editor state timed out after {EDITOR_STATE_TIMEOUT:?} while {waiting_for}; {}",
+                    frame_diagnostic(last_complete.as_ref()),
+                ),
+            }
+        };
+
+        match message {
+            HostResponse::Frame { frame } => {
+                if matches(&frame) {
+                    return *frame;
+                }
+                last_complete = Some(*frame);
+            }
+            HostResponse::TerminalDamage { .. } => {}
+            response => panic!(
+                "unexpected host response while {waiting_for}: {response:?}; {}",
+                frame_diagnostic(last_complete.as_ref()),
+            ),
+        }
+
+        if Instant::now() >= next_resynchronize {
+            client.send(&ClientRequest::Resynchronize).await.unwrap();
+            next_resynchronize = Instant::now() + EDITOR_STATE_POLL;
+        }
+    }
 }
 
 fn terminal_frame_text(response: &HostResponse) -> String {
@@ -545,8 +638,16 @@ async fn tutorial_persistent_lesson_completes_across_a_real_client_reattachment(
     let _ = send_input(&mut first, KeyStroke::plain(KeyCode::Char(':'))).await;
     let _ = send_input(&mut first, InputEvent::Text("tutorial sessions".to_owned())).await;
     let tutorial = send_input(&mut first, KeyStroke::plain(KeyCode::Enter)).await;
-    assert!(frame_text(&tutorial).contains("PERSISTENT SESSIONS"));
-    assert!(frame_text(&tutorial).contains("persistent tutorial token"));
+    let _tutorial = wait_for_editor_frame(
+        &mut first,
+        tutorial,
+        "waiting for the persistent-session tutorial lesson",
+        |frame| {
+            let text = editor_frame_text(frame);
+            text.contains("PERSISTENT SESSIONS") && text.contains("persistent tutorial token")
+        },
+    )
+    .await;
 
     let _ = send_input(&mut first, KeyStroke::plain(KeyCode::Char(':'))).await;
     let _ = send_input(&mut first, InputEvent::Text("detach".to_owned())).await;
@@ -569,8 +670,16 @@ async fn tutorial_persistent_lesson_completes_across_a_real_client_reattachment(
         HostResponse::Welcome { .. }
     ));
     let completed = response(&mut reattached).await;
-    assert!(frame_text(&completed).contains("NEXT STEPS"));
-    assert!(frame_text(&completed).contains("persistent tutorial token"));
+    let _completed = wait_for_editor_frame(
+        &mut reattached,
+        completed,
+        "waiting for the tutorial to complete after reattachment",
+        |frame| {
+            let text = editor_frame_text(frame);
+            text.contains("NEXT STEPS") && text.contains("persistent tutorial token")
+        },
+    )
+    .await;
 
     shutdown(&mut reattached, ClientRequest::ForceShutdown).await;
     let status = tokio::task::spawn_blocking(move || child.0.take().unwrap().wait())
