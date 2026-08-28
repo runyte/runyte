@@ -69,6 +69,19 @@ results from creating a session-manager overlay unless that manager was already
 open, so removing another worktree and its persistent session no longer
 interrupts the current workspace.
 
+A later 2026-08-28 CI follow-up removed the local-protocol test's remaining
+passive waits for unsolicited Git frames. The test now polls current complete
+frames through `Resynchronize`, uses the populated `[git worktrees]` buffer as
+the service-completion barrier, and confirms the selection input through a
+subsequent protocol round trip. Git discovery can still advance the optimistic
+frame revision between receiving a snapshot and invoking the command, so a
+typed stale-frame refusal now resynchronizes and retries within that state
+deadline. Correlated host replies retain their five-second deadline, while
+asynchronous Git state has its own thirty-second deadline and names the phase
+that failed. The shared response helper also retains its caller in timeout
+diagnostics, and the macOS job enables backtraces for child-process lifecycle
+failures.
+
 Known limitation: a switch does not forward file targets from the original
 command line, and a running destination host keeps the configuration it loaded
 at startup until it is restarted or retires.

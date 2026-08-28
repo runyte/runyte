@@ -50,6 +50,9 @@ jobs:
     runs-on: macos-latest
     timeout-minutes: 45
     env:
+      # Persistent-session and PTY tests spawn real child processes. Preserve
+      # the async caller when a platform-specific lifecycle wait fails.
+      RUST_BACKTRACE: 1
       # The default macOS temp directory is a long `/var/folders/...` path
       # whose canonical spelling starts with `/private`. Tests create many
       # path fixtures and Unix sockets below it, so use the short canonical

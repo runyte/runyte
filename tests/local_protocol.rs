@@ -11,14 +11,14 @@ use std::{
     path::{Path, PathBuf},
     process::{Child, Command, ExitStatus, Stdio},
     sync::atomic::{AtomicU64, Ordering},
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use runyte::{
     app::FrameGeometry,
     input::{InputEvent, KeyCode, KeyStroke, Modifiers},
     layout::Rect,
-    protocol::{CommandRequest, decode_path},
+    protocol::{CommandRequest, SnapshotRow, decode_path},
     workspace::transport::{
         ClientRequest, HostResponse, LocalClient, LocalEndpoint, PROTOCOL_VERSION, TransportChange,
         encode_path,
@@ -230,12 +230,50 @@ fn tui_geometry() -> FrameGeometry {
     }
 }
 
-async fn response(client: &mut LocalClient) -> HostResponse {
-    tokio::time::timeout(Duration::from_secs(5), client.recv())
+const HOST_RESPONSE_TIMEOUT: Duration = Duration::from_secs(5);
+const ASYNC_STATE_TIMEOUT: Duration = Duration::from_secs(30);
+const ASYNC_STATE_POLL_INTERVAL: Duration = Duration::from_millis(25);
+
+async fn receive_response(client: &mut LocalClient, waiting_for: &str) -> HostResponse {
+    tokio::time::timeout(HOST_RESPONSE_TIMEOUT, client.recv())
         .await
-        .expect("host response timed out")
-        .unwrap()
-        .expect("host disconnected")
+        .unwrap_or_else(|error| panic!("host response timed out while {waiting_for}: {error}"))
+        .unwrap_or_else(|error| panic!("host response failed while {waiting_for}: {error}"))
+        .unwrap_or_else(|| panic!("host disconnected while {waiting_for}"))
+}
+
+async fn receive_response_ignoring_frames(
+    client: &mut LocalClient,
+    waiting_for: &str,
+) -> HostResponse {
+    loop {
+        let response = receive_response(client, waiting_for).await;
+        if !matches!(response, HostResponse::Frame { .. }) {
+            return response;
+        }
+    }
+}
+
+/// Receives one host response while retaining the call site in timeout errors.
+///
+/// Most uses follow a request and therefore measure a local protocol round
+/// trip. Asynchronous state has a separate deadline in the polling helpers
+/// below, so a stalled host and state that has not settled are not conflated.
+#[track_caller]
+fn response(client: &mut LocalClient) -> impl Future<Output = HostResponse> + '_ {
+    let caller = std::panic::Location::caller();
+    async move {
+        receive_response(
+            client,
+            &format!(
+                "waiting for the request at {}:{}:{}",
+                caller.file(),
+                caller.line(),
+                caller.column()
+            ),
+        )
+        .await
+    }
 }
 
 async fn shutdown(client: &mut LocalClient) {
@@ -275,6 +313,89 @@ async fn next_idle_frame(client: &mut LocalClient) -> runyte::protocol::HostFram
                 client.send(&ClientRequest::Resynchronize).await.unwrap();
             }
             _ => {}
+        }
+    }
+}
+
+async fn resynchronized_frame(
+    client: &mut LocalClient,
+    waiting_for: &str,
+) -> runyte::protocol::HostFrame {
+    client.send(&ClientRequest::Resynchronize).await.unwrap();
+    loop {
+        match receive_response(client, waiting_for).await {
+            HostResponse::Frame { frame } => return *frame,
+            HostResponse::TerminalDamage { .. } => {
+                client.send(&ClientRequest::Resynchronize).await.unwrap();
+            }
+            response => {
+                panic!("expected a resynchronized frame while {waiting_for}, got {response:?}")
+            }
+        }
+    }
+}
+
+async fn wait_for_frame(
+    client: &mut LocalClient,
+    waiting_for: &str,
+    matches: impl Fn(&runyte::protocol::HostFrame) -> bool,
+) -> runyte::protocol::HostFrame {
+    let deadline = Instant::now() + ASYNC_STATE_TIMEOUT;
+    loop {
+        let frame = resynchronized_frame(client, waiting_for).await;
+        if matches(&frame) {
+            return frame;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "asynchronous state timed out after {ASYNC_STATE_TIMEOUT:?} while {waiting_for}; \
+             last frame id: {:?}, active buffer: {:?}, revision: {:?}",
+            frame.id,
+            frame.active_buffer,
+            frame.active_revision,
+        );
+        tokio::time::sleep(ASYNC_STATE_POLL_INTERVAL).await;
+    }
+}
+
+async fn invoke_when_current(
+    client: &mut LocalClient,
+    command: &str,
+    mut frame: runyte::protocol::HostFrame,
+) {
+    let deadline = Instant::now() + ASYNC_STATE_TIMEOUT;
+    loop {
+        client
+            .send(&ClientRequest::Invoke {
+                command: CommandRequest::at(
+                    command,
+                    frame.id,
+                    frame.active_buffer,
+                    frame.active_revision,
+                ),
+            })
+            .await
+            .unwrap();
+        match receive_response_ignoring_frames(
+            client,
+            &format!("receiving the {command} command result"),
+        )
+        .await
+        {
+            HostResponse::CommandResult { .. } => return,
+            HostResponse::Error { message } if message.starts_with("stale editor frame:") => {
+                assert!(
+                    Instant::now() < deadline,
+                    "editor frames stayed stale for {ASYNC_STATE_TIMEOUT:?} while invoking \
+                     {command}: {message}"
+                );
+                frame = resynchronized_frame(
+                    client,
+                    &format!("resynchronizing a stale frame before invoking {command}"),
+                )
+                .await;
+            }
+            response => panic!("expected the {command} command result, got {response:?}"),
         }
     }
 }
@@ -391,14 +512,20 @@ async fn try_connect_control(endpoint: &LocalEndpoint) -> anyhow::Result<LocalCl
 
 async fn wait_for_buffer_text(
     client: &mut LocalClient,
-    terminal_output: &std::sync::Arc<std::sync::Mutex<Vec<u8>>>,
+    terminal_output: Option<&std::sync::Arc<std::sync::Mutex<Vec<u8>>>>,
     name: &str,
     needle: &str,
 ) {
     let mut last_text = None;
-    for _ in 0..400 {
+    let deadline = Instant::now() + ASYNC_STATE_TIMEOUT;
+    loop {
         client.send(&ClientRequest::ListBuffers).await.unwrap();
-        let buffer = match response(client).await {
+        let buffer = match receive_response(
+            client,
+            &format!("polling for the {name:?} buffer to contain {needle:?}"),
+        )
+        .await
+        {
             HostResponse::Buffers { buffers } => buffers
                 .into_iter()
                 .find(|buffer| !buffer.closed && buffer.name == name),
@@ -409,7 +536,12 @@ async fn wait_for_buffer_text(
                 .send(&ClientRequest::ReadBuffer { buffer: buffer.id })
                 .await
                 .unwrap();
-            match response(client).await {
+            match receive_response(
+                client,
+                &format!("reading the {name:?} buffer while waiting for {needle:?}"),
+            )
+            .await
+            {
                 HostResponse::Buffer { buffer } => {
                     if buffer.text.contains(needle) {
                         return;
@@ -421,13 +553,18 @@ async fn wait_for_buffer_text(
                 }
             }
         }
-        tokio::time::sleep(Duration::from_millis(25)).await;
+        if Instant::now() >= deadline {
+            let terminal_output = terminal_output
+                .map(|output| String::from_utf8_lossy(&output.lock().unwrap()).into_owned())
+                .unwrap_or_else(|| "<not captured>".to_owned());
+            panic!(
+                "buffer {name:?} did not contain {needle:?} after {ASYNC_STATE_TIMEOUT:?}; \
+                 last contents: {:?}; terminal output: {terminal_output}",
+                last_text.as_deref().unwrap_or("<buffer was not opened>"),
+            );
+        }
+        tokio::time::sleep(ASYNC_STATE_POLL_INTERVAL).await;
     }
-    panic!(
-        "buffer {name:?} did not contain {needle:?}; last contents: {:?}; terminal output: {}",
-        last_text.as_deref().unwrap_or("<buffer was not opened>"),
-        String::from_utf8_lossy(&terminal_output.lock().unwrap())
-    );
 }
 
 async fn wait_for_terminal_output(
@@ -1295,52 +1432,38 @@ async fn persistent_worktree_switch_detaches_to_a_new_root_without_retargeting_t
     let mut interactive = LocalClient::connect(&endpoint, tui_geometry(), true)
         .await
         .unwrap();
-    let _ = response(&mut interactive).await;
-    let mut initial = match response(&mut interactive).await {
-        HostResponse::Frame { frame } => *frame,
-        response => panic!("expected initial frame, got {response:?}"),
-    };
-    while initial
-        .editor
-        .status
-        .git_summary
-        .as_deref()
-        .is_none_or(|summary| summary.contains(":git-cancel"))
-    {
-        initial = match response(&mut interactive).await {
-            HostResponse::Frame { frame } => *frame,
-            response => panic!("expected Git discovery frame, got {response:?}"),
-        };
-    }
-    interactive
-        .send(&ClientRequest::Invoke {
-            command: CommandRequest::at(
-                "git-worktrees",
-                initial.id,
-                initial.active_buffer,
-                initial.active_revision,
-            ),
-        })
-        .await
-        .unwrap();
     assert!(matches!(
-        response(&mut interactive).await,
-        HostResponse::CommandResult { .. }
+        receive_response(&mut interactive, "receiving the interactive welcome").await,
+        HostResponse::Welcome { .. }
     ));
-    let mut worktree_frame = None;
-    for _ in 0..100 {
-        if let HostResponse::Frame { frame } = response(&mut interactive).await
-            && frame
+    let initial = wait_for_frame(
+        &mut interactive,
+        "waiting for Git discovery before opening the worktree view",
+        |frame| {
+            frame
+                .editor
+                .status
+                .git_summary
+                .as_deref()
+                .is_some_and(|summary| !summary.contains(":git-cancel"))
+        },
+    )
+    .await;
+    invoke_when_current(&mut interactive, "git-worktrees", initial).await;
+    let linked_display = linked.to_string_lossy().into_owned();
+    wait_for_buffer_text(&mut control, None, "[git worktrees]", &linked_display).await;
+    let _worktree_frame = wait_for_frame(
+        &mut interactive,
+        "waiting for the populated worktree view to become active",
+        |frame| {
+            frame
                 .editor
                 .panes
                 .iter()
                 .any(|pane| pane.active && pane.title.name == "[git worktrees]")
-        {
-            worktree_frame = Some(*frame);
-            break;
-        }
-    }
-    let _ = worktree_frame.expect("worktree service did not open its view");
+        },
+    )
+    .await;
     interactive
         .send(&ClientRequest::Input {
             event: InputEvent::Key(KeyStroke::char('j')).into(),
@@ -1348,13 +1471,23 @@ async fn persistent_worktree_switch_detaches_to_a_new_root_without_retargeting_t
         })
         .await
         .unwrap();
-    let mut selected = None;
-    while let Ok(Ok(Some(HostResponse::Frame { frame }))) =
-        tokio::time::timeout(Duration::from_millis(100), interactive.recv()).await
-    {
-        selected = Some(*frame);
-    }
-    let _selected = selected.expect("selection input did not publish a frame");
+    let _selected = wait_for_frame(
+        &mut interactive,
+        "confirming the linked-worktree selection input was applied",
+        |frame| {
+            frame.editor.panes.iter().any(|pane| {
+                pane.active
+                    && pane.rows.iter().any(|row| {
+                        matches!(
+                            row,
+                            SnapshotRow::Text(row)
+                                if row.cursor_row && row.document_row == 1
+                        )
+                    })
+            })
+        },
+    )
+    .await;
     interactive
         .send(&ClientRequest::Input {
             event: InputEvent::Key(KeyStroke::new(KeyCode::Enter, Modifiers::NONE)).into(),
@@ -1363,7 +1496,12 @@ async fn persistent_worktree_switch_detaches_to_a_new_root_without_retargeting_t
         .await
         .unwrap();
     let switched = loop {
-        match response(&mut interactive).await {
+        match receive_response(
+            &mut interactive,
+            "waiting for the selected workspace switch response",
+        )
+        .await
+        {
             HostResponse::SwitchWorkspace {
                 selector_bytes,
                 working_directory_bytes,
@@ -1505,7 +1643,13 @@ async fn worktree_switch_reuses_the_destination_host_through_the_real_tui_launch
     wait_for_terminal_output(&output, "│ master").await;
     type_colon_command(&mut terminal, "git-worktrees");
     let linked_display = linked.to_string_lossy().into_owned();
-    wait_for_buffer_text(&mut source, &output, "[git worktrees]", &linked_display).await;
+    wait_for_buffer_text(
+        &mut source,
+        Some(&output),
+        "[git worktrees]",
+        &linked_display,
+    )
+    .await;
     terminal.write_all(b"j\r").unwrap();
     terminal.flush().unwrap();
 
@@ -1618,7 +1762,13 @@ async fn incompatible_worktree_host_returns_the_tui_to_its_source() {
     wait_for_terminal_output(&output, "│ master").await;
     type_colon_command(&mut terminal, "git-worktrees");
     let linked_display = linked.to_string_lossy().into_owned();
-    wait_for_buffer_text(&mut source, &output, "[git worktrees]", &linked_display).await;
+    wait_for_buffer_text(
+        &mut source,
+        Some(&output),
+        "[git worktrees]",
+        &linked_display,
+    )
+    .await;
     terminal.write_all(b"j\r").unwrap();
     terminal.flush().unwrap();
 
@@ -1717,7 +1867,7 @@ async fn creating_a_worktree_starts_and_attaches_its_persistent_session() {
     wait_for_terminal_output(&output, "│ master").await;
     type_colon_command(&mut terminal, "git-worktrees");
     let root_display = root.to_string_lossy().into_owned();
-    wait_for_buffer_text(&mut source, &output, "[git worktrees]", &root_display).await;
+    wait_for_buffer_text(&mut source, Some(&output), "[git worktrees]", &root_display).await;
     terminal
         .write_all(format!("\tNcreated-from-ui\r{}\r", created.to_string_lossy()).as_bytes())
         .unwrap();
@@ -2598,7 +2748,13 @@ async fn relative_workspace_attach_uses_editor_cwd_and_keeps_one_client_process(
     // worktree is the second row, so the main worktree is immediately above it.
     wait_for_terminal_output(&output, "│ linked").await;
     type_colon_command(&mut terminal, "git-worktrees");
-    wait_for_buffer_text(&mut destination, &output, "[git worktrees]", &root_display).await;
+    wait_for_buffer_text(
+        &mut destination,
+        Some(&output),
+        "[git worktrees]",
+        &root_display,
+    )
+    .await;
     terminal.write_all(b"k\r").unwrap();
     terminal.flush().unwrap();
     let mut returned_to_source = false;
