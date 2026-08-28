@@ -58,6 +58,8 @@ pub struct OverlaySnapshot {
     pub actions: Vec<OverlayAction>,
     pub title: String,
     pub query: String,
+    /// Optional non-selectable labels for the row columns.
+    pub column_header: Option<OverlayColumnHeader>,
     pub rows: Vec<OverlayRow>,
     pub selected: Option<usize>,
     /// Full-result row kept visible even when the surface has no actionable
@@ -73,6 +75,15 @@ pub struct OverlaySnapshot {
     pub show_preview: bool,
     pub preview_title: Option<String>,
     pub preview: Option<OverlayPreview>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OverlayColumnHeader {
+    pub label: String,
+    pub detail: String,
+    /// A short final label preserved under the same clipping rules as the
+    /// rows' trailing detail.
+    pub trailing_detail: String,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

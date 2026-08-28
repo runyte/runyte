@@ -899,6 +899,7 @@ impl WorkspaceHost {
                 actions: vec![crate::snapshot::OverlayAction::new("Esc", "dismiss")],
                 title: "Key hints".to_owned(),
                 query: key_hints.display_pending(),
+                column_header: None,
                 rows,
                 selected: None,
                 scroll_anchor: None,

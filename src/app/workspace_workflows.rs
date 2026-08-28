@@ -322,17 +322,20 @@ impl App {
             .iter()
             .map(|(name, _, _, _)| name.width())
             .max()
-            .unwrap_or(0);
+            .unwrap_or(0)
+            .max("Name".width());
         let branch_width = columns
             .iter()
             .map(|(_, branch, _, _)| branch.width())
             .max()
-            .unwrap_or(0);
+            .unwrap_or(0)
+            .max("Branch".width());
         let directory_width = columns
             .iter()
             .map(|(_, _, directory, _)| directory.width())
             .max()
-            .unwrap_or(0);
+            .unwrap_or(0)
+            .max("Path".width());
         let items = self
             .workspace_rows
             .iter()
@@ -383,8 +386,13 @@ impl App {
                     .dimmed(!row.running)
             })
             .collect();
-        let mut picker =
-            ListPicker::new("Sessions · 1-9 attach · Tab actions", items).with_preview("Session");
+        let mut picker = ListPicker::new("Sessions · 1-9 attach · Tab actions", items)
+            .with_column_header(
+                format!("No. {:<name_width$}", "Name"),
+                format!("{:<branch_width$}  {:<directory_width$}", "Branch", "Path"),
+                "Last active",
+            )
+            .with_preview("Session");
         picker.primary_action = Some("attach".to_owned());
         picker.filter = filter;
         picker.selected = selected.min(self.workspace_rows.len().saturating_sub(1));

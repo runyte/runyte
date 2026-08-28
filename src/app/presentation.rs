@@ -911,6 +911,7 @@ impl App {
                 actions,
                 title: title.into(),
                 query: query.into(),
+                column_header: None,
                 selected: selected
                     .filter(|selected| *selected < total_rows)
                     .map(|selected| selected - row_offset),
@@ -1122,6 +1123,15 @@ impl App {
             } else {
                 OverlayInput::None
             };
+            snapshot.column_header =
+                picker
+                    .column_header
+                    .as_ref()
+                    .map(|header| crate::snapshot::OverlayColumnHeader {
+                        label: header.label.clone(),
+                        detail: header.detail.clone(),
+                        trailing_detail: header.trailing_detail.clone(),
+                    });
             snapshot.layout = if self.settings_view.is_some() {
                 OverlayLayout::SettingChoice
             } else if picker.has_preview() {

@@ -389,6 +389,8 @@ pub struct OverlaySnapshot {
     pub actions: Vec<OverlayAction>,
     pub title: String,
     pub query: String,
+    #[serde(default)]
+    pub column_header: Option<OverlayColumnHeader>,
     pub rows: Vec<OverlayRow>,
     pub selected: Option<usize>,
     pub scroll_anchor: Option<usize>,
@@ -400,6 +402,33 @@ pub struct OverlaySnapshot {
     pub show_preview: bool,
     pub preview_title: Option<String>,
     pub preview: Option<OverlayPreview>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct OverlayColumnHeader {
+    pub label: String,
+    pub detail: String,
+    pub trailing_detail: String,
+}
+
+impl From<core::OverlayColumnHeader> for OverlayColumnHeader {
+    fn from(value: core::OverlayColumnHeader) -> Self {
+        Self {
+            label: value.label,
+            detail: value.detail,
+            trailing_detail: value.trailing_detail,
+        }
+    }
+}
+
+impl From<OverlayColumnHeader> for core::OverlayColumnHeader {
+    fn from(value: OverlayColumnHeader) -> Self {
+        Self {
+            label: value.label,
+            detail: value.detail,
+            trailing_detail: value.trailing_detail,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -436,6 +465,7 @@ impl From<core::OverlaySnapshot> for OverlaySnapshot {
             actions: value.actions.into_iter().map(Into::into).collect(),
             title: value.title,
             query: value.query,
+            column_header: value.column_header.map(Into::into),
             rows: value.rows.into_iter().map(Into::into).collect(),
             selected: value.selected,
             scroll_anchor: value.scroll_anchor,
@@ -462,6 +492,7 @@ impl TryFrom<OverlaySnapshot> for core::OverlaySnapshot {
             actions: value.actions.into_iter().map(Into::into).collect(),
             title: value.title,
             query: value.query,
+            column_header: value.column_header.map(Into::into),
             rows: value.rows.into_iter().map(Into::into).collect(),
             selected: value.selected,
             scroll_anchor: value.scroll_anchor,
@@ -542,6 +573,21 @@ mod tests {
         let decoded: OverlayRow = serde_json::from_slice(&encoded).unwrap();
 
         assert_eq!(core::OverlayRow::from(decoded), row);
+    }
+
+    #[test]
+    fn overlay_column_header_survives_the_wire_round_trip() {
+        let header = core::OverlayColumnHeader {
+            label: "No. Name".to_owned(),
+            detail: "Branch  Path".to_owned(),
+            trailing_detail: "Last active".to_owned(),
+        };
+
+        let wire = OverlayColumnHeader::from(header.clone());
+        let encoded = serde_json::to_vec(&wire).unwrap();
+        let decoded: OverlayColumnHeader = serde_json::from_slice(&encoded).unwrap();
+
+        assert_eq!(core::OverlayColumnHeader::from(decoded), header);
     }
 }
 

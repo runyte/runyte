@@ -45,6 +45,18 @@ pub struct PickerItem {
     dimmed: bool,
 }
 
+/// Non-selectable column labels drawn above a list's rows.
+///
+/// The three runs mirror [`PickerItem`]'s presentation regions. A producer
+/// may pad several semantic columns within `label` or `detail`, while the
+/// trailing run keeps the final column visible when a row is clipped.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ListColumnHeader {
+    pub label: String,
+    pub detail: String,
+    pub trailing_detail: String,
+}
+
 impl PickerItem {
     pub fn new(label: impl Into<String>, detail: impl Into<String>, index: usize) -> Self {
         let label = label.into();
@@ -122,6 +134,9 @@ pub struct ListPicker {
     pub primary_action: Option<String>,
     /// Optional additional action and its key hint, for example buffer actions.
     pub secondary_action: Option<(String, String)>,
+    /// Optional non-selectable labels for lists whose rows have stable
+    /// columns. Filtering and selection apply only to `items`.
+    pub column_header: Option<ListColumnHeader>,
     pub items: Vec<PickerItem>,
     pub filter: String,
     pub selected: usize,
@@ -150,6 +165,7 @@ impl ListPicker {
             purpose: ListPurpose::Picker,
             primary_action: Some("open".to_owned()),
             secondary_action: None,
+            column_header: None,
             items,
             filter: String::new(),
             selected: 0,
@@ -171,6 +187,20 @@ impl ListPicker {
 
     pub fn with_preview(mut self, title: impl Into<String>) -> Self {
         self.preview_title = Some(title.into());
+        self
+    }
+
+    pub fn with_column_header(
+        mut self,
+        label: impl Into<String>,
+        detail: impl Into<String>,
+        trailing_detail: impl Into<String>,
+    ) -> Self {
+        self.column_header = Some(ListColumnHeader {
+            label: label.into(),
+            detail: detail.into(),
+            trailing_detail: trailing_detail.into(),
+        });
         self
     }
 

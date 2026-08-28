@@ -136,7 +136,9 @@ use crate::workspace::{
 /// would otherwise omit `[STALE]` and hide a conflict retained by the host.
 /// Version 41 carries a picker row's pinned trailing column so an older client
 /// cannot silently clip the session manager's last-active value.
-pub const VERSION: u32 = 41;
+/// Version 42 carries non-selectable picker column labels so an older attached
+/// client cannot silently omit the session manager's headings.
+pub const VERSION: u32 = 42;
 pub const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const MAX_PATHS: usize = 32;
 pub const MAX_PATH_BYTES: usize = 32 * 1024;
@@ -906,7 +908,7 @@ mod tests {
 
     #[test]
     fn protocol_version_and_request_bounds_are_explicit() {
-        assert_eq!(VERSION, 41);
+        assert_eq!(VERSION, 42);
         let oversized_command = ClientRequest::Invoke {
             command: CommandRequest {
                 name: "open".to_owned(),

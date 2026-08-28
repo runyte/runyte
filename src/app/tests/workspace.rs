@@ -1456,16 +1456,20 @@ fn session_picker_keeps_filter_and_routes_enter_and_tab_by_workspace_identity() 
         generation: 4,
         result: Ok(rows.clone()),
     });
-    // Five columns: number, name, branch, directory, activity. Both rows pay
-    // for the name column at its widest so the branch column starts in one
-    // place, and a row with nothing to say in the branch column says `-`
-    // rather than going blank and letting the directory slide left.
+    // Five labelled columns: number, name, branch, directory, activity. Both
+    // rows pay for the widest value or heading so the columns stay aligned,
+    // and a row with nothing to say in the branch column says `-` rather than
+    // going blank and letting the directory slide left.
     let picker = app.list.as_ref().unwrap();
+    let header = picker.column_header.as_ref().unwrap();
+    assert_eq!(header.label, "No. Name   ");
+    assert_eq!(header.detail, "Branch  Path     ");
+    assert_eq!(header.trailing_detail, "Last active");
     assert_eq!(picker.items[0].label, "  * current");
     assert_eq!(picker.items[1].label, "    archive");
-    assert_eq!(picker.items[0].detail, "-     ~/current");
+    assert_eq!(picker.items[0].detail, "-       ~/current");
     assert_eq!(picker.items[0].trailing_detail, "0min ago");
-    assert_eq!(picker.items[1].detail, "main  ~/stopped");
+    assert_eq!(picker.items[1].detail, "main    ~/stopped");
     assert_eq!(picker.items[1].trailing_detail, "5days ago");
     assert!(
         picker.items[1]
@@ -1474,6 +1478,15 @@ fn session_picker_keeps_filter_and_routes_enter_and_tab_by_workspace_identity() 
             .contains("Active: 5days ago")
     );
     assert_eq!(picker.primary_action.as_deref(), Some("attach"));
+    let overlay = app
+        .overlay_snapshots()
+        .into_iter()
+        .find(|overlay| overlay.title.starts_with("Sessions"))
+        .unwrap();
+    let header = overlay.column_header.unwrap();
+    assert_eq!(header.label, "No. Name   ");
+    assert_eq!(header.detail, "Branch  Path     ");
+    assert_eq!(header.trailing_detail, "Last active");
     assert!(!app.refresh_workspace_activity_at(now));
     assert!(app.refresh_workspace_activity_at(now + 31));
     assert_eq!(
