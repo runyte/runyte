@@ -3,7 +3,7 @@
 use super::*;
 
 #[test]
-fn session_attach_captures_the_editor_working_directory_for_relative_selectors() {
+fn attach_alias_captures_the_editor_working_directory_for_relative_selectors() {
     let root = temporary("session-attach-working-directory");
     let editor_directory = root.join("nested");
     fs::create_dir_all(&editor_directory).unwrap();
@@ -21,7 +21,7 @@ fn session_attach_captures_the_editor_working_directory_for_relative_selectors()
     assert_eq!(app.working_directory, editor_directory);
     app.enable_persistent_session();
 
-    app.execute(crate::command::parse_named_command("session-attach", Some("../project")).unwrap())
+    app.execute(crate::command::parse_named_command("attach", Some("../project")).unwrap())
         .unwrap();
 
     assert_eq!(

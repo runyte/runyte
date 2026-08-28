@@ -237,11 +237,12 @@ how a file reaches a persistent session.
 `runyte --persistent WORKSPACE` (or `runyte -a WORKSPACE`) attaches to a named
 session from any directory, using the same selector the lifecycle commands
 accept. A session that is not running is started first, exactly as a bare
-attachment starts the current project's. A directory the catalog does not know
-yet resolves its project root the way a launch inside that directory would;
-when it has neither a Git root nor workspace state, the attachment fails rather
-than offering to create one, and `--init` remains the way to make a root out of
-it.
+attachment starts the current project's. An existing directory the catalog
+does not know names that exact directory: Runyte creates its configured
+workspace state directory (`.runyte/` by default) when necessary, then starts
+its persistent session. A bare explicit `runyte -a` does the same for the
+current directory when no workspace is discoverable there. `--init` remains
+available for explicitly initializing and opening a standalone workspace.
 
 Persistent mode uses a local host process that owns the workspace state and a
 client TUI that displays it. `--persistent` starts the host when necessary and
@@ -470,7 +471,10 @@ listing without giving its digit away.
 Forget removes only the visited-history record behind a stopped row: nothing in
 the project is touched, and naming the directory again starts a host there and
 lists it once more.
-`:session-attach WORKSPACE` attaches directly and starts a stopped session.
+`:session-attach WORKSPACE` (alias `:attach`) attaches directly and starts a
+stopped session. `WORKSPACE` may also be any existing directory; Runyte makes
+that exact directory a workspace when necessary before starting its persistent
+session.
 `:session-start [WORKSPACE]` warms one in the background,
 `:session-stop [WORKSPACE]` stops one without switching, and
 `:session-rename WORKSPACE NAME` changes its persistent name.
@@ -2403,6 +2407,7 @@ are enabled.
 :session-list           open the session manager (persistent mode; alias: sl)
 :session-attach WORKSPACE
                         attach to another workspace's persistent session
+                        (alias: attach)
 :session-start [WORKSPACE]
                         start a persistent session without switching
 :session-stop [WORKSPACE]

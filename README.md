@@ -213,6 +213,7 @@ runyte .                  # edit the current directory as an explorer
 runyte src/main.rs        # edit a file
 runyte +120:8 src/app.rs  # open at a one-based line and column
 runyte --persistent       # attach to or start this workspace's session
+runyte -a /path/to/notes  # initialize if needed, then attach persistently
 ```
 
 Inside the editor, press <kbd>Space</kbd> then <kbd>?</kbd> for contextual

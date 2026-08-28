@@ -1289,7 +1289,7 @@ pub const COMMANDS: &[CommandSpec] = &[
     spec!(
         ColonId(Colon::SessionAttach),
         "session-attach",
-        [],
+        ["attach"],
         "session-attach <workspace>",
         "Attach to another workspace's persistent session",
         Required(Path)
@@ -2941,6 +2941,9 @@ mod tests {
         let session_list = resolve_command("session-list").unwrap();
         assert_eq!(session_list.aliases, &["sl"]);
         assert_eq!(resolve_command("sl").unwrap().id, session_list.id);
+        let session_attach = resolve_command("session-attach").unwrap();
+        assert_eq!(session_attach.aliases, &["attach"]);
+        assert_eq!(resolve_command("attach").unwrap().id, session_attach.id);
         for removed in [
             "workspace-list",
             "wls",
