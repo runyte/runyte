@@ -323,6 +323,7 @@ impl WorkspaceServiceHandle {
         working_directory: PathBuf,
         name: String,
     ) -> Result<(), &'static str> {
+        let name = normalize_session_name(&name);
         self.requests
             .try_send(WorkspaceRequest::Rename {
                 generation,
@@ -1230,7 +1231,8 @@ async fn rename(
     state: &Path,
     config: Option<&Path>,
 ) -> Result<()> {
-    validate_host_name(name)?;
+    let name = normalize_session_name(name);
+    validate_host_name(&name)?;
     let rows = refresh(roots, recents, state, None).await?;
     let project_root = resolve_known_workspace_from_rows(&rows, selector, Some(working_directory))?
         .with_context(|| format!("no session matches {}", selector.display()))?;
@@ -1247,11 +1249,19 @@ async fn rename(
         })
         .await?
         .or_else(|_| resolve_workspace_endpoint(&row.project_root, state, config))?;
-        rename_host(&endpoint, name).await
+        rename_host(&endpoint, &name).await
     } else {
         let recents = recents.context("workspace recent history is unavailable")?;
-        rename_recent_workspace_in(recents, &row.project_root, name)
+        rename_recent_workspace_in(recents, &row.project_root, &name)
     }
+}
+
+/// Normalizes a person-supplied session name without changing any other
+/// identity characters. Spaces at the edges are discarded; spaces that carry
+/// meaning between words become hyphens. Persisted historical names remain
+/// readable even if they predate this input rule.
+fn normalize_session_name(name: &str) -> String {
+    name.trim_matches(' ').replace(' ', "-")
 }
 
 /// Gives one workspace a number shortcut, or clears it.
@@ -1971,7 +1981,7 @@ mod tests {
             Some(&recents),
             Path::new("project"),
             &root,
-            "archive",
+            "  release candidate  ",
             Path::new(".runyte"),
             None,
         )
@@ -1983,7 +1993,7 @@ mod tests {
                 .iter()
                 .find(|entry| entry.project_root == workspace)
                 .and_then(|entry| entry.name.as_deref()),
-            Some("archive")
+            Some("release-candidate")
         );
 
         let error = rename(
@@ -2031,10 +2041,10 @@ mod tests {
             None,
             None,
         );
-        for (generation, selector, name) in [
-            (1, PathBuf::from(row.id), "by-id"),
-            (2, PathBuf::from("by-id"), "by-name"),
-            (3, PathBuf::from("project"), "by-directory"),
+        for (generation, selector, name, expected) in [
+            (1, PathBuf::from(row.id), "  by id  ", "by-id"),
+            (2, PathBuf::from("by-id"), "by-name", "by-name"),
+            (3, PathBuf::from("project"), "by-directory", "by-directory"),
         ] {
             service
                 .try_rename(generation, selector.clone(), root.clone(), name.to_owned())
@@ -2050,7 +2060,7 @@ mod tests {
             };
             assert_eq!(completed, generation);
             assert_eq!(path, selector);
-            assert_eq!(completed_name, name);
+            assert_eq!(completed_name, expected);
             result.unwrap();
         }
         assert_eq!(
@@ -2310,6 +2320,10 @@ mod tests {
         assert_eq!(
             unique_default_workspace_name(Path::new("/workspace/ \n "), &[]),
             "workspace"
+        );
+        assert_eq!(
+            unique_default_workspace_name(Path::new("/workspace/release candidate"), &[]),
+            "release-candidate"
         );
 
         let long = format!("{}-tail", "ż".repeat(40));
@@ -3299,10 +3313,11 @@ fn unique_default_workspace_name(project_root: &Path, paths: &[RecentEntry]) -> 
             }
         })
         .collect::<String>();
+    let sanitized = normalize_session_name(&sanitized);
     let sanitized = if sanitized.is_empty() {
         "workspace"
     } else {
-        &sanitized
+        sanitized.as_str()
     };
     let base = truncate_utf8(sanitized, MAX_HOST_NAME_BYTES).to_owned();
     let available = |candidate: &str| {

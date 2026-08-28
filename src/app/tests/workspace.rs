@@ -2020,6 +2020,18 @@ fn a_digit_attaches_to_a_numbered_session_from_the_manager() {
     fs::remove_dir_all(root).unwrap();
 }
 
+#[cfg(unix)]
+#[test]
+fn space_closes_the_session_manager_instead_of_filtering() {
+    let (mut app, root, _roots) = numbered_sessions("session-space-close");
+
+    press(&mut app, ' ');
+
+    assert!(app.list.is_none(), "Space dismisses the manager overlay");
+    assert!(app.take_workspace_switch().is_none());
+    fs::remove_dir_all(root).unwrap();
+}
+
 /// The reason a digit is a shortcut only while nothing has been typed.
 /// Runyte's own default names and this repository's own worktree path both
 /// contain digits, so filtering for them has to keep working.
@@ -2086,14 +2098,17 @@ fn a_digit_no_session_holds_reports_that_rather_than_attaching() {
 
 #[cfg(unix)]
 #[test]
-fn the_manager_number_action_prompts_with_the_number_a_session_already_has() {
+fn the_manager_renumber_action_opens_an_empty_prompt() {
     let (mut app, root, roots) = numbered_sessions("session-number-prompt");
 
     key(&mut app, KeyCode::Tab, Modifiers::NONE);
     app.session_action_menu.as_mut().unwrap().selected = 2;
     key(&mut app, KeyCode::Enter, Modifiers::NONE);
     assert_eq!(app.prompt_kind, PromptKind::SessionNumber);
-    assert_eq!(app.command, "1", "the prompt opens on the current number");
+    assert!(
+        app.command.is_empty(),
+        "renumber starts ready for one digit"
+    );
     assert_eq!(
         app.session_number_target.as_deref(),
         Some(roots[0].as_path())
@@ -2216,7 +2231,7 @@ fn workspace_actions_match_the_selected_session_state() {
                 .collect::<Vec<_>>()
         })
         .unwrap();
-    assert_eq!(labels, vec!["Open", "Rename", "Number", "Forget"]);
+    assert_eq!(labels, vec!["Open", "Rename", "Renumber", "Forget"]);
 
     // No session service is attached in an isolated project, so the
     // request cannot be served; what matters here is that Forget asks to

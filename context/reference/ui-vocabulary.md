@@ -69,8 +69,9 @@ them, regardless of which extensibility direction is chosen.
   view; the list otherwise speaks normal Runyte and does not permanently own
   printable input.
 - **Picker overlay** — a transient choose-one overlay. Printable input filters
-  candidates, Enter accepts the selected candidate, and Escape cancels the
-  request.
+  candidates, Enter accepts the selected candidate, and Escape, `Ctrl-c`, or
+  an initial bare Space cancels the request. Once a project/content finder
+  query contains text, Space remains its term separator.
 - **Context overlay** — temporary information or assistance tied to the source
   under the caret, such as hover documentation, completion, or a signature.
   It leaves the source pane active and declares its own bounds and dismissal
@@ -100,6 +101,12 @@ retained Git-log special buffer because commit history benefits from ordinary
 browsing, search, and splits. `Space g /` opens a picker because fuzzy typing
 resolves one immediate commit choice. Enter from either surface opens the same
 retained commit-detail special buffer.
+
+Modal result lists, choice overlays, action menus, and confirmations use bare
+Space as a symmetric dismissal key through their existing cancellation paths.
+Exact-text confirmations keep Space as literal input, because the durable path
+they ask for may contain one. Interaction-line prompts are not overlays and
+retain ordinary space entry.
 
 ## Row selection
 

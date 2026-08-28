@@ -1532,7 +1532,7 @@ impl SessionAction {
         match self {
             Self::Open => "Open",
             Self::Rename => "Rename",
-            Self::Number => "Number",
+            Self::Number => "Renumber",
             Self::Close => "Close",
             Self::ForceClose => "Force close",
             Self::Forget => "Forget",
@@ -1553,9 +1553,7 @@ impl SessionAction {
 
 /// Reads a session number from a prompt answer.
 ///
-/// An empty answer clears the number rather than being a mistake: the prompt
-/// opens prefilled with the current one, so erasing it is how somebody says
-/// this workspace should have no shortcut.
+/// An empty answer clears the number rather than being a mistake.
 #[cfg(unix)]
 fn parse_session_number(value: &str) -> Result<Option<u8>, String> {
     let value = value.trim();
@@ -2469,12 +2467,11 @@ pub struct App {
     persistent_session: bool,
     #[cfg(unix)]
     workspace_rows: Vec<WorkspaceRow>,
-    /// This workspace's own session number, shown in the status line.
+    /// This workspace's own session number, retained for the owned snapshot.
     ///
-    /// Held separately from `workspace_rows` because the status line needs an
-    /// answer from the first frame, while the rows exist only once somebody
-    /// has opened the session manager. Both ultimately read the same per-user
-    /// catalog.
+    /// Held separately from `workspace_rows` because attached clients still
+    /// receive the version-29 wire field. Both ultimately read the same
+    /// per-user catalog.
     pub workspace_number: Option<u8>,
     #[cfg(unix)]
     workspace_generation: u64,

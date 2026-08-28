@@ -1919,7 +1919,7 @@ fn focused_theme_setting_previews_without_remembering_and_saves_on_enter() {
         DefaultColors::new(Some((0xd6, 0xda, 0xe0)), Some((0x16, 0x18, 0x1d)))
     );
     assert_eq!(fs::read_to_string(&path).unwrap(), "theme: light\n");
-    key(&mut app, KeyCode::Escape, Modifiers::NONE);
+    key(&mut app, KeyCode::Char(' '), Modifiers::NONE);
     assert_eq!(app.theme_name, "light");
     assert_eq!(
         app.terminals.default_colors(),

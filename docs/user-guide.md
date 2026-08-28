@@ -284,7 +284,10 @@ session listing. Rename a persistent session, running or stopped, with
 `runyte --session-rename WORKSPACE NAME`. A running session is renamed through
 its host; a stopped one is renamed in the visited history it is listed from.
 Session names persist across restarts and must be unique among running
-sessions. `WORKSPACE` may be the abbreviated
+sessions. When a name is entered, surrounding spaces are trimmed and spaces
+between words become `-`, so `  release candidate  ` is stored as
+`release-candidate`. Default names derived from directories follow the same
+rule. `WORKSPACE` may be the abbreviated
 ID a listing shows, any other unambiguous ID prefix, the full ID, its exact
 session name, or its project directory.
 The same selector works for attachment and the lifecycle commands:
@@ -359,12 +362,13 @@ A stopped session keeps its place in that order but is drawn in the theme's
 dimmed text colour, the one a command prompt grays the panes behind it with, so
 the running hosts stand out without any row being hidden or moved.
 `Space Space` is the complete binding,
-not a prefix with subcommands. Tab opens one manager menu listing only the
+not a prefix with subcommands. A third `Space` closes the manager, just like
+Escape or `Ctrl-c`. Tab opens one manager menu listing only the
 actions the selected row's own state can answer: a running row offers Open,
-Rename, Number, Close, and Force close, and a stopped row offers Open, Rename,
-Number, and Forget. Open is identical to Enter. Close stops the host and leaves
-the workspace listed as a stopped row; nothing below the session is touched,
-because a session is the only level that means nothing on its own.
+Rename, Renumber, Close, and Force close, and a stopped row offers Open,
+Rename, Renumber, and Forget. Open is identical to Enter. Close stops the host
+and leaves the workspace listed as a stopped row; nothing below the session is
+touched, because a session is the only level that means nothing on its own.
 
 Each row reads as five columns, padded to the widest value in the list so they
 line up down it:
@@ -430,27 +434,25 @@ The manager does not show the contents of the session's buffers and terminals.
 It did, and at this width a snippet of a pane is neither readable as text nor
 useful as identity.
 
-Sessions carry a number from `1` to `9`, shown in the manager's first column
-and in the status line as `[S1]` before the workspace directory. Pressing that
-digit in the manager attaches to its session directly, so `Space Space 1`
-reaches the first session as one gesture. The digit is a shortcut only while
-the manager's filter is empty: Runyte's default names are `runyte`, `runyte-2`,
-`runyte-3`, and project paths routinely contain digits, so once anything has
-been typed a digit is ordinary filter text. Clearing the filter, with Delete or
-by backspacing to empty, arms the shortcut again. A workspace whose name or
-path begins with a digit therefore cannot be filtered by that first character;
-type a later part of the name instead.
+Sessions carry a number from `1` to `9`, shown in the manager's first column.
+Pressing that digit in the manager attaches to its session directly, so
+`Space Space 1` reaches the first session as one gesture. The digit is a
+shortcut only while the manager's filter is empty: Runyte's default names are
+`runyte`, `runyte-2`, `runyte-3`, and project paths routinely contain digits,
+so once anything has been typed a digit is ordinary filter text. Clearing the
+filter, with Delete or by backspacing to empty, arms the shortcut again. A
+workspace whose name or path begins with a digit therefore cannot be filtered
+by that first character; type a later part of the name instead.
 
 Numbers are assigned in order of creation, when a workspace is first recorded,
 and stay with it as the list reorders around them, so the digit does not move
 between two visits. A catalog written before Runyte numbered sessions has no
 creation order left to recover, and is numbered most-recently-visited first on
 the next listing. Only nine sessions are numbered; a tenth is reached by name
-or path, and inherits a number when an earlier one is forgotten. Number in the
-manager menu sets the shortcut for the selected session, prefilled with the
-number it already has; an empty answer takes its number away. Giving a session
-a number another one holds swaps the two, so both keep a shortcut, and the
-status line names the workspace that took the number given up.
+or path, and inherits a number when an earlier one is forgotten. Renumber in
+the manager menu opens an empty prompt ready for one digit and sets the shortcut
+for the selected session; an empty answer takes its number away. Giving a
+session a number another one holds swaps the two, so both keep a shortcut.
 A standalone workspace owns no persistent host, so the whole `session`
 namespace is inert there rather than a set of commands that each refuse.
 `Space Space` greys out in the key-hint popup and `:session-list`,
@@ -1495,7 +1497,7 @@ cancellation keys.
 | `Space c y` / `Space c p` / `Space c P` | System clipboard yank / paste after / paste before |
 | `Space e` | Open the active buffer's directory as an editable explorer; from a file, select that file |
 | `Space E` | Open the working directory (controlled by `:cd`) as an editable explorer |
-| `Space Space` | Open the persistent-session manager (`:session-list`, `:sl`); `1`-`9` attach to a numbered session while the filter is empty; `Tab` shows the actions the selected row's state allows |
+| `Space Space` | Open the persistent-session manager (`:session-list`, `:sl`); another `Space` closes it, `1`-`9` attach to a numbered session while the filter is empty, and `Tab` shows the selected row's actions |
 | `Space / f` / `Space f` | Find project files, open buffers, or terminals; `Tab` switches modes and `Ctrl-t` toggles preview |
 | `Space / g` | Fuzzy-search contents below the stable project root |
 | `:file-picker-directory` | Fuzzy-find a file or directory below the active file/explorer directory |
@@ -1692,9 +1694,11 @@ finder `Tab` switches modes; `Shift-Tab` selects the previous row, as it does
 in directory-scoped and fuzzy-content pickers. In those other pickers, `Tab`
 retains its previous next-row navigation.
 Enter opens, `Ctrl-s` opens horizontally, `Ctrl-v` opens vertically, and
-Escape or `Ctrl-c` closes. Backspace/Delete and the ordinary prompt control
-keys edit the query. Printable letters such as `q`, `j`, and `k` are query
-text rather than navigation commands.
+Escape or `Ctrl-c` closes. A bare `Space` also closes a newly opened overlay;
+after a project or content finder query has begun, it retains its term-separator
+role. Backspace/Delete and the ordinary prompt control keys edit the query.
+Printable letters such as `q`, `j`, and `k` are query text rather than
+navigation commands.
 
 A space separates the query into terms rather than being matched. One word is
 the fuzzy subsequence it has always been, so `fpick` finds `file_picker.rs`.
