@@ -242,13 +242,17 @@ async fn receive_response(client: &mut LocalClient, waiting_for: &str) -> HostRe
         .unwrap_or_else(|| panic!("host disconnected while {waiting_for}"))
 }
 
-async fn receive_response_ignoring_frames(
-    client: &mut LocalClient,
-    waiting_for: &str,
-) -> HostResponse {
+/// Receives the next semantic reply from the host's mixed response stream.
+///
+/// Complete frames and terminal deltas can already be in flight when a later
+/// request is handled, so neither is a correlated response to that request.
+async fn receive_semantic_response(client: &mut LocalClient, waiting_for: &str) -> HostResponse {
     loop {
         let response = receive_response(client, waiting_for).await;
-        if !matches!(response, HostResponse::Frame { .. }) {
+        if !matches!(
+            response,
+            HostResponse::Frame { .. } | HostResponse::TerminalDamage { .. }
+        ) {
             return response;
         }
     }
@@ -288,12 +292,20 @@ async fn shutdown(client: &mut LocalClient) {
     );
 }
 
-async fn response_ignoring_frames(client: &mut LocalClient) -> HostResponse {
-    loop {
-        let response = response(client).await;
-        if !matches!(response, HostResponse::Frame { .. }) {
-            return response;
-        }
+#[track_caller]
+fn semantic_response(client: &mut LocalClient) -> impl Future<Output = HostResponse> + '_ {
+    let caller = std::panic::Location::caller();
+    async move {
+        receive_semantic_response(
+            client,
+            &format!(
+                "waiting for the semantic response at {}:{}:{}",
+                caller.file(),
+                caller.line(),
+                caller.column()
+            ),
+        )
+        .await
     }
 }
 
@@ -376,11 +388,8 @@ async fn invoke_when_current(
             })
             .await
             .unwrap();
-        match receive_response_ignoring_frames(
-            client,
-            &format!("receiving the {command} command result"),
-        )
-        .await
+        match receive_semantic_response(client, &format!("receiving the {command} command result"))
+            .await
         {
             HostResponse::CommandResult { .. } => return,
             HostResponse::Error { message } if message.starts_with("stale editor frame:") => {
@@ -746,45 +755,26 @@ async fn revision_protocol_is_stale_safe_undoable_and_bounded() {
         })
         .await
         .unwrap();
-    assert!(matches!(
-        response(&mut interactive).await,
-        HostResponse::Error { message } if message.contains("stale editor frame")
-    ));
-    interactive
-        .send(&ClientRequest::Invoke {
-            command: CommandRequest::at(
-                "git-refresh",
-                command_frame.id,
-                command_frame.active_buffer,
-                command_frame.active_revision,
-            ),
-        })
-        .await
-        .unwrap();
-    assert!(matches!(
-        response(&mut interactive).await,
-        HostResponse::CommandResult { .. }
-    ));
-    let quit_frame = match response(&mut interactive).await {
-        HostResponse::Frame { frame } => *frame,
-        response => panic!("expected command frame, got {response:?}"),
-    };
-    interactive
-        .send(&ClientRequest::Invoke {
-            command: CommandRequest::at(
-                "quit",
-                quit_frame.id,
-                quit_frame.active_buffer,
-                quit_frame.active_revision,
-            ),
-        })
-        .await
-        .unwrap();
-    assert!(matches!(
-        response(&mut interactive).await,
-        HostResponse::CommandResult { .. }
-    ));
-    assert_eq!(response(&mut interactive).await, HostResponse::ShuttingDown);
+    match receive_semantic_response(
+        &mut interactive,
+        "receiving the deliberately stale Git refresh result",
+    )
+    .await
+    {
+        HostResponse::Error { message } if message.contains("stale editor frame") => {}
+        response => panic!("expected a stale editor frame error, got {response:?}"),
+    }
+    invoke_when_current(&mut interactive, "git-refresh", command_frame).await;
+    let quit_frame = resynchronized_frame(
+        &mut interactive,
+        "receiving a current frame before invoking quit",
+    )
+    .await;
+    invoke_when_current(&mut interactive, "quit", quit_frame).await;
+    assert_eq!(
+        semantic_response(&mut interactive).await,
+        HostResponse::ShuttingDown
+    );
 
     let status = tokio::task::spawn_blocking(move || host.0.take().unwrap().wait())
         .await
@@ -891,8 +881,7 @@ async fn wait_cli_completes_without_stopping_host_or_unrelated_buffers() {
     let mut requested = None;
     for _ in 0..100 {
         interactive.send(&ClientRequest::ListBuffers).await.unwrap();
-        if let HostResponse::Buffers { buffers } = response_ignoring_frames(&mut interactive).await
-        {
+        if let HostResponse::Buffers { buffers } = semantic_response(&mut interactive).await {
             requested = buffers.into_iter().find(|buffer| {
                 buffer.path_bytes.clone().map(decode_path).as_deref()
                     == Some(root.join("note.txt").as_path())
@@ -912,7 +901,7 @@ async fn wait_cli_completes_without_stopping_host_or_unrelated_buffers() {
         .await
         .unwrap();
     assert!(matches!(
-        response_ignoring_frames(&mut interactive).await,
+        semantic_response(&mut interactive).await,
         HostResponse::Closed { .. }
     ));
     let status = wait_child(&mut waiter).await;
@@ -920,7 +909,7 @@ async fn wait_cli_completes_without_stopping_host_or_unrelated_buffers() {
 
     interactive.send(&ClientRequest::ListBuffers).await.unwrap();
     assert!(matches!(
-        response_ignoring_frames(&mut interactive).await,
+        semantic_response(&mut interactive).await,
         HostResponse::Buffers { buffers }
             if buffers.iter().any(|buffer| {
                 !buffer.closed
@@ -973,8 +962,7 @@ async fn killing_the_host_fails_an_outstanding_wait_process() {
     let mut opened = false;
     for _ in 0..100 {
         interactive.send(&ClientRequest::ListBuffers).await.unwrap();
-        if let HostResponse::Buffers { buffers } = response_ignoring_frames(&mut interactive).await
-        {
+        if let HostResponse::Buffers { buffers } = semantic_response(&mut interactive).await {
             opened = buffers.iter().any(|buffer| {
                 buffer.path_bytes.clone().map(decode_path).as_deref()
                     == Some(root.join("note.txt").as_path())
@@ -1032,8 +1020,7 @@ async fn git_commit_wait_closes_its_buffer_without_detaching_an_existing_tui() {
     let mut message = None;
     for _ in 0..200 {
         interactive.send(&ClientRequest::ListBuffers).await.unwrap();
-        if let HostResponse::Buffers { buffers } = response_ignoring_frames(&mut interactive).await
-        {
+        if let HostResponse::Buffers { buffers } = semantic_response(&mut interactive).await {
             message = buffers.into_iter().find(|buffer| {
                 buffer
                     .path_bytes
@@ -1076,7 +1063,7 @@ async fn git_commit_wait_closes_its_buffer_without_detaching_an_existing_tui() {
     assert!(wait_child(&mut commit).await.success());
     interactive.send(&ClientRequest::Health).await.unwrap();
     assert!(matches!(
-        response_ignoring_frames(&mut interactive).await,
+        semantic_response(&mut interactive).await,
         HostResponse::Health {
             interactive_attached: true,
             ..
@@ -1333,8 +1320,7 @@ async fn wait_paths_are_resolved_in_the_callers_directory_without_utf8_loss() {
     let mut requested = Vec::new();
     for _ in 0..100 {
         interactive.send(&ClientRequest::ListBuffers).await.unwrap();
-        if let HostResponse::Buffers { buffers } = response_ignoring_frames(&mut interactive).await
-        {
+        if let HostResponse::Buffers { buffers } = semantic_response(&mut interactive).await {
             requested = buffers
                 .into_iter()
                 .filter(|buffer| {
@@ -1365,13 +1351,13 @@ async fn wait_paths_are_resolved_in_the_callers_directory_without_utf8_loss() {
             .await
             .unwrap();
         assert!(matches!(
-            response_ignoring_frames(&mut interactive).await,
+            semantic_response(&mut interactive).await,
             HostResponse::Closed { .. }
         ));
     }
     assert!(wait_child(&mut waiter).await.success());
     interactive.send(&ClientRequest::Detach).await.unwrap();
-    let _ = response_ignoring_frames(&mut interactive).await;
+    let _ = semantic_response(&mut interactive).await;
     let mut control = connect_control(&endpoint).await;
     shutdown(&mut control).await;
     assert!(host.0.take().unwrap().wait().unwrap().success());
@@ -1962,51 +1948,24 @@ async fn persistent_tui_opens_async_log_and_shared_commit_detail() {
         .await
         .unwrap();
     let _ = response(&mut interactive).await;
-    let mut frame = match response(&mut interactive).await {
-        HostResponse::Frame { frame } => *frame,
-        response => panic!("expected initial history frame, got {response:?}"),
-    };
-    while frame
-        .editor
-        .status
-        .git_summary
-        .as_deref()
-        .is_none_or(|summary| summary.contains(":git-cancel"))
-    {
-        frame = match response(&mut interactive).await {
-            HostResponse::Frame { frame } => *frame,
-            response => panic!("expected Git discovery frame, got {response:?}"),
-        };
-    }
-    interactive
-        .send(&ClientRequest::Invoke {
-            command: CommandRequest::at(
-                "git-log",
-                frame.id,
-                frame.active_buffer,
-                frame.active_revision,
-            ),
-        })
-        .await
-        .unwrap();
-    loop {
-        match response(&mut interactive).await {
-            HostResponse::CommandResult { .. } => break,
-            HostResponse::Frame { .. } => {}
-            response => panic!("expected Git log command result, got {response:?}"),
-        }
-    }
-    loop {
-        if let HostResponse::Frame { frame } = response(&mut interactive).await
-            && frame
-                .editor
-                .panes
-                .iter()
-                .any(|pane| pane.active && pane.title.name == "[git log]")
-        {
-            break;
-        }
-    }
+    let frame = wait_for_frame(&mut interactive, "waiting for Git discovery", |frame| {
+        frame
+            .editor
+            .status
+            .git_summary
+            .as_deref()
+            .is_some_and(|summary| !summary.contains(":git-cancel"))
+    })
+    .await;
+    invoke_when_current(&mut interactive, "git-log", frame).await;
+    let _ = wait_for_frame(&mut interactive, "waiting for the Git log view", |frame| {
+        frame
+            .editor
+            .panes
+            .iter()
+            .any(|pane| pane.active && pane.title.name == "[git log]")
+    })
+    .await;
     interactive
         .send(&ClientRequest::Input {
             event: InputEvent::Key(KeyStroke::new(KeyCode::Enter, Modifiers::NONE)).into(),
@@ -2014,19 +1973,20 @@ async fn persistent_tui_opens_async_log_and_shared_commit_detail() {
         })
         .await
         .unwrap();
-    loop {
-        if let HostResponse::Frame { frame } = response(&mut interactive).await
-            && frame
+    let _ = wait_for_frame(
+        &mut interactive,
+        "waiting for the Git commit detail view",
+        |frame| {
+            frame
                 .editor
                 .panes
                 .iter()
                 .any(|pane| pane.active && pane.title.name.starts_with("[git commit "))
-        {
-            break;
-        }
-    }
+        },
+    )
+    .await;
     interactive.send(&ClientRequest::Detach).await.unwrap();
-    let _ = response_ignoring_frames(&mut interactive).await;
+    let _ = semantic_response(&mut interactive).await;
     let mut control = connect_control(&endpoint).await;
     shutdown(&mut control).await;
     assert!(host.0.take().unwrap().wait().unwrap().success());
@@ -2515,23 +2475,9 @@ async fn an_interactive_quit_flushes_its_shutdown_response_without_a_control_cli
         HostResponse::Welcome { .. }
     ));
     let frame = next_idle_frame(&mut interactive).await;
-    interactive
-        .send(&ClientRequest::Invoke {
-            command: CommandRequest::at(
-                "quit",
-                frame.id,
-                frame.active_buffer,
-                frame.active_revision,
-            ),
-        })
-        .await
-        .unwrap();
-    assert!(matches!(
-        response_ignoring_frames(&mut interactive).await,
-        HostResponse::CommandResult { .. }
-    ));
+    invoke_when_current(&mut interactive, "quit", frame).await;
     assert_eq!(
-        response_ignoring_frames(&mut interactive).await,
+        semantic_response(&mut interactive).await,
         HostResponse::ShuttingDown
     );
     assert!(
@@ -2590,13 +2536,13 @@ async fn a_shutting_down_host_finishes_its_last_message_before_exiting() {
         .unwrap();
     control.send(&ClientRequest::Shutdown).await.unwrap();
     assert!(matches!(
-        response_ignoring_frames(&mut control).await,
+        semantic_response(&mut control).await,
         // The protocol caps buffer text at a mebibyte, which is already
         // several times any local socket send buffer.
         HostResponse::Buffer { buffer } if buffer.text.len() > 512 * 1024
     ));
     assert!(matches!(
-        response_ignoring_frames(&mut control).await,
+        semantic_response(&mut control).await,
         HostResponse::ShuttingDown
     ));
     assert!(
