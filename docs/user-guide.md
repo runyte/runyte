@@ -1068,9 +1068,14 @@ instructions and disposable scratch text. The first picker asks whether lesson
 prose should show Vim-like motion spellings, Helix-like motion spellings, or
 both. That preference changes only the spellings displayed by the tutorial;
 Runyte's selection behavior and keymap do not change. Lessons cover modes,
-selection-first editing, search, multiple carets, `Space` discovery,
-`Ctrl-w` pane commands, `Alt-o`/`Alt-i` buffer history,
-`Ctrl-o`/`Ctrl-i` jump history, and the standalone/persistent boundary.
+selection-first editing with characterwise and `x`/`X` whole-line selections,
+search, multiple carets, `Space` discovery, and `Ctrl-w` pane commands. The
+hands-on view lessons distinguish scratch, generated, and editable explorer
+buffers from terminal pane content: they open the explorer, return through
+`Alt-o` buffer history, create an integrated terminal, and explicitly close
+that terminal session through its manager. The final lessons cover
+`Ctrl-o`/`Ctrl-i` jump history, the standalone/persistent boundary, and point
+to `:help` plus `Space ?` in each view for further learning.
 Reopening `:tutorial` resumes the live lesson, `:tutorial reset` starts over,
 and `:tutorial sessions` opens the persistent-session lesson directly.
 

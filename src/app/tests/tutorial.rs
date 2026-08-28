@@ -30,8 +30,55 @@ fn tutorial_opens_two_native_panes_and_advances_from_editor_state() {
     assert!(
         app.buffers[state.instruction_buffer]
             .to_string()
-            .contains("Move to the start of the line with gh")
+            .contains("Press gh to move to the start of the line")
     );
+}
+
+#[test]
+fn every_tutorial_lesson_has_at_least_ten_lines_and_ends_with_next_steps() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    app.execute_command("tutorial").unwrap();
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    let mut state = app.tutorial_state().unwrap().clone();
+
+    for lesson in 1..=crate::tutorial::LAST_LESSON {
+        state.lesson = lesson;
+        state.awaiting_reattach = false;
+        let document = crate::tutorial::render(&state, false);
+        let body = document
+            .split_once("\n\n")
+            .unwrap()
+            .1
+            .split_once("\n\nExercises happen")
+            .unwrap()
+            .0;
+        let content_lines = body.lines().filter(|line| !line.trim().is_empty()).count();
+        assert!(
+            content_lines >= 10,
+            "lesson {lesson} has only {content_lines} content lines"
+        );
+    }
+
+    state.lesson = crate::tutorial::LAST_LESSON;
+    for (persistent, awaiting_reattach) in [(true, false), (true, true)] {
+        state.awaiting_reattach = awaiting_reattach;
+        let document = crate::tutorial::render(&state, persistent);
+        let body = document
+            .split_once("\n\n")
+            .unwrap()
+            .1
+            .split_once("\n\nExercises happen")
+            .unwrap()
+            .0;
+        assert!(body.lines().filter(|line| !line.trim().is_empty()).count() >= 10);
+    }
+
+    state.lesson = crate::tutorial::LAST_LESSON + 1;
+    state.awaiting_reattach = false;
+    let completed = crate::tutorial::render(&state, true);
+    assert!(completed.contains("NEXT STEPS"));
+    assert!(completed.contains("Run :help"));
+    assert!(completed.contains("Press Space ? in each view"));
 }
 
 #[test]
@@ -54,27 +101,33 @@ fn tutorial_curriculum_advances_through_the_real_input_grammar() {
     press(&mut app, 'd');
     assert_eq!(app.tutorial_state().unwrap().lesson, 4);
 
+    press(&mut app, 'x');
+    press(&mut app, 'x');
+    press(&mut app, 'X');
+    press(&mut app, 'd');
+    assert_eq!(app.tutorial_state().unwrap().lesson, 5);
+
     press(&mut app, 's');
     type_text(&mut app, "cat");
     key(&mut app, KeyCode::Enter, Modifiers::NONE);
-    assert_eq!(app.tutorial_state().unwrap().lesson, 5);
+    assert_eq!(app.tutorial_state().unwrap().lesson, 6);
 
     press(&mut app, 'c');
     type_text(&mut app, "fox");
     key(&mut app, KeyCode::Escape, Modifiers::NONE);
-    assert_eq!(app.tutorial_state().unwrap().lesson, 6);
+    assert_eq!(app.tutorial_state().unwrap().lesson, 7);
 
     press(&mut app, 'C');
     press(&mut app, 'C');
     press(&mut app, 'i');
     type_text(&mut app, "> ");
     key(&mut app, KeyCode::Escape, Modifiers::NONE);
-    assert_eq!(app.tutorial_state().unwrap().lesson, 7);
+    assert_eq!(app.tutorial_state().unwrap().lesson, 8);
 
     press(&mut app, ' ');
     press(&mut app, 's');
     press(&mut app, 'c');
-    assert_eq!(app.tutorial_state().unwrap().lesson, 8);
+    assert_eq!(app.tutorial_state().unwrap().lesson, 9);
 
     app.prepare_view(FrameGeometry {
         screen: Rect {
@@ -93,23 +146,41 @@ fn tutorial_curriculum_advances_through_the_real_input_grammar() {
 
     key(&mut app, KeyCode::Char('w'), Modifiers::CONTROL);
     press(&mut app, 'h');
-    assert_eq!(app.tutorial_state().unwrap().lesson, 9);
+    assert_eq!(app.tutorial_state().unwrap().lesson, 10);
     key(&mut app, KeyCode::Char('w'), Modifiers::CONTROL);
     press(&mut app, 'l');
-    assert_eq!(app.tutorial_state().unwrap().lesson, 10);
-
-    key(&mut app, KeyCode::Char('o'), Modifiers::ALT);
     assert_eq!(app.tutorial_state().unwrap().lesson, 11);
-    key(&mut app, KeyCode::Char('i'), Modifiers::ALT);
+
+    press(&mut app, ' ');
+    press(&mut app, 'e');
+    assert!(app.active_buffer().is_directory());
     assert_eq!(app.tutorial_state().unwrap().lesson, 12);
+    key(&mut app, KeyCode::Char('o'), Modifiers::ALT);
+    assert_eq!(app.tutorial_state().unwrap().lesson, 13);
+
+    press(&mut app, ' ');
+    press(&mut app, 't');
+    press(&mut app, 'n');
+    assert!(app.active_terminal().is_some());
+    assert_eq!(app.tutorial_state().unwrap().lesson, 14);
+    key(&mut app, KeyCode::Char('\\'), Modifiers::CONTROL);
+    press(&mut app, ' ');
+    press(&mut app, 't');
+    press(&mut app, 't');
+    key(&mut app, KeyCode::Tab, Modifiers::NONE);
+    key(&mut app, KeyCode::Down, Modifiers::NONE);
+    key(&mut app, KeyCode::Down, Modifiers::NONE);
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert!(app.active_terminal().is_none());
+    assert_eq!(app.tutorial_state().unwrap().lesson, 15);
 
     press(&mut app, 'g');
     press(&mut app, 'e');
-    assert_eq!(app.tutorial_state().unwrap().lesson, 13);
+    assert_eq!(app.tutorial_state().unwrap().lesson, 16);
     key(&mut app, KeyCode::Char('o'), Modifiers::CONTROL);
-    assert_eq!(app.tutorial_state().unwrap().lesson, 14);
+    assert_eq!(app.tutorial_state().unwrap().lesson, 17);
     key(&mut app, KeyCode::Char('i'), Modifiers::CONTROL);
-    assert_eq!(app.tutorial_state().unwrap().lesson, 15);
+    assert_eq!(app.tutorial_state().unwrap().lesson, 18);
 }
 
 fn prepare_two_pane_geometry(app: &mut App) {
@@ -222,21 +293,21 @@ fn reopening_tutorial_restores_its_pane_buffers_after_navigation() {
 }
 
 #[test]
-fn reopening_buffer_history_lesson_restores_the_alt_i_forward_step() {
+fn reopening_explorer_history_lesson_restores_the_alt_o_back_step() {
     let mut app = App::new(Config::default(), None).unwrap();
     app.execute_command("tutorial").unwrap();
     key(&mut app, KeyCode::Enter, Modifiers::NONE);
     app.tutorial.as_mut().unwrap().lesson = 11;
-    app.prepare_tutorial_buffer_history();
-    app.jump_in(true, true);
+    press(&mut app, ' ');
+    press(&mut app, 'e');
     let state = app.tutorial_state().unwrap().clone();
     app.open_scratch_buffer();
 
     app.execute_command("tutorial").unwrap();
-    assert_eq!(app.active().buffer, state.instruction_buffer);
-    key(&mut app, KeyCode::Char('i'), Modifiers::ALT);
+    assert_eq!(app.active().buffer, state.explorer_buffer.unwrap());
+    key(&mut app, KeyCode::Char('o'), Modifiers::ALT);
 
-    assert_eq!(app.tutorial_state().unwrap().lesson, 12);
+    assert_eq!(app.tutorial_state().unwrap().lesson, 13);
     assert_eq!(app.active().buffer, state.scratch_buffer);
 }
 
@@ -245,19 +316,19 @@ fn reopening_jump_lessons_reconstructs_backward_and_forward_history() {
     let mut app = App::new(Config::default(), None).unwrap();
     app.execute_command("tutorial").unwrap();
     key(&mut app, KeyCode::Enter, Modifiers::NONE);
-    app.tutorial.as_mut().unwrap().lesson = 13;
+    app.tutorial.as_mut().unwrap().lesson = 16;
     app.reset_tutorial_scratch("first\nsecond\nthird\n", 0, true);
-    app.prepare_tutorial_jump_history(13);
+    app.prepare_tutorial_jump_history(16);
 
     app.open_scratch_buffer();
     app.execute_command("tutorial").unwrap();
     key(&mut app, KeyCode::Char('o'), Modifiers::CONTROL);
-    assert_eq!(app.tutorial_state().unwrap().lesson, 14);
+    assert_eq!(app.tutorial_state().unwrap().lesson, 17);
 
     app.open_scratch_buffer();
     app.execute_command("tutorial").unwrap();
     key(&mut app, KeyCode::Char('i'), Modifiers::CONTROL);
-    assert_eq!(app.tutorial_state().unwrap().lesson, 15);
+    assert_eq!(app.tutorial_state().unwrap().lesson, 18);
 }
 
 #[test]
@@ -312,7 +383,7 @@ fn file_end_lesson_honors_vim_like_and_both_motion_preferences() {
             key(&mut app, KeyCode::Down, Modifiers::NONE);
         }
         key(&mut app, KeyCode::Enter, Modifiers::NONE);
-        app.tutorial.as_mut().unwrap().lesson = 12;
+        app.tutorial.as_mut().unwrap().lesson = 15;
         app.reset_tutorial_scratch("first\nsecond\nthird\n", 0, true);
         app.refresh_tutorial_document();
         let instructions = app.tutorial_state().unwrap().instruction_buffer;
@@ -321,7 +392,7 @@ fn file_end_lesson_honors_vim_like_and_both_motion_preferences() {
         for (code, modifiers) in key_sequence {
             key(&mut app, code, modifiers);
         }
-        assert_eq!(app.tutorial_state().unwrap().lesson, 13);
+        assert_eq!(app.tutorial_state().unwrap().lesson, 16);
     }
 }
 
@@ -330,7 +401,7 @@ fn persistent_tutorial_finishes_only_after_detach_and_reattach() {
     let mut app = App::new(Config::default(), None).unwrap();
     app.enable_persistent_session();
     app.execute_command("tutorial sessions").unwrap();
-    assert_eq!(app.tutorial_state().unwrap().lesson, 15);
+    assert_eq!(app.tutorial_state().unwrap().lesson, 18);
     assert!(app.list.is_none());
 
     app.execute_command("detach").unwrap();
@@ -340,7 +411,7 @@ fn persistent_tutorial_finishes_only_after_detach_and_reattach() {
     app.should_quit = false;
     app.note_frontend_attached();
     let state = app.tutorial_state().unwrap();
-    assert_eq!(state.lesson, 16);
+    assert_eq!(state.lesson, 19);
     assert!(
         app.buffers[state.instruction_buffer]
             .to_string()

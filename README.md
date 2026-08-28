@@ -80,8 +80,9 @@ registry, so the documentation shown inside the editor cannot silently drift
 from what the keys do.
 
 Run `:tutorial` for a guided two-pane introduction to modes, selection-first
-editing, search, multiple carets, command namespaces, pane and buffer
-navigation, jump history, and persistent sessions.
+editing (including `x`/`X` whole-line selection), search, multiple carets,
+command namespaces, panes, buffer types, the explorer, integrated terminal
+sessions, jump history, persistent sessions, and where to continue learning.
 
 ## Opinionated by default
 
