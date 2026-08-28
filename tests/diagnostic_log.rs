@@ -30,40 +30,36 @@ use runyte::{
         CLIENT_VERSION, ClientKind, ClientRequest, ClientRole, FeatureGroup, HostResponse,
         LocalClient, LocalEndpoint, PROTOCOL_VERSION, encode_path,
     },
+    workspace::workspace_id,
 };
 use tokio::{io::AsyncWriteExt, net::UnixStream};
 
-/// A private runtime directory for every Runyte process this binary spawns, so
-/// nothing publishes an endpoint or a recent workspace into the person's own.
-fn test_runtime_dir() -> &'static Path {
-    static RUNTIME: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
-    RUNTIME
-        .get_or_init(|| {
-            use std::os::unix::fs::PermissionsExt;
-            let unique = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-                % 1_000_000_007;
-            let path = std::env::temp_dir().join(format!("rylog-{}-{unique}", std::process::id()));
-            fs::create_dir_all(&path).unwrap();
-            fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
-            path
-        })
-        .as_path()
+/// A private, short process directory for one test workspace.
+///
+/// The test binary runs several real hosts in parallel. Giving each workspace
+/// its own runtime registry and cache prevents their endpoint cleanup and
+/// recent-workspace writes from contending with unrelated assertions. The
+/// abbreviated identity also keeps macOS Unix socket paths below their limit.
+fn test_process_dir(root: &Path, kind: &str) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+
+    let identity = workspace_id(root);
+    let path = std::env::temp_dir().join(format!(
+        "rylog-{kind}-{}-{}",
+        std::process::id(),
+        &identity[..8]
+    ));
+    fs::create_dir_all(&path).unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
+    path
 }
 
-fn test_cache_dir() -> &'static Path {
-    static CACHE: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
-    CACHE
-        .get_or_init(|| {
-            use std::os::unix::fs::PermissionsExt;
-            let path = test_runtime_dir().join("cache");
-            fs::create_dir_all(&path).unwrap();
-            fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
-            path
-        })
-        .as_path()
+fn test_runtime_dir(root: &Path) -> PathBuf {
+    test_process_dir(root, "run")
+}
+
+fn test_cache_dir(root: &Path) -> PathBuf {
+    test_process_dir(root, "cache")
 }
 
 struct ChildGuard(Option<Child>);
@@ -98,7 +94,11 @@ impl AsRef<Path> for Project {
 
 impl Drop for Project {
     fn drop(&mut self) {
+        let runtime = test_runtime_dir(&self.0);
+        let cache = test_cache_dir(&self.0);
         let _ = fs::remove_dir_all(&self.0);
+        let _ = fs::remove_dir_all(runtime);
+        let _ = fs::remove_dir_all(cache);
     }
 }
 
@@ -122,8 +122,8 @@ fn runyte(root: &Path, arguments: &[&str]) -> std::process::Output {
     Command::new(env!("CARGO_BIN_EXE_runyte"))
         .args(arguments)
         .current_dir(root)
-        .env("XDG_RUNTIME_DIR", test_runtime_dir())
-        .env("XDG_CACHE_HOME", test_cache_dir())
+        .env("XDG_RUNTIME_DIR", test_runtime_dir(root))
+        .env("XDG_CACHE_HOME", test_cache_dir(root))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -193,7 +193,7 @@ fn geometry() -> FrameGeometry {
 }
 
 fn endpoint_for(root: &Path) -> LocalEndpoint {
-    LocalEndpoint::discover_with_runtime(&root.join(".runyte"), root, Some(test_runtime_dir()))
+    LocalEndpoint::discover_with_runtime(&root.join(".runyte"), root, Some(&test_runtime_dir(root)))
         .unwrap()
 }
 
@@ -205,8 +205,8 @@ fn serve(root: &Path, extra: &[&str]) -> ChildGuard {
         .arg(root)
         .args(extra)
         .current_dir(root)
-        .env("XDG_RUNTIME_DIR", test_runtime_dir())
-        .env("XDG_CACHE_HOME", test_cache_dir())
+        .env("XDG_RUNTIME_DIR", test_runtime_dir(root))
+        .env("XDG_CACHE_HOME", test_cache_dir(root))
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
@@ -242,8 +242,7 @@ async fn wait_until(mut ready: impl FnMut() -> bool) -> bool {
 }
 
 /// Runs a colon command the way a person would, through the command prompt.
-async fn type_command(client: &mut LocalClient, command: &str) -> HostResponse {
-    let mut last = None;
+async fn type_command(client: &mut LocalClient, command: &str) {
     for event in [
         InputEvent::from(runyte::input::KeyStroke::new(
             runyte::input::KeyCode::Char(':'),
@@ -262,45 +261,16 @@ async fn type_command(client: &mut LocalClient, command: &str) -> HostResponse {
             })
             .await
             .unwrap();
-        last = Some(response(client).await);
     }
-    last.expect("one response per event")
 }
 
-/// Whether a frame shows `needle`, regardless of where its pane wrapped.
-///
-/// A rendered row is a slice of a logical line, and the wrap point moves with
-/// the temporary directory's name, so a plain substring search over joined
-/// rows is a portability trap rather than an assertion.
-fn frame_shows(response: &HostResponse, needle: &str) -> bool {
-    let strip = |text: &str| {
-        text.chars()
-            .filter(|character| !character.is_whitespace())
-            .collect::<String>()
-    };
-    strip(&frame_text(response)).contains(&strip(needle))
-}
-
-fn frame_text(response: &HostResponse) -> String {
-    let HostResponse::Frame { frame } = response else {
-        return String::new();
-    };
-    frame
-        .editor
-        .panes
-        .iter()
-        .flat_map(|pane| &pane.rows)
-        .filter_map(|row| match row {
-            runyte::protocol::SnapshotRow::Text(row) => Some(
-                row.runs
-                    .iter()
-                    .map(|run| run.text.as_str())
-                    .collect::<String>(),
-            ),
-            _ => None,
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
+async fn response_ignoring_frames(client: &mut LocalClient) -> HostResponse {
+    loop {
+        let response = response(client).await;
+        if !matches!(response, HostResponse::Frame { .. }) {
+            return response;
+        }
+    }
 }
 
 async fn response(client: &mut LocalClient) -> HostResponse {
@@ -399,8 +369,8 @@ fn concurrent_standalone_processes_never_share_a_writable_log() {
             Command::new(env!("CARGO_BIN_EXE_runyte"))
                 .args(arguments)
                 .current_dir(&root)
-                .env("XDG_RUNTIME_DIR", test_runtime_dir())
-                .env("XDG_CACHE_HOME", test_cache_dir())
+                .env("XDG_RUNTIME_DIR", test_runtime_dir(&root))
+                .env("XDG_CACHE_HOME", test_cache_dir(&root))
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
@@ -455,8 +425,8 @@ async fn a_second_process_is_refused_when_an_explicit_log_is_owned() {
             destination.to_str().unwrap(),
         ])
         .current_dir(&root)
-        .env("XDG_RUNTIME_DIR", test_runtime_dir())
-        .env("XDG_CACHE_HOME", test_cache_dir())
+        .env("XDG_RUNTIME_DIR", test_runtime_dir(&root))
+        .env("XDG_CACHE_HOME", test_cache_dir(&root))
         .env("RUNYTE_INPUT_TRACE", &trace)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -578,7 +548,11 @@ async fn a_host_owns_host_log_and_records_client_lifecycle_while_detached() {
     let mut client = LocalClient::connect(&endpoint, geometry(), true)
         .await
         .unwrap();
-    let _welcome = response(&mut client).await;
+    let welcome = response(&mut client).await;
+    assert!(
+        matches!(welcome, HostResponse::Welcome { .. }),
+        "expected the first attachment welcome, got {welcome:?}"
+    );
     assert!(
         wait_until(|| read_log(&log).contains("interactive client attached")).await,
         "{}",
@@ -586,6 +560,12 @@ async fn a_host_owns_host_log_and_records_client_lifecycle_while_detached() {
     );
     // Detachment and disconnection are separate facts the host observes.
     client.send(&ClientRequest::Detach).await.unwrap();
+    assert_eq!(
+        response_ignoring_frames(&mut client).await,
+        HostResponse::Detached {
+            directory_bytes: None,
+        }
+    );
     assert!(
         wait_until(|| read_log(&log).contains("interactive client detached")).await,
         "{}",
@@ -596,7 +576,11 @@ async fn a_host_owns_host_log_and_records_client_lifecycle_while_detached() {
     let mut abandoning = LocalClient::connect(&endpoint, geometry(), true)
         .await
         .unwrap();
-    let _welcome = response(&mut abandoning).await;
+    let welcome = response(&mut abandoning).await;
+    assert!(
+        matches!(welcome, HostResponse::Welcome { .. }),
+        "expected the abandoning attachment welcome, got {welcome:?}"
+    );
     drop(abandoning);
     assert!(
         wait_until(|| read_log(&log).contains("interactive client disconnected")).await,
@@ -618,18 +602,38 @@ async fn a_host_owns_host_log_and_records_client_lifecycle_while_detached() {
     let mut reattached = LocalClient::connect(&endpoint, geometry(), true)
         .await
         .unwrap();
-    let _welcome = response(&mut reattached).await;
+    let welcome = response(&mut reattached).await;
+    assert!(
+        matches!(welcome, HostResponse::Welcome { .. }),
+        "expected the final attachment welcome, got {welcome:?}"
+    );
     assert!(read_log(&log).contains("persistent session published"));
 
-    let mut frame = type_command(&mut reattached, "log-open").await;
-    while !frame_shows(&frame, "host owner") {
-        frame = response(&mut reattached).await;
-    }
-    assert!(frame_shows(&frame, HOST_LOG_NAME), "{}", frame_text(&frame));
+    type_command(&mut reattached, "log-open").await;
+    reattached.send(&ClientRequest::ListBuffers).await.unwrap();
+    let log_buffer = match response_ignoring_frames(&mut reattached).await {
+        HostResponse::Buffers { buffers } => {
+            buffers
+                .into_iter()
+                .find(|buffer| !buffer.closed && buffer.name == "[log]")
+                .unwrap_or_else(|| panic!("the log command did not open [log]"))
+                .id
+        }
+        response => panic!("expected buffers after log-open, got {response:?}"),
+    };
+    reattached
+        .send(&ClientRequest::ReadBuffer { buffer: log_buffer })
+        .await
+        .unwrap();
+    let text = match response_ignoring_frames(&mut reattached).await {
+        HostResponse::Buffer { buffer } => buffer.text,
+        response => panic!("expected [log] contents, got {response:?}"),
+    };
+    assert!(text.contains("host owner"), "{text}");
+    assert!(text.contains(HOST_LOG_NAME), "{text}");
     assert!(
-        frame_shows(&frame, "persistent session published"),
-        "the buffer shows the host's own records:\n{}",
-        frame_text(&frame)
+        text.contains("persistent session published"),
+        "the buffer shows the host's own records:\n{text}"
     );
 
     drop(reattached);
@@ -730,8 +734,15 @@ async fn attaching_with_logging_flags_reports_the_retained_configuration() {
     let mut client = LocalClient::connect(&endpoint, geometry(), true)
         .await
         .unwrap();
-    let _welcome = response(&mut client).await;
+    let welcome = response(&mut client).await;
+    assert!(matches!(welcome, HostResponse::Welcome { .. }));
     client.send(&ClientRequest::Detach).await.unwrap();
+    assert_eq!(
+        response_ignoring_frames(&mut client).await,
+        HostResponse::Detached {
+            directory_bytes: None,
+        }
+    );
     drop(client);
     tokio::time::sleep(Duration::from_millis(250)).await;
 
@@ -825,7 +836,7 @@ async fn no_document_clipboard_terminal_or_environment_value_reaches_a_record() 
     fs::write(root.join("leak.rs"), format!("// {IN_FILE}\n")).unwrap();
     // Outside the project: a config directory is reserved storage, and one
     // containing the project root would be refused as overlapping it.
-    let config_directory = test_runtime_dir().join(format!("cfg-{}", std::process::id()));
+    let config_directory = test_runtime_dir(&root).join("config");
     fs::create_dir_all(&config_directory).unwrap();
     let config = config_directory.join("config.yaml");
     fs::write(
@@ -847,8 +858,8 @@ async fn no_document_clipboard_terminal_or_environment_value_reaches_a_record() 
         .arg("-vvv")
         .arg("leak.rs")
         .current_dir(&root)
-        .env("XDG_RUNTIME_DIR", test_runtime_dir())
-        .env("XDG_CACHE_HOME", test_cache_dir())
+        .env("XDG_RUNTIME_DIR", test_runtime_dir(&root))
+        .env("XDG_CACHE_HOME", test_cache_dir(&root))
         .env("RUNYTE_TEST_SECRET", ENVIRONMENT)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -889,7 +900,7 @@ async fn no_document_clipboard_terminal_or_environment_value_reaches_a_record() 
     // A terminal child whose output is emulator state, never a record. The
     // command itself is typed into the prompt, so the prompt text is covered
     // by the same assertion.
-    let _ = type_command(&mut client, &format!("terminal echo {TERMINAL}")).await;
+    type_command(&mut client, &format!("terminal echo {TERMINAL}")).await;
 
     // Yanking puts the secret in a register, which is where a clipboard value
     // would also live.
@@ -950,8 +961,8 @@ fn the_top_level_failure_record_never_carries_a_propagated_error_chain() {
             destination.to_str().unwrap(),
         ])
         .current_dir(&root)
-        .env("XDG_RUNTIME_DIR", test_runtime_dir())
-        .env("XDG_CACHE_HOME", test_cache_dir())
+        .env("XDG_RUNTIME_DIR", test_runtime_dir(&root))
+        .env("XDG_CACHE_HOME", test_cache_dir(&root))
         .env("RUNYTE_INPUT_TRACE", &trace)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())

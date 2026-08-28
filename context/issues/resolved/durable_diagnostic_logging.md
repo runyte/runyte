@@ -181,6 +181,21 @@ same ordering for a failed framed write. Each new assertion was also run
 against its reverted behavior and failed at the intended boundary rather than
 passing on an empty file, an impossible path, or a skipped socket.
 
+A later CI-hardening follow-up fixes the process fixture rather than weakening
+the five-second host-response boundary. `tests/diagnostic_log.rs` gave every
+parallel test the same runtime registry and cache, made the host-log lifecycle
+case infer `:log-open` completion from replaceable frontend frames, and dropped
+an explicit detach before reading its `Detached` response. On slower Linux and
+macOS runners the lifecycle case could therefore time out, while macOS could
+also retain the resulting broken-pipe warning in a different assertion. Each
+project now owns short private runtime and cache directories that are removed
+with its fixture, detach assertions complete the protocol handshake, and
+`a_host_owns_host_log_and_records_client_lifecycle_while_detached` reads the
+opened `[log]` buffer through `ListBuffers` and `ReadBuffer`. The related
+`attaching_with_logging_flags_reports_the_retained_configuration` test also
+consumes the detach response, so it measures the host's retained log level
+without manufacturing a transport failure.
+
 Known limitations. An explicit `--log` is honoured only by processes that own
 editor state. Passing it to a session-management command that neither starts
 nor attaches to a session — `--session-list`, `--session-stop`,
@@ -190,9 +205,7 @@ so on an ordinary `runyte --persistent -v` it is printed immediately before
 the alternate screen opens and the person is unlikely to see it; it is visible
 on `--session-start` and `--wait`. Filesystem-watcher lifecycle beyond its
 channel closing, and a host restart as distinct from a stop followed by a
-start, are not instrumented. The shared per-test-binary runtime directory under
-the temporary directory is not removed after a run, matching the existing
-convention in `tests/persistent_host.rs`.
+start, are not instrumented.
 
 ## Report
 
