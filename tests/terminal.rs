@@ -1764,16 +1764,17 @@ fn quitting_refuses_a_running_terminal_even_when_forced() {
 }
 
 #[test]
-fn persistent_quit_detaches_while_a_terminal_keeps_running() {
+fn persistent_quit_refuses_a_running_terminal_even_when_forced() {
     let mut session = Session::start("/bin/cat");
     let terminal = session.app.active_terminal().unwrap();
     session.app.enable_persistent_session();
 
     session.colon("quit");
-
-    assert!(session.app.should_quit);
+    assert!(!session.app.should_quit);
+    assert!(session.app.status.contains("still running"));
+    session.colon("quit!");
+    assert!(!session.app.should_quit);
     assert!(session.app.terminals.get(terminal).unwrap().live());
-    assert!(!session.app.status.contains("still running"));
 }
 
 #[test]

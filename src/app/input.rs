@@ -125,10 +125,21 @@ impl App {
         self.key_hint_mode()
     }
 
-    /// Persistent hosts interpret the ordinary quit command as detaching the
-    /// interactive client. The host process and its editor state remain live.
-    pub fn take_detach_request(&mut self) -> bool {
-        std::mem::take(&mut self.should_quit)
+    /// Takes the persistent-session meaning of an editor-level exit.
+    ///
+    /// Direct workspace switches clear `should_quit` through
+    /// `take_workspace_switch` before this is read. The fallback covers older
+    /// internal paths that request an ordinary safe quit by setting the public
+    /// application flag directly.
+    pub fn take_persistent_exit_request(&mut self) -> Option<super::PersistentExitRequest> {
+        if !std::mem::take(&mut self.should_quit) {
+            return None;
+        }
+        Some(
+            self.persistent_exit_request
+                .take()
+                .unwrap_or(super::PersistentExitRequest::Quit { force: false }),
+        )
     }
 
     /// Captures every optional capability consulted by the command palette.
@@ -1087,7 +1098,18 @@ impl App {
         Some(self.buffers[pane.buffer_id].clamp_offset(offset, insert))
     }
 
-    fn handle_key_stroke(&mut self, key: KeyStroke) -> Result<()> {
+    fn handle_key_stroke(&mut self, mut key: KeyStroke) -> Result<()> {
+        // Space opens most application surfaces, so the same bare key closes
+        // a modal overlay that already owns input. Route it through Escape
+        // instead of clearing state here: settings previews, confirmations,
+        // and nested action menus each retain their existing cancellation
+        // semantics. Exact-text confirmations are the exception because a
+        // branch or path can legitimately contain a space.
+        if key == KeyStroke::new(KeyCode::Char(' '), Modifiers::NONE)
+            && self.space_dismisses_input_overlay()
+        {
+            key = KeyStroke::new(KeyCode::Escape, Modifiers::NONE);
+        }
         if self.fs_confirmation.is_some() {
             return self.handle_fs_confirmation(key);
         }
@@ -1201,6 +1223,42 @@ impl App {
                 self.handle_editor_input(InputEvent::Key(key))
             }
         }
+    }
+
+    fn space_dismisses_input_overlay(&self) -> bool {
+        if self.exact_confirmation_accepts_space() {
+            return false;
+        }
+        // A nested action menu is the topmost overlay even when the picker
+        // beneath it already has a query.
+        if self.context_action_menu.is_some()
+            || self.program_action_menu.is_some()
+            || self.path_action_menu.is_some()
+            || self.buffer_action_menu.is_some()
+            || self.terminal_action_menu.is_some()
+            || self.session_action_menu.is_some()
+        {
+            return true;
+        }
+        if let Some(picker) = self.picker.as_ref() {
+            // An initial Space is the symmetric close gesture. Once a file or
+            // content query exists, spaces retain their established role as
+            // separators between fuzzy terms.
+            return picker.query.is_empty();
+        }
+        self.has_input_overlay()
+    }
+
+    fn exact_confirmation_accepts_space(&self) -> bool {
+        self.git_branch_switch.is_some()
+            || self
+                .git_branch_deletion
+                .as_ref()
+                .is_some_and(|confirmation| confirmation.typed())
+            || self
+                .git_worktree_removal
+                .as_ref()
+                .is_some_and(|confirmation| confirmation.typed())
     }
 
     pub(super) fn hover_visible_rows(&self) -> usize {

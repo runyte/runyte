@@ -482,6 +482,21 @@ fn picker_control_bindings_page_and_open_in_a_split() {
 }
 
 #[test]
+fn space_closes_a_new_picker_but_remains_a_query_separator_after_text() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    app.picker = Some(FilePicker::new(1, PathBuf::from("/project")));
+
+    key(&mut app, KeyCode::Char(' '), Modifiers::NONE);
+    assert!(app.picker.is_none(), "initial Space dismisses the picker");
+
+    let mut picker = FilePicker::new(2, PathBuf::from("/project"));
+    picker.insert_query_text("src");
+    app.picker = Some(picker);
+    key(&mut app, KeyCode::Char(' '), Modifiers::NONE);
+    assert_eq!(app.picker.as_ref().unwrap().query, "src ");
+}
+
+#[test]
 fn project_finder_switches_modes_without_losing_its_query_or_file_scan() {
     let root = temporary("project-finder-modes");
     fs::create_dir_all(&root).unwrap();

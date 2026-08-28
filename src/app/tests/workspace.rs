@@ -2,6 +2,13 @@
 
 use super::*;
 
+#[cfg(unix)]
+fn open_session_manager_for_refresh(app: &mut App) {
+    let mut picker = ListPicker::new("Sessions · loading…", Vec::new());
+    picker.primary_action = Some("attach".to_owned());
+    app.list = Some(picker);
+}
+
 #[test]
 fn attach_alias_captures_the_editor_working_directory_for_relative_selectors() {
     let root = temporary("session-attach-working-directory");
@@ -1356,6 +1363,34 @@ fn standalone_refuses_every_session_command_including_the_manager() {
 
 #[cfg(unix)]
 #[test]
+fn a_background_session_refresh_does_not_open_the_manager() {
+    let root = temporary("background-session-refresh");
+    fs::create_dir_all(&root).unwrap();
+    let root = root.canonicalize().unwrap();
+    let mut app = App::new_in_isolated_project(
+        &root,
+        HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+            String::new(),
+        ))))),
+    )
+    .unwrap();
+    app.enable_persistent_session();
+    app.workspace_generation = 1;
+
+    // Worktree teardown and other session actions refresh the catalog after
+    // their own UI has finished. The result updates cached rows, but only an
+    // explicit :session-list is allowed to create the manager overlay.
+    app.apply_workspace_event(WorkspaceEvent::Refreshed {
+        generation: 1,
+        result: Ok(Vec::new()),
+    });
+
+    assert!(app.list.is_none());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
 fn session_activity_uses_one_rounded_up_compact_unit() {
     const NOW: u64 = 10 * 24 * 60 * 60;
 
@@ -1406,6 +1441,7 @@ fn session_picker_keeps_filter_and_routes_enter_and_tab_by_workspace_identity() 
     app.enable_persistent_session();
     app.home_directory = Some(root.clone());
     app.workspace_generation = 4;
+    open_session_manager_for_refresh(&mut app);
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
@@ -1510,6 +1546,7 @@ fn session_picker_keeps_filter_and_routes_enter_and_tab_by_workspace_identity() 
     );
 
     app.workspace_generation = 5;
+    open_session_manager_for_refresh(&mut app);
     app.apply_workspace_event(WorkspaceEvent::Refreshed {
         generation: 5,
         result: Ok(vec![WorkspaceRow {
@@ -1558,6 +1595,7 @@ fn session_picker_omits_counts_a_running_host_answers_with_zero() {
     .unwrap();
     app.enable_persistent_session();
     app.workspace_generation = 6;
+    open_session_manager_for_refresh(&mut app);
     app.apply_workspace_event(WorkspaceEvent::Refreshed {
         generation: 6,
         result: Ok(vec![
@@ -1638,6 +1676,7 @@ fn session_picker_marks_a_running_hosts_unanswered_health_as_unavailable() {
     .unwrap();
     app.enable_persistent_session();
     app.workspace_generation = 7;
+    open_session_manager_for_refresh(&mut app);
     app.apply_workspace_event(WorkspaceEvent::Refreshed {
         generation: 7,
         result: Ok(vec![WorkspaceRow {
@@ -1696,6 +1735,7 @@ fn session_picker_states_the_session_as_fields_rather_than_pane_contents() {
     .unwrap();
     app.enable_persistent_session();
     app.workspace_generation = 3;
+    open_session_manager_for_refresh(&mut app);
     app.apply_workspace_event(WorkspaceEvent::Refreshed {
         generation: 3,
         result: Ok(vec![WorkspaceRow {
@@ -1810,6 +1850,7 @@ fn session_directory_paths_cannot_manufacture_manager_rows() {
     .unwrap();
     app.enable_persistent_session();
     app.workspace_generation = 1;
+    open_session_manager_for_refresh(&mut app);
     app.apply_workspace_event(WorkspaceEvent::Refreshed {
         generation: 1,
         result: Ok(vec![WorkspaceRow {
@@ -1867,6 +1908,7 @@ fn the_session_list_marks_stopped_rows_dormant_without_hiding_or_reordering_them
     .unwrap();
     app.enable_persistent_session();
     app.workspace_generation = 2;
+    open_session_manager_for_refresh(&mut app);
     app.apply_workspace_event(WorkspaceEvent::Refreshed {
         generation: 2,
         result: Ok(vec![
@@ -1945,6 +1987,7 @@ fn numbered_sessions(label: &str) -> (App, PathBuf, Vec<PathBuf>) {
     .unwrap();
     app.enable_persistent_session();
     app.workspace_generation = 3;
+    open_session_manager_for_refresh(&mut app);
     let numbers = [Some(1), Some(2), None];
     let names = ["runyte", "runyte-2", "spare"];
     app.apply_workspace_event(WorkspaceEvent::Refreshed {
@@ -1987,6 +2030,18 @@ fn a_digit_attaches_to_a_numbered_session_from_the_manager() {
         "the digit reaches the session holding that number, not the second row"
     );
     assert!(app.list.is_none(), "attaching closes the manager");
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn space_closes_the_session_manager_instead_of_filtering() {
+    let (mut app, root, _roots) = numbered_sessions("session-space-close");
+
+    press(&mut app, ' ');
+
+    assert!(app.list.is_none(), "Space dismisses the manager overlay");
+    assert!(app.take_workspace_switch().is_none());
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -2056,14 +2111,17 @@ fn a_digit_no_session_holds_reports_that_rather_than_attaching() {
 
 #[cfg(unix)]
 #[test]
-fn the_manager_number_action_prompts_with_the_number_a_session_already_has() {
+fn the_manager_renumber_action_opens_an_empty_prompt() {
     let (mut app, root, roots) = numbered_sessions("session-number-prompt");
 
     key(&mut app, KeyCode::Tab, Modifiers::NONE);
     app.session_action_menu.as_mut().unwrap().selected = 2;
     key(&mut app, KeyCode::Enter, Modifiers::NONE);
     assert_eq!(app.prompt_kind, PromptKind::SessionNumber);
-    assert_eq!(app.command, "1", "the prompt opens on the current number");
+    assert!(
+        app.command.is_empty(),
+        "renumber starts ready for one digit"
+    );
     assert_eq!(
         app.session_number_target.as_deref(),
         Some(roots[0].as_path())
@@ -2107,6 +2165,7 @@ fn workspace_actions_match_the_selected_session_state() {
     .unwrap();
     app.enable_persistent_session();
     app.workspace_generation = 9;
+    open_session_manager_for_refresh(&mut app);
     app.apply_workspace_event(WorkspaceEvent::Refreshed {
         generation: 9,
         result: Ok(vec![
@@ -2185,7 +2244,7 @@ fn workspace_actions_match_the_selected_session_state() {
                 .collect::<Vec<_>>()
         })
         .unwrap();
-    assert_eq!(labels, vec!["Open", "Rename", "Number", "Forget"]);
+    assert_eq!(labels, vec!["Open", "Rename", "Renumber", "Forget"]);
 
     // No session service is attached in an isolated project, so the
     // request cannot be served; what matters here is that Forget asks to
@@ -2290,6 +2349,7 @@ fn session_actions_confirm_force_close_and_recheck_state_at_enter() {
         });
     };
 
+    open_session_manager_for_refresh(&mut app);
     refresh(&mut app, true);
     key(&mut app, KeyCode::Tab, Modifiers::NONE);
     assert_eq!(

@@ -1626,14 +1626,7 @@ fn draw_normal_status(
     status_area: TuiRect,
 ) {
     let mode_label = format!(" {} ", status.mode.label());
-    // An unnumbered workspace contributes nothing rather than a placeholder:
-    // the marker is a key somebody can press, so showing one where no key
-    // works would be worse than showing none.
-    let number_label = status
-        .workspace_number
-        .map(|number| format!("[S{number}] "))
-        .unwrap_or_default();
-    let left_prefix = format!("│ {} │ {number_label}Workspace: ", session.label());
+    let left_prefix = format!("│ {} │ Workspace: ", session.label());
     let left_suffix = format!(
         "{}{}{} ",
         if status.dirty { " [+]" } else { "" },
@@ -3897,11 +3890,8 @@ mod tests {
         }
     }
 
-    /// The marker is the key somebody would press to come back here, so an
-    /// unnumbered workspace shows nothing rather than a placeholder standing
-    /// where a working shortcut would be.
     #[test]
-    fn the_status_row_marks_a_numbered_workspace_and_omits_the_marker_otherwise() {
+    fn the_status_row_leaves_session_shortcuts_to_the_manager() {
         let mut status = status_with_notifications(NotificationCounts::default());
         status.workspace_directory = "/project/runyte".to_owned();
         status.dirty = false;
@@ -3909,16 +3899,10 @@ mod tests {
         status.workspace_number = Some(1);
         let numbered = rendered_status_line_for(&status, SessionMode::Persistent, 120);
         assert!(
-            numbered.starts_with(" NOR │ persistent │ [S1] Workspace: /project/runyte "),
+            numbered.starts_with(" NOR │ persistent │ Workspace: /project/runyte "),
             "{numbered:?}"
         );
-
-        status.workspace_number = None;
-        let unnumbered = rendered_status_line_for(&status, SessionMode::Persistent, 120);
-        assert!(
-            unnumbered.starts_with(" NOR │ persistent │ Workspace: /project/runyte "),
-            "{unnumbered:?}"
-        );
+        assert!(!numbered.contains("[S1]"), "{numbered:?}");
     }
 
     /// The two render paths draw the same snapshot, so the mode has to come

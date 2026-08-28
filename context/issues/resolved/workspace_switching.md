@@ -59,6 +59,15 @@ send navigation only after the generated view contains the destination path.
 Slower runners therefore exercise the same state transition instead of racing
 the projection.
 
+A 2026-08-28 lifecycle follow-up separated ordinary quit from explicit detach.
+`:q` from the last pane, plus `:qa` and `:qh` from any layout, now stop a
+persistent session after the same unsaved-buffer, pending-wait, and
+live-terminal safety checks used by host shutdown; `:detach` remains the
+operation that preserves host state. The same follow-up stopped catalog refresh
+results from creating a session-manager overlay unless that manager was already
+open, so removing another worktree and its persistent session no longer
+interrupts the current workspace.
+
 Known limitation: a switch does not forward file targets from the original
 command line, and a running destination host keeps the configuration it loaded
 at startup until it is restarted or retires.

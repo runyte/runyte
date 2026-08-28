@@ -30,6 +30,10 @@ impl App {
                 }
                 match result {
                     Ok(rows) => {
+                        let manager_open = self
+                            .list
+                            .as_ref()
+                            .is_some_and(|picker| picker.title.starts_with("Sessions"));
                         self.workspace_rows = rows;
                         // Self-correcting: a swap performed from another
                         // workspace can change this one's number without this
@@ -43,8 +47,10 @@ impl App {
                             let number = row.number;
                             self.note_workspace_number(number);
                         }
-                        self.rebuild_workspace_picker();
-                        self.request_selected_workspace_preview();
+                        if manager_open {
+                            self.rebuild_workspace_picker();
+                            self.request_selected_workspace_preview();
+                        }
                     }
                     Err(error) => self.error_from("Host", "Host operation failed", error),
                 }
@@ -647,7 +653,7 @@ impl App {
         self.note_workspace_number(number);
     }
 
-    /// Enables the detach-and-preserve policy owned by a persistent session.
+    /// Enables persistent-session lifecycle and workspace switching.
     pub fn enable_persistent_session(&mut self) {
         self.persistent_session = true;
     }

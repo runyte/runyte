@@ -2626,21 +2626,10 @@ impl App {
                         self.command_cursor = self.command.chars().count();
                     }
                     Some((selector, _, _, SessionAction::Number)) => {
-                        let current = self
-                            .workspace_rows
-                            .iter()
-                            .find(|row| row.project_root == selector)
-                            .and_then(|row| row.number);
                         self.list = None;
                         self.session_action_menu = None;
                         self.session_number_target = Some(selector);
                         self.open_prompt(PromptKind::SessionNumber);
-                        // Prefilled with the number it already has, so the
-                        // prompt shows what is being changed and an empty
-                        // answer is a deliberate clearing rather than the
-                        // state it opened in.
-                        self.command = current.map(|number| number.to_string()).unwrap_or_default();
-                        self.command_cursor = self.command.chars().count();
                     }
                     Some((selector, _, true, SessionAction::Close)) => self.stop_session(selector),
                     Some((_, _, false, SessionAction::Close)) => {

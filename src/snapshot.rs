@@ -412,9 +412,8 @@ pub enum TextRole {
 pub struct StatusSnapshot {
     pub mode: Mode,
     /// The digit that reaches this workspace from the session manager, when it
-    /// has one. Presented beside the directory so the shortcut somebody would
-    /// press is visible from the workspace they are in, rather than only from
-    /// the list they would press it in.
+    /// has one. Kept in the snapshot for wire compatibility; the global status
+    /// line leaves shortcut presentation to the manager itself.
     pub workspace_number: Option<u8>,
     /// The editor working directory selected by startup or `:cd`, rendered as
     /// workspace context independently of the active pane's buffer identity.

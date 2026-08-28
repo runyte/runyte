@@ -279,7 +279,7 @@ These later fixes are covered by
 `escape_intermediates_are_counted_toward_the_sequence_limit` in
 `src/terminal/parser.rs`; `dense_review_search_maps_matches_in_one_forward_pass`
 and `review_memory_accounting_includes_search_matches` in
-`src/terminal/mod.rs`; `persistent_quit_detaches_while_a_terminal_keeps_running`
+`src/terminal/mod.rs`; `persistent_quit_refuses_a_running_terminal_even_when_forced`
 and `control_w_exits_then_opens_the_window_namespace_and_sends_the_literal_byte`
 in `tests/terminal.rs`;
 `terminal_control_w_leaves_insert_without_starting_a_window_prefix` in

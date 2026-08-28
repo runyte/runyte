@@ -37,6 +37,12 @@ termination paths. A child exit preserves its pane, pane quit leaves the child
 headless, every standalone editor-exit spelling refuses live terminals even
 with `!`, and persistent quit continues to detach without signalling children.
 
+A 2026-08-28 persistent-session lifecycle follow-up kept the terminal boundary
+but changed the host boundary: every quit spelling now refuses live terminal
+children in persistent mode too, then stops the host once its protected state
+is clear. `:detach` remains the explicit operation that leaves the child and
+host running.
+
 Terminal Insert dispatch had treated both `Ctrl-\\` and `Ctrl-w` as Normal-mode
 exits. `Ctrl-\\` (including legacy `Ctrl-4`) is now the sole exit. `Ctrl-w`
 starts a registry-backed movement-only prefix in Insert mode; a terminal

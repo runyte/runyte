@@ -250,12 +250,15 @@ connects the TUI. `--serve` runs the host in the foreground instead, for direct
 supervision or diagnostics; it is also the mechanism Runyte uses when starting
 or restarting a persistent session.
 
-`:quit` closes the active pane; from the last pane it disconnects the TUI
-without stopping the persistent session. `:quit-all` disconnects regardless
-of pane count. `:detach` states that intent directly: it immediately disconnects
-the TUI while retaining every pane, buffer, unsaved edit, and terminal in the
-host. It is available only in persistent mode and needs no force form because
-it discards nothing. Use `runyte --session-stop` for an explicit shutdown.
+`:quit` closes the active pane; from the last pane it stops a clean persistent
+session and disconnects the TUI. `:quit-all` requests the same shutdown
+regardless of pane count. Quit refuses unsaved buffers and live terminal
+children; a `!` form may discard unsaved buffers but still never terminates a
+terminal. `:detach` is the explicit leave-it-running operation: it immediately
+disconnects the TUI while retaining every pane, buffer, unsaved edit, and
+terminal in the host. It is available only in persistent mode and needs no
+force form because it discards nothing. Use `runyte --session-stop` to stop a
+different persistent session.
 Only one interactive TUI may connect at a time; separate control connections
 may still manage the host.
 
@@ -281,7 +284,10 @@ session listing. Rename a persistent session, running or stopped, with
 `runyte --session-rename WORKSPACE NAME`. A running session is renamed through
 its host; a stopped one is renamed in the visited history it is listed from.
 Session names persist across restarts and must be unique among running
-sessions. `WORKSPACE` may be the abbreviated
+sessions. When a name is entered, surrounding spaces are trimmed and spaces
+between words become `-`, so `  release candidate  ` is stored as
+`release-candidate`. Default names derived from directories follow the same
+rule. `WORKSPACE` may be the abbreviated
 ID a listing shows, any other unambiguous ID prefix, the full ID, its exact
 session name, or its project directory.
 The same selector works for attachment and the lifecycle commands:
@@ -335,11 +341,13 @@ completed wait is refreshed from disk first; unsaved text and buffers still
 owned by a pending wait are never replaced. If that host already has a TUI,
 the file appears there while the invoking process waits; if the TUI detaches
 before completion, the invoking terminal takes over. If no host exists, Runyte
-starts one, attaches the invoking terminal so the request is never invisible,
-and leaves the host running after completion. Dirty buffers retain the
-ordinary save/discard protection. Detaching the wait-owned TUI cancels the
-request, and explicit cancellation or host failure exits nonzero. Completing a
-request does not stop the host or close unrelated buffers.
+starts one and attaches the invoking terminal so the request is never invisible.
+The command used to complete the buffer owns what happens next: `:wbc` leaves
+the host and unrelated buffers running, while `:wq` applies `:q` after writing
+an ordinary file and therefore stops a clean persistent session from its last
+pane. Dirty buffers retain the ordinary save/discard protection. Detaching the
+wait-owned TUI cancels the request, and explicit cancellation or host failure
+exits nonzero.
 
 For example, `git config core.editor 'runyte --wait'` gives Git commit and
 rebase message files this lifecycle. Persistent hosting and `--wait` currently
@@ -354,12 +362,13 @@ A stopped session keeps its place in that order but is drawn in the theme's
 dimmed text colour, the one a command prompt grays the panes behind it with, so
 the running hosts stand out without any row being hidden or moved.
 `Space Space` is the complete binding,
-not a prefix with subcommands. Tab opens one manager menu listing only the
+not a prefix with subcommands. A third `Space` closes the manager, just like
+Escape or `Ctrl-c`. Tab opens one manager menu listing only the
 actions the selected row's own state can answer: a running row offers Open,
-Rename, Number, Close, and Force close, and a stopped row offers Open, Rename,
-Number, and Forget. Open is identical to Enter. Close stops the host and leaves
-the workspace listed as a stopped row; nothing below the session is touched,
-because a session is the only level that means nothing on its own.
+Rename, Renumber, Close, and Force close, and a stopped row offers Open,
+Rename, Renumber, and Forget. Open is identical to Enter. Close stops the host
+and leaves the workspace listed as a stopped row; nothing below the session is
+touched, because a session is the only level that means nothing on its own.
 
 Each row reads as five columns, padded to the widest value or heading in the
 list so they line up down it:
@@ -428,27 +437,25 @@ The manager does not show the contents of the session's buffers and terminals.
 It did, and at this width a snippet of a pane is neither readable as text nor
 useful as identity.
 
-Sessions carry a number from `1` to `9`, shown in the manager's first column
-and in the status line as `[S1]` before the workspace directory. Pressing that
-digit in the manager attaches to its session directly, so `Space Space 1`
-reaches the first session as one gesture. The digit is a shortcut only while
-the manager's filter is empty: Runyte's default names are `runyte`, `runyte-2`,
-`runyte-3`, and project paths routinely contain digits, so once anything has
-been typed a digit is ordinary filter text. Clearing the filter, with Delete or
-by backspacing to empty, arms the shortcut again. A workspace whose name or
-path begins with a digit therefore cannot be filtered by that first character;
-type a later part of the name instead.
+Sessions carry a number from `1` to `9`, shown in the manager's first column.
+Pressing that digit in the manager attaches to its session directly, so
+`Space Space 1` reaches the first session as one gesture. The digit is a
+shortcut only while the manager's filter is empty: Runyte's default names are
+`runyte`, `runyte-2`, `runyte-3`, and project paths routinely contain digits,
+so once anything has been typed a digit is ordinary filter text. Clearing the
+filter, with Delete or by backspacing to empty, arms the shortcut again. A
+workspace whose name or path begins with a digit therefore cannot be filtered
+by that first character; type a later part of the name instead.
 
 Numbers are assigned in order of creation, when a workspace is first recorded,
 and stay with it as the list reorders around them, so the digit does not move
 between two visits. A catalog written before Runyte numbered sessions has no
 creation order left to recover, and is numbered most-recently-visited first on
 the next listing. Only nine sessions are numbered; a tenth is reached by name
-or path, and inherits a number when an earlier one is forgotten. Number in the
-manager menu sets the shortcut for the selected session, prefilled with the
-number it already has; an empty answer takes its number away. Giving a session
-a number another one holds swaps the two, so both keep a shortcut, and the
-status line names the workspace that took the number given up.
+or path, and inherits a number when an earlier one is forgotten. Renumber in
+the manager menu opens an empty prompt ready for one digit and sets the shortcut
+for the selected session; an empty answer takes its number away. Giving a
+session a number another one holds swaps the two, so both keep a shortcut.
 A standalone workspace owns no persistent host, so the whole `session`
 namespace is inert there rather than a set of commands that each refuse.
 `Space Space` greys out in the key-hint popup and `:session-list`,
@@ -678,13 +685,13 @@ present, otherwise whatever the program calls itself — the title a shell sets
 from its prompt, or the program's own name until it sets one. Scrolled back
 into history it also carries `↑` and how far. When the child exits, its session
 disappears from `:terminals`, and a pane showing it reveals its most recently
-used buffer (or a scratch buffer) without closing the pane. In standalone mode
-every quit spelling, including its `!` form, refuses while any terminal is
-running and points to `:terminals`; in persistent mode quit detaches the client
-without signalling the child. Sessions survive normal
-detach, client failure, workspace switching, and reattachment for the lifetime
-of that same workspace-host process. They do not survive force-stop, host
-replacement or crash, logout/reboot, or machine failure.
+used buffer (or a scratch buffer) without closing the pane. Every quit spelling,
+including its `!` form, refuses while any terminal is running and points to
+`:terminals` in both standalone and persistent modes. `:detach` leaves
+persistent terminal children running without signalling them. Sessions survive
+normal detach, client failure, workspace switching, and reattachment for the
+lifetime of that same workspace-host process. They do not survive force-stop,
+host replacement or crash, logout/reboot, or machine failure.
 
 The emulator is Runyte's own, like the fuzzy scorer, the picker, and the diff.
 It implements what an interactive program on a pty needs: colour including the
@@ -1504,7 +1511,7 @@ cancellation keys.
 | `Space c y` / `Space c p` / `Space c P` | System clipboard yank / paste after / paste before |
 | `Space e` | Open the active buffer's directory as an editable explorer; from a file, select that file |
 | `Space E` | Open the working directory (controlled by `:cd`) as an editable explorer |
-| `Space Space` | Open the persistent-session manager (`:session-list`, `:sl`); `1`-`9` attach to a numbered session while the filter is empty; `Tab` shows the actions the selected row's state allows |
+| `Space Space` | Open the persistent-session manager (`:session-list`, `:sl`); another `Space` closes it, `1`-`9` attach to a numbered session while the filter is empty, and `Tab` shows the selected row's actions |
 | `Space / f` / `Space f` | Find project files, open buffers, or terminals; `Tab` switches modes and `Ctrl-t` toggles preview |
 | `Space / g` | Fuzzy-search contents below the stable project root |
 | `:file-picker-directory` | Fuzzy-find a file or directory below the active file/explorer directory |
@@ -1540,8 +1547,8 @@ cancellation keys.
 | `:resize-bottom +/- N` | Grow or shrink the active pane at its bottom edge by `N` terminal cells |
 | `:close[!]` or `:c[!]` | Close the active buffer in place; `!` explicitly discards unsaved text; terminals are refused |
 | `:window-close` or `:wc` | Close the active pane, but refuse the last pane |
-| `:quit[!]` or `:q[!]` | Close the active pane and its uniquely displayed buffer; from the last pane, leave with unsaved-change protection |
-| `:quit-all[!]` or `:qa[!]` | Leave regardless of pane count, with unsaved-change protection; never terminate terminals |
+| `:quit[!]` or `:q[!]` | Close the active pane and its uniquely displayed buffer; from the last pane, exit standalone or stop the persistent session with unsaved-change protection |
+| `:quit-all[!]` or `:qa[!]` | Exit standalone or stop the persistent session regardless of pane count, with unsaved-change protection; never terminate terminals |
 | `:quit-here[!]` or `:qh[!]` | Quit and let the shell wrapper change to the active explorer/file directory |
 
 Panes are reached from `Space w` or its `Ctrl-w` compatibility alias, both of
@@ -1701,9 +1708,11 @@ finder `Tab` switches modes; `Shift-Tab` selects the previous row, as it does
 in directory-scoped and fuzzy-content pickers. In those other pickers, `Tab`
 retains its previous next-row navigation.
 Enter opens, `Ctrl-s` opens horizontally, `Ctrl-v` opens vertically, and
-Escape or `Ctrl-c` closes. Backspace/Delete and the ordinary prompt control
-keys edit the query. Printable letters such as `q`, `j`, and `k` are query
-text rather than navigation commands.
+Escape or `Ctrl-c` closes. A bare `Space` also closes a newly opened overlay;
+after a project or content finder query has begun, it retains its term-separator
+role. Backspace/Delete and the ordinary prompt control keys edit the query.
+Printable letters such as `q`, `j`, and `k` are query text rather than
+navigation commands.
 
 A space separates the query into terms rather than being matched. One word is
 the fuzzy subsequence it has always been, so `fpick` finds `file_picker.rs`.
@@ -2382,7 +2391,7 @@ are enabled.
                         Tab offers copying it to the system clipboard or the
                         unnamed Runyte register
 :detach                 disconnect this persistent TUI while retaining all editor state
-:quit                   close the pane and its unique buffer, or quit safely from the last one (alias: q)
+:quit                   close the pane and its unique buffer, or stop safely from the last one (alias: q)
 :quit!                  discard its unique buffer, or force quit from the last pane (alias: q!)
 :quit-all               quit safely regardless of pane count, without ending terminals (alias: qa)
 :quit-all!              discard buffer changes and quit, without ending terminals (alias: qa!)
@@ -2480,13 +2489,13 @@ Session-management commands such as `--session-list` accept the option but leave
 file untouched, so they can be invoked through the same shell function.
 
 The wrapper works the same way against a persistent host. `:quit-here` runs in
-the host, which reports the directory it chose when it detaches, and the
-attached client writes the file — so the same wrapper serves both modes, and the
-directory follows you across a workspace switch. Because the capability belongs
-to the client rather than the host, a client launched without the wrapper still
-gets the usual refusal even when an earlier one had it. In persistent mode
-`:quit-here` detaches and leaves the host running, exactly as `:quit` does from
-the last pane.
+the host, which reports the directory it chose while the attached client writes
+the file — so the same wrapper serves both modes, and the directory follows you
+across a workspace switch. Because the capability belongs to the client rather
+than the host, a client launched without the wrapper still gets the usual
+refusal even when an earlier one had it. In persistent mode `:quit-here` stops
+the session after the same safety checks as `:quit`; use `:detach` when the host
+should remain running.
 
 ## Diagnostics and logging
 

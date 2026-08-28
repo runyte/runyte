@@ -43,6 +43,12 @@ and closes the buffer in place. This gives `$EDITOR --wait` callers a way to
 complete a requested file without detaching an existing TUI. The undocumented
 prompt-mode `Ctrl-q` path was removed.
 
+A 2026-08-28 persistent-session lifecycle follow-up made the existing
+editor-exit meaning literal in both deployment modes. `:q` from the last pane
+and `:qa` from any layout now stop a persistent session after its shutdown
+guards pass. `:detach` is the separate operation that leaves the host and all
+editor state running.
+
 This deliberately follows the Vim/Helix distinction between a view-local
 `:q`, an all-view `:qa`, and a buffer-local `:bc`, while retaining Runyte's
 safer `:c` that cannot close the last pane. It also retains Runyte's special
