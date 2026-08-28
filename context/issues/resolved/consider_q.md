@@ -49,6 +49,15 @@ and `:qa` from any layout now stop a persistent session after its shutdown
 guards pass. `:detach` is the separate operation that leaves the host and all
 editor state running.
 
+A same-day delivery follow-up kept the quitting interactive connection in the
+host's active set after queuing `ShuttingDown` (or the directory-bearing
+detach-shaped response used by `:quit-here`). The final connection flush can
+now observe both its sender and identity and keeps the runtime alive until the
+terminal response is written, instead of allowing a fast shutdown to truncate
+an otherwise successful quit on macOS. Coverage is provided by
+`an_interactive_quit_flushes_its_shutdown_response_without_a_control_client`
+in `tests/local_protocol.rs`.
+
 This deliberately follows the Vim/Helix distinction between a view-local
 `:q`, an all-view `:qa`, and a buffer-local `:bc`, while retaining Runyte's
 safer `:c` that cannot close the last pane. It also retains Runyte's special

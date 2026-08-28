@@ -369,7 +369,12 @@ async fn try_connect_control(endpoint: &LocalEndpoint) -> anyhow::Result<LocalCl
     Ok(client)
 }
 
-async fn wait_for_buffer_text(client: &mut LocalClient, name: &str, needle: &str) {
+async fn wait_for_buffer_text(
+    client: &mut LocalClient,
+    terminal_output: &std::sync::Arc<std::sync::Mutex<Vec<u8>>>,
+    name: &str,
+    needle: &str,
+) {
     let mut last_text = None;
     for _ in 0..400 {
         client.send(&ClientRequest::ListBuffers).await.unwrap();
@@ -399,8 +404,9 @@ async fn wait_for_buffer_text(client: &mut LocalClient, name: &str, needle: &str
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
     panic!(
-        "buffer {name:?} did not contain {needle:?}; last contents: {:?}",
-        last_text.as_deref().unwrap_or("<buffer was not opened>")
+        "buffer {name:?} did not contain {needle:?}; last contents: {:?}; terminal output: {}",
+        last_text.as_deref().unwrap_or("<buffer was not opened>"),
+        String::from_utf8_lossy(&terminal_output.lock().unwrap())
     );
 }
 
@@ -418,6 +424,12 @@ async fn wait_for_terminal_output(
         "terminal output did not contain {needle:?}: {}",
         String::from_utf8_lossy(&output.lock().unwrap())
     );
+}
+
+/// Types and accepts a command through the real terminal.
+fn type_colon_command(terminal: &mut File, command: &str) {
+    std::io::Write::write_all(terminal, format!(":{command}\r").as_bytes()).unwrap();
+    std::io::Write::flush(terminal).unwrap();
 }
 
 async fn start_host(root: &Path, endpoint: &LocalEndpoint) -> Option<ChildGuard> {
@@ -1470,11 +1482,10 @@ async fn worktree_switch_reuses_the_destination_host_through_the_real_tui_launch
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
     wait_for_terminal_output(&output, "other").await;
-    tokio::time::sleep(Duration::from_millis(500)).await;
-    terminal.write_all(b":git-worktrees\r").unwrap();
-    terminal.flush().unwrap();
+    wait_for_terminal_output(&output, "│ master").await;
+    type_colon_command(&mut terminal, "git-worktrees");
     let linked_display = linked.to_string_lossy().into_owned();
-    wait_for_buffer_text(&mut source, "[git worktrees]", &linked_display).await;
+    wait_for_buffer_text(&mut source, &output, "[git worktrees]", &linked_display).await;
     terminal.write_all(b"j\r").unwrap();
     terminal.flush().unwrap();
 
@@ -1584,11 +1595,10 @@ async fn incompatible_worktree_host_returns_the_tui_to_its_source() {
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
     wait_for_terminal_output(&output, "other").await;
-    tokio::time::sleep(Duration::from_millis(500)).await;
-    terminal.write_all(b":git-worktrees\r").unwrap();
-    terminal.flush().unwrap();
+    wait_for_terminal_output(&output, "│ master").await;
+    type_colon_command(&mut terminal, "git-worktrees");
     let linked_display = linked.to_string_lossy().into_owned();
-    wait_for_buffer_text(&mut source, "[git worktrees]", &linked_display).await;
+    wait_for_buffer_text(&mut source, &output, "[git worktrees]", &linked_display).await;
     terminal.write_all(b"j\r").unwrap();
     terminal.flush().unwrap();
 
@@ -1684,11 +1694,10 @@ async fn creating_a_worktree_starts_and_attaches_its_persistent_session() {
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
     wait_for_terminal_output(&output, "other").await;
-    tokio::time::sleep(Duration::from_millis(500)).await;
-    terminal.write_all(b":git-worktrees\r").unwrap();
-    terminal.flush().unwrap();
+    wait_for_terminal_output(&output, "│ master").await;
+    type_colon_command(&mut terminal, "git-worktrees");
     let root_display = root.to_string_lossy().into_owned();
-    wait_for_buffer_text(&mut source, "[git worktrees]", &root_display).await;
+    wait_for_buffer_text(&mut source, &output, "[git worktrees]", &root_display).await;
     terminal
         .write_all(format!("\tNcreated-from-ui\r{}\r", created.to_string_lossy()).as_bytes())
         .unwrap();
@@ -2316,6 +2325,60 @@ async fn wait_terminal_hangup_is_not_reported_as_success() {
 /// a message that ends inside itself: a transport error for what is an
 /// ordinary end of session.
 #[tokio::test]
+async fn an_interactive_quit_flushes_its_shutdown_response_without_a_control_client() {
+    let root = project();
+    let endpoint = LocalEndpoint::discover_with_runtime(
+        &root.join(".runyte"),
+        &root,
+        Some(test_runtime_dir()),
+    )
+    .unwrap();
+    let Some(mut host) = start_host(&root, &endpoint).await else {
+        fs::remove_dir_all(root).unwrap();
+        return;
+    };
+    let mut interactive = LocalClient::connect(&endpoint, FrameGeometry::default(), true)
+        .await
+        .unwrap();
+    assert!(matches!(
+        response(&mut interactive).await,
+        HostResponse::Welcome { .. }
+    ));
+    let frame = match response(&mut interactive).await {
+        HostResponse::Frame { frame } => *frame,
+        response => panic!("expected initial frame, got {response:?}"),
+    };
+    interactive
+        .send(&ClientRequest::Invoke {
+            command: CommandRequest::at(
+                "quit",
+                frame.id,
+                frame.active_buffer,
+                frame.active_revision,
+            ),
+        })
+        .await
+        .unwrap();
+    assert!(matches!(
+        response_ignoring_frames(&mut interactive).await,
+        HostResponse::CommandResult { .. }
+    ));
+    assert_eq!(
+        response_ignoring_frames(&mut interactive).await,
+        HostResponse::ShuttingDown
+    );
+    assert!(
+        end_of_stream(&mut interactive).await,
+        "the interactive shutdown response was truncated"
+    );
+    assert!(wait_child(host.0.as_mut().unwrap()).await.success());
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// A control response can be much larger than a socket buffer, so shutdown
+/// also keeps control connections alive until every queued semantic reply is
+/// complete.
+#[tokio::test]
 async fn a_shutting_down_host_finishes_its_last_message_before_exiting() {
     let root = project();
     // Larger than any local socket send buffer, so the reply cannot be handed
@@ -2512,14 +2575,13 @@ async fn relative_workspace_attach_uses_editor_cwd_and_keeps_one_client_process(
         "the relative selector did not reach the destination host"
     );
     wait_for_terminal_output(&output, "linked/other.txt").await;
-    tokio::time::sleep(Duration::from_millis(500)).await;
 
     // Return through the worktree list to retain the original regression that
     // switching both ways stays inside one client process. The linked
     // worktree is the second row, so the main worktree is immediately above it.
-    terminal.write_all(b":git-worktrees\r").unwrap();
-    terminal.flush().unwrap();
-    wait_for_buffer_text(&mut destination, "[git worktrees]", &root_display).await;
+    wait_for_terminal_output(&output, "│ linked").await;
+    type_colon_command(&mut terminal, "git-worktrees");
+    wait_for_buffer_text(&mut destination, &output, "[git worktrees]", &root_display).await;
     terminal.write_all(b"k\r").unwrap();
     terminal.flush().unwrap();
     let mut returned_to_source = false;

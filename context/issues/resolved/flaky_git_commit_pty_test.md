@@ -79,6 +79,19 @@ still reports the attachment failure or cancellation. The existing
 `tests/local_protocol.rs` passed 50 consecutive isolated runs after that
 change, followed by three complete `cargo test` runs.
 
+A 2026-08-28 persistent-quit follow-up fixed the corresponding server-side
+delivery race. `finish_attached_quit` completed durable waits and queued the
+interactive terminal response, but removed that connection from `active`
+before `flush_connections` ran. A fast host shutdown could therefore exit
+with `WaitState` or `ShuttingDown` still queued, leaving the attached client
+to report `BrokenPipe` while its control recovery found that the host had
+already stopped. Shutdown now retains the interactive sender and connection
+identity until the common flush drains it. The regression
+`an_interactive_quit_flushes_its_shutdown_response_without_a_control_client`
+in `tests/local_protocol.rs` covers the direct interactive path, while
+`git_commit_wait_tui_completes_through_write_quit` continues to cover the Git
+wait workflow.
+
 Known limitation: the escape-to-command-line transition still relies on a
 fixed delay rather than an observed signal, because the protocol has no way
 to report editor mode to a control client. Sustained scheduling delay past

@@ -1250,7 +1250,7 @@ async fn run_host_server(
                             ClientRequest::Shutdown => {
                                 let protected = host.protected_state();
                                 if protected.is_empty() {
-                                    if let Some(client) = active.take() {
+                                    if let Some(client) = active.as_ref() {
                                         let _ = client
                                             .responses
                                             .try_send(HostResponse::ShuttingDown);
@@ -1268,7 +1268,7 @@ async fn run_host_server(
                                     "forced termination discarded protected state";
                                     "connection" => id
                                 );
-                                if let Some(client) = active.take() {
+                                if let Some(client) = active.as_ref() {
                                     let _ = client.responses.try_send(HostResponse::ShuttingDown);
                                 }
                                 shutting_down = true;
@@ -2064,15 +2064,26 @@ fn finish_attached_quit(
         return false;
     }
 
-    // `:quit-here` still carries the selected directory through the detach
-    // response because the shell handoff belongs to the client. Receiving a
-    // detach-shaped response does not keep the host alive: the caller marks it
-    // for shutdown as soon as this function succeeds.
+    // Keep the response sender in `active` after queuing the terminal reply.
+    // `flush_connections` needs both the sender and connection identity to
+    // keep the runtime alive until the reply is written. Taking it here lets a
+    // fast shutdown end the process with a completed wait or `ShuttingDown`
+    // message still in flight, which is most visible on macOS.
+    //
+    // `:quit-here` still carries the selected directory through a detach-shaped
+    // response because the shell handoff belongs to the client. That response
+    // does not keep the host alive: the caller marks it for shutdown as soon as
+    // this function succeeds.
     let directory = host.quit_directory().map(Path::to_path_buf);
-    if directory.is_some() {
-        detach_client(active, directory.as_deref());
-    } else if let Some(client) = active.take() {
-        let _ = client.responses.try_send(HostResponse::ShuttingDown);
+    if let Some(client) = active.as_ref() {
+        let response = directory
+            .as_ref()
+            .map_or(HostResponse::ShuttingDown, |directory| {
+                HostResponse::Detached {
+                    directory_bytes: Some(encode_path(directory)),
+                }
+            });
+        let _ = client.responses.try_send(response);
     }
     true
 }

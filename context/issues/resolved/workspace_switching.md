@@ -53,11 +53,12 @@ plus `switching_back_and_forth_keeps_one_client_process` in
 
 A 2026-08-26 test-portability follow-up replaced delays that guessed when the
 asynchronous Git projection had settled with a control-protocol barrier on the
-populated `[git worktrees]` buffer. The tests observe initial TUI output before
-sending a command and retain the bounded terminal-input settle interval, then
-send navigation only after the generated view contains the destination path.
-Slower runners therefore exercise the same state transition instead of racing
-the projection.
+populated `[git worktrees]` buffer. A 2026-08-28 follow-up removed the remaining
+startup delay as well: the real-TUI tests now wait until the rendered status
+line contains the repository's current branch before typing `:git-worktrees`.
+That branch is unavailable until discovery and the initial refresh complete,
+so the command cannot race its own availability on a slower macOS runner.
+Navigation still waits until the generated view contains the destination path.
 
 A 2026-08-28 lifecycle follow-up separated ordinary quit from explicit detach.
 `:q` from the last pane, plus `:qa` and `:qh` from any layout, now stop a
