@@ -519,6 +519,22 @@ impl App {
                         );
                     }
                     Err(error) => {
+                        // The one boundary that has the operation, the request
+                        // identity, and the error. Everything below returned a
+                        // typed result rather than reporting it.
+                        //
+                        // `redacted` rather than `Display`: the latter quotes
+                        // the argument vector and Git's stderr, and a failing
+                        // commit's argument vector holds the message that was
+                        // just typed. The person still sees the full text in
+                        // the notification below.
+                        crate::log_warn!(
+                            "git",
+                            "Git operation failed: {}",
+                            error.redacted();
+                            "operation" => operation.label(),
+                            "request" => id.get()
+                        );
                         #[cfg(unix)]
                         if let GitOperation::Mutate {
                             mutation: GitMutation::RemoveWorktree { plan, .. },

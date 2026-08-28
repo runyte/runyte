@@ -68,7 +68,13 @@ impl App {
                     self.binding_label(EditorCommand::LeaveTerminal)
                 ));
             }
-            Err(error) => self.error(format!("cannot start {label}: {error}")),
+            Err(error) => {
+                // A session that never started is the terminal failure the
+                // exit record cannot cover, because there is no child to exit.
+                // The message names the program, not its arguments.
+                crate::log_warn!("terminal", "cannot start a terminal session: {error}");
+                self.error(format!("cannot start {label}: {error}"));
+            }
         }
     }
 
@@ -482,10 +488,23 @@ impl App {
             return;
         };
         let name = session.name();
-        let message = match session.exit_code() {
+        let exit_code = session.exit_code();
+        let message = match exit_code {
             Some(Some(code)) if code != 0 => format!("{name} exited with {code}"),
             _ => format!("{name} exited"),
         };
+        // A child that ended without being asked to is the case worth keeping:
+        // the pane it was in reveals its buffer again and the reason would
+        // otherwise survive only in the interaction line.
+        match exit_code {
+            Some(Some(code)) if code != 0 => crate::log_warn!(
+                "terminal",
+                "terminal child exited unsuccessfully";
+                "session" => id,
+                "code" => code
+            ),
+            _ => crate::log_debug!("terminal", "terminal child exited"; "session" => id),
+        }
         let was_active = self.active_terminal() == Some(id);
         let manager_open = self
             .list

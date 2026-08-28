@@ -77,9 +77,26 @@ pub struct LaunchArguments {
     /// Explicit permission for a lifecycle command to discard protected host
     /// state, including live terminal children.
     pub force: bool,
+    /// How many times `-v` was given. Zero leaves the default warning level;
+    /// each repetition raises it, and [`crate::log::Level::from_verbosity`]
+    /// caps the result at trace.
+    pub verbosity: u8,
+    /// An explicit diagnostic log destination. Failing to honour it is a
+    /// startup error: silently choosing another file would make the requested
+    /// capture misleading.
+    pub log: Option<PathBuf>,
 }
 
 impl LaunchArguments {
+    /// Whether this invocation asked for logging different from the default.
+    ///
+    /// An attachment cannot reconfigure a running host's logger, so the
+    /// attaching command reports the retention rather than appearing to have
+    /// applied these.
+    pub const fn requests_logging(&self) -> bool {
+        self.verbosity > 0 || self.log.is_some()
+    }
+
     pub fn parse() -> Result<Self> {
         Self::parse_from(std::env::args_os().skip(1))
     }
@@ -192,6 +209,26 @@ impl LaunchArguments {
                     LaunchMode::StopSession,
                 )?,
                 "-f" | "--force" => parsed.force = true,
+                // `-vv` and `-vvv` are how repetition is normally written, so
+                // the one clustered short option Runyte accepts is this one.
+                "--verbose" => parsed.verbosity = parsed.verbosity.saturating_add(1),
+                value
+                    if value.len() > 1
+                        && value.starts_with('-')
+                        && value[1..].bytes().all(|byte| byte == b'v') =>
+                {
+                    parsed.verbosity = parsed
+                        .verbosity
+                        .saturating_add(u8::try_from(value.len() - 1).unwrap_or(u8::MAX));
+                }
+                "--log" => {
+                    let path = arguments
+                        .next()
+                        .map(PathBuf::from)
+                        .context("--log requires a path")?;
+                    ensure!(!path.as_os_str().is_empty(), "--log requires a path");
+                    parsed.log = Some(path);
+                }
                 "-c" | "--config" => {
                     parsed.config = Some(
                         arguments
@@ -714,6 +751,59 @@ mod tests {
         );
         assert!(LaunchArguments::parse_from(["--force".into()]).is_err());
         assert!(LaunchArguments::parse_from(["--persistent".into(), "--force".into()]).is_err());
+    }
+
+    #[test]
+    fn logging_options_are_repeatable_and_require_a_destination() {
+        assert_eq!(
+            LaunchArguments::parse_from(Vec::<OsString>::new())
+                .unwrap()
+                .verbosity,
+            0
+        );
+        for spelling in ["-v", "--verbose"] {
+            let once = LaunchArguments::parse_from([spelling.into()]).unwrap();
+            assert_eq!(once.verbosity, 1);
+            assert!(once.requests_logging());
+        }
+        assert_eq!(
+            LaunchArguments::parse_from(["-v".into(), "-v".into(), "--verbose".into()])
+                .unwrap()
+                .verbosity,
+            3
+        );
+        // The clustered spelling is how repetition is normally written.
+        for (spelling, expected) in [("-vv", 2), ("-vvv", 3), ("-vvvvv", 5)] {
+            assert_eq!(
+                LaunchArguments::parse_from([spelling.into()])
+                    .unwrap()
+                    .verbosity,
+                expected
+            );
+        }
+        assert_eq!(
+            LaunchArguments::parse_from(["-vv".into(), "-v".into()])
+                .unwrap()
+                .verbosity,
+            3
+        );
+        // Clustering is limited to this one option; nothing else groups.
+        assert!(LaunchArguments::parse_from(["-vf".into()]).is_err());
+
+        let destination =
+            LaunchArguments::parse_from(["--log".into(), "/tmp/runyte.log".into()]).unwrap();
+        assert_eq!(destination.log, Some(PathBuf::from("/tmp/runyte.log")));
+        assert!(destination.requests_logging());
+        assert!(
+            !LaunchArguments::parse_from(Vec::<OsString>::new())
+                .unwrap()
+                .requests_logging()
+        );
+
+        assert!(LaunchArguments::parse_from(["--log".into()]).is_err());
+        assert!(LaunchArguments::parse_from(["--log".into(), "".into()]).is_err());
+        // Verbosity is lower case; -V remains the version flag.
+        assert!(LaunchArguments::parse_from(["-V".into()]).unwrap().version);
     }
 
     #[test]

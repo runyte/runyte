@@ -151,6 +151,37 @@ survival across a host crash, force-stop, logout, reboot, or machine failure.
 The [workspace and persistent-session guide](docs/user-guide.md#workspaces-and-modes)
 documents attachment, switching, lifecycle commands, and `--wait`.
 
+## Diagnostics and logging
+
+Runyte keeps a small local log of warnings, errors, and — when asked — more
+detailed lifecycle events, so a failure can still be read after the process is
+gone. It complements the interaction line, `:notifications`, and
+`:service-health` rather than replacing any of them.
+
+The process that owns editor state owns its log. Beneath the configured
+workspace state directory, normally `.runyte/`, a standalone editor writes
+`standalone-<pid>.log` and a persistent host writes `host.log`, which keeps
+growing while no TUI is attached. `:log-open` opens whichever of those
+belongs to the process holding the workspace, and `:service-health` names its
+owner, level, and resolved path.
+
+```sh
+runyte -v                 # info; -vv adds debug and -vvv adds trace
+runyte --log /tmp/run.log # write somewhere else
+runyte --session-restart -vv   # a running host keeps its logger until restarted
+```
+
+The default level records warnings and errors. A path that cannot be written is
+a startup error for `--log` and a degraded log for the default. On Unix, an
+explicit path already owned by another running Runyte process is refused. At
+most 4 MiB is kept in the active file, with one previous 4 MiB file beside it;
+each standalone launch also removes all but the four newest logs left by
+earlier exited standalone processes.
+
+Records never contain document text, selections, clipboard or terminal
+contents, environment values, or language-server message bodies. They do contain
+local paths and process metadata, so review a log before sharing it.
+
 ## Platform support
 
 Runyte currently supports Linux and macOS. Windows support is planned for a
@@ -220,6 +251,7 @@ for persistent-mode behavior and the `:quit-here!` force variant.
 - [User guide and complete feature reference](docs/user-guide.md)
 - [Keybindings and command reference](docs/user-guide.md#key-bindings)
 - [Configuration](docs/user-guide.md#configuration)
+- [Diagnostics and logging](docs/user-guide.md#diagnostics-and-logging)
 - [Language-server setup and examples](docs/lsp/README.md)
 - [Runyte and Helix keymap differences](context/reference/helix-keymap-v1.md)
 - [Example configuration](config.example.yaml)

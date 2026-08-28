@@ -33,6 +33,7 @@ pub mod key_hints;
 pub mod keymap;
 pub mod launch;
 pub mod layout;
+pub mod log;
 pub mod lsp;
 pub mod manual;
 pub mod notification;

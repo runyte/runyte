@@ -45,7 +45,7 @@ const MAX_CONNECTIONS: usize = 16;
 /// the budget measures a stall rather than a whole message: see
 /// `write_message_with_timeout`.
 const CONNECTION_WRITE_STALL: Duration = Duration::from_secs(2);
-const HOST_ID_LENGTH: usize = 32;
+const HOST_ID_LENGTH: usize = crate::workspace::WORKSPACE_ID_LENGTH;
 pub(crate) const MAX_HOST_NAME_BYTES: usize = 64;
 const MAX_METADATA_BYTES: usize = 64 * 1024;
 const MAX_STORED_NAME_BYTES: usize = 1024;
@@ -1229,7 +1229,7 @@ impl Drop for PrivateFileLock {
 
 /// Derives the transport identity for a canonical workspace project root.
 pub(super) fn workspace_id(project_root: &Path) -> String {
-    crate::hash::sha256_hex(&encode_path(project_root))[..HOST_ID_LENGTH].to_owned()
+    super::identity::workspace_id(project_root)
 }
 
 pub(super) fn registry_roots() -> Vec<PathBuf> {
@@ -1374,6 +1374,17 @@ pub enum ServerEvent {
     /// the same FIFO event boundary as valid requests so its error response
     /// cannot overtake an earlier semantic response on an unnumbered stream.
     ProtocolError {
+        id: u64,
+        message: String,
+    },
+    /// The connection ended because its framing failed: a malformed or
+    /// truncated message, or a write that could not be completed.
+    ///
+    /// Separate from [`ServerEvent::ProtocolError`], which is a decoded
+    /// request the host answers. Nothing can be answered here — the stream is
+    /// no longer readable — so this carries the reason to whatever records it
+    /// and is always followed by [`ServerEvent::Disconnected`].
+    TransportFailure {
         id: u64,
         message: String,
     },
@@ -1676,13 +1687,16 @@ impl LocalClient {
     }
 }
 
-async fn serve_connection(
+async fn serve_connection<S>(
     id: u64,
-    stream: UnixStream,
+    stream: S,
     events: mpsc::Sender<ServerEvent>,
     expected_project_root: Vec<u8>,
-) -> Result<()> {
-    let (reader, writer) = stream.into_split();
+) -> Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    let (reader, writer) = tokio::io::split(stream);
     let mut reader = MessageReader::new(reader);
     let hello = tokio::time::timeout(Duration::from_secs(2), reader.read::<ClientRequest>())
         .await
@@ -1791,7 +1805,7 @@ async fn serve_connection(
         .await
         .context("workspace host stopped")?;
     let mut writer = writer;
-    let result = async {
+    let result: Result<()> = async {
         loop {
             tokio::select! {
                 response = response_rx.recv() => {
@@ -1832,6 +1846,17 @@ async fn serve_connection(
         Ok(())
     }
     .await;
+    // The reason the loop ended is discarded by the caller that spawned this
+    // task, so it is reported here or nowhere. A host would otherwise see a
+    // truncated frame as an ordinary disconnection.
+    if let Err(error) = &result {
+        let _ = events
+            .send(ServerEvent::TransportFailure {
+                id,
+                message: error.to_string(),
+            })
+            .await;
+    }
     let _ = events.send(ServerEvent::Disconnected { id }).await;
     result
 }
@@ -2982,13 +3007,16 @@ mod tests {
             ("malformed-established", b"{not-json}\n".as_slice()),
             ("truncated-established", b"{\"type\":\"health\"".as_slice()),
         ] {
-            let (root, endpoint) = endpoint(name);
-            let Some(mut server) = bind_or_skip(&endpoint).await else {
-                fs::remove_dir_all(root).unwrap();
-                continue;
-            };
-            let stream = UnixStream::connect(endpoint.socket()).await.unwrap();
-            let (reader, mut writer) = stream.into_split();
+            let (host_stream, stream) = tokio::io::duplex(MAX_MESSAGE_BYTES + 1);
+            let (events, mut server) = mpsc::channel(EVENT_CAPACITY);
+            let project_root = encode_path(Path::new("/malformed-frame-test"));
+            tokio::spawn(serve_connection(
+                17,
+                host_stream,
+                events,
+                project_root.clone(),
+            ));
+            let (reader, mut writer) = tokio::io::split(stream);
             write_message(
                 &mut writer,
                 &ClientRequest::Hello {
@@ -2999,7 +3027,7 @@ mod tests {
                         FeatureGroup::Buffers,
                         FeatureGroup::Wait,
                     ],
-                    project_root_bytes: encode_path(&endpoint.project_root),
+                    project_root_bytes: project_root,
                     client_kind: ClientKind::Control,
                     client_version: CLIENT_VERSION.to_owned(),
                     role: ClientRole::Control,
@@ -3031,14 +3059,27 @@ mod tests {
             ));
             writer.write_all(payload).await.unwrap();
             writer.shutdown().await.unwrap();
+            let failure = tokio::time::timeout(Duration::from_secs(1), server.recv())
+                .await
+                .unwrap();
+            let Some(ServerEvent::TransportFailure {
+                id: failed,
+                message,
+            }) = failure
+            else {
+                panic!("expected a transport failure before disconnection, got {failure:?}");
+            };
+            assert_eq!(failed, id);
+            assert!(
+                message.contains("workspace transport"),
+                "the {name} framing reason must survive: {message}"
+            );
             assert!(matches!(
                 tokio::time::timeout(Duration::from_secs(1), server.recv())
                     .await
                     .unwrap(),
                 Some(ServerEvent::Disconnected { id: disconnected }) if disconnected == id
             ));
-            endpoint.cleanup().unwrap();
-            fs::remove_dir_all(root).unwrap();
         }
     }
 
@@ -3357,10 +3398,25 @@ mod tests {
             })
             .await
             .unwrap();
+        let failure = tokio::time::timeout(Duration::from_secs(3), server.recv())
+            .await
+            .expect("stalled write did not time out");
+        let Some(ServerEvent::TransportFailure {
+            id: failed,
+            message,
+        }) = failure
+        else {
+            panic!("expected a write failure before disconnection, got {failure:?}");
+        };
+        assert_eq!(failed, id);
+        assert!(
+            message.contains("workspace transport write timed out"),
+            "{message}"
+        );
         assert!(matches!(
-            tokio::time::timeout(Duration::from_secs(3), server.recv())
+            tokio::time::timeout(Duration::from_secs(1), server.recv())
                 .await
-                .expect("stalled write did not time out"),
+                .unwrap(),
             Some(ServerEvent::Disconnected { id: disconnected }) if disconnected == id
         ));
         drop(reader);

@@ -120,6 +120,36 @@ impl GitError {
     pub const fn is_unavailable(&self) -> bool {
         matches!(self, Self::Unavailable { .. })
     }
+
+    /// A summary safe to put in a durable file.
+    ///
+    /// `Display` is written for the person reading the interaction line, so it
+    /// quotes the argument vector and Git's stderr. Both are unbounded local
+    /// content — a failing commit's argument vector contains the message that
+    /// was just typed — and neither belongs in a diagnostic log. This names the
+    /// refusal and keeps only fields that cannot carry document, typed, or
+    /// subprocess text: exit status, byte limit, deadline, and counts.
+    pub fn redacted(&self) -> String {
+        match self {
+            Self::Unavailable { .. } => "Git is unavailable".to_owned(),
+            Self::NotARepository { .. } => "path is not in a Git repository".to_owned(),
+            Self::Failed { code, .. } => match code {
+                Some(code) => format!("Git refused with status {code}"),
+                None => "Git refused".to_owned(),
+            },
+            Self::DirtyWorktree { files } => {
+                format!("worktree differs from HEAD in {files} file(s)")
+            }
+            Self::Diverged { ahead, behind, .. } => {
+                format!("branch and upstream diverged by {ahead} ahead and {behind} behind")
+            }
+            Self::TooLarge { limit, .. } => format!("Git output exceeded {limit} bytes"),
+            Self::TimedOut { seconds, .. } => format!("Git timed out after {seconds}s"),
+            Self::Cancelled { .. } => "Git was cancelled".to_owned(),
+            Self::Malformed { .. } => "Git output could not be parsed".to_owned(),
+            Self::Io { action, .. } => format!("Git {action} failed"),
+        }
+    }
 }
 
 impl fmt::Display for GitError {
@@ -1748,6 +1778,67 @@ impl GitProvider for std::rc::Rc<MemoryGitProvider> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `Display` quotes the argument vector and Git's stderr, which is right
+    /// for the interaction line and wrong for a durable file: a failing commit
+    /// carries the message that was just typed, and stderr is unrestricted
+    /// subprocess output.
+    #[test]
+    fn a_redacted_failure_keeps_no_argument_vector_or_subprocess_output() {
+        let error = GitError::Failed {
+            command: "git commit --cleanup=whitespace -m Refactor the SECRET parser".to_owned(),
+            code: Some(128),
+            stderr: "fatal: SECRET-FROM-STDERR".to_owned(),
+        };
+
+        let redacted = error.redacted();
+        assert_eq!(redacted, "Git refused with status 128");
+        assert!(error.to_string().contains("SECRET"), "the premise holds");
+        for leaked in ["SECRET", "commit", "--cleanup", "fatal"] {
+            assert!(!redacted.contains(leaked), "{leaked} survived: {redacted}");
+        }
+
+        for error in [
+            GitError::Failed {
+                command: "git push origin SECRET-BRANCH".to_owned(),
+                code: None,
+                stderr: "SECRET".to_owned(),
+            },
+            GitError::TooLarge {
+                command: "git log SECRET".to_owned(),
+                limit: 64,
+            },
+            GitError::TimedOut {
+                command: "git fetch SECRET".to_owned(),
+                seconds: 5,
+            },
+            GitError::Cancelled {
+                command: "git merge SECRET".to_owned(),
+            },
+            GitError::Malformed {
+                command: "git status SECRET".to_owned(),
+                detail: "SECRET".to_owned(),
+            },
+            GitError::Unavailable {
+                detail: "SECRET".to_owned(),
+            },
+            GitError::NotARepository {
+                path: PathBuf::from("/home/someone/SECRET"),
+            },
+            GitError::Io {
+                action: "read",
+                path: PathBuf::from("/home/someone/SECRET"),
+                detail: "SECRET".to_owned(),
+            },
+        ] {
+            let redacted = error.redacted();
+            assert!(
+                !redacted.contains("SECRET"),
+                "{error:?} leaked through {redacted}"
+            );
+            assert!(!redacted.is_empty());
+        }
+    }
 
     fn status_of(files: Vec<FileStatus>) -> RepositoryStatus {
         RepositoryStatus {

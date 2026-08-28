@@ -184,8 +184,13 @@ fn editor_help_hides_internal_options_and_uses_workspace_modes() {
     assert!(help.contains("-s, --session-stop [WORKSPACE]"));
     assert!(help.contains("--session-rename WORKSPACE NAME"));
     assert!(help.contains("-f, --force"));
-    assert!(!help.contains("host"));
-    assert!(!help.contains("client"));
+    // `host` and `client` are internal roles, not the vocabulary a reader is
+    // given. The one exception is `host.log`: that is the actual file name a
+    // persistent session's diagnostic log has on disk, and help has to name a
+    // path somebody can open.
+    let prose = help.replace("host.log", "");
+    assert!(!prose.contains("host"));
+    assert!(!prose.contains("client"));
     assert!(help.contains(":quit-here"));
     assert!(help.contains("runyte()"));
     assert!(help.contains("README.md"));

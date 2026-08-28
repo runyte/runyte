@@ -69,6 +69,9 @@ pub const COMMIT_MESSAGE_NAME: &str = "[git commit]";
 /// The display name of contextual view help. The general manual owns `[help]`.
 pub const HELP_NAME: &str = "[view help]";
 
+/// The display name of the diagnostic log projection opened by `:log-open`.
+pub const LOG_NAME: &str = "[log]";
+
 /// How many undo steps a buffer retains.
 const HISTORY_LIMIT: usize = 1000;
 
@@ -153,6 +156,8 @@ pub enum GeneratedViewIdentity {
     Tutorial,
     Manual,
     Documentation,
+    /// The diagnostic log owned by the process that owns `App`.
+    Log,
     GitIndex,
     GitDiff {
         path: PathBuf,

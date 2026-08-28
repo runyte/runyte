@@ -340,6 +340,14 @@ pub struct HostStartup {
     pub env: Vec<(OsString, OsString)>,
     /// What the failure message calls this host, for example `"restarted"`.
     pub description: &'static str,
+    /// How many `-v` occurrences the host should start with. Verbosity is a
+    /// property of host startup: an attachment never reconfigures a running
+    /// host's logger.
+    pub verbosity: u8,
+    /// An explicit diagnostic log destination for the host. Resolved to an
+    /// absolute path before the child is spawned, because the child may run in
+    /// another directory.
+    pub log: Option<PathBuf>,
 }
 
 impl HostStartup {
@@ -351,7 +359,16 @@ impl HostStartup {
             targets: Vec::new(),
             env: Vec::new(),
             description,
+            verbosity: 0,
+            log: None,
         }
+    }
+
+    /// Hands this process's selected logging to the host it starts.
+    pub fn with_logging(mut self, verbosity: u8, log: Option<&Path>) -> Self {
+        self.verbosity = verbosity;
+        self.log = log.map(absolute);
+        self
     }
 
     pub fn with_env(mut self, key: impl Into<OsString>, value: impl Into<OsString>) -> Self {
@@ -368,21 +385,24 @@ impl HostStartup {
         // The child's working directory can differ from the caller's, so a
         // relative path given on the invoking command line needs resolving
         // before the child starts.
-        self.config = config.map(|path| {
-            if path.is_absolute() {
-                path.to_path_buf()
-            } else {
-                std::env::current_dir()
-                    .map(|directory| directory.join(path))
-                    .unwrap_or_else(|_| path.to_path_buf())
-            }
-        });
+        self.config = config.map(absolute);
         self
     }
 
     pub fn with_targets(mut self, targets: Vec<PathBuf>) -> Self {
         self.targets = targets;
         self
+    }
+}
+
+/// Resolves a path the spawned child will read from another directory.
+fn absolute(path: &Path) -> PathBuf {
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map(|directory| directory.join(path))
+            .unwrap_or_else(|_| path.to_path_buf())
     }
 }
 
@@ -442,6 +462,12 @@ pub async fn start_detached_host(endpoint: &LocalEndpoint, startup: HostStartup)
     }
     if let Some(config) = startup.config.as_deref() {
         command.arg("--config").arg(config);
+    }
+    for _ in 0..startup.verbosity {
+        command.arg("-v");
+    }
+    if let Some(log) = startup.log.as_deref() {
+        command.arg("--log").arg(log);
     }
     command.args(&startup.targets);
 

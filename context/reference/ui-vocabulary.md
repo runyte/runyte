@@ -12,11 +12,11 @@ them, regardless of which extensibility direction is chosen.
   use a derived ground halfway between it and the overlay ground.
 - **Pane border** — the frame delimiting a pane.
 - **Pane title** — structural buffer identity in the pane's top border, such as
-  `[file] path`, `[explorer] path`, or `[notifications]`, plus `[+]`, `[STALE]`,
-  and `[RO]`, in that order, and finally `[zen]` or `[fullscreen]` while the pane
-  is the maximized one. `[STALE]` means an ordinary file's path no longer
-  agrees with the disk baseline Runyte accepted; it is independent of `[+]`,
-  which means the buffer text differs from its baseline.
+  `[file] path`, `[explorer] path`, `[notifications]`, or `[log]`, plus `[+]`,
+  `[STALE]`, and `[RO]`, in that order, and finally `[zen]` or `[fullscreen]`
+  while the pane is the maximized one. `[STALE]` means an ordinary file's path
+  no longer agrees with the disk baseline Runyte accepted; it is independent
+  of `[+]`, which means the buffer text differs from its baseline.
   The first markers describe the buffer; the last describes how this pane is
   presented, and is absent in an ordinary layout.
 - **Pane body** — the complete drawable interior of a pane border.
@@ -61,8 +61,9 @@ them, regardless of which extensibility direction is chosen.
   pathless scratch text is not. The complete scoped set is `Directory`,
   `Settings`, `GitStatus`, `GitBranches`, `GitWorktrees`, `GitLog`, `GitBlame`,
   `GitStash`, `WorkspaceSearch`, `Help`, `CommitMessage`, and `Diff` in
-  `BindingScope`. The notification buffer and about page are special too, but
-  use the global scope because they have no actions of their own yet.
+  `BindingScope`. The notification buffer, the diagnostic-log buffer, and the
+  about page are special too, but use the global scope because they have no
+  actions of their own yet.
 - **Pane-backed filterable list** — a bounded-lifetime special buffer whose
   stable rows are actions or destinations. Filtering is an operation on the
   view; the list otherwise speaks normal Runyte and does not permanently own
@@ -171,3 +172,33 @@ host retains it across TUI detach/reattach, but it is never written to disk.
 The configured history limit bounds entries; independent 1 MiB per-entry and
 8 MiB per-workspace payload limits bound memory. Truncation is explicit in the
 retained text. A notification buffer is materialized only while one is open.
+
+## Diagnostic log
+
+A **diagnostic log** is the durable local file the process that owns `App`
+writes lifecycle records to. It is a fourth surface beside the interaction
+line, the notification center, and the service-health report, and it answers a
+different question from all three: what happened, in order, including after the
+process that saw it is gone. It is neither a notification surface nor an audit
+trail, and an actionable failure still reaches the person through the ordinary
+surfaces whether or not a record was written.
+
+Ownership follows editor-state ownership. A standalone editor owns
+`standalone-<pid>.log`; a persistent host owns `host.log`. Both sit beneath the
+resolved runtime workspace state root, normally `.runyte/`, never under
+Git-tracked context. A client never appends to a host's file and never forwards
+records over the local protocol.
+
+`:log-open` projects the owning process's file into the single read-only
+`[log]` buffer, following the generated-page vocabulary above: it is an
+ordinary buffer with normal movement, selection, search, splits, jump history,
+and buffer management, and it uses the global binding scope because it has no
+row actions of its own. It is a point-in-time projection, re-read by running
+the command again rather than refreshed in place, and it opens the log of the
+process that holds the workspace — in persistent mode, the host's.
+
+The `log` row of the service-health report names the owner role, the active
+level, the resolved path, and any logger initialization or write failure. In
+persistent mode those are host facts, so a newly attached client sees how the
+process holding its workspace is actually logging rather than the flags its own
+launch carried.

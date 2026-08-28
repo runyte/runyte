@@ -1182,6 +1182,13 @@ impl App {
                 sync,
                 capabilities,
             } => {
+                crate::log_info!(
+                    "lsp",
+                    "language server ready";
+                    "language" => language,
+                    "server" => name,
+                    "generation" => generation
+                );
                 self.lsp_servers.insert(
                     language.clone(),
                     ServerState {
@@ -1241,6 +1248,16 @@ impl App {
                 }
             }
             LspEvent::Stopped { language, message } => {
+                // The boundary that knows both which server went away and what
+                // editor state went with it. Nothing below reports it again.
+                //
+                // The language, not `message`: a server closed by its process
+                // carries up to 8 KiB of its own stderr in that text, which is
+                // unrestricted subprocess output and often quotes source. The
+                // person still gets it in full through the notification below,
+                // `:lsp-status`, and the language-server boundary that already
+                // retains stderr.
+                crate::log_warn!("lsp", "language server stopped"; "language" => language);
                 // Diagnostics with no server behind them are claims about the
                 // code that nothing will ever correct, so they go with it.
                 self.lsp_servers.remove(&language);
@@ -1276,6 +1293,7 @@ impl App {
                 self.error_from("LSP", "Language server stopped", message);
             }
             LspEvent::Restarted { language } => {
+                crate::log_info!("lsp", "language server restarted"; "language" => language);
                 self.lsp_servers.remove(&language);
                 self.pending_lsp_replies.retain(|command| {
                     !matches!(command, LspCommand::EditApplied { language: pending, .. } if pending == &language)

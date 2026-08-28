@@ -34,14 +34,17 @@ use runyte::{
     key_hints::{HintEventResult, KeyHintState},
     keymap::{BindingTarget, KeySequence, Lookup},
     launch::{LaunchArguments, LaunchMode, LaunchTarget},
+    log::{self as diagnostic_log, Level as LogLevel, Role as LogRole},
+    log_debug, log_error, log_info, log_trace, log_warn,
     lsp::{self, LspCommand, LspEvent, LspHandle},
+    notification::{NotificationDraft, NotificationSeverity},
     project_root,
     startup::{StartupPhase, StartupTrace},
     syntax::{self, SyntaxEvents},
     terminal::{self, TerminalEvents},
     tui::input::convert_event,
     ui, word_index,
-    workspace::{HostCommand, HostEvent, HostInputOutcome, WorkspaceHost},
+    workspace::{HostCommand, HostEvent, HostInputOutcome, WorkspaceHost, workspace_id},
 };
 
 const STATUS_ANIMATION_INTERVAL: Duration = Duration::from_millis(80);
@@ -80,6 +83,17 @@ fn main() -> Result<()> {
         .context("failed to start the async runtime")?;
     let result = runtime.block_on(run(&mut startup));
     drop(runtime);
+    // Only that the process is ending, never the chain that ended it. An
+    // arbitrary propagated error is unclassified text — an option's value, a
+    // path taken from the environment, whatever a future layer attaches — and
+    // this is a durable file. The boundaries that know what a failure means
+    // record it themselves, and a startup failure still reaches stderr, which
+    // is where a launcher reads a detached session's exit.
+    match &result {
+        Ok(()) => log_info!("process", "runyte exited"),
+        Err(_) => log_error!("process", "runyte exited with an error"),
+    }
+    runyte::log::shutdown();
     #[cfg(unix)]
     if let Err(error) = &result
         && let Some(signal) = error.downcast_ref::<TerminatedBySignal>()
@@ -228,7 +242,13 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
                         .workspace_selector
                         .as_deref()
                         .expect("selector checked");
-                    start_selected_session(selector, arguments.config.as_deref()).await
+                    start_selected_session(
+                        selector,
+                        arguments.config.as_deref(),
+                        arguments.verbosity,
+                        arguments.log.as_deref(),
+                    )
+                    .await
                 }
                 LaunchMode::StopAllSessions => {
                     let (config, config_path) = Config::load(arguments.config.as_deref())?;
@@ -272,7 +292,8 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
                     )
                     .await?;
                     let startup = HostStartup::new(std::env::current_exe()?, "restarted")
-                        .with_config(config_path.as_deref());
+                        .with_config(config_path.as_deref())
+                        .with_logging(arguments.verbosity, arguments.log.as_deref());
                     if arguments.force {
                         force_restart_host(&endpoint, startup).await
                     } else {
@@ -448,8 +469,11 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
                     if connect_control(&endpoint).await.is_err() {
                         let startup = HostStartup::new(std::env::current_exe()?, "attached")
                             .with_working_directory(&working_directory)
-                            .with_config(config_path.as_deref());
+                            .with_config(config_path.as_deref())
+                            .with_logging(arguments.verbosity, arguments.log.as_deref());
                         start_detached_host(&endpoint, startup).await?;
+                    } else {
+                        report_retained_host_logging(&arguments);
                     }
                     run_workspace_switcher(
                         endpoint,
@@ -461,11 +485,26 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
                     .await
                 }
                 LaunchMode::Wait => {
-                    run_wait(endpoint, arguments.targets, config_path, mouse_enabled).await
+                    run_wait(
+                        endpoint,
+                        arguments.targets,
+                        config_path,
+                        mouse_enabled,
+                        arguments.verbosity,
+                        arguments.log.as_deref(),
+                    )
+                    .await
                 }
                 LaunchMode::StartSession => {
                     let startup = HostStartup::new(std::env::current_exe()?, "started")
-                        .with_config(config_path.as_deref());
+                        .with_config(config_path.as_deref())
+                        .with_logging(arguments.verbosity, arguments.log.as_deref());
+                    report_retained_logging_if_running(
+                        &endpoint,
+                        arguments.verbosity,
+                        arguments.log.as_deref(),
+                    )
+                    .await;
                     ensure_workspace_host(
                         &project_root,
                         &config.workspace.state,
@@ -477,7 +516,8 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
                 }
                 LaunchMode::RestartSession => {
                     let startup = HostStartup::new(std::env::current_exe()?, "restarted")
-                        .with_config(config_path.as_deref());
+                        .with_config(config_path.as_deref())
+                        .with_logging(arguments.verbosity, arguments.log.as_deref());
                     if arguments.force {
                         force_restart_host(&endpoint, startup).await
                     } else {
@@ -497,12 +537,53 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
         #[cfg(not(unix))]
         anyhow::bail!("persistent mode is not yet supported on this platform");
     }
+    // Diagnostic logging belongs to whichever process owns editor state. A
+    // client leaves it uninstalled: its own failures reach stderr once the
+    // terminal is restored, and forwarding records would make transport
+    // diagnostics depend on the transport being healthy.
+    let role = if arguments.mode == LaunchMode::Serve {
+        LogRole::Host
+    } else {
+        LogRole::Standalone
+    };
+    let logging_failure = initialize_logging(&arguments, role, &state_root, &project_root)?;
+    log_info!(
+        "process",
+        "runyte {} started", env!("CARGO_PKG_VERSION");
+        "role" => role,
+        "workspace" => workspace_id(&project_root),
+        "root" => project_root.display()
+    );
+    log_debug!(
+        "process",
+        "diagnostic logging ready";
+        "level" => LogLevel::from_verbosity(arguments.verbosity).label(),
+        "explicit_destination" => arguments.log.is_some()
+    );
+    log_trace!(
+        "process",
+        "resolved workspace locations";
+        "state" => state_root.display(),
+        "cwd" => launch_directory.display(),
+        "config" => config_path.as_deref().map_or_else(
+            || "default".to_owned(),
+            |path| path.display().to_string(),
+        )
+    );
     let mut app = App::new_in_project_with_targets_and_trace(
         config,
         arguments.targets,
         project_root.clone(),
         startup,
     )?;
+    if let Some(failure) = logging_failure {
+        app.push_notification(NotificationDraft::new(
+            NotificationSeverity::Warning,
+            "Logging",
+            "Diagnostic log unavailable",
+            format!("{failure} · editing continues without a durable log"),
+        ));
+    }
     app.set_quit_directory_handoff(arguments.cwd_file.is_some());
     #[cfg(unix)]
     app.note_workspace_number(
@@ -578,6 +659,10 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
     let mut status_animation_tick = tokio::time::interval(STATUS_ANIMATION_INTERVAL);
     status_animation_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut key_repeat_detector = KeyRepeatDetector::default();
+    // Recorded once per service: a channel that closes stays closed, and the
+    // editor keeps working without it, so nothing else reports the loss.
+    let mut ended_services: std::collections::HashSet<&'static str> =
+        std::collections::HashSet::new();
     loop {
         key_hints.expire_at(Instant::now());
         if app.should_quit {
@@ -680,11 +765,15 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
             event = services.lsp_events.recv() => {
                 if let Some(event) = event {
                     app.apply_event(HostEvent::Lsp(event));
+                } else {
+                    note_ended_service(&mut ended_services, "language servers");
                 }
             }
             event = services.syntax_events.recv() => {
                 if let Some(event) = event {
                     app.apply_event(HostEvent::Syntax(event));
+                } else {
+                    note_ended_service(&mut ended_services, "syntax");
                 }
             }
             event = services.file_picker_events.recv() => {
@@ -695,6 +784,8 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
             event = services.file_monitor_events.recv() => {
                 if let Some(event) = event {
                     app.apply_event(HostEvent::FileObservation(event));
+                } else {
+                    note_ended_service(&mut ended_services, "file monitor");
                 }
             }
             output = services.terminal_events.recv() => {
@@ -721,6 +812,7 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
                 }
             }
             _ = git_refresh_tick.tick() => {
+                report_logging_failure(app.app_mut());
                 services.file_monitor.sync(app.file_monitor_requests());
                 let changed = app.refresh_git_if_due(Instant::now());
                 let activity_changed = app.refresh_session_activity();
@@ -880,6 +972,12 @@ async fn run_host_server(
     let mut termination = TerminationSignals::new()?;
     host.enable_persistent_session();
     let mut server = LocalServer::bind(&endpoint).await?;
+    log_info!(
+        "host",
+        "persistent session published";
+        "workspace" => endpoint.id(),
+        "socket" => endpoint.socket().display()
+    );
     let mut services = start_host_services(&mut host, startup, config_path)?;
     let mut last_detached = Instant::now();
     let mut idle_tick = tokio::time::interval(Duration::from_secs(1));
@@ -897,6 +995,10 @@ async fn run_host_server(
     let mut key_hints = KeyHintState::default();
     let mut shutting_down = false;
     let mut received_signal = None;
+    // A background service whose channel closes is gone for the rest of this
+    // host's life, and a detached host has no other way to say so.
+    let mut ended_services: std::collections::HashSet<&'static str> =
+        std::collections::HashSet::new();
     while !shutting_down {
         key_hints.expire_at(Instant::now());
         let mut changed = false;
@@ -904,11 +1006,17 @@ async fn run_host_server(
         tokio::select! {
             event = server.recv() => {
                 let Some(event) = event else {
+                    log_error!("host", "the connection listener stopped; this session cannot be reached again");
                     anyhow::bail!("workspace host listener stopped unexpectedly");
                 };
                 match event {
                     ServerEvent::Connected { id, geometry, interactive, directory_handoff, responses } => {
                         if interactive && active.is_some() {
+                            log_warn!(
+                                "client",
+                                "refused a second interactive attachment";
+                                "connection" => id
+                            );
                             let _ = responses.try_send(HostResponse::Refused {
                                 message: "another interactive TUI is already attached".to_owned(),
                             });
@@ -939,6 +1047,11 @@ async fn run_host_server(
                                 active = Some(client);
                                 last_detached = Instant::now();
                                 host.app_mut().note_frontend_attached();
+                                log_info!(
+                                    "client",
+                                    "interactive client attached";
+                                    "connection" => id
+                                );
                                 publish_attached_frame(&mut host, &mut active, &key_hints);
                                 terminal_frame_pending = false;
                             }
@@ -952,6 +1065,7 @@ async fn run_host_server(
                             ],
                             host_version: env!("CARGO_PKG_VERSION").to_owned(),
                         }).is_ok() {
+                            log_debug!("client", "control client attached"; "connection" => id);
                             controls.insert(id, responses);
                         }
                     }
@@ -979,6 +1093,11 @@ async fn run_host_server(
                                     shutting_down = true;
                                 }
                             } else if matches!(request, ClientRequest::ForceShutdown) {
+                                log_warn!(
+                                    "host",
+                                    "forced termination discarded protected state";
+                                    "connection" => id
+                                );
                                 if let Some(responses) = controls.get(&id) {
                                     let _ = responses.try_send(HostResponse::ShuttingDown);
                                 }
@@ -1085,6 +1204,11 @@ async fn run_host_server(
                                 changed = true;
                             }
                             ClientRequest::Detach => {
+                                log_info!(
+                                    "client",
+                                    "interactive client detached";
+                                    "connection" => id
+                                );
                                 key_hints.clear();
                                 // An explicit detach request is not `:quit-here`,
                                 // so it never carries a directory handoff.
@@ -1107,6 +1231,11 @@ async fn run_host_server(
                                 }
                             }
                             ClientRequest::ForceShutdown => {
+                                log_warn!(
+                                    "host",
+                                    "forced termination discarded protected state";
+                                    "connection" => id
+                                );
                                 if let Some(client) = active.take() {
                                     let _ = client.responses.try_send(HostResponse::ShuttingDown);
                                 }
@@ -1139,6 +1268,14 @@ async fn run_host_server(
                         }
                     }
                     ServerEvent::ProtocolError { id, message } => {
+                        // The one place that still knows which connection sent
+                        // a malformed or truncated frame, and what preceded it.
+                        log_warn!(
+                            "transport",
+                            "rejected a client frame: {message}";
+                            "connection" => id,
+                            "interactive" => active.as_ref().is_some_and(|client| client.id == id)
+                        );
                         let response = HostResponse::Error { message };
                         if active.as_ref().is_some_and(|client| client.id == id) {
                             send_active_response(&mut active, response);
@@ -1146,12 +1283,37 @@ async fn run_host_server(
                             send_control_response(&mut controls, id, response);
                         }
                     }
+                    ServerEvent::TransportFailure { id, message } => {
+                        // A framing error ends the connection, so no response
+                        // is sent and no further request will arrive. This is
+                        // the only place a malformed or truncated frame is
+                        // named; the `Disconnected` that follows only says the
+                        // connection went away.
+                        log_warn!(
+                            "transport",
+                            "client connection failed: {message}";
+                            "connection" => id,
+                            "interactive" => active.as_ref().is_some_and(|client| client.id == id)
+                        );
+                    }
                     ServerEvent::Disconnected { id } => {
-                        controls.remove(&id);
+                        let control = controls.remove(&id).is_some();
                         if active.as_ref().is_some_and(|client| client.id == id) {
                             key_hints.clear();
                             active = None;
                             last_detached = Instant::now();
+                            log_info!(
+                                "client",
+                                "interactive client disconnected";
+                                "connection" => id
+                            );
+                        } else if control {
+                            log_debug!("client", "control client disconnected"; "connection" => id);
+                        } else {
+                            // Either a connection refused at handshake, or an
+                            // interactive one whose closure was already
+                            // recorded where the failing write observed it.
+                            log_debug!("client", "connection closed"; "connection" => id);
                         }
                     }
                 }
@@ -1160,12 +1322,16 @@ async fn run_host_server(
                 if let Some(event) = event {
                     host.apply_event(HostEvent::Lsp(event));
                     changed = true;
+                } else {
+                    note_ended_service(&mut ended_services, "language servers");
                 }
             }
             event = services.syntax_events.recv() => {
                 if let Some(event) = event {
                     host.apply_event(HostEvent::Syntax(event));
                     changed = true;
+                } else {
+                    note_ended_service(&mut ended_services, "syntax");
                 }
             }
             event = services.file_picker_events.recv() => {
@@ -1178,6 +1344,8 @@ async fn run_host_server(
                 if let Some(event) = event {
                     host.apply_event(HostEvent::FileObservation(event));
                     changed = true;
+                } else {
+                    note_ended_service(&mut ended_services, "file monitor");
                 }
             }
             output = services.terminal_events.recv() => {
@@ -1208,6 +1376,7 @@ async fn run_host_server(
                 }
             }
             _ = refresh_tick.tick() => {
+                report_logging_failure(host.app_mut());
                 services.file_monitor.sync(host.file_monitor_requests());
                 changed = host.refresh_git_if_due(Instant::now());
                 changed |= host.refresh_session_activity();
@@ -1225,6 +1394,11 @@ async fn run_host_server(
                     && host.may_retire_idle()
                     && Instant::now().saturating_duration_since(last_detached) >= idle_retirement
                 {
+                    log_info!(
+                        "host",
+                        "retiring after an idle interval";
+                        "minutes" => host.config.workspace.idle_retirement_minutes
+                    );
                     shutting_down = true;
                 }
             }
@@ -1250,6 +1424,7 @@ async fn run_host_server(
                 changed = true;
             }
             signal = termination.recv() => {
+                log_warn!("host", "terminated by a signal"; "signal" => signal);
                 received_signal = Some(signal);
                 shutting_down = true;
             }
@@ -1280,6 +1455,7 @@ async fn run_host_server(
             terminal_frame_pending = false;
         }
     }
+    log_info!("host", "persistent session shutting down"; "workspace" => endpoint.id());
     host.cancel_all_waits("workspace host shut down");
     services.language_servers.send(LspCommand::Shutdown);
     // Unpublish before flushing rather than after: the listener is still
@@ -1287,7 +1463,12 @@ async fn run_host_server(
     // and a client that discovered this endpoint in that window would attach
     // to a host with no loop left to answer it.
     let unpublished = endpoint.cleanup();
+    if let Err(error) = &unpublished {
+        log_error!("host", "could not retire the published endpoint: {error}");
+    }
     flush_connections(&mut server, active, controls).await;
+    log_info!("host", "connections flushed and endpoint retired");
+    diagnostic_log::flush(diagnostic_log::FLUSH_BUDGET);
     unpublished?;
     if let Some(signal) = received_signal {
         return Err(terminated(signal));
@@ -1375,7 +1556,19 @@ fn publish_attached_frame(
     // person as an unexplained clean exit.
     match client.responses.try_send(response) {
         Ok(()) => client.last_frame = Some(frame),
-        Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => *active = None,
+        Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+            // The write is where the closure is observed, so this is the
+            // boundary that records it. The `Disconnected` event that follows
+            // finds no attachment left and stays quiet rather than reporting
+            // the same departure twice.
+            log_info!(
+                "client",
+                "interactive client disconnected";
+                "connection" => client.id,
+                "observed" => "frame publication"
+            );
+            *active = None;
+        }
         Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {}
     }
 }
@@ -1718,15 +1911,37 @@ fn send_active_response(active: &mut Option<AttachedClient>, response: HostRespo
     // latter ends the attachment; treating momentary backpressure as a
     // disconnect closed live sessions during bursts of frames.
     if let Err(error) = client.responses.try_send(response) {
+        let connection = client.id;
         match error {
-            tokio::sync::mpsc::error::TrySendError::Closed(_) => *active = None,
+            tokio::sync::mpsc::error::TrySendError::Closed(_) => {
+                // Recorded here, where the failing write observed it. The
+                // `Disconnected` event that follows finds no attachment and
+                // stays quiet rather than reporting the same departure twice.
+                log_info!(
+                    "client",
+                    "interactive client disconnected";
+                    "connection" => connection,
+                    "observed" => "control response"
+                );
+                *active = None;
+            }
             // A frame is a whole snapshot, so skipping one costs nothing: the
             // next publish supersedes it. Anything else carries state the
             // client cannot reconstruct, and a channel this full means it is
             // not draining at all, so detaching says so rather than losing a
             // control message in silence.
             tokio::sync::mpsc::error::TrySendError::Full(HostResponse::Frame { .. }) => {}
-            tokio::sync::mpsc::error::TrySendError::Full(_) => *active = None,
+            tokio::sync::mpsc::error::TrySendError::Full(_) => {
+                // The client is still connected, so no `Disconnected` event
+                // will follow: this is the only record a stalled reader
+                // produces.
+                log_warn!(
+                    "client",
+                    "interactive client stopped reading; ending the attachment";
+                    "connection" => connection
+                );
+                *active = None;
+            }
         }
     }
 }
@@ -2350,6 +2565,8 @@ async fn run_wait(
     targets: Vec<LaunchTarget>,
     config_path: Option<std::path::PathBuf>,
     mouse_enabled: bool,
+    verbosity: u8,
+    log: Option<&Path>,
 ) -> Result<()> {
     // Install before the durable request is created. A signal received while
     // its response is in flight is retained until the token is known, then
@@ -2367,7 +2584,12 @@ async fn run_wait(
         })
         .collect::<Vec<_>>();
     let mut control = match connect_control(&endpoint).await {
-        Ok(client) => client,
+        Ok(client) => {
+            // The host was already there, so this launch did not choose its
+            // logging and must not appear to have.
+            report_retained_logging(verbosity, log);
+            client
+        }
         // A host of another version is still holding this workspace. Starting a
         // second one would only fail to bind, and displacing it silently is not
         // this command's decision to make, so the error names the process and
@@ -2379,6 +2601,7 @@ async fn run_wait(
             let startup = HostStartup::new(std::env::current_exe()?, "--wait")
                 .with_working_directory(&caller_directory)
                 .with_config(config_path.as_deref())
+                .with_logging(verbosity, log)
                 .with_targets(paths.clone());
             start_detached_host(&endpoint, startup).await?;
             connect_control(&endpoint)
@@ -2501,7 +2724,12 @@ fn pad_table_cell(value: &str, width: usize) -> String {
 }
 
 #[cfg(unix)]
-async fn start_selected_session(selector: &Path, config_path: Option<&Path>) -> Result<()> {
+async fn start_selected_session(
+    selector: &Path,
+    config_path: Option<&Path>,
+    verbosity: u8,
+    log: Option<&Path>,
+) -> Result<()> {
     let (config, config_path) = Config::load(config_path)?;
     let working_directory = std::env::current_dir()?;
     let requested = resolve_known_workspace_from_directory(
@@ -2517,8 +2745,12 @@ async fn start_selected_session(selector: &Path, config_path: Option<&Path>) -> 
             working_directory.join(selector)
         }
     });
-    let startup =
-        HostStartup::new(std::env::current_exe()?, "started").with_config(config_path.as_deref());
+    let startup = HostStartup::new(std::env::current_exe()?, "started")
+        .with_config(config_path.as_deref())
+        .with_logging(verbosity, log);
+    let endpoint =
+        resolve_workspace_endpoint(&requested, &config.workspace.state, config_path.as_deref())?;
+    report_retained_logging_if_running(&endpoint, verbosity, log).await;
     ensure_workspace_host(
         &requested,
         &config.workspace.state,
@@ -3165,6 +3397,130 @@ impl Drop for TerminalGuard {
     }
 }
 
+/// Tells the person, once, that the diagnostic log stopped working.
+///
+/// A destination that becomes unwritable after startup is seen only by the
+/// background writer. Editing and serving continue either way, so this is a
+/// notification rather than an error: stderr belongs to the terminal the TUI
+/// is drawing on, and `:service-health` already carries the standing state.
+fn report_logging_failure(app: &mut App) {
+    if let Some(failure) = diagnostic_log::unreported_failure() {
+        app.push_notification(NotificationDraft::new(
+            NotificationSeverity::Warning,
+            "Logging",
+            "Diagnostic log stopped recording",
+            format!("{failure} · editing continues without a durable log"),
+        ));
+    }
+}
+
+/// Records a background service ending exactly once.
+///
+/// The editor keeps working without it, so nothing else reports the loss; a
+/// detached host would otherwise show only the missing behaviour.
+fn note_ended_service(
+    reported: &mut std::collections::HashSet<&'static str>,
+    service: &'static str,
+) {
+    if reported.insert(service) {
+        log_warn!("service", "background service ended"; "service" => service);
+    }
+}
+
+/// Says plainly that an already-running host kept its own logging.
+///
+/// Verbosity and destination are properties of host startup. Accepting `-v`
+/// or `--log` silently here would present an attachment as if it had
+/// reconfigured the host that owns the workspace.
+fn report_retained_logging(verbosity: u8, log: Option<&Path>) {
+    if verbosity == 0 && log.is_none() {
+        return;
+    }
+    eprintln!(
+        "runyte: the running session kept its own log level and destination; \
+restart it with --session-restart to change them"
+    );
+}
+
+fn report_retained_host_logging(arguments: &LaunchArguments) {
+    report_retained_logging(arguments.verbosity, arguments.log.as_deref());
+}
+
+/// The same report for callers that hold an endpoint rather than a mode.
+#[cfg(unix)]
+async fn report_retained_logging_if_running(
+    endpoint: &LocalEndpoint,
+    verbosity: u8,
+    log: Option<&Path>,
+) {
+    if (verbosity == 0 && log.is_none()) || connect_control(endpoint).await.is_err() {
+        return;
+    }
+    report_retained_logging(verbosity, log);
+}
+
+/// Installs the diagnostic logger this process will own, if any.
+///
+/// Returns the failure text when the default destination could not be used.
+/// A failed default degrades logging rather than preventing editing or
+/// preventing a host from serving; a failed explicit `--log` is a startup
+/// error, because silently choosing another destination would make the
+/// requested capture misleading.
+fn initialize_logging(
+    arguments: &LaunchArguments,
+    role: LogRole,
+    state_root: &Path,
+    project_root: &Path,
+) -> Result<Option<String>> {
+    let level = LogLevel::from_verbosity(arguments.verbosity);
+    let path = arguments
+        .log
+        .clone()
+        .unwrap_or_else(|| diagnostic_log::default_path(state_root, role, std::process::id()));
+    // Every launch leaves a standalone log behind, so the directory is swept
+    // before this one is opened. Live owners are never touched.
+    if role == LogRole::Standalone && arguments.log.is_none() {
+        diagnostic_log::prune_standalone_logs(
+            state_root,
+            std::process::id(),
+            diagnostic_log::RETAINED_STANDALONE_LOGS,
+        );
+    }
+    let workspace = workspace_id(project_root);
+    let abbreviated = workspace
+        .get(..ABBREVIATED_LOG_WORKSPACE_ID)
+        .unwrap_or(&workspace)
+        .to_owned();
+    let settings = diagnostic_log::Settings::new(level, role).with_workspace(Some(abbreviated));
+    let sink = if arguments.log.is_some() {
+        diagnostic_log::Sink::exclusive_file(path.clone())
+    } else {
+        diagnostic_log::Sink::file(path.clone())
+    };
+    match diagnostic_log::Logger::start(settings, sink) {
+        Ok(logger) => {
+            diagnostic_log::install(logger);
+            diagnostic_log::install_panic_hook();
+            Ok(None)
+        }
+        Err(failure) => {
+            anyhow::ensure!(arguments.log.is_none(), "{failure}");
+            diagnostic_log::note_unavailable(role, Some(path), failure.clone());
+            // Reported here, so the periodic check does not repeat it as a
+            // second notification once an `App` exists.
+            diagnostic_log::note_failure_reported();
+            eprintln!("runyte: {failure}");
+            Ok(Some(failure))
+        }
+    }
+}
+
+/// How much of the workspace ID each record carries. The same abbreviation
+/// session listings show, so a record can be matched to a listed session
+/// without pasting a 32-character hash onto every line. The startup record
+/// carries the complete ID.
+const ABBREVIATED_LOG_WORKSPACE_ID: usize = 8;
+
 fn print_help() {
     println!(
         "\
@@ -3176,6 +3532,8 @@ USAGE:
 OPTIONS:
     -c, --config PATH    Use a specific YAML config
     -i, --init DIRECTORY Initialize and open DIRECTORY as a workspace
+    -v, --verbose        Raise the diagnostic log level; repeat for more
+        --log PATH       Write the diagnostic log to PATH instead
     -h, --help           Print help
     -V, --version        Print version
 
@@ -3219,6 +3577,33 @@ PERSISTENT SESSIONS:
                          Rename a persistent session
     -f, --force          With stop/stop-all/restart, discard protected buffers,
                          waiters, and live terminal children
+
+DIAGNOSTICS:
+    Runyte keeps a small local log of warnings, errors, and, when asked, more
+    detailed lifecycle events. The process that owns editor state owns the
+    file: a standalone editor writes .runyte/standalone-<pid>.log, a persistent
+    session writes .runyte/host.log. At most 4 MiB is kept in the active file
+    and 4 MiB in one previous file beside it. A standalone launch keeps the
+    four newest logs left by exited standalone processes and removes older
+    active and previous files without touching a live owner's log.
+
+    The default level records warnings and errors. Each -v raises it through
+    info, debug, and trace, and stops at trace. --log PATH selects another
+    destination; a path that cannot be written is a startup error, while an
+    unwritable default only degrades logging. On Unix, a path already owned by
+    another running Runyte process is refused.
+
+    In persistent mode these are properties of session startup. --serve,
+    --session-start, --session-restart, and the launch that starts a missing
+    session pass them on; attaching to a running session leaves its logging
+    alone and says so. Inside the editor, :log-open shows the log of the
+    process that owns the workspace and :service-health names its owner,
+    level, and path.
+
+    Records never contain document text, selections, clipboard or terminal
+    contents, environment values, or language-server message bodies. They do
+    contain local paths and process metadata, so review a log before sharing
+    it.
 
 TARGETS:
     (no target)          Open the Runyte about page

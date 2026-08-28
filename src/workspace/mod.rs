@@ -33,7 +33,7 @@ pub use host::{
     HostServiceSubmitError, SessionPreview, SessionPreviewPane, SessionPreviewPaneKind,
     WorkspaceHost,
 };
-pub use identity::WorkspaceIdentity;
+pub use identity::{WORKSPACE_ID_LENGTH, WorkspaceIdentity, workspace_id};
 pub use service::{
     CancellationToken, ServiceKind, ServiceLane, ServiceLifecycle, ServiceOutcome, ServicePhase,
     ServiceProgress, ServiceRequestId, ServiceStateError, ServiceSubmitError, ServiceUpdate,

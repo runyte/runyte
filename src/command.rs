@@ -86,6 +86,7 @@ pub enum ColonCommand {
     GitUnstage,
     GitWorktrees,
     Grammar,
+    LogOpen,
     LspRestart,
     LspStatus,
     Notifications,
@@ -247,6 +248,7 @@ impl ColonCommand {
         Self::GitWorktrees,
         Self::Grammar,
         Self::LspRestart,
+        Self::LogOpen,
         Self::LspStatus,
         Self::Notifications,
         Self::Open,
@@ -321,7 +323,7 @@ impl ColonCommand {
             | Self::ForceQuitAll
             | Self::QuitHere
             | Self::ForceQuitHere => CommandCategory::Application,
-            Self::Grammar | Self::ServiceHealth => CommandCategory::Configuration,
+            Self::Grammar | Self::LogOpen | Self::ServiceHealth => CommandCategory::Configuration,
             Self::SessionAttach
             | Self::SessionList
             | Self::SessionStart
@@ -1508,6 +1510,14 @@ pub const COMMANDS: &[CommandSpec] = &[
         NoArguments
     ),
     spec!(
+        ColonId(Colon::LogOpen),
+        "log-open",
+        [],
+        "log-open",
+        "Open this process's diagnostic log",
+        NoArguments
+    ),
+    spec!(
         ColonId(Colon::Notifications),
         "notifications",
         ["not"],
@@ -2302,6 +2312,7 @@ fn valid_colon_parameters(command: ColonCommand, parameters: &InvocationParamete
             | Colon::GitStageLines
             | Colon::GitUnstage
             | Colon::GitWorktrees
+            | Colon::LogOpen
             | Colon::LspStatus
             | Colon::Notifications
             | Colon::Path
@@ -2629,6 +2640,7 @@ fn invocation_from_parts(
                 | ColonCommand::GitStageLines
                 | ColonCommand::GitUnstage
                 | ColonCommand::GitWorktrees
+                | ColonCommand::LogOpen
                 | ColonCommand::LspStatus
                 | ColonCommand::Notifications
                 | ColonCommand::Path

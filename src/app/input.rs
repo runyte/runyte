@@ -4739,6 +4739,10 @@ impl App {
                 }
                 Ok(())
             }
+            (Colon::LogOpen, InvocationParameters::None) => {
+                self.open_log_buffer();
+                Ok(())
+            }
             (Colon::Notifications, InvocationParameters::None) => {
                 self.open_notifications_buffer();
                 Ok(())
