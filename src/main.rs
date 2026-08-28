@@ -332,7 +332,10 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
     // attachment.
     #[cfg(unix)]
     let selected_workspace = match arguments.workspace_selector.take() {
-        Some(selector) => Some(resolve_attached_workspace(&selector, &config).await?),
+        Some(selector) => Some(
+            resolve_attached_workspace(&selector, &launch_directory, &config, &reserved_user_roots)
+                .await?,
+        ),
         None => None,
     };
     #[cfg(not(unix))]
@@ -344,6 +347,10 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
         None
     };
     let attaching_elsewhere = selected_workspace.is_some();
+    let initializing_current_attachment = arguments.mode == LaunchMode::Persistent
+        && arguments.mode_explicit
+        && arguments.project_root.is_none()
+        && !attaching_elsewhere;
     let initializing = arguments.init.is_some();
     let project_root = match arguments.init.take() {
         Some(requested) => {
@@ -362,6 +369,17 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
         }
         None if attaching_elsewhere => {
             let project_root = selected_workspace.expect("selector resolved a workspace");
+            startup.mark(StartupPhase::ProjectResolvedAutomatically);
+            project_root
+        }
+        None if initializing_current_attachment => {
+            let requested = project_root::discover(&launch_directory, &config.workspace.state)?
+                .unwrap_or_else(|| launch_directory.clone());
+            let project_root = project_root::initialize(
+                &requested,
+                &config.workspace.state,
+                &reserved_user_roots,
+            )?;
             startup.mark(StartupPhase::ProjectResolvedAutomatically);
             project_root
         }
@@ -782,45 +800,59 @@ fn uses_automatic_persistent_mode(
 ///
 /// The selector is matched against the workspace catalog first, so an ID, an
 /// unambiguous ID prefix, a persistent name, or a known root attaches without
-/// consulting the filesystem. A directory the catalog does not know is resolved
-/// the way a bare launch inside it would resolve its project, which is what
-/// makes `runyte -a DIRECTORY` and `cd DIRECTORY && runyte -a` the same
-/// request.
-///
-/// Discovery is not allowed to fall back to the interactive project-root
-/// prompt here. Naming a workspace is a request to attach to one, not an offer
-/// to create one somewhere the shell is not; `--init` remains the way to make a
-/// root out of a directory that has neither a Git root nor state of its own.
+/// consulting the filesystem. A directory the catalog does not know names that
+/// exact directory. It is initialized as a workspace when necessary, so
+/// attachment never needs the interactive project-root prompt and does not
+/// silently collapse a named nested directory into an ancestor workspace.
 #[cfg(unix)]
-async fn resolve_attached_workspace(selector: &Path, config: &Config) -> Result<PathBuf> {
-    if let Some(project_root) = resolve_known_workspace(selector, &config.workspace.state).await? {
-        return Ok(project_root);
-    }
-    resolve_attached_directory(selector, &config.workspace.state)
+async fn resolve_attached_workspace(
+    selector: &Path,
+    working_directory: &Path,
+    config: &Config,
+    reserved_user_roots: &[PathBuf],
+) -> Result<PathBuf> {
+    let requested = resolve_known_workspace_from_directory(
+        selector,
+        working_directory,
+        &config.workspace.state,
+    )
+    .await?
+    .unwrap_or_else(|| workspace_selector_path(selector, working_directory));
+    initialize_attached_directory(
+        &requested,
+        selector,
+        &config.workspace.state,
+        reserved_user_roots,
+    )
 }
 
-/// Resolves a selector the workspace catalog does not recognize.
+/// Resolves and initializes a directory selected for attachment.
 ///
-/// Only a directory can still name a workspace at this point, and it names the
-/// project a launch inside it would resolve, so a subdirectory of a project
-/// attaches to that project exactly as `cd` and a bare attachment would. A
-/// selector that is not a directory at all was an ID or a name that matched
-/// nothing, which the listing is the way to correct.
-fn resolve_attached_directory(selector: &Path, state: &Path) -> Result<PathBuf> {
+/// `display_selector` remains the spelling in an unknown-selector error even
+/// when a relative path has already been joined to the editor directory.
+fn initialize_attached_directory(
+    requested: &Path,
+    display_selector: &Path,
+    state: &Path,
+    reserved_user_roots: &[PathBuf],
+) -> Result<PathBuf> {
     let unknown = || {
         anyhow::anyhow!(
             "no session matches {}; use --session-list to see available sessions",
-            selector.display()
+            display_selector.display()
         )
     };
-    let directory = selector.canonicalize().map_err(|_| unknown())?;
+    let directory = requested.canonicalize().map_err(|_| unknown())?;
     anyhow::ensure!(directory.is_dir(), unknown());
-    project_root::discover(&directory, state)?.with_context(|| {
-        format!(
-            "{} is not a workspace and has no project root above it; use --init to make one",
-            directory.display()
-        )
-    })
+    project_root::initialize(&directory, state, reserved_user_roots)
+}
+
+fn workspace_selector_path(selector: &Path, working_directory: &Path) -> PathBuf {
+    if selector.is_absolute() {
+        selector.to_path_buf()
+    } else {
+        working_directory.join(selector)
+    }
 }
 
 /// Accepts a caller-resolved workspace root, or explains why it cannot be one.
@@ -1947,19 +1979,32 @@ async fn prepare_switch_target(
         &config.workspace.state,
     )
     .await?
-    .unwrap_or_else(|| {
-        if selector.is_absolute() {
-            selector.to_path_buf()
-        } else {
-            working_directory.join(selector)
-        }
-    });
+    .unwrap_or_else(|| workspace_selector_path(selector, working_directory));
+    let mut reserved_user_roots = config_path
+        .map(|path| config::config_root_for(path, working_directory))
+        .into_iter()
+        .collect::<Vec<_>>();
+    if let Some(cache_root) = external_open::cache_root() {
+        reserved_user_roots.push(cache_root);
+    }
+    let requested = initialize_attached_directory(
+        &requested,
+        selector,
+        &config.workspace.state,
+        &reserved_user_roots,
+    )?;
     let startup =
         HostStartup::new(std::env::current_exe()?, "destination").with_config(config_path);
-    let endpoint =
-        ensure_workspace_host(&requested, &config.workspace.state, config_path, startup).await?;
+    let state_root = project_root::resolve_state_root(&requested, &config.workspace.state);
+    let endpoint = LocalEndpoint::discover(&state_root, &requested)?;
     if endpoint.project_root() == current.project_root() {
         return Ok(None);
+    }
+    if let Err(error) = connect_control(&endpoint).await {
+        if error.downcast_ref::<IncompatibleHost>().is_some() {
+            return Err(error);
+        }
+        start_detached_host(&endpoint, startup).await?;
     }
     Ok(Some(endpoint))
 }
@@ -3196,10 +3241,11 @@ PERSISTENT SESSIONS:
     workspace.mode: persistent inside the editor.
 
     WORKSPACE selects a session by ID, unambiguous ID prefix, persistent name,
-    or directory, so a session is reachable from anywhere. Omitting it uses the
-    workspace found from the current directory. A directory the catalog does
-    not know yet resolves its project root as a launch inside it would; use
-    --init to make a root out of one that has none.
+    or directory, so a session is reachable from anywhere. An existing directory
+    names that exact workspace; its configured state directory is created when
+    necessary. Omitting WORKSPACE uses the workspace found from the current
+    directory, or initializes that directory when none is found. Use --init to
+    initialize and open an exact directory in standalone mode.
 
         --serve          Keep a persistent session alive in the foreground
         --wait FILE...   Edit files through persistent mode and wait for
@@ -3267,8 +3313,8 @@ mod tests {
         recover_switched_attachment, send_active_response, workspace_response_publishes_frame,
     };
     use super::{
-        KeyRepeatDetector, is_passive_pointer, is_redraw_only_event, motion_repeat_dispatches,
-        observe_key_or_text_hint, rejected_text_input, resolve_attached_directory,
+        KeyRepeatDetector, initialize_attached_directory, is_passive_pointer, is_redraw_only_event,
+        motion_repeat_dispatches, observe_key_or_text_hint, rejected_text_input,
         resolve_cwd_file_path, resolve_requested_project_root, starts_on_about,
         uses_automatic_persistent_mode, write_cwd_file,
     };
@@ -3840,7 +3886,7 @@ mod tests {
     }
 
     #[test]
-    fn an_attachment_selector_resolves_a_directory_to_its_project_root() {
+    fn an_attachment_directory_is_initialized_as_the_exact_workspace_root() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -3857,26 +3903,38 @@ mod tests {
         fs::write(project.join(".git").join("HEAD"), "ref: refs/heads/main\n").unwrap();
         fs::create_dir_all(&plain).unwrap();
         let state = PathBuf::from(".runyte");
-        let expected = project.canonicalize().unwrap();
+        let expected_project = project.canonicalize().unwrap();
+        let expected_nested = nested.canonicalize().unwrap();
+        let expected_plain = plain.canonicalize().unwrap();
 
         assert_eq!(
-            resolve_attached_directory(&project, &state).unwrap(),
-            expected
+            initialize_attached_directory(&project, &project, &state, &[]).unwrap(),
+            expected_project
         );
-        // A directory inside a project names that project, so an attachment
-        // reaches the same workspace a bare launch there would.
-        assert_eq!(
-            resolve_attached_directory(&nested, &state).unwrap(),
-            expected
-        );
+        assert!(project.join(".runyte").is_dir());
 
-        // Naming a workspace is a request to attach to one, not an offer to
-        // create one somewhere the shell is not.
-        let error = resolve_attached_directory(&plain, &state).unwrap_err();
-        assert!(error.to_string().contains("--init"), "{error}");
+        // Unlike ordinary discovery, an explicitly named nested directory is
+        // the workspace root even when a Git root exists above it.
+        assert_eq!(
+            initialize_attached_directory(&nested, &nested, &state, &[]).unwrap(),
+            expected_nested
+        );
+        assert!(nested.join(".runyte").is_dir());
+
+        assert_eq!(
+            initialize_attached_directory(&plain, &plain, &state, &[]).unwrap(),
+            expected_plain
+        );
+        assert!(plain.join(".runyte").is_dir());
 
         // An ID or name that matched nothing is not a directory either.
-        let error = resolve_attached_directory(Path::new("no-such-session"), &state).unwrap_err();
+        let error = initialize_attached_directory(
+            Path::new("no-such-session"),
+            Path::new("no-such-session"),
+            &state,
+            &[],
+        )
+        .unwrap_err();
         assert!(error.to_string().contains("--session-list"), "{error}");
 
         fs::remove_dir_all(&root).unwrap();
