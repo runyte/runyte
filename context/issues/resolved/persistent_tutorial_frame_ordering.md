@@ -1,4 +1,44 @@
-# Persistent tutorial integration test assumes input-correlated frames
+---
+title: "Persistent tutorial integration test attributed asynchronous frames to the latest input"
+status: resolved
+reported: 2026-08-28
+resolved: 2026-08-28
+commit: 108241d
+---
+
+## Resolution
+
+Commit `108241d` (`Fix persistent tutorial frame wait`) corrected
+`tutorial_persistent_lesson_completes_across_a_real_client_reattachment` at
+the integration-test boundary. The test previously used `send_input` as
+though the response it received were caused by that input. `ResponseSender`
+instead keeps visual output in an asynchronous replaceable slot, so a frame
+already pending before Enter could arrive after Enter and fail an otherwise
+successful tutorial transition.
+
+The new `wait_for_editor_frame` starts with the response already returned to
+the caller, then waits for a complete `HostFrame` satisfying the observable
+lesson state. A non-matching complete frame, terminal damage, or a quiet
+visual stream requests `ClientRequest::Resynchronize`; requests are rate
+limited to the visual polling interval. Refusal, detach, shutdown, protocol
+failure, disconnection, and every other unexpected semantic response fail
+immediately instead of being skipped.
+
+One absolute 30-second deadline bounds each editor-state transition while
+the shorter receive polling budget continues to detect a quiet host. If that
+deadline expires, the failure names the transition and prints the last
+complete frame's identity, active buffer, revision, and rendered editor text.
+Production frame publication and ordering are unchanged because visual
+responses remain intentionally asynchronous and replaceable.
+
+Tests covering the behavior are:
+
+- `tutorial_persistent_lesson_completes_across_a_real_client_reattachment` in
+  `tests/persistent_host.rs`;
+- `persistent_tutorial_finishes_only_after_detach_and_reattach` in
+  `src/app/tests/tutorial.rs`.
+
+## Report
 
 GitHub Actions run
 [`33183416669`](https://github.com/runyte/runyte/actions/runs/33183416669)
@@ -34,7 +74,7 @@ The complete macOS test job passed in the failing run, and the exact integration
 test passes when run in isolation, which is consistent with a timing-dependent
 test failure rather than incorrect tutorial state.
 
-## Expected behavior
+### Expected behavior
 
 The integration test waits for the observable editor state it exercises. After
 Enter, one complete frame must contain both `PERSISTENT SESSIONS` and
@@ -48,7 +88,7 @@ awaited and retain the last complete frame's identity and text for diagnosis.
 Unexpected semantic responses such as refusal, detach, shutdown, or protocol
 error must fail immediately rather than being swallowed.
 
-## Constraints
+### Constraints
 
 Production frame ordering should not be changed to satisfy the test. Visual
 frames are intentionally asynchronous and replaceable so a slow client can
@@ -66,7 +106,7 @@ it can request `ClientRequest::Resynchronize` to obtain current complete state.
 The fix belongs at the integration-test boundary in `tests/persistent_host.rs`.
 No GitHub Actions workflow change is required.
 
-## Reproduction
+### Reproduction
 
 Run the complete locked suite on a loaded Linux machine so the persistent-host
 integration test competes with the other test binaries:
