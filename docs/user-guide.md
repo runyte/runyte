@@ -361,10 +361,11 @@ Number, and Forget. Open is identical to Enter. Close stops the host and leaves
 the workspace listed as a stopped row; nothing below the session is touched,
 because a session is the only level that means nothing on its own.
 
-Each row reads as five columns, padded to the widest value in the list so they
-line up down it:
+Each row reads as five columns, padded to the widest value or heading in the
+list so they line up down it:
 
 ```text
+  No. Name                    Branch            Path                             Last active
   2 * runyte-dev              dev               ~/code/runyte-dev               0min ago
   1   main                    main              ~/code/runyte                   3h ago
   4   runyte.github.io        main              ~/code/runyte.github.io         5days ago
@@ -372,13 +373,15 @@ line up down it:
   5   runyte-enh-render-space enh/render-space  ~/code/runyte-enh-render-space  1min ago
 ```
 
-The number is the digit that attaches to the row, then the session name, then
-the checked-out branch, the workspace directory, and the last-active age. The
-directory is the widest identity column, so a path under your home directory
-is written with `~`; the preview keeps the full path. A workspace that is not
-a Git working tree has no branch, so that column holds `-`. The branch is read
-from the workspace directory itself rather than answered by a host, so a
-stopped session states its branch exactly as a running one does.
+The `No.`, `Name`, `Branch`, `Path`, and `Last active` headings stay above the
+rows and do not participate in filtering or selection. The number is the digit
+that attaches to the row, then the session name, then the checked-out branch,
+the workspace directory, and the last-active age. The directory is the widest
+identity column, so a path under your home directory is written with `~`; the
+preview keeps the full path. A workspace that is not a Git working tree has no
+branch, so that column holds `-`. The branch is read from the workspace
+directory itself rather than answered by a host, so a stopped session states
+its branch exactly as a running one does.
 
 Activity uses one short unit at a time: minutes below an hour, hours below a
 day, then days, written as `5min ago`, `3h ago`, or `5days ago`. Partial units

@@ -334,6 +334,31 @@ fn fit_row_with_trailing(
     Line::from(fitted)
 }
 
+/// Draws a list's non-selectable column labels in the same three regions as
+/// its rows. Marker-using lists still pay for the empty selection gutter, and
+/// the final heading follows the trailing column's clipping rule.
+fn column_header_line(
+    label: &str,
+    detail: &str,
+    trailing_detail: &str,
+    width: usize,
+    marker: bool,
+    theme: &TuiTheme,
+) -> Line<'static> {
+    let style = Style::default().fg(theme.muted).bold();
+    let mut spans = Vec::new();
+    if marker {
+        spans.push(Span::raw(SELECTION_GUTTER));
+    }
+    spans.push(Span::styled(label.to_owned(), style));
+    if !detail.is_empty() {
+        spans.push(Span::styled(format!("  {detail}"), style));
+    }
+    let trailing =
+        (!trailing_detail.is_empty()).then(|| Span::styled(format!("  {trailing_detail}"), style));
+    fit_row_with_trailing(spans, trailing, width, None)
+}
+
 /// Whether an overlay kind draws the selection marker gutter.
 ///
 /// Choose-one row lists do. Caret-anchored context overlays do not: they are
@@ -572,6 +597,7 @@ fn draw_snapshot_overlay(
         || (overlay.kind == OverlayKind::Confirmation
             && overlay.input == crate::snapshot::OverlayInput::Text);
     let query_height = usize::from(shows_query);
+    let header_height = usize::from(overlay.column_header.is_some());
     let message_height = usize::from(overlay.message.is_some());
     let area = if overlay.layout == OverlayLayout::Setting {
         to_tui_rect(setting_popup_area(editor_area))
@@ -614,7 +640,7 @@ fn draw_snapshot_overlay(
         }
     };
     let row_capacity = usize::from(area.height)
-        .saturating_sub(2 + query_height + message_height)
+        .saturating_sub(2 + query_height + header_height + message_height)
         .max(1);
     let anchor = overlay
         .scroll_anchor
@@ -697,6 +723,27 @@ fn draw_snapshot_overlay(
     // selection moves.
     let marker = uses_selection_marker(overlay.kind);
     let row_width = usize::from(columns[0].width);
+    let rows_area = if let Some(header) = &overlay.column_header {
+        frame.render_widget(
+            Paragraph::new(column_header_line(
+                &header.label,
+                &header.detail,
+                &header.trailing_detail,
+                row_width,
+                marker,
+                theme,
+            )),
+            TuiRect::new(columns[0].x, columns[0].y, columns[0].width, 1),
+        );
+        TuiRect::new(
+            columns[0].x,
+            columns[0].y.saturating_add(1),
+            columns[0].width,
+            columns[0].height.saturating_sub(1),
+        )
+    } else {
+        columns[0]
+    };
     let mut lines = Vec::new();
     for (index, row) in overlay
         .rows
@@ -794,7 +841,7 @@ fn draw_snapshot_overlay(
                 .map(|line| Line::styled(line.to_owned(), style)),
         );
     }
-    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), columns[0]);
+    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), rows_area);
     if show_preview {
         let preview = match overlay.preview.as_ref() {
             Some(OverlayPreview::Text(lines)) => {
@@ -2434,6 +2481,30 @@ fn draw_list(frame: &mut Frame<'_>, app: &TuiApp<'_>, editor_area: Rect) {
             .constraints([Constraint::Percentage(100)])
             .split(inner)
     };
+    frame.render_widget(Clear, area);
+    frame.render_widget(block, area);
+    let marker = true;
+    let list_area = if let Some(header) = &picker.column_header {
+        frame.render_widget(
+            Paragraph::new(column_header_line(
+                &header.label,
+                &header.detail,
+                &header.trailing_detail,
+                usize::from(columns[0].width),
+                marker,
+                &app.theme,
+            )),
+            TuiRect::new(columns[0].x, columns[0].y, columns[0].width, 1),
+        );
+        TuiRect::new(
+            columns[0].x,
+            columns[0].y.saturating_add(1),
+            columns[0].width,
+            columns[0].height.saturating_sub(1),
+        )
+    } else {
+        columns[0]
+    };
     let visible = picker.visible_indices();
     let report = picker.purpose == crate::picker::ListPurpose::Report;
     let report_offset = if report {
@@ -2445,7 +2516,7 @@ fn draw_list(frame: &mut Frame<'_>, app: &TuiApp<'_>, editor_area: Rect) {
         .iter()
         .skip(report_offset)
         .take(if report {
-            usize::from(columns[0].height).max(1)
+            usize::from(list_area.height).max(1)
         } else {
             usize::MAX
         })
@@ -2489,7 +2560,7 @@ fn draw_list(frame: &mut Frame<'_>, app: &TuiApp<'_>, editor_area: Rect) {
                 } else {
                     app.theme.muted
                 };
-                let row_width = usize::from(columns[0].width.saturating_sub(2));
+                let row_width = usize::from(list_area.width.saturating_sub(2));
                 if preview_layout {
                     let emphasized = picker
                         .item_label_emphasis(item)
@@ -2550,9 +2621,7 @@ fn draw_list(frame: &mut Frame<'_>, app: &TuiApp<'_>, editor_area: Rect) {
         .highlight_symbol(selection_marker(&app.theme))
         .highlight_spacing(HighlightSpacing::Always);
     let mut state = ListState::default().with_selected(selected);
-    frame.render_widget(Clear, area);
-    frame.render_widget(block, area);
-    StatefulWidget::render(list, columns[0], frame.buffer_mut(), &mut state);
+    StatefulWidget::render(list, list_area, frame.buffer_mut(), &mut state);
     if show_preview {
         let preview = picker.selected_preview().map_or_else(
             || vec![Line::from("No preview")],
@@ -5986,6 +6055,80 @@ mod tests {
             !screen.contains("End protected buffers, waiters, and live terminals"),
             "{screen}"
         );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn session_manager_draws_column_headers_in_standalone_and_attached_frames() {
+        let root = std::env::temp_dir().join(format!(
+            "runyte-ui-session-columns-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let current = root.join("current");
+        std::fs::create_dir_all(&current).unwrap();
+        let current = current.canonicalize().unwrap();
+        let mut app = App::new(Config::default(), Some(current.clone())).unwrap();
+        app.enable_persistent_session();
+        app.execute(crate::command::parse_named_command("sl", None).unwrap())
+            .unwrap();
+        app.apply_workspace_event(crate::workspace::WorkspaceEvent::Refreshed {
+            generation: 1,
+            result: Ok(vec![crate::workspace::WorkspaceRow {
+                number: Some(1),
+                last_active_unix_seconds: None,
+                id: "aaaaaaaaaaaaaaaa".to_owned(),
+                name: Some("current".to_owned()),
+                project_root: current,
+                running: true,
+                incompatible_protocol: None,
+                unsaved_buffers: None,
+                pending_wait_requests: None,
+                live_terminals: None,
+                terminal_sessions: None,
+                interactive_attached: None,
+                open_buffers: None,
+                git: Some(crate::git::WorkspaceGitFacts {
+                    branch: Some("main".to_owned()),
+                    worktree: None,
+                    remote: None,
+                }),
+                missing_directory: false,
+            }]),
+        });
+
+        let assert_headings = |screen: &str| {
+            for heading in ["No. Name", "Branch  Path", "Last active"] {
+                assert!(
+                    screen.contains(heading),
+                    "{heading:?} missing from {screen}"
+                );
+            }
+        };
+        app.list.as_mut().unwrap().show_preview = false;
+        assert_headings(&rendered(&mut app, 160, 24));
+
+        let mut overlay = app
+            .overlay_snapshots()
+            .into_iter()
+            .find(|overlay| overlay.title.starts_with("Sessions"))
+            .unwrap();
+        // Give the attached renderer's list the full overlay width so this
+        // assertion checks all headings, not the deliberate preview clipping.
+        overlay.show_preview = false;
+        let theme = TuiTheme::new(&app.theme);
+        let buffer = draw_overlay_alone(&mut app, &theme, &overlay);
+        let attached = buffer
+            .content
+            .iter()
+            .map(|cell| cell.symbol().chars().next().unwrap_or(' '))
+            .collect::<String>();
+        assert_headings(&attached);
+
         std::fs::remove_dir_all(root).unwrap();
     }
 
