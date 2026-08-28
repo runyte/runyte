@@ -1258,6 +1258,109 @@ fn a_directory_that_cannot_be_listed_adopts_no_explorer() {
     );
 }
 
+/// Wait activation becomes a Normal-mode boundary only after its target has
+/// opened successfully. A refused request must leave the existing editor
+/// interaction exactly where it was.
+#[cfg(unix)]
+#[test]
+fn a_failed_directory_wait_preserves_the_existing_mode_and_selection() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let directory = temporary("wait-failed-directory-entry");
+    let locked = directory.join("locked");
+    let note = directory.join("note.txt");
+    fs::create_dir_all(&locked).unwrap();
+    fs::write(&note, "hello").unwrap();
+
+    let mut app = App::new(Config::default(), Some(directory.clone())).unwrap();
+    app.open_file(locked.clone()).unwrap();
+    app.open_file(note).unwrap();
+    app.active_mut().directory_buffer = None;
+    press(&mut app, 'i');
+    let buffer = app.active().buffer;
+    let selection = app.active().selection.clone();
+
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
+    if fs::read_dir(&locked).is_ok() {
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
+        let _ = fs::remove_dir_all(&directory);
+        return;
+    }
+    let refused = app.host_open_wait_files(vec![locked.clone()], true, &HashSet::new());
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
+
+    assert!(refused.is_err(), "an unreadable directory wait was opened");
+    assert_eq!(app.active().buffer, buffer);
+    assert_eq!(app.mode, Mode::Insert);
+    assert_eq!(app.active().selection, selection);
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn a_successful_wait_records_the_source_as_normal_in_jump_history() {
+    let directory = temporary("wait-normal-jump");
+    fs::create_dir_all(&directory).unwrap();
+    let source = directory.join("source.txt");
+    let target = directory.join("target.txt");
+    fs::write(&source, "alpha\n").unwrap();
+    fs::write(&target, "beta\n").unwrap();
+
+    let mut expected = App::new(Config::default(), Some(source.clone())).unwrap();
+    press(&mut expected, 'v');
+    press(&mut expected, 'l');
+    expected.push_jump();
+    key(&mut expected, KeyCode::Escape, Modifiers::NONE);
+    expected.open_file(target.clone()).unwrap();
+    expected.jump(true);
+
+    let mut wait = App::new(Config::default(), Some(source)).unwrap();
+    press(&mut wait, 'v');
+    press(&mut wait, 'l');
+    // The raw Select position already being newest exercises jumplist
+    // deduplication: wait activation must append the distinct Normal form.
+    wait.push_jump();
+    wait.host_open_wait_files(vec![target], true, &HashSet::new())
+        .unwrap();
+    wait.jump(true);
+
+    assert_eq!(wait.mode, Mode::Normal);
+    assert_eq!(wait.active().selection, expected.active().selection);
+    assert_eq!(
+        wait.active().selection_semantics(),
+        expected.active().selection_semantics()
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn a_directory_wait_remembers_the_source_view_as_normal() {
+    let directory = temporary("wait-normal-directory-view");
+    let first = directory.join("first");
+    let second = directory.join("second");
+    fs::create_dir_all(&first).unwrap();
+    fs::create_dir_all(&second).unwrap();
+    fs::write(first.join("alpha.txt"), "alpha\n").unwrap();
+    fs::write(second.join("beta.txt"), "beta\n").unwrap();
+
+    let mut expected = App::new(Config::default(), Some(first.clone())).unwrap();
+    press(&mut expected, 'v');
+    press(&mut expected, 'l');
+    key(&mut expected, KeyCode::Escape, Modifiers::NONE);
+    expected.open_file(second.clone()).unwrap();
+    expected.open_file(first.clone()).unwrap();
+
+    let mut wait = App::new(Config::default(), Some(first.clone())).unwrap();
+    press(&mut wait, 'v');
+    press(&mut wait, 'l');
+    wait.host_open_wait_files(vec![second], true, &HashSet::new())
+        .unwrap();
+    wait.open_file(first).unwrap();
+
+    assert_eq!(wait.mode, Mode::Normal);
+    assert_eq!(wait.active().selection, expected.active().selection);
+    fs::remove_dir_all(directory).unwrap();
+}
+
 /// A pane browses with one explorer however deep it walks, and the row it
 /// left each directory on comes back with the directory.
 #[test]

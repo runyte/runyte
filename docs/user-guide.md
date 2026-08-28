@@ -326,7 +326,9 @@ parent already resolved.
 For tools that need an editor process to stay open, configure
 `runyte --wait`. One invocation may name several files and returns success only
 after every requested buffer is explicitly closed or completed. `:wbc` writes
-and closes the requested buffer without changing the pane layout. It reuses a
+and closes the requested buffer without changing the pane layout. An activated
+wait buffer enters Normal mode, including when an existing persistent session
+was in Insert mode, so `:` commands are immediately available. It reuses a
 matching buffer in an existing host. A clean buffer left by an earlier
 completed wait is refreshed from disk first; unsaved text and buffers still
 owned by a pending wait are never replaced. If that host already has a TUI,

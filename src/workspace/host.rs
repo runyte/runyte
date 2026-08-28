@@ -1141,7 +1141,7 @@ mod tests {
         app::HostPorts,
         buffer::BufferKind,
         clipboard::SystemClipboard,
-        command::{CommandExecutionContext, EditorCommand},
+        command::{CommandExecutionContext, EditorCommand, Mode},
         input::{KeyStroke, Modifiers, PointerButton, PointerEventKind},
         layout::Rect,
         text::Transaction,
@@ -1765,6 +1765,28 @@ mod tests {
             std::fs::read_to_string(&path).unwrap(),
             "Complete Merge branch 'dev'\n"
         );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn an_activated_wait_enters_normal_mode() {
+        let root = std::env::temp_dir().join(format!(
+            "runyte-host-normal-wait-{}-{}",
+            std::process::id(),
+            unique_test_id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("MERGE_MSG");
+        std::fs::write(&path, "Merge branch 'dev'\n").unwrap();
+        let mut host = host();
+        host.execute(HostCommand::Input(InputEvent::Key(KeyStroke::char('i'))))
+            .unwrap();
+        assert_eq!(host.app.mode, Mode::Insert);
+
+        let (_, buffers) = host.create_wait_request([path], true).unwrap();
+
+        assert_eq!(host.app.active().buffer, buffers[0].index().unwrap());
+        assert_eq!(host.app.mode, Mode::Normal);
         std::fs::remove_dir_all(root).unwrap();
     }
 

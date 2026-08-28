@@ -4081,13 +4081,17 @@ impl App {
         self.mode = self.grammar.preferred_mode().unwrap_or(Mode::Normal);
     }
 
-    pub(super) fn enter_normal_mode(&mut self) {
-        if matches!(self.mode, Mode::Insert | Mode::Replace) {
-            let buffer_id = self.active().buffer;
-            self.buffers[buffer_id].commit_undo_group();
-            let buffer = self.active_buffer();
+    pub(super) fn normal_mode_selection(
+        &self,
+        buffer_id: usize,
+        selection: Selection,
+        semantics: SelectionSemantics,
+        mode: Mode,
+    ) -> Selection {
+        if matches!(mode, Mode::Insert | Mode::Replace) {
+            let buffer = &self.buffers[buffer_id];
             let vim = self.grammar.kind() == crate::command::GrammarKind::Vim;
-            let selection = self.active().selection.transform(|range| {
+            selection.transform(|range| {
                 let mut head = range.head;
                 if vim {
                     let row = buffer.offset_to_row(head);
@@ -4097,22 +4101,32 @@ impl App {
                     }
                 }
                 Range::point(buffer.clamp_offset(head, false))
-            });
-            self.active_mut().replace_selection(selection);
+            })
+        } else if self.grammar.kind() == crate::command::GrammarKind::Vim
+            && mode == Mode::Select
+            && matches!(
+                semantics,
+                SelectionSemantics::HalfOpen | SelectionSemantics::VimLinewise
+            )
+        {
+            self.vim_half_open_to_inclusive(selection).collapse()
         } else {
-            let selection = if self.grammar.kind() == crate::command::GrammarKind::Vim
-                && self.mode == Mode::Select
-                && matches!(
-                    self.active().selection_semantics(),
-                    SelectionSemantics::HalfOpen | SelectionSemantics::VimLinewise
-                ) {
-                self.vim_half_open_to_inclusive(self.active().selection.clone())
-                    .collapse()
-            } else {
-                self.active().selection.collapse()
-            };
-            self.active_mut().replace_selection(selection);
+            selection.collapse()
         }
+    }
+
+    pub(super) fn enter_normal_mode(&mut self) {
+        let buffer_id = self.active().buffer;
+        if matches!(self.mode, Mode::Insert | Mode::Replace) {
+            self.buffers[buffer_id].commit_undo_group();
+        }
+        let selection = self.normal_mode_selection(
+            buffer_id,
+            self.active().selection.clone(),
+            self.active().selection_semantics(),
+            self.mode,
+        );
+        self.active_mut().replace_selection(selection);
         self.replace_session = None;
         self.mode = Mode::Normal;
         match self.grammar.kind() {

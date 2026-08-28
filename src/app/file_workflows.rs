@@ -8,9 +8,9 @@ use super::{
     DirectoryReloadConfirmation, DirectoryView, DocumentSyntax, FileObservation,
     FileReloadConfirmation, FsConfirmation, FsOperation, FsPlan, GeneratedViewIdentity, HashSet,
     InputGrammar, Layout, MAX_DIFF_BYTES, MaximizedPane, MaximizedView, Mode, PaneDirectory, Path,
-    PathBuf, PromptKind, Result, Selection, Side, TerminalId, Transaction, TransferMode, bail,
-    buffer_language, diff_row_for_identity, diff_row_identity, enclosing_area, ensure,
-    expand_home_path, external_open, fs, open_or_new_at_identity, parse_buffer,
+    PathBuf, PromptKind, Result, Selection, SelectionSemantics, Side, TerminalId, Transaction,
+    TransferMode, bail, buffer_language, diff_row_for_identity, diff_row_identity, enclosing_area,
+    ensure, expand_home_path, external_open, fs, open_or_new_at_identity, parse_buffer,
     resolved_operation_path, trailing_whitespace_changes,
 };
 
@@ -609,13 +609,76 @@ impl App {
 
     /// Opens files for a new editor-wait request, refreshing reused clean
     /// files unless another pending request still owns their current text.
+    /// Activating a wait file is also an input boundary: an external editor
+    /// request must not inherit Insert or another modal state from the buffer
+    /// that happened to be active in an existing persistent session.
     pub(crate) fn host_open_wait_files(
         &mut self,
         paths: Vec<PathBuf>,
         activate: bool,
         pending_wait_buffers: &HashSet<usize>,
     ) -> Result<Vec<usize>> {
-        self.host_open_files_with_refresh(paths, activate, Some(pending_wait_buffers))
+        let previous_buffer = self.active().buffer;
+        let previous_selection = self.active().selection.clone();
+        let previous_semantics = self.active().selection_semantics();
+        let previous_selection_revision = self.active().selection_revision;
+        let previous_mode = self.mode;
+        let normal_selection = self.normal_mode_selection(
+            previous_buffer,
+            previous_selection.clone(),
+            previous_semantics,
+            previous_mode,
+        );
+        let normal_semantics = match self.grammar.kind() {
+            crate::command::GrammarKind::Runyte => SelectionSemantics::Runyte,
+            crate::command::GrammarKind::Vim => SelectionSemantics::HalfOpen,
+        };
+        let previous_directory = self.buffers[previous_buffer]
+            .is_directory()
+            .then(|| self.buffers[previous_buffer].path.clone())
+            .flatten();
+        let previous_directory_view = previous_directory
+            .as_ref()
+            .and_then(|path| self.directory_views.get(path).cloned());
+        if activate {
+            // Let a successful open record the position being left exactly as
+            // an explicit transition to Normal would. A failed open restores
+            // both values and the captured selection revision without
+            // committing the Insert undo group.
+            let pane = self.active_mut();
+            pane.replace_selection(normal_selection);
+            pane.mark_selection_semantics(normal_semantics);
+        }
+        let opened =
+            match self.host_open_files_with_refresh(paths, activate, Some(pending_wait_buffers)) {
+                Ok(opened) => opened,
+                Err(error) => {
+                    if activate {
+                        let pane = self.active_mut();
+                        pane.replace_selection(previous_selection);
+                        pane.mark_selection_semantics(previous_semantics);
+                        pane.selection_revision = previous_selection_revision;
+                        if let Some(path) = previous_directory {
+                            if let Some(view) = previous_directory_view {
+                                self.directory_views.insert(path, view);
+                            } else {
+                                self.directory_views.remove(&path);
+                            }
+                        }
+                    }
+                    return Err(error);
+                }
+            };
+        if activate {
+            if matches!(previous_mode, Mode::Insert | Mode::Replace) {
+                self.buffers[previous_buffer].commit_undo_group();
+            }
+            // The inherited mode belonged to the source. The activated wait
+            // buffer starts from its own caret in Normal mode.
+            self.mode = Mode::Normal;
+            self.enter_normal_mode();
+        }
+        Ok(opened)
     }
 
     fn host_open_files_with_refresh(

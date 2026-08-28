@@ -848,6 +848,11 @@ async fn git_commit_wait_closes_its_buffer_without_detaching_an_existing_tui() {
         .unwrap();
     let _ = response(&mut interactive).await;
     let _ = response(&mut interactive).await;
+    // An editor request arriving in an existing persistent session must not
+    // inherit Insert mode from the buffer that was active before Git opened
+    // its message. The `i` sent after the wait appears below should therefore
+    // enter Insert rather than becoming part of the commit subject.
+    send_input_expect_frame(&mut interactive, InputEvent::Key(KeyStroke::char('i'))).await;
     let editor = format!("{} --wait", env!("CARGO_BIN_EXE_runyte"));
     let mut commit = Command::new("git")
         .arg("commit")
