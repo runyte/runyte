@@ -329,6 +329,20 @@ async fn next_complete_frame(client: &mut LocalClient) -> runyte::protocol::Host
     }
 }
 
+/// Returns a current semantic frame after startup services have settled.
+///
+/// A frame is an optimistic-concurrency token. Using the first one while Git
+/// discovery is still running lets its completion make an immediate command
+/// stale before the host reads it.
+async fn next_idle_frame(client: &mut LocalClient) -> runyte::protocol::HostFrame {
+    loop {
+        let frame = next_complete_frame(client).await;
+        if frame.editor.status.long_running_action.is_none() {
+            return frame;
+        }
+    }
+}
+
 fn selection_count(response: &HostResponse) -> usize {
     let HostResponse::Frame { frame } = response else {
         panic!("expected frame, got {response:?}")
@@ -1628,11 +1642,11 @@ async fn quit_here_reports_its_directory_to_a_handoff_capable_client() {
     let mut plain = LocalClient::connect_with_handoff(&endpoint, geometry(), true, false)
         .await
         .unwrap();
-    let _ = response(&mut plain).await;
-    let frame = response(&mut plain).await;
-    let HostResponse::Frame { frame } = &frame else {
-        panic!("expected a frame, got {frame:?}")
-    };
+    assert!(matches!(
+        response(&mut plain).await,
+        HostResponse::Welcome { .. }
+    ));
+    let frame = next_idle_frame(&mut plain).await;
     plain
         .send(&ClientRequest::Invoke {
             command: runyte::protocol::CommandRequest::at(
@@ -1669,11 +1683,11 @@ async fn quit_here_reports_its_directory_to_a_handoff_capable_client() {
     let mut capable = LocalClient::connect_with_handoff(&endpoint, geometry(), true, true)
         .await
         .unwrap();
-    let _ = response(&mut capable).await;
-    let frame = response(&mut capable).await;
-    let HostResponse::Frame { frame } = &frame else {
-        panic!("expected a frame, got {frame:?}")
-    };
+    assert!(matches!(
+        response(&mut capable).await,
+        HostResponse::Welcome { .. }
+    ));
+    let frame = next_idle_frame(&mut capable).await;
     capable
         .send(&ClientRequest::Invoke {
             command: runyte::protocol::CommandRequest::at(

@@ -58,6 +58,13 @@ an otherwise successful quit on macOS. Coverage is provided by
 `an_interactive_quit_flushes_its_shutdown_response_without_a_control_client`
 in `tests/local_protocol.rs`.
 
+The same follow-up made
+`quit_here_reports_its_directory_to_a_handoff_capable_client` in
+`tests/persistent_host.rs` obtain an idle complete frame before invoking the
+command. Protocol frames are optimistic-concurrency tokens; using the first
+startup frame while Git discovery was still active let the discovery result
+advance the host and reject `:quit-here` as stale on a loaded runner.
+
 This deliberately follows the Vim/Helix distinction between a view-local
 `:q`, an all-view `:qa`, and a buffer-local `:bc`, while retaining Runyte's
 safer `:c` that cannot close the last pane. It also retains Runyte's special
