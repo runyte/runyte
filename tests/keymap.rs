@@ -680,7 +680,6 @@ fn removed_duplicate_bindings_stay_unbound() {
     }
     for sequence in [
         KeySequence::from(Key::ctrl('h')),
-        KeySequence::from(Key::new(KeyCode::Backspace, Modifiers::SHIFT)),
         KeySequence::from(Key::ctrl('d')),
     ] {
         assert!(matches!(

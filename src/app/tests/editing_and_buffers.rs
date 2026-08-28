@@ -3,6 +3,28 @@
 use super::*;
 
 #[test]
+fn shift_backspace_aliases_backspace_in_insert_and_replace_modes() {
+    let mut insert = App::new(Config::default(), None).unwrap();
+    seed(&mut insert, "ABC");
+    insert.mode = Mode::Insert;
+    set_cursor(&mut insert, 0, 3);
+
+    key(&mut insert, KeyCode::Backspace, Modifiers::SHIFT);
+    assert_eq!(text(&insert), "AB");
+
+    let mut replace = App::new(Config::default(), None).unwrap();
+    seed(&mut replace, "abc");
+    press(&mut replace, 'R');
+    replace
+        .handle_input(InputEvent::Text("X".to_owned()))
+        .unwrap();
+
+    key(&mut replace, KeyCode::Backspace, Modifiers::SHIFT);
+    assert_eq!(text(&replace), "abc");
+    assert_eq!(replace.mode, Mode::Replace);
+}
+
+#[test]
 fn replace_mode_overwrites_from_every_selection_head_and_restores_steps() {
     let mut app = App::new(Config::default(), None).unwrap();
     seed(&mut app, "abc\nxy");

@@ -1229,8 +1229,11 @@ caret as text is entered. A caret already at line end appends instead, and a
 newline inserts a line break rather than consuming the existing terminator.
 Unicode characters are replaced one for one and CRLF remains one line ending.
 
-Backspace in Replace mode retraces the current overwrite run: overwritten
-characters return, while characters appended past line end are removed.
+Backspace or Shift-Backspace in Replace mode retraces the current overwrite
+run: overwritten characters return, while characters appended past line end
+are removed. In Insert mode, Shift-Backspace likewise deletes the previous
+character exactly like Backspace, so Shift can remain held while correcting
+uppercase text.
 Alt-Backspace and Ctrl-u restore by word and to the beginning of the current
 line. Escape or Ctrl-`\` returns to Normal mode, and the complete Replace-mode
 session is one undo checkpoint. Lowercase `r` remains the single-character

@@ -327,7 +327,7 @@ projection; keyboard overlays retain input ownership while open.
 | Insert `Alt-Backspace` | delete previous word | `delete-word-backward` | Implemented · Primary | Unicode-safe and can join lines. |
 | Insert `Alt-Delete` | delete next word | `delete-word-forward` | Added · Primary | Deletes the current word, or intervening whitespace plus the next word. |
 | Insert `Ctrl-u`, `Ctrl-k` | delete to line start/end | matching delete commands | Implemented | Half-open buffer range edits. |
-| Insert Backspace | delete previous character | `delete-char-backward` | Implemented | Existing Backspace behavior retained. |
+| Insert Backspace, `Shift-Backspace` | delete previous character | `delete-char-backward` | Implemented | Shift-Backspace aliases Backspace, matching Helix and allowing deletion while Shift remains held. |
 | Insert Delete | delete next character | `delete-char-forward` | Implemented | Joins the next line at line end. |
 | Insert `Ctrl-j`, Enter | insert newline | `insert-newline` | Deviation | Always preserves the row's exact leading indentation. With `editor.smart_newline` enabled (the default), it also uses syntax indentation where available and gives unordered, decimal, alphabetic, and canonical uppercase Roman-numeral list items a hanging indent aligned under their content. Disabling it keeps only the existing indentation. |
 | Insert `Tab` | smart tab | `insert-tab` | Deviation | Inserts spaces to the next configured tab stop; no syntax-aware indentation. |

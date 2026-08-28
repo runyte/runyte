@@ -1936,7 +1936,13 @@ fn built_in_bindings() -> Vec<Binding> {
         insert(Key::ctrl('u'), Command::DeleteToLineStart),
         insert(Key::ctrl('k'), Command::DeleteToLineEnd),
         insert(Key::ctrl('c'), Command::ToggleComments),
-        insert(Key::plain(KeyCode::Backspace), Command::DeleteCharBackward),
+        insert(Key::plain(KeyCode::Backspace), Command::DeleteCharBackward)
+            .with_alias(Key::new(KeyCode::Backspace, Modifiers::SHIFT)),
+        insert(
+            Key::new(KeyCode::Backspace, Modifiers::SHIFT),
+            Command::DeleteCharBackward,
+        )
+        .with_role(BindingRole::Compatibility),
         insert(Key::plain(KeyCode::Delete), Command::DeleteCharForward),
         insert(Key::ctrl('j'), Command::InsertNewline),
         insert(Key::plain(KeyCode::Enter), Command::InsertNewline),
