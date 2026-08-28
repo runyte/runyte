@@ -108,11 +108,11 @@ impl App {
     /// is opened or aggregated.
     pub(super) fn open_log_buffer(&mut self) {
         let Some(status) = crate::log::status() else {
-            self.error("no diagnostic log is installed for this process");
+            self.action_failed("no diagnostic log is installed for this process");
             return;
         };
         let Some(path) = status.path else {
-            self.error("this process's diagnostic log has no file destination");
+            self.action_failed("this process's diagnostic log has no file destination");
             return;
         };
         // The queue is drained before reading so the records that explain what
@@ -121,7 +121,11 @@ impl App {
         let text = match fs::read_to_string(&path) {
             Ok(text) => text,
             Err(error) => {
-                self.error(format!("cannot read {}: {error}", path.display()));
+                self.error_from(
+                    "Runyte",
+                    "Diagnostic log read failed",
+                    format!("cannot read {}: {error}", path.display()),
+                );
                 return;
             }
         };
@@ -365,7 +369,7 @@ impl App {
         }
         let values = self.setting_values(setting);
         if values.is_empty() {
-            self.error(format!(
+            self.action_failed(format!(
                 "{} has no valid choices in the loaded configuration",
                 setting.descriptor().title
             ));
@@ -440,7 +444,7 @@ impl App {
             return;
         }
         if let Err(error) = setting.apply(&value, &mut self.config) {
-            self.error(error.to_string());
+            self.action_failed(error.to_string());
             return;
         }
         self.sync_keymap();
@@ -507,7 +511,7 @@ impl App {
                 .rollback_setting_preview()
                 .map(|_| " · preview rolled back")
                 .unwrap_or("");
-            self.error(format!(
+            self.action_failed(format!(
                 "settings cannot be saved because no config path was loaded{recovery}"
             ));
             return false;
@@ -519,10 +523,14 @@ impl App {
                     .rollback_setting_preview()
                     .map(|_| " · preview rolled back; Enter retries")
                     .unwrap_or("");
-                self.error(format!(
-                    "could not save {}: {error}{recovery}",
-                    setting.descriptor().key,
-                ));
+                self.error_from(
+                    "Runyte",
+                    "Settings save failed",
+                    format!(
+                        "could not save {}: {error}{recovery}",
+                        setting.descriptor().key,
+                    ),
+                );
                 return false;
             }
         };
@@ -535,10 +543,14 @@ impl App {
             self.list = None;
             self.list_actions.clear();
             self.refresh_settings_buffers();
-            self.error(format!(
-                "saved {}, but could not apply it to this session; runtime preview rolled back, restart Runyte to apply: {error}",
-                setting.descriptor().key
-            ));
+            self.error_from(
+                "Runyte",
+                "Settings apply failed",
+                format!(
+                    "saved {}, but could not apply it to this session; runtime preview rolled back, restart Runyte to apply: {error}",
+                    setting.descriptor().key
+                ),
+            );
             return false;
         }
         self.sync_keymap();
@@ -577,7 +589,7 @@ impl App {
 
     pub(super) fn set_theme(&mut self, name: &str) -> Result<()> {
         if let Err(error) = self.config.resolve_theme(name) {
-            self.error(error.to_string());
+            self.action_failed(error.to_string());
             return Ok(());
         }
         self.persist_selected_setting(SettingId::Theme, SettingValue::Text(name.to_owned()));
@@ -610,7 +622,7 @@ impl App {
     /// terminals are not being abandoned and do not require a force spelling.
     pub(super) fn request_detach(&mut self) {
         if !self.persistent_session {
-            self.error(":detach is available only in persistent mode");
+            self.action_failed(":detach is available only in persistent mode");
             return;
         }
         self.tutorial_requested_detach();
@@ -631,7 +643,8 @@ impl App {
         if self.panes.len() == 1 {
             if self.active_terminal().is_none() && self.buffers[buffer].is_commit_message() {
                 if self.buffers[buffer].dirty && !force {
-                    self.error(
+                    self.action_warning(
+                        "Quit refused",
                         "modified commit message; use :q! to discard it and cancel the commit",
                     );
                     return;
@@ -658,7 +671,10 @@ impl App {
         });
         if !displayed_elsewhere {
             if self.buffers[buffer].dirty && !force {
-                self.error("modified buffer; use :q! to discard its unsaved changes");
+                self.action_warning(
+                    "Quit refused",
+                    "modified buffer; use :q! to discard its unsaved changes",
+                );
                 return;
             }
             if force {
@@ -672,7 +688,7 @@ impl App {
 
     pub(super) fn request_quit_here(&mut self, force: bool) {
         if !self.quit_directory_handoff {
-            self.error(":qh requires the runyte() shell function from README.md");
+            self.action_failed(":qh requires the runyte() shell function from README.md");
             return;
         }
         if !self.quit_allowed(force, ":qh!") {
@@ -682,14 +698,14 @@ impl App {
         let directory = match fs::canonicalize(&requested) {
             Ok(directory) if directory.is_dir() => directory,
             Ok(_) => {
-                self.error(format!(
+                self.action_failed(format!(
                     "cannot quit here: {} is not a directory",
                     requested.display()
                 ));
                 return;
             }
             Err(error) => {
-                self.error(format!(
+                self.action_failed(format!(
                     "cannot quit here at {}: {error}",
                     requested.display()
                 ));
@@ -703,9 +719,10 @@ impl App {
 
     fn quit_allowed(&mut self, force: bool, force_command: &str) -> bool {
         if !force && self.buffers.iter().any(|buffer| buffer.dirty) {
-            self.error(format!(
-                "unsaved changes; use {force_command} to discard them"
-            ));
+            self.action_warning(
+                "Quit refused",
+                format!("unsaved changes; use {force_command} to discard them"),
+            );
             return false;
         }
         // A terminal can only be ended by its child or the terminal manager.
@@ -718,7 +735,7 @@ impl App {
             .count();
         if !self.persistent_session && running > 0 {
             let plural = if running == 1 { "" } else { "s" };
-            self.error(format!(
+            self.action_failed(format!(
                 "{running} terminal{plural} still running; close {} in :terminals before quitting",
                 if running == 1 { "it" } else { "them" }
             ));
@@ -748,7 +765,7 @@ impl App {
         if errors.is_empty() && configured_grammar_error.is_none() {
             self.status(message);
         } else {
-            self.error(message);
+            self.error_from("Runyte", "Configuration failed", message);
         }
     }
 
@@ -774,7 +791,7 @@ impl App {
         } else {
             format!("{} │ {summary}", self.status)
         };
-        self.error(message);
+        self.error_from("Runyte", "Language configuration failed", message);
         true
     }
 
@@ -923,7 +940,7 @@ impl App {
         self.status_revision = self.status_revision.wrapping_add(1);
         self.unavailable_revision = self.unavailable_revision.wrapping_add(1);
         self.push_notification(NotificationDraft::new(
-            NotificationSeverity::Warning,
+            NotificationSeverity::Info,
             "Runyte",
             "Action unavailable",
             message,
@@ -948,11 +965,27 @@ impl App {
         self.unavailable_revision = self.unavailable_revision.wrapping_add(1);
     }
 
-    pub(super) fn error(&mut self, message: impl Into<String>) {
-        self.error_from("Runyte", "Action failed", message);
+    /// Reports an expected refusal at the editor-action boundary.
+    ///
+    /// The action still failed, so the interaction line uses its failure
+    /// styling and command dispatch returns `CommandOutcome::UserError`.
+    /// Retained severity is independent of that outcome: current-context
+    /// refusals are informational because Runyte and its dependencies are
+    /// still operating normally.
+    pub(super) fn action_failed(&mut self, message: impl Into<String>) {
+        let message = message.into();
+        self.status.clone_from(&message);
+        self.status_error = true;
+        self.status_revision = self.status_revision.wrapping_add(1);
+        self.push_notification(NotificationDraft::new(
+            NotificationSeverity::Info,
+            "Runyte",
+            "Action failed",
+            message,
+        ));
     }
 
-    /// Like [`Self::error`], but does not retain a notification.
+    /// Reports a failure without retaining a notification.
     ///
     /// Used for `No binding: X`: it is already visible at the moment it
     /// happens, through the same status this sets, and through the key
@@ -985,17 +1018,37 @@ impl App {
         ));
     }
 
-    /// Like [`Self::error`], but for a search that ran cleanly and simply
-    /// found nothing — expected, not a failure — so it is retained at
-    /// [`NotificationSeverity::Warning`] and never styled with `theme.error`
-    /// on the interaction line, unlike [`Self::error`].
-    pub(super) fn search_warning(&mut self, message: impl Into<String>) {
+    /// Reports a refusal or incomplete result that needs attention because it
+    /// protects data or leaves state needing review.
+    pub(super) fn action_warning(&mut self, title: impl Into<String>, message: impl Into<String>) {
+        let message = message.into();
+        self.status.clone_from(&message);
+        self.status_error = true;
+        self.status_revision = self.status_revision.wrapping_add(1);
+        self.push_notification(NotificationDraft::new(
+            NotificationSeverity::Warning,
+            "Runyte",
+            title,
+            message,
+        ));
+    }
+
+    /// Like [`Self::action_warning`], but for a protective condition already
+    /// retained by the producer that detected it.
+    pub(super) fn action_warning_unretained(&mut self, message: impl Into<String>) {
+        self.status = message.into();
+        self.status_error = true;
+        self.status_revision = self.status_revision.wrapping_add(1);
+    }
+
+    /// Reports a search that ran cleanly and simply found nothing.
+    pub(super) fn search_info(&mut self, message: impl Into<String>) {
         let message = message.into();
         self.status.clone_from(&message);
         self.status_error = false;
         self.status_revision = self.status_revision.wrapping_add(1);
         self.push_notification(NotificationDraft::new(
-            NotificationSeverity::Warning,
+            NotificationSeverity::Info,
             "Runyte",
             "Search",
             message,

@@ -3,6 +3,39 @@
 use super::*;
 
 #[test]
+fn saving_a_read_only_buffer_is_a_warning() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    app.open_about();
+
+    app.save(None, false).unwrap();
+
+    assert_eq!(app.status, "this buffer is read-only");
+    assert_eq!(app.unread_notification_counts().warnings, 1);
+    assert_eq!(app.unread_notification_counts().errors, 0);
+    assert_eq!(app.unread_notification_counts().infos, 0);
+}
+
+#[test]
+fn saving_over_a_file_changed_on_disk_is_a_warning() {
+    let directory = temporary("save-conflict-warning");
+    fs::create_dir_all(&directory).unwrap();
+    let path = directory.join("notes.txt");
+    fs::write(&path, "baseline\n").unwrap();
+    let mut app = App::new(Config::default(), Some(path.clone())).unwrap();
+    let buffer = app.active().buffer;
+    app.apply_to_buffer(buffer, &Transaction::insert(0, "local "));
+    fs::write(&path, "external\n").unwrap();
+
+    app.save(None, false).unwrap();
+
+    assert!(app.status.contains("changed on disk"), "{}", app.status);
+    assert_eq!(app.unread_notification_counts().warnings, 1);
+    assert_eq!(app.unread_notification_counts().errors, 0);
+    assert_eq!(fs::read_to_string(&path).unwrap(), "external\n");
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
 fn dirty_file_reload_is_confirmed_and_installs_only_the_reviewed_revision() {
     let directory = temporary("dirty-file-reload-confirmation");
     fs::create_dir_all(&directory).unwrap();
@@ -1998,6 +2031,8 @@ fn about_command_opens_one_read_only_front_page() {
     press(&mut app, 'i');
     assert_eq!(app.mode, Mode::Normal);
     assert!(app.status_error);
+    assert_eq!(app.unread_notification_counts().infos, 1);
+    assert_eq!(app.unread_notification_counts().errors, 0);
 }
 
 /// A text buffer has one help document, not one per mode. Select mode is

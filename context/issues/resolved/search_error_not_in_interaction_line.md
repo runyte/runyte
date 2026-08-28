@@ -60,6 +60,11 @@ severity fix rather than needing separate handling. An invalid regular
 expression, from either the prompt or `n`/`N`, is unaffected and still
 echoes as a genuine error.
 
+Current behavior further refines that retained severity from `WARNING` to
+`INFO`: a search that ran successfully and found no match is an empty result,
+not a condition requiring attention. The producer is now `search_info`; its
+non-error interaction-line styling is unchanged.
+
 Tests, in `src/app.rs`:
 
 - `a_failed_search_keeps_the_previous_one_working` (existing, updated) now
@@ -69,7 +74,7 @@ Tests, in `src/app.rs`:
 - `an_invalid_regex_from_the_search_prompt_echoes_as_an_error` drives an
   invalid pattern through the `/` prompt and checks both `status_error` and
   that the echoed interaction-line text names the failure.
-- `a_vim_search_prompt_with_no_match_echoes_as_a_warning` drives the Vim
+- `a_vim_search_prompt_with_no_match_echoes_as_information` drives the Vim
   grammar's `/` through a `vim_app` fixture and checks the same non-error
   echo for that grammar's prompt kind.
 

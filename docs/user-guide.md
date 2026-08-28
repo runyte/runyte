@@ -1048,6 +1048,14 @@ a local `YYYY-MM-DD HH:MM:SS` timestamp, Runyte-assigned `ERROR`, `WARNING`, or
 acknowledges the entries then retained. New notifications are queued without
 moving focus and become unread. Consecutive identical notifications coalesce,
 update their timestamp and occurrence count, and become unread again.
+Severity describes the underlying condition rather than merely whether the
+requested action completed. Expected context refusals, unavailable actions,
+and empty search results are `INFO`. Refusals that protect data or consistency,
+including saving a read-only buffer or a file that changed on disk, are
+`WARNING`. A failure in Runyte or an external dependency, such as a failed Git
+command, host operation, file write, or language-server protocol exchange, is
+`ERROR`. The interaction line can therefore call an action `failed` while its
+retained notification is informational.
 Producer safety bounds remain explicit: one notification retains at most 1 MiB
 and one workspace at most 8 MiB, in addition to the configured entry-count
 limit. Git failures retain labelled stdout and stderr within that 1 MiB budget,
@@ -1449,8 +1457,8 @@ the table is fine, and the rows below the selection are never drawn in. Rows
 that disagree on how many cells they hold are squared up with empty ones rather
 than rejected, and no cell is ever dropped. All rows take the indentation of the
 first. If any line in the selection is neither blank nor a row, or no separator
-is among them, nothing is edited and an ERROR notification reports that no table was
-detected.
+is among them, nothing is edited and an INFO notification reports that no table
+was detected.
 
 ### Macros
 
@@ -2062,7 +2070,7 @@ staging. Use Lazygit for finer patch surgery, conflict resolution, or other
 advanced history work.
 
 `Tab s` records each selected file **as written on disk**; when a buffer has
-unsaved changes an ERROR notification says so rather than leaving you to wonder which
+unsaved changes an INFO notification says so rather than leaving you to wonder which
 text went in. Staging moves the base the gutter is measured against, so the
 marks for the lines you staged disappear as soon as they are recorded.
 For a rename, the displayed destination remains the file opened or diffed,

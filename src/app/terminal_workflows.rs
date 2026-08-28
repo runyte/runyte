@@ -54,7 +54,7 @@ impl App {
         let request = match self.terminal_request(command, directory) {
             Ok(request) => request,
             Err(error) => {
-                self.error(error);
+                self.action_failed(error);
                 return;
             }
         };
@@ -73,7 +73,11 @@ impl App {
                 // exit record cannot cover, because there is no child to exit.
                 // The message names the program, not its arguments.
                 crate::log_warn!("terminal", "cannot start a terminal session: {error}");
-                self.error(format!("cannot start {label}: {error}"));
+                self.error_from(
+                    "Terminal",
+                    "Terminal process failed",
+                    format!("cannot start {label}: {error}"),
+                );
             }
         }
     }
@@ -115,15 +119,15 @@ impl App {
 
     pub(super) fn open_terminal_file_directory(&mut self, command: Option<String>) {
         let Some(path) = self.active_buffer().path.as_deref() else {
-            self.error("the active view has no file directory");
+            self.action_failed("the active view has no file directory");
             return;
         };
         if self.active_buffer().is_directory() {
-            self.error("use :terminal-directory-root for a directory view");
+            self.action_failed("use :terminal-directory-root for a directory view");
             return;
         }
         let Some(directory) = path.parent().map(Path::to_path_buf) else {
-            self.error("the active file has no parent directory");
+            self.action_failed("the active file has no parent directory");
             return;
         };
         self.open_terminal_at(command, directory);
@@ -131,7 +135,7 @@ impl App {
 
     pub(super) fn open_terminal_directory_root(&mut self, command: Option<String>) {
         if !self.active_buffer().is_directory() {
-            self.error("the active view is not a directory buffer");
+            self.action_failed("the active view is not a directory buffer");
             return;
         }
         let directory = self
@@ -146,16 +150,16 @@ impl App {
         let selected = match self.selected_directory_entry() {
             Ok(Some(path)) => path,
             Ok(None) => {
-                self.error("there is no directory entry on this row");
+                self.action_failed("there is no directory entry on this row");
                 return;
             }
             Err(error) => {
-                self.error(error.to_string());
+                self.action_failed(error.to_string());
                 return;
             }
         };
         if !selected.is_dir() {
-            self.error("the selected entry is not a directory");
+            self.action_failed("the selected entry is not a directory");
             return;
         }
         self.open_terminal_at(command, selected);
@@ -165,7 +169,7 @@ impl App {
         let id = match self.terminals.resolve(target) {
             Ok(id) => id,
             Err(error) => {
-                self.error(error);
+                self.action_failed(error);
                 return;
             }
         };
@@ -181,7 +185,7 @@ impl App {
     /// Points the active pane at a terminal without disturbing its buffer.
     pub(super) fn show_terminal(&mut self, id: TerminalId) {
         if self.terminals.get(id).is_none() {
-            self.error("that terminal is gone");
+            self.action_failed("that terminal is gone");
             return;
         }
         if self.active_terminal() != Some(id) {
@@ -223,7 +227,7 @@ impl App {
     /// Shows the pane's buffer again, leaving the child running.
     pub(super) fn leave_terminal(&mut self) {
         let Some(id) = self.active_terminal() else {
-            self.error("this pane is not showing a terminal");
+            self.action_failed("this pane is not showing a terminal");
             return;
         };
         self.push_jump();
@@ -244,13 +248,13 @@ impl App {
     pub(super) fn show_terminal_target(&mut self, target: &str) {
         match self.terminals.resolve(target) {
             Ok(id) => self.show_terminal(id),
-            Err(error) => self.error(error),
+            Err(error) => self.action_failed(error),
         }
     }
 
     pub(super) fn rename_active_terminal(&mut self, name: &str) {
         let Some(id) = self.active_terminal() else {
-            self.error("this pane is not showing a terminal");
+            self.action_failed("this pane is not showing a terminal");
             return;
         };
         let name = name.trim();
@@ -261,13 +265,13 @@ impl App {
             .rename(Some(name.to_owned()))
         {
             Ok(()) => self.status(format!("terminal {id} named {name}")),
-            Err(error) => self.error(error),
+            Err(error) => self.action_failed(error),
         }
     }
 
     pub(super) fn open_terminal_rename_prompt(&mut self) {
         if self.active_terminal().is_none() {
-            self.error("this pane is not showing a terminal");
+            self.action_failed("this pane is not showing a terminal");
             return;
         }
         self.open_prompt(PromptKind::Command);
@@ -350,11 +354,11 @@ impl App {
     /// frozen copy is real text, and everything works on it.
     pub(super) fn copy_terminal_output(&mut self) {
         let Some(id) = self.active_terminal().or(self.last_terminal) else {
-            self.error("no terminal to copy output from");
+            self.action_failed("no terminal to copy output from");
             return;
         };
         let Some(session) = self.terminals.get(id) else {
-            self.error("that terminal is gone");
+            self.action_failed("that terminal is gone");
             return;
         };
         let name = session.name();
@@ -389,21 +393,21 @@ impl App {
             match self.terminals.resolve(target) {
                 Ok(id) => id,
                 Err(error) => {
-                    self.error(error);
+                    self.action_failed(error);
                     return;
                 }
             }
         } else if let Some(id) = self.send_target_terminal() {
             id
         } else {
-            self.error(format!(
+            self.action_failed(format!(
                 "no terminal to send to · {} starts one",
                 self.binding_label(EditorCommand::OpenTerminal)
             ));
             return;
         };
         if self.active_terminal() == Some(id) {
-            self.error("that is the terminal you are in");
+            self.action_failed("that is the terminal you are in");
             return;
         }
         let text = if self.active().selection.ranges().iter().all(Range::is_empty) {
@@ -412,23 +416,23 @@ impl App {
             self.selection_text()
         };
         if text.trim().is_empty() {
-            self.error("nothing to send");
+            self.action_failed("nothing to send");
             return;
         }
         let characters = text.chars().count();
         let Some(session) = self.terminals.get_mut(id) else {
-            self.error("that terminal is gone");
+            self.action_failed("that terminal is gone");
             return;
         };
         if !session.live() {
-            self.error("that terminal's program has exited");
+            self.action_failed("that terminal's program has exited");
             return;
         }
         let name = session.name();
         if session.send_text(&text) {
             self.status(format!("sent {characters} characters to {name}"));
         } else {
-            self.error("terminal input queue is full or the paste exceeds 1 MiB");
+            self.action_failed("terminal input queue is full or the paste exceeds 1 MiB");
         }
     }
 
@@ -574,7 +578,7 @@ impl App {
         };
         if !session.live() {
             self.mode = Mode::Normal;
-            self.error("this terminal's program has exited");
+            self.action_failed("this terminal's program has exited");
             return Ok(());
         }
         // A key with no tty encoding — a bare modifier, a media key — is not
@@ -685,7 +689,7 @@ impl App {
                 let _ = session;
                 self.terminals.enforce_memory_budget();
                 if !copied {
-                    self.error("no room for another cursor");
+                    self.action_failed("no room for another cursor");
                 }
                 true
             }
@@ -698,7 +702,7 @@ impl App {
                         self.status(format!("jump to word: {} labels", labels.len()));
                         self.jump = Some(labels);
                     }
-                    None => self.error("no words on screen to jump to"),
+                    None => self.action_failed("no words on screen to jump to"),
                 }
                 true
             }
@@ -773,7 +777,7 @@ impl App {
             }
             Command::EnterReplaceMode => {
                 let _ = session;
-                self.error("replace mode needs an editable buffer");
+                self.action_failed("replace mode needs an editable buffer");
                 true
             }
             Command::ScrollViewUp => {
@@ -800,7 +804,7 @@ impl App {
             }
             Command::SearchNext | Command::RotateSelectionForward => {
                 if !session.step_review_match(true) {
-                    self.error("terminal review has no search matches");
+                    self.action_failed("terminal review has no search matches");
                 } else {
                     session.focus_review_selection(page, scroll_offset);
                 }
@@ -808,7 +812,7 @@ impl App {
             }
             Command::SearchPrevious | Command::RotateSelectionBackward => {
                 if !session.step_review_match(false) {
-                    self.error("terminal review has no search matches");
+                    self.action_failed("terminal review has no search matches");
                 } else {
                     session.focus_review_selection(page, scroll_offset);
                 }
@@ -839,7 +843,11 @@ impl App {
                 self.terminals.enforce_memory_budget();
                 match self.ports.clipboard().write(&text) {
                     Ok(()) => self.status("terminal review selection yanked to system clipboard"),
-                    Err(error) => self.error(error.to_string()),
+                    Err(error) => self.error_from(
+                        "Clipboard",
+                        "Clipboard operation failed",
+                        error.to_string(),
+                    ),
                 }
                 true
             }
@@ -862,7 +870,7 @@ impl App {
                     self.mode = Mode::Insert;
                     self.status("pasted Runyte register to terminal");
                 } else {
-                    self.error("terminal input queue is full or the paste exceeds 1 MiB");
+                    self.action_failed("terminal input queue is full or the paste exceeds 1 MiB");
                 }
                 true
             }
@@ -873,10 +881,16 @@ impl App {
                         if let Some(session) = self.terminals.get_mut(id)
                             && !session.send_text(&text)
                         {
-                            self.error("terminal input queue is full or the paste exceeds 1 MiB");
+                            self.action_failed(
+                                "terminal input queue is full or the paste exceeds 1 MiB",
+                            );
                         }
                     }
-                    Err(error) => self.error(error.to_string()),
+                    Err(error) => self.error_from(
+                        "Clipboard",
+                        "Clipboard operation failed",
+                        error.to_string(),
+                    ),
                 }
                 true
             }
@@ -892,10 +906,9 @@ impl App {
                     SentTextUndo::NothingSent => {
                         self.status("nothing Runyte sent is still this child's last input")
                     }
-                    SentTextUndo::AlreadyRun => {
-                        self.error("the paste ended a line and the child has already run it")
-                    }
-                    SentTextUndo::Refused => self.error("terminal input queue is full"),
+                    SentTextUndo::AlreadyRun => self
+                        .action_failed("the paste ended a line and the child has already run it"),
+                    SentTextUndo::Refused => self.action_failed("terminal input queue is full"),
                 }
                 true
             }
@@ -904,7 +917,7 @@ impl App {
             | Command::JumpBackwardBuffer
             | Command::JumpForwardBuffer => false,
             _ if terminal_refuses(command) => {
-                self.error(format!(
+                self.action_failed(format!(
                     "{} needs a buffer · {} shows this pane's again",
                     command.metadata().description.to_lowercase(),
                     self.binding_label(EditorCommand::LeaveTerminal)
@@ -917,7 +930,7 @@ impl App {
 
     pub(super) fn search_terminal_review(&mut self, pattern: &str, mode: SearchMode) {
         let Some(id) = self.active_terminal() else {
-            self.error("this pane is not showing a terminal");
+            self.action_failed("this pane is not showing a terminal");
             return;
         };
         let (_, rows) = self.pane_cells(self.active_pane);
@@ -934,7 +947,7 @@ impl App {
                 "terminal review · {count} match{} · i returns to live output",
                 if count == 1 { "" } else { "es" }
             )),
-            Err(error) => self.error(format!("invalid terminal search: {error}")),
+            Err(error) => self.action_failed(format!("invalid terminal search: {error}")),
         }
     }
 }

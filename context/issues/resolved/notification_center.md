@@ -68,7 +68,7 @@ and `notification::tests::document_preserves_multiline_details_and_escapes_contr
 in `src/notification.rs`;
 `app::tests::notification_commands_open_one_complete_buffer_and_acknowledge_history`
 and
-`app::tests::counted_colon_binding_echoes_failure_and_retains_its_error_notification`
+`app::tests::counted_colon_binding_echoes_failure_and_retains_its_info_notification`
 in `src/app.rs`;
 `snapshot::tests::a_later_host_failure_does_not_replace_completed_binding_feedback`
 in `src/snapshot.rs`;

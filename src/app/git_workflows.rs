@@ -295,7 +295,7 @@ impl App {
                 Some(id)
             }
             Err(error) => {
-                self.error(error.to_string());
+                self.error_from("Git", "Git operation failed", error.to_string());
                 None
             }
         }
@@ -735,7 +735,9 @@ impl App {
                     if let Some(index) = request.buffer.and_then(|(buffer, _)| buffer.index()) {
                         self.invalidate_partial_guards(index);
                     }
-                    self.error("stale partial-stage request; the originating buffer changed");
+                    self.action_failed(
+                        "stale partial-stage request; the originating buffer changed",
+                    );
                     return;
                 }
                 let Some(repository) = self.git.repository().cloned() else {
@@ -1226,7 +1228,7 @@ impl App {
                 continue;
             };
             if self.buffers[buffer].dirty {
-                self.error(format!(
+                self.action_failed(format!(
                     "Git changed {} on disk, but its unsaved buffer was kept; reload or save it explicitly",
                     path.display()
                 ));
@@ -1243,7 +1245,7 @@ impl App {
             }
             let language = buffer_language(&self.buffers[buffer], &self.registry);
             if let Err(error) = self.buffers[buffer].reload() {
-                self.error(error.to_string());
+                self.error_from("Git", "Git operation failed", error.to_string());
             } else {
                 self.resync_replaced_buffer(buffer, language);
             }
@@ -1463,19 +1465,19 @@ impl App {
     /// place rather than four.
     fn git_target(&mut self) -> Option<(Repository, PathBuf)> {
         if !self.has_git() {
-            self.error("no `git` executable was found");
+            self.action_failed("no `git` executable was found");
             return None;
         }
         let Some(repository) = self.git.repository().cloned() else {
-            self.error("this project is not in a Git repository");
+            self.action_failed("this project is not in a Git repository");
             return None;
         };
         let Some(path) = self.buffers[self.active().buffer].path.clone() else {
-            self.error("this buffer has no file behind it");
+            self.action_failed("this buffer has no file behind it");
             return None;
         };
         if !repository.contains(&path) {
-            self.error(format!(
+            self.action_failed(format!(
                 "{} is outside {}",
                 path.display(),
                 repository.workdir().display()
@@ -1510,7 +1512,7 @@ impl App {
         let diff = match provider.diff(&repository, scope, Some(&path)) {
             Ok(diff) => diff,
             Err(error) => {
-                self.error(error.to_string());
+                self.error_from("Git", "Git operation failed", error.to_string());
                 return;
             }
         };
@@ -1535,7 +1537,7 @@ impl App {
         let comparison = match provider.file_comparison(&repository, scope, &path) {
             Ok(comparison) => comparison,
             Err(error) => {
-                self.error(error.to_string());
+                self.error_from("Git", "Git operation failed", error.to_string());
                 return;
             }
         };
@@ -1563,13 +1565,13 @@ impl App {
         };
         let (Ok(previous), Ok(current)) = (text(comparison.previous), text(comparison.current))
         else {
-            self.error(format!(
+            self.action_failed(format!(
                 "{relative} is binary and cannot be compared as text"
             ));
             return;
         };
         if previous.len() > MAX_DIFF_BYTES || current.len() > MAX_DIFF_BYTES {
-            self.error(format!("{relative} is too large to compare"));
+            self.action_failed(format!("{relative} is too large to compare"));
             return;
         }
 
@@ -1588,7 +1590,7 @@ impl App {
         let left_pane = self.active_pane;
         self.push_jump();
         if self.split(Axis::Horizontal, None).is_err() {
-            self.error("comparing needs room for two panes");
+            self.action_failed("comparing needs room for two panes");
             return;
         }
         let right_pane = self.active_pane;
@@ -1737,25 +1739,27 @@ impl App {
 
     pub(super) fn request_partial_hunk(&mut self, expected_scope: DiffScope, selected_lines: bool) {
         if self.ports.git_service.is_none() {
-            self.error("partial staging requires the asynchronous Git service");
+            self.action_failed("partial staging requires the asynchronous Git service");
             return;
         }
         let Some(repository) = self.git.repository().cloned() else {
-            self.error("this project is not in a Git repository");
+            self.action_failed("this project is not in a Git repository");
             return;
         };
         let buffer = self.active().buffer;
         let selection = if selected_lines {
             let Some(path) = self.buffers[buffer].path.clone() else {
-                self.error("selected-line staging requires a saved file buffer");
+                self.action_failed("selected-line staging requires a saved file buffer");
                 return;
             };
             if self.buffers[buffer].dirty {
-                self.error("selected-line staging refuses unsaved buffers; save first");
+                self.action_failed("selected-line staging refuses unsaved buffers; save first");
                 return;
             }
             if self.active().selection.len() != 1 {
-                self.error("selected-line staging currently accepts one contiguous selection");
+                self.action_failed(
+                    "selected-line staging currently accepts one contiguous selection",
+                );
                 return;
             }
             let range = self.active().selection.primary();
@@ -1782,11 +1786,11 @@ impl App {
             }
         } else {
             let Some((path, scope)) = self.git_state.diff_buffers.get(&buffer).cloned() else {
-                self.error("hunk staging is available in a per-file Git diff view");
+                self.action_failed("hunk staging is available in a per-file Git diff view");
                 return;
             };
             if scope != expected_scope {
-                self.error(if expected_scope == DiffScope::Staged {
+                self.action_failed(if expected_scope == DiffScope::Staged {
                     "this is not a staged diff; use git-stage-hunk"
                 } else {
                     "this is a staged diff; use git-unstage-hunk"
@@ -1794,11 +1798,13 @@ impl App {
                 return;
             }
             if self.has_unsaved_changes(&path) {
-                self.error("hunk staging refuses unsaved buffers for this path; save first");
+                self.action_failed(
+                    "hunk staging refuses unsaved buffers for this path; save first",
+                );
                 return;
             }
             if let Some(error) = self.git_state.patch_errors.get(&buffer).cloned() {
-                self.error(error);
+                self.error_from("Git", "Git operation failed", error);
                 return;
             }
             let live = self
@@ -1822,7 +1828,7 @@ impl App {
                 .and_then(|index| self.git_state.patch_hunks.get(&buffer)?.get(index))
                 .map(|hunk| hunk.identity.clone())
             else {
-                self.error("place the cursor in a text hunk to stage it");
+                self.action_failed("place the cursor in a text hunk to stage it");
                 return;
             };
             let (source, guard) = live.map_or((None, None), |(index, revision)| {
@@ -1915,11 +1921,11 @@ impl App {
             return Some((repository, path, DiffScope::Unstaged));
         }
         let Some(repository) = self.git.repository().cloned() else {
-            self.error("this project is not in a Git repository");
+            self.action_failed("this project is not in a Git repository");
             return None;
         };
         let Some(entry) = self.changed_entry_at_cursor() else {
-            self.error("this row is not a file");
+            self.action_failed("this row is not a file");
             return None;
         };
         let scope = match entry.side {
@@ -1946,11 +1952,11 @@ impl App {
     /// that is answered by seeing which files and what in them at once.
     pub(super) fn open_git_index(&mut self) {
         if !self.has_git() {
-            self.error("no `git` executable was found");
+            self.action_failed("no `git` executable was found");
             return;
         }
         let Some(repository) = self.git.repository().cloned() else {
-            self.error("this project is not in a Git repository");
+            self.action_failed("this project is not in a Git repository");
             return;
         };
         if self.ports.git_service.is_some() {
@@ -1982,7 +1988,7 @@ impl App {
         let diff = match provider.diff(&repository, DiffScope::Staged, None) {
             Ok(diff) => diff,
             Err(error) => {
-                self.error(error.to_string());
+                self.error_from("Git", "Git operation failed", error.to_string());
                 return;
             }
         };
@@ -2071,11 +2077,11 @@ impl App {
     /// files, and a selection over several of them is a selection of files.
     pub(super) fn open_git_status(&mut self) {
         if !self.has_git() {
-            self.error("no `git` executable was found");
+            self.action_failed("no `git` executable was found");
             return;
         }
         if self.git.repository().is_none() {
-            self.error("this project is not in a Git repository");
+            self.action_failed("this project is not in a Git repository");
             return;
         }
         if let Some(repository) = self.git.repository().cloned() {
@@ -2127,11 +2133,11 @@ impl App {
     /// Opens the local branch list, reusing its one read-only buffer.
     pub(super) fn open_git_branches(&mut self) {
         if !self.has_git() {
-            self.error("no `git` executable was found");
+            self.action_failed("no `git` executable was found");
             return;
         }
         let Some(repository) = self.git.repository().cloned() else {
-            self.error("this project is not in a Git repository");
+            self.action_failed("this project is not in a Git repository");
             return;
         };
         if self.ports.git_service.is_some() {
@@ -2147,7 +2153,7 @@ impl App {
         {
             Ok(branches) => branches,
             Err(error) => {
-                self.error(error.to_string());
+                self.error_from("Git", "Git operation failed", error.to_string());
                 return;
             }
         };
@@ -2213,11 +2219,11 @@ impl App {
 
     pub(super) fn open_git_worktrees(&mut self) {
         if !self.has_git() {
-            self.error("no `git` executable was found");
+            self.action_failed("no `git` executable was found");
             return;
         }
         let Some(repository) = self.git.repository().cloned() else {
-            self.error("this project is not in a Git repository");
+            self.action_failed("this project is not in a Git repository");
             return;
         };
         if self.ports.git_service.is_some() {
@@ -2229,7 +2235,7 @@ impl App {
         };
         match provider.worktrees(&repository) {
             Ok(worktrees) => self.open_git_worktrees_result(worktrees, true),
-            Err(error) => self.error(error.to_string()),
+            Err(error) => self.error_from("Git", "Git operation failed", error.to_string()),
         }
     }
 
@@ -2331,13 +2337,13 @@ impl App {
 
     pub(super) fn selected_worktree(&mut self) -> Option<GeneralWorktreeRow> {
         if !self.active_buffer().is_git_worktrees() {
-            self.error("worktree actions are only available in the worktree list");
+            self.action_failed("worktree actions are only available in the worktree list");
             return None;
         }
         let row = self.active_buffer().offset_to_row(self.active().head());
         let worktree = self.git_state.worktree_rows.get(row).cloned();
         if worktree.is_none() {
-            self.error("this row is not a worktree");
+            self.action_failed("this row is not a worktree");
         }
         worktree
     }
@@ -2351,7 +2357,7 @@ impl App {
             return;
         }
         if row.worktree.bare || row.worktree.missing || row.worktree.prunable.is_some() {
-            self.error("this worktree has no usable project directory");
+            self.action_failed("this worktree has no usable project directory");
             return;
         }
         if !self.request_workspace_switch(row.worktree.path) {
@@ -2375,11 +2381,11 @@ impl App {
         }
         let worktree = row.worktree;
         if worktree.path == self.project_root {
-            self.error("cannot remove the worktree this Runyte workspace is using");
+            self.action_failed("cannot remove the worktree this Runyte workspace is using");
             return;
         }
         if worktree.bare {
-            self.error("cannot remove a bare worktree from this view");
+            self.action_failed("cannot remove a bare worktree from this view");
             return;
         }
         if let Some(reason) = worktree.locked.as_deref() {
@@ -2388,21 +2394,21 @@ impl App {
             } else {
                 format!(": {reason}")
             };
-            self.error(format!("cannot remove a locked worktree{detail}"));
+            self.action_failed(format!("cannot remove a locked worktree{detail}"));
             return;
         }
         if worktree.missing || worktree.prunable.is_some() {
-            self.error(
+            self.action_failed(
                 "this worktree directory is unavailable; repair or prune it with Git before removing it here",
             );
             return;
         }
         if self.git.repository().is_none() {
-            self.error("this project is not in a Git repository");
+            self.action_failed("this project is not in a Git repository");
             return;
         }
         if !self.has_git() {
-            self.error("no `git` executable was found");
+            self.action_failed("no `git` executable was found");
             return;
         }
         let Some(repository) = self.git.repository().cloned() else {
@@ -2429,7 +2435,7 @@ impl App {
         };
         match provider.prepare_worktree_removal(&repository, &worktree.path) {
             Ok(plan) => self.open_worktree_removal_confirmation(plan),
-            Err(error) => self.error(error.to_string()),
+            Err(error) => self.error_from("Git", "Git operation failed", error.to_string()),
         }
     }
 
@@ -2496,7 +2502,7 @@ impl App {
         }
         let provider = self.ports.git.as_deref()?;
         if let Err(error) = provider.remove_worktree_guarded(&repository, &plan, authorization) {
-            self.error(error.to_string());
+            self.error_from("Git", "Git operation failed", error.to_string());
             return None;
         }
         let branches = provider.branches(&repository);
@@ -2522,7 +2528,7 @@ impl App {
         if self.pending_worktree_removal.is_none() && self.worktree_teardown.is_none() {
             return false;
         }
-        self.error("another worktree removal is still in progress");
+        self.action_failed("another worktree removal is still in progress");
         true
     }
 
@@ -2554,7 +2560,7 @@ impl App {
                 });
                 self.status("checking the worktree session for unsaved buffers…");
             }
-            Err(error) => self.error(error),
+            Err(error) => self.error_from("Git", "Git operation failed", error),
         }
         true
     }
@@ -2599,18 +2605,18 @@ impl App {
         }
         match result {
             Err(error) => {
-                self.error(format!(
+                self.action_failed(format!(
                     "cannot verify whether the worktree session has unsaved buffers: {error}"
                 ));
             }
             Ok(Some(row)) if row.running && row.unsaved_buffers.is_none() => {
-                self.error(
+                self.action_failed(
                     "cannot remove this worktree because its running session's unsaved state is unavailable",
                 );
             }
             Ok(Some(row)) if row.unsaved_buffers.is_some_and(|count| count > 0) => {
                 let count = row.unsaved_buffers.unwrap_or_default();
-                self.error(format!(
+                self.action_failed(format!(
                     "cannot remove this worktree because its persistent session has {count} unsaved file buffer{}",
                     if count == 1 { "" } else { "s" }
                 ));
@@ -2662,7 +2668,7 @@ impl App {
         branch: Option<BranchDeletionPlan>,
     ) {
         if self.worktree_teardown.is_some() {
-            self.error("another worktree removal is still in progress");
+            self.action_failed("another worktree removal is still in progress");
             return;
         }
         let root = session.as_ref().map_or_else(
@@ -2736,7 +2742,7 @@ impl App {
         if queued {
             let Some(request) = request else {
                 if !self.status_error {
-                    self.error("Git worktree removal could not be queued");
+                    self.action_failed("Git worktree removal could not be queued");
                 }
                 self.worktree_teardown = None;
                 return;
@@ -2805,7 +2811,7 @@ impl App {
             || "no branch was deleted".to_owned(),
             |branch| format!("branch {} was not deleted", branch.branch),
         );
-        self.error(format!(
+        self.action_failed(format!(
             "removed worktree {path}{stopped}; its session record could not be forgotten: {}; {branch}",
             reason.as_ref()
         ));
@@ -2855,7 +2861,7 @@ impl App {
             } else if let Some(teardown) = self.worktree_teardown.take() {
                 self.git_state.branch_cascade_summary = None;
                 let reason = self.status.clone();
-                self.error(format!(
+                self.action_failed(format!(
                     "{}; {reason}",
                     Self::unfinished_branch_cascade(&teardown)
                 ));
@@ -2867,7 +2873,7 @@ impl App {
                 && let Some(teardown) = teardown
             {
                 let reason = self.status.clone();
-                self.error(format!(
+                self.action_failed(format!(
                     "{}; {reason}",
                     Self::unfinished_branch_cascade(&teardown)
                 ));
@@ -2891,7 +2897,7 @@ impl App {
             })
             .or(row.worktree.head);
         let Some(start) = start else {
-            self.error("this worktree has no branch or commit to start from");
+            self.action_failed("this worktree has no branch or commit to start from");
             return;
         };
         self.git_worktree_start = Some(start);
@@ -2911,7 +2917,7 @@ impl App {
     ) {
         let destination = destination.trim();
         if destination.is_empty() {
-            self.error("a worktree needs an explicit destination");
+            self.action_failed("a worktree needs an explicit destination");
             return;
         }
         let destination = PathBuf::from(destination);
@@ -2921,7 +2927,7 @@ impl App {
             self.working_directory.join(destination)
         };
         let Some(repository) = self.git.repository().cloned() else {
-            self.error("this project is not in a Git repository");
+            self.action_failed("this project is not in a Git repository");
             return;
         };
         let request = WorktreeCreate {
@@ -2940,7 +2946,7 @@ impl App {
             return;
         }
         let Some(provider) = self.ports.git.as_deref() else {
-            self.error("no `git` executable was found");
+            self.action_failed("no `git` executable was found");
             return;
         };
         match provider.create_worktree(&repository, &request) {
@@ -2950,7 +2956,7 @@ impl App {
                 self.status(format!("created worktree at {}", destination.display()));
                 self.attach_created_worktree(destination);
             }
-            Err(error) => self.error(error.to_string()),
+            Err(error) => self.error_from("Git", "Git operation failed", error.to_string()),
         }
     }
 
@@ -2965,7 +2971,7 @@ impl App {
 
     pub(super) fn open_git_log(&mut self) {
         let Some(repository) = self.git.repository().cloned() else {
-            self.error("this project is not in a Git repository");
+            self.action_failed("this project is not in a Git repository");
             return;
         };
         let refresh = self.git_refresh_spec(&repository);
@@ -2993,14 +2999,14 @@ impl App {
         } else if let Some(provider) = self.ports.git.as_deref() {
             match provider.log_page(&repository, &request) {
                 Ok(page) => self.open_git_log_result(request, page, 0, !refresh.log),
-                Err(error) => self.error(error.to_string()),
+                Err(error) => self.error_from("Git", "Git operation failed", error.to_string()),
             }
         }
     }
 
     pub(super) fn open_git_commit_search(&mut self) {
         let Some(repository) = self.git.repository().cloned() else {
-            self.error("this project is not in a Git repository");
+            self.action_failed("this project is not in a Git repository");
             return;
         };
         if self.ports.git_service.is_some() {
@@ -3008,7 +3014,7 @@ impl App {
         } else if let Some(provider) = self.ports.git.as_deref() {
             match provider.search_commits(&repository) {
                 Ok(result) => self.open_git_commit_search_result(result),
-                Err(error) => self.error(error.to_string()),
+                Err(error) => self.error_from("Git", "Git operation failed", error.to_string()),
             }
         }
     }
@@ -3055,7 +3061,7 @@ impl App {
 
     pub(super) fn open_git_stashes(&mut self) {
         let Some(repository) = self.git.repository().cloned() else {
-            self.error("this project is not in a Git repository");
+            self.action_failed("this project is not in a Git repository");
             return;
         };
         let refresh = self.git_refresh_spec(&repository);
@@ -3071,7 +3077,7 @@ impl App {
         } else if let Some(provider) = self.ports.git.as_deref() {
             match provider.stashes(&repository) {
                 Ok(entries) => self.open_git_stashes_result(entries, !refresh.stashes),
-                Err(error) => self.error(error.to_string()),
+                Err(error) => self.error_from("Git", "Git operation failed", error.to_string()),
             }
         }
     }
@@ -3160,7 +3166,7 @@ impl App {
                 .global_sequence_for(Mode::Normal, BindingTarget::Colon(ColonCommand::GitStashes))
                 .map(|sequence| format!("`:git-stashes` or {sequence}"))
                 .unwrap_or_else(|| "`:git-stashes`".to_owned());
-            self.error(format!(
+            self.action_failed(format!(
                 "stash actions are only available in the stash list; open it with {opening}"
             ));
             return None;
@@ -3168,7 +3174,7 @@ impl App {
         let row = self.active_buffer().offset_to_row(self.active().head());
         let entry = self.git_state.stash_rows.get(row).cloned();
         if entry.is_none() {
-            self.error("this row is not a stash");
+            self.action_failed("this row is not a stash");
         }
         entry
     }
@@ -3178,15 +3184,15 @@ impl App {
             .map(|name| name.trim().to_owned())
             .filter(|name| !name.is_empty())
         else {
-            self.error("a named stash needs a non-empty name");
+            self.action_failed("a named stash needs a non-empty name");
             return;
         };
         if name.chars().any(char::is_control) {
-            self.error("stash names cannot contain control characters");
+            self.action_failed("stash names cannot contain control characters");
             return;
         }
         let Some(repository) = self.git.repository().cloned() else {
-            self.error("this project is not in a Git repository");
+            self.action_failed("this project is not in a Git repository");
             return;
         };
         if !self.repository_buffers_clean(&repository, "create a stash") {
@@ -3266,7 +3272,9 @@ impl App {
                     return Ok(());
                 };
                 if repository != expected_repository {
-                    self.error("stash confirmation belongs to a different repository; retry");
+                    self.action_failed(
+                        "stash confirmation belongs to a different repository; retry",
+                    );
                     return Ok(());
                 }
                 let action = match mutation {
@@ -3313,11 +3321,11 @@ impl App {
 
     fn request_git_log_page(&mut self, page: usize, cursor: Option<LogCursor>) {
         if !self.active_buffer().is_git_log() {
-            self.error("log paging is only available in the Git log");
+            self.action_failed("log paging is only available in the Git log");
             return;
         }
         let Some(repository) = self.git.repository().cloned() else {
-            self.error("this project is not in a Git repository");
+            self.action_failed("this project is not in a Git repository");
             return;
         };
         let request = LogRequest {
@@ -3487,11 +3495,11 @@ impl App {
 
     pub(super) fn open_selected_git_commit(&mut self) {
         if !self.active_buffer().is_git_log() && !self.active_buffer().is_git_blame() {
-            self.error("commit navigation is only available in log and blame views");
+            self.action_failed("commit navigation is only available in log and blame views");
             return;
         }
         let Some(oid) = self.selected_git_commit_oid() else {
-            self.error("this row is uncommitted");
+            self.action_failed("this row is uncommitted");
             return;
         };
         self.open_git_commit_oid(oid);
@@ -3499,7 +3507,7 @@ impl App {
 
     pub(super) fn open_git_commit_oid(&mut self, oid: String) {
         let Some(repository) = self.git.repository().cloned() else {
-            self.error("this project is not in a Git repository");
+            self.action_failed("this project is not in a Git repository");
             return;
         };
         if self.ports.git_service.is_some() {
@@ -3507,7 +3515,7 @@ impl App {
         } else if let Some(provider) = self.ports.git.as_deref() {
             match provider.commit_detail(&repository, &oid) {
                 Ok(detail) => self.open_git_commit_detail_result(detail),
-                Err(error) => self.error(error.to_string()),
+                Err(error) => self.error_from("Git", "Git operation failed", error.to_string()),
             }
         }
     }
@@ -3556,25 +3564,25 @@ impl App {
     pub(super) fn request_git_blame(&mut self, full_file: bool) {
         let buffer = self.active().buffer;
         let Some(path) = self.buffers[buffer].path.clone() else {
-            self.error("Git blame needs a file buffer");
+            self.action_failed("Git blame needs a file buffer");
             return;
         };
         let Some(repository) = self.git.repository().cloned() else {
-            self.error("this project is not in a Git repository");
+            self.action_failed("this project is not in a Git repository");
             return;
         };
         if !repository.contains(&path) {
-            self.error("this file is outside the current Git working tree");
+            self.action_failed("this file is outside the current Git working tree");
             return;
         }
         if self.buffers[buffer].len_bytes() > MAX_BLAME_INPUT_BYTES {
-            self.error(format!(
+            self.action_failed(format!(
                 "Git blame accepts buffers up to {MAX_BLAME_INPUT_BYTES} bytes"
             ));
             return;
         }
         if full_file && self.buffers[buffer].len_lines() > MAX_BLAME_LINES {
-            self.error(format!(
+            self.action_failed(format!(
                 "full-file Git blame accepts up to {MAX_BLAME_LINES} lines; use current-line blame"
             ));
             return;
@@ -3585,7 +3593,7 @@ impl App {
             .chars()
             .any(|character| character == '\0')
         {
-            self.error("binary buffers cannot be blamed");
+            self.action_failed("binary buffers cannot be blamed");
             return;
         }
         let content = self.buffers[buffer].to_string();
@@ -3614,7 +3622,7 @@ impl App {
         } else if let Some(provider) = self.ports.git.as_deref() {
             match provider.blame(&repository, &request) {
                 Ok(lines) => self.open_git_blame_result(source, lines),
-                Err(error) => self.error(error.to_string()),
+                Err(error) => self.error_from("Git", "Git operation failed", error.to_string()),
             }
         }
     }
@@ -3638,7 +3646,7 @@ impl App {
         }
         if !source.full_file {
             let Some(line) = lines.first() else {
-                self.error("Git returned no attribution for this line");
+                self.action_failed("Git returned no attribution for this line");
                 return;
             };
             let identity = line
@@ -3701,7 +3709,7 @@ impl App {
             return;
         }
         let Some(repository) = self.git.repository().cloned() else {
-            self.error("this project is not in a Git repository");
+            self.action_failed("this project is not in a Git repository");
             return;
         };
         self.request_branch_switch(
@@ -3721,7 +3729,7 @@ impl App {
             .get(row)
             .and_then(|row| row.branch.clone());
         if branch.is_none() {
-            self.error("this row is not a branch");
+            self.action_failed("this row is not a branch");
         }
         branch
     }
@@ -3792,7 +3800,7 @@ impl App {
             return;
         }
         let Some(provider) = self.ports.git.as_deref() else {
-            self.error("no `git` executable was found");
+            self.action_failed("no `git` executable was found");
             return;
         };
         let result = match mutation {
@@ -3803,7 +3811,7 @@ impl App {
             _ => unreachable!("branch switches use only checkout or create mutations"),
         };
         if let Err(error) = result {
-            self.error(error.to_string());
+            self.error_from("Git", "Git operation failed", error.to_string());
             return;
         }
         self.finish_branch_switch(&repository, &branch, outcome);
@@ -3818,7 +3826,7 @@ impl App {
                     .as_deref()
                     .is_some_and(|path| repository.contains(path))
         }) {
-            self.error(format!("cannot {action} with unsaved file-buffer changes"));
+            self.action_failed(format!("cannot {action} with unsaved file-buffer changes"));
             return false;
         }
         true
@@ -3859,13 +3867,13 @@ impl App {
         if let Some((tracker, provider)) = self.git_ports()
             && let Err(error) = tracker.refresh(provider)
         {
-            self.error(error.to_string());
+            self.error_from("Git", "Git operation failed", error.to_string());
             return;
         }
         self.refresh_git_status_buffer();
         self.refresh_git_branches_buffer(branch);
         if let Some(error) = reload_error {
-            self.error(format!(
+            self.action_failed(format!(
                 "{outcome}, but an open buffer could not be reloaded: {error}"
             ));
         } else {
@@ -3883,11 +3891,11 @@ impl App {
             return;
         };
         let Some(repository) = self.git.repository().cloned() else {
-            self.error("this project is not in a Git repository");
+            self.action_failed("this project is not in a Git repository");
             return;
         };
         if !self.has_git() {
-            self.error("no `git` executable was found");
+            self.action_failed("no `git` executable was found");
             return;
         }
         if !self.branch_switch_allowed(&repository) {
@@ -3901,11 +3909,11 @@ impl App {
     pub(super) fn create_branch(&mut self, name: String, start_point: String) {
         let name = name.trim().to_owned();
         if name.is_empty() {
-            self.error("a new branch needs a name");
+            self.action_failed("a new branch needs a name");
             return;
         }
         let Some(repository) = self.git.repository().cloned() else {
-            self.error("this project is not in a Git repository");
+            self.action_failed("this project is not in a Git repository");
             return;
         };
         self.request_branch_switch(
@@ -3931,7 +3939,7 @@ impl App {
                 return;
             };
             if !branch.current {
-                self.error(format!(
+                self.action_failed(format!(
                     "only the current branch can be pulled; check {} out first",
                     branch.name
                 ));
@@ -3939,7 +3947,7 @@ impl App {
             }
         }
         let Some(repository) = self.git.repository().cloned() else {
-            self.error("this project is not in a Git repository");
+            self.action_failed("this project is not in a Git repository");
             return;
         };
         // A pull rewrites files under open buffers, and the resync below
@@ -3952,7 +3960,7 @@ impl App {
                     .as_deref()
                     .is_some_and(|path| repository.contains(path))
         }) {
-            self.error("cannot pull with unsaved file-buffer changes");
+            self.action_failed("cannot pull with unsaved file-buffer changes");
             return;
         }
         if self.ports.git_service.is_some() {
@@ -3965,7 +3973,7 @@ impl App {
             return;
         }
         let Some(provider) = self.ports.git.as_deref() else {
-            self.error("no `git` executable was found");
+            self.action_failed("no `git` executable was found");
             return;
         };
         let summary = match provider.pull(&repository) {
@@ -4013,7 +4021,7 @@ impl App {
             self.status(message);
             return;
         }
-        self.error(error.to_string());
+        self.error_from("Git", "Git operation failed", error.to_string());
     }
 
     /// Replays the current branch's unpushed commits onto its upstream, after
@@ -4024,7 +4032,7 @@ impl App {
     /// is the same one.
     pub(super) fn rebase_onto_upstream(&mut self) {
         let Some(repository) = self.git.repository().cloned() else {
-            self.error("this project is not in a Git repository");
+            self.action_failed("this project is not in a Git repository");
             return;
         };
         if self.ports.git_service.is_some() {
@@ -4037,13 +4045,13 @@ impl App {
             return;
         }
         let Some(provider) = self.ports.git.as_deref() else {
-            self.error("no `git` executable was found");
+            self.action_failed("no `git` executable was found");
             return;
         };
         let summary = match provider.rebase_onto_upstream(&repository) {
             Ok(summary) => summary,
             Err(error) => {
-                self.error(error.to_string());
+                self.error_from("Git", "Git operation failed", error.to_string());
                 return;
             }
         };
@@ -4078,17 +4086,17 @@ impl App {
             match self.git.status().map(|status| &status.head) {
                 Some(crate::git::Head::Branch(name)) => name.clone(),
                 Some(crate::git::Head::Unborn(_)) => {
-                    self.error("this branch has no commits to push yet");
+                    self.action_failed("this branch has no commits to push yet");
                     return;
                 }
                 _ => {
-                    self.error("HEAD is detached, so there is no branch to push");
+                    self.action_failed("HEAD is detached, so there is no branch to push");
                     return;
                 }
             }
         };
         let Some(repository) = self.git.repository().cloned() else {
-            self.error("this project is not in a Git repository");
+            self.action_failed("this project is not in a Git repository");
             return;
         };
         if self.ports.git_service.is_some() {
@@ -4101,13 +4109,13 @@ impl App {
             return;
         }
         let Some(provider) = self.ports.git.as_deref() else {
-            self.error("no `git` executable was found");
+            self.action_failed("no `git` executable was found");
             return;
         };
         let summary = match provider.push(&repository, &branch) {
             Ok(summary) => summary,
             Err(error) => {
-                self.error(error.to_string());
+                self.error_from("Git", "Git operation failed", error.to_string());
                 return;
             }
         };
@@ -4133,7 +4141,7 @@ impl App {
             return;
         }
         if branch.current {
-            self.error(
+            self.action_failed(
                 "cannot delete the branch this working tree is on; check out another branch first",
             );
             return;
@@ -4149,7 +4157,7 @@ impl App {
                 .map(|path| crate::git::display_path(path))
                 .collect::<Vec<_>>()
                 .join(", ");
-            self.error(format!(
+            self.action_failed(format!(
                 "cannot delete {} because it is checked out at {paths}; remove those worktrees from :git-worktrees first",
                 branch.name
             ));
@@ -4158,17 +4166,17 @@ impl App {
         if let Some(checkout) = branch.checkouts.first()
             && *checkout == self.project_root
         {
-            self.error(
+            self.action_failed(
                 "cannot remove the worktree this Runyte workspace is using; check out another branch first",
             );
             return;
         }
         if self.git.repository().is_none() {
-            self.error("this project is not in a Git repository");
+            self.action_failed("this project is not in a Git repository");
             return;
         }
         if !self.has_git() {
-            self.error("no `git` executable was found");
+            self.action_failed("no `git` executable was found");
             return;
         }
         let Some(repository) = self.git.repository().cloned() else {
@@ -4236,7 +4244,7 @@ impl App {
                     review
                 }
                 Err(error) => {
-                    self.error(error.to_string());
+                    self.error_from("Git", "Git operation failed", error.to_string());
                     return;
                 }
             },
@@ -4246,7 +4254,7 @@ impl App {
             Ok(plan) => self.open_branch_deletion_confirmation(plan),
             Err(error) => {
                 self.git_state.branch_cascade_worktree = None;
-                self.error(error.to_string());
+                self.error_from("Git", "Git operation failed", error.to_string());
             }
         }
     }
@@ -4394,7 +4402,7 @@ impl App {
         }
         let provider = self.ports.git.as_deref()?;
         if let Err(error) = provider.delete_branch_guarded(&repository, &plan, authorization) {
-            self.error(error.to_string());
+            self.error_from("Git", "Git operation failed", error.to_string());
             return None;
         }
         // The deleted branch is gone from the list, so the caret is asked to
@@ -4609,11 +4617,11 @@ impl App {
     /// Opens the file the caret is on in the changed-file list.
     pub(super) fn open_changed_file(&mut self) -> Result<()> {
         let Some(repository) = self.git.repository().cloned() else {
-            self.error("this project is not in a Git repository");
+            self.action_failed("this project is not in a Git repository");
             return Ok(());
         };
         let Some(entry) = self.changed_entry_at_cursor() else {
-            self.error("this row is not a file");
+            self.action_failed("this row is not a file");
             return Ok(());
         };
         self.open_file(repository.workdir().join(entry.path))
@@ -4623,7 +4631,7 @@ impl App {
     fn stage_selected_files(&mut self, stage: bool) {
         let paths = self.selected_changed_files();
         if paths.is_empty() {
-            self.error("no files are selected");
+            self.action_failed("no files are selected");
             return;
         }
         self.stage_changed_files(paths, stage);
@@ -4650,7 +4658,7 @@ impl App {
 
     fn stage_changed_files(&mut self, paths: Vec<PathBuf>, stage: bool) {
         let Some(repository) = self.git.repository().cloned() else {
-            self.error("this project is not in a Git repository");
+            self.action_failed("this project is not in a Git repository");
             return;
         };
         if self.ports.git_service.is_some() {
@@ -4672,7 +4680,7 @@ impl App {
             return;
         }
         let Some(provider) = self.ports.git.as_deref() else {
-            self.error("no `git` executable was found");
+            self.action_failed("no `git` executable was found");
             return;
         };
         let mut staged = 0;
@@ -4686,7 +4694,7 @@ impl App {
             match outcome {
                 Ok(()) => staged += 1,
                 Err(error) => {
-                    self.error(error.to_string());
+                    self.error_from("Git", "Git operation failed", error.to_string());
                     break;
                 }
             }
@@ -4738,7 +4746,7 @@ impl App {
         let (skipped, tracked): (Vec<_>, Vec<_>) =
             paths.into_iter().partition(|path| untracked.contains(path));
         if tracked.is_empty() {
-            self.error(if skipped.is_empty() {
+            self.action_failed(if skipped.is_empty() {
                 "nothing here has changes to discard".to_owned()
             } else {
                 "untracked files have no committed version to go back to; delete them in the \
@@ -4752,7 +4760,7 @@ impl App {
             .iter()
             .any(|path| self.has_unsaved_changes(&repository.workdir().join(path)));
         if unsaved {
-            self.error(
+            self.action_failed(
                 "cannot discard while a selected file buffer has unsaved changes; save or discard the buffer first",
             );
             return;
@@ -4775,12 +4783,12 @@ impl App {
     fn git_discard_targets(&mut self) -> Option<(Repository, Vec<PathBuf>)> {
         if self.active_buffer().is_git_status() {
             let Some(repository) = self.git.repository().cloned() else {
-                self.error("this project is not in a Git repository");
+                self.action_failed("this project is not in a Git repository");
                 return None;
             };
             let paths = self.selected_changed_files();
             if paths.is_empty() {
-                self.error("no files are selected");
+                self.action_failed("no files are selected");
                 return None;
             }
             return Some((repository, paths));
@@ -4809,7 +4817,7 @@ impl App {
             return Ok(());
         }
         let Some(provider) = self.ports.git.as_deref() else {
-            self.error("no `git` executable was found");
+            self.action_failed("no `git` executable was found");
             return Ok(());
         };
         let mut discarded = Vec::new();
@@ -4818,7 +4826,7 @@ impl App {
             match provider.discard(&repository, &absolute) {
                 Ok(()) => discarded.push(absolute),
                 Err(error) => {
-                    self.error(error.to_string());
+                    self.error_from("Git", "Git operation failed", error.to_string());
                     break;
                 }
             }
@@ -4861,11 +4869,11 @@ impl App {
     /// is in front of the person writing the message.
     pub(super) fn open_commit_message(&mut self) {
         if !self.has_git() {
-            self.error("no `git` executable was found");
+            self.action_failed("no `git` executable was found");
             return;
         }
         if self.git.repository().is_none() {
-            self.error("this project is not in a Git repository");
+            self.action_failed("this project is not in a Git repository");
             return;
         }
         if self.ports.git_service.is_some() {
@@ -4891,7 +4899,7 @@ impl App {
 
     fn open_commit_message_from_current_status(&mut self) {
         let Some(repository) = self.git.repository().cloned() else {
-            self.error("this project is not in a Git repository");
+            self.action_failed("this project is not in a Git repository");
             return;
         };
         let staged = self.git.status().map_or_else(Vec::new, |status| {
@@ -4909,7 +4917,7 @@ impl App {
                 .collect()
         });
         if staged.is_empty() {
-            self.error("nothing is staged for commit");
+            self.action_failed("nothing is staged for commit");
             return;
         }
         let head = self.git.status().map_or_else(
@@ -4934,7 +4942,7 @@ impl App {
             // written about a different set of staged files.
             Some(existing) => {
                 if let Err(error) = self.buffers[existing].discard_changes_to(&text) {
-                    self.error(error.to_string());
+                    self.error_from("Git", "Git operation failed", error.to_string());
                     return;
                 }
                 existing
@@ -4964,12 +4972,12 @@ impl App {
     /// piece of text whose write is not to a file.
     pub(super) fn commit_staged(&mut self, buffer_id: usize) {
         let Some(repository) = self.git.repository().cloned() else {
-            self.error("this project is not in a Git repository");
+            self.action_failed("this project is not in a Git repository");
             return;
         };
         let message = commit_message_body(&self.buffers[buffer_id].to_string());
         if message.is_empty() {
-            self.error("a commit needs a message; write one above the comments");
+            self.action_failed("a commit needs a message; write one above the comments");
             return;
         }
         if self.ports.git_service.is_some() {
@@ -4982,7 +4990,7 @@ impl App {
             return;
         }
         let Some(provider) = self.ports.git.as_deref() else {
-            self.error("no `git` executable was found");
+            self.action_failed("no `git` executable was found");
             return;
         };
         // This fallback exists only for isolated synchronous tests. Production
@@ -4993,7 +5001,7 @@ impl App {
             // an unset identity is something to fix and retry, not a reason to
             // lose what was written.
             Err(error) => {
-                self.error(error.to_string());
+                self.error_from("Git", "Git operation failed", error.to_string());
                 return;
             }
         };
@@ -5122,7 +5130,7 @@ impl App {
         }
         self.refresh_git_status();
         if let Some(error) = failure {
-            self.error(error.to_string());
+            self.error_from("Git", "Git operation failed", error.to_string());
             return;
         }
 
@@ -5204,16 +5212,16 @@ impl App {
             if self.request_git_refresh() {
                 self.status("refreshing Git in the background");
             } else {
-                self.error("this project is not in a Git repository");
+                self.action_failed("this project is not in a Git repository");
             }
             return;
         }
         let Some((tracker, provider)) = self.git_ports() else {
-            self.error("no `git` executable was found");
+            self.action_failed("no `git` executable was found");
             return;
         };
         if tracker.repository().is_none() {
-            self.error("this project is not in a Git repository");
+            self.action_failed("this project is not in a Git repository");
             return;
         }
         match tracker.refresh(provider) {
@@ -5225,7 +5233,7 @@ impl App {
                 let summary = self.git.summary().unwrap_or_default();
                 self.status(format!("git: {summary}"));
             }
-            Err(error) => self.error(error.to_string()),
+            Err(error) => self.error_from("Git", "Git operation failed", error.to_string()),
         }
     }
 }

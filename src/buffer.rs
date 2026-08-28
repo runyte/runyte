@@ -819,15 +819,31 @@ fn ensure_disk_unchanged(path: &Path, expected: Option<&DiskState>) -> Result<()
     };
     // Deletion is deliberately not a conflict: there is no newer on-disk
     // content left to lose, and the atomic replacement recreates the file.
-    if let Some(current) = DiskState::inspect(path)? {
-        ensure!(
-            &current == expected,
-            "{} changed on disk since it was read; use :write! to overwrite it or :reload to \
-             discard this buffer",
+    if let Some(current) = DiskState::inspect(path)?
+        && &current != expected
+    {
+        return Err(SaveConflict(format!(
+            "{} changed on disk since it was read; use :write! to overwrite it or :reload to discard this buffer",
             path.display()
-        );
+        ))
+        .into());
     }
     Ok(())
+}
+
+#[derive(Debug)]
+struct SaveConflict(String);
+
+impl std::fmt::Display for SaveConflict {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for SaveConflict {}
+
+pub(crate) fn is_save_conflict(error: &anyhow::Error) -> bool {
+    error.downcast_ref::<SaveConflict>().is_some()
 }
 
 fn resolve_write_target(path: &Path, depth: usize) -> Result<PathBuf> {

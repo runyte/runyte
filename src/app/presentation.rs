@@ -595,7 +595,7 @@ impl App {
         let topic = match requested.map(crate::manual::ManualTopic::resolve) {
             Some(Some(topic)) => Some(topic),
             Some(None) => {
-                self.error(format!(
+                self.action_failed(format!(
                     "unknown help topic: {}; available topics: {}",
                     requested.unwrap(),
                     crate::manual::available_topics()

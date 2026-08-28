@@ -163,6 +163,24 @@ or `INFO` severity at the producer boundary. Assigning a severity does not by
 itself mean a successful operation should create a notification; silent
 successes and routine polling remain silent.
 
+Severity describes the condition behind the feedback, independently of
+whether the requested action completed:
+
+- `INFO` means Runyte and its dependencies are operating normally. It includes
+  expected context refusals, unavailable actions, and empty results such as a
+  search pattern that was not found.
+- `WARNING` means an action was refused to protect data or preserve a
+  consistency boundary, or it completed with a condition that needs review.
+  A read-only save and a save refused because the file changed on disk are the
+  reference cases.
+- `ERROR` means Runyte or an external dependency failed to perform work it was
+  expected to perform. Failed Git commands, host operations, file I/O, and
+  language-server protocol failures are the reference cases.
+
+An interaction-line outcome may therefore say `failed` while its retained
+notification is `INFO`: the former describes the requested action, while the
+latter describes system health and urgency.
+
 Notifications enter the workspace-lifetime **notification center** without
 stealing focus. `:notifications` and `:not` project the complete retained
 history into the single read-only `[notifications]` buffer. The global status

@@ -1815,13 +1815,13 @@ fn rename_and_rejected_or_stopped_lsp_work_are_unavailable() {
 fn key_and_direct_execution_clear_stale_error_styling() {
     let mut key_path = App::new(Config::default(), None).unwrap();
     seed(&mut key_path, "abc");
-    key_path.error("stale error");
+    key_path.action_failed("stale error");
     press(&mut key_path, 'l');
     assert!(!key_path.status_error);
 
     let mut direct = App::new(Config::default(), None).unwrap();
     seed(&mut direct, "abc");
-    direct.error("stale error");
+    direct.action_failed("stale error");
     let invocation =
         CommandInvocation::editor(EditorCommand::MoveRight, CommandExecutionContext::default())
             .unwrap();
@@ -3181,7 +3181,7 @@ fn completed_actions_keep_specific_success_details() {
 }
 
 #[test]
-fn counted_colon_binding_echoes_failure_and_retains_its_error_notification() {
+fn counted_colon_binding_echoes_failure_and_retains_its_info_notification() {
     let mut app = App::new(Config::default(), None).unwrap();
 
     press(&mut app, '2');
@@ -3200,7 +3200,7 @@ fn counted_colon_binding_echoes_failure_and_retains_its_error_notification() {
              count)"
     );
     assert!(app.displayed_status_message_is_error());
-    assert_eq!(app.unread_notification_counts().errors, 1);
+    assert_eq!(app.unread_notification_counts().infos, 1);
 }
 
 #[test]
@@ -3265,5 +3265,5 @@ fn unavailable_colon_command_stays_typed_and_leaves_the_prior_echo_alone() {
     assert_eq!(app.command, "lsp-status");
     assert_eq!(app.displayed_status_message(), "");
     assert!(app.status.contains("unavailable"));
-    assert_eq!(app.unread_notification_counts().warnings, 1);
+    assert_eq!(app.unread_notification_counts().infos, 1);
 }
