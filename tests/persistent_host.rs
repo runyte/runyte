@@ -1507,7 +1507,16 @@ async fn detached_host_keeps_the_requested_editor_directory_below_the_project_ro
     };
     assert_eq!(detached_directory, Some(nested));
 
-    assert_cli_success(&run_cli(&root, &["--session-stop"]));
+    let stopped = tokio::time::timeout(HOST_RESPONSE_TIMEOUT, async {
+        while endpoint.metadata().exists() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await;
+    if stopped.is_err() {
+        let _ = run_cli(&root, &["--session-stop", "--force"]);
+        panic!(":quit-here did not stop the persistent session");
+    }
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -1584,7 +1593,8 @@ async fn detached_host_serves_a_project_it_could_not_have_discovered() {
 
 /// `:quit-here` chooses a directory inside the host, while the file a shell
 /// wrapper reads belongs to the client. The directory therefore has to travel
-/// on the detach, and only for a client that said it can deliver one.
+/// in a detach-shaped response even though a successful quit also stops the
+/// host, and only for a client that said it can deliver one.
 #[tokio::test]
 async fn quit_here_reports_its_directory_to_a_handoff_capable_client() {
     let root = project();
@@ -1686,9 +1696,8 @@ async fn quit_here_reports_its_directory_to_a_handoff_capable_client() {
         Some(root.join("nested"))
     );
 
-    // The host survives the handoff: `:quit-here` detaches, it does not stop.
-    let shutdown = run_cli(&root, &["--session-stop"]);
-    assert_cli_success(&shutdown);
+    // The response performs the client-owned handoff, then the ordinary quit
+    // lifecycle ends the clean persistent session.
     assert!(child.0.take().unwrap().wait().unwrap().success());
     fs::remove_dir_all(root).unwrap();
 }

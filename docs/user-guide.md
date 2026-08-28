@@ -250,12 +250,15 @@ connects the TUI. `--serve` runs the host in the foreground instead, for direct
 supervision or diagnostics; it is also the mechanism Runyte uses when starting
 or restarting a persistent session.
 
-`:quit` closes the active pane; from the last pane it disconnects the TUI
-without stopping the persistent session. `:quit-all` disconnects regardless
-of pane count. `:detach` states that intent directly: it immediately disconnects
-the TUI while retaining every pane, buffer, unsaved edit, and terminal in the
-host. It is available only in persistent mode and needs no force form because
-it discards nothing. Use `runyte --session-stop` for an explicit shutdown.
+`:quit` closes the active pane; from the last pane it stops a clean persistent
+session and disconnects the TUI. `:quit-all` requests the same shutdown
+regardless of pane count. Quit refuses unsaved buffers and live terminal
+children; a `!` form may discard unsaved buffers but still never terminates a
+terminal. `:detach` is the explicit leave-it-running operation: it immediately
+disconnects the TUI while retaining every pane, buffer, unsaved edit, and
+terminal in the host. It is available only in persistent mode and needs no
+force form because it discards nothing. Use `runyte --session-stop` to stop a
+different persistent session.
 Only one interactive TUI may connect at a time; separate control connections
 may still manage the host.
 
@@ -335,11 +338,13 @@ completed wait is refreshed from disk first; unsaved text and buffers still
 owned by a pending wait are never replaced. If that host already has a TUI,
 the file appears there while the invoking process waits; if the TUI detaches
 before completion, the invoking terminal takes over. If no host exists, Runyte
-starts one, attaches the invoking terminal so the request is never invisible,
-and leaves the host running after completion. Dirty buffers retain the
-ordinary save/discard protection. Detaching the wait-owned TUI cancels the
-request, and explicit cancellation or host failure exits nonzero. Completing a
-request does not stop the host or close unrelated buffers.
+starts one and attaches the invoking terminal so the request is never invisible.
+The command used to complete the buffer owns what happens next: `:wbc` leaves
+the host and unrelated buffers running, while `:wq` applies `:q` after writing
+an ordinary file and therefore stops a clean persistent session from its last
+pane. Dirty buffers retain the ordinary save/discard protection. Detaching the
+wait-owned TUI cancels the request, and explicit cancellation or host failure
+exits nonzero.
 
 For example, `git config core.editor 'runyte --wait'` gives Git commit and
 rebase message files this lifecycle. Persistent hosting and `--wait` currently
@@ -675,13 +680,13 @@ present, otherwise whatever the program calls itself — the title a shell sets
 from its prompt, or the program's own name until it sets one. Scrolled back
 into history it also carries `↑` and how far. When the child exits, its session
 disappears from `:terminals`, and a pane showing it reveals its most recently
-used buffer (or a scratch buffer) without closing the pane. In standalone mode
-every quit spelling, including its `!` form, refuses while any terminal is
-running and points to `:terminals`; in persistent mode quit detaches the client
-without signalling the child. Sessions survive normal
-detach, client failure, workspace switching, and reattachment for the lifetime
-of that same workspace-host process. They do not survive force-stop, host
-replacement or crash, logout/reboot, or machine failure.
+used buffer (or a scratch buffer) without closing the pane. Every quit spelling,
+including its `!` form, refuses while any terminal is running and points to
+`:terminals` in both standalone and persistent modes. `:detach` leaves
+persistent terminal children running without signalling them. Sessions survive
+normal detach, client failure, workspace switching, and reattachment for the
+lifetime of that same workspace-host process. They do not survive force-stop,
+host replacement or crash, logout/reboot, or machine failure.
 
 The emulator is Runyte's own, like the fuzzy scorer, the picker, and the diff.
 It implements what an interactive program on a pty needs: colour including the
@@ -1526,8 +1531,8 @@ cancellation keys.
 | `:resize-bottom +/- N` | Grow or shrink the active pane at its bottom edge by `N` terminal cells |
 | `:close[!]` or `:c[!]` | Close the active buffer in place; `!` explicitly discards unsaved text; terminals are refused |
 | `:window-close` or `:wc` | Close the active pane, but refuse the last pane |
-| `:quit[!]` or `:q[!]` | Close the active pane and its uniquely displayed buffer; from the last pane, leave with unsaved-change protection |
-| `:quit-all[!]` or `:qa[!]` | Leave regardless of pane count, with unsaved-change protection; never terminate terminals |
+| `:quit[!]` or `:q[!]` | Close the active pane and its uniquely displayed buffer; from the last pane, exit standalone or stop the persistent session with unsaved-change protection |
+| `:quit-all[!]` or `:qa[!]` | Exit standalone or stop the persistent session regardless of pane count, with unsaved-change protection; never terminate terminals |
 | `:quit-here[!]` or `:qh[!]` | Quit and let the shell wrapper change to the active explorer/file directory |
 
 Panes are reached from `Space w` or its `Ctrl-w` compatibility alias, both of
@@ -2368,7 +2373,7 @@ are enabled.
                         Tab offers copying it to the system clipboard or the
                         unnamed Runyte register
 :detach                 disconnect this persistent TUI while retaining all editor state
-:quit                   close the pane and its unique buffer, or quit safely from the last one (alias: q)
+:quit                   close the pane and its unique buffer, or stop safely from the last one (alias: q)
 :quit!                  discard its unique buffer, or force quit from the last pane (alias: q!)
 :quit-all               quit safely regardless of pane count, without ending terminals (alias: qa)
 :quit-all!              discard buffer changes and quit, without ending terminals (alias: qa!)
@@ -2466,13 +2471,13 @@ Session-management commands such as `--session-list` accept the option but leave
 file untouched, so they can be invoked through the same shell function.
 
 The wrapper works the same way against a persistent host. `:quit-here` runs in
-the host, which reports the directory it chose when it detaches, and the
-attached client writes the file — so the same wrapper serves both modes, and the
-directory follows you across a workspace switch. Because the capability belongs
-to the client rather than the host, a client launched without the wrapper still
-gets the usual refusal even when an earlier one had it. In persistent mode
-`:quit-here` detaches and leaves the host running, exactly as `:quit` does from
-the last pane.
+the host, which reports the directory it chose while the attached client writes
+the file — so the same wrapper serves both modes, and the directory follows you
+across a workspace switch. Because the capability belongs to the client rather
+than the host, a client launched without the wrapper still gets the usual
+refusal even when an earlier one had it. In persistent mode `:quit-here` stops
+the session after the same safety checks as `:quit`; use `:detach` when the host
+should remain running.
 
 ## Diagnostics and logging
 

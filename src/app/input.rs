@@ -125,10 +125,21 @@ impl App {
         self.key_hint_mode()
     }
 
-    /// Persistent hosts interpret the ordinary quit command as detaching the
-    /// interactive client. The host process and its editor state remain live.
-    pub fn take_detach_request(&mut self) -> bool {
-        std::mem::take(&mut self.should_quit)
+    /// Takes the persistent-session meaning of an editor-level exit.
+    ///
+    /// Direct workspace switches clear `should_quit` through
+    /// `take_workspace_switch` before this is read. The fallback covers older
+    /// internal paths that request an ordinary safe quit by setting the public
+    /// application flag directly.
+    pub fn take_persistent_exit_request(&mut self) -> Option<super::PersistentExitRequest> {
+        if !std::mem::take(&mut self.should_quit) {
+            return None;
+        }
+        Some(
+            self.persistent_exit_request
+                .take()
+                .unwrap_or(super::PersistentExitRequest::Quit { force: false }),
+        )
     }
 
     /// Captures every optional capability consulted by the command palette.

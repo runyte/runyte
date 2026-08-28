@@ -2252,6 +2252,17 @@ pub struct WorkspaceSwitchRequest {
     pub working_directory: PathBuf,
 }
 
+/// What an editor-level exit means to a persistent session host.
+///
+/// Standalone mode only reads [`App::should_quit`]. A persistent host also
+/// needs the intent: `:detach` leaves its state alive, while an ordinary quit
+/// asks the host itself to end after its lifecycle guards pass.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PersistentExitRequest {
+    Detach,
+    Quit { force: bool },
+}
+
 pub struct App {
     pub config: Config,
     /// Last successfully loaded or settings-written configuration. Runtime
@@ -2394,6 +2405,7 @@ pub struct App {
     status_revision: u64,
     unavailable_revision: u64,
     pub should_quit: bool,
+    persistent_exit_request: Option<PersistentExitRequest>,
     /// Directory handed to a cooperating shell wrapper after `:quit-here`.
     quit_directory: Option<PathBuf>,
     /// Whether the launcher supplied the channel needed to change its shell.
@@ -2451,9 +2463,9 @@ pub struct App {
     git_worktree_new_branch: Option<String>,
     git_stash_confirmation: Option<GitStashConfirmation>,
     workspace_switch: Option<WorkspaceSwitchRequest>,
-    /// A persistent session keeps owning its buffers after its TUI leaves, so a
-    /// root switch may preserve dirty text there. Standalone mode leaves this
-    /// false because replacing its process would otherwise lose that text.
+    /// A persistent session can keep owning its buffers after a TUI detaches or
+    /// switches roots. Standalone mode leaves this false because replacing its
+    /// process would otherwise lose that text.
     persistent_session: bool,
     #[cfg(unix)]
     workspace_rows: Vec<WorkspaceRow>,
@@ -2805,6 +2817,7 @@ impl App {
             status_revision: 0,
             unavailable_revision: 0,
             should_quit: false,
+            persistent_exit_request: None,
             quit_directory: None,
             quit_directory_handoff: false,
             areas: HashMap::new(),

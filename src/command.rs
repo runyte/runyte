@@ -1830,7 +1830,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "quit-all",
         ["qa"],
         "quit-all",
-        "Quit if all buffers are saved and no standalone terminal is running",
+        "Quit if all buffers are saved and no terminal is running",
         NoArguments
     ),
     spec!(

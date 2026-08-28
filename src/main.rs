@@ -25,7 +25,7 @@ use crossterm::{
 use futures_util::StreamExt;
 use ratatui::{Terminal, backend::CrosstermBackend};
 use runyte::{
-    app::App,
+    app::{App, PersistentExitRequest},
     command::{CommandCategory, CommandExecutionContext, CommandInvocation, EditorCommand},
     config::{self, Config, WorkspaceMode},
     external_open, file_monitor, file_picker,
@@ -1476,11 +1476,25 @@ async fn run_host_server(
                 last_detached = Instant::now();
                 changed = false;
             }
-        } else if host.take_detach_request() && active.is_some() {
+        } else if let Some(request) = host.take_persistent_exit_request()
+            && active.is_some()
+        {
             key_hints.clear();
-            finish_attached_quit(&mut host, &mut active);
-            last_detached = Instant::now();
-            changed = false;
+            match request {
+                PersistentExitRequest::Detach => {
+                    finish_attached_detach(&mut host, &mut active);
+                    last_detached = Instant::now();
+                    changed = false;
+                }
+                PersistentExitRequest::Quit { force } => {
+                    if finish_attached_quit(&mut host, &mut active, force) {
+                        shutting_down = true;
+                        changed = false;
+                    } else {
+                        changed = true;
+                    }
+                }
+            }
         }
         if changed {
             publish_attached_frame(&mut host, &mut active, &key_hints);
@@ -1988,7 +2002,7 @@ fn detach_client(active: &mut Option<AttachedClient>, directory: Option<&Path>) 
 }
 
 #[cfg(unix)]
-fn finish_attached_quit(host: &mut WorkspaceHost, active: &mut Option<AttachedClient>) {
+fn complete_attached_waits(host: &mut WorkspaceHost, active: &mut Option<AttachedClient>) {
     let tokens = active
         .as_ref()
         .map(|client| client.wait_tokens.clone())
@@ -2016,11 +2030,51 @@ fn finish_attached_quit(host: &mut WorkspaceHost, active: &mut Option<AttachedCl
             },
         );
     }
-    // `:quit-here` reaches the host as an ordinary quit, which a persistent host
-    // honours by detaching. The directory it chose travels with the detach so
-    // the client can hand it to the shell wrapper.
+}
+
+#[cfg(unix)]
+fn finish_attached_detach(host: &mut WorkspaceHost, active: &mut Option<AttachedClient>) {
+    complete_attached_waits(host, active);
+    detach_client(active, None);
+}
+
+/// Ends a persistent session in response to an editor-level quit.
+///
+/// The app owns the immediate dirty-buffer and terminal guards. Recheck the
+/// host-wide answer after completing this client's wait requests so a control
+/// client that raced the command cannot be abandoned. A force spelling may
+/// discard unsaved buffers, but it still cannot end terminal children or
+/// another caller's pending wait.
+#[cfg(unix)]
+fn finish_attached_quit(
+    host: &mut WorkspaceHost,
+    active: &mut Option<AttachedClient>,
+    force: bool,
+) -> bool {
+    complete_attached_waits(host, active);
+    let mut protected = host.protected_state();
+    if force {
+        protected.unsaved_buffers = 0;
+    }
+    if !protected.is_empty() {
+        host.report_host_error(format!(
+            "cannot quit persistent session: {}; finish or close that state, or use :detach to leave the session running",
+            protected.refusal()
+        ));
+        return false;
+    }
+
+    // `:quit-here` still carries the selected directory through the detach
+    // response because the shell handoff belongs to the client. Receiving a
+    // detach-shaped response does not keep the host alive: the caller marks it
+    // for shutdown as soon as this function succeeds.
     let directory = host.quit_directory().map(Path::to_path_buf);
-    detach_client(active, directory.as_deref());
+    if directory.is_some() {
+        detach_client(active, directory.as_deref());
+    } else if let Some(client) = active.take() {
+        let _ = client.responses.try_send(HostResponse::ShuttingDown);
+    }
+    true
 }
 
 #[cfg(unix)]

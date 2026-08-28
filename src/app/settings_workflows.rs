@@ -600,6 +600,7 @@ impl App {
     pub(super) fn request_quit(&mut self, force: bool, force_command: &str) {
         if self.quit_allowed(force, force_command) {
             self.quit_directory = None;
+            self.persistent_exit_request = Some(super::PersistentExitRequest::Quit { force });
             self.should_quit = true;
         }
     }
@@ -615,6 +616,7 @@ impl App {
         }
         self.tutorial_requested_detach();
         self.quit_directory = None;
+        self.persistent_exit_request = Some(super::PersistentExitRequest::Detach);
         self.should_quit = true;
     }
 
@@ -698,6 +700,7 @@ impl App {
         };
         self.working_directory = directory.clone();
         self.quit_directory = Some(directory);
+        self.persistent_exit_request = Some(super::PersistentExitRequest::Quit { force });
         self.should_quit = true;
     }
 
@@ -709,14 +712,14 @@ impl App {
             return false;
         }
         // A terminal can only be ended by its child or the terminal manager.
-        // Persistent quitting merely detaches its client, so host-owned live
-        // children are not a guard there; standalone exit must always refuse.
+        // `:detach` bypasses this guard because it leaves the host alive, but
+        // every quit spelling ends its owner in either deployment mode.
         let running = self
             .terminals
             .iter()
             .filter(|session| session.live())
             .count();
-        if !self.persistent_session && running > 0 {
+        if running > 0 {
             let plural = if running == 1 { "" } else { "s" };
             self.error(format!(
                 "{running} terminal{plural} still running; close {} in :terminals before quitting",

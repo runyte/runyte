@@ -615,14 +615,8 @@ async fn revision_protocol_is_stale_safe_undoable_and_bounded() {
         response(&mut interactive).await,
         HostResponse::CommandResult { .. }
     ));
-    assert_eq!(
-        response(&mut interactive).await,
-        HostResponse::Detached {
-            directory_bytes: None,
-        }
-    );
+    assert_eq!(response(&mut interactive).await, HostResponse::ShuttingDown);
 
-    shutdown(&mut client).await;
     let status = tokio::task::spawn_blocking(move || host.0.take().unwrap().wait())
         .await
         .unwrap()
@@ -1114,7 +1108,6 @@ async fn git_commit_wait_tui_completes_through_write_quit() {
         "PTY commit message"
     );
 
-    shutdown(&mut control).await;
     assert!(host.0.take().unwrap().wait().unwrap().success());
     fs::remove_dir_all(root).unwrap();
 }
@@ -1513,7 +1506,7 @@ async fn worktree_switch_reuses_the_destination_host_through_the_real_tui_launch
         }
     ));
 
-    terminal.write_all(b":q\r").unwrap();
+    terminal.write_all(b":detach\r").unwrap();
     terminal.flush().unwrap();
     assert!(wait_child(switcher.0.as_mut().unwrap()).await.success());
     let _ = switcher.0.take().unwrap().wait();
@@ -1625,7 +1618,7 @@ async fn incompatible_worktree_host_returns_the_tui_to_its_source() {
         String::from_utf8_lossy(&output.lock().unwrap())
     );
 
-    terminal.write_all(b":q\r").unwrap();
+    terminal.write_all(b":detach\r").unwrap();
     terminal.flush().unwrap();
     assert!(wait_child(switcher.0.as_mut().unwrap()).await.success());
     let _ = switcher.0.take().unwrap().wait();
@@ -1758,7 +1751,7 @@ async fn creating_a_worktree_starts_and_attaches_its_persistent_session() {
         "created-from-ui"
     );
 
-    terminal.write_all(b":q\r").unwrap();
+    terminal.write_all(b":detach\r").unwrap();
     terminal.flush().unwrap();
     assert!(wait_child(switcher.0.as_mut().unwrap()).await.success());
     let _ = switcher.0.take().unwrap().wait();
@@ -2570,7 +2563,7 @@ async fn relative_workspace_attach_uses_editor_cwd_and_keeps_one_client_process(
         );
     }
 
-    terminal.write_all(b":q\r").unwrap();
+    terminal.write_all(b":detach\r").unwrap();
     terminal.flush().unwrap();
     assert!(wait_child(switcher.0.as_mut().unwrap()).await.success());
     let _ = switcher.0.take().unwrap().wait();

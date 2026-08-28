@@ -2936,6 +2936,31 @@ fn detach_is_persistent_only_and_preserves_dirty_editor_state() {
     assert_eq!(persistent.panes.len(), 2);
     assert!(persistent.buffers[buffer].dirty);
     assert_eq!(persistent.buffers[buffer].text().to_string(), "unsaved");
+    assert_eq!(
+        persistent.take_persistent_exit_request(),
+        Some(PersistentExitRequest::Detach)
+    );
+}
+
+#[test]
+fn persistent_quit_requests_host_shutdown_and_retains_force_intent() {
+    let mut safe = App::new(Config::default(), None).unwrap();
+    safe.enable_persistent_session();
+    safe.execute_command("q").unwrap();
+    assert_eq!(
+        safe.take_persistent_exit_request(),
+        Some(PersistentExitRequest::Quit { force: false })
+    );
+
+    let mut forced = App::new(Config::default(), None).unwrap();
+    forced.enable_persistent_session();
+    let buffer = forced.active().buffer;
+    forced.buffers[buffer].apply(&Transaction::insert(0, "unsaved"));
+    forced.execute_command("q!").unwrap();
+    assert_eq!(
+        forced.take_persistent_exit_request(),
+        Some(PersistentExitRequest::Quit { force: true })
+    );
 }
 
 #[test]

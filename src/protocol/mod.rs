@@ -48,9 +48,9 @@ use crate::workspace::{
 /// and semantic notification colours. Version 12 adds matched full-text picker
 /// previews for commit search. Version 13 adds persistent host naming for the
 /// bundled lifecycle-management client. Version 14 carries the directory chosen
-/// by `:quit-here` on the detach response: the editor that chooses it runs in
+/// by `:quit-here` on the exit response: the editor that chooses it runs in
 /// the host, while the file a shell wrapper reads belongs to the client, so a
-/// host still running the previous binary would detach without ever reporting
+/// host still running the previous binary would exit without ever reporting
 /// where the shell should go. Version 15 lets a client report a message for the
 /// editor to show, which is how a client that could not reach a destination
 /// workspace explains why it stayed on the one it was already attached to.
@@ -774,7 +774,7 @@ pub enum HostResponse {
         damage: Box<TerminalDamageFrame>,
     },
     Detached {
-        /// Where `:quit-here` asked the invoking shell to go, when the detach
+        /// Where `:quit-here` asked the invoking shell to go, when this response
         /// came from that command. The client owns the file a shell wrapper
         /// reads, so the host reports the directory rather than writing it.
         directory_bytes: Option<Vec<u8>>,
