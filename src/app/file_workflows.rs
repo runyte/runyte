@@ -443,7 +443,7 @@ impl App {
             // A language server answering a goto with a binary file must not
             // replace the question already on screen, or a half-typed program
             // name would silently be applied to a file nobody asked about.
-            self.error(format!(
+            self.action_failed(format!(
                 "{} is not a text file; answer the open prompt first",
                 path.display()
             ));
@@ -464,7 +464,11 @@ impl App {
         if let Err(error) = external_open::launch(&program, path) {
             // Nothing is remembered, because a program that will not run is
             // not a hint worth offering back.
-            self.error(error.to_string());
+            self.error_from(
+                "External program",
+                "Program launch failed",
+                error.to_string(),
+            );
             return;
         }
         if program.is_empty() {
@@ -475,7 +479,10 @@ impl App {
             return;
         }
         if let Err(error) = self.programs.remember(&program) {
-            self.error(format!("opened with {program}, but {error}"));
+            self.action_warning(
+                "Program choice was not saved",
+                format!("opened with {program}, but {error}"),
+            );
             return;
         }
         self.status(format!("opened {} with {program}", path.display()));
@@ -1025,9 +1032,13 @@ impl App {
         path: Option<PathBuf>,
         replace: bool,
     ) -> Result<()> {
+        if let Some(reason) = self.buffers[buffer_id].read_only_reason() {
+            self.action_warning("Save refused", reason);
+            return Ok(());
+        }
         if self.buffers[buffer_id].is_commit_message() {
             if path.is_some() {
-                self.error("a commit message cannot be written to a path");
+                self.action_failed("a commit message cannot be written to a path");
                 return Ok(());
             }
             self.commit_staged(buffer_id);
@@ -1035,7 +1046,7 @@ impl App {
         }
         if self.buffers[buffer_id].is_directory() {
             if path.is_some() {
-                self.error("directory buffers cannot be written to another path");
+                self.action_failed("directory buffers cannot be written to another path");
                 return Ok(());
             }
             match self.buffers[buffer_id].directory_plan() {
@@ -1044,7 +1055,8 @@ impl App {
                     self.status("directory has no filesystem changes");
                 }
                 Ok(plan) if self.plan_invalidates_a_pasted_cut_source(buffer_id, &plan) => {
-                    self.error(
+                    self.action_warning(
+                        "Save refused",
                         "a cut from this explorer is pending in another explorer; write the destination first",
                     );
                 }
@@ -1061,7 +1073,7 @@ impl App {
                         if count == 1 { "" } else { "s" }
                     ));
                 }
-                Err(error) => self.error(error.to_string()),
+                Err(error) => self.action_warning("Save refused", error.to_string()),
             }
             return Ok(());
         }
@@ -1076,7 +1088,10 @@ impl App {
             && self.buffers[buffer_id].external_file_status()
                 != crate::buffer::ExternalFileStatus::Deleted
         {
-            self.error("file changed on disk; Space b d compares, Space r reloads, and :write! replaces it");
+            self.action_warning(
+                "Save refused",
+                "file changed on disk; Space b d compares, Space r reloads, and :write! replaces it",
+            );
             return Ok(());
         }
         let destination = path.as_deref().or(self.buffers[buffer_id].path.as_deref());
@@ -1094,13 +1109,16 @@ impl App {
                 .then_some(index)
             })
         {
-            self.error(format!(
-                "{} is already open in buffer {}; close that buffer before writing this one there",
-                destination
-                    .expect("a checked identity came from a destination")
-                    .display(),
-                self.buffers[owner].display_name()
-            ));
+            self.action_warning(
+                "Save refused",
+                format!(
+                    "{} is already open in buffer {}; close that buffer before writing this one there",
+                    destination
+                        .expect("a checked identity came from a destination")
+                        .display(),
+                    self.buffers[owner].display_name()
+                ),
+            );
             return Ok(());
         }
         if self.config.editor.trim_trailing_whitespace
@@ -1143,18 +1161,28 @@ impl App {
                 match save_outcome {
                     crate::buffer::SaveOutcome::Durable => self.status(format!("wrote {path}")),
                     crate::buffer::SaveOutcome::CommittedWithWarning(warning) => {
-                        self.error(warning);
+                        self.action_warning("Save completed with warning", warning);
                     }
                 }
                 self.report_new_registry_errors();
                 Ok(())
             }
             Err(error) => {
-                self.error(error.to_string());
+                let save_conflict = crate::buffer::is_save_conflict(&error);
                 if saving_current_path
                     && let Some(observation) = self.buffers[buffer_id].observe_now(buffer_id)
                 {
                     self.apply_file_observation(observation);
+                }
+                if save_conflict {
+                    let message = error.to_string();
+                    if self.buffers[buffer_id].external_file_status().is_stale() {
+                        self.action_warning_unretained(message);
+                    } else {
+                        self.action_warning("Save refused", message);
+                    }
+                } else {
+                    self.error_from("Runyte", "Save failed", error.to_string());
                 }
                 Ok(())
             }
@@ -1272,7 +1300,7 @@ impl App {
             }
             FileObservation::Text { .. } => return Ok(()),
         };
-        self.error(message);
+        self.action_failed(message);
         Ok(())
     }
 
@@ -1365,16 +1393,16 @@ impl App {
         let name = self.buffers[buffer].display_name();
 
         if self.buffers[buffer].is_directory() {
-            self.error("a directory listing cannot be compared");
+            self.action_failed("a directory listing cannot be compared");
             return;
         }
         if self.buffers[buffer].len_bytes() > MAX_DIFF_BYTES {
-            self.error(format!("{name} is too large to compare"));
+            self.action_failed(format!("{name} is too large to compare"));
             return;
         }
 
         if self.diffs.iter().any(|session| session.has_buffer(buffer)) {
-            self.error(format!(
+            self.action_failed(format!(
                 "{name} is already being compared; :diff-off closes it"
             ));
             return;
@@ -1403,12 +1431,12 @@ impl App {
         if self.buffers[marked].len_bytes() > MAX_DIFF_BYTES {
             let marked = self.buffers[marked].display_name();
             self.pending_diff = None;
-            self.error(format!("{marked} is too large to compare"));
+            self.action_failed(format!("{marked} is too large to compare"));
             return;
         }
 
         let Some((left, right)) = self.diff_sides(marked, buffer) else {
-            self.error("comparing needs room for two panes");
+            self.action_failed("comparing needs room for two panes");
             return;
         };
         self.pending_diff = None;
@@ -1439,11 +1467,11 @@ impl App {
     pub(super) fn diff_disk(&mut self) {
         let source = self.active().buffer;
         if self.buffers[source].kind != BufferKind::File {
-            self.error(":diff-disk requires an ordinary file buffer");
+            self.action_failed(":diff-disk requires an ordinary file buffer");
             return;
         }
         if self.maximized.is_some() {
-            self.error("leave the maximized view before comparing");
+            self.action_failed("leave the maximized view before comparing");
             return;
         }
         let existing_disk_diff = self.diffs.iter().position(|diff| {
@@ -1458,15 +1486,15 @@ impl App {
                 })
         });
         if self.diffs.iter().any(|diff| diff.has_buffer(source)) && existing_disk_diff.is_none() {
-            self.error("this buffer is already being compared; :diff-off closes it");
+            self.action_failed("this buffer is already being compared; :diff-off closes it");
             return;
         }
         if self.buffers[source].len_bytes() > MAX_DIFF_BYTES {
-            self.error("the Runyte buffer is too large to compare");
+            self.action_failed("the Runyte buffer is too large to compare");
             return;
         }
         let Some(event) = self.buffers[source].observe_now(source) else {
-            self.error(":diff-disk requires an ordinary file buffer");
+            self.action_failed(":diff-disk requires an ordinary file buffer");
             return;
         };
         self.apply_file_observation(event.clone());
@@ -1483,11 +1511,11 @@ impl App {
                 }
                 FileObservation::Text { .. } => unreachable!(),
             };
-            self.error(message);
+            self.action_failed(message);
             return;
         };
         if text.len() > MAX_DIFF_BYTES {
-            self.error("the disk version is too large to compare");
+            self.action_failed("the disk version is too large to compare");
             return;
         }
 
@@ -1520,7 +1548,7 @@ impl App {
         let disk = self.buffers.len() - 1;
         let Some((left, right)) = self.diff_sides(disk, source) else {
             self.closed_buffers.insert(disk);
-            self.error("comparing needs room for two panes");
+            self.action_failed("comparing needs room for two panes");
             return;
         };
         debug_assert_eq!(left.buffer, disk);

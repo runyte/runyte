@@ -79,7 +79,7 @@ impl App {
         // Remembered selections are mapped through every transaction, but a
         // buffer can also be replaced wholesale, so clamp before trusting them.
         let Some(buffer) = self.buffers.get(target.buffer) else {
-            self.error("that position's buffer is gone");
+            self.action_failed("that position's buffer is gone");
             return;
         };
         let selection = target.selection.transform(|range| {
@@ -347,7 +347,7 @@ impl App {
                 self.status(format!("jump to word: {} labels", labels.len()));
                 self.jump = Some(labels);
             }
-            None => self.error("no words on screen to jump to"),
+            None => self.action_failed("no words on screen to jump to"),
         }
     }
 
@@ -389,7 +389,7 @@ impl App {
                 }
                 self.status("");
             }
-            Press::Missed => self.error(format!("no jump label matches '{typed}'")),
+            Press::Missed => self.action_failed(format!("no jump label matches '{typed}'")),
         }
         Ok(())
     }
@@ -1505,7 +1505,7 @@ impl App {
                 return;
             }
             Err(error) => {
-                self.error(error.to_string());
+                self.action_failed(error.to_string());
                 return;
             }
         };
@@ -1526,7 +1526,7 @@ impl App {
     pub(super) fn match_bracket(&mut self) {
         let buffer_id = self.active().buffer;
         let Some(syntax) = self.syntax[buffer_id].as_ref() else {
-            self.error("no syntax tree for this buffer");
+            self.action_failed("no syntax tree for this buffer");
             return;
         };
         let text = self.buffers[buffer_id].text();
@@ -1544,7 +1544,7 @@ impl App {
             }
         });
         if !matched {
-            self.error("no matching bracket");
+            self.action_failed("no matching bracket");
             return;
         }
         let pane = self.active_mut();
@@ -1562,7 +1562,7 @@ impl App {
 
     pub(super) fn remove_primary_selection(&mut self) {
         if self.active().selection.len() == 1 {
-            self.error("only one selection");
+            self.action_failed("only one selection");
             return;
         }
         let selection = self.active().selection.remove_primary();
@@ -1600,7 +1600,7 @@ impl App {
     pub(super) fn rotate_selection_contents(&mut self, forward: bool) {
         let spans = self.operative_spans();
         if spans.len() < 2 {
-            self.error("rotating contents needs at least two selections");
+            self.action_failed("rotating contents needs at least two selections");
             return;
         }
         let buffer = self.active_buffer();
@@ -1689,7 +1689,7 @@ impl App {
             added.push(Range::point(buffer.line_to_offset(row) + position.col));
         }
         if added.is_empty() {
-            self.error("no room for another cursor");
+            self.action_failed("no room for another cursor");
             return;
         }
         let mut ranges = self.active().selection.ranges().to_vec();
@@ -1734,7 +1734,7 @@ impl App {
         }
 
         if additions.is_empty() {
-            self.error("no room for another cursor");
+            self.action_failed("no room for another cursor");
             return;
         }
 
@@ -1769,7 +1769,7 @@ impl App {
         let pattern = match Regex::new(pattern) {
             Ok(pattern) => pattern,
             Err(error) => {
-                self.error(format!("invalid regular expression: {error}"));
+                self.action_failed(format!("invalid regular expression: {error}"));
                 return;
             }
         };
@@ -1784,7 +1784,7 @@ impl App {
                 self.active_mut().replace_selection(selection);
                 self.status(format!("{count} selections"));
             }
-            None => self.error("that would remove every selection"),
+            None => self.action_failed("that would remove every selection"),
         }
     }
 
@@ -1981,7 +1981,7 @@ impl App {
                 .collect::<Option<Vec<_>>>()
         };
         let Some(formatted) = formatted else {
-            self.error("no table detected in the selected lines");
+            self.action_failed("no table detected in the selected lines");
             return;
         };
         let changes = formatted
@@ -2103,7 +2103,7 @@ impl App {
         let directory = match self.directory_register(TransferMode::Move, false) {
             Ok(directory) => directory,
             Err(error) => {
-                self.error(error.to_string());
+                self.action_failed(error.to_string());
                 return;
             }
         };
@@ -2382,7 +2382,7 @@ impl App {
         register.directory = match self.directory_register(TransferMode::Copy, true) {
             Ok(directory) => directory,
             Err(error) => {
-                self.error(error.to_string());
+                self.action_failed(error.to_string());
                 return;
             }
         };
@@ -2471,7 +2471,7 @@ impl App {
             && let Some(directory) = &register.directory
         {
             if let Err(error) = self.paste_directory_register(directory, before) {
-                self.error(error.to_string());
+                self.action_failed(error.to_string());
             }
             return;
         }
@@ -2583,7 +2583,7 @@ impl App {
 
     pub(super) fn select_register(&mut self, name: char) {
         if name.is_control() {
-            self.error("register name must be printable");
+            self.action_failed("register name must be printable");
             return;
         }
         self.selected_register = name;

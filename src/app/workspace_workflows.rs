@@ -46,7 +46,7 @@ impl App {
                         self.rebuild_workspace_picker();
                         self.request_selected_workspace_preview();
                     }
-                    Err(error) => self.error(error),
+                    Err(error) => self.error_from("Host", "Host operation failed", error),
                 }
             }
             WorkspaceEvent::Previewed {
@@ -82,7 +82,7 @@ impl App {
                         self.status(format!("started session for {}", path.display()));
                         self.request_workspace_refresh();
                     }
-                    Err(error) => self.error(error),
+                    Err(error) => self.error_from("Host", "Host operation failed", error),
                 }
             }
             WorkspaceEvent::Stopped {
@@ -109,9 +109,13 @@ impl App {
                         }
                         Err(error) => {
                             self.worktree_teardown = None;
-                            self.error(format!(
-                                "cannot remove this worktree because its session could not be stopped: {error}"
-                            ));
+                            self.error_from(
+                                "Host",
+                                "Host operation failed",
+                                format!(
+                                    "cannot remove this worktree because its session could not be stopped: {error}"
+                                ),
+                            );
                         }
                     }
                     return;
@@ -125,7 +129,7 @@ impl App {
                         self.status(format!("stopped session for {}", selector.display()));
                         self.request_workspace_refresh();
                     }
-                    Err(error) => self.error(error),
+                    Err(error) => self.error_from("Host", "Host operation failed", error),
                 }
             }
             WorkspaceEvent::Forgotten {
@@ -177,7 +181,7 @@ impl App {
                         "session for {} was not in the recent list",
                         path.display()
                     )),
-                    Err(error) => self.error(error),
+                    Err(error) => self.error_from("Host", "Host operation failed", error),
                 }
             }
             WorkspaceEvent::Renamed {
@@ -195,7 +199,7 @@ impl App {
                         self.status(format!("renamed session for {} to {name}", path.display()));
                         self.request_workspace_refresh();
                     }
-                    Err(error) => self.error(error),
+                    Err(error) => self.error_from("Host", "Host operation failed", error),
                 }
             }
             WorkspaceEvent::Numbered {
@@ -230,7 +234,7 @@ impl App {
                         }
                         self.request_workspace_refresh();
                     }
-                    Err(error) => self.error(error),
+                    Err(error) => self.error_from("Host", "Host operation failed", error),
                 }
             }
         }
@@ -250,7 +254,7 @@ impl App {
             return false;
         }
         if !self.persistent_session {
-            self.error("attaching sessions needs workspace.mode: persistent");
+            self.action_failed("attaching sessions needs workspace.mode: persistent");
             return false;
         }
         self.workspace_switch = Some(WorkspaceSwitchRequest {
@@ -265,12 +269,12 @@ impl App {
         self.workspace_generation = self.workspace_generation.wrapping_add(1).max(1);
         let generation = self.workspace_generation;
         let Some(service) = self.ports.workspace_service.as_ref() else {
-            self.error("session service is unavailable");
+            self.action_failed("session service is unavailable");
             return;
         };
         match service.try_refresh(generation) {
             Ok(()) => self.status("refreshing sessions…"),
-            Err(error) => self.error(error),
+            Err(error) => self.error_from("Host", "Host operation failed", error),
         }
     }
 
@@ -504,18 +508,18 @@ impl App {
     #[cfg(unix)]
     pub(super) fn start_session(&mut self, workspace: PathBuf) {
         if !self.persistent_session {
-            self.error("starting sessions needs workspace.mode: persistent");
+            self.action_failed("starting sessions needs workspace.mode: persistent");
             return;
         }
         self.workspace_generation = self.workspace_generation.wrapping_add(1).max(1);
         let generation = self.workspace_generation;
         let Some(service) = self.ports.workspace_service.as_ref() else {
-            self.error("session service is unavailable");
+            self.action_failed("session service is unavailable");
             return;
         };
         match service.try_start(generation, workspace, self.working_directory.clone()) {
             Ok(()) => self.status("starting session…"),
-            Err(error) => self.error(error),
+            Err(error) => self.error_from("Host", "Host operation failed", error),
         }
     }
 
@@ -532,7 +536,7 @@ impl App {
     #[cfg(unix)]
     fn stop_session_with_force(&mut self, selector: PathBuf, force: bool) {
         if !self.persistent_session {
-            self.error("stopping sessions needs workspace.mode: persistent");
+            self.action_failed("stopping sessions needs workspace.mode: persistent");
             return;
         }
         let _ = self.request_session_stop(selector, force);
@@ -550,7 +554,7 @@ impl App {
         self.workspace_generation = self.workspace_generation.wrapping_add(1).max(1);
         let generation = self.workspace_generation;
         let Some(service) = self.ports.workspace_service.as_ref() else {
-            self.error("session service is unavailable");
+            self.action_failed("session service is unavailable");
             return None;
         };
         match service.try_stop(generation, selector, self.working_directory.clone(), force) {
@@ -563,7 +567,7 @@ impl App {
                 Some(generation)
             }
             Err(error) => {
-                self.error(error);
+                self.error_from("Host", "Host operation failed", error);
                 None
             }
         }
@@ -575,7 +579,7 @@ impl App {
         self.workspace_generation = self.workspace_generation.wrapping_add(1).max(1);
         let generation = self.workspace_generation;
         let Some(service) = self.ports.workspace_service.as_ref() else {
-            self.error("session service is unavailable");
+            self.action_failed("session service is unavailable");
             return None;
         };
         match service.try_forget(generation, path) {
@@ -584,7 +588,7 @@ impl App {
                 Some(generation)
             }
             Err(error) => {
-                self.error(error);
+                self.error_from("Host", "Host operation failed", error);
                 None
             }
         }
@@ -595,12 +599,12 @@ impl App {
         self.workspace_generation = self.workspace_generation.wrapping_add(1).max(1);
         let generation = self.workspace_generation;
         let Some(service) = self.ports.workspace_service.as_ref() else {
-            self.error("session service is unavailable");
+            self.action_failed("session service is unavailable");
             return;
         };
         match service.try_rename(generation, path, self.working_directory.clone(), name) {
             Ok(()) => self.status("renaming session…"),
-            Err(error) => self.error(error),
+            Err(error) => self.error_from("Host", "Host operation failed", error),
         }
     }
 
@@ -610,12 +614,12 @@ impl App {
         self.workspace_generation = self.workspace_generation.wrapping_add(1).max(1);
         let generation = self.workspace_generation;
         let Some(service) = self.ports.workspace_service.as_ref() else {
-            self.error("session service is unavailable");
+            self.action_failed("session service is unavailable");
             return;
         };
         match service.try_number(generation, path, self.working_directory.clone(), number) {
             Ok(()) => self.status("numbering session…"),
-            Err(error) => self.error(error),
+            Err(error) => self.error_from("Host", "Host operation failed", error),
         }
     }
 

@@ -367,14 +367,14 @@ impl App {
         match target {
             ResourceTarget::Buffer(buffer) => {
                 if buffer >= self.buffers.len() || self.closed_buffers.contains(&buffer) {
-                    self.error("that buffer is no longer open");
+                    self.action_failed("that buffer is no longer open");
                 } else {
                     self.switch_buffer(buffer);
                 }
             }
             ResourceTarget::Terminal(id) => {
                 if self.terminals.get(id).is_none() {
-                    self.error("that terminal is gone");
+                    self.action_failed("that terminal is gone");
                 } else {
                     self.show_terminal(id);
                 }

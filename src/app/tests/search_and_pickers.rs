@@ -202,7 +202,7 @@ fn a_failed_search_keeps_the_previous_one_working() {
     assert_eq!(app.active().selection.len(), 2);
 
     search_for(&mut app, 's', "absent");
-    // A search that ran cleanly and found nothing is a warning, not a
+    // A search that ran cleanly and found nothing is informational, not a
     // failure: it does not take the interaction line's error styling.
     assert!(!app.status_error, "{}", app.status);
     assert_eq!(app.status, "pattern not found: absent");
@@ -211,6 +211,8 @@ fn a_failed_search_keeps_the_previous_one_working() {
         "s (pattern not found: absent)"
     );
     assert!(!app.displayed_status_message_is_error());
+    assert_eq!(app.unread_notification_counts().infos, 1);
+    assert_eq!(app.unread_notification_counts().warnings, 0);
     // `n` still walks the search that did work.
     press(&mut app, 'n');
     assert_eq!(app.active().selection.len(), 1);
@@ -234,7 +236,7 @@ fn an_invalid_regex_from_the_search_prompt_echoes_as_an_error() {
 }
 
 #[test]
-fn a_vim_search_prompt_with_no_match_echoes_as_a_warning() {
+fn a_vim_search_prompt_with_no_match_echoes_as_information() {
     let mut app = vim_app("foo bar");
 
     search_for(&mut app, '/', "absent");

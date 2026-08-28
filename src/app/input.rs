@@ -1283,7 +1283,7 @@ impl App {
             && let Some(session) = self.terminals.get_mut(id)
         {
             if !session.send_text(text) {
-                self.error("terminal input queue is full or the paste exceeds 1 MiB");
+                self.action_failed("terminal input queue is full or the paste exceeds 1 MiB");
             }
             return Ok(());
         }
@@ -1318,7 +1318,7 @@ impl App {
                 )
             {
                 self.mode = Mode::Normal;
-                self.error(reason);
+                self.action_failed(reason);
                 return Ok(());
             }
             if let InputEvent::Key(key) = &input
@@ -1437,7 +1437,7 @@ impl App {
             }
             EditorIntent::InsertText(text) => {
                 if let Some(reason) = self.active_buffer().read_only_reason() {
-                    self.error(reason);
+                    self.action_failed(reason);
                     return Ok(None);
                 }
                 if self.mode == Mode::Replace {
@@ -1513,17 +1513,20 @@ impl App {
                 GrammarNotice::CharacterInputCancelled => {
                     self.status("character input cancelled");
                 }
-                GrammarNotice::ExpectedCharacter => self.error("expected a character"),
+                GrammarNotice::ExpectedCharacter => self.action_failed("expected a character"),
                 GrammarNotice::InvalidRegister {
                     register,
                     macros_only,
-                } => self.error(if macros_only {
+                } => self.action_failed(if macros_only {
                     format!("macro register must be a-z, not '{register}'")
                 } else {
                     format!("register must be a-z, A-Z, quote, or underscore, not '{register}'")
                 }),
                 GrammarNotice::CountNotSupported(target) => {
-                    self.error(format!("{} does not support a count", target.description()));
+                    self.action_failed(format!(
+                        "{} does not support a count",
+                        target.description()
+                    ));
                 }
                 GrammarNotice::UnavailableBinding {
                     target,
@@ -1539,7 +1542,7 @@ impl App {
                             unreachable!("implemented binding cannot be unavailable")
                         }
                     };
-                    self.error(format!("{} is {state}: {reason}", target.description()));
+                    self.action_failed(format!("{} is {state}: {reason}", target.description()));
                 }
             },
         }
@@ -1984,7 +1987,7 @@ impl App {
         if let Some(reason) = self.active_buffer().read_only_reason()
             && operator != VimOperator::Yank
         {
-            self.error(reason);
+            self.action_failed(reason);
             return Ok(());
         }
         self.collapse_vim_normal_selection();
@@ -2083,7 +2086,7 @@ impl App {
         if let Some(reason) = self.active_buffer().read_only_reason()
             && operator != VimOperator::Yank
         {
-            self.error(reason);
+            self.action_failed(reason);
             return Ok(());
         }
         if self.active().selection.ranges().iter().all(Range::is_empty) {
@@ -2310,7 +2313,7 @@ impl App {
                         !confirmation.typed() || confirmation.input == confirmation.plan.branch
                     });
                 if !valid {
-                    self.error("type the exact branch name before deleting it");
+                    self.action_failed("type the exact branch name before deleting it");
                     return Ok(());
                 }
                 let Some(confirmation) = self.git_branch_deletion.take() else {
@@ -2358,7 +2361,7 @@ impl App {
                     .as_ref()
                     .is_some_and(|confirmation| confirmation.input == confirmation.action.branch());
                 if !valid {
-                    self.error("type the exact branch name before switching branches");
+                    self.action_failed("type the exact branch name before switching branches");
                     return Ok(());
                 }
                 let Some(confirmation) = self.git_branch_switch.take() else {
@@ -2427,7 +2430,9 @@ impl App {
                         !confirmation.typed() || confirmation.input == confirmation.expected()
                     });
                 if !valid {
-                    self.error("type the exact branch name or worktree path before removing it");
+                    self.action_failed(
+                        "type the exact branch name or worktree path before removing it",
+                    );
                     return Ok(());
                 }
                 let Some(confirmation) = self.git_worktree_removal.take() else {
@@ -2490,19 +2495,21 @@ impl App {
                 if confirmation.buffer >= self.buffers.len()
                     || self.closed_buffers.contains(&confirmation.buffer)
                 {
-                    self.error("the file buffer was closed; reload cancelled");
+                    self.action_failed("the file buffer was closed; reload cancelled");
                     return Ok(());
                 }
                 let Some(current) =
                     self.buffers[confirmation.buffer].observe_now(confirmation.buffer)
                 else {
-                    self.error("the buffer is no longer an ordinary file; reload cancelled");
+                    self.action_failed(
+                        "the buffer is no longer an ordinary file; reload cancelled",
+                    );
                     return Ok(());
                 };
                 if current.generation != confirmation.generation
                     || current.path != confirmation.path
                 {
-                    self.error("the file baseline changed; review reload again");
+                    self.action_failed("the file baseline changed; review reload again");
                     return Ok(());
                 }
                 if current.observation != confirmation.observation {
@@ -2515,7 +2522,7 @@ impl App {
                         confirmation.observation = current.observation;
                         self.file_reload_confirmation = Some(confirmation);
                     }
-                    self.error("the file changed again on disk; review reload again");
+                    self.action_failed("the file changed again on disk; review reload again");
                     return Ok(());
                 }
                 self.install_file_reload(confirmation.buffer, &confirmation.observation)?;
@@ -2557,7 +2564,7 @@ impl App {
                     message.push_str(" · ");
                     message.push_str(&warning);
                 }
-                self.error(message);
+                self.action_failed(message);
             }
         }
     }
@@ -2869,7 +2876,7 @@ impl App {
                 let invocation = match parse_colon_command(&command) {
                     Ok(invocation) => invocation,
                     Err(error) => {
-                        self.error(error.to_string());
+                        self.action_failed(error.to_string());
                         return Ok(());
                     }
                 };
@@ -3231,7 +3238,7 @@ impl App {
             && command.is_mutating()
         {
             self.mode = Mode::Normal;
-            self.error(reason);
+            self.action_failed(reason);
             return Ok(());
         }
 
@@ -3635,13 +3642,13 @@ impl App {
             Command::OpenTerminalFileDirectory
             | Command::OpenTerminalDirectoryRoot
             | Command::OpenTerminalSelectedDirectory
-            | Command::OpenTerminalSessionDirectory => self.error(format!(
+            | Command::OpenTerminalSessionDirectory => self.action_failed(format!(
                 "{} is a typed command",
                 command.metadata().description.to_lowercase()
             )),
             Command::OpenTerminalList => self.open_terminal_list(),
             Command::RenameTerminal => self.open_terminal_rename_prompt(),
-            Command::ShowTerminal => self.error(format!(
+            Command::ShowTerminal => self.action_failed(format!(
                 "{} is a typed command",
                 command.metadata().description.to_lowercase()
             )),
@@ -3652,7 +3659,7 @@ impl App {
             Command::ClipboardPasteBefore => self.clipboard_paste(true),
             Command::ClipboardYank => self.clipboard_yank(),
             Command::ShellPipe => {
-                self.error(format!(
+                self.action_failed(format!(
                     "{} is not available",
                     command.metadata().description
                 ));
@@ -3692,7 +3699,7 @@ impl App {
                     let value = match setting.descriptor().value_type {
                         SettingType::Integer { minimum, maximum } => {
                             let Ok(number) = value.trim().parse::<usize>() else {
-                                self.error(format!(
+                                self.action_failed(format!(
                                     "{} must be an integer from {minimum} through {maximum}",
                                     setting.descriptor().title
                                 ));
@@ -3705,12 +3712,12 @@ impl App {
                         | SettingType::Boolean
                         | SettingType::Theme
                         | SettingType::WorkspaceMode => {
-                            self.error("this setting must be chosen from its list");
+                            self.action_failed("this setting must be chosen from its list");
                             return Ok(());
                         }
                     };
                     if let Err(error) = setting.validate(&value, &self.config) {
-                        self.error(error.to_string());
+                        self.action_failed(error.to_string());
                         return Ok(());
                     }
                     if self.persist_selected_setting(setting, value) {
@@ -3736,7 +3743,7 @@ impl App {
                     }
                 } else if kind == PromptKind::Rename {
                     if value.trim().is_empty() {
-                        self.error("rename needs a new name");
+                        self.action_failed("rename needs a new name");
                     } else {
                         self.lsp_rename(value);
                     }
@@ -3746,17 +3753,17 @@ impl App {
                         self.rename_session(target, value);
                     }
                     #[cfg(not(unix))]
-                    self.error("persistent mode is not yet supported on this platform");
+                    self.action_failed("persistent mode is not yet supported on this platform");
                 } else if kind == PromptKind::SessionNumber {
                     #[cfg(unix)]
                     if let Some(target) = session_number_target {
                         match parse_session_number(&value) {
                             Ok(number) => self.number_session(target, number),
-                            Err(error) => self.error(error),
+                            Err(error) => self.action_failed(error),
                         }
                     }
                     #[cfg(not(unix))]
-                    self.error("persistent mode is not yet supported on this platform");
+                    self.action_failed("persistent mode is not yet supported on this platform");
                 } else if kind == PromptKind::NewBranch {
                     if let Some(start_point) = start_point {
                         self.create_branch(value, start_point);
@@ -3764,7 +3771,7 @@ impl App {
                 } else if kind == PromptKind::NewWorktreeBranch {
                     let name = value.trim().to_owned();
                     if name.is_empty() {
-                        self.error("a new worktree branch needs a name");
+                        self.action_failed("a new worktree branch needs a name");
                     } else if let Some(start) = worktree_start {
                         self.git_worktree_start = Some(start);
                         self.git_worktree_new_branch = Some(name);
@@ -3780,19 +3787,19 @@ impl App {
                     self.join_selections(&value);
                 } else if let PromptKind::GlobalSearch(mode) = kind {
                     if value.is_empty() {
-                        self.error("global search pattern is empty");
+                        self.action_failed("global search pattern is empty");
                     } else {
                         self.open_global_search(&value, mode);
                     }
                 } else if let PromptKind::TerminalSearch(mode) = kind {
                     if value.is_empty() {
-                        self.error("terminal search pattern is empty");
+                        self.action_failed("terminal search pattern is empty");
                     } else {
                         self.search_terminal_review(&value, mode);
                     }
                 } else if let PromptKind::FilterSelections { keep } = kind {
                     if value.is_empty() {
-                        self.error("filter pattern is empty");
+                        self.action_failed("filter pattern is empty");
                     } else {
                         self.filter_selections(keep, &value);
                     }
@@ -3805,7 +3812,7 @@ impl App {
                     // instead of only reaching the retained notification.
                     let state = CommandState::capture(self);
                     if value.is_empty() {
-                        self.error("search pattern is empty");
+                        self.action_failed("search pattern is empty");
                     } else if let PromptKind::Search(mode) = kind {
                         let region = self.scoping_region();
                         self.commit_search(SearchQuery {
@@ -4009,7 +4016,7 @@ impl App {
                 self.command_selection = 0;
                 self.status(status);
             }
-            Err(error) => self.error(error.to_string()),
+            Err(error) => self.error_from("Runyte", "Program choice failed", error.to_string()),
         }
     }
 
@@ -4238,7 +4245,7 @@ impl App {
             CommandId::Colon(command) => self.execute_colon_invocation(command, parameters),
         };
         if let Err(error) = execution_result {
-            self.error(error.to_string());
+            self.error_from("Runyte", "Command failed", error.to_string());
             return Ok(CommandOutcome::UserError(self.status.clone()));
         }
         self.retire_detached_ephemeral_buffers();
@@ -4393,7 +4400,7 @@ impl App {
                         }
                         self.terminals.enforce_memory_budget();
                         if !found {
-                            self.error(format!("character not found: {character}"));
+                            self.action_failed(format!("character not found: {character}"));
                         }
                         self.defer_replayed_character_repetitions(
                             command,
@@ -4403,7 +4410,7 @@ impl App {
                         return Ok(());
                     }
                     EditorCommand::ReplaceChar => {
-                        self.error(format!(
+                        self.action_failed(format!(
                             "replace character needs a buffer · {} shows this pane's again",
                             self.binding_label(EditorCommand::LeaveTerminal)
                         ));
@@ -4841,7 +4848,7 @@ impl App {
         ) else {
             return false;
         };
-        self.error(reason);
+        self.action_failed(reason);
         true
     }
 
@@ -4849,7 +4856,7 @@ impl App {
         let grammar = match ActiveGrammar::new(kind) {
             Ok(grammar) => grammar,
             Err(error) => {
-                self.error(error.to_string());
+                self.action_failed(error.to_string());
                 return;
             }
         };
@@ -4874,7 +4881,7 @@ impl App {
         match parse_colon_command(command) {
             Ok(invocation) => self.execute(invocation),
             Err(error) => {
-                self.error(error.to_string());
+                self.action_failed(error.to_string());
                 Ok(CommandOutcome::UserError(self.status.clone()))
             }
         }

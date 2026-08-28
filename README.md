@@ -72,8 +72,9 @@ The `:` palette is searchable and uses the same command registry. After a
 command completes, the interaction line shows the exact keys or command that
 were entered together with its description or result, for example
 `g l (Move to line end)`. Failures and unavailable actions are explained there
-too, while the searchable notification center retains errors and warnings that
-need a closer look.
+too, while the searchable notification center retains feedback worth reading
+back with severity based on the underlying condition rather than only on
+whether the requested action completed.
 
 Key execution, help, hints, and command descriptions all come from the same
 registry, so the documentation shown inside the editor cannot silently drift

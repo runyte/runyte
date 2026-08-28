@@ -1356,7 +1356,11 @@ fn config_commands_and_binding_open_the_registry_backed_buffer() {
 #[test]
 fn notification_commands_open_one_complete_buffer_and_acknowledge_history() {
     let mut app = App::new(Config::default(), None).unwrap();
-    app.error("git failed\nstdout line\nstderr line");
+    app.error_from(
+        "Git",
+        "Git operation failed",
+        "git failed\nstdout line\nstderr line",
+    );
     assert_eq!(app.unread_notification_counts().errors, 1);
 
     app.execute_command("not").unwrap();
@@ -1412,7 +1416,7 @@ fn opening_the_log_without_one_installed_reports_it_rather_than_opening_a_page()
 #[test]
 fn the_notifications_buffer_refreshes_while_open_and_the_new_entry_counts_as_unread_again() {
     let mut app = App::new(Config::default(), None).unwrap();
-    app.error("first failure");
+    app.error_from("Runyte", "Operation failed", "first failure");
     app.execute_command("not").unwrap();
     assert_eq!(
         app.unread_notification_counts(),
@@ -1420,7 +1424,7 @@ fn the_notifications_buffer_refreshes_while_open_and_the_new_entry_counts_as_unr
     );
     assert!(!app.active_buffer().to_string().contains("second failure"));
 
-    app.error("second failure");
+    app.error_from("Runyte", "Operation failed", "second failure");
 
     assert!(app.active_buffer().to_string().contains("second failure"));
     assert_eq!(app.unread_notification_counts().errors, 1);

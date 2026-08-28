@@ -166,7 +166,11 @@ impl App {
         match self.ports.send_lsp(command) {
             Some(true) => true,
             Some(false) => {
-                self.error("language server manager is not accepting work");
+                self.error_from(
+                    "LSP",
+                    "Language server operation failed",
+                    "language server manager is not accepting work",
+                );
                 self.unavailable_revision = self.unavailable_revision.wrapping_add(1);
                 false
             }
@@ -197,7 +201,11 @@ impl App {
         if self.pending_lsp_replies.len() < crate::lsp::EVENT_CAPACITY {
             self.pending_lsp_replies.push_back(command);
         } else {
-            self.error("language server reply queue is full");
+            self.error_from(
+                "LSP",
+                "Language server operation failed",
+                "language server reply queue is full",
+            );
         }
     }
 
@@ -406,15 +414,15 @@ impl App {
     ) -> bool {
         let label = kind.label();
         if !self.ports.has_lsp() {
-            self.error(format!("{label} needs a language server"));
+            self.action_failed(format!("{label} needs a language server"));
             return false;
         }
         let Some(language) = self.language_of(buffer_id) else {
-            self.error(format!("{label} needs a known language"));
+            self.action_failed(format!("{label} needs a known language"));
             return false;
         };
         let Some(path) = self.buffers[buffer_id].path.clone() else {
-            self.error(format!("{label} needs a saved file"));
+            self.action_failed(format!("{label} needs a saved file"));
             return false;
         };
         let Some((supported, generation)) = self
@@ -425,7 +433,7 @@ impl App {
             self.lsp_send(LspCommand::Ensure {
                 language: language.clone(),
             });
-            self.error(format!("{language} language server is not ready yet"));
+            self.action_failed(format!("{language} language server is not ready yet"));
             return false;
         };
         // A capability the server never advertised is never asked for: the
@@ -440,7 +448,7 @@ impl App {
             return false;
         }
         if !self.lsp_touch(buffer_id) {
-            self.error(format!("{label} needs a synchronized document"));
+            self.action_failed(format!("{label} needs a synchronized document"));
             return false;
         }
         let documents = matches!(
@@ -465,7 +473,11 @@ impl App {
         }
         let token = self.next_lsp_token;
         let Some(next_token) = token.checked_add(1) else {
-            self.error("language-server request identity space is exhausted");
+            self.error_from(
+                "LSP",
+                "Language server operation failed",
+                "language-server request identity space is exhausted",
+            );
             return false;
         };
         let command = LspCommand::Request {
@@ -521,12 +533,16 @@ impl App {
             .get(buffer)
             .and_then(|buffer| buffer.path.clone())
         else {
-            self.error("command needs a saved file");
+            self.action_failed("command needs a saved file");
             return;
         };
         let token = self.next_lsp_token;
         let Some(next_token) = token.checked_add(1) else {
-            self.error("language-server request identity space is exhausted");
+            self.error_from(
+                "LSP",
+                "Language server operation failed",
+                "language-server request identity space is exhausted",
+            );
             return;
         };
         if self.lsp_send(LspCommand::Request {
@@ -848,7 +864,7 @@ impl App {
     pub(super) fn lsp_code_actions(&mut self) {
         let buffer_id = self.active().buffer;
         let Some(language) = self.language_of(buffer_id) else {
-            self.error("code actions need a known language");
+            self.action_failed("code actions need a known language");
             return;
         };
         let encoding = self.encoding_for(&language);
@@ -904,7 +920,7 @@ impl App {
     /// common case is one keystroke away from a name that already exists.
     pub(super) fn lsp_rename_prompt(&mut self) {
         if !self.has_language_server() {
-            self.error("rename needs a language server");
+            self.action_failed("rename needs a language server");
             return;
         }
         let buffer = self.active_buffer();
@@ -1018,7 +1034,7 @@ impl App {
         let matcher = match mode.compile(pattern) {
             Ok(matcher) => matcher,
             Err(error) => {
-                self.error(format!("invalid regular expression: {error}"));
+                self.action_failed(format!("invalid regular expression: {error}"));
                 return;
             }
         };
@@ -1029,7 +1045,7 @@ impl App {
         ) {
             Ok(matches) => matches,
             Err(error) => {
-                self.error(error.to_string());
+                self.action_failed(error.to_string());
                 return;
             }
         };
@@ -1388,7 +1404,7 @@ impl App {
             {
                 self.completion = None;
             }
-            self.error(reason);
+            self.error_from("LSP", "Language server request failed", reason);
             return;
         }
         if tracked.pending.source_revision_must_match()
@@ -1397,7 +1413,10 @@ impl App {
                 .get(tracked.buffer)
                 .is_none_or(|buffer| buffer.revision() != tracked.revision)
         {
-            self.error("stale language-server response; the originating buffer changed");
+            self.action_warning(
+                "Language server result refused",
+                "stale language-server response; the originating buffer changed",
+            );
             return;
         }
         if tracked.pending.transient_group().is_some() && self.active().buffer != tracked.buffer {
@@ -1408,7 +1427,8 @@ impl App {
             PendingRequest::Edits { .. } | PendingRequest::CodeActions
         ) && !self.lsp_document_guards_are_current(&tracked.documents)
         {
-            self.error(
+            self.action_warning(
+                "Language server result refused",
                 "stale language-server response; another document changed, closed, or moved",
             );
             return;
@@ -1427,7 +1447,7 @@ impl App {
                     0 => self.status(format!("no {label} found")),
                     1 => {
                         if let Err(error) = self.jump_to(&locations[0]) {
-                            self.error(error.to_string());
+                            self.action_failed(error.to_string());
                         }
                     }
                     _ => self.open_location_picker(label, locations),
@@ -1507,7 +1527,7 @@ impl App {
                 let fallback = (!path.as_os_str().is_empty()).then_some(path);
                 match self.apply_document_edits(edits, fallback, Some(&documents), encoding, None) {
                     Ok(summary) => self.status(edit_summary(label, summary, skipped)),
-                    Err(error) => self.error(error),
+                    Err(error) => self.action_failed(error),
                 }
                 self.report_new_registry_errors();
             }
@@ -1521,13 +1541,17 @@ impl App {
                 },
             ) => {
                 let Some((language, generation)) = server else {
-                    self.error("resolved code action lost its server provenance");
+                    self.error_from(
+                        "LSP",
+                        "Language server response failed",
+                        "resolved code action lost its server provenance",
+                    );
                     return;
                 };
                 if command.as_ref().is_some_and(|command| {
                     skipped > 0 || !self.action_command_supported(&language, generation, command)
                 }) {
-                    self.error(
+                    self.action_failed(
                         "resolved code action command is unsupported or depends on file operations",
                     );
                     return;
@@ -1546,13 +1570,13 @@ impl App {
                             if summary.2 {
                                 self.send_action_command(buffer, language, generation, command);
                             } else {
-                                self.error(
+                                self.action_failed(
                                     "code action command not sent because its edits did not reach every language server",
                                 );
                             }
                         }
                     }
-                    Err(error) => self.error(error),
+                    Err(error) => self.action_failed(error),
                 }
                 self.report_new_registry_errors();
             }
@@ -1562,11 +1586,15 @@ impl App {
             (pending, response) => {
                 // A server answered with a shape its own capabilities did not
                 // promise. Reporting beats guessing.
-                self.error(format!(
-                    "unexpected {} response for {}",
-                    response_name(&response),
-                    pending.label()
-                ));
+                self.error_from(
+                    "LSP",
+                    "Language server response failed",
+                    format!(
+                        "unexpected {} response for {}",
+                        response_name(&response),
+                        pending.label()
+                    ),
+                );
             }
         }
     }
@@ -1746,7 +1774,10 @@ impl App {
     /// editor to apply. All three paths end at `apply_document_edits`.
     pub(super) fn run_code_action(&mut self, index: usize) {
         let Some(source) = self.lsp_action_source.clone() else {
-            self.error("stale code action; the originating buffer changed");
+            self.action_warning(
+                "Code action refused",
+                "stale code action; the originating buffer changed",
+            );
             return;
         };
         let source_buffer = source.buffer;
@@ -1759,11 +1790,17 @@ impl App {
             .get(source_buffer)
             .is_none_or(|candidate| candidate.revision() != source_revision)
         {
-            self.error("stale code action; the originating buffer changed");
+            self.action_warning(
+                "Code action refused",
+                "stale code action; the originating buffer changed",
+            );
             return;
         }
         if self.closed_buffers.contains(&source_buffer) {
-            self.error("stale code action; the originating buffer changed");
+            self.action_warning(
+                "Code action refused",
+                "stale code action; the originating buffer changed",
+            );
             return;
         }
         let current_generation = self
@@ -1771,7 +1808,10 @@ impl App {
             .get(&language)
             .map(|server| server.generation);
         if current_generation != Some(generation) {
-            self.error("stale code action; the language server restarted");
+            self.action_warning(
+                "Code action refused",
+                "stale code action; the language server restarted",
+            );
             return;
         }
         if self
@@ -1779,11 +1819,17 @@ impl App {
             .get(&source_buffer)
             .is_none_or(|document| document.language != language)
         {
-            self.error("stale code action; the document changed language ownership");
+            self.action_warning(
+                "Code action refused",
+                "stale code action; the document changed language ownership",
+            );
             return;
         }
         if !self.lsp_document_guards_are_current(&documents) {
-            self.error("stale code action; another language-server document changed");
+            self.action_warning(
+                "Code action refused",
+                "stale code action; another language-server document changed",
+            );
             return;
         }
         let Some(entry) = self.lsp_actions.get(index).cloned() else {
@@ -1795,7 +1841,7 @@ impl App {
                 self.send_action_command(source_buffer, language, generation, command);
             }
             crate::lsp::CodeActionOrCommand::CodeAction(action) if action.disabled.is_some() => {
-                self.error(format!(
+                self.action_failed(format!(
                     "code action is disabled: {}",
                     action.disabled.unwrap().reason
                 ));
@@ -1805,14 +1851,14 @@ impl App {
                 if command.as_ref().is_some_and(|command| {
                     !self.action_command_supported(&language, generation, command)
                 }) {
-                    self.error("code action contains an unadvertised command");
+                    self.action_failed("code action contains an unadvertised command");
                     return;
                 }
                 match action.edit.clone() {
                     Some(edit) => {
                         match crate::lsp::flatten_edit(edit) {
                             Ok((_, skipped)) if command.is_some() && skipped > 0 => {
-                                self.error(
+                                self.action_failed(
                                     "code action command depends on unsupported file operations",
                                 );
                             }
@@ -1834,15 +1880,15 @@ impl App {
                                                 command,
                                             );
                                         } else {
-                                            self.error(
+                                            self.action_failed(
                                                 "code action command not sent because its edits did not reach every language server",
                                             );
                                         }
                                     }
                                 }
-                                Err(error) => self.error(error),
+                                Err(error) => self.action_failed(error),
                             },
-                            Err(error) => self.error(error),
+                            Err(error) => self.action_failed(error),
                         }
                         self.report_new_registry_errors();
                     }
@@ -2248,7 +2294,11 @@ impl App {
             let Some((from, to)) =
                 checked_lsp_range(self.buffers[buffer_id].text(), edit.range, encoding)
             else {
-                self.error("completion has an invalid language-server edit range");
+                self.error_from(
+                    "LSP",
+                    "Language server response failed",
+                    "completion has an invalid language-server edit range",
+                );
                 return;
             };
             changes.push(Change::new(from, to, edit.new_text.clone()));
@@ -2260,7 +2310,11 @@ impl App {
                 let Some((from, to)) =
                     checked_lsp_range(self.buffers[buffer_id].text(), *range, encoding)
                 else {
-                    self.error("completion has an invalid language-server edit range");
+                    self.error_from(
+                        "LSP",
+                        "Language server response failed",
+                        "completion has an invalid language-server edit range",
+                    );
                     return;
                 };
                 Change::new(from, to.max(head), text.clone())
@@ -2276,7 +2330,11 @@ impl App {
                     && pair[1].from == pair[1].to
                     && pair[0].from == pair[1].from)
         }) {
-            self.error("completion has overlapping language-server edits");
+            self.error_from(
+                "LSP",
+                "Language server response failed",
+                "completion has overlapping language-server edits",
+            );
             return;
         }
         let transaction = Transaction::new(changes);
@@ -2461,11 +2519,11 @@ impl App {
             .find(|row| row.number == Some(number))
             .map(|row| row.project_root.clone())
         else {
-            self.error(format!("no session is numbered {number}"));
+            self.action_failed(format!("no session is numbered {number}"));
             return;
         };
         if !self.persistent_session {
-            self.error("attaching sessions needs workspace.mode: persistent");
+            self.action_failed("attaching sessions needs workspace.mode: persistent");
             return;
         }
         self.list = None;
@@ -2613,7 +2671,7 @@ impl App {
             return;
         };
         if self.terminals.get(id).is_none() {
-            self.error("that terminal is gone");
+            self.action_failed("that terminal is gone");
             return;
         }
         self.terminal_action_menu = Some(TerminalActionMenu {
@@ -2813,7 +2871,7 @@ impl App {
                     path: path.display().to_string(),
                 });
             }
-            None => self.error("buffer has no path"),
+            None => self.action_failed("buffer has no path"),
         }
     }
 
@@ -2884,7 +2942,9 @@ impl App {
         match target {
             PathClipboardTarget::System => match self.ports.clipboard().write(&popup.path) {
                 Ok(()) => self.status("copied path to system clipboard"),
-                Err(error) => self.error(error.to_string()),
+                Err(error) => {
+                    self.error_from("Clipboard", "Clipboard operation failed", error.to_string())
+                }
             },
             PathClipboardTarget::Register => {
                 let selected = self.selected_register;
@@ -2989,7 +3049,7 @@ impl App {
 
     pub(super) fn discard_buffer_changes(&mut self, buffer: usize) -> Result<()> {
         if self.closed_buffers.contains(&buffer) || self.buffers[buffer].is_directory() {
-            self.error("this buffer cannot be discarded here");
+            self.action_failed("this buffer cannot be discarded here");
             return Ok(());
         }
         let kind = self.buffers[buffer].kind.clone();
@@ -3023,11 +3083,11 @@ impl App {
             | BufferKind::GitCommit { .. }
             | BufferKind::WorkspaceSearch { .. }
             | BufferKind::Help => {
-                self.error("virtual buffers have no changes to discard");
+                self.action_failed("virtual buffers have no changes to discard");
                 return Ok(());
             }
             BufferKind::Directory => {
-                self.error("this buffer cannot be discarded here");
+                self.action_failed("this buffer cannot be discarded here");
                 return Ok(());
             }
         }
@@ -3049,12 +3109,15 @@ impl App {
     /// live buffer and finally a new scratch when no history remains.
     pub(super) fn close_active_buffer(&mut self, force: bool) {
         if self.active_terminal().is_some() {
-            self.error("a terminal is not a buffer; close it explicitly in :terminals");
+            self.action_failed("a terminal is not a buffer; close it explicitly in :terminals");
             return;
         }
         let buffer = self.active().buffer;
         if self.buffers[buffer].dirty && !force {
-            self.error("modified buffer; use :close! to discard its unsaved changes");
+            self.action_warning(
+                "Close refused",
+                "modified buffer; use :close! to discard its unsaved changes",
+            );
             return;
         }
         if force {
@@ -3102,7 +3165,10 @@ impl App {
         }
         if self.buffers[buffer].dirty {
             self.buffer_action_menu = None;
-            self.error("modified buffers must be saved or discarded before closing");
+            self.action_warning(
+                "Close refused",
+                "modified buffers must be saved or discarded before closing",
+            );
             return;
         }
         self.invalidate_partial_guards(buffer);
@@ -3314,7 +3380,7 @@ impl App {
     fn activate_list_selection(&mut self) -> Result<()> {
         let chosen = self.selected_list_action();
         if self.settings_view.is_some() && chosen.is_none() {
-            self.error("no matching setting choice · clear the filter or press Esc");
+            self.action_failed("no matching setting choice · clear the filter or press Esc");
             return Ok(());
         }
         if let Some(ListAction::SettingValue { setting, value }) = chosen {
@@ -3327,7 +3393,7 @@ impl App {
         }
         #[cfg(unix)]
         if matches!(chosen, Some(ListAction::Workspace(_))) && !self.persistent_session {
-            self.error("attaching sessions needs workspace.mode: persistent");
+            self.action_failed("attaching sessions needs workspace.mode: persistent");
             return Ok(());
         }
         self.list = None;

@@ -140,7 +140,7 @@ Tests, all updated or added for the final shape:
   above. `asynchronous_git_mutation_failure_echoes_its_message_inline`
   (existing, updated) drives `mark_action_feedback_failed` through a real
   `GitServiceEvent::Completed` failure. `counted_colon_binding_echoes_
-  failure_and_retains_its_error_notification` (existing, updated) covers a
+  failure_and_retains_its_info_notification` (existing, updated) covers a
   counted binding's grammar-level rejection.
 - In `src/snapshot.rs`: `a_failed_binding_marks_the_interaction_line_as_an_
   error_but_an_unavailable_one_does_not` drives a real key press through

@@ -30,7 +30,9 @@ impl App {
         let register = self.yank_value(false);
         match self.ports.clipboard().write(&register.text) {
             Ok(()) => self.status("yanked to system clipboard"),
-            Err(error) => self.error(error.to_string()),
+            Err(error) => {
+                self.error_from("Clipboard", "Clipboard operation failed", error.to_string())
+            }
         }
     }
 
@@ -48,7 +50,9 @@ impl App {
                     before,
                 );
             }
-            Err(error) => self.error(error.to_string()),
+            Err(error) => {
+                self.error_from("Clipboard", "Clipboard operation failed", error.to_string())
+            }
         }
     }
 
@@ -67,11 +71,11 @@ impl App {
 
     pub(super) fn start_macro_recording(&mut self, register: char) {
         if register.is_control() {
-            self.error("macro register must be printable");
+            self.action_failed("macro register must be printable");
             return;
         }
         if let Some(active) = self.recording_macro {
-            self.error(format!(
+            self.action_failed(format!(
                 "already recording macro @{active}; {} stops it",
                 self.macro_stop_hint()
             ));
@@ -141,7 +145,7 @@ impl App {
 
     pub(super) fn replay_macro(&mut self, register: char, count: usize) -> Result<()> {
         let Some(inputs) = self.macros.get(&register) else {
-            self.error(if register == DEFAULT_MACRO_REGISTER {
+            self.action_failed(if register == DEFAULT_MACRO_REGISTER {
                 "no default macro recorded; Space m m records one".to_owned()
             } else {
                 format!("macro @{register} is empty")
@@ -198,7 +202,7 @@ impl App {
             if let Some(replay) = self.macro_replay.as_mut() {
                 replay.abort_reason = Some(reason);
             } else {
-                self.error(reason);
+                self.action_failed(reason);
             }
             return Ok(());
         }
@@ -463,7 +467,7 @@ impl App {
     fn abort_macro_replay(&mut self, reason: String) {
         self.macro_replay = None;
         self.grammar.reset();
-        self.error(reason);
+        self.action_failed(reason);
     }
 
     pub(super) fn undo(&mut self) {
@@ -535,7 +539,7 @@ impl App {
             buffer.slice(from, to)
         };
         if pattern.is_empty() || pattern.contains('\n') {
-            self.error("search selection must be non-empty and on one line");
+            self.action_failed("search selection must be non-empty and on one line");
             return None;
         }
         Some(pattern)
@@ -580,7 +584,7 @@ impl App {
 
     pub(super) fn repeat_search_count(&mut self, reverse: bool, count: usize) {
         if self.search.pattern.is_empty() {
-            self.error("no previous search");
+            self.action_failed("no previous search");
             return;
         }
         if self.grammar.kind() == crate::command::GrammarKind::Vim {
@@ -660,7 +664,7 @@ impl App {
             Ok(matches) => matches,
             Err(error) => {
                 let pattern = std::mem::replace(&mut self.search, previous);
-                self.error(format!(
+                self.action_failed(format!(
                     "invalid regular expression: {error} in {}",
                     pattern.pattern
                 ));
@@ -669,7 +673,7 @@ impl App {
         };
         if matches.is_empty() {
             let pattern = std::mem::replace(&mut self.search, previous);
-            self.search_warning(format!("pattern not found: {}", pattern.pattern));
+            self.search_info(format!("pattern not found: {}", pattern.pattern));
             return;
         }
         // The match at or after where the cursor already was becomes primary, so
@@ -708,12 +712,12 @@ impl App {
         let matches = match self.search_matches() {
             Ok(matches) => matches,
             Err(error) => {
-                self.error(format!("invalid regular expression: {error}"));
+                self.action_failed(format!("invalid regular expression: {error}"));
                 return;
             }
         };
         if matches.is_empty() {
-            self.search_warning(format!("pattern not found: {}", self.search.pattern));
+            self.search_info(format!("pattern not found: {}", self.search.pattern));
             return;
         }
         let current = self.active().selection.primary().from();
@@ -775,7 +779,7 @@ impl App {
             }
         }
         if matches.is_empty() {
-            self.search_warning(format!("pattern not found: {}", self.search.pattern));
+            self.search_info(format!("pattern not found: {}", self.search.pattern));
             return;
         }
 
@@ -875,7 +879,7 @@ impl App {
             }
         });
         if missed {
-            self.error(format!("character not found: {character}"));
+            self.action_failed(format!("character not found: {character}"));
         }
         let pane = self.active_mut();
         pane.replace_selection(selection);
