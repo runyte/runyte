@@ -65,6 +65,17 @@ command. Protocol frames are optimistic-concurrency tokens; using the first
 startup frame while Git discovery was still active let the discovery result
 advance the host and reject `:quit-here` as stale on a loaded runner.
 
+A later same-day follow-up fixed the last ordering race inside the connection
+task. Its fair read/write selection could accept a periodic wait-status poll
+ahead of lifecycle replies that were already queued while the host was
+shutting down. Because the request queue was no longer being serviced, the
+client could see the socket close before receiving `WaitState` and
+`ShuttingDown`. The bounded semantic response queue now has priority over
+socket reads, which makes the existing shutdown flush deterministic. The
+direct interactive regression now also waits for an idle frame before
+invoking `:quit`, so startup Git discovery cannot make its concurrency token
+stale.
+
 This deliberately follows the Vim/Helix distinction between a view-local
 `:q`, an all-view `:qa`, and a buffer-local `:bc`, while retaining Runyte's
 safer `:c` that cannot close the last pane. It also retains Runyte's special

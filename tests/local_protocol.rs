@@ -259,6 +259,26 @@ async fn response_ignoring_frames(client: &mut LocalClient) -> HostResponse {
     }
 }
 
+/// Returns a current complete frame after asynchronous startup work settles.
+///
+/// Frame revisions are optimistic-concurrency tokens. Git discovery can
+/// replace the first frame immediately, making a command issued against that
+/// otherwise-valid startup snapshot stale before the host handles it.
+async fn next_idle_frame(client: &mut LocalClient) -> runyte::protocol::HostFrame {
+    loop {
+        match response(client).await {
+            HostResponse::Frame { frame } if frame.editor.status.long_running_action.is_none() => {
+                return *frame;
+            }
+            HostResponse::Frame { .. } => {}
+            HostResponse::TerminalDamage { .. } => {
+                client.send(&ClientRequest::Resynchronize).await.unwrap();
+            }
+            _ => {}
+        }
+    }
+}
+
 async fn send_input_expect_frame(client: &mut LocalClient, event: InputEvent) {
     client
         .send(&ClientRequest::Input {
@@ -2344,10 +2364,7 @@ async fn an_interactive_quit_flushes_its_shutdown_response_without_a_control_cli
         response(&mut interactive).await,
         HostResponse::Welcome { .. }
     ));
-    let frame = match response(&mut interactive).await {
-        HostResponse::Frame { frame } => *frame,
-        response => panic!("expected initial frame, got {response:?}"),
-    };
+    let frame = next_idle_frame(&mut interactive).await;
     interactive
         .send(&ClientRequest::Invoke {
             command: CommandRequest::at(

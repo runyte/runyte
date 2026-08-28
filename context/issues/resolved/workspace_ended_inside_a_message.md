@@ -64,6 +64,19 @@ Coverage:
 Run `cargo test --test local_protocol` and `cargo test --lib transport` for
 those boundaries.
 
+A 2026-08-28 follow-up made the connection task prefer its bounded response
+queue over a simultaneously ready socket read. The shutdown flush already
+closed the queue and waited for disconnection, but the task's fair outer
+selection could accept a wait client's periodic `WaitStatus` poll after the
+host had queued `WaitState` and `ShuttingDown`. The host loop had already
+ended, so that request could not be answered; under an unlucky schedule the
+client observed the socket closing before either queued lifecycle reply was
+written. Semantic replies now drain first. The direct interactive regression
+`an_interactive_quit_flushes_its_shutdown_response_without_a_control_client`
+and the Git wait regression
+`git_commit_wait_tui_completes_through_write_quit`, both in
+`tests/local_protocol.rs`, cover the two affected paths.
+
 Known limitation: a peer that has genuinely stopped reading still loses the
 message being written to it, both when the stall budget expires and when the
 shutdown flush budget does. Nothing can be delivered to a peer that is not

@@ -1808,6 +1808,14 @@ where
     let result: Result<()> = async {
         loop {
             tokio::select! {
+                // Semantic replies are bounded and must drain before another
+                // ready request can advance teardown. In particular, a wait
+                // client's periodic status poll can otherwise win this race
+                // after the host has queued WaitState and ShuttingDown, then
+                // observe the socket closing before either reply is written.
+                // Visual responses already occupy one replaceable slot, so
+                // this priority cannot starve reads indefinitely.
+                biased;
                 response = response_rx.recv() => {
                     let Some(response) = response else { break };
                     write_message(&mut writer, &response).await?;

@@ -92,6 +92,16 @@ in `tests/local_protocol.rs` covers the direct interactive path, while
 `git_commit_wait_tui_completes_through_write_quit` continues to cover the Git
 wait workflow.
 
+A later same-day follow-up fixed a remaining transport ordering race exposed
+by the Git wait workflow. The connection task selected fairly between queued
+responses and incoming requests, so the wait client's periodic `WaitStatus`
+poll could be accepted after `WaitState` and `ShuttingDown` were queued but
+before either was written. The host loop was already ending and could not
+answer that last poll. Giving the bounded semantic response queue priority
+now drains the lifecycle replies before further socket input, allowing the
+wait client to complete cleanly instead of falling into control recovery
+after the host endpoint has retired.
+
 Known limitation: the escape-to-command-line transition still relies on a
 fixed delay rather than an observed signal, because the protocol has no way
 to report editor mode to a control client. Sustained scheduling delay past
