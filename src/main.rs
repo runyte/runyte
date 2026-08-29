@@ -50,6 +50,8 @@ use runyte::{
 
 const STATUS_ANIMATION_INTERVAL: Duration = Duration::from_millis(80);
 const TERMINAL_FRAME_INTERVAL: Duration = Duration::from_millis(16);
+#[cfg(unix)]
+const WAIT_LIFECYCLE_RECOVERY_BUDGET: Duration = Duration::from_millis(500);
 /// How long a shutting-down host waits for its connections to finish writing.
 /// Longer than the transport's own write stall budget, so a peer that is
 /// merely slow is flushed and only one that has stopped reading is cut off.
@@ -146,6 +148,177 @@ impl TerminationSignals {
     }
 }
 
+/// Reports when the terminal behind stdin is no longer reachable.
+///
+/// Crossterm 0.29 keeps its Unix `EventStream` alive after a zero-byte terminal
+/// read. A hung-up PTY is then continuously readable, so its helper thread can
+/// spin without ever producing an event for the async caller. Watching only
+/// exceptional poll states avoids competing with Crossterm for input and also
+/// covers a `--wait` client that is still queued behind another interactive
+/// TUI and has not created an event stream yet.
+#[cfg(unix)]
+struct TerminalLoss {
+    cancel: Option<std::os::unix::net::UnixStream>,
+    event: Option<tokio::sync::oneshot::Receiver<std::io::Result<()>>>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+#[cfg(unix)]
+impl TerminalLoss {
+    fn new() -> Result<Self> {
+        use std::os::fd::AsRawFd;
+
+        let Some(terminal) = wait_client_terminal()? else {
+            return Ok(Self {
+                cancel: None,
+                event: None,
+                thread: None,
+            });
+        };
+        let (cancel, cancel_reader) = std::os::unix::net::UnixStream::pair()
+            .context("cannot create terminal-loss cancellation socket")?;
+        let (sender, event) = tokio::sync::oneshot::channel();
+        let thread = std::thread::Builder::new()
+            .name("runyte-terminal-loss".to_owned())
+            .spawn(move || {
+                if let Some(result) =
+                    wait_for_terminal_loss(terminal.as_raw_fd(), cancel_reader.as_raw_fd())
+                {
+                    let _ = sender.send(result);
+                }
+            })
+            .context("cannot start terminal-loss watcher")?;
+        Ok(Self {
+            cancel: Some(cancel),
+            event: Some(event),
+            thread: Some(thread),
+        })
+    }
+
+    async fn recv(&mut self) -> Result<()> {
+        let Some(event) = self.event.as_mut() else {
+            return std::future::pending().await;
+        };
+        match event.await {
+            Ok(result) => result.context("failed while watching the terminal"),
+            Err(_) => anyhow::bail!("terminal-loss watcher stopped unexpectedly"),
+        }
+    }
+}
+
+/// Opens the same terminal source Crossterm uses and gives the watcher its own
+/// close-on-exec descriptor. A queued noninteractive wait can legitimately
+/// have neither a TTY stdin nor `/dev/tty`; it remains usable through the
+/// already-attached TUI, and a later attempted takeover fails through the
+/// existing terminal-entry path.
+#[cfg(unix)]
+fn wait_client_terminal() -> Result<Option<std::os::fd::OwnedFd>> {
+    use std::os::fd::{FromRawFd, IntoRawFd};
+
+    // SAFETY: `isatty` only inspects the process's standard input descriptor.
+    if unsafe { libc::isatty(libc::STDIN_FILENO) } == 1 {
+        // SAFETY: `F_DUPFD_CLOEXEC` duplicates a live descriptor and returns a
+        // fresh owned descriptor on success.
+        let descriptor = unsafe { libc::fcntl(libc::STDIN_FILENO, libc::F_DUPFD_CLOEXEC, 0) };
+        if descriptor == -1 {
+            return Err(std::io::Error::last_os_error())
+                .context("cannot duplicate the wait client's terminal");
+        }
+        // SAFETY: successful duplication transferred one fresh descriptor.
+        return Ok(Some(unsafe {
+            std::os::fd::OwnedFd::from_raw_fd(descriptor)
+        }));
+    }
+
+    match fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open("/dev/tty")
+    {
+        Ok(terminal) => {
+            // SAFETY: `into_raw_fd` transfers the file's one owned descriptor.
+            Ok(Some(unsafe {
+                std::os::fd::OwnedFd::from_raw_fd(terminal.into_raw_fd())
+            }))
+        }
+        Err(error)
+            if matches!(
+                error.raw_os_error(),
+                Some(libc::ENOENT | libc::ENXIO | libc::ENODEV | libc::ENOTTY)
+            ) =>
+        {
+            Ok(None)
+        }
+        Err(error) => Err(error).context("cannot open the wait client's terminal"),
+    }
+}
+
+/// Blocks without consuming input until `terminal` reports loss, or until
+/// `cancel` becomes readable. `None` is the ordinary cancellation path.
+#[cfg(unix)]
+fn wait_for_terminal_loss(
+    terminal: std::os::fd::RawFd,
+    cancel: std::os::fd::RawFd,
+) -> Option<std::io::Result<()>> {
+    let mut descriptors = [
+        libc::pollfd {
+            fd: terminal,
+            events: 0,
+            revents: 0,
+        },
+        libc::pollfd {
+            fd: cancel,
+            events: libc::POLLIN,
+            revents: 0,
+        },
+    ];
+    loop {
+        // SAFETY: both entries contain live descriptors for this call, and the
+        // array is writable storage for the two returned `revents` fields.
+        let result = unsafe { libc::poll(descriptors.as_mut_ptr(), descriptors.len() as _, -1) };
+        if result == -1 {
+            let error = std::io::Error::last_os_error();
+            if error.kind() == std::io::ErrorKind::Interrupted {
+                continue;
+            }
+            return Some(Err(error));
+        }
+        if descriptors[1].revents != 0 {
+            return None;
+        }
+        if descriptors[0].revents & (libc::POLLHUP | libc::POLLERR | libc::POLLNVAL) != 0 {
+            return Some(Ok(()));
+        }
+    }
+}
+
+#[cfg(unix)]
+impl Drop for TerminalLoss {
+    fn drop(&mut self) {
+        if let Some(cancel) = self.cancel.as_mut() {
+            let _ = cancel.write_all(&[0]);
+        }
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+#[cfg(unix)]
+async fn terminal_loss_error(termination: &mut TerminationSignals) -> anyhow::Error {
+    // A controlling-PTY close reports descriptor hangup and SIGHUP together.
+    // Give the signal handler one bounded scheduling window so its established
+    // 128+signal process status wins that race. Descriptor loss without a
+    // signal still exits promptly through the generic error below.
+    tokio::select! {
+        biased;
+        signal = termination.recv() => terminated(signal),
+        _ = tokio::time::sleep(Duration::from_millis(50)) => {
+            anyhow::anyhow!("wait request lost its terminal before completion")
+        }
+    }
+}
+
 #[cfg(unix)]
 static RECEIVED_TERMINATION: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 
@@ -198,14 +371,27 @@ struct HostSupervisor {
     kind: HostSupervisorKind,
     pid: libc::pid_t,
     #[cfg(target_os = "linux")]
-    pidfd: Option<std::os::fd::OwnedFd>,
+    pidfd: Option<tokio::io::unix::AsyncFd<std::os::fd::OwnedFd>>,
     #[cfg(target_os = "macos")]
-    process_queue: Option<std::os::fd::OwnedFd>,
+    process_queue: Option<tokio::io::unix::AsyncFd<std::os::fd::OwnedFd>>,
 }
 
 #[cfg(unix)]
 impl HostSupervisor {
     fn for_launch(arguments: &LaunchArguments) -> Result<Option<Self>> {
+        if arguments.mode == LaunchMode::Wait {
+            if let Some(value) = std::env::var_os("RUNYTE_TEST_WAIT_PARENT_PID") {
+                let pid = value
+                    .to_string_lossy()
+                    .parse::<libc::pid_t>()
+                    .context("RUNYTE_TEST_WAIT_PARENT_PID must be a positive process ID")?;
+                anyhow::ensure!(pid > 0, "RUNYTE_TEST_WAIT_PARENT_PID must be positive");
+                return Self::new(HostSupervisorKind::TestProcess, pid).map(Some);
+            }
+            // SAFETY: `getppid` has no preconditions and only reads process
+            // metadata maintained by the kernel.
+            return Self::new(HostSupervisorKind::Parent, unsafe { libc::getppid() }).map(Some);
+        }
         if arguments.mode != LaunchMode::Serve {
             return Ok(None);
         }
@@ -227,9 +413,15 @@ impl HostSupervisor {
 
     fn new(kind: HostSupervisorKind, pid: libc::pid_t) -> Result<Self> {
         #[cfg(target_os = "linux")]
-        let pidfd = open_pidfd(pid)?;
+        let pidfd = open_pidfd(pid)?
+            .map(tokio::io::unix::AsyncFd::new)
+            .transpose()
+            .context("cannot register host supervisor process descriptor")?;
         #[cfg(target_os = "macos")]
-        let process_queue = open_process_queue(pid)?;
+        let process_queue = open_process_queue(pid)?
+            .map(tokio::io::unix::AsyncFd::new)
+            .transpose()
+            .context("cannot register host supervisor process queue")?;
         Ok(Self {
             kind,
             pid,
@@ -243,13 +435,13 @@ impl HostSupervisor {
     fn exited(&self) -> bool {
         #[cfg(target_os = "linux")]
         if let Some(pidfd) = self.pidfd.as_ref()
-            && pidfd_has_exited(pidfd)
+            && pidfd_has_exited(pidfd.get_ref())
         {
             return true;
         }
         #[cfg(target_os = "macos")]
         if let Some(process_queue) = self.process_queue.as_ref()
-            && process_queue_has_exited(process_queue)
+            && process_queue_has_exited(process_queue.get_ref())
         {
             return true;
         }
@@ -270,6 +462,38 @@ impl HostSupervisor {
 
     fn pid(&self) -> libc::pid_t {
         self.pid
+    }
+
+    async fn recv(&self) -> Result<()> {
+        #[cfg(target_os = "linux")]
+        if let Some(pidfd) = self.pidfd.as_ref() {
+            loop {
+                let mut ready = pidfd.readable().await?;
+                if pidfd_has_exited(pidfd.get_ref()) {
+                    return Ok(());
+                }
+                ready.clear_ready();
+            }
+        }
+        #[cfg(target_os = "macos")]
+        if let Some(process_queue) = self.process_queue.as_ref() {
+            loop {
+                let mut ready = process_queue.readable().await?;
+                if process_queue_has_exited(process_queue.get_ref()) {
+                    return Ok(());
+                }
+                ready.clear_ready();
+            }
+        }
+        // Stable kernel observation can be unavailable under restricted
+        // kernels. This fallback is deliberately coarse and is used only then;
+        // ordinary Linux/macOS waits block on the descriptor above.
+        loop {
+            tokio::time::sleep(Duration::from_millis(500)).await;
+            if self.exited() {
+                return Ok(());
+            }
+        }
     }
 }
 
@@ -719,6 +943,9 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
                         mouse_enabled,
                         arguments.verbosity,
                         arguments.log.as_deref(),
+                        supervising_parent
+                            .as_ref()
+                            .expect("wait launch records its parent"),
                     )
                     .await
                 }
@@ -2546,12 +2773,26 @@ async fn attach_for_wait(
     token: WaitToken,
     control: &mut LocalClient,
     termination: &mut TerminationSignals,
+    terminal_loss: &mut TerminalLoss,
+    launching_parent: &HostSupervisor,
 ) -> Result<()> {
     let _terminal = TerminalGuard::enter(mouse_enabled)?;
     let mut terminal = Terminal::new(CrosstermBackend::new(stdout()))?;
     let mut geometry = current_frame_geometry()?;
     let mut terminal_events = EventStream::new();
     let attachment = tokio::select! {
+        biased;
+        signal = termination.recv() => return Err(terminated(signal)),
+        parent = launching_parent.recv() => {
+            Err(parent.map_or_else(
+                |error| error.context("failed while watching the wait client's launching process"),
+                |()| anyhow::anyhow!("wait request lost its launching process before completion"),
+            ))
+        }
+        loss = terminal_loss.recv() => {
+            loss?;
+            Err(terminal_loss_error(termination).await)
+        }
         attachment = run_attached(
             endpoint,
             &mut terminal,
@@ -2561,40 +2802,21 @@ async fn attach_for_wait(
             None,
             None,
         ) => attachment,
-        signal = termination.recv() => return Err(terminated(signal)),
     };
     match attachment {
+        Err(attachment_error)
+            if attachment_error
+                .downcast_ref::<TerminatedBySignal>()
+                .is_some() =>
+        {
+            Err(attachment_error)
+        }
+        // Completing a wait closes its interactive attachment after queuing
+        // terminal state. Transport failure or terminal loss can race that
+        // close, so the independent control connection resolves authoritative
+        // durable status before the client reports failure.
         Err(attachment_error) => {
-            // Completing a wait closes its interactive attachment after
-            // queuing the terminal state. A periodic status poll can race that
-            // close and see BrokenPipe before the queued completion reaches
-            // the reader. The wait request is durable host state, so resolve
-            // that race through the independent control connection instead of
-            // turning a successful edit into a failed caller process.
-            control.send(&ClientRequest::WaitStatus { token }).await?;
-            match control.recv().await? {
-                Some(HostResponse::WaitState {
-                    token: response_token,
-                    status: WaitStatus::Completed,
-                    ..
-                }) if response_token == token => Ok(()),
-                Some(HostResponse::WaitState {
-                    token: response_token,
-                    status: WaitStatus::Cancelled { reason },
-                    ..
-                }) if response_token == token => anyhow::bail!(reason),
-                Some(HostResponse::WaitState {
-                    token: response_token,
-                    status: WaitStatus::Pending { .. },
-                    ..
-                }) if response_token == token => Err(attachment_error
-                    .context("wait attachment failed while the request remained pending")),
-                Some(response) => Err(attachment_error.context(format!(
-                    "wait attachment failed and status recovery returned {response:?}"
-                ))),
-                None => Err(attachment_error
-                    .context("wait attachment failed and its host disconnected during recovery")),
-            }
+            recover_wait_after_lifecycle_loss(control, token, false, attachment_error).await
         }
         Ok(AttachOutcome::Detached) => Ok(()),
         Ok(AttachOutcome::Switch { .. }) => {
@@ -2923,6 +3145,7 @@ async fn run_wait(
     mouse_enabled: bool,
     verbosity: u8,
     log: Option<&Path>,
+    launching_parent: &HostSupervisor,
 ) -> Result<()> {
     // Install before the durable request is created. A signal received while
     // its response is in flight is retained until the token is known, then
@@ -2965,6 +3188,11 @@ async fn run_wait(
                 .context("workspace host for --wait did not publish an endpoint")?
         }
     };
+    // Do not introduce another thread before detached host startup forks and
+    // execs. A terminal lost during startup is still reported immediately by
+    // the exceptional descriptor state once this watcher begins, before the
+    // durable request can settle into its wait loop.
+    let mut terminal_loss = TerminalLoss::new()?;
     control
         .send(&ClientRequest::CreateWait {
             paths: paths.iter().map(|path| encode_path(path)).collect(),
@@ -2992,6 +3220,8 @@ async fn run_wait(
             mouse_enabled,
             token,
             &mut termination,
+            &mut terminal_loss,
+            launching_parent,
         )
         .await
     } else {
@@ -3001,6 +3231,8 @@ async fn run_wait(
             token,
             &mut control,
             &mut termination,
+            &mut terminal_loss,
+            launching_parent,
         )
         .await
     };
@@ -3287,12 +3519,30 @@ async fn wait_for_completion(
     mouse_enabled: bool,
     token: WaitToken,
     termination: &mut TerminationSignals,
+    terminal_loss: &mut TerminalLoss,
+    launching_parent: &HostSupervisor,
 ) -> Result<()> {
     loop {
         client.send(&ClientRequest::WaitStatus { token }).await?;
         let response = tokio::select! {
-            response = client.recv() => response?,
+            biased;
             signal = termination.recv() => return Err(terminated(signal)),
+            parent = launching_parent.recv() => {
+                let error = parent.map_or_else(
+                    |error| error.context("failed while watching the wait client's launching process"),
+                    |()| anyhow::anyhow!("wait request lost its launching process before completion"),
+                );
+                return recover_wait_after_lifecycle_loss(client, token, true, error).await;
+            }
+            loss = terminal_loss.recv() => {
+                loss?;
+                let error = terminal_loss_error(termination).await;
+                if error.downcast_ref::<TerminatedBySignal>().is_some() {
+                    return Err(error);
+                }
+                return recover_wait_after_lifecycle_loss(client, token, true, error).await;
+            }
+            response = client.recv() => response?,
         };
         match response {
             Some(HostResponse::WaitState {
@@ -3303,8 +3553,16 @@ async fn wait_for_completion(
                 WaitStatus::Completed => return Ok(()),
                 WaitStatus::Cancelled { reason } => anyhow::bail!(reason),
                 WaitStatus::Pending { .. } if !interactive_attached => {
-                    return attach_for_wait(endpoint, mouse_enabled, token, client, termination)
-                        .await;
+                    return attach_for_wait(
+                        endpoint,
+                        mouse_enabled,
+                        token,
+                        client,
+                        termination,
+                        terminal_loss,
+                        launching_parent,
+                    )
+                    .await;
                 }
                 WaitStatus::Pending { .. } => {}
             },
@@ -3315,9 +3573,101 @@ async fn wait_for_completion(
             None => anyhow::bail!("workspace host stopped before wait request completed"),
         }
         tokio::select! {
-            _ = tokio::time::sleep(Duration::from_millis(100)) => {}
+            biased;
             signal = termination.recv() => return Err(terminated(signal)),
+            parent = launching_parent.recv() => {
+                let error = parent.map_or_else(
+                    |error| error.context("failed while watching the wait client's launching process"),
+                    |()| anyhow::anyhow!("wait request lost its launching process before completion"),
+                );
+                return recover_wait_after_lifecycle_loss(client, token, false, error).await;
+            }
+            loss = terminal_loss.recv() => {
+                loss?;
+                let error = terminal_loss_error(termination).await;
+                if error.downcast_ref::<TerminatedBySignal>().is_some() {
+                    return Err(error);
+                }
+                return recover_wait_after_lifecycle_loss(client, token, false, error).await;
+            }
+            _ = tokio::time::sleep(Duration::from_millis(100)) => {}
         }
+    }
+}
+
+/// Resolves client lifecycle loss against the host's durable wait state.
+///
+/// A status request is already in flight while `wait_for_completion` waits for
+/// its response. Read that answer first, then ask once more if it was pending:
+/// explicit completion that reached the host before terminal loss remains a
+/// success, while a still-pending request is released by `run_wait`'s ordinary
+/// error cleanup.
+#[cfg(unix)]
+async fn recover_wait_after_lifecycle_loss(
+    client: &mut LocalClient,
+    token: WaitToken,
+    mut status_in_flight: bool,
+    terminal_error: anyhow::Error,
+) -> Result<()> {
+    let mut terminal_error = Some(terminal_error);
+    let recovery = async {
+        for attempt in 0..2 {
+            if !status_in_flight {
+                client.send(&ClientRequest::WaitStatus { token }).await?;
+            }
+            status_in_flight = false;
+            match client.recv().await? {
+                Some(HostResponse::WaitState {
+                    token: response_token,
+                    status: WaitStatus::Completed,
+                    ..
+                }) if response_token == token => return Ok(()),
+                Some(HostResponse::WaitState {
+                    token: response_token,
+                    status: WaitStatus::Cancelled { reason },
+                    ..
+                }) if response_token == token => anyhow::bail!(reason),
+                Some(HostResponse::WaitState {
+                    token: response_token,
+                    status: WaitStatus::Pending { .. },
+                    ..
+                }) if response_token == token && attempt == 0 => {}
+                Some(HostResponse::WaitState {
+                    token: response_token,
+                    status: WaitStatus::Pending { .. },
+                    ..
+                }) if response_token == token => {
+                    return Err(terminal_error
+                        .take()
+                        .expect("terminal error is consumed only by the final response"));
+                }
+                Some(HostResponse::Error { message } | HostResponse::Refused { message }) => {
+                    anyhow::bail!(message)
+                }
+                Some(response) => {
+                    return Err(terminal_error
+                        .take()
+                        .expect("terminal error is consumed only by a terminal response")
+                        .context(format!(
+                            "wait lifecycle status recovery returned {response:?}"
+                        )));
+                }
+                None => {
+                    return Err(terminal_error
+                        .take()
+                        .expect("terminal error is consumed only by a terminal response")
+                        .context("workspace host disconnected during wait lifecycle recovery"));
+                }
+            }
+        }
+        unreachable!("the bounded wait-lifecycle recovery loop always returns")
+    };
+    match tokio::time::timeout(WAIT_LIFECYCLE_RECOVERY_BUDGET, recovery).await {
+        Ok(result) => result,
+        Err(_) => Err(terminal_error
+            .take()
+            .expect("timed-out recovery has not consumed its terminal error")
+            .context("workspace host did not answer wait lifecycle status recovery")),
     }
 }
 

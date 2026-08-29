@@ -92,11 +92,24 @@ impl Drop for ChildGuard {
 
 fn spawn_in_pty(command: &mut Command) -> (Child, File) {
     isolate_runyte_children(command);
-    let (child, master, _) = spawn_in_pty_with_initial_termios(command);
+    let (child, master, _) = spawn_in_pty_with_terminal_ownership(command, true);
     (child, master)
 }
 
 fn spawn_in_pty_with_initial_termios(command: &mut Command) -> (Child, File, libc::termios) {
+    spawn_in_pty_with_terminal_ownership(command, true)
+}
+
+fn spawn_in_pty_without_hangup_signal(command: &mut Command) -> (Child, File) {
+    isolate_runyte_children(command);
+    let (child, master, _) = spawn_in_pty_with_terminal_ownership(command, false);
+    (child, master)
+}
+
+fn spawn_in_pty_with_terminal_ownership(
+    command: &mut Command,
+    controlling_terminal: bool,
+) -> (Child, File, libc::termios) {
     let mut master = -1;
     let mut slave = -1;
     // `openpty` takes `*mut` for both of the trailing arguments on Apple
@@ -137,19 +150,22 @@ fn spawn_in_pty_with_initial_termios(command: &mut Command) -> (Child, File, lib
     // SAFETY: successful `openpty` returned fresh descriptors owned here.
     let slave = unsafe { File::from_raw_fd(slave) };
     let initial = terminal_attributes(slave.as_raw_fd());
-    // SAFETY: this runs in the child between fork and exec, calls only
-    // async-signal-safe libc operations, and makes the PTY slave controlling
-    // terminal so closing the master exercises a real terminal hangup.
-    unsafe {
-        command.pre_exec(|| {
-            if libc::setsid() == -1 {
-                return Err(std::io::Error::last_os_error());
-            }
-            if libc::ioctl(libc::STDIN_FILENO, libc::TIOCSCTTY as _, 0) == -1 {
-                return Err(std::io::Error::last_os_error());
-            }
-            Ok(())
-        });
+    if controlling_terminal {
+        // SAFETY: this runs in the child between fork and exec, calls only
+        // async-signal-safe libc operations, and makes the PTY slave the
+        // controlling terminal so closing the master exercises SIGHUP as well
+        // as descriptor loss.
+        unsafe {
+            command.pre_exec(|| {
+                if libc::setsid() == -1 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                if libc::ioctl(libc::STDIN_FILENO, libc::TIOCSCTTY as _, 0) == -1 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
     }
     let child = command
         .stdin(Stdio::from(slave.try_clone().unwrap()))
@@ -181,6 +197,81 @@ fn spawn_wait_in_pty(root: &Path, target: &str) -> (Child, File) {
             .env("XDG_RUNTIME_DIR", test_runtime_dir())
             .env("XDG_CACHE_HOME", test_cache_dir()),
     )
+}
+
+fn spawn_wait_in_pty_without_hangup_signal(root: &Path, target: &str) -> (Child, File) {
+    spawn_in_pty_without_hangup_signal(
+        bundled_runyte()
+            .arg("--wait")
+            .arg(target)
+            .current_dir(root)
+            .env("XDG_RUNTIME_DIR", test_runtime_dir())
+            .env("XDG_CACHE_HOME", test_cache_dir()),
+    )
+}
+
+fn spawn_wait_with_redirected_stdin_in_pty(root: &Path, target: &str) -> (Child, File) {
+    let mut command = bundled_runyte();
+    command
+        .arg("--wait")
+        .arg(target)
+        .current_dir(root)
+        .env("XDG_RUNTIME_DIR", test_runtime_dir())
+        .env("XDG_CACHE_HOME", test_cache_dir());
+    let mut master = -1;
+    let mut slave = -1;
+    let mut size = libc::winsize {
+        ws_row: 24,
+        ws_col: 80,
+        ws_xpixel: 0,
+        ws_ypixel: 0,
+    };
+    // SAFETY: `openpty` initializes both descriptors on success. Each is
+    // immediately wrapped in a `File` with one owner.
+    assert_eq!(
+        unsafe {
+            libc::openpty(
+                &mut master,
+                &mut slave,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                &raw mut size,
+            )
+        },
+        0,
+        "openpty failed: {}",
+        std::io::Error::last_os_error()
+    );
+    // SAFETY: successful `openpty` returned fresh owned descriptors.
+    let master = unsafe { File::from_raw_fd(master) };
+    // SAFETY: the descriptor is live and owned by `master`.
+    assert_ne!(
+        unsafe { libc::fcntl(master.as_raw_fd(), libc::F_SETFD, libc::FD_CLOEXEC) },
+        -1
+    );
+    // SAFETY: successful `openpty` returned a fresh owned slave descriptor.
+    let slave = unsafe { File::from_raw_fd(slave) };
+    // SAFETY: after stdio is installed in the child, stdout names the PTY
+    // slave. The calls are async-signal-safe and make it `/dev/tty` even though
+    // stdin is the separate pipe under test.
+    unsafe {
+        command.pre_exec(|| {
+            if libc::setsid() == -1 {
+                return Err(std::io::Error::last_os_error());
+            }
+            if libc::ioctl(libc::STDOUT_FILENO, libc::TIOCSCTTY as _, 0) == -1 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    let child = command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::from(slave.try_clone().unwrap()))
+        .stderr(Stdio::from(slave))
+        .spawn()
+        .unwrap();
+    (child, master)
 }
 
 fn git(root: &Path, arguments: &[&str]) {
@@ -447,6 +538,85 @@ async fn wait_child(child: &mut Child) -> ExitStatus {
     })
     .await
     .expect("child process timed out")
+}
+
+async fn wait_child_after_terminal_loss(child: &mut Child) -> ExitStatus {
+    let result = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                return status;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    })
+    .await;
+    match result {
+        Ok(status) => status,
+        Err(_) => {
+            let diagnostics = Command::new("ps")
+                .args([
+                    "-o",
+                    "pid=,ppid=,state=,time=,command=",
+                    "-p",
+                    &child.id().to_string(),
+                ])
+                .output()
+                .map(|output| String::from_utf8_lossy(&output.stdout).into_owned())
+                .unwrap_or_else(|error| format!("ps failed: {error}"));
+            #[cfg(target_os = "linux")]
+            let diagnostics = format!(
+                "{diagnostics}\n/proc stat: {}\n/proc wchan: {}",
+                fs::read_to_string(format!("/proc/{}/stat", child.id()))
+                    .unwrap_or_else(|error| format!("unavailable: {error}")),
+                fs::read_to_string(format!("/proc/{}/wchan", child.id()))
+                    .unwrap_or_else(|error| format!("unavailable: {error}")),
+            );
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("wait client did not exit after terminal loss:\n{diagnostics}");
+        }
+    }
+}
+
+const WAIT_PARENT_HELPER_ROOT: &str = "RUNYTE_WAIT_PARENT_HELPER_ROOT";
+const WAIT_PARENT_HELPER_RUNTIME: &str = "RUNYTE_WAIT_PARENT_HELPER_RUNTIME";
+const WAIT_PARENT_HELPER_CACHE: &str = "RUNYTE_WAIT_PARENT_HELPER_CACHE";
+const WAIT_PARENT_HELPER_INVENTORY: &str = "RUNYTE_WAIT_PARENT_HELPER_INVENTORY";
+
+#[test]
+#[ignore = "subprocess helper for wait_client_exits_when_its_launching_process_dies"]
+fn wait_parent_process_helper() {
+    let Some(root) = std::env::var_os(WAIT_PARENT_HELPER_ROOT).map(PathBuf::from) else {
+        return;
+    };
+    let runtime = std::env::var_os(WAIT_PARENT_HELPER_RUNTIME).unwrap();
+    let cache = std::env::var_os(WAIT_PARENT_HELPER_CACHE).unwrap();
+    let inventory = std::env::var_os(WAIT_PARENT_HELPER_INVENTORY).unwrap();
+    let mut waiter = Command::new(env!("CARGO_BIN_EXE_runyte"))
+        .arg("--wait")
+        .arg("note.txt")
+        .current_dir(&root)
+        .env("XDG_RUNTIME_DIR", runtime)
+        .env("XDG_CACHE_HOME", cache)
+        .env("RUNYTE_ALL_HOSTS_DIR", inventory)
+        .spawn()
+        .unwrap();
+    fs::write(root.join("wait-parent.pid"), waiter.id().to_string()).unwrap();
+    let _ = waiter.wait();
+}
+
+fn process_is_running(pid: u32) -> bool {
+    #[cfg(target_os = "linux")]
+    if let Ok(stat) = fs::read_to_string(format!("/proc/{pid}/stat")) {
+        return stat
+            .rsplit_once(") ")
+            .and_then(|(_, suffix)| suffix.chars().next())
+            .is_some_and(|state| state != 'Z' && state != 'X');
+    }
+    // SAFETY: signal zero does not deliver a signal; `pid` came from this
+    // test's freshly spawned helper child.
+    (unsafe { libc::kill(pid as libc::pid_t, 0) }) == 0
+        || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
 }
 
 #[test]
@@ -2110,6 +2280,693 @@ async fn wait_without_a_host_starts_one_and_attaches_the_invoking_terminal() {
 }
 
 #[tokio::test]
+async fn attached_wait_client_exits_and_cancels_when_its_terminal_is_lost() {
+    let root = project();
+    let endpoint = LocalEndpoint::discover_with_runtime(
+        &root.join(".runyte"),
+        &root,
+        Some(test_runtime_dir()),
+    )
+    .unwrap();
+    let Some(mut host) = start_host(&root, &endpoint).await else {
+        fs::remove_dir_all(root).unwrap();
+        return;
+    };
+    // This PTY deliberately is not the child's controlling terminal. Closing
+    // it therefore tests descriptor hangup directly instead of letting SIGHUP
+    // satisfy the deadline through the separate signal path.
+    let (mut waiter, terminal) = spawn_wait_in_pty_without_hangup_signal(&root, "note.txt");
+    let mut control = connect_control(&endpoint).await;
+    let mut attached = false;
+    for _ in 0..100 {
+        control.send(&ClientRequest::Health).await.unwrap();
+        attached = matches!(
+            response(&mut control).await,
+            HostResponse::Health {
+                interactive_attached: true,
+                pending_wait_requests: 1,
+                ..
+            }
+        );
+        if attached {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    assert!(attached, "wait request did not attach its terminal");
+
+    drop(terminal);
+    assert!(!wait_child_after_terminal_loss(&mut waiter).await.success());
+
+    let mut released = false;
+    for _ in 0..100 {
+        control.send(&ClientRequest::Health).await.unwrap();
+        released = matches!(
+            response(&mut control).await,
+            HostResponse::Health {
+                interactive_attached: false,
+                pending_wait_requests: 0,
+                ..
+            }
+        );
+        if released {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    assert!(released, "terminal loss left the wait request live");
+
+    shutdown(&mut control).await;
+    assert!(host.0.take().unwrap().wait().unwrap().success());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn queued_wait_client_exits_and_cancels_when_its_terminal_is_lost() {
+    let root = project();
+    let endpoint = LocalEndpoint::discover_with_runtime(
+        &root.join(".runyte"),
+        &root,
+        Some(test_runtime_dir()),
+    )
+    .unwrap();
+    let Some(mut host) = start_host(&root, &endpoint).await else {
+        fs::remove_dir_all(root).unwrap();
+        return;
+    };
+    let mut interactive = LocalClient::connect(&endpoint, FrameGeometry::default(), true)
+        .await
+        .unwrap();
+    let _ = response(&mut interactive).await;
+    let _ = response(&mut interactive).await;
+    let (mut waiter, terminal) = spawn_wait_in_pty_without_hangup_signal(&root, "note.txt");
+    let mut pending = false;
+    for _ in 0..100 {
+        interactive.send(&ClientRequest::Health).await.unwrap();
+        pending = matches!(
+            semantic_response(&mut interactive).await,
+            HostResponse::Health {
+                interactive_attached: true,
+                pending_wait_requests: 1,
+                ..
+            }
+        );
+        if pending {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    assert!(
+        pending,
+        "wait request did not queue behind the existing TUI"
+    );
+
+    drop(terminal);
+    assert!(!wait_child_after_terminal_loss(&mut waiter).await.success());
+
+    let mut released = false;
+    for _ in 0..100 {
+        interactive.send(&ClientRequest::Health).await.unwrap();
+        released = matches!(
+            semantic_response(&mut interactive).await,
+            HostResponse::Health {
+                interactive_attached: true,
+                pending_wait_requests: 0,
+                ..
+            }
+        );
+        if released {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    assert!(
+        released,
+        "terminal loss left a queued wait request live or detached the existing TUI"
+    );
+
+    interactive.send(&ClientRequest::Detach).await.unwrap();
+    let _ = semantic_response(&mut interactive).await;
+    let mut control = connect_control(&endpoint).await;
+    shutdown(&mut control).await;
+    assert!(host.0.take().unwrap().wait().unwrap().success());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn handed_off_wait_client_exits_and_cancels_when_its_terminal_is_lost() {
+    let root = project();
+    let endpoint = LocalEndpoint::discover_with_runtime(
+        &root.join(".runyte"),
+        &root,
+        Some(test_runtime_dir()),
+    )
+    .unwrap();
+    let Some(mut host) = start_host(&root, &endpoint).await else {
+        fs::remove_dir_all(root).unwrap();
+        return;
+    };
+    let mut interactive = LocalClient::connect(&endpoint, FrameGeometry::default(), true)
+        .await
+        .unwrap();
+    let _ = response(&mut interactive).await;
+    let _ = response(&mut interactive).await;
+    let (mut waiter, terminal) = spawn_wait_in_pty_without_hangup_signal(&root, "note.txt");
+    let mut pending = false;
+    for _ in 0..100 {
+        interactive.send(&ClientRequest::Health).await.unwrap();
+        pending = matches!(
+            semantic_response(&mut interactive).await,
+            HostResponse::Health {
+                interactive_attached: true,
+                pending_wait_requests: 1,
+                ..
+            }
+        );
+        if pending {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    assert!(
+        pending,
+        "wait request did not queue behind the existing TUI"
+    );
+
+    interactive.send(&ClientRequest::Detach).await.unwrap();
+    let _ = semantic_response(&mut interactive).await;
+    let mut control = connect_control(&endpoint).await;
+    let mut handed_off = false;
+    for _ in 0..100 {
+        control.send(&ClientRequest::Health).await.unwrap();
+        handed_off = matches!(
+            response(&mut control).await,
+            HostResponse::Health {
+                interactive_attached: true,
+                pending_wait_requests: 1,
+                ..
+            }
+        );
+        if handed_off {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    assert!(handed_off, "wait client did not take over after TUI detach");
+
+    drop(terminal);
+    assert!(!wait_child_after_terminal_loss(&mut waiter).await.success());
+
+    let mut released = false;
+    for _ in 0..100 {
+        control.send(&ClientRequest::Health).await.unwrap();
+        released = matches!(
+            response(&mut control).await,
+            HostResponse::Health {
+                interactive_attached: false,
+                pending_wait_requests: 0,
+                ..
+            }
+        );
+        if released {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    assert!(
+        released,
+        "terminal loss left a handed-off wait request live"
+    );
+
+    shutdown(&mut control).await;
+    assert!(host.0.take().unwrap().wait().unwrap().success());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn redirected_stdin_uses_dev_tty_for_terminal_loss() {
+    let root = project();
+    let endpoint = LocalEndpoint::discover_with_runtime(
+        &root.join(".runyte"),
+        &root,
+        Some(test_runtime_dir()),
+    )
+    .unwrap();
+    let Some(mut host) = start_host(&root, &endpoint).await else {
+        fs::remove_dir_all(root).unwrap();
+        return;
+    };
+    let mut interactive = LocalClient::connect(&endpoint, FrameGeometry::default(), true)
+        .await
+        .unwrap();
+    let _ = response(&mut interactive).await;
+    let _ = response(&mut interactive).await;
+    let (mut waiter, terminal) = spawn_wait_with_redirected_stdin_in_pty(&root, "note.txt");
+
+    let mut requested = None;
+    for _ in 0..100 {
+        interactive.send(&ClientRequest::ListBuffers).await.unwrap();
+        if let HostResponse::Buffers { buffers } = semantic_response(&mut interactive).await {
+            requested = buffers.into_iter().find(|buffer| {
+                buffer.path_bytes.clone().map(decode_path).as_deref()
+                    == Some(root.join("note.txt").as_path())
+            });
+        }
+        if requested.is_some() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    let _requested = requested.expect("wait request did not queue behind the existing TUI");
+
+    drop(waiter.stdin.take());
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    assert!(
+        waiter.try_wait().unwrap().is_none(),
+        "closing redirected stdin was mistaken for loss of /dev/tty"
+    );
+
+    drop(terminal);
+    assert!(!wait_child_after_terminal_loss(&mut waiter).await.success());
+
+    let mut released = false;
+    for _ in 0..100 {
+        interactive.send(&ClientRequest::Health).await.unwrap();
+        released = matches!(
+            semantic_response(&mut interactive).await,
+            HostResponse::Health {
+                interactive_attached: true,
+                pending_wait_requests: 0,
+                ..
+            }
+        );
+        if released {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    assert!(
+        released,
+        "/dev/tty hangup did not release the redirected-stdin wait"
+    );
+
+    interactive.send(&ClientRequest::Detach).await.unwrap();
+    let _ = semantic_response(&mut interactive).await;
+    let mut control = connect_control(&endpoint).await;
+    shutdown(&mut control).await;
+    assert!(host.0.take().unwrap().wait().unwrap().success());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn controlling_terminal_loss_preserves_the_hangup_exit_status() {
+    let root = project();
+    let endpoint = LocalEndpoint::discover_with_runtime(
+        &root.join(".runyte"),
+        &root,
+        Some(test_runtime_dir()),
+    )
+    .unwrap();
+    let Some(mut host) = start_host(&root, &endpoint).await else {
+        fs::remove_dir_all(root).unwrap();
+        return;
+    };
+    let (mut waiter, terminal) = spawn_wait_in_pty(&root, "note.txt");
+    let mut control = connect_control(&endpoint).await;
+    let mut attached = false;
+    for _ in 0..100 {
+        control.send(&ClientRequest::Health).await.unwrap();
+        attached = matches!(
+            response(&mut control).await,
+            HostResponse::Health {
+                interactive_attached: true,
+                pending_wait_requests: 1,
+                ..
+            }
+        );
+        if attached {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    assert!(attached, "wait request did not attach its terminal");
+
+    drop(terminal);
+    assert_eq!(
+        wait_child_after_terminal_loss(&mut waiter).await.code(),
+        Some(128 + libc::SIGHUP)
+    );
+
+    let mut released = false;
+    for _ in 0..100 {
+        control.send(&ClientRequest::Health).await.unwrap();
+        released = matches!(
+            response(&mut control).await,
+            HostResponse::Health {
+                interactive_attached: false,
+                pending_wait_requests: 0,
+                ..
+            }
+        );
+        if released {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    assert!(released, "SIGHUP left the wait request live");
+
+    shutdown(&mut control).await;
+    assert!(host.0.take().unwrap().wait().unwrap().success());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn durable_completion_wins_a_race_with_terminal_loss() {
+    let root = project();
+    let endpoint = LocalEndpoint::discover_with_runtime(
+        &root.join(".runyte"),
+        &root,
+        Some(test_runtime_dir()),
+    )
+    .unwrap();
+    let Some(mut host) = start_host(&root, &endpoint).await else {
+        fs::remove_dir_all(root).unwrap();
+        return;
+    };
+    let mut interactive = LocalClient::connect(&endpoint, FrameGeometry::default(), true)
+        .await
+        .unwrap();
+    let _ = response(&mut interactive).await;
+    let _ = response(&mut interactive).await;
+    let (mut waiter, terminal) = spawn_wait_in_pty_without_hangup_signal(&root, "note.txt");
+
+    let mut requested = None;
+    for _ in 0..100 {
+        interactive.send(&ClientRequest::ListBuffers).await.unwrap();
+        if let HostResponse::Buffers { buffers } = semantic_response(&mut interactive).await {
+            requested = buffers.into_iter().find(|buffer| {
+                buffer.path_bytes.clone().map(decode_path).as_deref()
+                    == Some(root.join("note.txt").as_path())
+            });
+        }
+        if requested.is_some() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    let requested = requested.expect("wait request did not queue behind the existing TUI");
+    interactive
+        .send(&ClientRequest::CloseBuffer {
+            buffer: requested.id,
+            discard: false,
+        })
+        .await
+        .unwrap();
+    assert!(matches!(
+        semantic_response(&mut interactive).await,
+        HostResponse::Closed { .. }
+    ));
+    drop(terminal);
+    assert!(wait_child_after_terminal_loss(&mut waiter).await.success());
+
+    interactive.send(&ClientRequest::Detach).await.unwrap();
+    let _ = semantic_response(&mut interactive).await;
+    let mut control = connect_control(&endpoint).await;
+    shutdown(&mut control).await;
+    assert!(host.0.take().unwrap().wait().unwrap().success());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn terminal_loss_recovery_is_bounded_when_the_host_stops_responding() {
+    let root = project();
+    let endpoint = LocalEndpoint::discover_with_runtime(
+        &root.join(".runyte"),
+        &root,
+        Some(test_runtime_dir()),
+    )
+    .unwrap();
+    let Some(mut host) = start_host(&root, &endpoint).await else {
+        fs::remove_dir_all(root).unwrap();
+        return;
+    };
+    let (mut waiter, terminal) = spawn_wait_in_pty_without_hangup_signal(&root, "note.txt");
+    let mut control = connect_control(&endpoint).await;
+    let mut attached = false;
+    for _ in 0..100 {
+        control.send(&ClientRequest::Health).await.unwrap();
+        attached = matches!(
+            response(&mut control).await,
+            HostResponse::Health {
+                interactive_attached: true,
+                pending_wait_requests: 1,
+                ..
+            }
+        );
+        if attached {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    assert!(attached, "wait request did not attach its terminal");
+
+    let host_pid = host.0.as_ref().unwrap().id() as libc::pid_t;
+    // SAFETY: `host_pid` names this test's live child host.
+    assert_eq!(unsafe { libc::kill(host_pid, libc::SIGSTOP) }, 0);
+    drop(terminal);
+    assert!(!wait_child_after_terminal_loss(&mut waiter).await.success());
+    // SAFETY: the stopped process is still this test's owned child.
+    assert_eq!(unsafe { libc::kill(host_pid, libc::SIGCONT) }, 0);
+
+    let mut released = false;
+    for _ in 0..100 {
+        control.send(&ClientRequest::Health).await.unwrap();
+        released = matches!(
+            response(&mut control).await,
+            HostResponse::Health {
+                interactive_attached: false,
+                pending_wait_requests: 0,
+                ..
+            }
+        );
+        if released {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    assert!(
+        released,
+        "best-effort cancellation did not reach the resumed host"
+    );
+
+    shutdown(&mut control).await;
+    assert!(host.0.take().unwrap().wait().unwrap().success());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn wait_client_exits_when_its_launching_process_dies() {
+    let root = project();
+    let endpoint = LocalEndpoint::discover_with_runtime(
+        &root.join(".runyte"),
+        &root,
+        Some(test_runtime_dir()),
+    )
+    .unwrap();
+    let Some(mut host) = start_host(&root, &endpoint).await else {
+        fs::remove_dir_all(root).unwrap();
+        return;
+    };
+    let mut command = Command::new(std::env::current_exe().unwrap());
+    command
+        .args([
+            "--ignored",
+            "--exact",
+            "wait_parent_process_helper",
+            "--nocapture",
+        ])
+        .env(WAIT_PARENT_HELPER_ROOT, &root)
+        .env(WAIT_PARENT_HELPER_RUNTIME, test_runtime_dir())
+        .env(WAIT_PARENT_HELPER_CACHE, test_cache_dir())
+        .env(
+            WAIT_PARENT_HELPER_INVENTORY,
+            test_runtime_dir().join("runyte/all-hosts"),
+        );
+    // The helper and wait client share a real PTY, but it is deliberately not
+    // controlling: killing only the helper cannot produce SIGHUP or close the
+    // terminal and therefore isolates launching-parent observation.
+    let (mut helper, mut terminal) = spawn_in_pty_without_hangup_signal(&mut command);
+    let flags = unsafe { libc::fcntl(terminal.as_raw_fd(), libc::F_GETFL) };
+    assert_ne!(flags, -1);
+    assert_ne!(
+        unsafe {
+            libc::fcntl(
+                terminal.as_raw_fd(),
+                libc::F_SETFL,
+                flags | libc::O_NONBLOCK,
+            )
+        },
+        -1
+    );
+    let marker = root.join("wait-parent.pid");
+    let mut waiter_pid = None;
+    let mut control = connect_control(&endpoint).await;
+    for _ in 0..200 {
+        if let Ok(value) = fs::read_to_string(&marker) {
+            waiter_pid = value.parse::<u32>().ok();
+        }
+        control.send(&ClientRequest::Health).await.unwrap();
+        let pending = matches!(
+            response(&mut control).await,
+            HostResponse::Health {
+                interactive_attached: true,
+                pending_wait_requests: 1,
+                ..
+            }
+        );
+        if waiter_pid.is_some() && pending {
+            break;
+        }
+        assert!(
+            helper.try_wait().unwrap().is_none(),
+            "wait launcher exited before publishing its child"
+        );
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    let waiter_pid = waiter_pid.expect("wait launcher did not publish its child PID");
+
+    helper.kill().unwrap();
+    let _ = helper.wait().unwrap();
+    let mut terminal_output = Vec::new();
+    let mut stopped = false;
+    for _ in 0..200 {
+        let mut chunk = [0_u8; 4096];
+        loop {
+            match terminal.read(&mut chunk) {
+                Ok(0) => break,
+                Ok(count) => terminal_output.extend_from_slice(&chunk[..count]),
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => break,
+                Err(error) if error.raw_os_error() == Some(libc::EIO) => break,
+                Err(error) => panic!("failed to drain orphaned wait PTY: {error}"),
+            }
+        }
+        stopped = !process_is_running(waiter_pid);
+        if stopped {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    assert!(
+        stopped,
+        "wait client survived loss of launcher {}; output: {:?}",
+        helper.id(),
+        String::from_utf8_lossy(&terminal_output)
+    );
+    let output = String::from_utf8_lossy(&terminal_output);
+    assert!(
+        output.contains("wait request lost its launching process before completion"),
+        "wait client did not report its nonzero parent-loss exit: {output:?}"
+    );
+
+    let mut released = false;
+    for _ in 0..100 {
+        control.send(&ClientRequest::Health).await.unwrap();
+        released = matches!(
+            response(&mut control).await,
+            HostResponse::Health {
+                interactive_attached: false,
+                pending_wait_requests: 0,
+                ..
+            }
+        );
+        if released {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    assert!(released, "launcher loss left the wait request live");
+
+    drop(terminal);
+    shutdown(&mut control).await;
+    assert!(host.0.take().unwrap().wait().unwrap().success());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn durable_completion_wins_a_race_with_launcher_loss() {
+    let root = project();
+    let endpoint = LocalEndpoint::discover_with_runtime(
+        &root.join(".runyte"),
+        &root,
+        Some(test_runtime_dir()),
+    )
+    .unwrap();
+    let Some(mut host) = start_host(&root, &endpoint).await else {
+        fs::remove_dir_all(root).unwrap();
+        return;
+    };
+    let mut interactive = LocalClient::connect(&endpoint, FrameGeometry::default(), true)
+        .await
+        .unwrap();
+    let _ = response(&mut interactive).await;
+    let _ = response(&mut interactive).await;
+    let mut launcher = Command::new("sleep").arg("120").spawn().unwrap();
+    let mut waiter = bundled_runyte()
+        .arg("--wait")
+        .arg("note.txt")
+        .current_dir(&root)
+        .env("XDG_RUNTIME_DIR", test_runtime_dir())
+        .env("XDG_CACHE_HOME", test_cache_dir())
+        .env("RUNYTE_TEST_WAIT_PARENT_PID", launcher.id().to_string())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+
+    let mut requested = None;
+    for _ in 0..100 {
+        interactive.send(&ClientRequest::ListBuffers).await.unwrap();
+        if let HostResponse::Buffers { buffers } = semantic_response(&mut interactive).await {
+            requested = buffers.into_iter().find(|buffer| {
+                buffer.path_bytes.clone().map(decode_path).as_deref()
+                    == Some(root.join("note.txt").as_path())
+            });
+        }
+        if requested.is_some() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    let requested = requested.expect("wait request did not queue behind the existing TUI");
+    interactive
+        .send(&ClientRequest::CloseBuffer {
+            buffer: requested.id,
+            discard: false,
+        })
+        .await
+        .unwrap();
+    assert!(matches!(
+        semantic_response(&mut interactive).await,
+        HostResponse::Closed { .. }
+    ));
+    assert!(
+        waiter.try_wait().unwrap().is_none(),
+        "wait client consumed completion before launcher-loss ordering could be exercised"
+    );
+    launcher.kill().unwrap();
+    let _ = launcher.wait().unwrap();
+    assert!(wait_child(&mut waiter).await.success());
+
+    interactive.send(&ClientRequest::Detach).await.unwrap();
+    let _ = semantic_response(&mut interactive).await;
+    let mut control = connect_control(&endpoint).await;
+    shutdown(&mut control).await;
+    assert!(host.0.take().unwrap().wait().unwrap().success());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
 async fn signalling_a_wait_client_cancels_its_durable_request() {
     let root = project();
     let endpoint = LocalEndpoint::discover_with_runtime(
@@ -2437,16 +3294,62 @@ async fn wait_terminal_hangup_is_not_reported_as_success() {
         Some(test_runtime_dir()),
     )
     .unwrap();
-    let (mut waiter, terminal) = spawn_wait_in_pty(&root, "note.txt");
+    let (mut waiter, mut terminal) = spawn_wait_in_pty(&root, "note.txt");
+    let flags = unsafe { libc::fcntl(terminal.as_raw_fd(), libc::F_GETFL) };
+    assert_ne!(flags, -1);
+    assert_ne!(
+        unsafe {
+            libc::fcntl(
+                terminal.as_raw_fd(),
+                libc::F_SETFL,
+                flags | libc::O_NONBLOCK,
+            )
+        },
+        -1
+    );
+    let mut terminal_output = Vec::new();
     let mut control = None;
     for _ in 0..200 {
+        let mut chunk = [0_u8; 4096];
+        loop {
+            match terminal.read(&mut chunk) {
+                Ok(0) => break,
+                Ok(count) => terminal_output.extend_from_slice(&chunk[..count]),
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => break,
+                Err(error) if error.raw_os_error() == Some(libc::EIO) => break,
+                Err(error) => panic!("failed to drain wait PTY: {error}"),
+            }
+        }
         if let Ok(client) = try_connect_control(&endpoint).await {
             control = Some(client);
             break;
         }
+        if let Some(status) = waiter.try_wait().unwrap() {
+            let output = String::from_utf8_lossy(&terminal_output);
+            if output.contains("Operation not permitted") {
+                fs::remove_dir_all(root).unwrap();
+                return;
+            }
+            panic!("--wait exited before host publication: {status}: {output:?}");
+        }
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
-    let mut control = control.expect("wait host did not become reachable");
+    let mut control = control.unwrap_or_else(|| {
+        let diagnostics = Command::new("ps")
+            .args([
+                "-o",
+                "pid=,ppid=,state=,time=,command=",
+                "-p",
+                &waiter.id().to_string(),
+            ])
+            .output()
+            .map(|output| String::from_utf8_lossy(&output.stdout).into_owned())
+            .unwrap_or_else(|error| format!("ps failed: {error}"));
+        panic!(
+            "wait host did not become reachable; PTY output: {:?}; process: {diagnostics}",
+            String::from_utf8_lossy(&terminal_output)
+        )
+    });
     for _ in 0..100 {
         control.send(&ClientRequest::Health).await.unwrap();
         if matches!(

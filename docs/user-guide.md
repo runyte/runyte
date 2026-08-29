@@ -398,8 +398,10 @@ The command used to complete the buffer owns what happens next: `:wbc` leaves
 the host and unrelated buffers running, while `:wq` applies `:q` after writing
 an ordinary file and therefore stops a clean persistent session from its last
 pane. Dirty buffers retain the ordinary save/discard protection. Detaching the
-wait-owned TUI cancels the request, and explicit cancellation or host failure
-exits nonzero.
+wait-owned TUI cancels the request. Losing the invoking terminal or launching
+process cancels it whether the client is queued behind another TUI or has
+already taken over; lifecycle loss, explicit cancellation, and host failure
+all exit nonzero.
 
 For example, `git config core.editor 'runyte --wait'` gives Git commit and
 rebase message files this lifecycle. Persistent hosting and `--wait` currently
