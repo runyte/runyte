@@ -156,6 +156,51 @@ async fn response(client: &mut LocalClient) -> HostResponse {
         .expect("host disconnected")
 }
 
+async fn semantic_response_after(
+    client: &mut LocalClient,
+    mut first: Option<HostResponse>,
+    waiting_for: &str,
+) -> HostResponse {
+    tokio::time::timeout(HOST_RESPONSE_TIMEOUT, async {
+        loop {
+            let response = match first.take() {
+                Some(response) => response,
+                None => client
+                    .recv()
+                    .await
+                    .unwrap_or_else(|error| {
+                        panic!("host response failed while {waiting_for}: {error}")
+                    })
+                    .unwrap_or_else(|| panic!("host disconnected while {waiting_for}")),
+            };
+            if !matches!(
+                response,
+                HostResponse::Frame { .. } | HostResponse::TerminalDamage { .. }
+            ) {
+                return response;
+            }
+        }
+    })
+    .await
+    .unwrap_or_else(|error| panic!("host response timed out while {waiting_for}: {error}"))
+}
+
+async fn await_detached(
+    client: &mut LocalClient,
+    first: Option<HostResponse>,
+    waiting_for: &str,
+) -> Option<Vec<u8>> {
+    match semantic_response_after(client, first, waiting_for).await {
+        HostResponse::Detached { directory_bytes } => directory_bytes,
+        response => panic!("expected host detach while {waiting_for}, got {response:?}"),
+    }
+}
+
+async fn detach(client: &mut LocalClient, waiting_for: &str) -> Option<Vec<u8>> {
+    client.send(&ClientRequest::Detach).await.unwrap();
+    await_detached(client, None, waiting_for).await
+}
+
 async fn connect_interactive_when_available(
     endpoint: &LocalEndpoint,
     geometry: FrameGeometry,
@@ -669,12 +714,9 @@ async fn detach_reattach_preserves_live_editor_and_refuses_a_second_tui() {
     let _ = send_input(&mut first, KeyStroke::plain(KeyCode::Char('b'))).await;
     let selections = send_input(&mut first, KeyStroke::plain(KeyCode::Char('*'))).await;
     assert_eq!(selection_count(&selections), 2);
-    first.send(&ClientRequest::Detach).await.unwrap();
     assert_eq!(
-        response(&mut first).await,
-        HostResponse::Detached {
-            directory_bytes: None,
-        }
+        detach(&mut first, "detaching the edited client").await,
+        None
     );
 
     let mut reattached = LocalClient::connect(&endpoint, geometry(), true)
@@ -701,12 +743,9 @@ async fn detach_reattach_preserves_live_editor_and_refuses_a_second_tui() {
     while frame_text(&pasted).matches("word").count() < 4 {
         pasted = response(&mut after_disconnect).await;
     }
-    after_disconnect.send(&ClientRequest::Detach).await.unwrap();
     assert_eq!(
-        response(&mut after_disconnect).await,
-        HostResponse::Detached {
-            directory_bytes: None
-        }
+        detach(&mut after_disconnect, "detaching the reconnected client").await,
+        None
     );
 
     let mut control = LocalClient::connect(&endpoint, geometry(), false)
@@ -811,15 +850,15 @@ async fn tutorial_persistent_lesson_completes_across_a_real_client_reattachment(
 
     let _ = send_input(&mut first, KeyStroke::plain(KeyCode::Char(':'))).await;
     let _ = send_input(&mut first, InputEvent::Text("detach".to_owned())).await;
-    let mut detached = send_input(&mut first, KeyStroke::plain(KeyCode::Enter)).await;
-    while !matches!(detached, HostResponse::Detached { .. }) {
-        detached = response(&mut first).await;
-    }
+    let first_response = send_input(&mut first, KeyStroke::plain(KeyCode::Enter)).await;
     assert_eq!(
-        detached,
-        HostResponse::Detached {
-            directory_bytes: None,
-        }
+        await_detached(
+            &mut first,
+            Some(first_response),
+            "detaching from the tutorial"
+        )
+        .await,
+        None
     );
 
     let mut reattached = LocalClient::connect(&endpoint, geometry(), true)
@@ -901,8 +940,10 @@ async fn terminal_pid_output_and_input_survive_detach_disconnect_and_reattach() 
         .trim()
         .to_owned();
 
-    client.send(&ClientRequest::Detach).await.unwrap();
-    while !matches!(response(&mut client).await, HostResponse::Detached { .. }) {}
+    assert_eq!(
+        detach(&mut client, "detaching the terminal client").await,
+        None
+    );
     let mut detached_control = LocalClient::connect(&endpoint, geometry(), false)
         .await
         .unwrap();
@@ -1073,8 +1114,10 @@ async fn hidden_terminal_output_while_detached_is_unread_after_reattach() {
     })
     .await
     .expect("terminal pane never became hidden");
-    client.send(&ClientRequest::Detach).await.unwrap();
-    while !matches!(response(&mut client).await, HostResponse::Detached { .. }) {}
+    assert_eq!(
+        detach(&mut client, "detaching with a hidden terminal").await,
+        None
+    );
     let mut detached_control = LocalClient::connect(&endpoint, geometry(), false)
         .await
         .unwrap();
@@ -1196,12 +1239,9 @@ async fn detach_reattach_preserves_notification_history_and_unread_state() {
     while unread_errors(&failed) == 0 {
         failed = response(&mut first).await;
     }
-    first.send(&ClientRequest::Detach).await.unwrap();
     assert_eq!(
-        response(&mut first).await,
-        HostResponse::Detached {
-            directory_bytes: None,
-        }
+        detach(&mut first, "detaching after a failed command").await,
+        None
     );
 
     let mut reattached = LocalClient::connect(&endpoint, geometry(), true)
@@ -1219,12 +1259,9 @@ async fn detach_reattach_preserves_notification_history_and_unread_state() {
     let notifications = send_input(&mut reattached, KeyStroke::plain(KeyCode::Enter)).await;
     assert!(frame_text(&notifications).contains("ERROR"));
     assert_eq!(unread_errors(&notifications), 0);
-    reattached.send(&ClientRequest::Detach).await.unwrap();
     assert_eq!(
-        response(&mut reattached).await,
-        HostResponse::Detached {
-            directory_bytes: None,
-        }
+        detach(&mut reattached, "detaching after reading notifications").await,
+        None
     );
 
     let mut control = LocalClient::connect(&endpoint, geometry(), false)
@@ -1783,11 +1820,11 @@ async fn detached_host_keeps_the_requested_editor_directory_below_the_project_ro
         HostResponse::Detached { directory_bytes } => {
             directory_bytes.map(runyte::workspace::transport::decode_path)
         }
-        HostResponse::CommandResult { .. } => loop {
-            if let HostResponse::Detached { directory_bytes } = response(&mut client).await {
-                break directory_bytes.map(runyte::workspace::transport::decode_path);
-            }
-        },
+        HostResponse::CommandResult { .. } => {
+            await_detached(&mut client, None, "waiting for quit-here to detach")
+                .await
+                .map(runyte::workspace::transport::decode_path)
+        }
         response => panic!("expected quit-here result, got {response:?}"),
     };
     assert_eq!(detached_directory, Some(nested));
@@ -1926,12 +1963,7 @@ async fn quit_here_reports_its_directory_to_a_handoff_capable_client() {
         format!("{outcome:?}").contains("runyte()"),
         "unexpected quit-here outcome: {outcome:?}"
     );
-    plain.send(&ClientRequest::Detach).await.unwrap();
-    let plain_detached = loop {
-        if let HostResponse::Detached { directory_bytes } = response(&mut plain).await {
-            break directory_bytes;
-        }
-    };
+    let plain_detached = detach(&mut plain, "detaching the client without handoff").await;
     assert_eq!(plain_detached, None);
 
     // A capable client receives the directory of the open file, not the root.
@@ -1947,11 +1979,12 @@ async fn quit_here_reports_its_directory_to_a_handoff_capable_client() {
         invoke_when_current(&mut capable, "quit-here", frame).await,
         HostResponse::CommandResult { .. }
     ));
-    let detached = loop {
-        if let HostResponse::Detached { directory_bytes } = response(&mut capable).await {
-            break directory_bytes;
-        }
-    };
+    let detached = await_detached(
+        &mut capable,
+        None,
+        "waiting for the handoff-capable client to detach",
+    )
+    .await;
     assert_eq!(
         detached.map(runyte::workspace::transport::decode_path),
         Some(root.join("nested"))

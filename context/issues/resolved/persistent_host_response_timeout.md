@@ -63,6 +63,17 @@ barrier already provide the required frames. The hidden-terminal test queues
 one resynchronization immediately before shutdown as a deterministic
 regression for the mixed visual and semantic response lanes.
 
+The next macOS run exposed the same incorrect immediate-response assumption at
+detach boundaries. Selection, notification, terminal, tutorial, and
+`quit-here` tests could read a serialized frame before `Detached`; several
+loops also had no overall deadline and silently discarded unexpected semantic
+errors. Persistent-host tests now share one bounded semantic receiver that
+drains both complete frames and terminal damage, plus detach helpers that send
+the request once, require `Detached`, and retain its optional handoff
+directory. Every detach path uses that boundary. The adjacent local-protocol
+test now uses its equivalent semantic helper, and diagnostic-log tests classify
+terminal damage alongside complete frames as visual traffic.
+
 Coverage is in
 `tests/persistent_host.rs::terminal_pid_output_and_input_survive_detach_disconnect_and_reattach`
 and

@@ -275,10 +275,13 @@ async fn type_command(client: &mut LocalClient, command: &str) {
     }
 }
 
-async fn response_ignoring_frames(client: &mut LocalClient) -> HostResponse {
+async fn response_ignoring_visuals(client: &mut LocalClient) -> HostResponse {
     loop {
         let response = response(client).await;
-        if !matches!(response, HostResponse::Frame { .. }) {
+        if !matches!(
+            response,
+            HostResponse::Frame { .. } | HostResponse::TerminalDamage { .. }
+        ) {
             return response;
         }
     }
@@ -572,7 +575,7 @@ async fn a_host_owns_host_log_and_records_client_lifecycle_while_detached() {
     // Detachment and disconnection are separate facts the host observes.
     client.send(&ClientRequest::Detach).await.unwrap();
     assert_eq!(
-        response_ignoring_frames(&mut client).await,
+        response_ignoring_visuals(&mut client).await,
         HostResponse::Detached {
             directory_bytes: None,
         }
@@ -622,7 +625,7 @@ async fn a_host_owns_host_log_and_records_client_lifecycle_while_detached() {
 
     type_command(&mut reattached, "log-open").await;
     reattached.send(&ClientRequest::ListBuffers).await.unwrap();
-    let log_buffer = match response_ignoring_frames(&mut reattached).await {
+    let log_buffer = match response_ignoring_visuals(&mut reattached).await {
         HostResponse::Buffers { buffers } => {
             buffers
                 .into_iter()
@@ -636,7 +639,7 @@ async fn a_host_owns_host_log_and_records_client_lifecycle_while_detached() {
         .send(&ClientRequest::ReadBuffer { buffer: log_buffer })
         .await
         .unwrap();
-    let text = match response_ignoring_frames(&mut reattached).await {
+    let text = match response_ignoring_visuals(&mut reattached).await {
         HostResponse::Buffer { buffer } => buffer.text,
         response => panic!("expected [log] contents, got {response:?}"),
     };
@@ -749,7 +752,7 @@ async fn attaching_with_logging_flags_reports_the_retained_configuration() {
     assert!(matches!(welcome, HostResponse::Welcome { .. }));
     client.send(&ClientRequest::Detach).await.unwrap();
     assert_eq!(
-        response_ignoring_frames(&mut client).await,
+        response_ignoring_visuals(&mut client).await,
         HostResponse::Detached {
             directory_bytes: None,
         }
@@ -941,7 +944,7 @@ async fn no_document_clipboard_terminal_or_environment_value_reaches_a_record() 
     );
     client.send(&ClientRequest::ForceShutdown).await.unwrap();
     assert!(matches!(
-        response_ignoring_frames(&mut client).await,
+        response_ignoring_visuals(&mut client).await,
         HostResponse::ShuttingDown
     ));
     drop(client);

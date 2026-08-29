@@ -1197,7 +1197,7 @@ async fn wait_cli_completes_without_stopping_host_or_unrelated_buffers() {
             })
     ));
     interactive.send(&ClientRequest::Detach).await.unwrap();
-    let _ = response(&mut interactive).await;
+    let _ = semantic_response(&mut interactive).await;
     let mut control = connect_control(&endpoint).await;
     shutdown(&mut control).await;
     let status = tokio::task::spawn_blocking(move || host.0.take().unwrap().wait())
