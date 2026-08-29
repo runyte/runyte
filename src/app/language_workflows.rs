@@ -3250,6 +3250,7 @@ impl App {
         }
         self.stale_syntax.remove(&buffer);
         self.syntax[buffer] = None;
+        self.generated_highlights.remove(&buffer);
         self.closed_buffers.insert(buffer);
         if let Some(path) = git_path
             && !self.buffers.iter().enumerate().any(|(candidate, entry)| {

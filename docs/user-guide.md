@@ -1208,6 +1208,13 @@ kinds of help are ordinary read-only buffers, so they scroll, search, split,
 and close with their scoped `q`, `:c`, or `Space b c`. Nothing is truncated to
 fit the window, and opening one kind of help does not overwrite the other.
 
+The about page and both kinds of help use one semantic colour schema. Section
+titles, commands, keybindings, file paths, web links, and technical examples
+carry roles alongside the generated text and borrow the active theme's
+existing syntax colours. They are not Markdown: punctuation such as visible
+backticks remains ordinary searchable and copyable buffer text, and colouring
+does not change any buffer coordinate or make a command or link actionable.
+
 A read-only buffer is marked `[RO]` in the pane title and the status line,
 beside the `[+]` that marks unsaved changes, and its help states the same in
 full: `Help · RUNYTE · GIT STATUS · Read-only`. The global status line describes the
