@@ -60,7 +60,22 @@ does not change when Runyte's own source does.
 | `medium.rs` | A realistic working file. |
 | `large.rs` | A document large enough that parsing dominates everything else. |
 | `large.txt` | The same bytes with no language. The difference from `large.rs` is parsing; what remains is reading the file. |
+| `large.md` | The one fixture every measured editor parses with tree-sitter, so it is the only row where a cross-editor comparison is between editors doing the same work. |
 | `minified.json` | One very long line, which stresses everything that works outward from the start of a line rather than per row. |
+
+`large.md` exists because the source-code fixtures do not compare editors fairly:
+an editor without a parser for the language falls back to regular expressions
+over the visible window. Neovim bundles a Markdown parser, Helix ships one, and
+Runyte links one, so all three build a tree over the whole document.
+
+Its fenced code blocks deliberately carry no info string. A tagged fence injects
+another language, and each editor injects only the languages it actually has, so
+tagged fences would put the editors' differing grammar inventories back into the
+measurement. Untagged fences inject nothing anywhere.
+
+Markdown is two grammars — block and inline — driven through injections, so this
+row reports how the editors compare *on Markdown*. It is not a stand-in for how
+they compare on a large source file.
 
 ## Reading the results
 
@@ -69,12 +84,29 @@ work.** The clearest case is tree-sitter: an editor with no parser installed for
 a language highlights that file with regular expressions over the visible window,
 or not at all, while an editor with a parser builds a tree over the whole
 document. Those are different amounts of work and the times are not comparable.
-The `.txt` rows exist for this reason — no editor claims a language for them, so
-they compare reading and drawing alone.
 
-Before comparing across editors, confirm what each one has available. For
-Neovim that means checking whether a parser for the fixture's language is
-installed; the version line recorded with each result set does not capture it.
+Three kinds of row, in decreasing order of how much they support a cross-editor
+claim:
+
+- `large.md` — every editor parses it with tree-sitter. This is the fair row.
+- The `.txt` rows — no editor claims a language, so they compare reading and
+  drawing alone.
+- The `.rs` and `.json` rows — comparable only if every editor has a parser for
+  that language, which is worth checking rather than assuming. Neovim bundles
+  parsers for a fixed short list and does not include Rust, so its `.rs` figures
+  measure regular-expression highlighting of one screen.
+
+To check what an editor is actually doing, open the fixture and ask it. For
+Neovim:
+
+```sh
+nvim --headless FIXTURE \
+  -c 'lua local b=vim.api.nvim_get_current_buf()
+      print(vim.treesitter.highlighter.active[b] ~= nil, vim.bo.syntax)' -c q
+```
+
+`true` with an empty `syntax` is a tree-sitter parse; `false` with a syntax name
+is the regular-expression fallback.
 
 **Comparisons of one editor against its own earlier numbers are sound** as long
 as the fixtures and the machine are unchanged, which is what the fixture seed is

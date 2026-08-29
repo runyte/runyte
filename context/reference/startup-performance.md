@@ -35,8 +35,8 @@ taken on different hardware.
 ## 2026-08-29
 
 Harness as committed in this record's own commit; the tool reported HEAD
-`0975487`, which is the commit the harness was added on top of. Median of 5
-runs, 120x40 pty, empty config.
+`0a046c6` with the `large.md` fixture still uncommitted. Median of 5 runs,
+120x40 pty, empty config.
 
 - neovim: `NVIM v0.12.4`
 - helix: `helix 25.07.1 (a05c151b)`
@@ -44,31 +44,19 @@ runs, 120x40 pty, empty config.
 
 Machine: AMD Ryzen AI 9 365, 20 threads, 27 GB, Linux 7.1.9, btrfs.
 
-**Neovim did no tree-sitter work on the `.rs` rows.** It bundles seven parsers
-in `/usr/lib64/nvim/parser/` — `c`, `lua`, `markdown`, `markdown_inline`,
-`query`, `vim`, `vimdoc` — and Rust is not among them. Opening `small.rs`
-reports `vim.treesitter.highlighter.active` as absent and `&syntax` as `rust`,
-so the `.rs` rows are regular-expression highlighting of the visible window
-rather than a whole-document parse. Helix and Runyte parse the entire document
-on those rows. The three columns are not measuring the same work and the Neovim
-figures should not be read as a comparison.
-
-No fixture currently produces a three-way tree-sitter comparison. Markdown would
-— all three parse it — and Lua would once Runyte gains that grammar. Adding such
-a fixture is the clearest available improvement to this benchmark.
-
 ### Startup
 
 First paint is the first byte of output; ready is when drawing goes quiet.
 
 | Fixture | Size | neovim first / ready | helix first / ready | runyte first / ready |
 | --- | --- | ---: | ---: | ---: |
-| `small.rs` | 4 KB | 6 / 21 ms | 108 / 109 ms | 22 / 23 ms |
-| `small.txt` | 4 KB | 6 / 15 ms | 22 / 22 ms | 5 / 6 ms |
-| `medium.rs` | 114 KB | 6 / 26 ms | 141 / 142 ms | 59 / 60 ms |
-| `large.rs` | 4.7 MB | 5 / 24 ms | 2219 / 2220 ms | 357 / 358 ms |
-| `large.txt` | 4.7 MB | 5 / 31 ms | 28 / 29 ms | 28 / 29 ms |
-| `minified.json` | 3.7 MB | 5 / 232 ms | 309 / 309 ms | 278 / 278 ms |
+| `small.rs` | 4 KB | 5 / 21 ms | 106 / 106 ms | 22 / 23 ms |
+| `small.txt` | 4 KB | 5 / 18 ms | 20 / 20 ms | 6 / 6 ms |
+| `medium.rs` | 114 KB | 5 / 21 ms | 141 / 142 ms | 44 / 45 ms |
+| `large.rs` | 4.7 MB | 6 / 30 ms | 1986 / 1987 ms | 347 / 348 ms |
+| `large.txt` | 4.7 MB | 5 / 24 ms | 22 / 23 ms | 25 / 26 ms |
+| `large.md` | 818 KB | 5 / 245 ms | 339 / 340 ms | 136 / 137 ms |
+| `minified.json` | 3.7 MB | 5 / 203 ms | 320 / 320 ms | 259 / 260 ms |
 
 ### Idle cost, `medium.rs` open in a Git repository, 10 s
 
@@ -76,21 +64,39 @@ First paint is the first byte of output; ready is when drawing goes quiet.
 | --- | ---: | ---: |
 | neovim | 0.00 % | 0 |
 | helix | 0.00 % | 0 |
-| runyte | 1.29 % | 66 |
+| runyte | 1.59 % | 66 |
 
-### Reservation on the `large.rs` Helix figure
+### Which rows compare editors
 
-Helix's 2220 ms is specific to this fixture's shape and should not be quoted as
-a general comparison. Measured against real source at 12 MB during the same
-session, Helix read 581 ms and Runyte 1027 ms — the opposite ordering. Runyte's
-figures reconcile between the two shapes once scaled for size, about 329 ms of
-parse here against about 870 ms at 12 MB; Helix's do not, so the generated
-fixture's many small repetitive items appear to be pathological for it
-specifically.
+**`large.md` is the only row where all three do the same work**, and Runyte is
+fastest on it: 137 ms against Neovim's 245 ms and Helix's 340 ms. All three
+build a tree over the whole document — Neovim's Markdown parser is bundled
+upstream, Helix ships one, Runyte links one — and the fixture's fenced blocks
+carry no info string, so no editor injects a second grammar the others lack.
+This measures Markdown, which is two grammars driven through injections; it is
+not a stand-in for large source files.
 
-This does not affect comparing Runyte against its own later result sets, which
-is what the fixture seed exists for. It does mean the Helix column is evidence
-about this fixture rather than about Helix.
+The `.txt` rows compare reading and drawing alone, since no editor claims a
+language for them.
+
+**The `.rs` rows do not compare editors.** Neovim bundles parsers for `c`,
+`lua`, `markdown`, `markdown_inline`, `query`, `vim` and `vimdoc` only; Rust is
+not among them. Opening `small.rs` reports
+`vim.treesitter.highlighter.active` as absent and `&syntax` as `rust`, so those
+rows are regular-expression highlighting of one screen while Helix and Runyte
+parse the whole document. Neovim's flat ~30 ms on a 4.7 MB file is less work,
+not faster work.
+
+Helix's 1987 ms on `large.rs` is also specific to this fixture's shape. Measured
+against real source at 12 MB during the same session, Helix read 581 ms and
+Runyte 1027 ms — the opposite ordering. Runyte's figures reconcile between the
+two shapes once scaled for size; Helix's do not, so the generated fixture's many
+small repetitive items appear to be pathological for it. Treat that cell as
+evidence about the fixture rather than about Helix.
+
+Run-to-run variance across two full sessions was roughly ten percent on the
+larger fixtures even at median-of-five, so differences smaller than that are not
+signal.
 
 ## Interpretation of the first result set
 
@@ -114,12 +120,12 @@ Two costs separate cleanly from the fixtures:
   well under a millisecond — but the language actually opened pays this cost on
   the main thread before the first frame. An independent measurement with the
   `startup-timing` feature put the same figure at about 15 ms.
-- The gap between `large.txt` and `large.rs`, 29 ms against 358 ms, is parsing.
+- The gap between `large.txt` and `large.rs`, 26 ms against 348 ms, is parsing.
   What remains in `large.txt` is reading the file, which is a floor that
   deferring the parse would not remove.
 
 Deferring the initial parse to the existing background worker would therefore
-move roughly 330 ms of this fixture, and proportionally more on larger
+move roughly 320 ms of this fixture, and proportionally more on larger
 documents, off the first frame. `syntax[i] = None` is already a rendered state,
 used both for documents in unknown languages and while a reparse is in flight,
 so no new presentation state is required. `ParseRequest` currently carries a
