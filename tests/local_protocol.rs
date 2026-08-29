@@ -16,10 +16,10 @@ use std::{
 
 use runyte::{
     app::FrameGeometry,
-    command::Mode,
     input::{InputEvent, KeyCode, KeyStroke, Modifiers},
     layout::Rect,
     protocol::{CommandRequest, SnapshotRow, decode_path},
+    terminal::emulator::Emulator,
     workspace::transport::{
         ClientRequest, HostResponse, LocalClient, LocalEndpoint, PROTOCOL_VERSION, TransportChange,
         encode_path,
@@ -478,23 +478,6 @@ async fn wait_for_frame(
     }
 }
 
-async fn wait_for_git_summary(
-    client: &mut LocalClient,
-    branch: &str,
-    waiting_for: &str,
-) -> runyte::protocol::HostFrame {
-    wait_for_frame(client, waiting_for, |frame| {
-        frame.editor.status.long_running_action.is_none()
-            && frame
-                .editor
-                .status
-                .git_summary
-                .as_deref()
-                .is_some_and(|summary| summary.contains(branch))
-    })
-    .await
-}
-
 async fn invoke_when_current(
     client: &mut LocalClient,
     command: &str,
@@ -725,7 +708,7 @@ async fn try_connect_control(endpoint: &LocalEndpoint) -> anyhow::Result<LocalCl
 
 async fn wait_for_buffer_text(
     client: &mut LocalClient,
-    terminal_output: Option<&std::sync::Arc<std::sync::Mutex<Vec<u8>>>>,
+    terminal_output: Option<&SharedTerminalCapture>,
     name: &str,
     needle: &str,
 ) {
@@ -768,7 +751,7 @@ async fn wait_for_buffer_text(
         }
         if Instant::now() >= deadline {
             let terminal_output = terminal_output
-                .map(|output| String::from_utf8_lossy(&output.lock().unwrap()).into_owned())
+                .map(|output| output.lock().unwrap().raw_text())
                 .unwrap_or_else(|| "<not captured>".to_owned());
             panic!(
                 "buffer {name:?} did not contain {needle:?} after {ASYNC_STATE_TIMEOUT:?}; \
@@ -776,6 +759,68 @@ async fn wait_for_buffer_text(
                 last_text.as_deref().unwrap_or("<buffer was not opened>"),
             );
         }
+        tokio::time::sleep(ASYNC_STATE_POLL_INTERVAL).await;
+    }
+}
+
+struct TerminalCapture {
+    screen: Emulator,
+    raw: Vec<u8>,
+}
+
+impl TerminalCapture {
+    fn new() -> Self {
+        Self {
+            screen: Emulator::new(80, 24),
+            raw: Vec::new(),
+        }
+    }
+
+    fn feed(&mut self, bytes: &[u8]) {
+        self.raw.extend_from_slice(bytes);
+        self.screen.feed(bytes);
+    }
+
+    fn screen_text(&self) -> String {
+        self.screen.plain_text()
+    }
+
+    fn raw_text(&self) -> String {
+        String::from_utf8_lossy(&self.raw).into_owned()
+    }
+}
+
+type SharedTerminalCapture = std::sync::Arc<std::sync::Mutex<TerminalCapture>>;
+
+fn capture_terminal_output(terminal: &File) -> SharedTerminalCapture {
+    let output = std::sync::Arc::new(std::sync::Mutex::new(TerminalCapture::new()));
+    let captured = std::sync::Arc::clone(&output);
+    let mut drain = terminal.try_clone().unwrap();
+    std::thread::spawn(move || {
+        let mut chunk = [0_u8; 4096];
+        loop {
+            match std::io::Read::read(&mut drain, &mut chunk) {
+                Ok(0) | Err(_) => break,
+                Ok(count) => captured.lock().unwrap().feed(&chunk[..count]),
+            }
+        }
+    });
+    output
+}
+
+async fn wait_for_terminal_screen(output: &SharedTerminalCapture, needle: &str) {
+    let deadline = Instant::now() + ASYNC_STATE_TIMEOUT;
+    loop {
+        let screen = output.lock().unwrap().screen_text();
+        if screen.contains(needle) {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "terminal screen did not contain {needle:?} after {ASYNC_STATE_TIMEOUT:?}; \
+             last screen: {screen:?}; raw output: {:?}",
+            output.lock().unwrap().raw_text(),
+        );
         tokio::time::sleep(ASYNC_STATE_POLL_INTERVAL).await;
     }
 }
@@ -1310,21 +1355,7 @@ async fn git_commit_wait_tui_completes_through_write_quit() {
     // and exits 1 — the same failure text this test used to see from a
     // completely different cause. Drain continuously, but keep what was
     // drained so a real failure can still be diagnosed from it below.
-    let drained = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-    let drain_sink = std::sync::Arc::clone(&drained);
-    let mut drain = terminal.try_clone().unwrap();
-    std::thread::spawn(move || {
-        let mut chunk = [0_u8; 4096];
-        loop {
-            match std::io::Read::read(&mut drain, &mut chunk) {
-                Ok(0) | Err(_) => break,
-                Ok(count) => drain_sink
-                    .lock()
-                    .unwrap()
-                    .extend_from_slice(&chunk[..count]),
-            }
-        }
-    });
+    let drained = capture_terminal_output(&terminal);
     let mut control = connect_control(&endpoint).await;
     let mut attached = false;
     for _ in 0..200 {
@@ -1386,6 +1417,7 @@ async fn git_commit_wait_tui_completes_through_write_quit() {
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
     assert!(inserted, "typed commit message did not reach the buffer");
+    wait_for_terminal_screen(&drained, " INS ").await;
 
     // The commit message instructions this editor writes into the buffer
     // ("commit", "message", ...) are ordinary words, so word completion can
@@ -1394,12 +1426,7 @@ async fn git_commit_wait_tui_completes_through_write_quit() {
     // mode, exactly as it does when word completion is switched off.
     terminal.write_all(b"\x1b").unwrap();
     terminal.flush().unwrap();
-    let _ = wait_for_frame(
-        &mut control,
-        "waiting for Escape to leave the Git commit editor in Normal mode",
-        |frame| Mode::from(frame.editor.mode) == Mode::Normal,
-    )
-    .await;
+    wait_for_terminal_screen(&drained, " NOR ").await;
     control
         .send(&ClientRequest::ReadBuffer {
             buffer: commit_buffer,
@@ -1420,7 +1447,7 @@ async fn git_commit_wait_tui_completes_through_write_quit() {
         // Give the drain thread a moment to catch up with whatever the
         // exiting process wrote last, so the diagnostic below is complete.
         tokio::time::sleep(Duration::from_millis(50)).await;
-        let output = String::from_utf8_lossy(&drained.lock().unwrap()).into_owned();
+        let output = drained.lock().unwrap().raw_text();
         control
             .send(&ClientRequest::ReadBuffer {
                 buffer: commit_buffer,
@@ -1781,19 +1808,7 @@ async fn worktree_switch_reuses_the_destination_host_through_the_real_tui_launch
     // Nothing else reads this PTY, and two full-screen TUIs render into it
     // in sequence. Once the terminal buffer fills, the attached editor blocks
     // writing a frame and stops reading input, so later keys are never seen.
-    let output = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-    let captured = std::sync::Arc::clone(&output);
-    let drain = terminal.try_clone().unwrap();
-    std::thread::spawn(move || {
-        let mut drain = drain;
-        let mut sink = [0_u8; 4096];
-        while let Ok(count) = std::io::Read::read(&mut drain, &mut sink) {
-            if count == 0 {
-                break;
-            }
-            captured.lock().unwrap().extend_from_slice(&sink[..count]);
-        }
-    });
+    let output = capture_terminal_output(&terminal);
 
     for _ in 0..200 {
         source.send(&ClientRequest::Health).await.unwrap();
@@ -1808,12 +1823,7 @@ async fn worktree_switch_reuses_the_destination_host_through_the_real_tui_launch
         }
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
-    let _ = wait_for_git_summary(
-        &mut source,
-        "master",
-        "waiting for Git discovery before opening the source worktree list",
-    )
-    .await;
+    wait_for_terminal_screen(&output, "│ master").await;
     type_colon_command(&mut terminal, "git-worktrees");
     let linked_display = linked.to_string_lossy().into_owned();
     wait_for_buffer_text(
@@ -1904,19 +1914,7 @@ async fn incompatible_worktree_host_returns_the_tui_to_its_source() {
             .env("XDG_CACHE_HOME", test_cache_dir()),
     );
     let mut switcher = ChildGuard(Some(switcher));
-    let output = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-    let captured = std::sync::Arc::clone(&output);
-    let drain = terminal.try_clone().unwrap();
-    std::thread::spawn(move || {
-        let mut drain = drain;
-        let mut sink = [0_u8; 4096];
-        while let Ok(count) = std::io::Read::read(&mut drain, &mut sink) {
-            if count == 0 {
-                break;
-            }
-            captured.lock().unwrap().extend_from_slice(&sink[..count]);
-        }
-    });
+    let output = capture_terminal_output(&terminal);
 
     for _ in 0..200 {
         source.send(&ClientRequest::Health).await.unwrap();
@@ -1931,12 +1929,7 @@ async fn incompatible_worktree_host_returns_the_tui_to_its_source() {
         }
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
-    let _ = wait_for_git_summary(
-        &mut source,
-        "master",
-        "waiting for Git discovery before opening the source worktree list",
-    )
-    .await;
+    wait_for_terminal_screen(&output, "│ master").await;
     type_colon_command(&mut terminal, "git-worktrees");
     let linked_display = linked.to_string_lossy().into_owned();
     wait_for_buffer_text(
@@ -1971,14 +1964,9 @@ async fn incompatible_worktree_host_returns_the_tui_to_its_source() {
     assert!(
         recovered,
         "incompatible destination did not return to source; terminal output: {}",
-        String::from_utf8_lossy(&output.lock().unwrap())
+        output.lock().unwrap().raw_text()
     );
-    let _ = wait_for_frame(
-        &mut source,
-        "waiting for the incompatible destination error to be retained",
-        |frame| frame.editor.status.notification_counts.errors > 0,
-    )
-    .await;
+    wait_for_terminal_screen(&output, "E1").await;
 
     terminal.write_all(b":detach\r").unwrap();
     terminal.flush().unwrap();
@@ -2018,19 +2006,7 @@ async fn creating_a_worktree_starts_and_attaches_its_persistent_session() {
             .env("XDG_CACHE_HOME", test_cache_dir()),
     );
     let mut switcher = ChildGuard(Some(switcher));
-    let output = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-    let captured = std::sync::Arc::clone(&output);
-    let drain = terminal.try_clone().unwrap();
-    std::thread::spawn(move || {
-        let mut drain = drain;
-        let mut sink = [0_u8; 4096];
-        while let Ok(count) = std::io::Read::read(&mut drain, &mut sink) {
-            if count == 0 {
-                break;
-            }
-            captured.lock().unwrap().extend_from_slice(&sink[..count]);
-        }
-    });
+    let output = capture_terminal_output(&terminal);
 
     for _ in 0..200 {
         source.send(&ClientRequest::Health).await.unwrap();
@@ -2045,12 +2021,7 @@ async fn creating_a_worktree_starts_and_attaches_its_persistent_session() {
         }
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
-    let _ = wait_for_git_summary(
-        &mut source,
-        "master",
-        "waiting for Git discovery before opening the source worktree list",
-    )
-    .await;
+    wait_for_terminal_screen(&output, "│ master").await;
     type_colon_command(&mut terminal, "git-worktrees");
     let root_display = root.to_string_lossy().into_owned();
     wait_for_buffer_text(&mut source, Some(&output), "[git worktrees]", &root_display).await;
@@ -3556,19 +3527,7 @@ async fn relative_workspace_attach_uses_editor_cwd_and_keeps_one_client_process(
     // Nothing else reads this PTY, and two full-screen TUIs render into it in
     // sequence. Once the terminal buffer fills, the attached editor blocks
     // writing a frame and stops reading input, so later keys are never seen.
-    let output = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-    let captured = std::sync::Arc::clone(&output);
-    let drain = terminal.try_clone().unwrap();
-    std::thread::spawn(move || {
-        let mut drain = drain;
-        let mut sink = [0_u8; 4096];
-        while let Ok(count) = std::io::Read::read(&mut drain, &mut sink) {
-            if count == 0 {
-                break;
-            }
-            captured.lock().unwrap().extend_from_slice(&sink[..count]);
-        }
-    });
+    let output = capture_terminal_output(&terminal);
 
     let mut attached_to_source = false;
     for _ in 0..200 {
@@ -3587,12 +3546,7 @@ async fn relative_workspace_attach_uses_editor_cwd_and_keeps_one_client_process(
     }
     assert!(attached_to_source, "the source host never received the TUI");
     let root_display = root.to_string_lossy().into_owned();
-    let _ = wait_for_git_summary(
-        &mut source,
-        "master",
-        "waiting for the source workspace to finish Git discovery",
-    )
-    .await;
+    wait_for_terminal_screen(&output, "│ master").await;
 
     // The client process stays at `root`, while `:cd` changes only the
     // editor-owned directory to `root/nested`. Resolving `../linked` against
@@ -3628,12 +3582,7 @@ async fn relative_workspace_attach_uses_editor_cwd_and_keeps_one_client_process(
     // Return through the worktree list to retain the original regression that
     // switching both ways stays inside one client process. The linked
     // worktree is the second row, so the main worktree is immediately above it.
-    let _ = wait_for_git_summary(
-        &mut destination,
-        "linked",
-        "waiting for the destination workspace to finish Git discovery",
-    )
-    .await;
+    wait_for_terminal_screen(&output, "│ linked").await;
     type_colon_command(&mut terminal, "git-worktrees");
     wait_for_buffer_text(
         &mut destination,
