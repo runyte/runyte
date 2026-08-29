@@ -22,9 +22,27 @@ The cwd handoff now uses a same-directory, exclusively created, mode-0600
 temporary file with flush, sync, atomic rename, collision retry, and
 owned-candidate cleanup.
 
+A later fix corrected how clipboard cleanup identified the group it was
+retiring. `wait_until` reported the helper's exit through `Child::try_wait`,
+which reaps, and cleanup then sent `SIGKILL` to `-child.id()`. The kernel
+recycles a PID once its group is empty and its leader reaped, so that
+negative number could by then name an unrelated process group — a signal
+delivered successfully, to a stranger, with the damage appearing wherever
+that stranger happened to be. Completion is now observed through
+`waitid(WNOWAIT)`, which reports the same status while leaving the helper
+unreaped, so the PID and the private process group stay reserved for as long
+as cleanup may address them; the leader is collected afterwards, on the
+successful path too. Cleanup states which proof it holds — a running leader
+or a completed but uncollected one — through `src/process_group.rs`, and
+sends nothing when it holds neither. Descendant cleanup is unchanged in
+effect: retiring the group after the leader exits is exactly what the
+unreaped anchor preserves.
+
 Coverage lives in `src/clipboard.rs` in
-`timing_out_a_helper_also_kills_its_descendants` and
-`a_successful_parent_with_stuck_output_cleans_up_its_descendant`, in
+`timing_out_a_helper_also_kills_its_descendants`,
+`a_successful_parent_with_stuck_output_cleans_up_its_descendant`,
+`completed_helper_cleanup_signals_no_recycled_group`, and
+`a_completed_but_unreaped_helper_still_owns_its_group`, in
 `src/external_open.rs` in
 `launched_program_has_a_process_group_separate_from_the_editor`, in
 `src/main.rs` in `cwd_file_retry_preserves_colliding_temporary_file` and

@@ -30,6 +30,9 @@ use anyhow::{Context, Result, bail};
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
 
+#[cfg(unix)]
+use crate::process_group;
+
 const MAX_HELPER_STDERR_BYTES: usize = 1_024;
 const MAX_CLIPBOARD_TEXT_BYTES: usize = 64 * 1024 * 1024;
 
@@ -262,6 +265,11 @@ fn run_helper(
     command.process_group(0);
     let mut child = command.spawn()?;
     let deadline = Instant::now() + timeout;
+    // Set once the helper's exit has been observed without reaping it, which
+    // is what keeps its PID — and the private process group given to it above
+    // — reserved to this process for as long as cleanup may need to address
+    // them.
+    let completed = std::cell::Cell::new(false);
     let outcome = (|| -> io::Result<BoundedCommandOutput> {
         let written = match (stdin_text, child.stdin.take()) {
             (Some(text), Some(mut stdin)) => {
@@ -286,7 +294,7 @@ fn run_helper(
             detached(move || read_and_discard_after_limit(stderr, MAX_HELPER_STDERR_BYTES))
         });
 
-        let Some(status) = wait_until(&mut child, deadline)? else {
+        let Some(status) = wait_until(&mut child, deadline, &completed)? else {
             return Err(io::Error::new(
                 io::ErrorKind::TimedOut,
                 format!(
@@ -336,25 +344,45 @@ fn run_helper(
         })
     })();
     if !matches!(&outcome, Ok(output) if output.success) {
-        terminate_helper(&mut child);
+        terminate_helper(&mut child, completed.get());
+    } else {
+        // A successful helper is left alone — its forked selection owner is
+        // supposed to outlive this call — but the leader itself was never
+        // reaped, so it is collected here.
+        let _ = child.wait();
     }
     outcome
 }
 
-fn terminate_helper(child: &mut Child) {
+#[cfg(unix)]
+const CLEANUP: process_group::Site = process_group::Site::new("clipboard", "terminate_helper");
+
+/// Stops an unsuccessful helper and everything it started.
+///
+/// Helpers get a private process group before spawn, and the group is what
+/// cleanup addresses: killing only the direct child leaves descendants that
+/// inherited its pipes running and their reader threads parked. That number
+/// is only Runyte's for as long as the leader is unreaped, so `completed`
+/// says which proof cleanup holds — the leader is either still running, or
+/// exited and deliberately not yet collected. If neither holds, no group is
+/// addressed at all, because the number may already name a stranger.
+fn terminate_helper(child: &mut Child, completed: bool) {
     #[cfg(unix)]
-    {
-        // Helpers get a private process group before spawn. Killing the group
-        // on timeout also retires descendants that inherited the helper's
-        // pipes; killing only the direct child can leave those descendants
-        // running and their reader threads parked indefinitely.
-        let process_group = -(child.id() as libc::pid_t);
-        // SAFETY: a negative PID addresses exactly the process group created
-        // for this child, and SIGKILL requires no userspace signal handler.
-        let _ = unsafe { libc::kill(process_group, libc::SIGKILL) };
+    if completed {
+        process_group::claim_anchored_group(
+            CLEANUP,
+            child.id() as libc::pid_t,
+            process_group::GroupAnchor::UnreapedLeader,
+        )
+        .signal(libc::SIGKILL);
+    } else {
+        process_group::signal_child_group(CLEANUP, child, libc::SIGKILL);
     }
     #[cfg(not(unix))]
-    let _ = child.kill();
+    {
+        let _ = completed;
+        let _ = child.kill();
+    }
     let _ = child.wait();
 }
 
@@ -386,9 +414,20 @@ fn collect<T>(receiver: Receiver<io::Result<T>>, deadline: Instant) -> io::Resul
 }
 
 /// `Ok(None)` means the helper was still running when the deadline passed.
-fn wait_until(child: &mut Child, deadline: Instant) -> io::Result<Option<ExitStatus>> {
+///
+/// Completion is observed without reaping so that the helper's PID, and the
+/// process group Runyte created for it, stay reserved until cleanup is done
+/// with them. `try_wait` reports the same status but releases both at once,
+/// which would leave a later group signal naming whichever process the kernel
+/// handed the number to next.
+fn wait_until(
+    child: &mut Child,
+    deadline: Instant,
+    completed: &std::cell::Cell<bool>,
+) -> io::Result<Option<ExitStatus>> {
     loop {
-        if let Some(status) = child.try_wait()? {
+        if let Some(status) = observe_exit(child)? {
+            completed.set(true);
             return Ok(Some(status));
         }
         let left = remaining(deadline);
@@ -397,6 +436,16 @@ fn wait_until(child: &mut Child, deadline: Instant) -> io::Result<Option<ExitSta
         }
         thread::sleep(HELPER_POLL_INTERVAL.min(left));
     }
+}
+
+#[cfg(unix)]
+fn observe_exit(child: &mut Child) -> io::Result<Option<ExitStatus>> {
+    process_group::completed_without_reaping(child)
+}
+
+#[cfg(not(unix))]
+fn observe_exit(child: &mut Child) -> io::Result<Option<ExitStatus>> {
+    child.try_wait()
 }
 
 fn remaining(deadline: Instant) -> Duration {
@@ -493,6 +542,88 @@ mod tests {
         .unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::TimedOut);
         assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    /// Cleanup after a helper that is already complete and already reaped
+    /// must address no process group at all.
+    ///
+    /// A negative PID is recycled as soon as the group's leader is reaped, so
+    /// a signal sent past that point lands on whichever process the kernel
+    /// handed the number to next — successfully, and with the damage showing
+    /// up somewhere else entirely.
+    #[cfg(unix)]
+    #[test]
+    fn completed_helper_cleanup_signals_no_recycled_group() {
+        let mut helper = Command::new("sh")
+            .args(["-c", "exit 1"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .process_group(0)
+            .spawn()
+            .unwrap();
+        helper.wait().unwrap();
+
+        assert!(
+            matches!(
+                process_group::claim_child_group(CLEANUP, &mut helper),
+                process_group::Claim::AlreadyComplete
+            ),
+            "a reaped helper still claimed ownership of its group"
+        );
+        // Cleanup has no claim to sign a target with, so it sends nothing.
+        terminate_helper(&mut helper, false);
+    }
+
+    /// An exited helper is still the owner of its group until it is reaped,
+    /// which is what lets cleanup retire the descendants holding its pipes.
+    #[cfg(unix)]
+    #[test]
+    fn a_completed_but_unreaped_helper_still_owns_its_group() {
+        let mut helper = Command::new("sh")
+            .args(["-c", "sleep 30 & exit 0"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .process_group(0)
+            .spawn()
+            .unwrap();
+        let pid = helper.id() as libc::pid_t;
+        let completed = std::cell::Cell::new(false);
+
+        let status = loop {
+            if let Some(status) =
+                wait_until(&mut helper, Instant::now() + HELPER_TIMEOUT, &completed).unwrap()
+            {
+                break status;
+            }
+        };
+        assert!(status.success());
+        assert!(
+            completed.get(),
+            "the helper's exit was observed through a reap"
+        );
+
+        terminate_helper(&mut helper, completed.get());
+
+        // The group emptying is the kernel's to schedule once its members are
+        // signalled and orphaned, so it is observed rather than assumed.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while group_exists(pid) {
+            assert!(
+                Instant::now() < deadline,
+                "the helper's process group {pid} outlived its termination"
+            );
+            thread::sleep(HELPER_POLL_INTERVAL);
+        }
+    }
+
+    #[cfg(unix)]
+    fn group_exists(pid: libc::pid_t) -> bool {
+        // SAFETY: signal 0 performs the existence and permission checks
+        // without delivering anything.
+        let result = unsafe { libc::kill(-pid, 0) };
+        result == 0 || io::Error::last_os_error().kind() == io::ErrorKind::PermissionDenied
     }
 
     #[cfg(unix)]

@@ -39,7 +39,7 @@
 use std::{
     io::Write,
     path::PathBuf,
-    process::Child,
+    process::{Child, ExitStatus},
     sync::{
         OnceLock,
         atomic::{AtomicUsize, Ordering},
@@ -232,6 +232,68 @@ fn deliver(target: libc::pid_t, signal: libc::c_int) {
     unsafe {
         libc::kill(target, signal);
     }
+}
+
+/// Observes a child's completion without reaping it.
+///
+/// `Ok(None)` means the child is still running. Anything else answers with
+/// the status the kernel reports in its `siginfo_t` rather than through a
+/// reap, so the child's PID — and with it the process group Runyte gave the
+/// child — stays reserved to this process until the caller has finished
+/// addressing it. `Child::try_wait` answers the same question but releases
+/// both immediately, which is what leaves a later `-pid` naming a stranger.
+///
+/// The caller owes the child a `Child::wait` once cleanup is done; nothing
+/// here reaps it.
+pub fn completed_without_reaping(child: &Child) -> std::io::Result<Option<ExitStatus>> {
+    let pid = libc::pid_t::try_from(child.id()).map_err(|_| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "child PID does not fit pid_t",
+        )
+    })?;
+    let mut information = std::mem::MaybeUninit::<libc::siginfo_t>::zeroed();
+    // SAFETY: `information` points at writable storage for a `siginfo_t`,
+    // P_PID limits the observation to this live `Child`, and WNOWAIT leaves
+    // the reported exit available for a later `Child::wait`.
+    let result = unsafe {
+        libc::waitid(
+            libc::P_PID,
+            pid as libc::id_t,
+            information.as_mut_ptr(),
+            libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+        )
+    };
+    if result == -1 {
+        return Err(std::io::Error::last_os_error());
+    }
+    // SAFETY: a successful `waitid` initializes the structure. Under WNOHANG
+    // `si_pid` is zero when the child has not exited yet.
+    let information = unsafe { information.assume_init() };
+    // SAFETY: the same successful call initialized the child fields this
+    // reads, and `si_status` is the accessor libc provides for them.
+    let (reported, status) = unsafe { (information.si_pid(), information.si_status()) };
+    if reported == 0 {
+        return Ok(None);
+    }
+    Ok(Some(exit_status(information.si_code, status)))
+}
+
+/// Rebuilds a wait status from the pair `waitid` reports.
+///
+/// `ExitStatus` can only be constructed from the raw form `wait` produces, so
+/// the two fields are encoded back into it: an ordinary exit lives in the
+/// high byte, a terminating signal in the low seven bits, and a core dump
+/// sets the bit above them.
+fn exit_status(code: libc::c_int, status: libc::c_int) -> ExitStatus {
+    use std::os::unix::process::ExitStatusExt as _;
+
+    let raw = match code {
+        libc::CLD_EXITED => (status & 0xff) << 8,
+        libc::CLD_DUMPED => (status & 0x7f) | 0x80,
+        _ => status & 0x7f,
+    };
+    ExitStatus::from_raw(raw)
 }
 
 /// Records that a subsystem started a child in its own process group.
