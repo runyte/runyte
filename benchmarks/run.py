@@ -7,8 +7,9 @@ Run from anywhere:
 
     benchmarks/run.py                     every editor found on PATH
     benchmarks/run.py --only runyte       Runyte alone, no external editors
-    benchmarks/run.py --runs 9            more samples per figure
+    benchmarks/run.py --runs 20           more samples per figure
     benchmarks/run.py --no-idle           skip the idle window
+    benchmarks/run.py --fixtures long.txt,long.lua
 
 Output is Markdown, shaped for `context/reference/startup-performance.md`.
 
@@ -39,7 +40,7 @@ WORK = HERE / ".work"
 FIXTURES = WORK / "fixtures"
 EMPTY_CONFIG = WORK / "empty-config"
 
-IDLE_FIXTURE = "medium.rs"
+IDLE_FIXTURE = "medium.lua"
 
 
 def runyte_binary() -> str | None:
@@ -107,7 +108,9 @@ def environment() -> dict[str, str]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--only", help="comma-separated subset: neovim,helix,runyte")
-    parser.add_argument("--runs", type=int, default=5, help="samples per figure (default 5)")
+    parser.add_argument(
+        "--runs", type=int, default=10, help="samples per figure (default 10)"
+    )
     parser.add_argument("--no-idle", action="store_true", help="skip the idle window")
     parser.add_argument(
         "--fixtures", help=f"comma-separated subset of {','.join(fixtures.FIXTURES)}"
@@ -121,6 +124,12 @@ def main() -> int:
         return 1
 
     names = args.fixtures.split(",") if args.fixtures else list(fixtures.FIXTURES)
+    for name in names:
+        try:
+            fixtures.split(name)
+        except ValueError as error:
+            print(f"error: {error}", file=sys.stderr)
+            return 1
     paths = prepare()
     env = environment()
 

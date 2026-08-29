@@ -3,26 +3,26 @@
 """Deterministic documents for the startup benchmark.
 
 Fixtures are generated rather than committed, and generated from a fixed seed
-rather than copied out of the repository. A benchmark whose inputs are Runyte's
-own source files would report a different number every time that source
-changed, which is the opposite of what a regression benchmark is for.
+rather than copied out of the repository. A benchmark whose inputs were Runyte's
+own source files would report a different number every time that source changed,
+which is the opposite of what a regression benchmark is for.
 
-Each fixture isolates one cost:
+The matrix is one document at three sizes, written twice: once as ``.lua``,
+which every measured editor parses with the same single tree-sitter grammar, and
+once as ``.txt``, which no editor claims a language for. The two files of a size
+are byte-identical, so the difference between them is the whole cost of treating
+a document as a language and nothing else. The difference along the size axis is
+how each of those costs scales.
 
-``small.rs``      fixed startup cost; the document is too small to matter.
-``small.txt``     the same document with no language. Against ``small.rs`` this
-                  isolates the cost of compiling one language's queries.
-``medium.rs``     a realistic working file.
-``large.rs``      a document large enough that parsing dominates.
-``large.txt``     the same bytes with no language, isolating file reading from
-                  parsing.
-``large.lua``     source code which every measured editor parses with one
-                  tree-sitter grammar.
-``large.md``      Markdown, which every measured editor parses with tree-sitter,
-                  making it a second fixture where a cross-editor comparison
-                  is between editors doing the same work.
-``minified.json`` one very long line, which stresses everything that works
-                  outward from the start of a line rather than per row.
+``short.txt``   500 lines with no language: reading and drawing alone.
+``medium.txt``  5,000 lines with no language.
+``long.txt``    50,000 lines with no language.
+``short.lua``   the same 500 lines parsed with the Lua grammar. Against
+                ``short.txt`` this is dominated by compiling one language's
+                queries, since the document is too small to matter.
+``medium.lua``  the same 5,000 lines parsed with the Lua grammar.
+``long.lua``    the same 50,000 lines parsed with the Lua grammar. Against
+                ``long.txt`` this is parsing.
 """
 
 from __future__ import annotations
@@ -30,102 +30,20 @@ from __future__ import annotations
 import random
 from pathlib import Path
 
-SMALL_LINES = 200
-MEDIUM_LINES = 5_000
-LARGE_LINES = 200_000
-LUA_LINES = 30_000
-MARKDOWN_LINES = 30_000
-MINIFIED_KEYS = 200_000
+# Lines per size. Every count is a multiple of the generator's block length, so
+# no fixture ends in a truncated Lua function.
+SIZES = {
+    "short": 500,
+    "medium": 5_000,
+    "long": 50_000,
+}
+
+# The extension decides whether an editor claims a language for the document.
+SUFFIXES = ("txt", "lua")
+
 SEED = 20260829
 
-FIXTURES = (
-    "small.rs",
-    "small.txt",
-    "medium.rs",
-    "large.rs",
-    "large.txt",
-    "large.lua",
-    "large.md",
-    "minified.json",
-)
-
-
-def _rust_source(lines: int, seed: int = SEED) -> str:
-    """Rust with enough shape to exercise a highlighter: items, strings,
-    comments, generics, attributes and nesting."""
-    rng = random.Random(seed)
-    names = ["parse", "render", "collect", "resolve", "encode", "merge", "scan", "apply"]
-    types = ["usize", "u64", "i32", "String", "Vec<u8>", "Option<usize>"]
-    out: list[str] = ["// SPDX-License-Identifier: MPL-2.0", "//! Generated benchmark fixture.", ""]
-    index = 0
-    while len(out) < lines:
-        name = f"{rng.choice(names)}_{index}"
-        kind = rng.choice(types)
-        out += [
-            f"/// Documentation for `{name}`.",
-            "#[inline]",
-            f"pub fn {name}(value: {kind}, label: &str) -> {kind} {{",
-            f'    let tag = format!("{name}: {{label}}");',
-            "    if tag.len() > 8 {",
-            f"        // narrow the {name} path",
-            "        return value;",
-            "    }",
-            "    value",
-            "}",
-            "",
-        ]
-        index += 1
-    return "\n".join(out[:lines]) + "\n"
-
-
-def _markdown(lines: int, seed: int = SEED) -> str:
-    """Markdown exercising both of its grammars: block structure and inline spans.
-
-    Fenced code blocks deliberately carry no info string. A tagged fence injects
-    another language, and each editor injects only the languages it actually
-    has, so a tagged fence would measure the editors' differing grammar
-    inventories rather than their Markdown parsing. Untagged fences inject
-    nothing anywhere and keep the comparison about Markdown.
-    """
-    rng = random.Random(seed)
-    words = [
-        "buffer", "selection", "grammar", "viewport", "transaction", "register",
-        "pane", "workspace", "offset", "revision", "gutter", "overlay",
-    ]
-
-    def sentence(count: int) -> str:
-        body = " ".join(rng.choice(words) for _ in range(count))
-        return body.capitalize() + "."
-
-    out: list[str] = ["# Generated benchmark fixture", ""]
-    section = 0
-    while len(out) < lines:
-        section += 1
-        out += [
-            f"## Section {section}",
-            "",
-            f"{sentence(12)} With *emphasis*, **strong emphasis**, and `inline code`.",
-            "",
-            f"See [the reference](https://example.invalid/{section}) for detail.",
-            "",
-            "- First item with `code`",
-            "- Second item with *emphasis*",
-            f"- Third item referring to section {section}",
-            "",
-            "> A block quote holding one sentence.",
-            f"> {sentence(8)}",
-            "",
-            "```",
-            f"plain fenced block {section}",
-            "no info string, so nothing is injected",
-            "```",
-            "",
-            "| Column | Meaning |",
-            "| --- | --- |",
-            f"| `{rng.choice(words)}` | {sentence(4)} |",
-            "",
-        ]
-    return "\n".join(out[:lines]) + "\n"
+FIXTURES = tuple(f"{size}.{suffix}" for suffix in SUFFIXES for size in SIZES)
 
 
 def _lua_source(lines: int, seed: int = SEED) -> str:
@@ -173,42 +91,31 @@ def _lua_source(lines: int, seed: int = SEED) -> str:
     return "\n".join(out[:lines]) + "\n"
 
 
-def _minified_json(keys: int, seed: int = SEED) -> str:
-    rng = random.Random(seed)
-    pairs = ",".join(f'"key{i}":{rng.randint(0, 1_000_000)}' for i in range(keys))
-    return "{" + pairs + "}"
+def split(name: str) -> tuple[str, str]:
+    """Return the size and suffix of a fixture name, rejecting anything else."""
+    size, _, suffix = name.partition(".")
+    if size not in SIZES or suffix not in SUFFIXES:
+        raise ValueError(f"unknown fixture {name}")
+    return size, suffix
 
 
 def ensure(directory: Path, names=FIXTURES) -> dict[str, Path]:
     """Generate any missing fixture in `directory` and return their paths."""
     directory.mkdir(parents=True, exist_ok=True)
     paths: dict[str, Path] = {}
-    large_source: str | None = None
+    # One document per size, shared by both extensions so the pair stays
+    # byte-identical however few of them this run was asked for.
+    sources: dict[str, str] = {}
 
     for name in names:
         path = directory / name
         paths[name] = path
+        size, _ = split(name)
         if path.exists():
             continue
-        if name == "small.rs":
-            path.write_text(_rust_source(SMALL_LINES))
-        elif name == "small.txt":
-            # Byte-identical to small.rs so the only variable is the extension.
-            path.write_text(_rust_source(SMALL_LINES))
-        elif name == "medium.rs":
-            path.write_text(_rust_source(MEDIUM_LINES))
-        elif name in ("large.rs", "large.txt"):
-            if large_source is None:
-                large_source = _rust_source(LARGE_LINES)
-            path.write_text(large_source)
-        elif name == "large.lua":
-            path.write_text(_lua_source(LUA_LINES))
-        elif name == "large.md":
-            path.write_text(_markdown(MARKDOWN_LINES))
-        elif name == "minified.json":
-            path.write_text(_minified_json(MINIFIED_KEYS))
-        else:
-            raise ValueError(f"unknown fixture {name}")
+        if size not in sources:
+            sources[size] = _lua_source(SIZES[size])
+        path.write_text(sources[size])
     return paths
 
 
@@ -216,4 +123,4 @@ def describe(path: Path) -> str:
     size = path.stat().st_size
     if size >= 1_000_000:
         return f"{size / 1_000_000:.1f} MB"
-    return f"{size / 1_000:.0f} KB"
+    return f"{size / 1_000:.0f} kB"
