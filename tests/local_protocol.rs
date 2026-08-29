@@ -751,7 +751,7 @@ async fn wait_for_buffer_text(
         }
         if Instant::now() >= deadline {
             let terminal_output = terminal_output
-                .map(|output| output.lock().unwrap().raw_text())
+                .map(TerminalCapture::raw_text)
                 .unwrap_or_else(|| "<not captured>".to_owned());
             panic!(
                 "buffer {name:?} did not contain {needle:?} after {ASYNC_STATE_TIMEOUT:?}; \
@@ -764,44 +764,49 @@ async fn wait_for_buffer_text(
 }
 
 struct TerminalCapture {
-    screen: Emulator,
-    raw: Vec<u8>,
+    screen: std::sync::Arc<std::sync::Mutex<Emulator>>,
+    raw: std::sync::Arc<std::sync::Mutex<Vec<u8>>>,
 }
 
 impl TerminalCapture {
     fn new() -> Self {
         Self {
-            screen: Emulator::new(80, 24),
-            raw: Vec::new(),
+            screen: std::sync::Arc::new(std::sync::Mutex::new(Emulator::new(80, 24))),
+            raw: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
         }
     }
 
-    fn feed(&mut self, bytes: &[u8]) {
-        self.raw.extend_from_slice(bytes);
-        self.screen.feed(bytes);
-    }
-
     fn screen_text(&self) -> String {
-        self.screen.plain_text()
+        self.screen.lock().unwrap().plain_text()
     }
 
     fn raw_text(&self) -> String {
-        String::from_utf8_lossy(&self.raw).into_owned()
+        String::from_utf8_lossy(&self.raw.lock().unwrap()).into_owned()
     }
 }
 
-type SharedTerminalCapture = std::sync::Arc<std::sync::Mutex<TerminalCapture>>;
+type SharedTerminalCapture = TerminalCapture;
 
 fn capture_terminal_output(terminal: &File) -> SharedTerminalCapture {
-    let output = std::sync::Arc::new(std::sync::Mutex::new(TerminalCapture::new()));
-    let captured = std::sync::Arc::clone(&output);
+    let output = TerminalCapture::new();
+    let raw = std::sync::Arc::clone(&output.raw);
+    let screen = std::sync::Arc::clone(&output.screen);
+    let (chunks, queued) = std::sync::mpsc::channel::<Vec<u8>>();
+    std::thread::spawn(move || {
+        while let Ok(chunk) = queued.recv() {
+            screen.lock().unwrap().feed(&chunk);
+        }
+    });
     let mut drain = terminal.try_clone().unwrap();
     std::thread::spawn(move || {
         let mut chunk = [0_u8; 4096];
         loop {
             match std::io::Read::read(&mut drain, &mut chunk) {
                 Ok(0) | Err(_) => break,
-                Ok(count) => captured.lock().unwrap().feed(&chunk[..count]),
+                Ok(count) => {
+                    raw.lock().unwrap().extend_from_slice(&chunk[..count]);
+                    let _ = chunks.send(chunk[..count].to_vec());
+                }
             }
         }
     });
@@ -811,7 +816,7 @@ fn capture_terminal_output(terminal: &File) -> SharedTerminalCapture {
 async fn wait_for_terminal_screen(output: &SharedTerminalCapture, needle: &str) {
     let deadline = Instant::now() + ASYNC_STATE_TIMEOUT;
     loop {
-        let screen = output.lock().unwrap().screen_text();
+        let screen = output.screen_text();
         if screen.contains(needle) {
             return;
         }
@@ -819,7 +824,7 @@ async fn wait_for_terminal_screen(output: &SharedTerminalCapture, needle: &str) 
             Instant::now() < deadline,
             "terminal screen did not contain {needle:?} after {ASYNC_STATE_TIMEOUT:?}; \
              last screen: {screen:?}; raw output: {:?}",
-            output.lock().unwrap().raw_text(),
+            output.raw_text(),
         );
         tokio::time::sleep(ASYNC_STATE_POLL_INTERVAL).await;
     }
@@ -1447,10 +1452,8 @@ async fn git_commit_wait_tui_completes_through_write_quit() {
         // Give the drain thread a moment to catch up with whatever the
         // exiting process wrote last, so the diagnostic below is complete.
         tokio::time::sleep(Duration::from_millis(50)).await;
-        let capture = drained.lock().unwrap();
-        let output = capture.raw_text();
-        let screen = capture.screen_text();
-        drop(capture);
+        let output = drained.raw_text();
+        let screen = drained.screen_text();
         let buffer_text = match control
             .send(&ClientRequest::ReadBuffer {
                 buffer: commit_buffer,
@@ -1982,7 +1985,7 @@ async fn incompatible_worktree_host_returns_the_tui_to_its_source() {
     assert!(
         recovered,
         "incompatible destination did not return to source; terminal output: {}",
-        output.lock().unwrap().raw_text()
+        output.raw_text()
     );
     wait_for_terminal_screen(&output, "E1").await;
 
