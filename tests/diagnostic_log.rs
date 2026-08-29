@@ -118,8 +118,19 @@ fn project(name: &str) -> Project {
     Project(root.canonicalize().unwrap())
 }
 
+fn bundled_runyte(root: &Path) -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_runyte"));
+    command
+        .env(
+            "RUNYTE_ALL_HOSTS_DIR",
+            test_runtime_dir(root).join("runyte/all-hosts"),
+        )
+        .env("RUNYTE_TEST_SUPERVISOR_PID", std::process::id().to_string());
+    command
+}
+
 fn runyte(root: &Path, arguments: &[&str]) -> std::process::Output {
-    Command::new(env!("CARGO_BIN_EXE_runyte"))
+    bundled_runyte(root)
         .args(arguments)
         .current_dir(root)
         .env("XDG_RUNTIME_DIR", test_runtime_dir(root))
@@ -198,7 +209,7 @@ fn endpoint_for(root: &Path) -> LocalEndpoint {
 }
 
 fn serve(root: &Path, extra: &[&str]) -> ChildGuard {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_runyte"));
+    let mut command = bundled_runyte(root);
     command
         .arg("--serve")
         .arg("--project-root")
@@ -366,7 +377,7 @@ fn concurrent_standalone_processes_never_share_a_writable_log() {
     ];
     let children = (0..2)
         .map(|_| {
-            Command::new(env!("CARGO_BIN_EXE_runyte"))
+            bundled_runyte(&root)
                 .args(arguments)
                 .current_dir(&root)
                 .env("XDG_RUNTIME_DIR", test_runtime_dir(&root))
@@ -414,7 +425,7 @@ async fn a_second_process_is_refused_when_an_explicit_log_is_owned() {
     // SAFETY: `trace_bytes` is a live, NUL-terminated path and the mode is a
     // conventional private FIFO mode.
     assert_eq!(unsafe { libc::mkfifo(trace_bytes.as_ptr(), 0o600) }, 0);
-    let mut command = Command::new(env!("CARGO_BIN_EXE_runyte"));
+    let mut command = bundled_runyte(&root);
     command
         .args([
             "--standalone",
@@ -847,7 +858,7 @@ async fn no_document_clipboard_terminal_or_environment_value_reaches_a_record() 
     )
     .unwrap();
 
-    let mut command = Command::new(env!("CARGO_BIN_EXE_runyte"));
+    let mut command = bundled_runyte(&root);
     command
         .arg("--serve")
         .arg("--project-root")
@@ -952,7 +963,7 @@ fn the_top_level_failure_record_never_carries_a_propagated_error_chain() {
     let root = project("top-level-redaction");
     let destination = root.join("explicit.log");
     let trace = root.join(SECRET).join("input.trace");
-    let output = Command::new(env!("CARGO_BIN_EXE_runyte"))
+    let output = bundled_runyte(&root)
         .args([
             "--standalone",
             "--project-root",

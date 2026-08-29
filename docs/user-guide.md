@@ -252,7 +252,17 @@ Persistent mode uses a local host process that owns the workspace state and a
 client TUI that displays it. `--persistent` starts the host when necessary and
 connects the TUI. `--serve` runs the host in the foreground instead, for direct
 supervision or diagnostics; it is also the mechanism Runyte uses when starting
-or restarting a persistent session.
+or restarting a persistent session. After a foreground `--serve` process has
+begun startup, it observes its supervising parent for the rest of its lifetime
+and exits when that process exits. Linux uses a stable process descriptor when
+the kernel provides one, and macOS uses a process event queue, so PID reuse
+cannot transfer that ownership through either mechanism. If the kernel denies
+stable observation, Runyte falls back to checking the PID; Linux also detects
+an unreaped zombie in that fallback. Unix cannot identify an original parent
+that disappeared before Runyte began executing; a service manager launching
+`--serve` should therefore retain and stop the Runyte process directly. Hosts
+detached internally by Runyte remain independent of the launcher and continue
+serving after it returns.
 
 `:quit` closes the active pane; from the last pane it stops a clean persistent
 session and disconnects the TUI. `:quit-all` requests the same shutdown
@@ -269,7 +279,14 @@ may still manage the host.
 `runyte --session-list` (or `runyte -l`) lists running and recently visited
 persistent sessions with `ID`, `NAME`, `DIRECTORY`, `STATE`, `UNSAVED`, `TERMINALS`,
 `WAITING`, and `TUI` columns,
-most recently visited first.
+most recently visited first. By default it reads only the runtime and cache
+registry namespace selected by the current environment. Add
+`--all-namespaces` to include every validated live Runyte host in the current
+user's owner-wide inventory. Stopped recent-history rows remain local to the
+current namespace because there is no live host to publish them elsewhere. If
+two deliberately isolated namespaces host the same workspace, the broad list
+shows both live endpoints even though their workspace IDs and directories are
+the same.
 `STATE` is `running`, `stopped`, or `running (protocol N)` for a host left over
 from another version of Runyte. Such a host still holds the workspace, so
 nothing can attach to it or open a file through it, and its unsaved-buffer
@@ -302,6 +319,8 @@ runyte --session-start [WORKSPACE]
 runyte --session-stop [WORKSPACE]       # or runyte -s [WORKSPACE]
 runyte --session-restart [WORKSPACE]
 runyte --session-stop-all
+runyte --session-list --all-namespaces
+runyte --session-stop-all --all-namespaces
 runyte --session-clear-all
 ```
 
@@ -317,7 +336,10 @@ and stopping or retiring the host discards it. A restart does not
 retain clean buffers or other in-memory editor state. When a host used a
 non-default configuration, pass the same `--config PATH` while restarting it.
 `--session-stop-all` applies the same protected-state checks to every running
-session and continues after refusals so unrelated clean hosts still stop.
+session in the current registry namespace and continues after refusals so
+unrelated clean hosts still stop. Add `--all-namespaces` to apply it to every
+validated live endpoint in the owner-wide inventory instead, including each
+copy of a workspace hosted independently in more than one namespace.
 Add `--force` to make the protected-state loss explicit for every host.
 `--session-clear-all` removes every stopped row from recent history after
 rechecking the inventory; running sessions and project directories are left
@@ -329,6 +351,30 @@ owner-only permissions. A private user-wide cache registry makes both endpoint
 locations listable, while XDG-backed hosts also publish a runtime copy so a
 missing or unusable cache does not prevent discovery. Dead registrations are
 removed while listing, and stale sockets are recovered when a new host starts.
+Each host also publishes an owner-private inventory row below non-disposable
+account state (`~/.local/state/runyte/all-hosts/<boot>` on Linux and
+`~/Library/Application Support/Runyte/all-hosts/<boot>` on macOS), resolved
+through the operating-system account database rather than `$HOME`. The final
+directory is keyed by the kernel's boot identity, so machines sharing a home
+directory never overwrite or inspect one another's machine-local PIDs and Unix
+sockets, and a new boot does not inherit stale live-process identity. That
+stable, account-owned parent cannot be pre-claimed by another user in the
+system temporary directory. If the account home or boot identity cannot be
+resolved, publishing a new persistent host and explicit all-namespace
+operations fail with an error instead of silently using an incomplete
+inventory. Attaching to an already-running host and ordinary namespace listing
+do not resolve or depend on the broad inventory.
+Ordinary discovery and identity locking never read the broad inventory; it
+exists so an explicit `--all-namespaces` operation can find hosts whose XDG
+runtime and cache namespaces differ from its own. Broad listing reads the
+current namespace's recent history for display but never rewrites it from a
+host found outside that namespace. Inventory scans accept only
+private, non-symlinked records whose workspace identity, endpoint metadata,
+live process, and responsive Unix socket agree where process visibility is
+available. A responsive endpoint is retained when a PID namespace hides its
+process; an endpoint that cannot be observed conclusively is omitted without
+being removed.
+Graceful host retirement also removes its now-empty private endpoint directory.
 Persistent-session names live under the configured workspace state root,
 normally `.runyte/host-names/`. Detached startup carries the already-resolved
 workspace identity internally, so the child never rediscovers a project its

@@ -153,6 +153,7 @@ fn editor_help_hides_internal_options_and_uses_workspace_modes() {
     assert!(help.contains("-i, --init DIRECTORY"));
     assert!(!help.contains("--cwd-file"));
     assert!(!help.contains("--project-root"));
+    assert!(!help.contains("--detached-host"));
     assert!(!help.contains("--attach"));
     for spelling in [
         "--list-workspaces",
@@ -180,6 +181,7 @@ fn editor_help_hides_internal_options_and_uses_workspace_modes() {
     assert!(help.contains("--standalone"));
     assert!(help.contains("--persistent"));
     assert!(help.contains("-l, --session-list"));
+    assert!(help.contains("--all-namespaces"));
     assert!(help.contains("--session-start [WORKSPACE]"));
     assert!(help.contains("-s, --session-stop [WORKSPACE]"));
     assert!(help.contains("--session-rename WORKSPACE NAME"));

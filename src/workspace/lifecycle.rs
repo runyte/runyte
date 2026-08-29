@@ -438,6 +438,7 @@ pub async fn start_detached_host(endpoint: &LocalEndpoint, startup: HostStartup)
     let mut command = Command::new(&startup.executable);
     command
         .arg("--serve")
+        .arg("--detached-host")
         // The endpoint already names the workspace this host is being started
         // for, so the child is told it rather than left to rediscover it. Its
         // stdin is null, so a project whose root cannot be derived from the
@@ -456,6 +457,12 @@ pub async fn start_detached_host(endpoint: &LocalEndpoint, startup: HostStartup)
         // fallback endpoint must start at that same fallback endpoint even when
         // this process happens to have a usable XDG runtime directory.
         command.env_remove("XDG_RUNTIME_DIR");
+    }
+    if let Some(inventory_registry) = endpoint.inventory_registry() {
+        command.env("RUNYTE_ALL_HOSTS_DIR", inventory_registry);
+    }
+    if let Some(supervisor) = endpoint.test_supervisor() {
+        command.env("RUNYTE_TEST_SUPERVISOR_PID", supervisor.to_string());
     }
     for (key, value) in &startup.env {
         command.env(key, value);

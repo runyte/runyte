@@ -29,8 +29,9 @@ use super::{
         resolve_workspace_endpoint_with_runtime, shutdown_host, terminate_incompatible_host,
     },
     transport::{
-        LocalEndpoint, MAX_HOST_NAME_BYTES, MAX_PERSISTED_PATH_BYTES, RegisteredHost, decode_path,
-        encode_path, registered_hosts_in, registry_roots, validate_host_name, workspace_id,
+        LocalEndpoint, MAX_HOST_NAME_BYTES, MAX_PERSISTED_PATH_BYTES, RegisteredHost,
+        all_registry_roots, decode_path, encode_path, registered_hosts_in, registry_roots,
+        validate_host_name, workspace_id,
     },
 };
 
@@ -571,6 +572,16 @@ pub async fn known_workspaces(state: &Path) -> Result<Vec<WorkspaceRow>> {
     refresh(&registry_roots(), recent_file().as_deref(), state, None).await
 }
 
+/// Enumerates the current namespace's recent history together with every live
+/// host in the explicit owner-wide inventory.
+///
+/// Recent history remains namespace-local: a stopped workspace has no host to
+/// discover outside the namespace that recorded it.
+pub async fn known_workspaces_all_namespaces(state: &Path) -> Result<Vec<WorkspaceRow>> {
+    let roots = all_registry_roots()?;
+    refresh_with_name_persistence(&roots, recent_file().as_deref(), state, None, false).await
+}
+
 /// Removes every stopped session from the visited history and returns the
 /// number of history entries removed. Running sessions remain discoverable
 /// through their endpoint registry even when they have no recent entry.
@@ -686,6 +697,21 @@ async fn refresh(
     state: &Path,
     runtime: Option<&Path>,
 ) -> Result<Vec<WorkspaceRow>> {
+    refresh_with_name_persistence(roots, recents, state, runtime, true).await
+}
+
+/// Builds the workspace inventory, optionally persisting names learned from
+/// the scanned hosts back into this namespace's recent history.
+///
+/// Explicit owner-wide listing disables that write: a host in another
+/// namespace may deliberately use a different name for the same project.
+async fn refresh_with_name_persistence(
+    roots: &[PathBuf],
+    recents: Option<&Path>,
+    state: &Path,
+    runtime: Option<&Path>,
+    persist_host_names: bool,
+) -> Result<Vec<WorkspaceRow>> {
     let scan_roots = roots.to_vec();
     let recent_path = recents.map(Path::to_path_buf);
     let (hosts, mut remembered) = tokio::task::spawn_blocking(move || {
@@ -772,7 +798,7 @@ async fn refresh(
             .unwrap_or(usize::MAX);
         (recency, row.project_root.clone())
     });
-    if let Some(path) = recents {
+    if persist_host_names && let Some(path) = recents {
         let path = path.to_path_buf();
         let refreshed_rows = rows.clone();
         tokio::task::spawn_blocking(move || {
@@ -2536,6 +2562,78 @@ mod tests {
             named(read_recents(Some(&path)).unwrap()),
             vec![(workspace, Some("concurrent-name".to_owned()))]
         );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn owner_wide_refresh_does_not_merge_host_names_into_local_recents() {
+        use crate::workspace::transport::{EndpointMetadata, LocalServer, PROTOCOL_VERSION};
+
+        let root = unique_test_root("broad-name-isolation");
+        let project = root.join("project");
+        let recents = root.join("cache/workspaces.json");
+        let runtime = std::env::temp_dir().join(format!(
+            "ryt-bn-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(project.join(".runyte")).unwrap();
+        fs::create_dir_all(&runtime).unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&runtime, fs::Permissions::from_mode(0o700)).unwrap();
+        let project = project.canonicalize().unwrap();
+        record_recent_workspace_in(&recents, &project).unwrap();
+        rename_recent_workspace_in(&recents, &project, "local-name").unwrap();
+        let endpoint = LocalEndpoint::discover_with_runtime(
+            &project.join(".runyte"),
+            &project,
+            Some(&runtime),
+        )
+        .unwrap();
+        let server = match LocalServer::bind(&endpoint).await {
+            Ok(server) => server,
+            Err(error)
+                if error.chain().any(|cause| {
+                    cause
+                        .downcast_ref::<io::Error>()
+                        .is_some_and(|error| error.raw_os_error() == Some(libc::EPERM))
+                }) =>
+            {
+                fs::remove_dir_all(runtime).unwrap();
+                fs::remove_dir_all(root).unwrap();
+                return;
+            }
+            Err(error) => panic!("cannot bind test transport: {error:#}"),
+        };
+        endpoint.rename("outside-name").unwrap();
+        let mut metadata: EndpointMetadata =
+            serde_json::from_slice(&fs::read(endpoint.metadata()).unwrap()).unwrap();
+        metadata.protocol = PROTOCOL_VERSION.checked_sub(1).unwrap();
+        let metadata = serde_json::to_vec_pretty(&metadata).unwrap();
+        fs::write(endpoint.metadata(), &metadata).unwrap();
+        let registry = runtime.join("runyte/hosts");
+        fs::write(registry.join(format!("{}.json", endpoint.id())), &metadata).unwrap();
+
+        let rows = refresh_with_name_persistence(
+            std::slice::from_ref(&registry),
+            Some(&recents),
+            Path::new(".runyte"),
+            Some(&runtime),
+            false,
+        )
+        .await
+        .unwrap();
+        assert_eq!(rows[0].name.as_deref(), Some("outside-name"));
+        assert_eq!(
+            read_recents(Some(&recents)).unwrap()[0].name.as_deref(),
+            Some("local-name")
+        );
+
+        drop(server);
+        fs::remove_dir_all(runtime).unwrap();
         fs::remove_dir_all(root).unwrap();
     }
 

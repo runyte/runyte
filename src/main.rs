@@ -67,12 +67,14 @@ use runyte::workspace::lifecycle::{
 use runyte::workspace::transport::{
     ClientRequest, FeatureGroup, HostResponse, IncompatibleHost, LocalClient, LocalEndpoint,
     LocalServer, ServerEvent, TransportChange, decode_path, encode_path,
+    registered_hosts_all_namespaces,
 };
 #[cfg(unix)]
 use runyte::workspace::{
     WorkspaceService, abbreviated_id_width, clear_stopped_sessions, ensure_recent_workspace,
-    known_workspaces, record_recent_workspace, record_workspace_activity, rename_known_workspace,
-    resolve_known_workspace, resolve_known_workspace_from_directory,
+    known_workspaces, known_workspaces_all_namespaces, record_recent_workspace,
+    record_workspace_activity, rename_known_workspace, resolve_known_workspace,
+    resolve_known_workspace_from_directory,
 };
 
 fn main() -> Result<()> {
@@ -183,6 +185,209 @@ fn terminated(signal: i32) -> anyhow::Error {
     TerminatedBySignal(signal).into()
 }
 
+#[cfg(unix)]
+#[derive(Clone, Copy)]
+enum HostSupervisorKind {
+    Parent,
+    TestProcess,
+}
+
+#[cfg(unix)]
+struct HostSupervisor {
+    kind: HostSupervisorKind,
+    pid: libc::pid_t,
+    #[cfg(target_os = "linux")]
+    pidfd: Option<std::os::fd::OwnedFd>,
+    #[cfg(target_os = "macos")]
+    process_queue: Option<std::os::fd::OwnedFd>,
+}
+
+#[cfg(unix)]
+impl HostSupervisor {
+    fn for_launch(arguments: &LaunchArguments) -> Result<Option<Self>> {
+        if arguments.mode != LaunchMode::Serve {
+            return Ok(None);
+        }
+        if let Some(value) = std::env::var_os("RUNYTE_TEST_SUPERVISOR_PID") {
+            let pid = value
+                .to_string_lossy()
+                .parse::<libc::pid_t>()
+                .context("RUNYTE_TEST_SUPERVISOR_PID must be a positive process ID")?;
+            anyhow::ensure!(pid > 0, "RUNYTE_TEST_SUPERVISOR_PID must be positive");
+            return Self::new(HostSupervisorKind::TestProcess, pid).map(Some);
+        }
+        if arguments.detached_host {
+            return Ok(None);
+        }
+        // SAFETY: `getppid` has no preconditions and only reads process
+        // metadata maintained by the kernel.
+        Self::new(HostSupervisorKind::Parent, unsafe { libc::getppid() }).map(Some)
+    }
+
+    fn new(kind: HostSupervisorKind, pid: libc::pid_t) -> Result<Self> {
+        #[cfg(target_os = "linux")]
+        let pidfd = open_pidfd(pid)?;
+        #[cfg(target_os = "macos")]
+        let process_queue = open_process_queue(pid)?;
+        Ok(Self {
+            kind,
+            pid,
+            #[cfg(target_os = "linux")]
+            pidfd,
+            #[cfg(target_os = "macos")]
+            process_queue,
+        })
+    }
+
+    fn exited(&self) -> bool {
+        #[cfg(target_os = "linux")]
+        if let Some(pidfd) = self.pidfd.as_ref()
+            && pidfd_has_exited(pidfd)
+        {
+            return true;
+        }
+        #[cfg(target_os = "macos")]
+        if let Some(process_queue) = self.process_queue.as_ref()
+            && process_queue_has_exited(process_queue)
+        {
+            return true;
+        }
+        match self.kind {
+            HostSupervisorKind::Parent => {
+                // SAFETY: `getppid` has no preconditions.
+                (unsafe { libc::getppid() }) != self.pid
+            }
+            HostSupervisorKind::TestProcess => {
+                // SAFETY: signal zero does not deliver a signal; it only asks
+                // the kernel whether this positive PID is observable.
+                let result = unsafe { libc::kill(self.pid, 0) };
+                result == -1 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+                    || process_is_zombie(self.pid)
+            }
+        }
+    }
+
+    fn pid(&self) -> libc::pid_t {
+        self.pid
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn open_pidfd(pid: libc::pid_t) -> Result<Option<std::os::fd::OwnedFd>> {
+    use std::os::fd::FromRawFd;
+
+    // SAFETY: `pid` is positive and the pidfd syscall takes no pointer
+    // arguments. A successful return transfers one fresh descriptor.
+    let descriptor = unsafe { libc::syscall(libc::SYS_pidfd_open, pid, 0) };
+    if descriptor >= 0 {
+        // SAFETY: a non-negative pidfd result is a fresh owned descriptor.
+        return Ok(Some(unsafe {
+            std::os::fd::OwnedFd::from_raw_fd(descriptor as libc::c_int)
+        }));
+    }
+    let error = std::io::Error::last_os_error();
+    match error.raw_os_error() {
+        Some(libc::ENOSYS | libc::EINVAL | libc::EPERM) => Ok(None),
+        Some(libc::ESRCH) => anyhow::bail!("host supervisor process {pid} already exited"),
+        _ => Err(error).context("cannot observe host supervisor process"),
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn pidfd_has_exited(pidfd: &std::os::fd::OwnedFd) -> bool {
+    use std::os::fd::AsRawFd;
+
+    let mut descriptor = libc::pollfd {
+        fd: pidfd.as_raw_fd(),
+        events: libc::POLLIN,
+        revents: 0,
+    };
+    (unsafe { libc::poll(&mut descriptor, 1, 0) }) > 0
+        && descriptor.revents & (libc::POLLIN | libc::POLLHUP | libc::POLLERR) != 0
+}
+
+#[cfg(target_os = "macos")]
+fn open_process_queue(pid: libc::pid_t) -> Result<Option<std::os::fd::OwnedFd>> {
+    use std::os::fd::{FromRawFd, OwnedFd};
+
+    // SAFETY: `kqueue` has no preconditions and returns a fresh descriptor.
+    let descriptor = unsafe { libc::kqueue() };
+    if descriptor == -1 {
+        return Err(std::io::Error::last_os_error())
+            .context("cannot create host supervisor process queue");
+    }
+    // SAFETY: a successful `kqueue` call returns a fresh owned descriptor.
+    let queue = unsafe { OwnedFd::from_raw_fd(descriptor) };
+    let change = libc::kevent {
+        ident: pid as libc::uintptr_t,
+        filter: libc::EVFILT_PROC,
+        flags: libc::EV_ADD | libc::EV_ENABLE | libc::EV_CLEAR,
+        fflags: libc::NOTE_EXIT,
+        data: 0,
+        udata: std::ptr::null_mut(),
+    };
+    // SAFETY: `queue` is a live kqueue descriptor and `change` points to one
+    // fully initialized event registration. No output event list is supplied.
+    let status = unsafe {
+        libc::kevent(
+            descriptor,
+            &change,
+            1,
+            std::ptr::null_mut(),
+            0,
+            std::ptr::null(),
+        )
+    };
+    if status == 0 {
+        return Ok(Some(queue));
+    }
+    let error = std::io::Error::last_os_error();
+    match error.raw_os_error() {
+        Some(libc::EPERM) => Ok(None),
+        Some(libc::ESRCH | libc::ENOENT) => {
+            anyhow::bail!("host supervisor process {pid} already exited")
+        }
+        _ => Err(error).context("cannot observe host supervisor process"),
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn process_queue_has_exited(process_queue: &std::os::fd::OwnedFd) -> bool {
+    use std::os::fd::AsRawFd;
+
+    let mut event = std::mem::MaybeUninit::<libc::kevent>::uninit();
+    let timeout = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    // SAFETY: the kqueue descriptor is live, the output has capacity for one
+    // event, and the zero timeout performs a non-blocking observation.
+    (unsafe {
+        libc::kevent(
+            process_queue.as_raw_fd(),
+            std::ptr::null(),
+            0,
+            event.as_mut_ptr(),
+            1,
+            &timeout,
+        )
+    }) > 0
+}
+
+#[cfg(target_os = "linux")]
+fn process_is_zombie(pid: libc::pid_t) -> bool {
+    fs::read_to_string(format!("/proc/{pid}/stat"))
+        .ok()
+        .and_then(|stat| stat.rsplit_once(") ").map(|(_, suffix)| suffix.to_owned()))
+        .and_then(|suffix| suffix.chars().next())
+        .is_some_and(|state| matches!(state, 'Z' | 'X'))
+}
+
+#[cfg(all(unix, not(target_os = "linux")))]
+fn process_is_zombie(_pid: libc::pid_t) -> bool {
+    false
+}
+
 #[cfg(not(unix))]
 struct TerminationSignals;
 
@@ -199,6 +404,8 @@ impl TerminationSignals {
 
 async fn run(startup: &mut StartupTrace) -> Result<()> {
     let mut arguments = LaunchArguments::parse()?;
+    #[cfg(unix)]
+    let supervising_parent = HostSupervisor::for_launch(&arguments)?;
     let show_startup_about = starts_on_about(&arguments);
     startup.mark(StartupPhase::CliParsed);
     if arguments.help {
@@ -235,7 +442,7 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
             return match arguments.mode {
                 LaunchMode::ListSessions => {
                     let config = Config::load(arguments.config.as_deref())?.0;
-                    list_sessions(&config.workspace.state).await
+                    list_sessions(&config.workspace.state, arguments.all_namespaces).await
                 }
                 LaunchMode::StartSession => {
                     let selector = arguments
@@ -256,6 +463,7 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
                         &config.workspace.state,
                         config_path.as_deref(),
                         arguments.force,
+                        arguments.all_namespaces,
                     )
                     .await
                 }
@@ -625,7 +833,14 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
             if let Some(recorded) = recorded_workspace.as_ref() {
                 endpoint.store_name_if_absent(&recorded.name)?;
             }
-            return run_host_server(app, endpoint, startup, config_path.as_deref()).await;
+            return run_host_server(
+                app,
+                endpoint,
+                startup,
+                config_path.as_deref(),
+                supervising_parent,
+            )
+            .await;
         }
         #[cfg(not(unix))]
         anyhow::bail!("persistent mode is not yet supported on this platform");
@@ -1000,6 +1215,7 @@ async fn run_host_server(
     endpoint: LocalEndpoint,
     startup: &mut StartupTrace,
     config_path: Option<&Path>,
+    supervising_parent: Option<HostSupervisor>,
 ) -> Result<()> {
     let mut termination = TerminationSignals::new()?;
     host.enable_persistent_session();
@@ -1414,6 +1630,18 @@ async fn run_host_server(
                 changed |= host.refresh_session_activity();
             }
             _ = idle_tick.tick() => {
+                if supervising_parent
+                    .as_ref()
+                    .is_some_and(HostSupervisor::exited)
+                {
+                    log_info!(
+                        "host",
+                        "foreground supervisor exited; retiring persistent session";
+                        "parent" => supervising_parent.as_ref().expect("checked as some").pid()
+                    );
+                    shutting_down = true;
+                    continue;
+                }
                 // Read per tick rather than once at startup: the settings view
                 // applies this immediately, and a host that had to be restarted
                 // to honor its own retirement interval would be answering with
@@ -2765,8 +2993,12 @@ async fn run_wait(
 }
 
 #[cfg(unix)]
-async fn list_sessions(state: &Path) -> Result<()> {
-    let workspaces = known_workspaces(state).await?;
+async fn list_sessions(state: &Path, all_namespaces: bool) -> Result<()> {
+    let workspaces = if all_namespaces {
+        known_workspaces_all_namespaces(state).await?
+    } else {
+        known_workspaces(state).await?
+    };
     let width = abbreviated_id_width(workspaces.iter().map(|workspace| workspace.id.as_str()));
     let mut rows = workspaces
         .iter()
@@ -2935,7 +3167,30 @@ async fn stop_selected_session(endpoint: &LocalEndpoint, force: bool) -> Result<
 /// Tries every running host even when one refuses, so a protected session
 /// cannot prevent unrelated clean sessions from stopping.
 #[cfg(unix)]
-async fn stop_all_sessions(state: &Path, config_path: Option<&Path>, force: bool) -> Result<()> {
+async fn stop_all_sessions(
+    state: &Path,
+    config_path: Option<&Path>,
+    force: bool,
+    all_namespaces: bool,
+) -> Result<()> {
+    if all_namespaces {
+        let hosts = registered_hosts_all_namespaces()?;
+        let total = hosts.len();
+        let mut stopped = 0;
+        let mut failures = Vec::new();
+        for host in hosts {
+            match stop_selected_session(host.endpoint(), force).await {
+                Ok(()) => stopped += 1,
+                Err(error) => failures.push(format!(
+                    "{} ({}): {error:#}",
+                    host.name.as_deref().unwrap_or("unnamed"),
+                    host.project_root.display()
+                )),
+            }
+        }
+        return report_stop_all(stopped, total, failures);
+    }
+
     let running = known_workspaces(state)
         .await?
         .into_iter()
@@ -2945,11 +3200,18 @@ async fn stop_all_sessions(state: &Path, config_path: Option<&Path>, force: bool
     let mut stopped = 0;
     let mut failures = Vec::new();
     for workspace in running {
-        let result =
-            match resolve_lifecycle_endpoint(&workspace.project_root, state, config_path).await {
-                Ok(endpoint) => stop_selected_session(&endpoint, force).await,
-                Err(error) => Err(error),
-            };
+        let endpoint =
+            resolve_registered_host(&workspace.project_root).map(|host| host.endpoint().clone());
+        let result = match endpoint {
+            Ok(endpoint) => stop_selected_session(&endpoint, force).await,
+            Err(_) => {
+                match resolve_lifecycle_endpoint(&workspace.project_root, state, config_path).await
+                {
+                    Ok(endpoint) => stop_selected_session(&endpoint, force).await,
+                    Err(error) => Err(error),
+                }
+            }
+        };
         match result {
             Ok(()) => stopped += 1,
             Err(error) => failures.push(format!(
@@ -2959,6 +3221,11 @@ async fn stop_all_sessions(state: &Path, config_path: Option<&Path>, force: bool
             )),
         }
     }
+    report_stop_all(stopped, total, failures)
+}
+
+#[cfg(unix)]
+fn report_stop_all(stopped: usize, total: usize, failures: Vec<String>) -> Result<()> {
     if failures.is_empty() {
         println!(
             "stopped {stopped} session{}",
@@ -3679,7 +3946,9 @@ PERSISTENT SESSIONS:
     -s, --session-stop [WORKSPACE]
                          Stop the selected or current session
         --session-stop-all
-                         Stop every running session
+                         Stop every running session in the current namespace
+        --all-namespaces With session-list or session-stop-all, include every
+                         validated live session owned by the current user
         --session-clear-all
                          Clear every stopped session from the recent list
         --session-restart [WORKSPACE]
