@@ -24,6 +24,8 @@ use super::{
     is_refreshed_projection, selection_is_deliberate,
 };
 
+const AUTOMATIC_GIT_INTERACTION_QUIET: Duration = Duration::from_millis(250);
+
 /// Git-service bookkeeping and semantic row identities owned by the editor's
 /// Git integration.
 ///
@@ -306,17 +308,19 @@ impl App {
     }
 
     pub(super) fn git_refresh_spec(&self, repository: &Repository) -> RefreshSpec {
-        let visible = self
-            .panes
-            .values()
-            .map(|pane| pane.buffer)
-            .collect::<HashSet<_>>();
-        let mut staged_paths = self
-            .buffers
+        let visible_panes = self.maximized.as_ref().map_or_else(
+            || self.panes.keys().copied().collect::<Vec<_>>(),
+            |maximized| vec![maximized.pane],
+        );
+        let visible = visible_panes
             .iter()
-            .enumerate()
-            .filter_map(|(index, buffer)| {
-                (!self.closed_buffers.contains(&index) && buffer.kind == BufferKind::File)
+            .filter_map(|pane| self.panes.get(pane).map(|pane| pane.buffer))
+            .collect::<HashSet<_>>();
+        let mut staged_paths = visible
+            .iter()
+            .filter_map(|index| {
+                let buffer = &self.buffers[*index];
+                (!self.closed_buffers.contains(index) && buffer.kind == BufferKind::File)
                     .then_some(buffer.path.as_ref())
                     .flatten()
                     .filter(|path| self.workspace_contains_path(path) && repository.contains(path))
@@ -338,9 +342,9 @@ impl App {
                 .then_with(|| (left.1 == DiffScope::Staged).cmp(&(right.1 == DiffScope::Staged)))
         });
         file_diffs.dedup();
-        let mut log_anchors = self
-            .panes
-            .values()
+        let mut log_anchors = visible_panes
+            .iter()
+            .filter_map(|pane| self.panes.get(pane))
             .filter(|pane| self.buffers[pane.buffer].is_git_log())
             .filter_map(|pane| {
                 let line = self.buffers[pane.buffer].offset_to_row(pane.head());
@@ -356,32 +360,27 @@ impl App {
             branches: visible.iter().any(|index| {
                 !self.closed_buffers.contains(index) && self.buffers[*index].is_git_branches()
             }),
-            // On the buffer rather than on a pane showing it, because the list
-            // is rewritten from the same condition: one that is open but
-            // covered still has its rows replaced, and rows without their
-            // numbers would lose the column until the next refresh.
-            stats: self.git_status_buffer().is_some(),
+            stats: self
+                .git_status_buffer()
+                .is_some_and(|index| visible.contains(&index)),
             staged_diff: self.git_state.index_buffer.is_some_and(|index| {
                 visible.contains(&index) && !self.closed_buffers.contains(&index)
             }),
             file_diffs,
-            worktrees: self
-                .panes
-                .values()
-                .any(|pane| self.buffers[pane.buffer].is_git_worktrees()),
+            worktrees: self.panes.iter().any(|(pane, value)| {
+                visible_panes.contains(pane) && self.buffers[value.buffer].is_git_worktrees()
+            }),
             // Only the first page tracks the branch tip. Every later page sits
             // behind a commit cursor, so its history cannot change under the
             // person and re-reading it would just fight their paging.
             log: self.git_state.log_page == 0
-                && self
-                    .panes
-                    .values()
-                    .any(|pane| self.buffers[pane.buffer].is_git_log()),
+                && self.panes.iter().any(|(pane, value)| {
+                    visible_panes.contains(pane) && self.buffers[value.buffer].is_git_log()
+                }),
             log_anchors,
-            stashes: self
-                .panes
-                .values()
-                .any(|pane| self.buffers[pane.buffer].is_git_stash()),
+            stashes: self.panes.iter().any(|(pane, value)| {
+                visible_panes.contains(pane) && self.buffers[value.buffer].is_git_stash()
+            }),
         }
     }
 
@@ -398,17 +397,41 @@ impl App {
         self.config.git.refresh_interval_seconds
     }
 
+    pub fn git_monitor_repository(&self) -> Option<Repository> {
+        (self.periodic_git_refresh_seconds() != 0)
+            .then(|| self.git.repository().cloned())
+            .flatten()
+    }
+
+    pub(crate) fn mark_git_snapshot_stale(&mut self) {
+        self.git_state.snapshot_stale = true;
+    }
+
+    pub(crate) fn visible_git_refresh_spec(&self) -> Option<RefreshSpec> {
+        self.git
+            .repository()
+            .map(|repository| self.git_refresh_spec(repository))
+    }
+
     pub(crate) fn has_visible_git_state(&self) -> bool {
-        self.panes.values().any(|pane| {
+        let visible_panes = self.maximized.as_ref().map_or_else(
+            || self.panes.keys().copied().collect::<Vec<_>>(),
+            |maximized| vec![maximized.pane],
+        );
+        visible_panes.iter().any(|pane| {
+            let Some(pane) = self.panes.get(pane) else {
+                return false;
+            };
             let buffer = &self.buffers[pane.buffer];
             is_refreshed_projection(buffer)
-                || buffer.path.as_deref().is_some_and(|path| {
-                    self.workspace_contains_path(path)
-                        && self
-                            .git
-                            .repository()
-                            .is_some_and(|repository| repository.contains(path))
-                })
+                || (buffer.kind == BufferKind::File
+                    && buffer.path.as_deref().is_some_and(|path| {
+                        self.workspace_contains_path(path)
+                            && self
+                                .git
+                                .repository()
+                                .is_some_and(|repository| repository.contains(path))
+                    }))
         })
     }
 
@@ -427,10 +450,11 @@ impl App {
         }
         // A refresh rebuilds the projection and moves the cursor to the
         // nearest surviving row, which is disruptive to walk into while
-        // reading or navigating. Waiting out the refresh interval since the
-        // last keystroke means it only lands once the person has paused.
+        // reading or navigating. The filesystem monitor already debounces a
+        // write burst; this shorter interaction quiet period avoids tying UI
+        // responsiveness to the much longer fallback reconciliation cadence.
         if Instant::now().saturating_duration_since(self.last_interaction)
-            < Duration::from_secs(self.periodic_git_refresh_seconds() as u64)
+            < AUTOMATIC_GIT_INTERACTION_QUIET
         {
             return true;
         }
@@ -443,17 +467,21 @@ impl App {
         })
     }
 
-    pub(crate) fn request_periodic_git_refresh(&mut self) -> bool {
+    pub(crate) fn request_automatic_git_refresh(&mut self, spec: RefreshSpec) -> bool {
         if self
             .git_state
             .progress
             .values()
-            .any(|progress| progress.mutation)
+            .any(|progress| progress.mutation || progress.operation == "refresh repository")
             || self.interaction_defers_git_refresh()
         {
             return false;
         }
-        self.request_git_refresh()
+        let Some(repository) = self.git.repository().cloned() else {
+            return false;
+        };
+        self.request_git(GitOperation::Refresh { repository, spec })
+            .is_some()
     }
 
     pub fn apply_git_service_event(&mut self, event: GitServiceEvent) {

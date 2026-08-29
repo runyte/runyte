@@ -22,6 +22,7 @@ pub mod file_picker;
 pub mod finder;
 pub mod fs_plan;
 pub mod git;
+pub mod git_monitor;
 pub mod hash;
 pub mod headless;
 pub mod help;

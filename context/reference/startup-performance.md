@@ -66,6 +66,31 @@ First paint is the first byte of output; ready is when drawing goes quiet.
 | helix | 0.00 % | 0 |
 | runyte | 1.59 % | 66 |
 
+### Event-driven Git follow-up, 2026-08-29
+
+Measured after replacing timed Git polling with debounced filesystem
+invalidation. The same release build and `medium.rs` fixture were run with LSP
+disabled so language-server indexing could not be counted as Git idle work. A
+`git` wrapper counted every Runyte subprocess while delegating unchanged to
+`/usr/bin/git`.
+
+| Shape | Window | Idle CPU | Screen writes | Git subprocesses during window |
+| --- | ---: | ---: | ---: | ---: |
+| One visible tracked file | 10 s | 0.40 % | 0 | 0 |
+| 100 open repository files, one visible | 5 s | 0.80 % | 0 | 0 |
+
+Both shapes performed one initial snapshot before the measurement window. The
+one-file repository used six startup subprocesses: the three repository-layout
+queries, status, `HEAD`, and the visible file's staged content. The 100-buffer
+repository still used only five: three discovery queries, status, and staged
+content for `file-1.rs`; the 99 hidden buffers added no Git subprocess.
+
+A separate burst appended to the visible file twice, staged it externally,
+committed externally (moving the index, `HEAD`, and refs), then appended once
+more before the 150 ms quiet period elapsed. Runyte issued one refresh request,
+which used four subprocesses for status, `HEAD`, index entry, and blob content.
+No second refresh followed the duplicate worktree and metadata observations.
+
 ### Which rows compare editors
 
 **`large.md` is the only row where all three do the same work**, and Runyte is
@@ -132,7 +157,7 @@ so no new presentation state is required. `ParseRequest` currently carries a
 prior `DocumentSyntax` and would need a variant that carries text and language
 instead.
 
-Runyte's idle cost comes from timed Git refresh rather than from the editor
-being awake generally: outside a Git repository the same measurement reports no
-CPU and no screen writes. This is tracked separately in
-`context/issues/event_driven_git_refresh.md`.
+In the first result set, Runyte's idle writes came from timed Git refresh rather
+than from the editor being awake generally. The event-driven follow-up above
+records the replacement behavior: no Git subprocess and no screen write during
+an unchanged window, with the longer timer retained only as reconciliation.

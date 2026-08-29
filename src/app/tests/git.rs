@@ -596,7 +596,7 @@ fn periodic_refresh_defers_to_an_open_prompt_and_to_search_matches() {
 }
 
 #[test]
-fn periodic_refresh_waits_out_the_interval_after_the_last_keystroke() {
+fn automatic_refresh_waits_out_a_short_quiet_period_after_the_last_keystroke() {
     let root = temporary("git-refresh-idle");
     fs::create_dir_all(&root).unwrap();
     let mut app = App::new_in_isolated_project(
@@ -606,20 +606,18 @@ fn periodic_refresh_waits_out_the_interval_after_the_last_keystroke() {
         ))))),
     )
     .unwrap();
-    let interval = app.periodic_git_refresh_seconds() as u64;
-    assert!(interval > 0, "this test needs a live refresh interval");
-
     // Just acted: a refresh now would move the cursor mid-navigation.
     app.handle_input(InputEvent::Key(KeyStroke::char('j')))
         .unwrap();
     assert!(app.interaction_defers_git_refresh());
 
-    // Still inside the interval.
-    app.last_interaction = Instant::now() - Duration::from_secs(interval - 1);
+    // Still inside the interaction quiet period, independently from the much
+    // longer fallback reconciliation interval.
+    app.last_interaction = Instant::now() - Duration::from_millis(100);
     assert!(app.interaction_defers_git_refresh());
 
-    // Paused for the whole interval, so reconciliation is welcome.
-    app.last_interaction = Instant::now() - Duration::from_secs(interval);
+    // Paused beyond the short quiet period, so reconciliation is welcome.
+    app.last_interaction = Instant::now() - Duration::from_secs(1);
     assert!(!app.interaction_defers_git_refresh());
 
     // Any further input restarts the wait, including pointer input.
@@ -4562,7 +4560,7 @@ fn a_refreshed_diff_follows_the_same_line_in_the_same_hunk() {
 }
 
 #[test]
-fn async_refresh_keeps_staged_bases_for_hidden_open_files() {
+fn async_refresh_requests_staged_bases_only_for_visible_open_files() {
     let (root, mut app, _) = staged_project("async-open-bases");
     let first = root.join("first.rs");
     let second = root.join("second.rs");
@@ -4575,12 +4573,20 @@ fn async_refresh_keeps_staged_bases_for_hidden_open_files() {
     let repository = app.git.repository().unwrap().clone();
     let spec = app.git_refresh_spec(&repository);
 
-    assert!(spec.staged_paths.contains(&first));
     assert!(spec.staged_paths.contains(&second));
+    assert!(
+        !spec.staged_paths.contains(&first),
+        "a hidden file caused an unnecessary staged-content read"
+    );
     assert!(
         !spec.staged_paths.contains(&root),
         "a directory buffer became an empty Git pathspec"
     );
+
+    app.split(Axis::Horizontal, Some(first.clone())).unwrap();
+    app.toggle_maximized(MaximizedView::Fullscreen);
+    let maximized = app.git_refresh_spec(&repository);
+    assert_eq!(maximized.staged_paths, vec![first]);
     fs::remove_dir_all(root).unwrap();
 }
 

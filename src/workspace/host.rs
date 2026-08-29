@@ -14,6 +14,7 @@ use crate::{
     command::CommandInvocation,
     file_picker::{FilePickerEvent, FileScanner},
     git::GitServiceEvent,
+    git_monitor::GitInvalidation,
     input::{InputEvent, PointerEvent},
     key_hints::KeyHintState,
     keymap::BindingAvailability,
@@ -180,6 +181,7 @@ pub enum HostEvent {
     Lsp(LspEvent),
     FilePicker(FilePickerEvent),
     FileObservation(FileObservationEvent),
+    GitInvalidation(GitInvalidation),
     Git(GitServiceEvent),
     Terminal(crate::terminal::TerminalOutput),
     #[cfg(unix)]
@@ -211,6 +213,8 @@ pub struct WorkspaceHost {
     next_frame: u64,
     prepared: Option<PreparedFrame>,
     last_git_refresh: Instant,
+    git_dirty: bool,
+    git_reconciled: Option<crate::git::RefreshSpec>,
     next_wait_token: u64,
     wait_requests: HashMap<WaitToken, WaitRequest>,
     wait_order: VecDeque<WaitToken>,
@@ -274,6 +278,8 @@ impl WorkspaceHost {
             next_frame: 1,
             prepared: None,
             last_git_refresh: Instant::now(),
+            git_dirty: false,
+            git_reconciled: None,
             next_wait_token: 1,
             wait_requests: HashMap::new(),
             wait_order: VecDeque::new(),
@@ -1019,6 +1025,7 @@ impl WorkspaceHost {
             HostEvent::Lsp(event) => self.app.apply_lsp_event(event),
             HostEvent::FilePicker(event) => self.app.apply_file_picker_event(event),
             HostEvent::FileObservation(event) => self.app.apply_file_observation(event),
+            HostEvent::GitInvalidation(event) => self.apply_git_invalidation(event),
             HostEvent::Git(event) => self.app.apply_git_service_event(event),
             HostEvent::Terminal(output) => self.app.apply_terminal_output(output),
             #[cfg(unix)]
@@ -1057,18 +1064,51 @@ impl WorkspaceHost {
         self.app.attach_file_scanner(scanner);
     }
 
-    /// Host-owned automatic Git timer. It remains dormant with no relevant
-    /// visible projection and when the configured interval is zero.
+    fn apply_git_invalidation(&mut self, event: GitInvalidation) {
+        if self
+            .app
+            .git_monitor_repository()
+            .is_some_and(|repository| repository.workdir() == event.repository)
+        {
+            self.git_dirty = true;
+            self.git_reconciled = None;
+            self.app.mark_git_snapshot_stale();
+        }
+    }
+
+    /// Reconciles observed invalidation promptly and otherwise uses the
+    /// configured interval as a maximum-staleness fallback. Dirty state is
+    /// retained while no Git consumer is visible or interaction defers a
+    /// projection rewrite.
     pub fn refresh_git_if_due(&mut self, now: Instant) -> bool {
         let seconds = self.app.periodic_git_refresh_seconds();
-        if seconds == 0
-            || !self.app.has_visible_git_state()
-            || now.saturating_duration_since(self.last_git_refresh)
-                < Duration::from_secs(seconds as u64)
-        {
+        if seconds == 0 {
+            self.git_dirty = false;
+            self.git_reconciled = None;
             return false;
         }
-        if self.app.request_periodic_git_refresh() {
+        if !self.app.has_visible_git_state() {
+            return false;
+        }
+        let Some(spec) = self.app.visible_git_refresh_spec() else {
+            return false;
+        };
+        let fallback_due = now.saturating_duration_since(self.last_git_refresh)
+            >= Duration::from_secs(seconds as u64);
+        let dirty_due = self.git_dirty
+            && self
+                .git_reconciled
+                .as_ref()
+                .is_none_or(|reconciled| !reconciled.covers(&spec));
+        if !dirty_due && !fallback_due {
+            return false;
+        }
+        if self.app.request_automatic_git_refresh(spec.clone()) {
+            if self.git_dirty {
+                self.git_reconciled
+                    .get_or_insert_with(Default::default)
+                    .merge(&spec);
+            }
             self.last_git_refresh = now;
             true
         } else {
@@ -1143,15 +1183,25 @@ mod tests {
         buffer::BufferKind,
         clipboard::SystemClipboard,
         command::{CommandExecutionContext, EditorCommand, Mode},
+        config::Config,
+        git::{GitCliProvider, GitOperation, GitService, GitServiceEvent},
+        git_monitor::GitInvalidation,
         input::{KeyStroke, Modifiers, PointerButton, PointerEventKind},
+        launch::LaunchTarget,
         layout::Rect,
         text::Transaction,
         workspace::{ServiceLane, ServiceOutcome, ServiceWorker},
     };
     use anyhow::{Result, bail};
-    use std::sync::{
-        Arc, Condvar, Mutex,
-        atomic::{AtomicU64, Ordering},
+    use std::{
+        fs,
+        process::Command,
+        sync::{
+            Arc, Condvar, Mutex,
+            atomic::{AtomicU64, Ordering},
+        },
+        thread,
+        time::SystemTime,
     };
 
     fn unique_test_id() -> u64 {
@@ -1208,6 +1258,150 @@ mod tests {
                 height: 1,
             },
         }
+    }
+
+    fn complete_git_refresh(
+        host: &mut WorkspaceHost,
+        events: &mut tokio::sync::mpsc::Receiver<GitServiceEvent>,
+    ) {
+        loop {
+            let event = events.blocking_recv().expect("Git service stayed live");
+            let complete = matches!(
+                &event,
+                GitServiceEvent::Completed {
+                    operation: GitOperation::Refresh { .. },
+                    ..
+                }
+            );
+            host.apply_event(HostEvent::Git(event));
+            if complete {
+                break;
+            }
+        }
+    }
+
+    #[test]
+    fn git_invalidation_is_retained_until_visible_and_fallback_is_not_polling() {
+        let root = std::env::temp_dir().join(format!(
+            "runyte-host-git-invalidation-{}-{}-{}",
+            std::process::id(),
+            unique_test_id(),
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let run = |arguments: &[&str]| {
+            let output = Command::new("git")
+                .args(arguments)
+                .current_dir(&root)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "git {arguments:?}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        };
+        run(&["init", "-q"]);
+        run(&["config", "user.name", "Runyte Test"]);
+        run(&["config", "user.email", "runyte@example.invalid"]);
+        let tracked = root.join("tracked.rs");
+        let second = root.join("second.rs");
+        fs::write(&tracked, "fn main() {}\n").unwrap();
+        fs::write(&second, "fn second() {}\n").unwrap();
+        run(&["add", "tracked.rs", "second.rs"]);
+        run(&["commit", "-qm", "base"]);
+        let root = root.canonicalize().unwrap();
+        let tracked = tracked.canonicalize().unwrap();
+        let second = second.canonicalize().unwrap();
+
+        let mut app = App::new_in_project_with_targets(
+            Config::default(),
+            vec![
+                LaunchTarget::new(root.clone()),
+                LaunchTarget::new(tracked.clone()),
+                LaunchTarget::new(second.clone()),
+            ],
+            &root,
+        )
+        .unwrap();
+        let directory_buffer = app
+            .buffers
+            .iter()
+            .position(|buffer| buffer.path.as_deref() == Some(root.as_path()))
+            .unwrap();
+        let tracked_buffer = app
+            .buffers
+            .iter()
+            .position(|buffer| buffer.path.as_deref() == Some(tracked.as_path()))
+            .unwrap();
+        let second_buffer = app
+            .buffers
+            .iter()
+            .position(|buffer| buffer.path.as_deref() == Some(second.as_path()))
+            .unwrap();
+        app.panes.get_mut(&app.active_pane).unwrap().buffer = tracked_buffer;
+        let (service, mut events) = GitService::spawn(GitCliProvider::new("git"));
+        app.attach_git_service(service);
+        let mut host = WorkspaceHost::new(app);
+        complete_git_refresh(&mut host, &mut events);
+        thread::sleep(Duration::from_millis(275));
+
+        let before_fallback = host.last_git_refresh + Duration::from_secs(59);
+        assert!(
+            !host.refresh_git_if_due(before_fallback),
+            "an unchanged visible file triggered routine polling"
+        );
+
+        let active_pane = host.active_pane;
+        host.panes.get_mut(&active_pane).unwrap().buffer = directory_buffer;
+        host.apply_event(HostEvent::GitInvalidation(GitInvalidation {
+            repository: root.clone(),
+            overflowed: false,
+        }));
+        assert!(host.git_dirty);
+        assert!(host.git_summary().unwrap().contains("stale"));
+        assert!(
+            !host.refresh_git_if_due(before_fallback),
+            "a hidden invalidation ran Git with no visible consumer"
+        );
+        assert!(host.git_dirty, "the hidden invalidation was forgotten");
+
+        host.panes.get_mut(&active_pane).unwrap().buffer = tracked_buffer;
+        thread::sleep(Duration::from_millis(275));
+        assert!(
+            host.refresh_git_if_due(before_fallback),
+            "revealing the dirty tracked gutter did not refresh promptly"
+        );
+        complete_git_refresh(&mut host, &mut events);
+
+        host.panes.get_mut(&active_pane).unwrap().buffer = second_buffer;
+        assert!(
+            host.refresh_git_if_due(before_fallback),
+            "revealing a different dirty gutter did not request its staged base"
+        );
+        complete_git_refresh(&mut host, &mut events);
+        let reconciled = host.git_reconciled.as_ref().unwrap();
+        assert!(reconciled.staged_paths.contains(&tracked));
+        assert!(reconciled.staged_paths.contains(&second));
+
+        let fallback = host.last_git_refresh + Duration::from_secs(60);
+        assert!(host.refresh_git_if_due(fallback));
+        complete_git_refresh(&mut host, &mut events);
+
+        host.config.git.refresh_interval_seconds = 0;
+        host.apply_event(HostEvent::GitInvalidation(GitInvalidation {
+            repository: root.clone(),
+            overflowed: true,
+        }));
+        assert!(!host.refresh_git_if_due(fallback + Duration::from_secs(600)));
+        assert!(!host.git_dirty);
+
+        drop(host);
+        drop(events);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

@@ -65,7 +65,7 @@ impl RepositoryGeneration {
     }
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct RefreshSpec {
     pub staged_paths: Vec<PathBuf>,
     pub branches: bool,
@@ -79,6 +79,51 @@ pub struct RefreshSpec {
     /// Selected log identities that must survive a refresh while reachable.
     pub log_anchors: Vec<String>,
     pub stashes: bool,
+}
+
+impl RefreshSpec {
+    pub(crate) fn covers(&self, required: &Self) -> bool {
+        required
+            .staged_paths
+            .iter()
+            .all(|path| self.staged_paths.contains(path))
+            && (!required.branches || self.branches)
+            && (!required.stats || self.stats)
+            && (!required.staged_diff || self.staged_diff)
+            && required
+                .file_diffs
+                .iter()
+                .all(|diff| self.file_diffs.contains(diff))
+            && (!required.worktrees || self.worktrees)
+            && (!required.log || self.log)
+            && required
+                .log_anchors
+                .iter()
+                .all(|oid| self.log_anchors.contains(oid))
+            && (!required.stashes || self.stashes)
+    }
+
+    pub(crate) fn merge(&mut self, other: &Self) {
+        self.staged_paths.extend(other.staged_paths.iter().cloned());
+        self.staged_paths.sort();
+        self.staged_paths.dedup();
+        self.branches |= other.branches;
+        self.stats |= other.stats;
+        self.staged_diff |= other.staged_diff;
+        self.file_diffs.extend(other.file_diffs.iter().cloned());
+        self.file_diffs.sort_by(|left, right| {
+            left.0
+                .cmp(&right.0)
+                .then_with(|| (left.1 == DiffScope::Staged).cmp(&(right.1 == DiffScope::Staged)))
+        });
+        self.file_diffs.dedup();
+        self.worktrees |= other.worktrees;
+        self.log |= other.log;
+        self.log_anchors.extend(other.log_anchors.iter().cloned());
+        self.log_anchors.sort();
+        self.log_anchors.dedup();
+        self.stashes |= other.stashes;
+    }
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -674,9 +719,10 @@ enum ReadKey {
 
 fn refresh_key(spec: &RefreshSpec) -> String {
     format!(
-        "{:?}|{}|{}|{:?}|{}|{}|{:?}|{}",
+        "{:?}|{}|{}|{}|{:?}|{}|{}|{:?}|{}",
         spec.staged_paths,
         spec.branches,
+        spec.stats,
         spec.staged_diff,
         spec.file_diffs,
         spec.worktrees,

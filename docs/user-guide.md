@@ -518,16 +518,18 @@ are measured against the **index**, not `HEAD`, so staging a change makes their
 symbols go away.
 
 The comparison happens inside the editor. Git is asked for a file's staged text
-once, when the file is opened and after Git changes; everything after that is
-diffed in memory, so marks keep up with typing without running a process per
-keystroke. The asynchronous refresh notices commits, index changes, and branch
-switches made elsewhere every five seconds by default. `:git-refresh` remains
-the immediate manual reconciliation.
+once, when the file is opened and after relevant Git changes while that file is
+visible; everything after that is diffed in memory, so marks keep up with typing
+without running a process per keystroke. Filesystem observations of the
+worktree, index, `HEAD`, refs, packed refs, stashes, and linked-worktree metadata
+trigger one debounced asynchronous refresh. Hidden file buffers do not reload
+their staged text until a pane reveals their gutter. `:git-refresh` remains the
+immediate manual reconciliation.
 
 A refresh rewrites a Git view's text and moves the cursor to the nearest row
 that survived, so it waits while you are working. It is skipped until you have
-paused for one refresh interval, while a prompt is open — including the `/` and
-`s` search queries — and while a Git view holds a deliberate selection
+paused briefly, while a prompt is open — including the `/` and `s` search
+queries — and while a Git view holds a deliberate selection
 such as the matches `s` leaves behind. Nothing is dropped: the refresh runs as
 soon as you stop, the prompt closes, or the selection collapses back to a
 cursor, and `:git-refresh` still reconciles immediately. A selection in an
@@ -2726,9 +2728,15 @@ event streams that have reported ordinary keys as repeats there. For terminals
 that report auto-repeat as ordinary presses, Runyte recognizes the long initial
 delay followed by the regular held-key cadence and applies the same multiplier.
 
-Git-derived views and tracked-file gutters refresh every five seconds while
-relevant state is visible. Set `git.refresh_interval_seconds` to another
-interval, or to `0` to disable the timer; `:git-refresh` remains available.
+Git-derived views and tracked-file gutters refresh from debounced filesystem
+observations while relevant state is visible. An observation received while no
+Git consumer is visible stays pending until a projection or tracked-file gutter
+is revealed. `git.refresh_interval_seconds` is a periodic reconciliation
+fallback for lost or unsupported filesystem events and defaults to 60 seconds;
+it is a maximum-staleness cadence for visible Git state, not routine polling.
+Set it to `0` to disable both watcher-triggered and fallback refreshes.
+`:git-refresh` and reconciliation bundled with Runyte's own Git mutations remain
+available.
 
 `workspace.state` is where a workspace keeps its local runtime state. It may be
 absolute or relative to the workspace directory. Runyte finds that directory by
