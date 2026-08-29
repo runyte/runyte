@@ -11,7 +11,7 @@ newest first, by running:
 
 ```sh
 cargo build --release
-benchmarks/run.py --runs 5
+benchmarks/run.py
 ```
 
 ## Reading these numbers
@@ -28,6 +28,15 @@ while an editor with a parser builds a tree over the whole document. Each result
 set records what was true of the machine it was taken on. The `.txt` fixtures
 carry no language for any editor and are the rows that compare reading and
 drawing alone.
+
+**The fixture set changed on 2026-08-29.** It is now one document at 500, 5,000
+and 50,000 lines, written twice per size as `.txt` and as byte-identical `.lua`,
+and nothing else. The Rust, Markdown and JSON fixtures in the result sets below
+were dropped because they did not compare the three editors on equal terms:
+Neovim bundles no Rust parser, and Markdown is two grammars driven through
+injections rather than one. Rows recorded before that date name fixtures that no
+longer exist and cannot be compared against a later run; they are kept because
+their diagnoses about where Runyte's startup time goes still hold.
 
 Absolute values are machine-specific and are not comparable between result sets
 taken on different hardware.

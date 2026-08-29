@@ -13,9 +13,9 @@ Results are recorded in
 ```sh
 benchmarks/run.py                  # every editor found, all fixtures
 benchmarks/run.py --only runyte    # Runyte alone; no external editors needed
-benchmarks/run.py --runs 9         # more samples per figure
+benchmarks/run.py --runs 20        # more samples per figure than the default 10
 benchmarks/run.py --no-idle        # skip the idle window
-benchmarks/run.py --fixtures small.rs,large.rs
+benchmarks/run.py --fixtures long.txt,long.lua
 ```
 
 Output is Markdown shaped for the results document. Python 3.9 or newer, Linux or
@@ -51,36 +51,53 @@ of idle work that would otherwise go unmeasured.
 
 Generated from a fixed seed into `.work/fixtures/` on first run, and ignored by
 Git. They are generated rather than copied from the repository so that a result
-does not change when Runyte's own source does.
+does not change when Runyte's own source does. Deleting `.work/` is safe; the
+next run rebuilds everything in it.
+
+The matrix is one document at three sizes, written twice. Every editor measured
+here parses `.lua` with the same single tree-sitter grammar, and no editor claims
+a language for `.txt`.
+
+| Size | Lines | On disk |
+| --- | ---: | ---: |
+| short | 500 | 17 kB |
+| medium | 5,000 | 171 kB |
+| long | 50,000 | 1.7 MB |
 
 | Fixture | Isolates |
 | --- | --- |
-| `small.rs` | Fixed startup cost; the document is too small to matter. |
-| `small.txt` | Byte-identical to `small.rs` with an extension no language claims. The difference between the two is the cost of compiling one language's queries. |
-| `medium.rs` | A realistic working file. |
-| `large.rs` | A document large enough that parsing dominates everything else. |
-| `large.txt` | The same bytes with no language. The difference from `large.rs` is parsing; what remains is reading the file. |
-| `large.lua` | General-purpose source code that every measured editor parses with one tree-sitter grammar. This is the fair cross-editor code row. |
-| `large.md` | Markdown that every measured editor parses with tree-sitter. This is a fair cross-editor markup row, but it uses block and inline grammars through injections. |
-| `minified.json` | One very long line, which stresses everything that works outward from the start of a line rather than per row. |
+| `short.txt` | Fixed startup cost with no language involved: reading and drawing alone, on a document too small to matter. |
+| `medium.txt` | The same on a realistic working file. |
+| `long.txt` | The same at a size where reading the file is measurable on its own. |
+| `short.lua` | The cost of treating a small document as a language, which at this size is dominated by compiling one language's queries. |
+| `medium.lua` | A realistic working file parsed with tree-sitter. |
+| `long.lua` | A document large enough that parsing dominates everything else. |
 
-`large.lua` and `large.md` exist because the Rust source fixtures do not compare
-editors fairly: an editor without a parser for the language falls back to regular
-expressions over the visible window. Neovim, Helix, and Runyte all ship and
-enable Lua and Markdown parsers, so all three build a tree over each document.
+**The `.txt` and `.lua` files of a size are byte-identical.** Only the extension
+differs, so the difference between the two figures is the whole cost of treating
+the document as a language: nothing else about the document can account for it.
+The `.txt` file is Lua source that no editor recognises as such, which is what
+makes it a control rather than a second document.
+
+Reading the two axes:
+
+- Across a pair, `.lua` minus `.txt` is language cost. At `short` that is mostly
+  compiling the grammar's queries; at `long` it is mostly parsing.
+- Down a column, the same measurement at ten and a hundred times the size shows
+  how each of those costs scales.
 
 The Lua fixture contains no comments, long strings, or calls recognized by any
-editor's Lua injection query. All three therefore parse it with the Lua grammar
-alone, making it the source-code row that supports a cross-editor comparison.
+editor's Lua injection query. All three editors therefore parse it with the Lua
+grammar alone, which is what makes it a fair cross-editor row.
 
-The Markdown fixture's fenced code blocks deliberately carry no info string. A
-tagged fence injects another language, and each editor injects only the languages
-it actually has, so tagged fences would put the editors' differing grammar
-inventories back into the measurement. Untagged fences inject nothing anywhere.
-
-Markdown is two grammars — block and inline — driven through injections, so this
-row reports how the editors compare *on Markdown*. It is not a stand-in for how
-they compare on a large source file.
+Rust, Markdown and JSON fixtures were measured previously and have been removed.
+Neovim bundles parsers for a fixed short list that does not include Rust, so its
+`.rs` figures were regular-expression highlighting of one screen against two
+editors parsing the whole document. Markdown is two grammars driven through
+injections rather than one, so it reported how the editors compare on Markdown
+specifically rather than on source. Both are kept in
+[`context/reference/startup-performance.md`](../context/reference/startup-performance.md)
+as history and neither is measured now.
 
 ## Reading the results
 
@@ -90,19 +107,13 @@ a language highlights that file with regular expressions over the visible window
 or not at all, while an editor with a parser builds a tree over the whole
 document. Those are different amounts of work and the times are not comparable.
 
-Three kinds of row, in decreasing order of how much they support a cross-editor
-claim:
+The matrix is chosen so that both kinds of row support a cross-editor claim:
 
-- `large.lua` — every editor parses it with the Lua grammar alone. This is the
-  fair source-code row.
-- `large.md` — every editor parses it with tree-sitter. This is the fair markup
-  row, with separate block and inline Markdown grammars.
+- The `.lua` rows — Neovim, Helix and Runyte all ship and enable a Lua parser,
+  and the fixture triggers no editor's injection queries, so each builds one
+  tree with one grammar over the same bytes.
 - The `.txt` rows — no editor claims a language, so they compare reading and
   drawing alone.
-- The `.rs` and `.json` rows — comparable only if every editor has a parser for
-  that language, which is worth checking rather than assuming. Neovim bundles
-  parsers for a fixed short list and does not include Rust, so its `.rs` figures
-  measure regular-expression highlighting of one screen.
 
 To check what an editor is actually doing, open the fixture and ask it. For
 Neovim:
