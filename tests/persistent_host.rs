@@ -227,6 +227,24 @@ async fn wait_for_endpoint(child: &mut ChildGuard, endpoint: &LocalEndpoint) -> 
     panic!("host endpoint was not published");
 }
 
+fn process_is_running(pid: u32) -> bool {
+    // SAFETY: signal zero only asks the kernel whether this positive process
+    // identifier is still observable; it does not deliver a signal.
+    let result = unsafe { libc::kill(pid as libc::pid_t, 0) };
+    result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+}
+
+async fn wait_for_process_exit(pid: u32) {
+    let deadline = Instant::now() + HOST_RESPONSE_TIMEOUT;
+    while process_is_running(pid) {
+        assert!(
+            Instant::now() < deadline,
+            "host process {pid} remained live after its shutdown acknowledgement"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
+
 fn frame_text(response: &HostResponse) -> String {
     let HostResponse::Frame { frame } = response else {
         panic!("expected frame, got {response:?}")
@@ -1414,7 +1432,7 @@ async fn restart_keeps_a_fallback_host_on_its_original_endpoint() {
         .unwrap();
     assert_cli_success(&restart);
     assert!(original.0.take().unwrap().wait().unwrap().success());
-    assert!(endpoint.verify_for_connect().is_ok());
+    let replacement_pid = endpoint.verify_for_connect().unwrap().pid;
 
     let shutdown = bundled_runyte()
         .args(["--session-stop", selector.as_ref()])
@@ -1431,6 +1449,10 @@ async fn restart_keeps_a_fallback_host_on_its_original_endpoint() {
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
     assert!(!endpoint.metadata().exists());
+    // The endpoint is unpublished before the detached process flushes its
+    // connections, diagnostic log, and registry cleanup. Wait for that
+    // explicit process lifecycle boundary before deleting its project.
+    wait_for_process_exit(replacement_pid).await;
     fs::remove_dir_all(root).unwrap();
 }
 
