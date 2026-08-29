@@ -39,6 +39,19 @@ of letting Ratatui report a failed cursor restore through the same dead stderr;
 that report previously panicked and replaced the intended SIGHUP status with
 exit code 101.
 
+A later Darwin-specific refinement replaced the terminal descriptor's poll
+registration with a native kqueue watcher. Requesting `POLLHUP` made an idle
+PTY close observable on macOS, but Darwin implements poll through a one-shot
+read knote; ordinary unread input could consume that observation before the
+later close. The watcher now registers `EVFILT_READ` with `EV_CLEAR`, ignores
+ordinary read events without reading the terminal, and reports loss only when
+the event carries `EV_EOF`. The cancellation descriptor has its own read
+filter and retains priority when cancellation and EOF arrive together. Linux
+and other Unix targets continue to poll only exceptional descriptor state.
+`src/main.rs::terminal_loss_watcher_observes_pty_peer_close` covers the direct
+PTY-close boundary on both CI platforms, while the local-protocol subprocess
+tests cover real wait clients with active terminal traffic.
+
 Regression coverage lives in `tests/local_protocol.rs`:
 
 - `attached_wait_client_exits_and_cancels_when_its_terminal_is_lost`

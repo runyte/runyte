@@ -30,10 +30,12 @@ top-anchored inline scroll regions, review stability, SGR mouse encoding,
 simultaneous noisy/quiet sessions, process-group close, resize, frame damage,
 default foreground/background queries, client loss, and detach/reattach.
 
-Wait-client PTY loss is exercised on both Linux and macOS CI. Its descriptor
-watcher requests `POLLHUP` explicitly because Darwin does not register a poll
-filter for a descriptor whose event mask is zero. It does not request or read
-`POLLIN`, so it cannot consume input owned by Crossterm.
+Wait-client PTY loss is exercised on both Linux and macOS CI. Linux observes
+exceptional poll states without requesting readable input. Darwin's poll
+adapter does not register a descriptor whose event mask is zero, so macOS uses
+an `EVFILT_READ` kqueue filter and reacts only to `EV_EOF`. Ordinary read
+events are cleared without reading, so the watcher cannot consume input owned
+by Crossterm or lose a later EOF behind already-pending input.
 
 Deliberate limits:
 

@@ -279,12 +279,7 @@ fn wait_client_terminal() -> Result<Option<std::os::fd::OwnedFd>> {
 
 /// Blocks without consuming input until `terminal` reports loss, or until
 /// `cancel` becomes readable. `None` is the ordinary cancellation path.
-///
-/// Darwin does not register a poll filter for a descriptor whose requested
-/// events are zero. Requesting `POLLHUP` makes PTY EOF observable there while
-/// avoiding `POLLIN`, which would wake repeatedly for ordinary terminal input
-/// that this watcher deliberately leaves for Crossterm.
-#[cfg(unix)]
+#[cfg(all(unix, not(target_os = "macos")))]
 fn wait_for_terminal_loss(
     terminal: std::os::fd::RawFd,
     cancel: std::os::fd::RawFd,
@@ -292,7 +287,7 @@ fn wait_for_terminal_loss(
     let mut descriptors = [
         libc::pollfd {
             fd: terminal,
-            events: libc::POLLHUP,
+            events: 0,
             revents: 0,
         },
         libc::pollfd {
@@ -316,6 +311,124 @@ fn wait_for_terminal_loss(
             return None;
         }
         if descriptors[0].revents & (libc::POLLHUP | libc::POLLERR | libc::POLLNVAL) != 0 {
+            return Some(Ok(()));
+        }
+    }
+}
+
+/// Darwin's `poll` adapter does not register a descriptor whose requested
+/// event mask is zero. Asking it for read or hangup readiness is not safe
+/// either: the adapter uses a one-shot read knote, so ordinary unread input can
+/// consume the observation before a later PTY close. A native kqueue watcher
+/// can ignore ordinary readability, clear that notification without consuming
+/// input, and wait for the distinct EOF transition.
+#[cfg(target_os = "macos")]
+fn wait_for_terminal_loss(
+    terminal: std::os::fd::RawFd,
+    cancel: std::os::fd::RawFd,
+) -> Option<std::io::Result<()>> {
+    use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+
+    // SAFETY: `kqueue` has no preconditions and returns a fresh descriptor.
+    let descriptor = unsafe { libc::kqueue() };
+    if descriptor == -1 {
+        return Some(Err(std::io::Error::last_os_error()));
+    }
+    // SAFETY: a successful `kqueue` call returns a fresh owned descriptor.
+    let queue = unsafe { OwnedFd::from_raw_fd(descriptor) };
+    let changes = [
+        libc::kevent {
+            ident: terminal as libc::uintptr_t,
+            filter: libc::EVFILT_READ,
+            flags: libc::EV_ADD | libc::EV_ENABLE | libc::EV_CLEAR,
+            fflags: 0,
+            data: 0,
+            udata: std::ptr::null_mut(),
+        },
+        libc::kevent {
+            ident: cancel as libc::uintptr_t,
+            filter: libc::EVFILT_READ,
+            flags: libc::EV_ADD | libc::EV_ENABLE,
+            fflags: 0,
+            data: 0,
+            udata: std::ptr::null_mut(),
+        },
+    ];
+    // SAFETY: `queue` is live and `changes` contains two complete read-filter
+    // registrations. This call supplies no event output storage.
+    if unsafe {
+        libc::kevent(
+            queue.as_raw_fd(),
+            changes.as_ptr(),
+            changes.len() as _,
+            std::ptr::null_mut(),
+            0,
+            std::ptr::null(),
+        )
+    } == -1
+    {
+        return Some(Err(std::io::Error::last_os_error()));
+    }
+
+    let mut events = [
+        libc::kevent {
+            ident: 0,
+            filter: 0,
+            flags: 0,
+            fflags: 0,
+            data: 0,
+            udata: std::ptr::null_mut(),
+        },
+        libc::kevent {
+            ident: 0,
+            filter: 0,
+            flags: 0,
+            fflags: 0,
+            data: 0,
+            udata: std::ptr::null_mut(),
+        },
+    ];
+    loop {
+        // SAFETY: `queue` remains live and `events` has writable storage for
+        // both returned events. A null timeout blocks until one is ready.
+        let count = unsafe {
+            libc::kevent(
+                queue.as_raw_fd(),
+                std::ptr::null(),
+                0,
+                events.as_mut_ptr(),
+                events.len() as _,
+                std::ptr::null(),
+            )
+        };
+        if count == -1 {
+            let error = std::io::Error::last_os_error();
+            if error.kind() == std::io::ErrorKind::Interrupted {
+                continue;
+            }
+            return Some(Err(error));
+        }
+        let ready = &events[..count as usize];
+        if let Some(event) = ready.iter().find(|event| event.flags & libc::EV_ERROR != 0) {
+            let error = i32::try_from(event.data)
+                .ok()
+                .filter(|code| *code > 0)
+                .map(std::io::Error::from_raw_os_error)
+                .unwrap_or_else(|| std::io::Error::from_raw_os_error(libc::EIO));
+            return Some(Err(error));
+        }
+        // Preserve the poll implementation's cancellation priority when the
+        // cancellation socket and terminal EOF become ready together.
+        if ready.iter().any(|event| {
+            event.ident == cancel as libc::uintptr_t && event.filter == libc::EVFILT_READ
+        }) {
+            return None;
+        }
+        if ready.iter().any(|event| {
+            event.ident == terminal as libc::uintptr_t
+                && event.filter == libc::EVFILT_READ
+                && event.flags & libc::EV_EOF != 0
+        }) {
             return Some(Ok(()));
         }
     }
