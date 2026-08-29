@@ -881,6 +881,29 @@ async fn start_host(root: &Path, endpoint: &LocalEndpoint) -> Option<ChildGuard>
     start_host_opening(root, endpoint, Some("other.txt")).await
 }
 
+/// Settles startup Git discovery through an interactive semantic frame before
+/// a real PTY client needs a Git-only command to be available.
+async fn wait_for_git_before_tui(endpoint: &LocalEndpoint) {
+    let mut interactive = LocalClient::connect(endpoint, tui_geometry(), true)
+        .await
+        .unwrap();
+    assert!(matches!(
+        receive_response(&mut interactive, "receiving the Git readiness welcome").await,
+        HostResponse::Welcome { .. }
+    ));
+    let _ = wait_for_frame(
+        &mut interactive,
+        "waiting for Git discovery before starting the real TUI",
+        |frame| frame.editor.status.git_summary.is_some(),
+    )
+    .await;
+    interactive.send(&ClientRequest::Detach).await.unwrap();
+    assert!(matches!(
+        semantic_response(&mut interactive).await,
+        HostResponse::Detached { .. }
+    ));
+}
+
 /// Starts a host, optionally on a file. Without one the host keeps the
 /// scratch buffer it starts with, which is the only way to reach a scratchpad
 /// from a control client.
@@ -1857,6 +1880,7 @@ async fn worktree_switch_reuses_the_destination_host_through_the_real_tui_launch
         fs::remove_dir_all(root).unwrap();
         return;
     };
+    wait_for_git_before_tui(&source_endpoint).await;
     let mut source = connect_control(&source_endpoint).await;
     let mut destination = connect_control(&linked_endpoint).await;
     let (switcher, mut terminal) = spawn_in_pty(
@@ -1885,7 +1909,7 @@ async fn worktree_switch_reuses_the_destination_host_through_the_real_tui_launch
         }
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
-    wait_for_terminal_screen(&output, "│ master").await;
+    wait_for_terminal_screen(&output, "other.txt").await;
     type_colon_command(&mut terminal, "git-worktrees");
     let linked_display = linked.to_string_lossy().into_owned();
     wait_for_buffer_text(
@@ -1967,6 +1991,7 @@ async fn incompatible_worktree_host_returns_the_tui_to_its_source() {
         fs::remove_dir_all(root).unwrap();
         return;
     };
+    wait_for_git_before_tui(&source_endpoint).await;
     let mut source = connect_control(&source_endpoint).await;
     let (switcher, mut terminal) = spawn_in_pty(
         bundled_runyte()
@@ -1991,7 +2016,7 @@ async fn incompatible_worktree_host_returns_the_tui_to_its_source() {
         }
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
-    wait_for_terminal_screen(&output, "│ master").await;
+    wait_for_terminal_screen(&output, "other.txt").await;
     type_colon_command(&mut terminal, "git-worktrees");
     let linked_display = linked.to_string_lossy().into_owned();
     wait_for_buffer_text(
@@ -2059,6 +2084,7 @@ async fn creating_a_worktree_starts_and_attaches_its_persistent_session() {
         fs::remove_dir_all(root).unwrap();
         return;
     };
+    wait_for_git_before_tui(&source_endpoint).await;
     let mut source = connect_control(&source_endpoint).await;
     let (switcher, mut terminal) = spawn_in_pty(
         bundled_runyte()
@@ -2083,7 +2109,7 @@ async fn creating_a_worktree_starts_and_attaches_its_persistent_session() {
         }
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
-    wait_for_terminal_screen(&output, "│ master").await;
+    wait_for_terminal_screen(&output, "other.txt").await;
     type_colon_command(&mut terminal, "git-worktrees");
     let root_display = root.to_string_lossy().into_owned();
     wait_for_buffer_text(&mut source, Some(&output), "[git worktrees]", &root_display).await;
@@ -3617,7 +3643,6 @@ async fn relative_workspace_attach_uses_editor_cwd_and_keeps_one_client_process(
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
     assert!(attached_to_source, "the source host never received the TUI");
-    let root_display = root.to_string_lossy().into_owned();
     wait_for_terminal_screen(&output, "source-ready.txt").await;
 
     // The client process stays at `root`, while `:cd` changes only the
@@ -3651,20 +3676,12 @@ async fn relative_workspace_attach_uses_editor_cwd_and_keeps_one_client_process(
         attached_to_destination,
         "the relative selector did not reach the destination host"
     );
-    // Return through the worktree list to retain the original regression that
-    // switching both ways stays inside one client process. The linked
-    // worktree is the second row, so the main worktree is immediately above it.
+    // Return through the same relative selector path. Worktree-picker switching
+    // has its own real-TUI coverage; coupling this process-loop regression to
+    // asynchronous Git discovery let Enter arrive while that command was still
+    // unavailable.
     wait_for_terminal_screen(&output, "linked-ready.txt").await;
-    type_colon_command(&mut terminal, "git-worktrees");
-    wait_for_buffer_text(
-        &mut destination,
-        Some(&output),
-        "[git worktrees]",
-        &root_display,
-    )
-    .await;
-    terminal.write_all(b"k\r").unwrap();
-    terminal.flush().unwrap();
+    type_colon_command(&mut terminal, "session-attach ..");
     let mut returned_to_source = false;
     for _ in 0..200 {
         source.send(&ClientRequest::Health).await.unwrap();
