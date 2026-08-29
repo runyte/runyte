@@ -770,19 +770,28 @@ impl App {
                 // terminator. An unterminated final row has no truthful token
                 // to query and falls back to its exact leading prefix.
                 let newline_offset = existing_terminator.map(|(_, offset)| offset);
-                let add_level = list_indent.is_none()
-                    && syntax
+                let syntax_unit = list_indent.is_none().then(|| {
+                    syntax
                         .zip(newline_offset)
                         .and_then(|(syntax, newline_offset)| {
                             syntax
                                 .newline_indent(buffer.text(), &self.registry, newline_offset)
                                 .ok()
                         })
-                        .is_some_and(|indent| indent.begin_levels + indent.always_levels > 0);
+                        .map_or("", |indent| {
+                            if indent.tab_levels > 0 {
+                                "\t"
+                            } else if indent.begin_levels + indent.always_levels > 0 {
+                                unit.as_str()
+                            } else {
+                                ""
+                            }
+                        })
+                });
                 format!(
                     "{terminator}{}{}",
                     list_indent.as_deref().unwrap_or(&prefix),
-                    if add_level { unit.as_str() } else { "" }
+                    syntax_unit.unwrap_or("")
                 )
             })
             .collect::<Vec<_>>();

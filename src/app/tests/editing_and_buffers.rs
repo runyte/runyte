@@ -1615,6 +1615,24 @@ fn smart_newline_preserves_crlf_and_uses_its_syntax_indent() {
 }
 
 #[test]
+fn smart_newline_uses_the_required_make_recipe_tab() {
+    let path = temporary("syntax-indent.mk");
+    let original = "all:\n";
+    fs::write(&path, original).unwrap();
+    let mut app = App::new(Config::default(), Some(path.clone())).unwrap();
+    app.mode = Mode::Insert;
+    let caret = app.buffers[0].line_len(0);
+    app.replace_active_selection(Selection::point(caret));
+
+    app.edit_newline();
+
+    assert_eq!(text(&app), "all:\n\t\n");
+    app.undo();
+    assert_eq!(text(&app), original);
+    fs::remove_file(path).unwrap();
+}
+
+#[test]
 fn syntax_newline_mid_line_and_unterminated_eof_degrade_without_losing_prefix() {
     let path = temporary("syntax-indent-positions.rs");
     fs::write(&path, "fn outer() {\n    let value = 1;\n    tail").unwrap();

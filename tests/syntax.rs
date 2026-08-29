@@ -930,7 +930,7 @@ fn indentation_and_folds_cover_the_truthful_language_matrix() {
             .newline_indent(&text, &registry, newline)
             .unwrap_or_else(|error| panic!("{language} indentation failed: {error}"));
         assert!(
-            indent.begin_levels + indent.always_levels > 0,
+            indent.begin_levels + indent.always_levels + indent.tab_levels > 0,
             "{language} returned no indentation captures: {indent:?}"
         );
         assert_eq!(registry.language_name(indent.language), language);
@@ -1097,6 +1097,7 @@ fn indentation_and_folds_match_fresh_after_malformed_incremental_edits_and_go_st
             incremental_indent.injection_depth,
             incremental_indent.begin_levels,
             incremental_indent.always_levels,
+            incremental_indent.tab_levels,
             incremental_indent.issues,
             incremental_indent.truncated,
         ),
@@ -1105,6 +1106,7 @@ fn indentation_and_folds_match_fresh_after_malformed_incremental_edits_and_go_st
             fresh_indent.injection_depth,
             fresh_indent.begin_levels,
             fresh_indent.always_levels,
+            fresh_indent.tab_levels,
             fresh_indent.issues,
             fresh_indent.truncated,
         )
@@ -2801,6 +2803,26 @@ fn additional_language_grammars_highlight_representative_documents() {
         let scopes = scopes(source, language);
         assert_scope(&scopes, text, scope);
     }
+}
+
+#[test]
+fn additional_language_highlights_keep_semantic_captures_after_helper_captures() {
+    for (language, source, comment) in [
+        ("sql", "-- sql\nSELECT 1;\n", "-- sql"),
+        ("zig", "// zig\nconst value = 1;\n", "// zig"),
+        ("cmake", "# cmake\nproject(runyte)\n", "# cmake"),
+        ("ini", "; ini\nname=runyte\n", "; ini\n"),
+    ] {
+        assert_scope(&scopes(source, language), comment, "comment");
+    }
+
+    let cmake = scopes(
+        "#!/usr/bin/env cmake\nset(VAR value)\nlist(APPEND VAR next)\n",
+        "cmake",
+    );
+    assert_scope(&cmake, "#!/usr/bin/env cmake", "keyword");
+    assert_scope(&cmake, "set", "function");
+    assert_scope(&cmake, "list", "function");
 }
 
 #[test]

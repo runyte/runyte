@@ -208,9 +208,10 @@ queries adapted from `tree-sitter-sequel`, `tree-sitter-zig`,
 `tree-sitter-cmake`, and `tree-sitter-proto`; fold queries from
 `tree-sitter-zig`, `tree-sitter-cmake`, `tree-sitter-proto`, and
 `tree-sitter-ini`; and highlight queries from `tree-sitter-zig` and
-`tree-sitter-cmake` adapted to replace unsupported predicates. Those files
-retain the upstream MIT or Apache-2.0 SPDX identifier. The complete Apache-2.0
-text is preserved in `licenses/Apache-2.0.txt`.
+`tree-sitter-cmake` adapted to replace unsupported predicates and unmapped
+editor helper captures. Those files retain the upstream MIT or Apache-2.0 SPDX
+identifier. The complete Apache-2.0 text is preserved in
+`licenses/Apache-2.0.txt`.
 
 Copyright notices present in the audited crate archives include:
 

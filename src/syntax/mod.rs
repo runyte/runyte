@@ -449,9 +449,11 @@ pub struct Outline {
 ///
 /// `begin_levels` counts captured containers that begin on the newline's row;
 /// `always_levels` counts captured containers that span it regardless of their
-/// start row. Keeping the two minimal query semantics distinct lets a future
-/// editing frontend combine them with its own whitespace policy without
-/// exposing Tree-sitter captures.
+/// start row. `tab_levels` counts contexts whose syntax requires a literal tab
+/// rather than the editor's configured indentation unit, such as a Make recipe.
+/// Keeping these minimal query semantics distinct lets an editing frontend
+/// combine them with its whitespace policy without exposing Tree-sitter
+/// captures.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NewlineIndent {
     pub newline: SyntaxRange,
@@ -460,6 +462,7 @@ pub struct NewlineIndent {
     pub injection_depth: u32,
     pub begin_levels: u16,
     pub always_levels: u16,
+    pub tab_levels: u16,
     pub issues: Vec<IndentIssue>,
     pub truncated: bool,
     document: u64,
@@ -1055,7 +1058,7 @@ impl LazyIndentationCapability {
                 self.definition,
                 self.override_source.as_deref(),
                 self.definition.indentation,
-                &["indent.begin", "indent.always"],
+                &["indent.begin", "indent.always", "indent.tab"],
             ) {
                 Ok(query) => IndentationCapability::Ready(query),
                 Err(error) => IndentationCapability::Failed(error),
@@ -2281,6 +2284,7 @@ impl DocumentSyntax {
 
             let begin = query.get_capture("indent.begin");
             let always = query.get_capture("indent.always");
+            let tab = query.get_capture("indent.tab");
             let scan_end = u32::try_from(len_bytes)
                 .map_err(|_| SyntaxError::DocumentTooLarge { len_bytes })?;
             let loader = |candidate: Language| (candidate == parser_language).then_some(query);
@@ -2289,6 +2293,7 @@ impl DocumentSyntax {
             let mut seen = std::collections::HashSet::new();
             let mut begin_levels = 0usize;
             let mut always_levels = 0usize;
+            let mut tab_levels = 0usize;
             let mut current_depth = 0usize;
             while let Some(event) = iter.next() {
                 let captured_match = match event {
@@ -2333,9 +2338,23 @@ impl DocumentSyntax {
                         }
                     }
                 }
+                if let Some(capture) = tab {
+                    for node in captured_match.nodes_for_capture(capture) {
+                        let key = (2u8, node.start_byte(), node.end_byte());
+                        if node.start_byte() <= newline_byte
+                            && node.end_byte() > newline_byte
+                            && seen.insert(key)
+                        {
+                            tab_levels += 1;
+                        }
+                    }
+                }
             }
             drop(iter);
-            if begin_levels > INDENT_LEVEL_LIMIT || always_levels > INDENT_LEVEL_LIMIT {
+            if begin_levels > INDENT_LEVEL_LIMIT
+                || always_levels > INDENT_LEVEL_LIMIT
+                || tab_levels > INDENT_LEVEL_LIMIT
+            {
                 truncated = true;
             }
             return Ok(NewlineIndent {
@@ -2345,6 +2364,7 @@ impl DocumentSyntax {
                 injection_depth: depth as u32,
                 begin_levels: begin_levels.min(INDENT_LEVEL_LIMIT) as u16,
                 always_levels: always_levels.min(INDENT_LEVEL_LIMIT) as u16,
+                tab_levels: tab_levels.min(INDENT_LEVEL_LIMIT) as u16,
                 issues,
                 truncated,
                 document: self.document,
@@ -4308,8 +4328,8 @@ mod tests {
             "public languages need canonical/plain configurations and Markdown needs one internal inline configuration"
         );
         assert_eq!(
-            plain_count, 6,
-            "Rust, HTML, Markdown, Lua, Zig, and CMake have plain variants"
+            plain_count, 4,
+            "Rust, HTML, Markdown, and Lua have resolvable injection variants"
         );
 
         for definition in grammars::BUILTIN_LANGUAGES
@@ -4342,7 +4362,7 @@ mod tests {
                     definition,
                     None,
                     definition.indentation,
-                    &["indent.begin", "indent.always"],
+                    &["indent.begin", "indent.always", "indent.tab"],
                 )
                 .unwrap_or_else(|error| panic!("{} indentation query: {error}", definition.name));
             }

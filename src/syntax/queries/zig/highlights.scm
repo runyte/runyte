@@ -1,6 +1,7 @@
 ; SPDX-License-Identifier: MIT
 ; Adapted from tree-sitter-zig 1.1.2 queries/highlights.scm by translating
-; #lua-match? to #match? and dropping the unsupported priority property.
+; #lua-match? to #match?, dropping the unsupported priority property, and
+; removing the unmapped @spell helper from the comment capture.
 ; Variables
 
 (identifier) @variable
@@ -287,7 +288,7 @@
 
 ; Comments
 
-(comment) @comment @spell
+(comment) @comment
 
 ((comment) @comment.documentation
   (#match? @comment.documentation "^//!"))

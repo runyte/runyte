@@ -24,6 +24,24 @@ use super::SyntaxObject;
 /// has an unmapped capture, so repeat the semantic capture last.
 const SWIFT_COMMENT_HIGHLIGHTS: &str = "[(comment) (multiline_comment)] @comment";
 
+/// Runyte-authored precedence repair for `tree-sitter-sequel 0.3.11`.
+///
+/// The upstream query ends its comment capture with the unmapped `@spell`
+/// helper, so repeat the semantic capture after the upstream fragment.
+const SQL_COMMENT_HIGHLIGHTS: QueryFragment = runyte(
+    "(comment) @comment",
+    "Runyte SQL comment precedence repair for tree-sitter-sequel 0.3.11",
+);
+
+/// Runyte-authored precedence repair for `tree-sitter-ini 1.4.0`.
+///
+/// The upstream query ends its comment capture with the unmapped `@spell`
+/// helper, so repeat the semantic capture after the upstream fragment.
+const INI_COMMENT_HIGHLIGHTS: QueryFragment = runyte(
+    "(comment) @comment",
+    "Runyte INI comment precedence repair for tree-sitter-ini 1.4.0",
+);
+
 const JAVASCRIPT_HIGHLIGHTS: QueryFragment = upstream(
     tree_sitter_javascript::HIGHLIGHT_QUERY,
     "tree-sitter-javascript 0.25.0 highlights",
@@ -800,10 +818,13 @@ pub(super) const BUILTIN_LANGUAGES: &[LanguageDefinition] = &[
         line_comment: Some("--"),
         grammar: tree_sitter_sequel::LANGUAGE,
         queries: LanguageQueries {
-            highlights: QuerySource::new(&[upstream(
-                tree_sitter_sequel::HIGHLIGHTS_QUERY,
-                "tree-sitter-sequel 0.3.11 highlights",
-            )]),
+            highlights: QuerySource::new(&[
+                upstream(
+                    tree_sitter_sequel::HIGHLIGHTS_QUERY,
+                    "tree-sitter-sequel 0.3.11 highlights",
+                ),
+                SQL_COMMENT_HIGHLIGHTS,
+            ]),
             injections: QuerySource::EMPTY,
             locals: QuerySource::EMPTY,
         },
@@ -941,10 +962,8 @@ pub(super) const BUILTIN_LANGUAGES: &[LanguageDefinition] = &[
                 include_str!("queries/zig/highlights.scm"),
                 "tree-sitter-zig 1.1.2 highlights adapted for Runyte predicates",
             )]),
-            injections: QuerySource::new(&[upstream(
-                tree_sitter_zig::INJECTIONS_QUERY,
-                "tree-sitter-zig 1.1.2 comment injections",
-            )]),
+            // The upstream query injects an unbundled `comment` grammar.
+            injections: QuerySource::EMPTY,
             locals: QuerySource::EMPTY,
         },
         text_objects: &[
@@ -995,10 +1014,8 @@ pub(super) const BUILTIN_LANGUAGES: &[LanguageDefinition] = &[
                 include_str!("queries/cmake/highlights.scm"),
                 "tree-sitter-cmake 0.7.4 highlights adapted for Runyte predicates",
             )]),
-            injections: QuerySource::new(&[upstream(
-                tree_sitter_cmake::INJECTIONS_QUERY,
-                "tree-sitter-cmake 0.7.4 comment injections",
-            )]),
+            // The upstream query injects an unbundled `comment` grammar.
+            injections: QuerySource::EMPTY,
             locals: QuerySource::EMPTY,
         },
         text_objects: &[],
@@ -1072,10 +1089,13 @@ pub(super) const BUILTIN_LANGUAGES: &[LanguageDefinition] = &[
         line_comment: Some(";"),
         grammar: tree_sitter_ini::LANGUAGE,
         queries: LanguageQueries {
-            highlights: QuerySource::new(&[upstream(
-                tree_sitter_ini::HIGHLIGHTS_QUERY,
-                "tree-sitter-ini 1.4.0 highlights",
-            )]),
+            highlights: QuerySource::new(&[
+                upstream(
+                    tree_sitter_ini::HIGHLIGHTS_QUERY,
+                    "tree-sitter-ini 1.4.0 highlights",
+                ),
+                INI_COMMENT_HIGHLIGHTS,
+            ]),
             injections: QuerySource::EMPTY,
             locals: QuerySource::EMPTY,
         },

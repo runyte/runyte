@@ -23,9 +23,9 @@ carried locally because its Rust crate exports no query constant. Zig and CMake
 highlight queries are carried locally to translate unsupported
 `#lua-match?` predicates, and Zig's unsupported priority property is omitted.
 Upstream indentation files that use captures beyond Runyte's bounded
-`@indent.begin` and `@indent.always` dialect are reduced to the same node
-coverage within Runyte's owned semantics. Every copied or adapted query records
-its exact upstream version and license.
+`@indent.begin`, `@indent.always`, and syntax-required `@indent.tab` dialect
+are reduced to the same node coverage within Runyte's owned semantics. Every
+copied or adapted query records its exact upstream version and license.
 
 INI deliberately uses `;` for comments inserted by `toggle-comments`; both
 `;` and `#` continue to parse as comments. CMake, Protobuf, Make, and INI
@@ -34,10 +34,21 @@ invent outlines or text objects. A stripped LTO release build grew from
 34,244,352 bytes at baseline `06e859d` to 43,168,320 bytes, an increase of
 8,923,968 bytes (8.51 MiB, 26.1%).
 
+An independent review then found three integration gaps. SQL, Zig, CMake, and
+INI comment captures ended with unmapped spelling helpers, while CMake command
+and shebang patterns could likewise let helper captures replace their semantic
+scope. Later mapped captures now preserve those highlights. Zig and CMake no
+longer register upstream injections for the unbundled `comment` grammar, so
+they do not create unusable injection-free parser variants or report false
+large-file degradation. Finally, Make rules use the owned `@indent.tab`
+capture, and smart newline realizes that result as the literal tab required by
+ordinary recipe lines rather than as the configured number of spaces.
+
 Coverage lives in `tests/syntax.rs`:
 `filename_extension_and_bounded_shebang_inference_have_stable_precedence`,
 `extensions_map_to_languages_case_insensitively`,
 `additional_language_grammars_highlight_representative_documents`,
+`additional_language_highlights_keep_semantic_captures_after_helper_captures`,
 `indentation_and_folds_cover_the_truthful_language_matrix`,
 `outline_queries_cover_the_supported_language_inventory`,
 `lua_c_sharp_and_zig_structural_objects_match_real_declarations`, and
@@ -45,11 +56,15 @@ Coverage lives in `tests/syntax.rs`:
 comment markers are covered by
 `src/syntax/mod.rs::every_canonical_plain_and_owned_capability_query_compiles`
 and
-`src/syntax/mod.rs::every_built_in_language_declares_its_line_comment`.
+`src/syntax/mod.rs::every_built_in_language_declares_its_line_comment`. Make's
+literal recipe indentation is covered by
+`src/app/tests/editing_and_buffers.rs::smart_newline_uses_the_required_make_recipe_tab`.
 
 Known limitation: CMake functions/macros and Make targets do not yet appear in
 the document outline; adding those capabilities remains a separate product
 choice rather than being inferred from this grammar-registration change.
+Makefiles that override `.RECIPEPREFIX` still receive the standard tab prefix;
+Runyte does not currently evaluate Make directives when choosing indentation.
 
 ## Report
 
