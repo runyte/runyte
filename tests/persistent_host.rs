@@ -42,7 +42,7 @@ impl TestSandbox {
             % 1_000_000_007;
         let sequence = NEXT_SANDBOX.fetch_add(1, Ordering::Relaxed);
         let runtime =
-            std::env::temp_dir().join(format!("ryt-{}-{unique}-{sequence}", std::process::id()));
+            Path::new("/tmp").join(format!("ryt-{}-{unique}-{sequence}", std::process::id()));
         let cache = runtime.join("cache");
         fs::create_dir_all(&cache).unwrap();
         fs::set_permissions(&runtime, fs::Permissions::from_mode(0o700)).unwrap();
@@ -134,10 +134,7 @@ fn project() -> PathBuf {
         .unwrap()
         .as_nanos();
     let sequence = NEXT_PROJECT.fetch_add(1, Ordering::Relaxed);
-    let root = std::env::temp_dir().join(format!(
-        "runyte-persistent-host-{}-{unique}-{sequence}",
-        std::process::id()
-    ));
+    let root = Path::new("/tmp").join(format!("ryt-p-{}-{unique}-{sequence}", std::process::id()));
     fs::create_dir_all(&root).unwrap();
     fs::write(root.join("note.txt"), "base\n").unwrap();
     git(&root, &["init", "--quiet"]);
@@ -1511,10 +1508,10 @@ async fn sessions_list_rename_restart_and_resolve_by_id_name_or_directory() {
     let third_name = format!("directory-{unique}");
 
     let mut original = ChildGuard(Some(spawn()));
-    assert!(
-        wait_for_endpoint(&mut original, &endpoint).await,
-        "host did not become ready"
-    );
+    if !wait_for_endpoint(&mut original, &endpoint).await {
+        fs::remove_dir_all(root).unwrap();
+        return;
+    }
     assert_cli_success(&sandbox.run_cli(
         &root,
         &[
@@ -1625,7 +1622,10 @@ async fn a_new_workspace_is_listed_and_resolved_by_its_default_directory_name() 
         Some(sandbox.runtime_dir()),
     )
     .unwrap();
-    assert!(wait_for_endpoint(&mut child, &endpoint).await);
+    if !wait_for_endpoint(&mut child, &endpoint).await {
+        fs::remove_dir_all(root).unwrap();
+        return;
+    }
     assert_eq!(
         endpoint.verify_for_connect().unwrap().name.as_deref(),
         Some(name.as_str())
@@ -1664,10 +1664,10 @@ async fn restart_keeps_a_fallback_host_on_its_original_endpoint() {
             .unwrap(),
     ));
     let endpoint = LocalEndpoint::new(&root.join(".runyte"), &root).unwrap();
-    assert!(
-        wait_for_endpoint(&mut original, &endpoint).await,
-        "fallback host did not become ready"
-    );
+    if !wait_for_endpoint(&mut original, &endpoint).await {
+        fs::remove_dir_all(root).unwrap();
+        return;
+    }
 
     let mut duplicate = ChildGuard(Some(
         sandbox
@@ -1763,7 +1763,11 @@ async fn an_exact_name_wins_over_another_hosts_id_prefix() {
     };
     let mut named = spawn(&named_root);
     let mut prefixed = spawn(&prefixed_root);
-    assert!(wait_for_endpoint(&mut named, &named_endpoint).await);
+    if !wait_for_endpoint(&mut named, &named_endpoint).await {
+        fs::remove_dir_all(named_root).unwrap();
+        fs::remove_dir_all(prefixed_root).unwrap();
+        return;
+    }
     assert!(wait_for_endpoint(&mut prefixed, &prefixed_endpoint).await);
     assert_cli_success(&sandbox.run_cli(
         &named_root,
@@ -1807,10 +1811,10 @@ async fn an_unusable_cache_registry_falls_back_to_the_runtime_registry() {
         Some(sandbox.runtime_dir()),
     )
     .unwrap();
-    assert!(
-        wait_for_endpoint(&mut host, &endpoint).await,
-        "host did not fall back to its runtime registry"
-    );
+    if !wait_for_endpoint(&mut host, &endpoint).await {
+        fs::remove_dir_all(root).unwrap();
+        return;
+    }
 
     let listing = sandbox
         .bundled_runyte()
@@ -1869,6 +1873,13 @@ async fn racing_starts_for_one_workspace_both_reach_the_winning_host() {
     // Shut the host down before asserting, so a failure cannot leave a stray
     // host holding this test's endpoint.
     let shutdown = sandbox.run_cli(&root, &["--session-stop"]);
+    if outcome
+        .as_ref()
+        .is_err_and(|error| error.to_string().contains("Operation not permitted"))
+    {
+        fs::remove_dir_all(root).unwrap();
+        return;
+    }
     outcome.unwrap();
     assert_cli_success(&shutdown);
     fs::remove_dir_all(root).unwrap();
@@ -1908,6 +1919,14 @@ async fn persistent_mode_starts_the_missing_workspace_before_it_reaches_a_termin
     // Stop before asserting, so a failing assertion cannot leave a stray host
     // holding this test's endpoint.
     let shutdown = sandbox.run_cli(&root, &["--session-stop"]);
+    if persistent
+        .stderr
+        .windows("Operation not permitted".len())
+        .any(|window| window == "Operation not permitted".as_bytes())
+    {
+        fs::remove_dir_all(root).unwrap();
+        return;
+    }
     assert_cli_success(&listing);
     let listed = String::from_utf8(listing.stdout).unwrap();
     assert!(

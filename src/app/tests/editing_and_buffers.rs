@@ -877,7 +877,7 @@ fn system_clipboard_bindings_use_the_clipboard_boundary() {
 #[test]
 fn path_command_opens_a_popup_with_the_active_files_absolute_path() {
     let mut app = App::new(Config::default(), None).unwrap();
-    let path = std::env::temp_dir().join(format!("runyte-path-{}.txt", std::process::id()));
+    let path = temporary_directory().join(format!("runyte-path-{}.txt", std::process::id()));
     std::fs::write(&path, "contents\n").unwrap();
 
     app.open_file(path.clone()).unwrap();
@@ -895,7 +895,7 @@ fn path_command_opens_a_popup_with_the_active_files_absolute_path() {
 #[test]
 fn path_command_on_a_directory_buffer_shows_its_root() {
     let mut app = App::new(Config::default(), None).unwrap();
-    let directory = std::env::temp_dir().join(format!(
+    let directory = temporary_directory().join(format!(
         "runyte-path-dir-{}-{}",
         std::process::id(),
         std::time::SystemTime::now()
@@ -930,7 +930,7 @@ fn path_command_on_a_pathless_buffer_refuses() {
 #[test]
 fn path_popup_tab_opens_a_mnemonic_action_menu_and_escape_unwinds_one_level_at_a_time() {
     let mut app = App::new(Config::default(), None).unwrap();
-    let path = std::env::temp_dir().join(format!("runyte-path-tab-{}.txt", std::process::id()));
+    let path = temporary_directory().join(format!("runyte-path-tab-{}.txt", std::process::id()));
     std::fs::write(&path, "contents\n").unwrap();
     app.open_file(path.clone()).unwrap();
 
@@ -965,7 +965,7 @@ fn path_popup_tab_opens_a_mnemonic_action_menu_and_escape_unwinds_one_level_at_a
 #[test]
 fn path_action_menu_cycles_with_up_and_down_and_wraps() {
     let mut app = App::new(Config::default(), None).unwrap();
-    let path = std::env::temp_dir().join(format!("runyte-path-cycle-{}.txt", std::process::id()));
+    let path = temporary_directory().join(format!("runyte-path-cycle-{}.txt", std::process::id()));
     std::fs::write(&path, "contents\n").unwrap();
     app.open_file(path.clone()).unwrap();
     app.execute_command("path").unwrap();
@@ -996,7 +996,7 @@ fn path_action_menu_mnemonic_s_copies_to_the_system_clipboard_and_closes() {
     let shared = Arc::new(Mutex::new(String::new()));
     let mut app = App::new(Config::default(), None).unwrap();
     app.set_system_clipboard(Box::new(MemoryClipboard(shared.clone())));
-    let path = std::env::temp_dir().join(format!("runyte-path-sys-{}.txt", std::process::id()));
+    let path = temporary_directory().join(format!("runyte-path-sys-{}.txt", std::process::id()));
     std::fs::write(&path, "contents\n").unwrap();
     app.open_file(path.clone()).unwrap();
 
@@ -1014,7 +1014,7 @@ fn path_action_menu_mnemonic_s_copies_to_the_system_clipboard_and_closes() {
 #[test]
 fn path_action_menu_mnemonic_r_copies_to_the_unnamed_register_and_closes() {
     let mut app = App::new(Config::default(), None).unwrap();
-    let path = std::env::temp_dir().join(format!("runyte-path-reg-{}.txt", std::process::id()));
+    let path = temporary_directory().join(format!("runyte-path-reg-{}.txt", std::process::id()));
     std::fs::write(&path, "contents\n").unwrap();
     app.open_file(path.clone()).unwrap();
 
@@ -1035,7 +1035,7 @@ fn path_action_menu_mnemonic_r_copies_to_the_unnamed_register_and_closes() {
 #[test]
 fn path_action_menu_down_then_enter_copies_to_the_register_target() {
     let mut app = App::new(Config::default(), None).unwrap();
-    let path = std::env::temp_dir().join(format!("runyte-path-enter-{}.txt", std::process::id()));
+    let path = temporary_directory().join(format!("runyte-path-enter-{}.txt", std::process::id()));
     std::fs::write(&path, "contents\n").unwrap();
     app.open_file(path.clone()).unwrap();
 
@@ -1373,7 +1373,7 @@ fn tab_still_navigates_non_buffer_result_pickers() {
 
 #[test]
 fn global_search_opens_a_reusable_result_buffer_and_jumps_to_a_match() {
-    let directory = std::env::temp_dir().join(format!(
+    let directory = temporary_directory().join(format!(
         "runyte-global-search-{}-{}",
         std::process::id(),
         SystemTime::now()
@@ -1497,7 +1497,7 @@ fn workspace_search_remains_jumpable_and_is_rebuilt_in_place() {
 
 #[test]
 fn workspace_search_offers_the_same_flavours_as_the_buffer() {
-    let directory = std::env::temp_dir().join(format!(
+    let directory = temporary_directory().join(format!(
         "runyte-workspace-flavours-{}-{}",
         std::process::id(),
         SystemTime::now()

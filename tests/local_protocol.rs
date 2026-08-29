@@ -44,7 +44,7 @@ fn test_runtime_dir() -> &'static Path {
                 .unwrap()
                 .as_nanos()
                 % 1_000_000_007;
-            let path = std::env::temp_dir().join(format!("ryt-{}-{unique}", std::process::id()));
+            let path = Path::new("/tmp").join(format!("ryt-{}-{unique}", std::process::id()));
             fs::create_dir_all(&path).unwrap();
             fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
             path

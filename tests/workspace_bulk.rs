@@ -33,7 +33,7 @@ fn sandbox() -> PathBuf {
     static NEXT: AtomicU64 = AtomicU64::new(0);
     loop {
         let sequence = NEXT.fetch_add(1, Ordering::Relaxed);
-        let root = std::env::temp_dir().join(format!("rwb-{}-{sequence}", std::process::id()));
+        let root = Path::new("/tmp").join(format!("rwb-{}-{sequence}", std::process::id()));
         match fs::create_dir(&root) {
             Ok(()) => return root,
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}

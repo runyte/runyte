@@ -1425,14 +1425,7 @@ mod tests {
 
         let root = unique_test_root("targeted-unregistered-inspection");
         let project = root.join("project");
-        let runtime = std::env::temp_dir().join(format!(
-            "ryt-ti-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let runtime = unique_test_root("targeted-runtime");
         fs::create_dir_all(project.join(".runyte")).unwrap();
         fs::create_dir_all(&runtime).unwrap();
         #[cfg(unix)]
@@ -1585,14 +1578,7 @@ mod tests {
 
         let root = unique_test_root("registered-incompatible-host");
         let project = root.join("project");
-        let runtime = std::env::temp_dir().join(format!(
-            "ryt-ri-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let runtime = unique_test_root("incompatible-runtime");
         fs::create_dir_all(project.join(".runyte")).unwrap();
         fs::create_dir_all(&runtime).unwrap();
         #[cfg(unix)]
@@ -2545,14 +2531,7 @@ mod tests {
         let root = unique_test_root("broad-name-isolation");
         let project = root.join("project");
         let recents = root.join("cache/workspaces.json");
-        let runtime = std::env::temp_dir().join(format!(
-            "ryt-bn-{}-{}",
-            std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let runtime = unique_test_root("broad-runtime");
         fs::create_dir_all(project.join(".runyte")).unwrap();
         fs::create_dir_all(&runtime).unwrap();
         use std::os::unix::fs::PermissionsExt;
@@ -3359,12 +3338,18 @@ mod tests {
             .and_then(|entry| entry.number)
     }
 
-    fn unique_test_root(label: &str) -> PathBuf {
+    fn unique_test_root(_label: &str) -> PathBuf {
         use std::sync::atomic::{AtomicU64, Ordering};
 
         static NEXT_ROOT: AtomicU64 = AtomicU64::new(1);
-        std::env::temp_dir().join(format!(
-            "runyte-workspace-{label}-{}-{}",
+        // Darwin's Unix-domain socket path is short. Keep every catalog
+        // fixture eligible to host an endpoint, and canonicalize `/tmp` so
+        // assertions never compare it with the `/private/tmp` identity.
+        let base = Path::new("/tmp")
+            .canonicalize()
+            .unwrap_or_else(|_| std::env::temp_dir());
+        base.join(format!(
+            "ryt-c-{}-{}",
             std::process::id(),
             NEXT_ROOT.fetch_add(1, Ordering::Relaxed)
         ))

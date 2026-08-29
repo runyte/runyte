@@ -99,6 +99,18 @@ fn launch_position(line: usize, column: Option<usize>) -> LaunchPosition {
     }
 }
 
+/// The system temporary directory under its filesystem identity.
+///
+/// macOS commonly advertises `/var/...` through `TMPDIR` while resolving the
+/// same directory as `/private/var/...`. Application paths are canonicalized
+/// when they become buffer and workspace identities, so fixtures must begin
+/// from that same spelling or assertions accidentally compare aliases.
+fn temporary_directory() -> PathBuf {
+    std::env::temp_dir()
+        .canonicalize()
+        .unwrap_or_else(|_| std::env::temp_dir())
+}
+
 /// All production source that implements the application coordinator.
 fn production_source() -> String {
     fn collect_modules(directory: &std::path::Path, sources: &mut Vec<std::path::PathBuf>) {

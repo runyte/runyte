@@ -23,7 +23,7 @@ impl TempDir {
             std::process::id()
         ));
         fs::create_dir(&path).unwrap();
-        Self(path)
+        Self(path.canonicalize().unwrap())
     }
 
     fn path(&self) -> &Path {

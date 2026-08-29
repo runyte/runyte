@@ -442,7 +442,7 @@ fn picker_control_bindings_page_and_open_in_a_split() {
         .unwrap()
         .as_nanos();
     let directory =
-        std::env::temp_dir().join(format!("runyte-picker-{}-{unique}", std::process::id()));
+        temporary_directory().join(format!("runyte-picker-{}-{unique}", std::process::id()));
     fs::create_dir(&directory).unwrap();
     for index in 0..15 {
         fs::write(

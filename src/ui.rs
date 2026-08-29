@@ -4100,6 +4100,9 @@ mod tests {
         let after = root.join("café");
         std::fs::create_dir_all(&before).unwrap();
         std::fs::create_dir_all(&after).unwrap();
+        let root = root.canonicalize().unwrap();
+        let before = root.join("before");
+        let after = root.join("café");
         let mut app = App::new(Config::default(), None).unwrap();
         app.working_directory = before;
 

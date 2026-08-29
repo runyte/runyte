@@ -4804,10 +4804,10 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "runyte-switch-recovery-{}-{nanos}",
-            std::process::id()
-        ));
+        // Keep the fixture below Darwin's short Unix-domain socket path limit.
+        // The macOS temporary directory under /var/folders is too long once
+        // `.runyte/host/workspace.sock` is appended.
+        let root = Path::new("/tmp").join(format!("ryt-s-{}-{nanos}", std::process::id()));
         let runtime = root.join("runtime");
         let source_root = root.join("source");
         let destination_root = root.join("destination");
