@@ -1657,7 +1657,7 @@ fn read_bounded_file(root: &Path, path: &Path, limit: usize) -> Option<Vec<u8>> 
 #[cfg(target_os = "macos")]
 struct ChildExitObserver {
     pid: libc::pid_t,
-    already_zombie: bool,
+    already_completed: Option<std::process::ExitStatus>,
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -1675,18 +1675,18 @@ impl ChildExitObserver {
         // not authorize group cleanup: signalling the group then would also
         // signal the still-exiting Git leader and could replace its successful
         // status with SIGKILL.
-        let already_zombie = darwin_process_is_zombie(pid)?;
+        let already_completed = darwin_process_completion(pid)?;
         Ok(Self {
             pid,
-            already_zombie,
+            already_completed,
         })
     }
 
-    fn exited(&self) -> io::Result<bool> {
-        if self.already_zombie {
-            return Ok(true);
+    fn completion(&self) -> io::Result<Option<std::process::ExitStatus>> {
+        if self.already_completed.is_some() {
+            return Ok(self.already_completed);
         }
-        darwin_process_is_zombie(self.pid)
+        darwin_process_completion(self.pid)
     }
 }
 
@@ -1697,7 +1697,7 @@ const DARWIN_PROC_FLAG_INEXIT: u32 = 4;
 const DARWIN_INCLUDE_ZOMBIES: u64 = 1;
 
 #[cfg(target_os = "macos")]
-fn darwin_process_is_zombie(pid: libc::pid_t) -> io::Result<bool> {
+fn darwin_process_completion(pid: libc::pid_t) -> io::Result<Option<std::process::ExitStatus>> {
     let mut information = std::mem::MaybeUninit::<libc::proc_bsdinfo>::zeroed();
     let size = std::mem::size_of::<libc::proc_bsdinfo>();
     let buffer_size = libc::c_int::try_from(size)
@@ -1735,9 +1735,10 @@ fn darwin_process_is_zombie(pid: libc::pid_t) -> io::Result<bool> {
             "process state described a different PID",
         ));
     }
-    Ok(matches!(
-        darwin_process_snapshot_state(information.pbi_status, information.pbi_flags),
-        DarwinProcessState::Zombie
+    Ok(darwin_process_snapshot_completion(
+        information.pbi_status,
+        information.pbi_flags,
+        information.pbi_xstatus,
     ))
 }
 
@@ -1760,6 +1761,21 @@ fn darwin_process_snapshot_state(status: u32, flags: u32) -> DarwinProcessState 
     }
 }
 
+#[cfg(target_os = "macos")]
+fn darwin_process_snapshot_completion(
+    status: u32,
+    flags: u32,
+    raw_wait_status: u32,
+) -> Option<std::process::ExitStatus> {
+    use std::os::unix::process::ExitStatusExt as _;
+
+    matches!(
+        darwin_process_snapshot_state(status, flags),
+        DarwinProcessState::Zombie
+    )
+    .then(|| std::process::ExitStatus::from_raw(raw_wait_status as i32))
+}
+
 /// Observes a completed Unix child without releasing its process identity,
 /// stops any descendants still in its owned group, and only then reaps it.
 ///
@@ -1768,8 +1784,11 @@ fn darwin_process_snapshot_state(status: u32, flags: u32) -> DarwinProcessState 
 /// created. Linux and other Unix targets use `waitid(WNOWAIT)` to keep the
 /// exited leader waitable. Darwin level-queries both the live and zombie
 /// process tables because its `waitid` implementation does not provide a
-/// reliable nonblocking completion boundary here. Both keep the PID and
-/// process-group identity anchored through cleanup.
+/// reliable nonblocking completion boundary here. Its zombie snapshot also
+/// supplies the raw wait status, which must be retained before signalling the
+/// owned group: Darwin can otherwise report that cleanup signal from the
+/// subsequent reap. Both keep the PID and process-group identity anchored
+/// through cleanup.
 #[cfg(all(unix, not(target_os = "macos")))]
 fn try_finish_child(
     child: &mut std::process::Child,
@@ -1807,24 +1826,26 @@ fn try_finish_child(
     child: &mut std::process::Child,
     observer: &ChildExitObserver,
 ) -> io::Result<Option<std::process::ExitStatus>> {
-    if !observer.exited()? {
+    let Some(observed) = observer.completion()? else {
         return Ok(None);
-    }
+    };
     let pid = child.id();
     stop_child_group(child);
-    let status = child.wait()?;
-    if !status.success() {
+    let reaped = child.wait()?;
+    if reaped != observed {
         crate::log_warn!(
             "git",
-            "Git child failed after stable process-group cleanup";
+            "Git child reap status changed after stable process-group cleanup";
             "pid" => pid,
             "observed_state" => "zombie",
             "group_signal" => libc::SIGKILL,
-            "exit_code" => format_args!("{:?}", status.code()),
-            "exit_signal" => format_args!("{:?}", exit_signal(&status)),
+            "observed_code" => format_args!("{:?}", observed.code()),
+            "observed_signal" => format_args!("{:?}", exit_signal(&observed)),
+            "reaped_code" => format_args!("{:?}", reaped.code()),
+            "reaped_signal" => format_args!("{:?}", exit_signal(&reaped)),
         );
     }
-    Ok(Some(status))
+    Ok(Some(observed))
 }
 
 #[cfg(not(unix))]
@@ -4419,7 +4440,7 @@ mod tests {
         let observer_before_exit = ChildExitObserver::new(&child).unwrap();
         child.stdin.take().unwrap().write_all(b"go\n").unwrap();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-        while !observer_before_exit.exited().unwrap() {
+        while observer_before_exit.completion().unwrap().is_none() {
             assert!(
                 std::time::Instant::now() < deadline,
                 "the observer never reached the child's stable zombie state"
@@ -4429,7 +4450,7 @@ mod tests {
 
         let observer_after_exit = ChildExitObserver::new(&child).unwrap();
         assert!(
-            observer_after_exit.exited().unwrap(),
+            observer_after_exit.completion().unwrap().is_some(),
             "observer creation after exit did not recognize the unreaped zombie"
         );
         let status = try_finish_child(&mut child, &observer_after_exit)
@@ -4447,6 +4468,8 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn darwin_process_snapshot_requires_a_stable_zombie_before_cleanup() {
+        use std::os::unix::process::ExitStatusExt as _;
+
         assert_eq!(
             darwin_process_snapshot_state(libc::SRUN, DARWIN_PROC_FLAG_INEXIT),
             DarwinProcessState::Exiting,
@@ -4459,6 +4482,55 @@ mod tests {
             darwin_process_snapshot_state(libc::SRUN, 0),
             DarwinProcessState::Live,
         );
+        assert!(
+            darwin_process_snapshot_completion(libc::SRUN, DARWIN_PROC_FLAG_INEXIT, 23 << 8,)
+                .is_none(),
+            "an exiting snapshot exposed a wait status before it was stable"
+        );
+        assert_eq!(
+            darwin_process_snapshot_completion(libc::SZOMB, 0, 0)
+                .unwrap()
+                .code(),
+            Some(0),
+        );
+        assert_eq!(
+            darwin_process_snapshot_completion(libc::SZOMB, 0, 23 << 8)
+                .unwrap()
+                .code(),
+            Some(23),
+        );
+        assert_eq!(
+            darwin_process_snapshot_completion(libc::SZOMB, 0, libc::SIGKILL as u32)
+                .unwrap()
+                .signal(),
+            Some(libc::SIGKILL),
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn darwin_observer_preserves_an_external_signal() {
+        use std::os::unix::process::ExitStatusExt as _;
+
+        let mut child = Command::new("sleep").arg("30").spawn().unwrap();
+        let observer = ChildExitObserver::new(&child).unwrap();
+        // SAFETY: this test owns the live child named by this positive PID.
+        assert_eq!(
+            unsafe { libc::kill(child.id() as libc::pid_t, libc::SIGKILL) },
+            0
+        );
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        let status = loop {
+            if let Some(status) = try_finish_child(&mut child, &observer).unwrap() {
+                break status;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the observer never reported the externally killed child"
+            );
+            std::thread::yield_now();
+        };
+        assert_eq!(status.signal(), Some(libc::SIGKILL));
     }
 
     #[cfg(unix)]

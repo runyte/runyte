@@ -169,6 +169,17 @@ from an exit code, redacted logs must preserve that classification, and this
 test's failure path must read the full retained notification through the local
 protocol before diagnosing the child lifecycle.
 
+CI run 33272842849 then retained the full classification: the precondition
+failed because `git rev-parse --show-toplevel` was terminated by signal 9.
+Darwin's zombie snapshot includes both `pbi_status == SZOMB` and the raw
+`pbi_xstatus`, but Runyte discarded that authoritative pre-cleanup status,
+sent `SIGKILL` to remove remaining members of the owned process group, and
+classified Git from the later reap status. The observer must preserve
+`pbi_xstatus` only once the process is a zombie, retain it as the command's
+status, and use the post-cleanup `Child::wait` solely to reap and diagnose any
+status change. This keeps genuine external signals visible without letting
+Runyte's descendant cleanup rewrite a successful Git result.
+
 CI run 33269246467 also showed that the full-content-budget performance gate
 could fail on a single 71.93 ms sample against its 64 ms release budget. The
 picker's score comparator recomputed each candidate's Unicode character count
