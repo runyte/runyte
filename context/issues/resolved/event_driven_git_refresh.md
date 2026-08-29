@@ -1,4 +1,67 @@
-# Git refresh should be event-driven with periodic reconciliation
+---
+title: "Automatic Git refresh polled unchanged repositories"
+status: resolved
+reported: 2026-08-29
+resolved: 2026-08-29
+commit: 30e093c
+---
+
+## Resolution
+
+Commit `30e093c` (`Make automatic Git refresh event-driven`) resolved this
+report.
+
+`WorkspaceHost::refresh_git_if_due` had treated
+`git.refresh_interval_seconds` as the primary refresh trigger, and
+`App::git_refresh_spec` requested staged content for hidden open files. That
+made an ordinary visible tracked file run Git repeatedly even when neither the
+checkout nor its metadata had changed.
+
+The new `git_monitor` owns a bounded native-observation queue, watches the
+checkout plus its worktree-private and shared Git directories, ignores
+read-only access events, and turns each burst after a 150 ms quiet period into
+one repository invalidation. Watcher errors and queue overflow deliberately
+become full invalidations; events remain hints, and only the Git service reads
+authoritative repository state. Repository discovery now retains both
+`--git-dir` and `--git-common-dir`, covering ordinary repositories, linked
+worktrees, and Git-directory indirection.
+
+`WorkspaceHost::refresh_git_if_due` now retains dirty state until a Git
+consumer is visible, accumulates the `RefreshSpec` requirements already
+reconciled for that invalidation, and submits only the current visible panes'
+requirements. The configured interval is a maximum-staleness fallback instead
+of routine polling. Its measured default is 60 seconds, while zero unregisters
+the watcher and disables both automatic paths. Explicit refresh and snapshots
+bundled with editor-owned mutations keep their direct paths and the Git
+service's existing generation and mutation ordering. A fixed 250 ms
+interaction quiet period preserves prompt, search, deliberate-selection, and
+row-identity protections without delaying an observed change for the full
+fallback interval.
+
+Tests: `git_monitor::tests::a_native_burst_produces_one_debounced_invalidation`,
+`git_monitor::tests::linked_worktree_watches_checkout_private_and_shared_metadata`,
+and `git_monitor::tests::worktree_index_head_refs_and_packed_refs_are_relevant`
+in `src/git_monitor.rs` cover native coalescing and metadata scope;
+`workspace::host::tests::git_invalidation_is_retained_until_visible_and_fallback_is_not_polling`
+in `src/workspace/host.rs` covers the visibility gate, retained dirty state,
+narrow requirements, fallback, and zero setting;
+`app::tests::async_refresh_requests_staged_bases_only_for_visible_open_files`
+and
+`app::tests::automatic_refresh_waits_out_a_short_quiet_period_after_the_last_keystroke`
+in `src/app/tests/git.rs` cover visible/maximized panes and interaction;
+`config::tests::git_reconciliation_defaults_to_sixty_seconds` in
+`src/config.rs` covers the new default; and discovery coverage in
+`tests/git_provider.rs` verifies main, linked-worktree, and separate Git
+directories. The unchanged-repository, 100-open-buffer, and external burst
+subprocess measurements are recorded in
+`context/reference/startup-performance.md`.
+
+Known limitation: native watcher support and event delivery remain
+platform/filesystem dependent. Conservative repository-wide invalidation and
+the configured periodic fallback recover from unclassified or lost events;
+the watcher does not attempt to infer Git status from event paths.
+
+## Report
 
 Runyte currently uses `git.refresh_interval_seconds` as the primary trigger for
 automatic Git refresh. `WorkspaceHost::refresh_git_if_due` checks the timer and
