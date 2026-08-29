@@ -711,6 +711,7 @@ async fn refresh(
         name,
         number: _,
         last_active_unix_seconds,
+        number_declined: _,
     } in openable
     {
         if rows.iter().any(|row| row.project_root == project_root) {
@@ -764,6 +765,10 @@ async fn refresh(
     // holds. A workspace absent from that history is a running host whose
     // record was pruned or never written; it sorts after the remembered ones,
     // by path, so the listing stays stable between refreshes.
+    //
+    // This is not the order the listing is shown in: it is the order numbering
+    // reads, so a digit two running sessions both prefer goes to the more
+    // recently visited one and the same sessions always number the same way.
     rows.sort_by_cached_key(|row| {
         let recency = recent_snapshot
             .iter()
@@ -771,10 +776,10 @@ async fn refresh(
             .unwrap_or(usize::MAX);
         (recency, row.project_root.clone())
     });
-    // Numbering follows the order the listing shows, so a digit two running
-    // sessions both prefer goes to the more recently visited one and the same
-    // listing always numbers the same way.
     assign_running_workspace_numbers(&mut rows, &remembered);
+    // The digits are settled, so the listing can be put in the order it is
+    // read in: pinned sessions first.
+    order_workspace_rows(&mut rows);
     if let Some(path) = recents {
         let path = path.to_path_buf();
         let refreshed_rows = rows.clone();
@@ -798,7 +803,7 @@ fn apply_recent_names(rows: &mut [WorkspaceRow], recent_entries: &[RecentEntry])
     }
 }
 
-/// Gives every running session a digit, and no stopped one.
+/// Gives every running session a digit, and no stopped or declining one.
 ///
 /// The digit is a shortcut that attaches, so it belongs to a session somebody
 /// can reach right now: a stopped session releases the one it held rather than
@@ -807,37 +812,67 @@ fn apply_recent_names(rows: &mut [WorkspaceRow], recent_entries: &[RecentEntry])
 /// starts again answers to the same digit whenever nothing running has claimed
 /// it meanwhile, and otherwise takes the lowest one still free.
 ///
+/// A workspace whose record declines a digit is left alone. Taking one away is
+/// a decision, and handing the row the lowest free digit on the next listing
+/// would undo it before it could be seen.
+///
 /// A number is per-user history rather than host state, so a running host never
 /// answers one and the catalog is the only place a preference can come from.
 fn assign_running_workspace_numbers(rows: &mut [WorkspaceRow], recent_entries: &[RecentEntry]) {
-    let mut taken = [false; MAX_WORKSPACE_NUMBER as usize];
-    for row in rows.iter_mut() {
-        row.number = None;
-        if !row.running {
-            continue;
-        }
-        let preferred = recent_entries
+    let record = |row: &WorkspaceRow| {
+        recent_entries
             .iter()
             .find(|entry| entry.project_root == row.project_root)
-            .and_then(|entry| entry.number)
-            .filter(|number| {
-                (1..=MAX_WORKSPACE_NUMBER).contains(number) && !taken[usize::from(number - 1)]
-            });
+    };
+    let mut taken = [false; MAX_WORKSPACE_NUMBER as usize];
+    let mut wanted = Vec::with_capacity(rows.len());
+    for row in rows.iter_mut() {
+        row.number = None;
+        let entry = record(row);
+        let declined = entry.is_some_and(|entry| entry.number_declined);
+        wanted.push(row.running && !declined);
+        if !row.running || declined {
+            continue;
+        }
+        let preferred = entry.and_then(|entry| entry.number).filter(|number| {
+            (1..=MAX_WORKSPACE_NUMBER).contains(number) && !taken[usize::from(number - 1)]
+        });
         if let Some(number) = preferred {
             taken[usize::from(number - 1)] = true;
             row.number = Some(number);
         }
     }
-    for row in rows
-        .iter_mut()
-        .filter(|row| row.running && row.number.is_none())
-    {
+    for (row, wanted) in rows.iter_mut().zip(wanted) {
+        if !wanted || row.number.is_some() {
+            continue;
+        }
         let free = (1..=MAX_WORKSPACE_NUMBER).find(|candidate| !taken[usize::from(candidate - 1)]);
         if let Some(number) = free {
             taken[usize::from(number - 1)] = true;
             row.number = Some(number);
         }
     }
+}
+
+/// Puts the rows in the order the manager and `--session-list` show them.
+///
+/// A digit pins its session: numbered sessions lead the listing in digit order,
+/// so the shortcut also says where the row is and the top of the list stops
+/// reshuffling as sessions are visited. Everything else follows by the same
+/// value the `Last active` column shows, least recently visited first, with a
+/// session nothing has ever attached to last: `-` there is unknown rather than
+/// old. Rows that tie in all of it are ordered by path so a listing does not
+/// move between two refreshes that found the same sessions.
+fn order_workspace_rows(rows: &mut [WorkspaceRow]) {
+    rows.sort_by_cached_key(|row| {
+        (
+            row.number.is_none(),
+            row.number.unwrap_or(0),
+            row.last_active_unix_seconds.is_none(),
+            row.last_active_unix_seconds.unwrap_or(0),
+            row.project_root.clone(),
+        )
+    });
 }
 
 /// Supplies the per-user visit time to every row, including running hosts.
@@ -1773,6 +1808,7 @@ mod tests {
                 name: None,
                 number: None,
                 last_active_unix_seconds: None,
+                number_declined: false,
             })
             .collect::<Vec<_>>();
         fs::write(&path, serde_json::to_vec(&repeated).unwrap()).unwrap();
@@ -1784,6 +1820,7 @@ mod tests {
             name: None,
             number: None,
             last_active_unix_seconds: None,
+            number_declined: false,
         }];
         fs::write(&path, serde_json::to_vec(&invalid_path).unwrap()).unwrap();
         let error = read_recents(Some(&path)).unwrap_err().to_string();
@@ -1794,6 +1831,7 @@ mod tests {
             name: Some("x".repeat(MAX_HOST_NAME_BYTES + 1)),
             number: None,
             last_active_unix_seconds: None,
+            number_declined: false,
         }];
         fs::write(&path, serde_json::to_vec(&invalid_name).unwrap()).unwrap();
         let error = read_recents(Some(&path)).unwrap_err().to_string();
@@ -1864,37 +1902,64 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn refresh_lists_workspaces_from_most_recently_visited_to_oldest() {
-        let root = unique_test_root("recency-order");
+    async fn refresh_lists_the_least_recently_visited_first_and_never_visited_last() {
+        let root = unique_test_root("visit-order");
         let recents = root.join("cache/workspaces.json");
-        let mut visited = Vec::new();
-        for name in ["oldest", "middle", "newest"] {
+        let mut workspaces = Vec::new();
+        for name in ["oldest", "newest", "unvisited"] {
             let directory = root.join(name);
             fs::create_dir_all(&directory).unwrap();
             let directory = directory.canonicalize().unwrap();
             record_recent_workspace_in(&recents, &directory).unwrap();
-            visited.push(directory);
+            workspaces.push(directory);
         }
+        // Stamped rather than attached to, so the order under test is the one
+        // the values describe and not the second the test happened to run in.
+        let stamp = |entries: &mut Vec<RecentEntry>, project_root: &Path, seconds: u64| {
+            entries
+                .iter_mut()
+                .find(|entry| entry.project_root == project_root)
+                .unwrap()
+                .last_active_unix_seconds = Some(seconds);
+        };
+        update_recents(&recents, |entries| {
+            stamp(entries, &workspaces[0], 1_000);
+            stamp(entries, &workspaces[1], 9_000);
+        })
+        .unwrap();
 
+        // No host is running in any of them, so nothing is numbered and the
+        // visits are the whole answer.
         let rows = refresh(&[], Some(&recents), Path::new(".runyte"), None)
             .await
             .unwrap();
-
-        visited.reverse();
+        assert!(rows.iter().all(|row| row.number.is_none()));
         assert_eq!(
             rows.iter()
                 .map(|row| row.project_root.clone())
                 .collect::<Vec<_>>(),
-            visited
+            workspaces
         );
 
-        // Visiting the oldest one again moves it to the top rather than
-        // leaving the listing in whatever order the first visits produced.
-        record_recent_workspace_in(&recents, visited.last().unwrap()).unwrap();
+        // Visiting the oldest one again moves it below the other visited row
+        // rather than leaving the listing in the order the first visits made.
+        update_recents(&recents, |entries| {
+            stamp(entries, &workspaces[0], 12_000);
+        })
+        .unwrap();
         let rows = refresh(&[], Some(&recents), Path::new(".runyte"), None)
             .await
             .unwrap();
-        assert_eq!(rows[0].project_root, *visited.last().unwrap());
+        assert_eq!(
+            rows.iter()
+                .map(|row| row.project_root.clone())
+                .collect::<Vec<_>>(),
+            vec![
+                workspaces[1].clone(),
+                workspaces[0].clone(),
+                workspaces[2].clone(),
+            ]
+        );
 
         fs::remove_dir_all(root).unwrap();
     }
@@ -2891,6 +2956,156 @@ mod tests {
     }
 
     #[test]
+    fn numbered_sessions_lead_the_listing_and_the_rest_follow_by_visit() {
+        let mut rows = Vec::new();
+        for (path, number, last_active) in [
+            ("/w/never", None, None),
+            ("/w/recent", None, Some(9_000)),
+            ("/w/second", Some(2), Some(1)),
+            ("/w/old", None, Some(1_000)),
+            ("/w/first", Some(1), None),
+        ] {
+            let mut row = numbering_row(Path::new(path), number.is_some());
+            row.number = number;
+            row.last_active_unix_seconds = last_active;
+            rows.push(row);
+        }
+
+        order_workspace_rows(&mut rows);
+
+        assert_eq!(
+            rows.iter()
+                .map(|row| row.project_root.display().to_string())
+                .collect::<Vec<_>>(),
+            vec!["/w/first", "/w/second", "/w/old", "/w/recent", "/w/never"],
+            "digits lead in order, then the least recently visited, then the \
+             sessions nothing has ever attached to"
+        );
+    }
+
+    #[test]
+    fn a_cleared_digit_is_remembered_rather_than_handed_out_again() {
+        let root = unique_test_root("number-declined");
+        let path = root.join("cache/workspaces.json");
+        let workspace = root.join("workspace");
+        fs::create_dir_all(&workspace).unwrap();
+        record_recent_workspace_in(&path, &workspace).unwrap();
+        let workspace = workspace.canonicalize().unwrap();
+        assert_eq!(recorded_number(&path, &workspace), Some(1));
+
+        set_recent_workspace_number_in(Some(&path), &workspace, None).unwrap();
+        assert_eq!(recorded_number(&path, &workspace), None);
+
+        // The running session it belongs to is left unnumbered, where it would
+        // otherwise be given the lowest free digit by the next listing.
+        let entries = read_recents(Some(&path)).unwrap();
+        let mut rows = vec![numbering_row(&workspace, true)];
+        assign_running_workspace_numbers(&mut rows, &entries);
+        assert_eq!(rows[0].number, None);
+
+        // Nor does revisiting the workspace, or a listing that backfills an
+        // older catalog, quietly claim one for it.
+        record_recent_workspace_in(&path, &workspace).unwrap();
+        assert_eq!(recorded_number(&path, &workspace), None);
+        let mut entries = read_recents(Some(&path)).unwrap();
+        assign_missing_default_workspace_numbers(&mut entries);
+        assert_eq!(entries[0].number, None);
+
+        // Numbering it again ends the decision.
+        set_recent_workspace_number_in(Some(&path), &workspace, Some(4)).unwrap();
+        assert_eq!(recorded_number(&path, &workspace), Some(4));
+        let entries = read_recents(Some(&path)).unwrap();
+        assert!(!entries[0].number_declined);
+        let mut rows = vec![numbering_row(&workspace, true)];
+        assign_running_workspace_numbers(&mut rows, &entries);
+        assert_eq!(rows[0].number, Some(4));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// The mirror of `refresh_merge_preserves_a_concurrently_changed_existing_name`
+    /// for digits: a refresh must not undo a renumbering, or an unpinning, that
+    /// landed while it was gathering the listing.
+    #[test]
+    fn a_refresh_does_not_overwrite_a_concurrently_changed_number() {
+        let root = unique_test_root("number-writeback-race");
+        let path = root.join("cache/workspaces.json");
+        let renumbered = root.join("renumbered");
+        let unpinned = root.join("unpinned");
+        for workspace in [&renumbered, &unpinned] {
+            fs::create_dir_all(workspace).unwrap();
+            record_recent_workspace_in(&path, workspace).unwrap();
+        }
+        let renumbered = renumbered.canonicalize().unwrap();
+        let unpinned = unpinned.canonicalize().unwrap();
+
+        let snapshot = read_recents(Some(&path)).unwrap();
+        let mut rows = vec![
+            numbering_row(&renumbered, true),
+            numbering_row(&unpinned, true),
+        ];
+        assign_running_workspace_numbers(&mut rows, &snapshot);
+        assert_eq!(rows[0].number, Some(1));
+        assert_eq!(rows[1].number, Some(2));
+
+        // Another process answers for both while this listing is in flight.
+        set_recent_workspace_number_in(Some(&path), &renumbered, Some(7)).unwrap();
+        set_recent_workspace_number_in(Some(&path), &unpinned, None).unwrap();
+        merge_refreshed_rows(&path, &snapshot, &rows).unwrap();
+
+        assert_eq!(
+            recorded_number(&path, &renumbered),
+            Some(7),
+            "the digit somebody just chose survives a refresh that read the old one"
+        );
+        assert_eq!(recorded_number(&path, &unpinned), None);
+        let entries = read_recents(Some(&path)).unwrap();
+        assert!(
+            entries
+                .iter()
+                .find(|entry| entry.project_root == unpinned)
+                .unwrap()
+                .number_declined,
+            "an unpinned workspace is not given its digit back by a stale refresh"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_workspace_displaced_by_a_swap_may_still_be_numbered_again() {
+        let root = unique_test_root("number-swap-declined");
+        let path = root.join("cache/workspaces.json");
+        let first = root.join("first");
+        let second = root.join("second");
+        for workspace in [&first, &second] {
+            fs::create_dir_all(workspace).unwrap();
+            record_recent_workspace_in(&path, workspace).unwrap();
+        }
+        let first = first.canonicalize().unwrap();
+        let second = second.canonicalize().unwrap();
+
+        // The asking workspace has no digit to hand over, so the swap leaves
+        // the holder without one -- but it never asked for that, so a listing
+        // is still free to give it another.
+        set_recent_workspace_number_in(Some(&path), &second, None).unwrap();
+        let displaced = set_recent_workspace_number_in(Some(&path), &second, Some(1)).unwrap();
+        assert_eq!(displaced.as_deref(), Some(first.as_path()));
+        let entries = read_recents(Some(&path)).unwrap();
+        assert_eq!(recorded_number(&path, &first), None);
+        assert!(
+            !entries
+                .iter()
+                .find(|entry| entry.project_root == first)
+                .unwrap()
+                .number_declined
+        );
+        let mut rows = vec![numbering_row(&first, true), numbering_row(&second, true)];
+        assign_running_workspace_numbers(&mut rows, &entries);
+        assert_eq!(rows[1].number, Some(1));
+        assert_eq!(rows[0].number, Some(2));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn a_refresh_records_the_digit_a_running_session_was_given() {
         let root = unique_test_root("number-writeback");
         let path = root.join("cache/workspaces.json");
@@ -3138,6 +3353,10 @@ struct RecentWorkspace {
     /// Absent in catalogs written before the session manager showed activity.
     #[serde(default)]
     last_active_unix_seconds: Option<u64>,
+    /// Absent in catalogs written before a digit could be declined, which is
+    /// the same as never having declined one.
+    #[serde(default)]
+    number_declined: bool,
 }
 
 /// The largest number a workspace can carry.
@@ -3165,9 +3384,18 @@ pub struct RecentEntry {
     /// Whole Unix seconds make the regenerable catalog portable across
     /// processes while keeping elapsed-time presentation out of persistence.
     pub last_active_unix_seconds: Option<u64>,
+    /// Somebody took this workspace's digit away.
+    ///
+    /// Clearing a number is an answer rather than an absence, so it is
+    /// remembered: a running session is otherwise given the lowest free digit
+    /// again on the next listing, and the manager would undo the decision
+    /// before it could be seen. Numbering the workspace again ends it.
+    pub number_declined: bool,
 }
 
 impl RecentEntry {
+    /// A workspace that has not declined a digit, which every producer of a
+    /// record but the reader means.
     fn new(
         project_root: PathBuf,
         name: Option<String>,
@@ -3179,6 +3407,7 @@ impl RecentEntry {
             name,
             number,
             last_active_unix_seconds,
+            number_declined: false,
         }
     }
 }
@@ -3253,6 +3482,10 @@ pub fn recorded_workspace_number(project_root: &Path) -> Option<u8> {
 /// quietly unnumbering the other. Both keep a shortcut, and the returned path
 /// lets the caller say where the old one went instead of leaving somebody to
 /// discover it by pressing the key.
+///
+/// Taking a number away is remembered as a decision, so the workspace stays
+/// unnumbered instead of being handed the lowest free digit by the next
+/// listing. Giving it one again ends that.
 fn set_recent_workspace_number_in(
     path: Option<&Path>,
     project_root: &Path,
@@ -3290,9 +3523,13 @@ fn set_recent_workspace_number_in(
             // why an unnumbered one leaves the other without a number rather
             // than duplicating the one it just gave away.
             paths[holder].number = vacated;
+            // The displaced workspace did not ask to lose its digit, so it is
+            // left open to being given another one; only the workspace that
+            // was cleared on purpose declines.
             displaced = Some(paths[holder].project_root.clone());
         }
         paths[index].number = number;
+        paths[index].number_declined = number.is_none();
         Ok(())
     })?;
     Ok(displaced)
@@ -3324,29 +3561,37 @@ fn record_recent_workspace_name_in(
                     entry.name.clone(),
                     entry.number,
                     entry.last_active_unix_seconds,
+                    entry.number_declined,
                 )
             });
         paths.retain(|entry| entry.project_root != canonical);
+        let declined = previous
+            .as_ref()
+            .is_some_and(|(_, _, _, declined)| *declined);
         let (previous_name, previous_number, last_active_unix_seconds) = previous
-            .map_or((None, None, None), |(name, number, active)| {
+            .map_or((None, None, None), |(name, number, active, _)| {
                 (name, Some(number), active)
             });
         let name = previous_name
             .unwrap_or_else(|| unique_default_workspace_name(&canonical, paths.as_slice()));
         // Revisiting keeps the number this workspace already answered to.
         // Only a genuinely new record claims one, which is what makes the
-        // default assignment order the order workspaces were created in.
-        let number = previous_number
-            .flatten()
-            .or_else(|| lowest_free_workspace_number(paths));
+        // default assignment order the order workspaces were created in, and a
+        // workspace whose digit was taken away keeps none.
+        let number = if declined {
+            None
+        } else {
+            previous_number
+                .flatten()
+                .or_else(|| lowest_free_workspace_number(paths))
+        };
         recorded = Some(RecordedWorkspace {
             name: name.clone(),
             number,
         });
-        paths.insert(
-            0,
-            RecentEntry::new(canonical, Some(name), number, last_active_unix_seconds),
-        );
+        let mut entry = RecentEntry::new(canonical, Some(name), number, last_active_unix_seconds);
+        entry.number_declined = declined;
+        paths.insert(0, entry);
         // Truncation drops the least recently visited tail, which can free a
         // number. The next new workspace claims it; the survivors keep theirs.
         paths.truncate(RECENT_LIMIT);
@@ -3430,9 +3675,11 @@ fn assign_missing_default_workspace_names(paths: &mut [RecentEntry]) {
 /// numbering existed has no creation order to recover -- it is ordered by
 /// recency and nothing else -- so this one-time backfill numbers those rows
 /// most-recently-visited first and says so rather than inventing a history.
+///
+/// A workspace whose digit was taken away on purpose is not missing one.
 fn assign_missing_default_workspace_numbers(paths: &mut [RecentEntry]) {
     for index in 0..paths.len() {
-        if paths[index].number.is_some() {
+        if paths[index].number.is_some() || paths[index].number_declined {
             continue;
         }
         paths[index].number = lowest_free_workspace_number(paths);
@@ -3579,7 +3826,15 @@ fn rename_recent_workspace_in(path: &Path, project_root: &Path, name: &str) -> R
 /// so, and a stopped session's record keeps its digit only until a running
 /// session needs it. Writing the answer back is also what lets the status line
 /// name this session's digit on the next start without listing every workspace.
-fn merge_assigned_numbers(paths: &mut [RecentEntry], rows: &[WorkspaceRow]) {
+///
+/// A record that changed while the listing was being gathered is not written,
+/// for the same reason a concurrently renamed one is not: the person who
+/// changed it answered more recently than this refresh read.
+fn merge_assigned_numbers(
+    paths: &mut [RecentEntry],
+    snapshot: &[RecentEntry],
+    rows: &[WorkspaceRow],
+) {
     let assigned = rows
         .iter()
         .filter_map(|row| {
@@ -3588,6 +3843,20 @@ fn merge_assigned_numbers(paths: &mut [RecentEntry], rows: &[WorkspaceRow]) {
         })
         .collect::<Vec<_>>();
     for entry in paths {
+        // These digits were decided against the catalog as the refresh found
+        // it. A record that has changed since then holds somebody else's newer
+        // answer -- a renumber, or a digit taken away, from another process --
+        // so it is left alone rather than overwritten from a stale read. The
+        // next listing resolves the numbers against what that answer left.
+        let Some(snapshot_entry) = snapshot
+            .iter()
+            .find(|candidate| candidate.project_root == entry.project_root)
+        else {
+            continue;
+        };
+        if snapshot_entry.number != entry.number || entry.number_declined {
+            continue;
+        }
         if let Some((_, number)) = assigned
             .iter()
             .find(|(project_root, _)| *project_root == entry.project_root)
@@ -3608,7 +3877,7 @@ fn merge_refreshed_rows(
     rows: &[WorkspaceRow],
 ) -> Result<()> {
     update_recents(path, |paths| {
-        merge_assigned_numbers(paths, rows);
+        merge_assigned_numbers(paths, snapshot, rows);
         for entry in paths {
             let Some(snapshot_entry) = snapshot
                 .iter()
@@ -3734,6 +4003,7 @@ fn write_recents(path: &Path, paths: &[RecentEntry], _lock: &RecentFileLock) -> 
             name: entry.name.clone(),
             number: entry.number,
             last_active_unix_seconds: entry.last_active_unix_seconds,
+            number_declined: entry.number_declined,
         })
         .collect::<Vec<_>>();
     let Some(parent) = path.parent() else {
@@ -3794,13 +4064,12 @@ fn read_recents(path: Option<&Path>) -> Result<Vec<RecentEntry>> {
     }
     let mut entries = entries
         .into_iter()
-        .map(|entry| {
-            RecentEntry::new(
-                decode_path(entry.project_root_bytes),
-                entry.name,
-                entry.number,
-                entry.last_active_unix_seconds,
-            )
+        .map(|entry| RecentEntry {
+            project_root: decode_path(entry.project_root_bytes),
+            name: entry.name,
+            number: entry.number,
+            last_active_unix_seconds: entry.last_active_unix_seconds,
+            number_declined: entry.number_declined,
         })
         .collect::<Vec<_>>();
     // A number identifies one workspace, so a file hand-edited into holding a
