@@ -99,32 +99,65 @@ fn process_audit() -> &'static Path {
 
 /// What the audit journal says, for a failure that has to name a sender.
 ///
-/// Every delivered group signal is reported however old it is, because that is
-/// the record a stale-identity failure needs and there are very few of them.
-/// The rest is a bounded tail, which is where the spawn and completion records
-/// around the failure itself sit.
+/// A child killed by a signal cannot report who sent it, so the question the
+/// journal exists to answer is whether any Runyte process addressed that
+/// child's process group before it died. Every record naming a
+/// signal-terminated child is therefore reported in order: its spawn, any
+/// group signal aimed at it, and the completion that classified it. A signal
+/// record standing before that completion names a sender; none standing there
+/// means nothing in Runyte killed it, and the cause lies outside the program.
 fn process_audit_tail() -> String {
-    const TAIL_RECORDS: usize = 40;
-    const MAX_REPORTED_SIGNALS: usize = 40;
+    const TAIL_RECORDS: usize = 20;
     let Ok(contents) = fs::read_to_string(process_audit()) else {
         return "<no process audit was recorded>".to_owned();
     };
     let records: Vec<&str> = contents.lines().collect();
-    let sent: Vec<&str> = records
+    let killed: Vec<&str> = records
         .iter()
         .copied()
-        .filter(|line| line.contains("event=signal") && line.contains("outcome=sent"))
+        .filter(|line| line.contains("event=completion") && !line.contains("signal=None"))
         .collect();
-    let reported = sent.len().min(MAX_REPORTED_SIGNALS);
+    let mut correlated = Vec::new();
+    for line in &killed {
+        let Some(pid) = audit_field(line, "child_pid") else {
+            continue;
+        };
+        let history: Vec<&str> = records
+            .iter()
+            .copied()
+            .filter(|record| audit_field(record, "child_pid").as_deref() == Some(pid.as_str()))
+            .collect();
+        let sent_before = history
+            .iter()
+            .take_while(|record| !record.contains("event=completion"))
+            .filter(|record| record.contains("event=signal") && record.contains("outcome=sent"))
+            .count();
+        correlated.push(format!(
+            "child {pid}: {sent_before} Runyte group signal(s) before completion; {history:?}"
+        ));
+    }
+    let sent = records
+        .iter()
+        .filter(|line| line.contains("event=signal") && line.contains("outcome=sent"))
+        .count();
     format!(
-        "{} record(s); {} delivered group signal(s), first {reported}: {:?}; last \
-         {} record(s): {:?}",
+        "{} record(s), {sent} delivered group signal(s); {} signal-terminated child(ren): \
+         {correlated:?}; last {} record(s): {:?}",
         records.len(),
-        sent.len(),
-        &sent[..reported],
+        killed.len(),
         TAIL_RECORDS.min(records.len()),
         &records[records.len().saturating_sub(TAIL_RECORDS)..],
     )
+}
+
+/// Reads one `key=value` field out of an audit record.
+fn audit_field(record: &str, key: &str) -> Option<String> {
+    record.split(' ').find_map(|field| {
+        field
+            .strip_prefix(key)
+            .and_then(|rest| rest.strip_prefix('='))
+            .map(str::to_owned)
+    })
 }
 
 struct ChildGuard(Option<Child>);

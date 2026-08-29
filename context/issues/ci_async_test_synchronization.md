@@ -260,6 +260,25 @@ until init collects it, and a zombie still answers as a member. Nothing in the
 test can acknowledge that collection, so group emptiness has to be observed
 under a deadline rather than assumed complete when teardown returns.
 
+CI run 33278404613 carried that audit and reproduced the failure in
+`incompatible_worktree_host_returns_the_tui_to_its_source`. Every delivered
+group signal in the journal came from Git's own `try_finish_child`, aimed at
+its own child while that child was still unreaped; no clipboard, PTY, or
+`stop_child_tree` signal appeared, and no signal named a group its sender did
+not own. The journal also showed that Darwin answers `getpgid` and `getsid`
+with `-1` for a completed but unreaped child, where Linux answers with the
+child's own identifier, because XNU's process lookup does not report a
+zombie. That is a difference in what the two kernels will say about an
+anchored child rather than, by itself, a defect. What the journal does not
+yet settle is whether any signal reached the killed child before it died,
+because the tail alone does not order the records that name it. The failure
+diagnostic must therefore correlate directly: for every child the journal
+classifies as signal-terminated, report its spawn, every group signal aimed
+at it, and its completion, in order. A signal record standing before that
+completion names a sender inside Runyte; none standing there places the cause
+outside the program, in macOS process-exit details or runner and kernel
+termination.
+
 A full-suite run also failed in
 `git::cli::tests::a_detached_helper_cannot_hold_completed_command_pipes_open`,
 where spawning a runtime-written executable returned `ETXTBSY`. Writing a

@@ -1858,30 +1858,16 @@ fn try_finish_child(
     child: &mut std::process::Child,
     _observer: &ChildExitObserver,
 ) -> io::Result<Option<std::process::ExitStatus>> {
-    let pid = i32::try_from(child.id())
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "child PID does not fit pid_t"))?;
-    let mut information = std::mem::MaybeUninit::<libc::siginfo_t>::zeroed();
-    // SAFETY: `information` points to writable storage for `siginfo_t`; P_PID
-    // limits the observation to this live Child handle, and WNOWAIT leaves the
-    // reported exit available for `Child::wait` below.
-    let result = unsafe {
-        libc::waitid(
-            libc::P_PID,
-            pid as libc::id_t,
-            information.as_mut_ptr(),
-            libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
-        )
-    };
-    if result == -1 {
-        return Err(io::Error::last_os_error());
-    }
-    // SAFETY: successful waitid initializes the supplied structure. With
-    // WNOHANG, si_pid is zero when the child has not exited yet.
-    let information = unsafe { information.assume_init() };
-    if unsafe { information.si_pid() } == 0 {
+    let Some(observed) = crate::process_group::completed_without_reaping(child)? else {
         return Ok(None);
-    }
-    crate::process_group::record_completion("git", "waitid_wnowait", child.id(), None, None);
+    };
+    crate::process_group::record_completion(
+        "git",
+        "waitid_wnowait",
+        child.id(),
+        observed.code(),
+        exit_signal(&observed),
+    );
     stop_anchored_child_group(child);
     child.wait().map(Some)
 }
