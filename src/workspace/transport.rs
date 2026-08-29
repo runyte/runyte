@@ -197,7 +197,7 @@ impl LocalEndpoint {
                 EndpointPublication {
                     registry: registry.clone().or_else(|| Some(runtime_registry.clone())),
                     secondary_registry: registry.map(|_| runtime_registry),
-                    inventory_registry: all_hosts_registry_root(),
+                    inventory_registry: all_hosts_registry_root()?,
                     test_supervisor: None,
                     runtime_root: Some(runtime.to_path_buf()),
                 },
@@ -210,7 +210,7 @@ impl LocalEndpoint {
             EndpointPublication {
                 registry: usable_fallback_registry_root(),
                 secondary_registry: None,
-                inventory_registry: all_hosts_registry_root(),
+                inventory_registry: all_hosts_registry_root()?,
                 test_supervisor: None,
                 runtime_root: None,
             },
@@ -333,7 +333,11 @@ impl LocalEndpoint {
             inventory_registry: if inventory_row {
                 Some(registry)
             } else {
-                all_hosts_registry_root()
+                // Ordinary namespace discovery must not depend on the broad
+                // inventory being available. Publication and explicit broad
+                // operations resolve it fallibly and report failures; this
+                // reconstructed endpoint uses it only for best-effort cleanup.
+                all_hosts_registry_root().ok().flatten()
             },
             test_supervisor: None,
             name_file: None,
@@ -873,7 +877,7 @@ pub fn registered_hosts() -> Result<Vec<RegisteredHost>> {
 /// Current-namespace roots are included as a compatibility path for hosts
 /// started by an older build which did not publish the additional row.
 pub fn registered_hosts_all_namespaces() -> Result<Vec<RegisteredHost>> {
-    registered_hosts_in(&all_registry_roots())
+    registered_hosts_in(&all_registry_roots()?)
 }
 
 pub(super) fn registered_hosts_in(roots: &[PathBuf]) -> Result<Vec<RegisteredHost>> {
@@ -1357,39 +1361,118 @@ pub(super) fn registry_roots() -> Vec<PathBuf> {
 
 /// Registry roots used only when a lifecycle command explicitly requests the
 /// broader owner-wide scope.
-pub(super) fn all_registry_roots() -> Vec<PathBuf> {
+pub(super) fn all_registry_roots() -> Result<Vec<PathBuf>> {
     let mut roots = registry_roots();
-    if let Some(inventory) = all_hosts_registry_root()
+    if let Some(inventory) = all_hosts_registry_root()?
         && !roots.contains(&inventory)
     {
         roots.push(inventory);
     }
-    roots
+    Ok(roots)
 }
 
-/// A location independent of XDG runtime and cache namespaces.
+/// A machine/boot-local state location independent of XDG namespaces.
 ///
 /// Integration tests override it so subprocess tests never inspect or mutate
 /// the person's real inventory. Unit tests do not publish outside their
 /// temporary endpoints at all.
-fn all_hosts_registry_root() -> Option<PathBuf> {
+fn all_hosts_registry_root() -> Result<Option<PathBuf>> {
     if cfg!(test) {
-        return None;
+        return Ok(None);
     }
     if let Some(path) = std::env::var_os("RUNYTE_ALL_HOSTS_DIR").map(PathBuf::from)
         && path.is_absolute()
     {
-        return Some(path);
+        return Ok(Some(path));
     }
-    system_home_directory().map(|home| all_hosts_registry_root_for_home(&home))
+    let home = system_home_directory().context(
+        "cannot resolve the operating-system account home required for owner-wide session inventory",
+    )?;
+    let namespace = boot_namespace()?;
+    Ok(Some(all_hosts_registry_root_for_home(&home, &namespace)))
 }
 
-fn all_hosts_registry_root_for_home(home: &Path) -> PathBuf {
+fn all_hosts_registry_root_for_home(home: &Path, namespace: &str) -> PathBuf {
     if cfg!(target_os = "macos") {
-        home.join("Library/Caches/runyte/all-hosts")
+        home.join("Library/Application Support/Runyte/all-hosts")
+            .join(namespace)
     } else {
-        home.join(".cache/runyte/all-hosts")
+        home.join(".local/state/runyte/all-hosts").join(namespace)
     }
+}
+
+fn boot_namespace() -> Result<String> {
+    let identifier = boot_identifier()?;
+    ensure!(
+        !identifier.is_empty() && identifier.len() <= 1024,
+        "operating system returned an invalid boot identifier"
+    );
+    Ok(crate::hash::sha256_hex(&identifier)[..HOST_ID_LENGTH].to_owned())
+}
+
+#[cfg(target_os = "linux")]
+fn boot_identifier() -> Result<Vec<u8>> {
+    let identifier = fs::read("/proc/sys/kernel/random/boot_id")
+        .context("cannot read the Linux boot identity required for owner-wide session inventory")?;
+    let identifier = identifier
+        .into_iter()
+        .filter(|byte| !byte.is_ascii_whitespace())
+        .collect::<Vec<_>>();
+    ensure!(
+        !identifier.is_empty(),
+        "Linux returned an empty boot identity"
+    );
+    Ok(identifier)
+}
+
+#[cfg(target_os = "macos")]
+fn boot_identifier() -> Result<Vec<u8>> {
+    use std::ffi::CString;
+
+    let name = CString::new("kern.bootsessionuuid").expect("static sysctl name has no NUL");
+    let mut length = 0_usize;
+    // SAFETY: the first `sysctlbyname` call requests only the required output
+    // length and supplies no input value.
+    let status = unsafe {
+        libc::sysctlbyname(
+            name.as_ptr(),
+            std::ptr::null_mut(),
+            &mut length,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if status == -1 {
+        return Err(io::Error::last_os_error()).context(
+            "cannot read the macOS boot identity required for owner-wide session inventory",
+        );
+    }
+    ensure!(
+        (2..=1024).contains(&length),
+        "macOS returned an invalid boot identity length"
+    );
+    let mut identifier = vec![0_u8; length];
+    // SAFETY: `identifier` is writable for `length` bytes and the second call
+    // uses the size returned for the same read-only sysctl.
+    let status = unsafe {
+        libc::sysctlbyname(
+            name.as_ptr(),
+            identifier.as_mut_ptr().cast(),
+            &mut length,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if status == -1 {
+        return Err(io::Error::last_os_error()).context(
+            "cannot read the macOS boot identity required for owner-wide session inventory",
+        );
+    }
+    identifier.truncate(length);
+    while identifier.last().is_some_and(|byte| *byte == 0) {
+        identifier.pop();
+    }
+    Ok(identifier)
 }
 
 /// Reads the account database rather than `$HOME`, which may deliberately be
@@ -2611,16 +2694,35 @@ mod tests {
     }
 
     #[test]
-    fn owner_wide_inventory_is_anchored_below_the_account_home() {
+    fn owner_wide_inventory_is_durable_and_boot_scoped() {
         let home = Path::new("/accounts/example");
-        let inventory = all_hosts_registry_root_for_home(home);
+        let inventory = all_hosts_registry_root_for_home(home, "boot-one");
         assert!(inventory.starts_with(home));
-        assert_eq!(inventory.file_name().unwrap(), "all-hosts");
+        assert_eq!(inventory.file_name().unwrap(), "boot-one");
+        assert_ne!(
+            inventory,
+            all_hosts_registry_root_for_home(home, "boot-two")
+        );
         assert!(!inventory.starts_with(std::env::temp_dir()));
         #[cfg(target_os = "macos")]
-        assert_eq!(inventory, home.join("Library/Caches/runyte/all-hosts"));
+        assert_eq!(
+            inventory,
+            home.join("Library/Application Support/Runyte/all-hosts/boot-one")
+        );
         #[cfg(not(target_os = "macos"))]
-        assert_eq!(inventory, home.join(".cache/runyte/all-hosts"));
+        assert_eq!(
+            inventory,
+            home.join(".local/state/runyte/all-hosts/boot-one")
+        );
+    }
+
+    #[test]
+    fn boot_namespace_is_stable_and_path_safe() {
+        let first = boot_namespace().unwrap();
+        let second = boot_namespace().unwrap();
+        assert_eq!(first, second);
+        assert_eq!(first.len(), HOST_ID_LENGTH);
+        assert!(first.bytes().all(|byte| byte.is_ascii_hexdigit()));
     }
 
     async fn bind_or_skip(endpoint: &LocalEndpoint) -> Option<LocalServer> {

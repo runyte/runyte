@@ -22,8 +22,9 @@ wake-up was added. The internal `--detached-host` marker keeps ordinary
 production persistent sessions independent of their short-lived launcher.
 
 A follow-up hardening pass made supervisor identity stable on Linux with a
-`pidfd` when the kernel supports it, with signal-zero and zombie detection as
-the portability fallback. Every integration-test subprocess constructor now
+`pidfd` when the kernel supports it and on macOS with a process `kqueue`.
+Signal-zero remains the last fallback, with Linux `/proc` zombie detection when
+no `pidfd` is available. Every integration-test subprocess constructor now
 installs both the isolated inventory root and the test-runner supervisor, so a
 direct `--serve`, an internally detached host, and a Runyte process launched
 indirectly as Git's editor all retain the same test ownership boundary.
@@ -40,15 +41,18 @@ the Unix socket before accepting a row and does not remove a responsive host
 solely because its PID is hidden by another namespace. Graceful cleanup now
 also removes an empty per-host endpoint directory.
 
-The broad registry is publication only. It is anchored below the native
-account home returned by the operating-system account database rather than at
-a predictable system-temporary path, and it never participates in ordinary
-host identity or name locking. Inventory filenames combine the workspace
-identity with the endpoint identity, so two deliberately isolated namespaces
-may host the same workspace without overwriting or blocking each other. Broad
-listing reports both endpoints, and broad stop iterates the exact registered
-hosts rather than resolving the ambiguous workspace identity back to one of
-them.
+The broad registry is publication only. It is anchored in non-disposable state
+below the native account home returned by the operating-system account database
+rather than at a predictable system-temporary or disposable cache path. A
+kernel boot-identity component makes the registry machine- and boot-local even
+when multiple machines mount the same home; failure to resolve either identity
+is reported instead of silently disabling broad publication. The registry
+never participates in ordinary host identity or name locking. Inventory
+filenames combine the workspace identity with the endpoint identity, so two
+deliberately isolated namespaces may host the same workspace without
+overwriting or blocking each other. Broad listing reports both endpoints, and
+broad stop iterates the exact registered hosts rather than resolving the
+ambiguous workspace identity back to one of them.
 
 The common scope option was chosen instead of the proposed
 `--session-list-all` spelling so list and stop operations express the same
@@ -68,8 +72,8 @@ and
 `an_unobservable_pid_does_not_remove_a_responsive_endpoint`, and inventory
 publication and cleanup assertions in
 `registry_lists_names_rejects_duplicates_and_preserves_a_name_across_restart`;
-`owner_wide_inventory_is_anchored_below_the_account_home` covers the stable
-account-owned location.
+`owner_wide_inventory_is_durable_and_boot_scoped` covers the durable,
+machine-local account-owned location.
 `tests/release_packaging.rs` verifies the public and hidden CLI surfaces.
 
 Known limitation: owner-wide discovery covers live hosts. Stopped recent

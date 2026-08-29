@@ -78,11 +78,23 @@ fn wait_for_listing(
     cache: &Path,
     needles: &[&str],
 ) -> Option<String> {
+    wait_for_listing_with_running_count(directory, runtime, cache, needles, 0)
+}
+
+fn wait_for_listing_with_running_count(
+    directory: &Path,
+    runtime: &Path,
+    cache: &Path,
+    needles: &[&str],
+    running_count: usize,
+) -> Option<String> {
     for _ in 0..200 {
         let listing = run_cli(directory, runtime, cache, &["--session-list"]);
         if listing.status.success() {
             let output = String::from_utf8(listing.stdout).unwrap();
-            if needles.iter().all(|needle| output.contains(needle)) {
+            if needles.iter().all(|needle| output.contains(needle))
+                && output.matches("running").count() >= running_count
+            {
                 return Some(output);
             }
         }
@@ -385,11 +397,12 @@ fn stop_all_then_clear_all_manages_the_complete_workspace_inventory() {
     }
     let first_display = first.canonicalize().unwrap().display().to_string();
     let second_display = second.canonicalize().unwrap().display().to_string();
-    let Some(listing) = wait_for_listing(
+    let Some(listing) = wait_for_listing_with_running_count(
         &root,
         &runtime,
         &cache,
         &[&first_display, &second_display, "running"],
+        2,
     ) else {
         if socket_creation_is_unavailable(&mut first_host)
             || socket_creation_is_unavailable(&mut second_host)

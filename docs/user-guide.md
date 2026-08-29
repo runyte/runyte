@@ -251,11 +251,14 @@ supervision or diagnostics; it is also the mechanism Runyte uses when starting
 or restarting a persistent session. After a foreground `--serve` process has
 begun startup, it observes its supervising parent for the rest of its lifetime
 and exits when that process exits. Linux uses a stable process descriptor when
-the kernel provides one, so PID reuse cannot transfer that ownership. Unix
-cannot identify an original parent that disappeared before Runyte began
-executing; a service manager launching `--serve` should therefore retain and
-stop the Runyte process directly. Hosts detached internally by Runyte remain
-independent of the launcher and continue serving after it returns.
+the kernel provides one, and macOS uses a process event queue, so PID reuse
+cannot transfer that ownership through either mechanism. If the kernel denies
+stable observation, Runyte falls back to checking the PID; Linux also detects
+an unreaped zombie in that fallback. Unix cannot identify an original parent
+that disappeared before Runyte began executing; a service manager launching
+`--serve` should therefore retain and stop the Runyte process directly. Hosts
+detached internally by Runyte remain independent of the launcher and continue
+serving after it returns.
 
 `:quit` closes the active pane; from the last pane it stops a clean persistent
 session and disconnects the TUI. `:quit-all` requests the same shutdown
@@ -344,11 +347,17 @@ owner-only permissions. A private user-wide cache registry makes both endpoint
 locations listable, while XDG-backed hosts also publish a runtime copy so a
 missing or unusable cache does not prevent discovery. Dead registrations are
 removed while listing, and stale sockets are recovered when a new host starts.
-Each host also publishes an owner-private inventory row below the account's
-native home cache (`~/.cache/runyte/all-hosts` on Unix other than macOS and
-`~/Library/Caches/runyte/all-hosts` on macOS), resolved through the operating
-system account database rather than `$HOME`. That stable, account-owned parent
-cannot be pre-claimed by another user in the system temporary directory.
+Each host also publishes an owner-private inventory row below non-disposable
+account state (`~/.local/state/runyte/all-hosts/<boot>` on Linux and
+`~/Library/Application Support/Runyte/all-hosts/<boot>` on macOS), resolved
+through the operating-system account database rather than `$HOME`. The final
+directory is keyed by the kernel's boot identity, so machines sharing a home
+directory never overwrite or inspect one another's machine-local PIDs and Unix
+sockets, and a new boot does not inherit stale live-process identity. That
+stable, account-owned parent cannot be pre-claimed by another user in the
+system temporary directory. If the account home or boot identity cannot be
+resolved, persistent-host startup and explicit all-namespace operations fail
+with an error instead of silently using an incomplete inventory.
 Ordinary discovery and identity locking never read the broad inventory; it
 exists so an explicit `--all-namespaces` operation can find hosts whose XDG
 runtime and cache namespaces differ from its own. Inventory scans accept only

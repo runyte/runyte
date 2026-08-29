@@ -578,7 +578,8 @@ pub async fn known_workspaces(state: &Path) -> Result<Vec<WorkspaceRow>> {
 /// Recent history remains namespace-local: a stopped workspace has no host to
 /// discover outside the namespace that recorded it.
 pub async fn known_workspaces_all_namespaces(state: &Path) -> Result<Vec<WorkspaceRow>> {
-    refresh(&all_registry_roots(), recent_file().as_deref(), state, None).await
+    let roots = all_registry_roots()?;
+    refresh(&roots, recent_file().as_deref(), state, None).await
 }
 
 /// Removes every stopped session from the visited history and returns the

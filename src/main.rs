@@ -198,6 +198,8 @@ struct HostSupervisor {
     pid: libc::pid_t,
     #[cfg(target_os = "linux")]
     pidfd: Option<std::os::fd::OwnedFd>,
+    #[cfg(target_os = "macos")]
+    process_queue: Option<std::os::fd::OwnedFd>,
 }
 
 #[cfg(unix)]
@@ -225,11 +227,15 @@ impl HostSupervisor {
     fn new(kind: HostSupervisorKind, pid: libc::pid_t) -> Result<Self> {
         #[cfg(target_os = "linux")]
         let pidfd = open_pidfd(pid)?;
+        #[cfg(target_os = "macos")]
+        let process_queue = open_process_queue(pid)?;
         Ok(Self {
             kind,
             pid,
             #[cfg(target_os = "linux")]
             pidfd,
+            #[cfg(target_os = "macos")]
+            process_queue,
         })
     }
 
@@ -237,6 +243,12 @@ impl HostSupervisor {
         #[cfg(target_os = "linux")]
         if let Some(pidfd) = self.pidfd.as_ref()
             && pidfd_has_exited(pidfd)
+        {
+            return true;
+        }
+        #[cfg(target_os = "macos")]
+        if let Some(process_queue) = self.process_queue.as_ref()
+            && process_queue_has_exited(process_queue)
         {
             return true;
         }
@@ -292,6 +304,74 @@ fn pidfd_has_exited(pidfd: &std::os::fd::OwnedFd) -> bool {
     };
     (unsafe { libc::poll(&mut descriptor, 1, 0) }) > 0
         && descriptor.revents & (libc::POLLIN | libc::POLLHUP | libc::POLLERR) != 0
+}
+
+#[cfg(target_os = "macos")]
+fn open_process_queue(pid: libc::pid_t) -> Result<Option<std::os::fd::OwnedFd>> {
+    use std::os::fd::{FromRawFd, OwnedFd};
+
+    // SAFETY: `kqueue` has no preconditions and returns a fresh descriptor.
+    let descriptor = unsafe { libc::kqueue() };
+    if descriptor == -1 {
+        return Err(std::io::Error::last_os_error())
+            .context("cannot create host supervisor process queue");
+    }
+    // SAFETY: a successful `kqueue` call returns a fresh owned descriptor.
+    let queue = unsafe { OwnedFd::from_raw_fd(descriptor) };
+    let change = libc::kevent {
+        ident: pid as libc::uintptr_t,
+        filter: libc::EVFILT_PROC,
+        flags: libc::EV_ADD | libc::EV_ENABLE | libc::EV_CLEAR,
+        fflags: libc::NOTE_EXIT,
+        data: 0,
+        udata: std::ptr::null_mut(),
+    };
+    // SAFETY: `queue` is a live kqueue descriptor and `change` points to one
+    // fully initialized event registration. No output event list is supplied.
+    let status = unsafe {
+        libc::kevent(
+            descriptor,
+            &change,
+            1,
+            std::ptr::null_mut(),
+            0,
+            std::ptr::null(),
+        )
+    };
+    if status == 0 {
+        return Ok(Some(queue));
+    }
+    let error = std::io::Error::last_os_error();
+    match error.raw_os_error() {
+        Some(libc::EPERM) => Ok(None),
+        Some(libc::ESRCH | libc::ENOENT) => {
+            anyhow::bail!("host supervisor process {pid} already exited")
+        }
+        _ => Err(error).context("cannot observe host supervisor process"),
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn process_queue_has_exited(process_queue: &std::os::fd::OwnedFd) -> bool {
+    use std::os::fd::AsRawFd;
+
+    let mut event = std::mem::MaybeUninit::<libc::kevent>::uninit();
+    let timeout = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    // SAFETY: the kqueue descriptor is live, the output has capacity for one
+    // event, and the zero timeout performs a non-blocking observation.
+    (unsafe {
+        libc::kevent(
+            process_queue.as_raw_fd(),
+            std::ptr::null(),
+            0,
+            event.as_mut_ptr(),
+            1,
+            &timeout,
+        )
+    }) > 0
 }
 
 #[cfg(target_os = "linux")]
