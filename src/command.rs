@@ -109,7 +109,6 @@ pub enum ColonCommand {
     WriteBufferClose,
     SessionAttach,
     SessionList,
-    SessionStart,
     SessionStop,
     SessionRename,
 }
@@ -270,7 +269,6 @@ impl ColonCommand {
         Self::WriteBufferClose,
         Self::SessionAttach,
         Self::SessionList,
-        Self::SessionStart,
         Self::SessionStop,
         Self::SessionRename,
     ];
@@ -324,11 +322,9 @@ impl ColonCommand {
             | Self::QuitHere
             | Self::ForceQuitHere => CommandCategory::Application,
             Self::Grammar | Self::LogOpen | Self::ServiceHealth => CommandCategory::Configuration,
-            Self::SessionAttach
-            | Self::SessionList
-            | Self::SessionStart
-            | Self::SessionStop
-            | Self::SessionRename => CommandCategory::Application,
+            Self::SessionAttach | Self::SessionList | Self::SessionStop | Self::SessionRename => {
+                CommandCategory::Application
+            }
         }
     }
 }
@@ -1185,7 +1181,6 @@ impl CommandId {
             Self::Colon(
                 ColonCommand::SessionAttach
                 | ColonCommand::SessionList
-                | ColonCommand::SessionStart
                 | ColonCommand::SessionStop
                 | ColonCommand::SessionRename,
             ) => Some(CommandCapability::PersistentSession),
@@ -1301,14 +1296,6 @@ pub const COMMANDS: &[CommandSpec] = &[
         "session-list",
         "Session manager (persistent mode)",
         NoArguments
-    ),
-    spec!(
-        ColonId(Colon::SessionStart),
-        "session-start",
-        [],
-        "session-start [workspace]",
-        "Start a persistent session without switching",
-        Optional(Path)
     ),
     spec!(
         ColonId(Colon::SessionStop),
@@ -2342,7 +2329,7 @@ fn valid_colon_parameters(command: ColonCommand, parameters: &InvocationParamete
             Colon::ChangeDirectory | Colon::Open | Colon::SessionAttach,
             InvocationParameters::Path(path),
         ) => !path.as_os_str().is_empty(),
-        (Colon::SessionStart | Colon::SessionStop, InvocationParameters::OptionalPath(_)) => true,
+        (Colon::SessionStop, InvocationParameters::OptionalPath(_)) => true,
         (Colon::SessionRename, InvocationParameters::SessionRename { workspace, name }) => {
             !workspace.as_os_str().is_empty() && !name.trim().is_empty()
         }
@@ -2606,6 +2593,13 @@ fn invocation_from_parts(
             )),
             _ => Err(invalid()),
         },
+        CommandId::Colon(ColonCommand::SessionStop) => match argument {
+            ParsedArgument::Path(path) => Ok(CommandInvocation::new(
+                id,
+                InvocationParameters::OptionalPath(path),
+            )),
+            _ => Err(invalid()),
+        },
         CommandId::Colon(command) => match (command, argument) {
             (
                 ColonCommand::ChangeDirectory | ColonCommand::SessionAttach,
@@ -2670,13 +2664,6 @@ fn invocation_from_parts(
             (ColonCommand::Open, ParsedArgument::Path(Some(path))) => {
                 Ok(CommandInvocation::new(id, InvocationParameters::Path(path)))
             }
-            (
-                ColonCommand::SessionStart | ColonCommand::SessionStop,
-                ParsedArgument::Path(path),
-            ) => Ok(CommandInvocation::new(
-                id,
-                InvocationParameters::OptionalPath(path),
-            )),
             (ColonCommand::SessionRename, ParsedArgument::Text(Some(value))) => {
                 let (workspace, name) = parse_session_rename(command, &value)?;
                 Ok(CommandInvocation::new(
@@ -2952,6 +2939,7 @@ mod tests {
             "wst",
             "workspace-attach",
             "wat",
+            "session-start",
         ] {
             assert!(
                 resolve_command(removed).is_none(),
@@ -3087,10 +3075,6 @@ mod tests {
 
     #[test]
     fn session_commands_parse_optional_workspaces_and_typed_renames() {
-        assert_eq!(
-            parse_colon_command("session-start").unwrap().parameters(),
-            &InvocationParameters::OptionalPath(None)
-        );
         assert_eq!(
             parse_colon_command("session-stop api")
                 .unwrap()

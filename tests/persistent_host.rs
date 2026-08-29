@@ -1567,35 +1567,6 @@ async fn racing_starts_for_one_workspace_both_reach_the_winning_host() {
     fs::remove_dir_all(root).unwrap();
 }
 
-#[tokio::test]
-async fn session_start_is_idempotent_for_current_and_explicit_workspaces() {
-    let root = project();
-    let endpoint = LocalEndpoint::discover_with_runtime(
-        &root.join(".runyte"),
-        &root,
-        Some(test_runtime_dir()),
-    )
-    .unwrap();
-
-    assert_cli_success(&run_cli(&root, &["--session-start"]));
-    assert_cli_success(&run_cli(
-        &root,
-        &["--session-start", root.to_string_lossy().as_ref()],
-    ));
-
-    let listing = run_cli(&root, &["--session-list"]);
-    assert_cli_success(&listing);
-    let listing = String::from_utf8(listing.stdout).unwrap();
-    assert!(
-        listing.contains(&endpoint.id()[..ABBREVIATED_WORKSPACE_ID]),
-        "{listing}"
-    );
-    assert!(listing.contains("running"), "{listing}");
-
-    assert_cli_success(&run_cli(&root, &["--session-stop"]));
-    fs::remove_dir_all(root).unwrap();
-}
-
 /// `--persistent` means "keep this workspace alive and show its TUI", which is
 /// answerable whether or not one is running, so it starts the missing host
 /// itself rather than failing at connect. This runs under the default

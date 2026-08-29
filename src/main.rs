@@ -62,9 +62,9 @@ const SHUTDOWN_FLUSH_BUDGET: Duration = Duration::from_secs(3);
 use runyte::protocol::{MAX_POINTER_REPETITIONS, WaitStatus, WaitToken, validate_welcome};
 #[cfg(unix)]
 use runyte::workspace::lifecycle::{
-    HostStartup, connect_control, ensure_workspace_host, force_restart_host, force_shutdown_host,
-    resolve_registered_host, resolve_registered_host_from_directory, resolve_workspace_endpoint,
-    restart_host, shutdown_host, start_detached_host, terminate_incompatible_host,
+    HostStartup, connect_control, force_restart_host, force_shutdown_host, resolve_registered_host,
+    resolve_registered_host_from_directory, resolve_workspace_endpoint, restart_host,
+    shutdown_host, start_detached_host, terminate_incompatible_host,
 };
 #[cfg(unix)]
 use runyte::workspace::transport::{
@@ -649,11 +649,11 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
         arguments.mode,
         LaunchMode::ListSessions
             | LaunchMode::StopAllSessions
-            | LaunchMode::ClearAllSessions
+            | LaunchMode::CleanSessions
             | LaunchMode::RenameSession
     ) || (matches!(
         arguments.mode,
-        LaunchMode::StartSession | LaunchMode::RestartSession | LaunchMode::StopSession
+        LaunchMode::RestartSession | LaunchMode::StopSession
     ) && arguments.workspace_selector.is_some())
     {
         // These modes address a host by selector or list every one of them, so
@@ -667,20 +667,7 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
             return match arguments.mode {
                 LaunchMode::ListSessions => {
                     let config = Config::load(arguments.config.as_deref())?.0;
-                    list_sessions(&config.workspace.state, arguments.all_namespaces).await
-                }
-                LaunchMode::StartSession => {
-                    let selector = arguments
-                        .workspace_selector
-                        .as_deref()
-                        .expect("selector checked");
-                    start_selected_session(
-                        selector,
-                        arguments.config.as_deref(),
-                        arguments.verbosity,
-                        arguments.log.as_deref(),
-                    )
-                    .await
+                    list_sessions(&config.workspace.state, arguments.include_hidden).await
                 }
                 LaunchMode::StopAllSessions => {
                     let (config, config_path) = Config::load(arguments.config.as_deref())?;
@@ -688,15 +675,15 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
                         &config.workspace.state,
                         config_path.as_deref(),
                         arguments.force,
-                        arguments.all_namespaces,
+                        arguments.include_hidden,
                     )
                     .await
                 }
-                LaunchMode::ClearAllSessions => {
+                LaunchMode::CleanSessions => {
                     let config = Config::load(arguments.config.as_deref())?.0;
                     let cleared = clear_stopped_sessions(&config.workspace.state).await?;
                     println!(
-                        "cleared {cleared} stopped session{}",
+                        "forgot {cleared} stopped session{}",
                         if cleared == 1 { "" } else { "s" }
                     );
                     Ok(())
@@ -896,7 +883,6 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
         arguments.mode,
         LaunchMode::Persistent
             | LaunchMode::Wait
-            | LaunchMode::StartSession
             | LaunchMode::RestartSession
             | LaunchMode::StopSession
     ) {
@@ -948,25 +934,6 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
                             .expect("wait launch records its parent"),
                     )
                     .await
-                }
-                LaunchMode::StartSession => {
-                    let startup = HostStartup::new(std::env::current_exe()?, "started")
-                        .with_config(config_path.as_deref())
-                        .with_logging(arguments.verbosity, arguments.log.as_deref());
-                    report_retained_logging_if_running(
-                        &endpoint,
-                        arguments.verbosity,
-                        arguments.log.as_deref(),
-                    )
-                    .await;
-                    ensure_workspace_host(
-                        &project_root,
-                        &config.workspace.state,
-                        config_path.as_deref(),
-                        startup,
-                    )
-                    .await
-                    .map(|_| ())
                 }
                 LaunchMode::RestartSession => {
                     let startup = HostStartup::new(std::env::current_exe()?, "restarted")
@@ -3243,8 +3210,8 @@ async fn run_wait(
 }
 
 #[cfg(unix)]
-async fn list_sessions(state: &Path, all_namespaces: bool) -> Result<()> {
-    let workspaces = if all_namespaces {
+async fn list_sessions(state: &Path, include_hidden: bool) -> Result<()> {
+    let workspaces = if include_hidden {
         known_workspaces_all_namespaces(state).await?
     } else {
         known_workspaces(state).await?
@@ -3315,44 +3282,6 @@ fn pad_table_cell(value: &str, width: usize) -> String {
     format!("{value}{}", " ".repeat(width.saturating_sub(used)))
 }
 
-#[cfg(unix)]
-async fn start_selected_session(
-    selector: &Path,
-    config_path: Option<&Path>,
-    verbosity: u8,
-    log: Option<&Path>,
-) -> Result<()> {
-    let (config, config_path) = Config::load(config_path)?;
-    let working_directory = std::env::current_dir()?;
-    let requested = resolve_known_workspace_from_directory(
-        selector,
-        &working_directory,
-        &config.workspace.state,
-    )
-    .await?
-    .unwrap_or_else(|| {
-        if selector.is_absolute() {
-            selector.to_path_buf()
-        } else {
-            working_directory.join(selector)
-        }
-    });
-    let startup = HostStartup::new(std::env::current_exe()?, "started")
-        .with_config(config_path.as_deref())
-        .with_logging(verbosity, log);
-    let endpoint =
-        resolve_workspace_endpoint(&requested, &config.workspace.state, config_path.as_deref())?;
-    report_retained_logging_if_running(&endpoint, verbosity, log).await;
-    ensure_workspace_host(
-        &requested,
-        &config.workspace.state,
-        config_path.as_deref(),
-        startup,
-    )
-    .await
-    .map(|_| ())
-}
-
 /// Renames a session whether or not it is running.
 ///
 /// A stopped session has no endpoint to ask, so this cannot go through
@@ -3421,9 +3350,9 @@ async fn stop_all_sessions(
     state: &Path,
     config_path: Option<&Path>,
     force: bool,
-    all_namespaces: bool,
+    include_hidden: bool,
 ) -> Result<()> {
-    if all_namespaces {
+    if include_hidden {
         let hosts = registered_hosts_all_namespaces()?;
         let total = hosts.len();
         let mut stopped = 0;
@@ -3727,7 +3656,6 @@ fn start_host_services(
     #[cfg(unix)]
     let workspace_events = {
         let (service, mut events) = WorkspaceService::spawn(
-            std::env::current_exe()?,
             app.config.workspace.state.clone(),
             config_path.map(Path::to_path_buf),
         );
@@ -4197,19 +4125,6 @@ fn report_retained_host_logging(arguments: &LaunchArguments) {
     report_retained_logging(arguments.verbosity, arguments.log.as_deref());
 }
 
-/// The same report for callers that hold an endpoint rather than a mode.
-#[cfg(unix)]
-async fn report_retained_logging_if_running(
-    endpoint: &LocalEndpoint,
-    verbosity: u8,
-    log: Option<&Path>,
-) {
-    if (verbosity == 0 && log.is_none()) || connect_control(endpoint).await.is_err() {
-        return;
-    }
-    report_retained_logging(verbosity, log);
-}
-
 /// Installs the diagnostic logger this process will own, if any.
 ///
 /// Returns the failure text when the default destination could not be used.
@@ -4282,7 +4197,8 @@ USAGE:
 
 OPTIONS:
     -c, --config PATH    Use a specific YAML config
-    -i, --init DIRECTORY Initialize and open DIRECTORY as a workspace
+        --init DIRECTORY Make DIRECTORY the exact standalone workspace root
+                         and open it
     -v, --verbose        Raise the diagnostic log level; repeat for more
         --log PATH       Write the diagnostic log to PATH instead
     -h, --help           Print help
@@ -4296,37 +4212,32 @@ MODES:
         --standalone     Use standalone mode, overriding configuration
     -a, --persistent [WORKSPACE]
                          Attach to the selected or current session, starting it
-                         if needed
+                         if needed. If WORKSPACE is omitted, use the workspace
+                         found from the current directory, or make that
+                         directory a workspace when none is found
 
 PERSISTENT SESSIONS:
     A persistent session is the durable local process and retained editor state
-    associated with one workspace. Listing also works from standalone mode; attaching,
-    starting, and stopping inside the editor need
-    workspace.mode: persistent inside the editor.
+    associated with one workspace. CLI listing also works from standalone mode;
+    session commands inside the editor need workspace.mode: persistent.
 
     WORKSPACE selects a session by ID, unambiguous ID prefix, persistent name,
-    or directory, so a session is reachable from anywhere. An existing directory
-    names that exact workspace; its configured state directory is created when
-    necessary. Omitting WORKSPACE uses the workspace found from the current
-    directory, or initializes that directory when none is found. Use --init to
-    initialize and open an exact directory in standalone mode.
+    or directory, so a session is reachable from anywhere.
 
         --serve          Keep a persistent session alive in the foreground
         --wait FILE...   Edit files through persistent mode and wait for
                          explicit completion
     -l, --session-list   List running and recently visited sessions
-        --session-start [WORKSPACE]
-                         Start the selected or current session
     -s, --session-stop [WORKSPACE]
                          Stop the selected or current session
         --session-stop-all
-                         Stop every running session in the current namespace
-        --all-namespaces With session-list or session-stop-all, include every
-                         validated live session owned by the current user
-        --session-clear-all
-                         Clear every stopped session from the recent list
+                         Stop every running session in the current environment
+        --include-hidden With session-list or session-stop-all, also include
+                         live sessions started in isolated Runyte environments
+        --session-clean  Forget every stopped session
         --session-restart [WORKSPACE]
-                         Restart the selected or current session
+                         Replace the selected or current running session using
+                         the supplied config and logging options, without attaching
         --session-rename WORKSPACE NAME
                          Rename a persistent session
     -f, --force          With stop/stop-all/restart, discard protected buffers,
@@ -4348,11 +4259,10 @@ DIAGNOSTICS:
     another running Runyte process is refused.
 
     In persistent mode these are properties of session startup. --serve,
-    --session-start, --session-restart, and the launch that starts a missing
-    session pass them on; attaching to a running session leaves its logging
-    alone and says so. Inside the editor, :log-open shows the log of the
-    process that owns the workspace and :service-health names its owner,
-    level, and path.
+    --session-restart, and the launch that starts a missing session pass them
+    on; attaching to a running session leaves its logging alone and says so.
+    Inside the editor, :log-open shows the log of the process that owns the
+    workspace and :service-health names its owner, level, and path.
 
     Records never contain document text, selections, clipboard or terminal
     contents, environment values, or language-server message bodies. They do
@@ -4361,14 +4271,16 @@ DIAGNOSTICS:
 
 TARGETS:
     (no target)          Open the Runyte about page
-    DIRECTORY            Open DIRECTORY in the explorer
+    DIRECTORY            Open DIRECTORY in the explorer inside the workspace
+                         discovered from the launch directory
     +LINE[:COLUMN] FILE  Open FILE and place its caret at a one-based position
     -- FILE...           Treat every remaining argument as a literal path
 
     Naming a target always runs standalone, so its relative path and caret
     position keep their ordinary meaning: workspace.mode: persistent changes
     only a bare runyte, and --persistent reads its argument as a workspace
-    rather than a file. Use --wait to open files through a persistent session.
+    rather than a file. Use --init to make a directory the exact standalone
+    workspace root, or --wait to open files through a persistent session.
 
 :quit-here moves the shell to the editor's directory on exit; it requires the
 runyte() shell function documented in README.md.

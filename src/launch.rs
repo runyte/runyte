@@ -18,9 +18,8 @@ pub enum LaunchMode {
     Persistent,
     Wait,
     ListSessions,
-    StartSession,
     StopAllSessions,
-    ClearAllSessions,
+    CleanSessions,
     RenameSession,
     RestartSession,
     StopSession,
@@ -79,7 +78,7 @@ pub struct LaunchArguments {
     pub force: bool,
     /// Include the owner-wide host inventory instead of limiting a lifecycle
     /// operation to the registries selected by this process's environment.
-    pub all_namespaces: bool,
+    pub include_hidden: bool,
     /// Marks the `--serve` child created by Runyte itself. Unlike a foreground
     /// host, that child is intentionally independent of its launching process.
     /// This is an internal transport between bundled processes, not a public
@@ -165,8 +164,8 @@ impl LaunchArguments {
                 "--serve" => set_mode(&mut parsed.mode, &mut mode_explicit, LaunchMode::Serve)?,
                 // A bare `-a` attaches to the workspace found from the
                 // current directory. A trailing selector names one outright,
-                // in the same grammar `--session-start` and `:session-attach`
-                // already accept, so attaching from anywhere is one launch
+                // in the same grammar `:session-attach` already accepts, so
+                // attaching from anywhere is one launch
                 // rather than a launch followed by an editor switch.
                 "-a" | "--persistent" => {
                     set_mode(&mut parsed.mode, &mut mode_explicit, LaunchMode::Persistent)?
@@ -177,20 +176,15 @@ impl LaunchArguments {
                     &mut mode_explicit,
                     LaunchMode::ListSessions,
                 )?,
-                "--session-start" => set_mode(
-                    &mut parsed.mode,
-                    &mut mode_explicit,
-                    LaunchMode::StartSession,
-                )?,
                 "--session-stop-all" => set_mode(
                     &mut parsed.mode,
                     &mut mode_explicit,
                     LaunchMode::StopAllSessions,
                 )?,
-                "--session-clear-all" => set_mode(
+                "--session-clean" => set_mode(
                     &mut parsed.mode,
                     &mut mode_explicit,
-                    LaunchMode::ClearAllSessions,
+                    LaunchMode::CleanSessions,
                 )?,
                 "--session-rename" => {
                     set_mode(
@@ -217,7 +211,7 @@ impl LaunchArguments {
                     LaunchMode::StopSession,
                 )?,
                 "-f" | "--force" => parsed.force = true,
-                "--all-namespaces" => parsed.all_namespaces = true,
+                "--include-hidden" => parsed.include_hidden = true,
                 "--detached-host" => parsed.detached_host = true,
                 // `-vv` and `-vvv` are how repetition is normally written, so
                 // the one clustered short option Runyte accepts is this one.
@@ -247,7 +241,7 @@ impl LaunchArguments {
                             .context("--config requires a path")?,
                     );
                 }
-                "-i" | "--init" => {
+                "--init" => {
                     let directory = arguments
                         .next()
                         .map(PathBuf::from)
@@ -313,12 +307,12 @@ impl LaunchArguments {
             "--force is available only with --session-stop, --session-stop-all, or --session-restart"
         );
         ensure!(
-            !parsed.all_namespaces
+            !parsed.include_hidden
                 || matches!(
                     parsed.mode,
                     LaunchMode::ListSessions | LaunchMode::StopAllSessions
                 ),
-            "--all-namespaces is available only with --session-list or --session-stop-all"
+            "--include-hidden is available only with --session-list or --session-stop-all"
         );
         ensure!(
             !parsed.detached_host || parsed.mode == LaunchMode::Serve,
@@ -333,12 +327,8 @@ impl LaunchArguments {
             "--init does not accept file targets"
         );
         ensure!(
-            parsed.init.is_none()
-                || matches!(
-                    parsed.mode,
-                    LaunchMode::Standalone | LaunchMode::Serve | LaunchMode::Persistent
-                ),
-            "--init is not available in this session-management mode"
+            parsed.init.is_none() || parsed.mode == LaunchMode::Standalone,
+            "--init is available only in standalone mode"
         );
         ensure!(
             parsed.mode != LaunchMode::Wait || !parsed.targets.is_empty(),
@@ -354,10 +344,7 @@ impl LaunchArguments {
         );
         if matches!(
             parsed.mode,
-            LaunchMode::Persistent
-                | LaunchMode::StartSession
-                | LaunchMode::RestartSession
-                | LaunchMode::StopSession
+            LaunchMode::Persistent | LaunchMode::RestartSession | LaunchMode::StopSession
         ) {
             ensure!(
                 parsed.targets.len() <= 1,
@@ -376,7 +363,7 @@ impl LaunchArguments {
                 parsed.mode,
                 LaunchMode::ListSessions
                     | LaunchMode::StopAllSessions
-                    | LaunchMode::ClearAllSessions
+                    | LaunchMode::CleanSessions
                     | LaunchMode::RenameSession
             ) || parsed.targets.is_empty(),
             "this session-management mode does not accept file targets"
@@ -601,16 +588,20 @@ mod tests {
     }
 
     #[test]
-    fn init_accepts_its_public_spellings_and_rejects_ambiguous_launches() {
-        for spelling in ["--init", "-i"] {
-            let parsed =
-                LaunchArguments::parse_from([spelling.into(), "/work/new".into()]).unwrap();
-            assert_eq!(parsed.init, Some(PathBuf::from("/work/new")));
-            assert_eq!(parsed.mode, LaunchMode::Standalone);
-        }
+    fn init_is_long_only_and_rejects_ambiguous_launches() {
+        let parsed = LaunchArguments::parse_from(["--init".into(), "/work/new".into()]).unwrap();
+        assert_eq!(parsed.init, Some(PathBuf::from("/work/new")));
+        assert_eq!(parsed.mode, LaunchMode::Standalone);
+        assert!(LaunchArguments::parse_from(["-i".into(), "/work/new".into()]).is_err());
 
         assert!(LaunchArguments::parse_from(["--init".into()]).is_err());
         assert!(LaunchArguments::parse_from(["--init".into(), "".into()]).is_err());
+        for mode in ["--persistent", "--serve"] {
+            assert!(
+                LaunchArguments::parse_from([mode.into(), "--init".into(), "/work/new".into(),])
+                    .is_err()
+            );
+        }
         assert!(
             LaunchArguments::parse_from(["--init".into(), "/work/new".into(), "note.txt".into(),])
                 .is_err()
@@ -644,22 +635,16 @@ mod tests {
         }
 
         assert_eq!(
-            LaunchArguments::parse_from(["--session-start".into()])
-                .unwrap()
-                .mode,
-            LaunchMode::StartSession
-        );
-        assert_eq!(
             LaunchArguments::parse_from(["--session-stop-all".into()])
                 .unwrap()
                 .mode,
             LaunchMode::StopAllSessions
         );
         assert_eq!(
-            LaunchArguments::parse_from(["--session-clear-all".into()])
+            LaunchArguments::parse_from(["--session-clean".into()])
                 .unwrap()
                 .mode,
-            LaunchMode::ClearAllSessions
+            LaunchMode::CleanSessions
         );
 
         for spelling in ["--session-stop", "-s"] {
@@ -693,6 +678,10 @@ mod tests {
     #[test]
     fn superseded_workspace_and_host_spellings_are_unknown_options() {
         for spelling in [
+            "-i",
+            "--session-start",
+            "--session-clear-all",
+            "--all-namespaces",
             "--attach",
             "--workspace-list",
             "--wls",
@@ -734,7 +723,6 @@ mod tests {
         );
 
         for mode in [
-            "--session-start",
             "--session-restart",
             "--session-stop",
             "-s",
@@ -768,8 +756,7 @@ mod tests {
             LaunchArguments::parse_from(["--session-stop-all".into(), "workspace".into()]).is_err()
         );
         assert!(
-            LaunchArguments::parse_from(["--session-clear-all".into(), "workspace".into()])
-                .is_err()
+            LaunchArguments::parse_from(["--session-clean".into(), "workspace".into()]).is_err()
         );
         assert!(LaunchArguments::parse_from(["--force".into()]).is_err());
         assert!(LaunchArguments::parse_from(["--persistent".into(), "--force".into()]).is_err());
@@ -837,14 +824,14 @@ mod tests {
     }
 
     #[test]
-    fn all_namespaces_is_explicit_and_limited_to_list_or_stop_all() {
+    fn include_hidden_is_explicit_and_limited_to_list_or_stop_all() {
         for mode in ["--session-list", "--session-stop-all"] {
             let parsed =
-                LaunchArguments::parse_from([mode.into(), "--all-namespaces".into()]).unwrap();
-            assert!(parsed.all_namespaces);
+                LaunchArguments::parse_from([mode.into(), "--include-hidden".into()]).unwrap();
+            assert!(parsed.include_hidden);
         }
         for mode in ["--standalone", "--serve", "--session-stop"] {
-            assert!(LaunchArguments::parse_from([mode.into(), "--all-namespaces".into()]).is_err());
+            assert!(LaunchArguments::parse_from([mode.into(), "--include-hidden".into()]).is_err());
         }
     }
 

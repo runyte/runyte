@@ -75,22 +75,6 @@ impl App {
                     self.rebuild_workspace_picker();
                 }
             }
-            WorkspaceEvent::Started {
-                generation,
-                path,
-                result,
-            } => {
-                if generation != self.workspace_generation {
-                    return;
-                }
-                match result {
-                    Ok(()) => {
-                        self.status(format!("started session for {}", path.display()));
-                        self.request_workspace_refresh();
-                    }
-                    Err(error) => self.error_from("Host", "Host operation failed", error),
-                }
-            }
             WorkspaceEvent::Stopped {
                 generation,
                 selector,
@@ -526,24 +510,6 @@ impl App {
     pub(super) fn advance_worktree_teardown(&mut self, stage: super::WorktreeTeardownStage) {
         if let Some(teardown) = self.worktree_teardown.as_mut() {
             teardown.stage = stage;
-        }
-    }
-
-    #[cfg(unix)]
-    pub(super) fn start_session(&mut self, workspace: PathBuf) {
-        if !self.persistent_session {
-            self.action_failed("starting sessions needs workspace.mode: persistent");
-            return;
-        }
-        self.workspace_generation = self.workspace_generation.wrapping_add(1).max(1);
-        let generation = self.workspace_generation;
-        let Some(service) = self.ports.workspace_service.as_ref() else {
-            self.action_failed("session service is unavailable");
-            return;
-        };
-        match service.try_start(generation, workspace, self.working_directory.clone()) {
-            Ok(()) => self.status("starting session…"),
-            Err(error) => self.error_from("Host", "Host operation failed", error),
         }
     }
 

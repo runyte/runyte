@@ -717,19 +717,19 @@ async fn attaching_with_logging_flags_reports_the_retained_configuration() {
     let output = runyte(
         &root,
         &[
-            "--session-start",
+            "--persistent",
             "-v",
             "-v",
             "--log",
             root.join("elsewhere.log").to_str().unwrap(),
         ],
     );
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
     let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "a pipe unexpectedly supported a TUI"
+    );
+    assert!(stderr.contains("raw mode"), "{stderr}");
     assert!(
         stderr.contains("kept its own log level and destination"),
         "{stderr}"

@@ -1333,8 +1333,6 @@ fn standalone_refuses_every_session_command_including_the_manager() {
         .unwrap();
     assert_eq!(app.status, "needs workspace.mode: persistent");
     assert!(app.take_workspace_switch().is_none());
-    app.execute_command("session-start elsewhere").unwrap();
-    assert_eq!(app.status, "needs workspace.mode: persistent");
     app.execute_command("session-stop").unwrap();
     assert_eq!(app.status, "needs workspace.mode: persistent");
     app.execute_command(&format!("session-rename {} other", root.display()))
@@ -1347,7 +1345,6 @@ fn standalone_refuses_every_session_command_including_the_manager() {
     for name in [
         "session-list",
         "session-attach",
-        "session-start",
         "session-stop",
         "session-rename",
     ] {

@@ -217,7 +217,7 @@ on Unix.
 Initialize a specific non-Git directory as a workspace with:
 
 ```sh
-runyte --init /path/to/project   # or runyte -i /path/to/project
+runyte --init /path/to/project
 ```
 
 This creates the configured workspace state directory (`.runyte/` by default)
@@ -225,6 +225,10 @@ when it is absent, then opens that exact project directory. If the state
 directory already exists, Runyte uses it without resetting or removing
 anything. Explicit initialization selects the named directory even when an
 ancestor has its own workspace state directory.
+
+This differs from `runyte DIRECTORY`, which opens that directory in the
+workspace discovered from the shell's current directory. Use `--init` only
+when the directory itself must be the standalone workspace root.
 
 Attach to the current project's persistent session with:
 
@@ -246,13 +250,13 @@ does not know names that exact directory: Runyte creates its configured
 workspace state directory (`.runyte/` by default) when necessary, then starts
 its persistent session. A bare explicit `runyte -a` does the same for the
 current directory when no workspace is discoverable there. `--init` remains
-available for explicitly initializing and opening a standalone workspace.
+available for making an exact directory the standalone workspace root.
 
 Persistent mode uses a local host process that owns the workspace state and a
 client TUI that displays it. `--persistent` starts the host when necessary and
 connects the TUI. `--serve` runs the host in the foreground instead, for direct
-supervision or diagnostics; it is also the mechanism Runyte uses when starting
-or restarting a persistent session. After a foreground `--serve` process has
+supervision or diagnostics; it is also the mechanism Runyte uses when attaching
+to a missing session or restarting one. After a foreground `--serve` process has
 begun startup, it observes its supervising parent for the rest of its lifetime
 and exits when that process exits. Linux uses a stable process descriptor when
 the kernel provides one, and macOS uses a process event queue, so PID reuse
@@ -282,13 +286,12 @@ persistent sessions with `ID`, `NAME`, `DIRECTORY`, `STATE`, `UNSAVED`, `TERMINA
 in the manager's order: numbered sessions first in digit order, then the rest
 least recently visited first. The listing has no number column of its own, so
 that reads as the running sessions ahead of the stopped ones. By default it
-reads only the runtime and cache registry namespace selected by the current
-environment. Add `--all-namespaces` to include every validated live Runyte host
-in the current user's owner-wide inventory. Stopped recent-history rows remain
-local to the current namespace because there is no live host to publish them
-elsewhere. If two deliberately isolated namespaces host the same workspace, the
-broad list shows both live endpoints even though their workspace IDs and
-directories are the same.
+reads the Runyte environment selected by the current runtime and cache
+settings. Add `--include-hidden` to include validated live sessions started in
+other isolated Runyte environments. Stopped recent-history rows remain local
+because there is no live host to publish them elsewhere. If two isolated
+environments host the same workspace, the broad list shows both live endpoints
+even though their workspace IDs and directories are the same.
 `STATE` is `running`, `stopped`, or `running (protocol N)` for a host left over
 from another version of Runyte. Such a host still holds the workspace, so
 nothing can attach to it or open a file through it, and its unsaved-buffer
@@ -317,19 +320,18 @@ The same selector works for attachment and the lifecycle commands:
 
 ```sh
 runyte --persistent [WORKSPACE]         # or runyte -a [WORKSPACE]
-runyte --session-start [WORKSPACE]
 runyte --session-stop [WORKSPACE]       # or runyte -s [WORKSPACE]
 runyte --session-restart [WORKSPACE]
 runyte --session-stop-all
-runyte --session-list --all-namespaces
-runyte --session-stop-all --all-namespaces
-runyte --session-clear-all
+runyte --session-list --include-hidden
+runyte --session-stop-all --include-hidden
+runyte --session-clean
 ```
 
-Omitting `WORKSPACE` from attach, start, stop, or restart selects the project
-found from the current directory. Start is idempotent and leaves the session
-detached. Restart starts a detached replacement and retains its name. Stop and
-restart refuse while the host owns unsaved buffers, pending `--wait`
+Omitting `WORKSPACE` from attach, stop, or restart selects the project found
+from the current directory. Restart replaces the running host without attaching
+a TUI and retains its name. Stop and restart refuse while the host owns unsaved
+buffers, pending `--wait`
 requests, or live terminal children. Add `--force` to discard that protected
 state; the refusal names each count first. Unsaved buffers never count the
 scratch buffer: it has no path, so nothing about it could be saved in place. A
@@ -338,14 +340,14 @@ and stopping or retiring the host discards it. A restart does not
 retain clean buffers or other in-memory editor state. When a host used a
 non-default configuration, pass the same `--config PATH` while restarting it.
 `--session-stop-all` applies the same protected-state checks to every running
-session in the current registry namespace and continues after refusals so
-unrelated clean hosts still stop. Add `--all-namespaces` to apply it to every
-validated live endpoint in the owner-wide inventory instead, including each
-copy of a workspace hosted independently in more than one namespace.
+session in the current environment and continues after refusals so unrelated
+clean hosts still stop. Add `--include-hidden` to apply it to every validated
+live endpoint in the owner-wide inventory instead, including each copy of a
+workspace hosted independently in more than one isolated environment.
 Add `--force` to make the protected-state loss explicit for every host.
-`--session-clear-all` removes every stopped row from recent history after
-rechecking the inventory; running sessions and project directories are left
-alone.
+`--session-clean` forgets every stopped row from recent history after rechecking
+the inventory; running sessions, workspace directories, and project files are
+left alone.
 
 Endpoint metadata and the Unix-domain socket prefer a valid owner-only
 `$XDG_RUNTIME_DIR`, with the workspace state root as the fallback, and use
@@ -362,15 +364,15 @@ directory never overwrite or inspect one another's machine-local PIDs and Unix
 sockets, and a new boot does not inherit stale live-process identity. That
 stable, account-owned parent cannot be pre-claimed by another user in the
 system temporary directory. If the account home or boot identity cannot be
-resolved, publishing a new persistent host and explicit all-namespace
+resolved, publishing a new persistent host and explicit hidden-session
 operations fail with an error instead of silently using an incomplete
-inventory. Attaching to an already-running host and ordinary namespace listing
-do not resolve or depend on the broad inventory.
+inventory. Attaching to an already-running host and ordinary listing in the
+current Runyte environment do not resolve or depend on the broad inventory.
 Ordinary discovery and identity locking never read the broad inventory; it
-exists so an explicit `--all-namespaces` operation can find hosts whose XDG
-runtime and cache namespaces differ from its own. Broad listing reads the
-current namespace's recent history for display but never rewrites it from a
-host found outside that namespace. Inventory scans accept only
+exists so an explicit `--include-hidden` operation can find hosts started in
+another isolated Runyte environment. Broad listing reads the current
+environment's recent history for display but never rewrites it from a host
+found outside that environment. Inventory scans accept only
 private, non-symlinked records whose workspace identity, endpoint metadata,
 live process, and responsive Unix socket agree where process visibility is
 available. A responsive endpoint is retained when a PID namespace hides its
@@ -535,7 +537,7 @@ stopped row's menu has no Renumber: there is no digit on it to change.
 A standalone workspace owns no persistent host, so the whole `session`
 namespace is inert there rather than a set of commands that each refuse.
 `Space Space` greys out in the key-hint popup and `:session-list`,
-`:session-attach`, `:session-start`, `:session-stop`, and `:session-rename`
+`:session-attach`, `:session-stop`, and `:session-rename`
 grey out in the command palette, exactly as `Space l` and `Space x` do without
 a language server or a parser. Invoking one anyway answers
 `needs workspace.mode: persistent`.
@@ -561,7 +563,6 @@ lists it once more.
 stopped session. `WORKSPACE` may also be any existing directory; Runyte makes
 that exact directory a workspace when necessary before starting its persistent
 session.
-`:session-start [WORKSPACE]` warms one in the background,
 `:session-stop [WORKSPACE]` stops one without switching, and
 `:session-rename WORKSPACE NAME` changes its persistent name.
 Stopping refuses while the target owns protected buffers, waiters, or live
@@ -2509,8 +2510,6 @@ are enabled.
 :session-attach WORKSPACE
                         attach to another workspace's persistent session
                         (alias: attach)
-:session-start [WORKSPACE]
-                        start a persistent session without switching
 :session-stop [WORKSPACE]
                         stop a clean persistent session
 :session-rename WORKSPACE NAME
@@ -2652,8 +2651,8 @@ retained in `:notifications` as well as the standing failure in
 `:service-health`.
 
 In persistent mode, verbosity and destination are properties of host startup.
-`--serve`, `--session-start`, `--session-restart`, and the launch that creates
-a missing host pass them to that host. Attaching to an already-running host
+`--serve`, `--session-restart`, and the launch that creates a missing host pass
+them to that host. Attaching to an already-running host
 does not change its logger; supplying `-v` or `--log` there reports that the
 session kept its own configuration and that a restart is required:
 

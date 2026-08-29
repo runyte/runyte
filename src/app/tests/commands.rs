@@ -2081,7 +2081,6 @@ fn session_commands_stay_in_the_palette_and_share_one_availability() {
     for name in [
         "session-attach",
         "session-list",
-        "session-start",
         "session-stop",
         "session-rename",
     ] {
@@ -2112,7 +2111,6 @@ fn session_commands_stay_in_the_palette_and_share_one_availability() {
         for name in [
             "session-attach",
             "session-list",
-            "session-start",
             "session-stop",
             "session-rename",
         ] {
@@ -2136,10 +2134,6 @@ fn session_execution_reports_the_shared_unsupported_platform_reason_first() {
             InvocationParameters::Path(PathBuf::from("attach")),
         ),
         (ColonCommand::SessionList, InvocationParameters::None),
-        (
-            ColonCommand::SessionStart,
-            InvocationParameters::OptionalPath(Some(PathBuf::from("start"))),
-        ),
         (
             ColonCommand::SessionStop,
             InvocationParameters::OptionalPath(Some(PathBuf::from("stop"))),

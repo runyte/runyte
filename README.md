@@ -141,7 +141,7 @@ a multiplexer session:
 ```sh
 runyte --persistent
 runyte --session-list
-runyte --session-list --all-namespaces  # explicit owner-wide live-host inventory
+runyte --session-list --include-hidden  # include isolated live sessions
 runyte --persistent api   # attach to a session by ID, name, or directory
 ```
 

@@ -4647,19 +4647,6 @@ impl App {
                 }
                 Ok(())
             }
-            (Colon::SessionStart, InvocationParameters::OptionalPath(workspace)) => {
-                if self.reject_unavailable_persistent_session(
-                    platform_supports_persistent_sessions,
-                    true,
-                ) {
-                    return Ok(());
-                }
-                #[cfg(unix)]
-                self.start_session(workspace.unwrap_or_else(|| self.project_root.clone()));
-                #[cfg(not(unix))]
-                let _ = workspace;
-                Ok(())
-            }
             (Colon::SessionStop, InvocationParameters::OptionalPath(selector)) => {
                 if self.reject_unavailable_persistent_session(
                     platform_supports_persistent_sessions,

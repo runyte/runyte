@@ -154,10 +154,14 @@ fn detached_host_supervision_helper() {
     let runtime = root.join("runtime");
     let cache = root.join("cache");
     let project = root.join("project");
-    let started = run_cli(&project, &runtime, &cache, &["--session-start"]);
+    let started = run_cli(&project, &runtime, &cache, &["--persistent"]);
     assert!(
-        started.status.success(),
-        "detached host did not start: {}",
+        !started.status.success(),
+        "the non-terminal attachment unexpectedly reached a TUI"
+    );
+    assert!(
+        String::from_utf8_lossy(&started.stderr).contains("raw mode"),
+        "detached host launch failed before attachment: {}",
         String::from_utf8_lossy(&started.stderr)
     );
     let inventory = root.join("all-hosts");
@@ -276,7 +280,7 @@ fn detached_host_exits_and_unpublishes_when_its_test_runner_is_killed() {
             &root,
             &runtime,
             &cache,
-            &["--session-list", "--all-namespaces"],
+            &["--session-list", "--include-hidden"],
         );
         let output = String::from_utf8_lossy(&listing.stdout);
         let row_is_stopped = output
@@ -310,7 +314,7 @@ fn detached_host_exits_and_unpublishes_when_its_test_runner_is_killed() {
         &root,
         &runtime,
         &cache,
-        &["--session-list", "--all-namespaces"],
+        &["--session-list", "--include-hidden"],
     );
     let process_state = fs::read_to_string(format!("/proc/{host_pid}/stat")).ok();
     // SAFETY: the marker was written by this test's helper for its own host.
@@ -356,7 +360,7 @@ fn child_guard_reaps_a_test_host_during_panic_unwinding() {
         &root,
         &runtime,
         &cache,
-        &["--session-list", "--all-namespaces"],
+        &["--session-list", "--include-hidden"],
     );
     assert!(listing.status.success());
     let inventory_rows = fs::read_dir(root.join("all-hosts"))
@@ -374,7 +378,7 @@ fn child_guard_reaps_a_test_host_during_panic_unwinding() {
 }
 
 #[test]
-fn stop_all_then_clear_all_manages_the_complete_workspace_inventory() {
+fn stop_all_then_clean_manages_the_complete_workspace_inventory() {
     let root = sandbox();
     let runtime = root.join("runtime");
     let cache = root.join("cache");
@@ -437,7 +441,7 @@ fn stop_all_then_clear_all_manages_the_complete_workspace_inventory() {
     .expect("stopped sessions remained in recent history");
     assert_eq!(listing.matches("stopped").count(), 2, "{listing}");
 
-    let cleared = run_cli(&root, &runtime, &cache, &["--session-clear-all"]);
+    let cleared = run_cli(&root, &runtime, &cache, &["--session-clean"]);
     assert!(
         cleared.status.success(),
         "{}",
@@ -446,7 +450,7 @@ fn stop_all_then_clear_all_manages_the_complete_workspace_inventory() {
     assert!(
         String::from_utf8(cleared.stdout)
             .unwrap()
-            .contains("cleared 2 stopped sessions")
+            .contains("forgot 2 stopped sessions")
     );
     let listing = run_cli(&root, &runtime, &cache, &["--session-list"]);
     assert!(listing.status.success());
@@ -458,7 +462,7 @@ fn stop_all_then_clear_all_manages_the_complete_workspace_inventory() {
 }
 
 #[test]
-fn explicit_all_namespaces_lists_and_stops_hosts_outside_the_current_registry() {
+fn include_hidden_lists_and_stops_hosts_outside_the_current_environment() {
     let root = sandbox();
     let first_runtime = root.join("runtime-one");
     let second_runtime = root.join("runtime-two");
@@ -516,7 +520,7 @@ fn explicit_all_namespaces_lists_and_stops_hosts_outside_the_current_registry() 
         &root,
         &first_runtime,
         &first_cache,
-        &["--session-list", "--all-namespaces"],
+        &["--session-list", "--include-hidden"],
     );
     assert!(
         all.status.success(),
@@ -549,7 +553,7 @@ fn explicit_all_namespaces_lists_and_stops_hosts_outside_the_current_registry() 
         &root,
         &first_runtime,
         &first_cache,
-        &["--session-stop-all", "--all-namespaces"],
+        &["--session-stop-all", "--include-hidden"],
     );
     assert!(
         stopped.status.success(),
@@ -608,7 +612,7 @@ fn identical_workspace_hosts_remain_isolated_until_an_explicit_owner_wide_stop()
         &root,
         &first_runtime,
         &first_cache,
-        &["--session-list", "--all-namespaces"],
+        &["--session-list", "--include-hidden"],
     );
     assert!(
         listed.status.success(),
@@ -628,7 +632,7 @@ fn identical_workspace_hosts_remain_isolated_until_an_explicit_owner_wide_stop()
         &root,
         &first_runtime,
         &first_cache,
-        &["--session-stop-all", "--all-namespaces"],
+        &["--session-stop-all", "--include-hidden"],
     );
     assert!(
         stopped.status.success(),

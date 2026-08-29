@@ -24,9 +24,9 @@ use crate::{external_open, project_root};
 use super::{
     SessionPreview,
     lifecycle::{
-        HostStartup, connect_control, ensure_workspace_host, force_shutdown_host, rename_host,
-        resolve_registered_host_from, resolve_workspace_endpoint,
-        resolve_workspace_endpoint_with_runtime, shutdown_host, terminate_incompatible_host,
+        connect_control, force_shutdown_host, rename_host, resolve_registered_host_from,
+        resolve_workspace_endpoint, resolve_workspace_endpoint_with_runtime, shutdown_host,
+        terminate_incompatible_host,
     },
     transport::{
         LocalEndpoint, MAX_HOST_NAME_BYTES, MAX_PERSISTED_PATH_BYTES, RegisteredHost,
@@ -150,11 +150,6 @@ enum WorkspaceRequest {
         generation: u64,
         path: PathBuf,
     },
-    Start {
-        generation: u64,
-        selector: PathBuf,
-        working_directory: PathBuf,
-    },
     Stop {
         generation: u64,
         selector: PathBuf,
@@ -194,11 +189,6 @@ pub enum WorkspaceEvent {
         generation: u64,
         path: PathBuf,
         result: Result<SessionPreview, String>,
-    },
-    Started {
-        generation: u64,
-        path: PathBuf,
-        result: Result<(), String>,
     },
     Stopped {
         generation: u64,
@@ -290,24 +280,6 @@ impl WorkspaceServiceHandle {
             })
     }
 
-    pub fn try_start(
-        &self,
-        generation: u64,
-        selector: PathBuf,
-        working_directory: PathBuf,
-    ) -> Result<(), &'static str> {
-        self.requests
-            .try_send(WorkspaceRequest::Start {
-                generation,
-                selector,
-                working_directory,
-            })
-            .map_err(|error| match error {
-                mpsc::error::TrySendError::Full(_) => "session service queue is full",
-                mpsc::error::TrySendError::Closed(_) => "session service is unavailable",
-            })
-    }
-
     pub fn try_forget(&self, generation: u64, path: PathBuf) -> Result<(), &'static str> {
         self.requests
             .try_send(WorkspaceRequest::Forget { generation, path })
@@ -363,24 +335,15 @@ pub struct WorkspaceService;
 
 impl WorkspaceService {
     pub fn spawn(
-        executable: PathBuf,
         state: PathBuf,
         config: Option<PathBuf>,
     ) -> (WorkspaceServiceHandle, mpsc::Receiver<WorkspaceEvent>) {
-        Self::spawn_with(
-            registry_roots(),
-            recent_file(),
-            executable,
-            state,
-            config,
-            None,
-        )
+        Self::spawn_with(registry_roots(), recent_file(), state, config, None)
     }
 
     fn spawn_with(
         roots: Vec<PathBuf>,
         recents: Option<PathBuf>,
-        executable: PathBuf,
         state: PathBuf,
         config: Option<PathBuf>,
         runtime: Option<PathBuf>,
@@ -433,30 +396,6 @@ impl WorkspaceService {
                         WorkspaceEvent::Inspected {
                             generation,
                             path,
-                            result,
-                        }
-                    }
-                    WorkspaceRequest::Start {
-                        generation,
-                        selector,
-                        working_directory,
-                    } => {
-                        let startup = HostStartup::new(executable.clone(), "started")
-                            .with_config(config.as_deref());
-                        let result = start(
-                            &roots,
-                            recents.as_deref(),
-                            &selector,
-                            &working_directory,
-                            &state,
-                            config.as_deref(),
-                            startup,
-                        )
-                        .await
-                        .map_err(|error| format!("{error:#}"));
-                        WorkspaceEvent::Started {
-                            generation,
-                            path: selector,
                             result,
                         }
                     }
@@ -1223,29 +1162,6 @@ async fn preview_session(project_root: &Path, state: &Path) -> Result<SessionPre
     .context("session preview timed out")?
 }
 
-async fn start(
-    roots: &[PathBuf],
-    recents: Option<&Path>,
-    selector: &Path,
-    working_directory: &Path,
-    state: &Path,
-    config: Option<&Path>,
-    startup: HostStartup,
-) -> Result<()> {
-    let rows = refresh(roots, recents, state, None).await?;
-    let requested = resolve_known_workspace_from_rows(&rows, selector, Some(working_directory))?
-        .unwrap_or_else(|| {
-            if selector.is_absolute() {
-                selector.to_path_buf()
-            } else {
-                working_directory.join(selector)
-            }
-        });
-    ensure_workspace_host(&requested, state, config, startup)
-        .await
-        .map(|_| ())
-}
-
 async fn stop(
     roots: &[PathBuf],
     selector: &std::path::Path,
@@ -1488,14 +1404,8 @@ mod tests {
     async fn empty_injected_registry_refreshes_without_touching_user_state() {
         let root =
             std::env::temp_dir().join(format!("runyte-workspace-catalog-{}", std::process::id()));
-        let (service, mut events) = WorkspaceService::spawn_with(
-            vec![root],
-            None,
-            PathBuf::from("runyte-does-not-run"),
-            PathBuf::from(".runyte"),
-            None,
-            None,
-        );
+        let (service, mut events) =
+            WorkspaceService::spawn_with(vec![root], None, PathBuf::from(".runyte"), None, None);
         service.try_refresh(7).unwrap();
         let Some(WorkspaceEvent::Refreshed { generation, result }) = events.recv().await else {
             panic!("workspace service ended")
@@ -1625,7 +1535,6 @@ mod tests {
         let (service, mut events) = WorkspaceService::spawn_with(
             vec![root.join("empty-registry")],
             Some(recents.clone()),
-            PathBuf::from("runyte-does-not-run"),
             PathBuf::from(".runyte"),
             None,
             Some(runtime.clone()),
@@ -2183,7 +2092,6 @@ mod tests {
         let (service, mut events) = WorkspaceService::spawn_with(
             vec![registry],
             Some(recents.clone()),
-            PathBuf::from("runyte-does-not-run"),
             PathBuf::from(".runyte"),
             None,
             None,
@@ -2214,63 +2122,6 @@ mod tests {
             read_recents(Some(&recents)).unwrap()[0].name.as_deref(),
             Some("by-directory")
         );
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[tokio::test]
-    async fn session_service_start_resolves_id_name_and_editor_relative_directory() {
-        let root = unique_test_root("session-start-selectors");
-        let registry = root.join("registry");
-        let recents = root.join("cache/workspaces.json");
-        let workspace = root.join("project");
-        fs::create_dir_all(workspace.join(".runyte")).unwrap();
-        let workspace = workspace.canonicalize().unwrap();
-        record_recent_workspace_in(&recents, &workspace).unwrap();
-        let row = refresh(
-            std::slice::from_ref(&registry),
-            Some(&recents),
-            Path::new(".runyte"),
-            None,
-        )
-        .await
-        .unwrap()
-        .pop()
-        .unwrap();
-        let name = row.name.unwrap();
-
-        let (service, mut events) = WorkspaceService::spawn_with(
-            vec![registry],
-            Some(recents),
-            PathBuf::from("runyte-does-not-run"),
-            PathBuf::from(".runyte"),
-            None,
-            None,
-        );
-        for (generation, selector) in [
-            (1, PathBuf::from(row.id)),
-            (2, PathBuf::from(name)),
-            (3, PathBuf::from("project")),
-        ] {
-            service
-                .try_start(generation, selector.clone(), root.clone())
-                .unwrap();
-            let Some(WorkspaceEvent::Started {
-                generation: completed,
-                path,
-                result,
-            }) = events.recv().await
-            else {
-                panic!("session start service ended")
-            };
-            assert_eq!(completed, generation);
-            assert_eq!(path, selector);
-            let error = result.unwrap_err();
-            assert!(
-                error.contains(workspace.to_string_lossy().as_ref()),
-                "{error}"
-            );
-            assert!(!error.contains("workspace is unavailable"), "{error}");
-        }
         fs::remove_dir_all(root).unwrap();
     }
 

@@ -150,7 +150,8 @@ fn editor_help_hides_internal_options_and_uses_workspace_modes() {
         .unwrap();
     assert!(output.status.success());
     let help = String::from_utf8(output.stdout).unwrap();
-    assert!(help.contains("-i, --init DIRECTORY"));
+    assert!(help.contains("--init DIRECTORY"));
+    assert!(!help.contains("-i, --init"));
     assert!(!help.contains("--cwd-file"));
     assert!(!help.contains("--project-root"));
     assert!(!help.contains("--detached-host"));
@@ -181,8 +182,11 @@ fn editor_help_hides_internal_options_and_uses_workspace_modes() {
     assert!(help.contains("--standalone"));
     assert!(help.contains("--persistent"));
     assert!(help.contains("-l, --session-list"));
-    assert!(help.contains("--all-namespaces"));
-    assert!(help.contains("--session-start [WORKSPACE]"));
+    assert!(help.contains("--include-hidden"));
+    assert!(help.contains("--session-clean"));
+    assert!(!help.contains("--all-namespaces"));
+    assert!(!help.contains("--session-start"));
+    assert!(!help.contains("--session-clear-all"));
     assert!(help.contains("-s, --session-stop [WORKSPACE]"));
     assert!(help.contains("--session-rename WORKSPACE NAME"));
     assert!(help.contains("-f, --force"));
