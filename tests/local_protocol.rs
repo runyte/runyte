@@ -16,6 +16,7 @@ use std::{
 
 use runyte::{
     app::FrameGeometry,
+    command::Mode,
     input::{InputEvent, KeyCode, KeyStroke, Modifiers},
     layout::Rect,
     protocol::{CommandRequest, SnapshotRow, decode_path},
@@ -477,6 +478,23 @@ async fn wait_for_frame(
     }
 }
 
+async fn wait_for_git_summary(
+    client: &mut LocalClient,
+    branch: &str,
+    waiting_for: &str,
+) -> runyte::protocol::HostFrame {
+    wait_for_frame(client, waiting_for, |frame| {
+        frame.editor.status.long_running_action.is_none()
+            && frame
+                .editor
+                .status
+                .git_summary
+                .as_deref()
+                .is_some_and(|summary| summary.contains(branch))
+    })
+    .await
+}
+
 async fn invoke_when_current(
     client: &mut LocalClient,
     command: &str,
@@ -760,22 +778,6 @@ async fn wait_for_buffer_text(
         }
         tokio::time::sleep(ASYNC_STATE_POLL_INTERVAL).await;
     }
-}
-
-async fn wait_for_terminal_output(
-    output: &std::sync::Arc<std::sync::Mutex<Vec<u8>>>,
-    needle: &str,
-) {
-    for _ in 0..400 {
-        if String::from_utf8_lossy(&output.lock().unwrap()).contains(needle) {
-            return;
-        }
-        tokio::time::sleep(Duration::from_millis(25)).await;
-    }
-    panic!(
-        "terminal output did not contain {needle:?}: {}",
-        String::from_utf8_lossy(&output.lock().unwrap())
-    );
 }
 
 /// Types and accepts a command through the real terminal.
@@ -1385,18 +1387,6 @@ async fn git_commit_wait_tui_completes_through_write_quit() {
     }
     assert!(inserted, "typed commit message did not reach the buffer");
 
-    // Escape has no buffer-visible effect, so unlike the insert above there is
-    // no host state to poll here: a `Buffer` read taken right after writing
-    // it would trivially match on the first attempt and confirm nothing.
-    // What actually needs guarding against is the raw byte stream, not the
-    // host: if the escape and the following `:wq\r` land in the same read on
-    // the editor's terminal input parser, a bare ESC immediately followed by
-    // `:` is Alt/Meta-sequence-shaped and can be swallowed as a modified key
-    // instead of a standalone Escape, leaving insert mode active so `:wq`
-    // never reaches the command line. Guarantee real separation between the
-    // two writes, then use the buffer read only as a sanity check that
-    // nothing was corrupted in the meantime.
-    //
     // The commit message instructions this editor writes into the buffer
     // ("commit", "message", ...) are ordinary words, so word completion can
     // legitimately be showing a popup once "commit message" has been typed.
@@ -1404,7 +1394,12 @@ async fn git_commit_wait_tui_completes_through_write_quit() {
     // mode, exactly as it does when word completion is switched off.
     terminal.write_all(b"\x1b").unwrap();
     terminal.flush().unwrap();
-    tokio::time::sleep(Duration::from_millis(150)).await;
+    let _ = wait_for_frame(
+        &mut control,
+        "waiting for Escape to leave the Git commit editor in Normal mode",
+        |frame| Mode::from(frame.editor.mode) == Mode::Normal,
+    )
+    .await;
     control
         .send(&ClientRequest::ReadBuffer {
             buffer: commit_buffer,
@@ -1813,8 +1808,12 @@ async fn worktree_switch_reuses_the_destination_host_through_the_real_tui_launch
         }
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
-    wait_for_terminal_output(&output, "other").await;
-    wait_for_terminal_output(&output, "│ master").await;
+    let _ = wait_for_git_summary(
+        &mut source,
+        "master",
+        "waiting for Git discovery before opening the source worktree list",
+    )
+    .await;
     type_colon_command(&mut terminal, "git-worktrees");
     let linked_display = linked.to_string_lossy().into_owned();
     wait_for_buffer_text(
@@ -1932,8 +1931,12 @@ async fn incompatible_worktree_host_returns_the_tui_to_its_source() {
         }
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
-    wait_for_terminal_output(&output, "other").await;
-    wait_for_terminal_output(&output, "│ master").await;
+    let _ = wait_for_git_summary(
+        &mut source,
+        "master",
+        "waiting for Git discovery before opening the source worktree list",
+    )
+    .await;
     type_colon_command(&mut terminal, "git-worktrees");
     let linked_display = linked.to_string_lossy().into_owned();
     wait_for_buffer_text(
@@ -1956,8 +1959,7 @@ async fn incompatible_worktree_host_returns_the_tui_to_its_source() {
                 ..
             }
         );
-        let reported = String::from_utf8_lossy(&output.lock().unwrap()).contains("E1");
-        if attached && reported {
+        if attached {
             recovered = true;
             break;
         }
@@ -1971,6 +1973,12 @@ async fn incompatible_worktree_host_returns_the_tui_to_its_source() {
         "incompatible destination did not return to source; terminal output: {}",
         String::from_utf8_lossy(&output.lock().unwrap())
     );
+    let _ = wait_for_frame(
+        &mut source,
+        "waiting for the incompatible destination error to be retained",
+        |frame| frame.editor.status.notification_counts.errors > 0,
+    )
+    .await;
 
     terminal.write_all(b":detach\r").unwrap();
     terminal.flush().unwrap();
@@ -2037,8 +2045,12 @@ async fn creating_a_worktree_starts_and_attaches_its_persistent_session() {
         }
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
-    wait_for_terminal_output(&output, "other").await;
-    wait_for_terminal_output(&output, "│ master").await;
+    let _ = wait_for_git_summary(
+        &mut source,
+        "master",
+        "waiting for Git discovery before opening the source worktree list",
+    )
+    .await;
     type_colon_command(&mut terminal, "git-worktrees");
     let root_display = root.to_string_lossy().into_owned();
     wait_for_buffer_text(&mut source, Some(&output), "[git worktrees]", &root_display).await;
@@ -3575,7 +3587,12 @@ async fn relative_workspace_attach_uses_editor_cwd_and_keeps_one_client_process(
     }
     assert!(attached_to_source, "the source host never received the TUI");
     let root_display = root.to_string_lossy().into_owned();
-    wait_for_terminal_output(&output, "other").await;
+    let _ = wait_for_git_summary(
+        &mut source,
+        "master",
+        "waiting for the source workspace to finish Git discovery",
+    )
+    .await;
 
     // The client process stays at `root`, while `:cd` changes only the
     // editor-owned directory to `root/nested`. Resolving `../linked` against
@@ -3608,12 +3625,15 @@ async fn relative_workspace_attach_uses_editor_cwd_and_keeps_one_client_process(
         attached_to_destination,
         "the relative selector did not reach the destination host"
     );
-    wait_for_terminal_output(&output, "linked/other.txt").await;
-
     // Return through the worktree list to retain the original regression that
     // switching both ways stays inside one client process. The linked
     // worktree is the second row, so the main worktree is immediately above it.
-    wait_for_terminal_output(&output, "│ linked").await;
+    let _ = wait_for_git_summary(
+        &mut destination,
+        "linked",
+        "waiting for the destination workspace to finish Git discovery",
+    )
+    .await;
     type_colon_command(&mut terminal, "git-worktrees");
     wait_for_buffer_text(
         &mut destination,

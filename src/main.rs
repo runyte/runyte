@@ -443,7 +443,9 @@ impl HostSupervisor {
             .context("cannot register host supervisor process descriptor")?;
         #[cfg(target_os = "macos")]
         let process_queue = open_process_queue(pid)?
-            .map(tokio::io::unix::AsyncFd::new)
+            .map(|queue| {
+                tokio::io::unix::AsyncFd::with_interest(queue, tokio::io::Interest::READABLE)
+            })
             .transpose()
             .context("cannot register host supervisor process queue")?;
         Ok(Self {
@@ -4420,6 +4422,27 @@ mod tests {
         tui::input::convert_event,
         workspace::WorkspaceHost,
     };
+
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn host_supervisor_process_queue_reports_child_exit() {
+        let mut child = std::process::Command::new("sleep")
+            .arg("120")
+            .spawn()
+            .unwrap();
+        let supervisor = super::HostSupervisor::new(
+            super::HostSupervisorKind::TestProcess,
+            child.id() as libc::pid_t,
+        )
+        .unwrap();
+
+        child.kill().unwrap();
+        let _ = child.wait().unwrap();
+        tokio::time::timeout(Duration::from_secs(5), supervisor.recv())
+            .await
+            .expect("the process queue did not become readable")
+            .unwrap();
+    }
 
     #[cfg(unix)]
     #[test]
