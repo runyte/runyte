@@ -1,0 +1,24 @@
+#!/bin/sh
+# SPDX-License-Identifier: MPL-2.0
+#
+# Stands in for a program whose behavior a test needs to control.
+#
+# A test must never run a file it wrote itself. Writing an executable leaves a
+# descriptor open for the length of the write, another thread's fork inherits
+# it, and the kernel then refuses to exec that inode while any writer holds it
+# — `ETXTBSY`, arriving only when the machine is loaded enough for the two to
+# overlap. Sleeping, retrying, syncing, or renaming around it changes the odds
+# rather than the ownership: the inode being executed is still one this
+# process opened for writing.
+#
+# This file is checked in and never written at runtime, so no descriptor for
+# it ever exists. A test installs it under whatever name it needs — a symlink
+# creates no writable descriptor — and puts the behavior it wants beside that
+# name in an ordinary data file.
+#
+# `$0` is the path the caller invoked, symlink and all, so `$0.behavior` is
+# that file. Sourcing it rather than running it keeps this shell's arguments,
+# working directory, process group, and PID, all of which are what the tests
+# are actually observing.
+
+. "$0.behavior"

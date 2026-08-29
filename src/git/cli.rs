@@ -3867,6 +3867,78 @@ mod tests {
     use super::*;
     use crate::git::BufferRevisionGuard;
 
+    /// Installs a program at `program` whose behavior is `behavior`.
+    ///
+    /// A test must never run a file it wrote itself. The write leaves a
+    /// descriptor open, a concurrent fork elsewhere in this binary inherits
+    /// it, and the exec is then refused with `ETXTBSY` — but only when the
+    /// machine is loaded enough for the two to overlap, which is why it
+    /// surfaces as an unrelated flake. Sleeping, syncing, or renaming shifts
+    /// the odds instead of the ownership. So the runnable file is checked in
+    /// at `src/fixtures/stand-in`, this only links to it, and the behavior
+    /// travels beside the link in an ordinary data file that nothing execs.
+    #[cfg(unix)]
+    fn install_stand_in(program: &Path, behavior: &str) {
+        let mut data = program.as_os_str().to_owned();
+        data.push(".behavior");
+        std::fs::write(PathBuf::from(data), behavior).unwrap();
+        std::os::unix::fs::symlink(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("src/fixtures/stand-in"),
+            program,
+        )
+        .unwrap();
+    }
+
+    /// Installing stand-ins in parallel never contends with running them.
+    ///
+    /// Writing a program and then executing it made every spawn in this binary
+    /// a race: any other thread forking between the `open` and the `close`
+    /// inherits the write descriptor, and the exec is refused with `ETXTBSY`
+    /// for as long as that fork lives. The stand-in's executable is checked in
+    /// and only ever linked to, so no descriptor for it exists to inherit and
+    /// the contention has no way to occur — which is what this asserts, rather
+    /// than that it has become rare.
+    #[cfg(unix)]
+    #[test]
+    fn parallel_stand_in_installs_never_contend_with_running_one() {
+        const WORKERS: usize = 8;
+        const ROUNDS: usize = 8;
+
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "runyte-git-stand-in-stress-{}-{nonce}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+
+        std::thread::scope(|scope| {
+            for worker in 0..WORKERS {
+                let root = &root;
+                scope.spawn(move || {
+                    let directory = root.join(format!("worker-{worker}"));
+                    std::fs::create_dir_all(&directory).unwrap();
+                    for round in 0..ROUNDS {
+                        let program = directory.join(format!("git-{round}"));
+                        let token = format!("{worker}-{round}");
+                        install_stand_in(
+                            &program,
+                            &format!("#!/bin/sh\nprintf '%s\\n' '{token}'\n"),
+                        );
+                        let output = GitCliProvider::new(&program)
+                            .run_text(&directory, &["rev-parse", "--show-toplevel"])
+                            .unwrap_or_else(|error| panic!("{token} could not run: {error}"));
+                        assert_eq!(output.trim(), token);
+                    }
+                });
+            }
+        });
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
     #[test]
     fn long_failure_logs_are_large_and_explicitly_bounded() {
         let short = vec![b'x'; 128 * 1024];
@@ -4016,8 +4088,6 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn cleanup_after_a_cancellation_still_runs_git() {
-        use std::os::unix::fs::PermissionsExt;
-
         let nonce = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -4026,16 +4096,12 @@ mod tests {
             std::env::temp_dir().join(format!("runyte-git-cleanup-{}-{nonce}", std::process::id()));
         std::fs::create_dir_all(&root).unwrap();
         let program = root.join("slow-git");
-        std::fs::write(
+        install_stand_in(
             &program,
             "#!/bin/sh\nwhile [ -e \"$0.hold\" ]; do sleep 0.05; done\necho ran\n",
-        )
-        .unwrap();
+        );
         let hold = root.join("slow-git.hold");
         std::fs::write(&hold, b"").unwrap();
-        let mut permissions = std::fs::metadata(&program).unwrap().permissions();
-        permissions.set_mode(0o755);
-        std::fs::set_permissions(&program, permissions).unwrap();
         let cancellation = Arc::new(AtomicBool::new(true));
         let provider = GitCliProvider::new(&program).with_cancellation(Arc::clone(&cancellation));
 
@@ -4111,7 +4177,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn local_history_reads_have_a_deadline() {
-        use std::{fs, os::unix::fs::PermissionsExt, time::Duration};
+        use std::{fs, time::Duration};
 
         let directory = std::env::temp_dir().join(format!(
             "runyte-git-read-timeout-{}-{}",
@@ -4120,8 +4186,7 @@ mod tests {
         ));
         fs::create_dir_all(&directory).unwrap();
         let program = directory.join("slow-git");
-        fs::write(&program, "#!/bin/sh\nsleep 1\n").unwrap();
-        fs::set_permissions(&program, fs::Permissions::from_mode(0o700)).unwrap();
+        install_stand_in(&program, "#!/bin/sh\nsleep 1\n");
         let provider =
             GitCliProvider::new(&program).with_local_read_timeout(Duration::from_millis(10));
         let error = provider
@@ -4266,8 +4331,6 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn a_network_timeout_is_not_extended_by_a_child_holding_the_pipes() {
-        use std::os::unix::fs::PermissionsExt;
-
         let nonce = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -4278,10 +4341,7 @@ mod tests {
         ));
         std::fs::create_dir_all(&root).unwrap();
         let program = root.join("git-with-helper");
-        std::fs::write(&program, "#!/bin/sh\nsleep 30 &\nwait\n").unwrap();
-        let mut permissions = std::fs::metadata(&program).unwrap().permissions();
-        permissions.set_mode(0o755);
-        std::fs::set_permissions(&program, permissions).unwrap();
+        install_stand_in(&program, "#!/bin/sh\nsleep 30 &\nwait\n");
         let provider = GitCliProvider::new(&program);
         let started = std::time::Instant::now();
 
@@ -4302,8 +4362,6 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn cancellation_stops_a_local_command_and_its_helpers() {
-        use std::os::unix::fs::PermissionsExt;
-
         let nonce = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -4312,10 +4370,7 @@ mod tests {
             std::env::temp_dir().join(format!("runyte-git-cancel-{}-{nonce}", std::process::id()));
         std::fs::create_dir_all(&root).unwrap();
         let program = root.join("git-with-helper");
-        std::fs::write(&program, "#!/bin/sh\nsleep 30 &\nwait\n").unwrap();
-        let mut permissions = std::fs::metadata(&program).unwrap().permissions();
-        permissions.set_mode(0o755);
-        std::fs::set_permissions(&program, permissions).unwrap();
+        install_stand_in(&program, "#!/bin/sh\nsleep 30 &\nwait\n");
         let cancellation = Arc::new(AtomicBool::new(false));
         let provider = GitCliProvider::new(&program).with_cancellation(Arc::clone(&cancellation));
         let directory = root.clone();
@@ -4338,8 +4393,6 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn a_detached_helper_cannot_hold_completed_command_pipes_open() {
-        use std::os::unix::fs::PermissionsExt;
-
         let nonce = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -4350,8 +4403,7 @@ mod tests {
         ));
         std::fs::create_dir_all(&root).unwrap();
         let program = root.join("git-with-detached-helper");
-        std::fs::write(&program, "#!/bin/sh\nsleep 30 &\nexit 0\n").unwrap();
-        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+        install_stand_in(&program, "#!/bin/sh\nsleep 30 &\nexit 0\n");
         let started = std::time::Instant::now();
 
         GitCliProvider::new(&program)
@@ -4371,8 +4423,6 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn a_session_escaping_helper_cannot_hold_the_completed_worker() {
-        use std::os::unix::fs::PermissionsExt;
-
         if Command::new("setsid").arg("true").status().is_err() {
             return;
         }
@@ -4386,8 +4436,7 @@ mod tests {
         ));
         std::fs::create_dir_all(&root).unwrap();
         let program = root.join("git-with-escaped-helper");
-        std::fs::write(&program, "#!/bin/sh\nsetsid sleep 2 &\nexit 0\n").unwrap();
-        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+        install_stand_in(&program, "#!/bin/sh\nsetsid sleep 2 &\nexit 0\n");
         let started = std::time::Instant::now();
 
         GitCliProvider::new(&program)
@@ -4407,8 +4456,6 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn fast_output_survives_readers_held_until_after_child_exit() {
-        use std::os::unix::fs::PermissionsExt;
-
         let nonce = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -4419,12 +4466,10 @@ mod tests {
         ));
         std::fs::create_dir_all(&root).unwrap();
         let program = root.join("git-with-fast-output");
-        std::fs::write(
+        install_stand_in(
             &program,
             "#!/bin/sh\nprintf 'complete\\n'\nprintf 'diagnostic\\n' >&2\n",
-        )
-        .unwrap();
-        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+        );
         let gate = Arc::new(TestPipeReaderGate::default());
         let provider = GitCliProvider::new(&program).with_pipe_reader_gate(gate);
 
@@ -4436,8 +4481,6 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn finalizer_wake_is_followed_by_a_fresh_eof_read() {
-        use std::os::unix::fs::PermissionsExt;
-
         let nonce = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -4449,15 +4492,13 @@ mod tests {
         std::fs::create_dir_all(&root).unwrap();
         let release = root.join("release");
         let program = root.join("git-with-parked-readers");
-        std::fs::write(
+        install_stand_in(
             &program,
-            format!(
+            &format!(
                 "#!/bin/sh\nwhile [ ! -e '{}' ]; do :; done\nprintf 'complete\\n'\n",
                 release.display()
             ),
-        )
-        .unwrap();
-        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+        );
         let observer = Arc::new(TestPipePollObserver::default());
         let provider = GitCliProvider::new(&program).with_pipe_poll_observer(Arc::clone(&observer));
         let worker_root = root.clone();
@@ -4654,8 +4695,6 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn failed_input_write_cannot_be_reported_as_git_success() {
-        use std::os::unix::fs::PermissionsExt;
-
         let nonce = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -4666,8 +4705,7 @@ mod tests {
         ));
         std::fs::create_dir_all(&root).unwrap();
         let program = root.join("git-ignoring-input");
-        std::fs::write(&program, "#!/bin/sh\nexit 0\n").unwrap();
-        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+        install_stand_in(&program, "#!/bin/sh\nexit 0\n");
         let gate = Arc::new(TestPipeReaderGate::default());
         let provider = GitCliProvider::new(&program).with_pipe_reader_gate(gate);
 
@@ -4682,8 +4720,6 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn discovery_without_a_marker_does_not_invoke_git() {
-        use std::os::unix::fs::PermissionsExt;
-
         let nonce = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -4695,15 +4731,13 @@ mod tests {
         std::fs::create_dir_all(&root).unwrap();
         let invoked = root.join("invoked");
         let program = root.join("failing-git");
-        std::fs::write(
+        install_stand_in(
             &program,
-            format!(
+            &format!(
                 "#!/bin/sh\nprintf invoked > '{}'\nexit 1\n",
                 invoked.display()
             ),
-        )
-        .unwrap();
-        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+        );
 
         assert!(!has_git_marker_in(std::iter::once(root.as_path()), |_| false).unwrap());
         assert!(
@@ -4755,8 +4789,6 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn shared_scratch_marker_is_a_ceiling_but_private_markers_remain_decisive() {
-        use std::os::unix::fs::PermissionsExt;
-
         let nonce = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -4772,15 +4804,13 @@ mod tests {
         std::fs::create_dir_all(&workspace).unwrap();
         let invoked = root.join("invoked");
         let program = root.join("failing-git");
-        std::fs::write(
+        install_stand_in(
             &program,
-            format!(
+            &format!(
                 "#!/bin/sh\nprintf invoked > '{}'\nexit 1\n",
                 invoked.display()
             ),
-        )
-        .unwrap();
-        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+        );
         let probe =
             |start: &Path| has_git_marker_in(start.ancestors(), |directory| directory == ceiling);
         let provider = GitCliProvider::new(&program);
@@ -4814,8 +4844,6 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn discovery_with_a_marker_propagates_git_failure() {
-        use std::os::unix::fs::PermissionsExt;
-
         let nonce = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -4827,12 +4855,10 @@ mod tests {
         std::fs::create_dir_all(root.join(".git")).unwrap();
         std::fs::write(root.join(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
         let program = root.join("failing-git");
-        std::fs::write(
+        install_stand_in(
             &program,
             "#!/bin/sh\nprintf 'broken repository' >&2\nexit 1\n",
-        )
-        .unwrap();
-        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+        );
 
         let error = GitCliProvider::new(&program).discover(&root).unwrap_err();
         assert!(matches!(error, GitError::Failed { .. }), "{error:?}");
@@ -4843,8 +4869,6 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn repository_discovery_rejects_empty_required_rev_parse_output() {
-        use std::os::unix::fs::PermissionsExt;
-
         for empty_argument in ["--show-toplevel", "--git-dir", "--git-common-dir"] {
             let nonce = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -4857,9 +4881,9 @@ mod tests {
             std::fs::create_dir_all(root.join(".git")).unwrap();
             std::fs::write(root.join(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
             let program = root.join("git-with-empty-discovery-field");
-            std::fs::write(
+            install_stand_in(
                 &program,
-                format!(
+                &format!(
                     "#!/bin/sh\n\
                      case \"$*\" in\n\
                        *{empty_argument}*) exit 0 ;;\n\
@@ -4869,9 +4893,7 @@ mod tests {
                      esac\n",
                     root.display()
                 ),
-            )
-            .unwrap();
-            std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+            );
 
             let error = GitCliProvider::new(&program).discover(&root).unwrap_err();
             assert!(

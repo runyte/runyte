@@ -234,6 +234,13 @@ registry.
   through `note_loaded_config`; one that answers an "open with" prompt must
   point `app.programs` at a temporary directory, as `tests/key_hints.rs`
   already does. Keep environment-derived paths injectable for that reason.
+- Never run a file a test wrote. Writing an executable leaves a descriptor
+  open, a concurrent fork elsewhere in the binary inherits it, and the exec is
+  then refused with `ETXTBSY` on a loaded machine and nowhere else. Sleeping,
+  syncing, retrying, or renaming changes the odds rather than the ownership.
+  `src/fixtures/stand-in` is the checked-in executable for this: link to it
+  under whatever name the test needs and put the behavior beside the link in a
+  `<program>.behavior` data file, which it sources.
 - Keep source files MPL-2.0 compatible and retain existing SPDX headers.
 
 Before handing off a Rust change, run:

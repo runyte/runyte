@@ -215,6 +215,21 @@ process-group number. PTY teardown must probe its owned child immediately
 before signalling: a still-running child anchors the group and may be stopped,
 while an already-reaped child makes teardown signal-free.
 
+A full-suite run also failed in
+`git::cli::tests::a_detached_helper_cannot_hold_completed_command_pipes_open`,
+where spawning a runtime-written executable returned `ETXTBSY`. Writing a
+program and then running it makes every spawn in a parallel test binary a
+race: a fork in any other thread between the `open` and the `close` inherits
+the writable descriptor, and the kernel refuses to exec that inode for as long
+as the fork holds it. The same shape reproduced locally in
+`external_open::tests::launched_program_has_a_process_group_separate_from_the_editor`
+under unrelated concurrent spawning, so it is not confined to the Git tests.
+Sleeping, retrying, `fsync`, `chmod`, and rename all change the odds rather
+than the ownership, because the inode being executed is still one the process
+opened for writing. The executable a test runs must therefore be checked in
+and never written at runtime, with per-test behavior selected through the
+working directory, a data file, arguments, or a symlink basename.
+
 CI run 33269246467 also showed that the full-content-budget performance gate
 could fail on a single 71.93 ms sample against its 64 ms release budget. The
 picker's score comparator recomputed each candidate's Unicode character count
@@ -264,6 +279,9 @@ Reproduction:
 6. Repeat the affected process and PTY tests under load on Ubuntu and macOS,
    then run the full formatting, Clippy, and test gates. A single successful
    run is not sufficient evidence that a timing failure is gone.
-7. Do not use retries, longer arbitrary sleeps, suite serialization, or test
+7. Replace every runtime-written executable a test runs with a checked-in
+   one, and keep parallel coverage that installs and runs them at the same
+   time.
+8. Do not use retries, longer arbitrary sleeps, suite serialization, or test
    thread reduction as fixes. Require a green CI result for the exact commit
    before a release is tagged or published.

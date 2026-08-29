@@ -302,6 +302,27 @@ fn provider() -> GitCliProvider {
     GitCliProvider::from_environment().expect("these tests need `git` on PATH")
 }
 
+/// Installs a program at `program` whose behavior is `behavior`.
+///
+/// A test must never run a file it wrote itself. The write leaves a descriptor
+/// open, a concurrent fork elsewhere in this binary inherits it, and the exec
+/// is then refused with `ETXTBSY` — but only when the machine is loaded enough
+/// for the two to overlap, which is why it surfaces as an unrelated flake. So
+/// the runnable file is checked in at `src/fixtures/stand-in`, this only links
+/// to it, and the behavior travels beside the link in an ordinary data file
+/// that nothing execs.
+#[cfg(unix)]
+fn install_stand_in(program: &Path, behavior: &str) {
+    let mut data = program.as_os_str().to_owned();
+    data.push(".behavior");
+    fs::write(PathBuf::from(data), behavior).unwrap();
+    std::os::unix::fs::symlink(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("src/fixtures/stand-in"),
+        program,
+    )
+    .unwrap();
+}
+
 fn line_selection(path: PathBuf, lines: (usize, usize)) -> PartialStageSelection {
     PartialStageSelection {
         path,
@@ -2471,18 +2492,14 @@ fn a_message_full_of_shell_characters_is_recorded_verbatim() {
 #[cfg(unix)]
 #[test]
 fn a_successful_verbose_hook_is_not_killed_by_the_error_bound() {
-    use std::os::unix::fs::PermissionsExt;
-
     let repository = TempRepository::new("verbose-hook");
     repository.write("source.rs", "staged\n");
     repository.git(&["add", "source.rs"]);
     let hook = repository.path().join(".git/hooks/pre-commit");
-    fs::write(
+    install_stand_in(
         &hook,
         "#!/bin/sh\nset -e\ndd if=/dev/zero bs=1100000 count=1 2>/dev/null | tr '\\000' x >&2\nexit 0\n",
-    )
-    .unwrap();
-    fs::set_permissions(&hook, fs::Permissions::from_mode(0o700)).unwrap();
+    );
 
     provider()
         .commit(&repository.repository(), "verbose hook")
@@ -3518,8 +3535,6 @@ fn partial_staging_refuses_file_mode_metadata() {
 #[cfg(unix)]
 #[test]
 fn patch_prepare_refuses_when_disk_changes_during_diff_capture() {
-    use std::os::unix::fs::PermissionsExt;
-
     let repository = TempRepository::new("partial-capture-race");
     repository.write("source.txt", "old\n");
     repository.commit("base");
@@ -3529,15 +3544,13 @@ fn patch_prepare_refuses_when_disk_changes_during_diff_capture() {
     let real_git = real_git.trim();
     let wrapper = repository.path().join("git-racing-diff");
     let source = repository.path().join("source.txt");
-    fs::write(
+    install_stand_in(
         &wrapper,
-        format!(
+        &format!(
             "#!/bin/sh\nfor arg in \"$@\"; do\n  if [ \"$arg\" = diff ]; then\n    '{real_git}' \"$@\"\n    printf 'second\\n' > '{}'\n    exit 0\n  fi\ndone\nexec '{real_git}' \"$@\"\n",
             source.display()
         ),
-    )
-    .unwrap();
-    fs::set_permissions(&wrapper, fs::Permissions::from_mode(0o700)).unwrap();
+    );
 
     let result = GitCliProvider::new(wrapper)
         .prepare_partial(&repository.repository(), &line_selection(source, (1, 1)));

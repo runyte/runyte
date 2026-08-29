@@ -571,11 +571,30 @@ mod tests {
         assert_eq!(cache.programs(), ["feh"]);
     }
 
+    /// Installs a program at `program` whose behavior is `behavior`.
+    ///
+    /// A test must never run a file it wrote itself. The write leaves a
+    /// descriptor open, a concurrent fork elsewhere in this binary inherits
+    /// it, and the exec is then refused with `ETXTBSY` — but only when the
+    /// machine is loaded enough for the two to overlap, which is why it
+    /// surfaces as an unrelated flake. So the runnable file is checked in at
+    /// `src/fixtures/stand-in`, this only links to it, and the behavior
+    /// travels beside the link in an ordinary data file that nothing execs.
+    #[cfg(unix)]
+    fn install_stand_in(program: &Path, behavior: &str) {
+        let mut data = program.as_os_str().to_owned();
+        data.push(".behavior");
+        fs::write(PathBuf::from(data), behavior).unwrap();
+        std::os::unix::fs::symlink(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("src/fixtures/stand-in"),
+            program,
+        )
+        .unwrap();
+    }
+
     #[cfg(unix)]
     #[test]
     fn launched_program_has_a_process_group_separate_from_the_editor() {
-        use std::os::unix::fs::PermissionsExt;
-
         let root = std::env::temp_dir().join(format!(
             "runyte-detached-open-{}-{}",
             std::process::id(),
@@ -587,12 +606,10 @@ mod tests {
         fs::create_dir_all(&root).unwrap();
         let helper = root.join("record-group");
         let output = root.join("group");
-        fs::write(
+        install_stand_in(
             &helper,
             "#!/bin/sh\nps -o pgid= -p $$ > \"$1.tmp\"\nmv \"$1.tmp\" \"$1\"\n",
-        )
-        .unwrap();
-        fs::set_permissions(&helper, fs::Permissions::from_mode(0o700)).unwrap();
+        );
 
         launch(helper.to_str().unwrap(), &output).unwrap();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
