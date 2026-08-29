@@ -215,6 +215,15 @@ process-group number. PTY teardown must probe its owned child immediately
 before signalling: a still-running child anchors the group and may be stopped,
 while an already-reaped child makes teardown signal-free.
 
+CI run 33278087061 then failed
+`terminal::pty::tests::running_child_teardown_still_signals_and_reaps_its_private_group`
+on Ubuntu. The test signalled the group, let teardown reap the leader, and
+asserted immediately that the process group no longer existed. Reaping the
+leader orphans the shell's own `sleep`, which stays a member of that group
+until init collects it, and a zombie still answers as a member. Nothing in the
+test can acknowledge that collection, so group emptiness has to be observed
+under a deadline rather than assumed complete when teardown returns.
+
 A full-suite run also failed in
 `git::cli::tests::a_detached_helper_cannot_hold_completed_command_pipes_open`,
 where spawning a runtime-written executable returned `ETXTBSY`. Writing a

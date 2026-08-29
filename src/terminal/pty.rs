@@ -550,7 +550,16 @@ mod tests {
                 (process_group, libc::SIGKILL),
             ]
         );
-        assert!(!process_group_exists(pid));
+        // Teardown reaps the leader itself, but the shell's own `sleep` is
+        // orphaned by that reap and stays a member of the group until init
+        // collects it. Nothing here can acknowledge that collection, and a
+        // zombie still answers as a group member, so the group emptying is
+        // observed under a deadline rather than assumed to have finished by
+        // the time teardown returned.
+        assert!(
+            wait_until(Duration::from_secs(5), || !process_group_exists(pid)),
+            "process group {pid} outlived the SIGKILL its members were sent"
+        );
     }
 
     #[test]
