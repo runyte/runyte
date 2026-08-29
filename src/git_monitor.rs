@@ -39,13 +39,17 @@ pub struct GitInvalidation {
 
 enum WorkerMessage {
     Sync(Option<Repository>),
-    Native(notify::Result<Event>),
+    Native {
+        observed_at: Instant,
+        event: notify::Result<Event>,
+    },
     Stop,
 }
 
 pub struct GitMonitorHandle {
     commands: SyncSender<WorkerMessage>,
     overflowed: Arc<AtomicBool>,
+    stopped: Arc<AtomicBool>,
 }
 
 impl GitMonitorHandle {
@@ -65,6 +69,7 @@ impl GitMonitorHandle {
 
 impl Drop for GitMonitorHandle {
     fn drop(&mut self) {
+        self.stopped.store(true, Ordering::Release);
         let _ = self.commands.try_send(WorkerMessage::Stop);
     }
 }
@@ -76,7 +81,10 @@ pub fn spawn() -> (GitMonitorHandle, mpsc::Receiver<GitInvalidation>) {
     let native_overflowed = Arc::clone(&overflowed);
     let mut watcher = notify::recommended_watcher(move |event| {
         if native_commands
-            .try_send(WorkerMessage::Native(event))
+            .try_send(WorkerMessage::Native {
+                observed_at: Instant::now(),
+                event,
+            })
             .is_err()
         {
             native_overflowed.store(true, Ordering::Release);
@@ -85,14 +93,25 @@ pub fn spawn() -> (GitMonitorHandle, mpsc::Receiver<GitInvalidation>) {
     .ok();
     let (events, event_receiver) = mpsc::channel(EVENT_CAPACITY);
     let worker_overflowed = Arc::clone(&overflowed);
+    let stopped = Arc::new(AtomicBool::new(false));
+    let worker_stopped = Arc::clone(&stopped);
     thread::Builder::new()
         .name("runyte-git-monitor".to_owned())
-        .spawn(move || run_worker(watcher.as_mut(), receiver, events, worker_overflowed))
+        .spawn(move || {
+            run_worker(
+                watcher.as_mut(),
+                receiver,
+                events,
+                worker_overflowed,
+                worker_stopped,
+            );
+        })
         .expect("Git monitor thread must start");
     (
         GitMonitorHandle {
             commands,
             overflowed,
+            stopped,
         },
         event_receiver,
     )
@@ -103,6 +122,7 @@ fn run_worker(
     receiver: Receiver<WorkerMessage>,
     events: mpsc::Sender<GitInvalidation>,
     overflowed: Arc<AtomicBool>,
+    stopped: Arc<AtomicBool>,
 ) {
     let mut repository = None::<Repository>;
     let mut watched = HashSet::<PathBuf>::new();
@@ -111,7 +131,7 @@ fn run_worker(
     let mut full = false;
     let mut ready = None::<GitInvalidation>;
 
-    loop {
+    while !stopped.load(Ordering::Acquire) {
         match receiver.recv_timeout(Duration::from_millis(25)) {
             Ok(WorkerMessage::Sync(next)) => {
                 if repository != next {
@@ -129,22 +149,26 @@ fn run_worker(
                     }
                 }
             }
-            Ok(WorkerMessage::Native(Ok(event))) => {
+            Ok(WorkerMessage::Native {
+                observed_at,
+                event: Ok(event),
+            }) => {
                 if repository
                     .as_ref()
                     .is_some_and(|repository| affects(&event, repository))
                 {
-                    let observed = Instant::now();
-                    last_observed = Some(observed);
-                    deadline = Some(observed + DEBOUNCE);
+                    last_observed = Some(observed_at);
+                    deadline = Some(observed_at + DEBOUNCE);
                 }
             }
-            Ok(WorkerMessage::Native(Err(_))) => {
+            Ok(WorkerMessage::Native {
+                observed_at,
+                event: Err(_),
+            }) => {
                 if repository.is_some() {
-                    let observed = Instant::now();
-                    last_observed = Some(observed);
+                    last_observed = Some(observed_at);
                     full = true;
-                    deadline = Some(observed + DEBOUNCE);
+                    deadline = Some(observed_at + DEBOUNCE);
                 }
             }
             Ok(WorkerMessage::Stop) => break,
@@ -290,6 +314,25 @@ mod tests {
                 .add_path("/repo/.git/index".into()),
             &repository
         ));
+    }
+
+    #[test]
+    fn dropping_the_handle_requests_shutdown_even_when_the_queue_is_full() {
+        let (commands, receiver) = sync_channel(1);
+        commands.try_send(WorkerMessage::Sync(None)).unwrap();
+        let overflowed = Arc::new(AtomicBool::new(false));
+        let stopped = Arc::new(AtomicBool::new(false));
+        let handle = GitMonitorHandle {
+            commands,
+            overflowed: Arc::clone(&overflowed),
+            stopped: Arc::clone(&stopped),
+        };
+
+        drop(handle);
+
+        assert!(stopped.load(Ordering::Acquire));
+        let (events, _) = mpsc::channel(1);
+        run_worker(None, receiver, events, overflowed, stopped);
     }
 
     #[tokio::test]

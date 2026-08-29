@@ -216,7 +216,7 @@ struct PendingAutomaticGitRefresh {
 #[derive(Clone, Debug)]
 struct AppliedGitReconciliation {
     repository: PathBuf,
-    captured_at: Instant,
+    started_at: Instant,
     spec: RefreshSpec,
 }
 
@@ -224,7 +224,7 @@ struct AppliedGitReconciliation {
 struct CompletedGitSnapshot {
     repository: PathBuf,
     generation: RepositoryGeneration,
-    captured_at: Instant,
+    started_at: Instant,
     spec: RefreshSpec,
     state: GitServiceState,
     coalesced: bool,
@@ -1121,7 +1121,7 @@ impl WorkspaceHost {
         Some(CompletedGitSnapshot {
             repository: snapshot.repository.workdir().to_path_buf(),
             generation: snapshot.generation,
-            captured_at: snapshot.captured_at,
+            started_at: snapshot.started_at,
             spec: snapshot.requested.clone(),
             state: *state,
             coalesced: *coalesced,
@@ -1172,16 +1172,16 @@ impl WorkspaceHost {
     fn record_git_reconciliation(&mut self, completed: CompletedGitSnapshot, reset: bool) {
         if self
             .latest_git_observation
-            .is_some_and(|observed| observed > completed.captured_at)
+            .is_some_and(|observed| observed > completed.started_at)
         {
             self.app.mark_git_snapshot_stale();
             return;
         }
-        self.last_git_refresh = completed.captured_at;
+        self.last_git_refresh = Instant::now();
         self.next_git_retry = None;
         self.last_git_reconciliation = Some(AppliedGitReconciliation {
             repository: completed.repository,
-            captured_at: completed.captured_at,
+            started_at: completed.started_at,
             spec: completed.spec.clone(),
         });
         if self.app.periodic_git_refresh_seconds() == 0 {
@@ -1215,7 +1215,7 @@ impl WorkspaceHost {
                 .last_git_reconciliation
                 .as_ref()
                 .filter(|reconciliation| reconciliation.repository == event.repository)
-                .filter(|reconciliation| event.observed_at <= reconciliation.captured_at);
+                .filter(|reconciliation| event.observed_at <= reconciliation.started_at);
             if let Some(reconciliation) = covered {
                 self.git_reconciled = Some(reconciliation.spec.clone());
             } else {
@@ -1440,7 +1440,7 @@ mod tests {
     }
 
     #[test]
-    fn a_mutation_snapshot_covers_its_delayed_native_invalidation() {
+    fn a_snapshot_covers_only_observations_before_its_first_read() {
         let mut host = host();
         let root = host.project_root.clone();
         let path = root.join("covered-by-mutation.rs");
@@ -1451,7 +1451,7 @@ mod tests {
             staged_paths: vec![path.clone()],
             ..RefreshSpec::default()
         };
-        let captured_at = Instant::now();
+        let started_at = Instant::now();
         let mutation = GitMutation::Stage(vec![path.clone()]);
         host.apply_event(HostEvent::Git(GitServiceEvent::Completed {
             id: GitRequestId::from_raw(91),
@@ -1468,7 +1468,7 @@ mod tests {
                 snapshot: Box::new(Ok(RepositorySnapshot {
                     repository,
                     generation: RepositoryGeneration::from_raw(1),
-                    captured_at,
+                    started_at,
                     requested: spec.clone(),
                     status: RepositoryStatus {
                         head: Head::Branch("main".to_owned()),
@@ -1495,12 +1495,21 @@ mod tests {
 
         host.apply_event(HostEvent::GitInvalidation(GitInvalidation {
             repository: root,
-            observed_at: captured_at.checked_sub(Duration::from_millis(1)).unwrap(),
+            observed_at: started_at.checked_sub(Duration::from_millis(1)).unwrap(),
             overflowed: false,
         }));
 
         assert!(host.git_dirty);
         assert!(host.git_reconciled.as_ref().unwrap().covers(&spec));
+
+        host.apply_event(HostEvent::GitInvalidation(GitInvalidation {
+            repository: host.project_root.clone(),
+            observed_at: started_at + Duration::from_millis(1),
+            overflowed: false,
+        }));
+
+        assert!(host.git_dirty);
+        assert!(host.git_reconciled.is_none());
     }
 
     #[test]

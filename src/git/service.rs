@@ -472,8 +472,8 @@ impl GitOperation {
 pub struct RepositorySnapshot {
     pub repository: Repository,
     pub generation: RepositoryGeneration,
-    /// When the service finished reading the fields in this snapshot.
-    pub captured_at: Instant,
+    /// Safe freshness barrier captured before the service reads any field.
+    pub started_at: Instant,
     /// The subset of ambient state this snapshot authoritatively refreshed.
     pub requested: RefreshSpec,
     pub status: RepositoryStatus,
@@ -1344,6 +1344,7 @@ fn refresh(
     spec: &RefreshSpec,
     generation: RepositoryGeneration,
 ) -> Result<RepositorySnapshot> {
+    let started_at = Instant::now();
     let status = provider.status(repository)?;
     let stats = if spec.stats {
         // Counts decorate an otherwise complete status. A provider that
@@ -1418,7 +1419,7 @@ fn refresh(
     Ok(RepositorySnapshot {
         repository: repository.clone(),
         generation,
-        captured_at: Instant::now(),
+        started_at,
         requested: spec.clone(),
         status,
         stats,
@@ -1496,7 +1497,7 @@ mod tests {
                     GitResponse::Snapshot(Box::new(RepositorySnapshot {
                         repository: repository.clone(),
                         generation,
-                        captured_at: Instant::now(),
+                        started_at: Instant::now(),
                         requested: spec.clone(),
                         status,
                         stats: StatusStats::default(),
@@ -1528,7 +1529,7 @@ mod tests {
                     snapshot: Box::new(Ok(RepositorySnapshot {
                         repository: repository.clone(),
                         generation,
-                        captured_at: Instant::now(),
+                        started_at: Instant::now(),
                         requested: refresh.clone(),
                         status,
                         stats: StatusStats::default(),

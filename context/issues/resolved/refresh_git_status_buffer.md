@@ -32,6 +32,9 @@ A later completion-aware refinement made narrow snapshots merge only their
 requested staged bases and statistics. Automatic freshness is now recorded on
 successful snapshot completion rather than submission, so a failed or
 coalesced read cannot suppress the reconciliation that still needs to run.
+The freshness timestamp is taken before the first Git read, and staged bases
+are retired when their last file buffer closes; a late asynchronous response
+cannot restore a base with no live consumer.
 
 Coverage includes `git::service::tests::equivalent_refreshes_coalesce_onto_one_worker`
 in `src/git/service.rs`,
@@ -43,7 +46,9 @@ and
 `workspace::host::tests::a_failed_automatic_refresh_does_not_claim_reconciliation`
 in `src/workspace/host.rs`,
 `git::tracker::tests::a_narrow_snapshot_preserves_other_staged_bases_and_unrequested_stats`
-in `src/git/tracker.rs`, and the settings registry validation tests in
+in `src/git/tracker.rs`,
+`app::tests::closing_a_file_retires_its_staged_base` in
+`src/app/tests/git.rs`, and the settings registry validation tests in
 `src/settings.rs`.
 
 ## Report

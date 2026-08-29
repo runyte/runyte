@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::app::git_workflows::RequestedGitViews;
+use crate::git::BaseContent;
 
 #[test]
 fn saving_an_external_file_does_not_ask_git_about_it() {
@@ -1211,7 +1212,7 @@ fn log_selection_is_object_stable_and_stale_blame_is_discarded() {
         RepositorySnapshot {
             repository: repository.clone(),
             generation: RepositoryGeneration::from_raw(1),
-            captured_at: Instant::now(),
+            started_at: Instant::now(),
             requested: RefreshSpec::default(),
             status: crate::git::RepositoryStatus {
                 head: crate::git::Head::Branch("main".to_owned()),
@@ -1304,7 +1305,7 @@ fn log_selection_is_object_stable_and_stale_blame_is_discarded() {
         RepositorySnapshot {
             repository: repository.clone(),
             generation: RepositoryGeneration::from_raw(1),
-            captured_at: Instant::now(),
+            started_at: Instant::now(),
             requested: RefreshSpec::default(),
             status: crate::git::RepositoryStatus {
                 head: crate::git::Head::Branch("main".to_owned()),
@@ -3750,6 +3751,70 @@ fn staged_project_with(
     (root, app, provider)
 }
 
+#[test]
+fn closing_a_file_retires_its_staged_base() {
+    let (root, mut app, _) = staged_project_with("retire-staged-base", |provider| {
+        provider.with_staged("closed.rs", "base\n")
+    });
+    let path = root.join("closed.rs");
+    fs::write(&path, "base\n").unwrap();
+    app.open_file(path.clone()).unwrap();
+    let buffer = app.active().buffer;
+    let repository = app.git.repository().unwrap().clone();
+    let status = app.git.status().unwrap().clone();
+    let generation = app.git_snapshot_generation();
+    assert!(app.git.tracks(&path));
+
+    app.close_buffer(buffer);
+
+    assert!(!app.git.tracks(&path));
+    app.apply_git_response(
+        GitOperation::StagedContent {
+            repository: repository.clone(),
+            path: path.clone(),
+        },
+        GitResponse::StagedContent {
+            path: path.clone(),
+            content: BaseContent::Text("late direct base\n".to_owned()),
+        },
+        (None, GitServiceState::Completed),
+        RequestedGitViews::default(),
+        None,
+        None,
+    );
+    assert!(!app.git.tracks(&path));
+    app.apply_repository_snapshot(
+        RepositorySnapshot {
+            repository,
+            generation,
+            started_at: Instant::now(),
+            requested: RefreshSpec {
+                staged_paths: vec![path.clone()],
+                ..RefreshSpec::default()
+            },
+            status,
+            stats: Default::default(),
+            head_oid: Some("a".repeat(40)),
+            staged: vec![(
+                path.clone(),
+                BaseContent::Text("late snapshot base\n".to_owned()),
+            )],
+            branches: None,
+            staged_diff: None,
+            file_diffs: Vec::new(),
+            worktrees: None,
+            log: None,
+            requested_log_anchors: Vec::new(),
+            reachable_log_anchors: Vec::new(),
+            stashes: None,
+        },
+        false,
+        false,
+    );
+    assert!(!app.git.tracks(&path));
+    fs::remove_dir_all(root).unwrap();
+}
+
 /// The template answers "what am I committing" and "how do I finish"
 /// without the reader leaving the buffer.
 #[test]
@@ -4943,7 +5008,7 @@ fn commit_open_waits_for_the_refreshed_index() {
         result: Box::new(Ok(GitResponse::Snapshot(Box::new(RepositorySnapshot {
             repository: repository.clone(),
             generation: RepositoryGeneration::default(),
-            captured_at: Instant::now(),
+            started_at: Instant::now(),
             requested: RefreshSpec::default(),
             status: stale_status,
             stats: StatusStats::default(),
@@ -4985,7 +5050,7 @@ fn commit_open_waits_for_the_refreshed_index() {
         result: Box::new(Ok(GitResponse::Snapshot(Box::new(RepositorySnapshot {
             repository,
             generation: RepositoryGeneration::default(),
-            captured_at: Instant::now(),
+            started_at: Instant::now(),
             requested: RefreshSpec::default(),
             status,
             stats: StatusStats::default(),
@@ -5058,7 +5123,7 @@ fn cancelling_a_coalesced_commit_check_does_not_reopen_the_intent() {
         result: Box::new(Ok(GitResponse::Snapshot(Box::new(RepositorySnapshot {
             repository: Repository::new(&root),
             generation: RepositoryGeneration::default(),
-            captured_at: Instant::now(),
+            started_at: Instant::now(),
             requested: RefreshSpec::default(),
             status: RepositoryStatus {
                 head: Head::Branch("main".to_owned()),

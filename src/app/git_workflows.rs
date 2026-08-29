@@ -307,6 +307,14 @@ impl App {
         crate::path_safety::ensure_within_root(&self.project_root, path).is_ok()
     }
 
+    fn has_live_file_buffer(&self, path: &Path) -> bool {
+        self.buffers.iter().enumerate().any(|(index, buffer)| {
+            !self.closed_buffers.contains(&index)
+                && buffer.kind == BufferKind::File
+                && buffer.path.as_deref() == Some(path)
+        })
+    }
+
     pub(super) fn git_refresh_spec(&self, repository: &Repository) -> RefreshSpec {
         let visible_panes = self
             .maximized
@@ -724,7 +732,13 @@ impl App {
                 self.refresh_git_status_buffer();
             }
             GitResponse::StagedContent { path, content } => {
-                self.git.apply_staged_content(path, content);
+                if self.has_live_file_buffer(&path) {
+                    self.git.apply_staged_content(path, content);
+                } else {
+                    // The asynchronous read may finish after its buffer was
+                    // closed. Do not resurrect an otherwise unreferenced base.
+                    self.git.forget(&path);
+                }
                 self.git_state.snapshot_stale = false;
             }
             GitResponse::Diff { scope, path, text } => {
@@ -866,11 +880,16 @@ impl App {
             self.git_state.head_oid.is_some() && self.git_state.head_oid != snapshot.head_oid;
         self.git_state.generation = snapshot.generation;
         self.git_state.head_oid = snapshot.head_oid;
+        let staged = snapshot
+            .staged
+            .into_iter()
+            .filter(|(path, _)| self.has_live_file_buffer(path))
+            .collect();
         self.git.apply_snapshot(
             snapshot.repository,
             snapshot.status,
             snapshot.stats,
-            snapshot.staged,
+            staged,
             snapshot.requested.stats,
         );
         self.git_state.snapshot_stale = false;

@@ -43,10 +43,20 @@ completion-aware. `GitTracker::apply_snapshot` now replaces only staged bases
 and statistics the snapshot actually requested, so revealing file B cannot
 evict file A's already reconciled gutter base. Terminal-covered buffers are
 not visible Git consumers. The host records coverage only after a successful,
-non-coalesced snapshot and uses the snapshot's capture time to recognize a
-delayed watcher event already covered by an editor-owned mutation. Failed
-automatic reads keep the repository dirty and retry after a bounded delay
-rather than claiming freshness until the fallback interval.
+non-coalesced snapshot. Failed automatic reads keep the repository dirty and
+retry after a bounded delay rather than claiming freshness until the fallback
+interval.
+
+A second review follow-up moved that freshness barrier to immediately before
+the first Git read and timestamps native observations in the watcher callback
+before they enter the bounded command queue. An observation made during a
+multi-field refresh therefore cannot be mistaken for state the snapshot read,
+while an earlier observation remains safe to absorb even if queueing delays its
+delivery. Closing the last buffer for a file now retires its staged base, and
+late direct or snapshot responses cannot recreate that unreferenced cache
+entry. Monitor shutdown uses an atomic stop request in addition to the bounded
+command channel, so a saturated queue cannot keep the worker and its callback
+sender alive.
 
 Tests: `git_monitor::tests::a_native_burst_produces_one_debounced_invalidation`,
 `git_monitor::tests::linked_worktree_watches_checkout_private_and_shared_metadata`,
@@ -55,17 +65,20 @@ in `src/git_monitor.rs` cover native coalescing and metadata scope;
 `workspace::host::tests::git_invalidation_is_retained_until_visible_and_fallback_is_not_polling`
 in `src/workspace/host.rs` covers the visibility gate, retained dirty state,
 narrow requirements, fallback, and zero setting;
-`workspace::host::tests::a_mutation_snapshot_covers_its_delayed_native_invalidation`
+`workspace::host::tests::a_snapshot_covers_only_observations_before_its_first_read`
 and
 `workspace::host::tests::a_failed_automatic_refresh_does_not_claim_reconciliation`
-cover direct mutation reconciliation and completion-aware failures;
+cover the freshness boundary, direct mutation reconciliation, and
+completion-aware failures;
 `git::tracker::tests::a_narrow_snapshot_preserves_other_staged_bases_and_unrequested_stats`
 in `src/git/tracker.rs` covers non-destructive partial snapshots;
+`git_monitor::tests::dropping_the_handle_requests_shutdown_even_when_the_queue_is_full`
+in `src/git_monitor.rs` covers bounded-queue shutdown;
 `app::tests::async_refresh_requests_staged_bases_only_for_visible_open_files`
-and
+and `app::tests::closing_a_file_retires_its_staged_base`, together with
 `app::tests::automatic_refresh_waits_out_a_short_quiet_period_after_the_last_keystroke`
-in `src/app/tests/git.rs` cover visible, maximized, terminal-covered panes and
-interaction;
+in `src/app/tests/git.rs` cover visible, maximized, terminal-covered panes,
+closed-buffer cache retirement, late responses, and interaction;
 `config::tests::git_reconciliation_defaults_to_sixty_seconds` in
 `src/config.rs` covers the new default; and discovery coverage in
 `tests/git_provider.rs` verifies main, linked-worktree, and separate Git
