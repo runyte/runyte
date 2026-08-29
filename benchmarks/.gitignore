@@ -1,0 +1,6 @@
+# Generated fixtures, the scratch workspace, and the Git repository the harness
+# initialises inside it. All of it is reproduced by run.py on demand.
+.work/
+
+# Python bytecode from running the harness in place.
+__pycache__/

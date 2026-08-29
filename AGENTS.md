@@ -23,6 +23,10 @@ records relevant to the task:
   panes, lists, pickers, prompts, overlays, or frontend snapshots.
 - `context/reference/terminal-compatibility-v1.md` is required when changing
   terminal emulation or PTY behavior.
+- `context/reference/startup-performance.md` records measured startup and idle
+  cost over time. Consult it when changing startup ordering, document loading,
+  syntax parsing, or anything that runs on a timer; the harness that produces
+  it is `benchmarks/`.
 - `context/issues/` contains open work, `context/issues/deferred/` contains
   confirmed problems awaiting a broader design decision, and
   `context/issues/resolved/` contains searchable diagnoses and regression
