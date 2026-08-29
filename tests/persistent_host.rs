@@ -449,7 +449,17 @@ async fn frame_containing(
         terminal_wire_frame_text(frame).contains(needle)
     })
     .await
-    .unwrap_or_else(|| panic!("terminal frame never contained {needle:?}"))
+    .unwrap_or_else(|| {
+        let last_frame = current.as_ref().map(|frame| frame.id);
+        let last_screen = current
+            .as_ref()
+            .map(terminal_wire_frame_text)
+            .unwrap_or_else(|| "<no complete terminal frame>".to_owned());
+        panic!(
+            "terminal frame never contained {needle:?}; last frame: {last_frame:?}; \
+             damage messages: {damage_count}; last screen:\n{last_screen}"
+        )
+    })
 }
 
 /// Waits for terminal-owned state without weakening the host response budget.
@@ -488,7 +498,15 @@ async fn frame_matching(
                     client.send(&ClientRequest::Resynchronize).await.unwrap();
                 }
             }
-            _ => {}
+            HostResponse::Error { message } => {
+                panic!("host rejected a request while waiting for terminal state: {message}")
+            }
+            HostResponse::Refused { message } => {
+                panic!("host refused a request while waiting for terminal state: {message}")
+            }
+            response => {
+                panic!("unexpected host response while waiting for terminal state: {response:?}")
+            }
         }
         if current.as_ref().is_some_and(&matches) {
             return current.clone();
@@ -528,24 +546,34 @@ async fn next_idle_frame(client: &mut LocalClient) -> runyte::protocol::HostFram
 async fn invoke_when_current(
     client: &mut LocalClient,
     command: &str,
+    frame: runyte::protocol::HostFrame,
+) -> HostResponse {
+    invoke_with_argument_when_current(client, command, None, frame).await
+}
+
+async fn invoke_with_argument_when_current(
+    client: &mut LocalClient,
+    command: &str,
+    argument: Option<&str>,
     mut frame: runyte::protocol::HostFrame,
 ) -> HostResponse {
     let deadline = Instant::now() + EDITOR_STATE_TIMEOUT;
     loop {
         client
             .send(&ClientRequest::Invoke {
-                command: runyte::protocol::CommandRequest::at(
-                    command,
-                    frame.id,
-                    frame.active_buffer,
-                    frame.active_revision,
-                ),
+                command: runyte::protocol::CommandRequest {
+                    name: command.to_owned(),
+                    argument: argument.map(str::to_owned),
+                    frame: frame.id,
+                    buffer: frame.active_buffer,
+                    revision: frame.active_revision,
+                },
             })
             .await
             .unwrap();
         loop {
             match response(client).await {
-                HostResponse::Frame { .. } => {}
+                HostResponse::Frame { .. } | HostResponse::TerminalDamage { .. } => {}
                 HostResponse::Error { message } if message.starts_with("stale editor frame:") => {
                     assert!(
                         Instant::now() < deadline,
@@ -849,27 +877,17 @@ async fn terminal_pid_output_and_input_survive_detach_disconnect_and_reattach() 
         HostResponse::Welcome { pid, .. } => pid,
         other => panic!("expected welcome, got {other:?}"),
     };
-    let initial = response(&mut client).await;
-    let HostResponse::Frame { frame } = initial else {
-        panic!("expected initial frame, got {initial:?}")
-    };
-    let mut current = Some((*frame).clone());
+    let frame = next_idle_frame(&mut client).await;
     let mut damage_count = 0;
-    client
-        .send(&ClientRequest::Invoke {
-            command: runyte::protocol::CommandRequest {
-                name: "terminal".to_owned(),
-                argument: Some(
-                    "/bin/sh -c 'printf \"token:%s\\n\" \"$$\"; sleep 0.2; printf \"detached\\n\"; while IFS= read -r line; do printf \"reply:%s\\n\" \"$line\"; done'"
-                        .to_owned(),
-                ),
-                frame: frame.id,
-                buffer: frame.active_buffer,
-                revision: frame.active_revision,
-            },
-        })
-        .await
-        .unwrap();
+    let command = "/bin/sh -c 'printf \"token:%s\\n\" \"$$\"; sleep 0.2; printf \"detached\\n\"; while IFS= read -r line; do printf \"reply:%s\\n\" \"$line\"; done'";
+    let outcome =
+        invoke_with_argument_when_current(&mut client, "terminal", Some(command), frame).await;
+    assert!(
+        matches!(outcome, HostResponse::CommandResult { .. }),
+        "expected terminal command result, got {outcome:?}"
+    );
+    client.send(&ClientRequest::Resynchronize).await.unwrap();
+    let mut current = None;
     let first = frame_containing(&mut client, &mut current, &mut damage_count, "token:").await;
     let token = terminal_wire_frame_text(&first)
         .lines()
@@ -1008,22 +1026,17 @@ async fn hidden_terminal_output_while_detached_is_unread_after_reattach() {
         response(&mut client).await,
         HostResponse::Welcome { .. }
     ));
-    let initial = next_complete_frame(&mut client).await;
-    client
-        .send(&ClientRequest::Invoke {
-            command: runyte::protocol::CommandRequest {
-                name: "terminal".to_owned(),
-                argument: Some(
-                    "/bin/sh -c 'sleep 0.3; printf \"hidden-unread\\033]2;hidden-ready\\007\"; sleep 30'"
-                        .to_owned(),
-                ),
-                frame: initial.id,
-                buffer: initial.active_buffer,
-                revision: initial.active_revision,
-            },
-        })
-        .await
-        .unwrap();
+    let initial = next_idle_frame(&mut client).await;
+    let terminal_command =
+        "/bin/sh -c 'sleep 0.3; printf \"hidden-unread\\033]2;hidden-ready\\007\"; sleep 30'";
+    let outcome =
+        invoke_with_argument_when_current(&mut client, "terminal", Some(terminal_command), initial)
+            .await;
+    assert!(
+        matches!(outcome, HostResponse::CommandResult { .. }),
+        "expected terminal command result, got {outcome:?}"
+    );
+    client.send(&ClientRequest::Resynchronize).await.unwrap();
     let mut current = None;
     let mut damage_count = 0;
     let terminal_frame = frame_matching(&mut client, &mut current, &mut damage_count, |frame| {
@@ -1039,18 +1052,15 @@ async fn hidden_terminal_output_while_detached_is_unread_after_reattach() {
     // persistence test depend on the 1.2-second `Space t q` prefix deadline.
     // Prefix expiry under scheduler contention belongs to key-hint behavior;
     // the state needed here is only a live terminal with no attached view.
-    client
-        .send(&ClientRequest::Invoke {
-            command: runyte::protocol::CommandRequest {
-                name: "open".to_owned(),
-                argument: Some("note.txt".to_owned()),
-                frame: terminal_frame.id,
-                buffer: terminal_frame.active_buffer,
-                revision: terminal_frame.active_revision,
-            },
-        })
-        .await
-        .unwrap();
+    let outcome =
+        invoke_with_argument_when_current(&mut client, "open", Some("note.txt"), terminal_frame)
+            .await;
+    assert!(
+        matches!(outcome, HostResponse::CommandResult { .. }),
+        "expected open command result, got {outcome:?}"
+    );
+    client.send(&ClientRequest::Resynchronize).await.unwrap();
+    current = None;
     frame_matching(&mut client, &mut current, &mut damage_count, |frame| {
         frame
             .editor
@@ -1089,28 +1099,29 @@ async fn hidden_terminal_output_while_detached_is_unread_after_reattach() {
         response(&mut reattached).await,
         HostResponse::Welcome { .. }
     ));
-    let frame = next_complete_frame(&mut reattached).await;
+    let frame = next_idle_frame(&mut reattached).await;
+    let outcome = invoke_when_current(&mut reattached, "terminals", frame).await;
+    assert!(
+        matches!(outcome, HostResponse::CommandResult { .. }),
+        "expected terminals command result, got {outcome:?}"
+    );
     reattached
-        .send(&ClientRequest::Invoke {
-            command: runyte::protocol::CommandRequest::at(
-                "terminals",
-                frame.id,
-                frame.active_buffer,
-                frame.active_revision,
-            ),
-        })
+        .send(&ClientRequest::Resynchronize)
         .await
         .unwrap();
-    let manager = loop {
-        let frame = next_complete_frame(&mut reattached).await;
-        if frame
-            .overlays
-            .iter()
-            .any(|overlay| overlay.title == "Terminals")
-        {
-            break frame;
-        }
-    };
+    let first = response(&mut reattached).await;
+    let manager = wait_for_editor_frame(
+        &mut reattached,
+        first,
+        "waiting for the terminal manager",
+        |frame| {
+            frame
+                .overlays
+                .iter()
+                .any(|overlay| overlay.title == "Terminals")
+        },
+    )
+    .await;
     let terminals = manager
         .overlays
         .iter()
@@ -1760,25 +1771,18 @@ async fn detached_host_keeps_the_requested_editor_directory_below_the_project_ro
         .await
         .unwrap();
     let _ = response(&mut client).await;
-    let frame = response(&mut client).await;
-    let HostResponse::Frame { frame } = frame else {
-        panic!("expected initial frame, got {frame:?}")
-    };
-    client
-        .send(&ClientRequest::Invoke {
-            command: runyte::protocol::CommandRequest::at(
-                "quit-here",
-                frame.id,
-                frame.active_buffer,
-                frame.active_revision,
-            ),
-        })
-        .await
-        .unwrap();
-    let detached_directory = loop {
-        if let HostResponse::Detached { directory_bytes } = response(&mut client).await {
-            break directory_bytes.map(runyte::workspace::transport::decode_path);
+    let frame = next_idle_frame(&mut client).await;
+    let outcome = invoke_when_current(&mut client, "quit-here", frame).await;
+    let detached_directory = match outcome {
+        HostResponse::Detached { directory_bytes } => {
+            directory_bytes.map(runyte::workspace::transport::decode_path)
         }
+        HostResponse::CommandResult { .. } => loop {
+            if let HostResponse::Detached { directory_bytes } = response(&mut client).await {
+                break directory_bytes.map(runyte::workspace::transport::decode_path);
+            }
+        },
+        response => panic!("expected quit-here result, got {response:?}"),
     };
     assert_eq!(detached_directory, Some(nested));
 

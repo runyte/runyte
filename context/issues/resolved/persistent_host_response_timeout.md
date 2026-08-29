@@ -37,6 +37,18 @@ needs without coupling it to key-prefix timing. This is not a Runyte/Helix
 binding change; the documented `Space t q` behavior and its hint timeout are
 unchanged.
 
+A later CI hardening pass fixed the command boundary before that polling
+starts. The persistence test previously sent `terminal` against its first
+frame and allowed `frame_matching` to discard a stale-frame error; startup Git
+work could therefore prevent the terminal from opening while the test waited
+the full terminal deadline for output that could never exist. The invocation
+now retries against a resynchronized current frame, requires a
+`CommandResult`, and only then waits for terminal output. The hidden-terminal
+and working-directory cases use the same current-frame barrier for every
+semantic invocation they make. Terminal polling now fails immediately on
+protocol errors and includes the last complete frame, reconstructed terminal
+screen, and damage count in deadline diagnostics.
+
 Coverage is in
 `tests/persistent_host.rs::terminal_pid_output_and_input_survive_detach_disconnect_and_reattach`
 and
