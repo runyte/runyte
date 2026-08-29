@@ -91,7 +91,15 @@ The example version below is 0.1.1. Substitute the real one.
    git push origin main
    ```
 
-8. **Publish:**
+8. **Require green CI for the exact release commit.** Wait for the `CI`
+   workflow triggered by step 7 and verify that its head SHA is exactly the
+   output of `git rev-parse HEAD`. Every job, including both lifecycle-stress
+   platforms, must complete successfully. A green run for an earlier commit
+   does not qualify, and a failed job must be diagnosed and fixed rather than
+   rerun until it happens to pass. Do not publish or tag while this check is
+   pending or failed.
+
+9. **Publish:**
 
    ```sh
    cargo publish --locked
@@ -101,14 +109,14 @@ The example version below is 0.1.1. Substitute the real one.
    configuration. It is not in the repository and should never be searched
    for; if the token is missing, stop and say so.
 
-9. **Tag the release commit and push the tag:**
+10. **Tag the release commit and push the tag:**
 
    ```sh
    git tag v0.1.1
    git push origin v0.1.1
    ```
 
-10. **Carry the release commit back to `dev`**, so the branches do not diverge
+11. **Carry the release commit back to `dev`**, so the branches do not diverge
     over a version bump:
 
     ```sh
@@ -127,8 +135,8 @@ branches. Where each branch has a worktree of its own, `git switch` refuses:
 fatal: 'main' is already used by worktree at <path>
 ```
 
-That is the only thing that changes. Run steps 1 through 9 from whichever
-worktree holds `main`, and step 10's merge from the one holding `dev`, dropping
+That is the only thing that changes. Run steps 1 through 10 from whichever
+worktree holds `main`, and step 11's merge from the one holding `dev`, dropping
 the two `git switch` lines — a worktree keeps its branch, so there is nothing to
 switch back to at the end. `git worktree list` names which is which. Every
 command in between is unchanged, and so are the commits and pushes it produces.
@@ -148,10 +156,13 @@ publish honest about that: it ships the same resolved graph the gates in step 3
 ran against, and fails loudly if the lock file is stale rather than quietly
 resolving something newer.
 
-**Push before publish.** A crates.io version cannot be replaced or unpublished,
-only yanked. From 0.1.0 onward, pushing first means every published version
-has a matching public commit, even if the publish then fails. The reverse order
-can leave a version on crates.io that corresponds to nothing anyone can fetch.
+**Push and exact-commit CI before publish.** A crates.io version cannot be
+replaced or unpublished, only yanked. From 0.1.0 onward, pushing first means
+every published version has a matching public commit, even if the publish then
+fails. Waiting for that commit's complete CI result also prevents an unrelated
+earlier green run or a lucky rerun from authorizing a release. The reverse
+order can leave a version on crates.io that corresponds to nothing anyone can
+fetch.
 
 **The dry run.** `Cargo.toml` sets `include` as an allowlist, so a file that is
 not listed is silently absent from the published crate rather than flagged. The

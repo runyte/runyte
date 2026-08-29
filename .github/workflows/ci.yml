@@ -70,6 +70,39 @@ jobs:
       - name: Test
         run: cargo test --locked
 
+  lifecycle-stress:
+    name: Lifecycle stress (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    env:
+      RUST_BACKTRACE: 1
+      TMPDIR: ${{ matrix.os == 'macos-latest' && '/private/tmp' || '/tmp' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: lifecycle-stress-${{ matrix.os }}
+
+      # This is a burn-in gate, not a retry: `bash -e` stops on the first
+      # failure, so every invocation and every attempt must pass. The suites
+      # retain their normal parallelism and production deadlines.
+      - name: Repeat process and PTY integration suites
+        run: |
+          for attempt in {1..10}; do
+            echo "burn-in attempt ${attempt}/10"
+            cargo test --locked --test local_protocol
+            cargo test --locked --test diagnostic_log
+            cargo test --locked --test persistent_host
+            cargo test --locked --test workspace_bulk
+          done
+
   performance:
     name: Performance (ubuntu-latest)
     runs-on: ubuntu-latest
