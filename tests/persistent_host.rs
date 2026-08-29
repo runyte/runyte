@@ -712,8 +712,13 @@ async fn detach_reattach_preserves_live_editor_and_refuses_a_second_tui() {
     }
     let _ = send_input(&mut first, KeyStroke::new(KeyCode::Escape, Modifiers::NONE)).await;
     let _ = send_input(&mut first, KeyStroke::plain(KeyCode::Char('b'))).await;
-    let selections = send_input(&mut first, KeyStroke::plain(KeyCode::Char('*'))).await;
-    assert_eq!(selection_count(&selections), 2);
+    first
+        .send(&ClientRequest::Input {
+            event: InputEvent::from(KeyStroke::plain(KeyCode::Char('*'))).into(),
+            repeated: false,
+        })
+        .await
+        .unwrap();
     assert_eq!(
         detach(&mut first, "detaching the edited client").await,
         None

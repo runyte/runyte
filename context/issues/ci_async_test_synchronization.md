@@ -38,6 +38,14 @@ longer than the sleep can leave the editor in the wrong mode. The current
 protocol frame already exposes the editor mode, so the test can wait for a
 current semantic frame in Normal mode instead of using elapsed time.
 
+The broader audit also exposed the same attribution error in
+`detach_reattach_preserves_live_editor_and_refuses_a_second_tui`. CI run
+33267109748 received a frame with one selection immediately after sending `*`
+and asserted that it was the input's result. The protocol permits an older
+replaceable frame to already be queued. The subsequent `Detached` response is
+the causal FIFO barrier for the input, and the first frame after reattachment
+is the behavior boundary that proves the two-selection state survived.
+
 The expected behavior is that asynchronous integration tests wait on semantic
 state or explicit process acknowledgements with bounded deadlines. PTY output
 must still be drained to prevent backpressure and retained for failure
