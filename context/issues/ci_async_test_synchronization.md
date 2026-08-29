@@ -86,6 +86,17 @@ the exited leader until its group is finalized, required discovery fields must
 reject empty output, and the capability snapshot must expose discovery failure
 separately from marker absence.
 
+CI run 33268796677 exposed a lock inversion between that lifecycle work and
+Crossterm's terminal input stream. After a `--wait` client's PTY master was
+closed, Crossterm 0.29 remained in its Unix read loop while holding the
+process-global event-reader mutex. Polling `EventStream` on Runyte's
+single-thread executor then blocked on that mutex, so the executor could not
+receive the already-independent terminal-loss notification. The client stayed
+runnable at one full core and retained its pending wait. Wait-mode input must
+be isolated from the lifecycle executor until the upstream EOF and stream
+handoff fixes are available in a release; a wedged third-party reader cannot
+be allowed to block request cancellation.
+
 The expected behavior is that asynchronous integration tests wait on semantic
 state or explicit process acknowledgements with bounded deadlines. PTY output
 must still be drained to prevent backpressure and retained for failure

@@ -52,6 +52,17 @@ and other Unix targets continue to poll only exceptional descriptor state.
 PTY-close boundary on both CI platforms, while the local-protocol subprocess
 tests cover real wait clients with active terminal traffic.
 
+A later release-gate follow-up isolates wait-mode input from the lifecycle
+executor. The independent descriptor watcher was correct, but Crossterm's
+`EventStream::poll_next` could synchronously block the single-thread Tokio
+runtime while waiting for Crossterm's process-global reader mutex. Its reader
+held that mutex forever when a dead PTY repeatedly returned EOF, so Runyte
+could not receive the watcher's already-ready notification. A dedicated,
+unjoined OS thread now performs blocking wait-mode input and forwards parsed
+events over a channel. The thread is allowed to remain inside the third-party
+reader until the dedicated wait process exits; terminal loss, host status,
+signals, and request cancellation remain independently responsive.
+
 Regression coverage lives in `tests/local_protocol.rs`:
 
 - `attached_wait_client_exits_and_cancels_when_its_terminal_is_lost`

@@ -8,6 +8,9 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[cfg(unix)]
+use std::thread;
+
 use anyhow::{Context, Result};
 #[cfg(unix)]
 use crossterm::event::{
@@ -2767,7 +2770,7 @@ async fn run_workspace_switcher(
     // unavailable Crossterm falls back to asking the terminal for its cursor
     // position, and an event reader would consume the reply.
     let mut geometry = current_frame_geometry()?;
-    let mut terminal_events = EventStream::new();
+    let mut terminal_events = AttachedTerminalEvents::stream();
     let mut current = endpoint;
     // Where to fall back to when a destination turns out to be unreachable.
     let mut previous: Option<LocalEndpoint> = None;
@@ -2928,7 +2931,7 @@ async fn attach_for_wait(
     let _terminal = TerminalGuard::enter(mouse_enabled)?;
     let mut terminal = Terminal::new(CrosstermBackend::new(stdout()))?;
     let mut geometry = current_frame_geometry()?;
-    let mut terminal_events = EventStream::new();
+    let mut terminal_events = AttachedTerminalEvents::isolated_wait_reader()?;
     let (mut attachment, reconcile_lifecycle) = tokio::select! {
         biased;
         signal = termination.recv() => (Err(terminated(signal)), false),
@@ -2979,6 +2982,53 @@ async fn attach_for_wait(
             anyhow::bail!("wait request cannot switch workspaces")
         }
         Ok(AttachOutcome::Refused(message)) => anyhow::bail!(message),
+    }
+}
+
+/// Terminal input used by a persistent attachment.
+///
+/// Crossterm 0.29 can remain inside its Unix event reader forever after a PTY
+/// hangup. Its `EventStream::poll_next` then blocks the Tokio thread on the
+/// process-global reader mutex, preventing `attach_for_wait` from observing
+/// the independent terminal-loss watcher. A `--wait` process therefore reads
+/// input on a detached OS thread and receives events through a channel. The
+/// reader may remain blocked after a dead terminal, but it cannot block the
+/// lifecycle executor, and the dedicated wait process exits immediately after
+/// releasing its request.
+#[cfg(unix)]
+enum AttachedTerminalEvents {
+    Stream(EventStream),
+    Isolated(tokio::sync::mpsc::UnboundedReceiver<io::Result<CrosstermEvent>>),
+}
+
+#[cfg(unix)]
+impl AttachedTerminalEvents {
+    fn stream() -> Self {
+        Self::Stream(EventStream::new())
+    }
+
+    fn isolated_wait_reader() -> Result<Self> {
+        let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
+        thread::Builder::new()
+            .name("runyte-wait-terminal-input".into())
+            .spawn(move || {
+                loop {
+                    let event = crossterm::event::read();
+                    let terminal = event.is_err();
+                    if sender.send(event).is_err() || terminal {
+                        break;
+                    }
+                }
+            })
+            .context("failed to start wait terminal input reader")?;
+        Ok(Self::Isolated(receiver))
+    }
+
+    async fn next(&mut self) -> Option<io::Result<CrosstermEvent>> {
+        match self {
+            Self::Stream(stream) => stream.next().await,
+            Self::Isolated(receiver) => receiver.recv().await,
+        }
     }
 }
 
@@ -3080,7 +3130,7 @@ impl Drop for AttachedWorkspaceActivity {
 async fn run_attached(
     endpoint: &LocalEndpoint,
     terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
-    terminal_events: &mut EventStream,
+    terminal_events: &mut AttachedTerminalEvents,
     geometry: &mut runyte::app::FrameGeometry,
     wait_token: Option<WaitToken>,
     cwd_file: Option<&Path>,
