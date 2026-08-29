@@ -3848,6 +3848,52 @@ fn save_as_retires_the_previous_paths_staged_base() {
     fs::remove_dir_all(root).unwrap();
 }
 
+#[test]
+fn an_explorer_move_reconciles_git_with_monitoring_disabled() {
+    let (root, mut app, provider) = staged_project_with("explorer-move-git", |provider| {
+        provider
+            .with_staged("before.rs", "base\n")
+            .with_staged("after.rs", "base\n")
+    });
+    app.config.git.refresh_interval_seconds = 0;
+    let before = root.join("before.rs");
+    let after = root.join("after.rs");
+    fs::write(&before, "base\n").unwrap();
+    app.open_file(before.clone()).unwrap();
+    let file = app.active().buffer;
+    assert!(app.git.tracks(&before));
+    let calls_before = provider.calls();
+    fs::rename(&before, &after).unwrap();
+    provider.set_status(crate::git::RepositoryStatus {
+        head: crate::git::Head::Branch("after-move".to_owned()),
+        upstream: None,
+        divergence: crate::git::Divergence::default(),
+        files: Vec::new(),
+    });
+    let report = ApplyReport {
+        applied: vec![FsOperation::Rename {
+            from: PathBuf::from("before.rs"),
+            to: PathBuf::from("after.rs"),
+            kind: EntryKind::File,
+        }],
+    };
+
+    assert_eq!(
+        app.reconcile_applied_filesystem(&root, file, &report, true),
+        None
+    );
+
+    assert_eq!(app.buffers[file].path.as_deref(), Some(after.as_path()));
+    assert!(!app.git.tracks(&before));
+    assert!(app.git.tracks(&after));
+    assert!(provider.calls() > calls_before);
+    assert_eq!(
+        app.git.status().unwrap().head,
+        crate::git::Head::Branch("after-move".to_owned())
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
 /// The template answers "what am I committing" and "how do I finish"
 /// without the reader leaving the buffer.
 #[test]

@@ -67,6 +67,12 @@ longer clear repository-wide stale state, because they cannot prove they cover
 an invalidation. Save-as also retires the previous path's staged base before
 tracking the new path.
 
+Confirmed explorer filesystem plans also reconcile Git directly after every
+successfully applied portion, including partial failures. File and directory
+moves retire each retargeted file buffer's old staged base and track its new
+path, so editor-owned filesystem changes neither depend on watcher delivery
+nor leak old keys when automatic monitoring is disabled.
+
 Tests: `git_monitor::tests::a_native_burst_produces_one_debounced_invalidation`,
 `git_monitor::tests::linked_worktree_watches_checkout_private_and_shared_metadata`,
 and `git_monitor::tests::worktree_index_head_refs_and_packed_refs_are_relevant`
@@ -89,6 +95,7 @@ time, and delayed-queue debouncing;
 `app::tests::async_refresh_requests_staged_bases_only_for_visible_open_files`
 and `app::tests::closing_a_file_retires_its_staged_base`, together with
 `app::tests::save_as_retires_the_previous_paths_staged_base` and
+`app::tests::an_explorer_move_reconciles_git_with_monitoring_disabled`, plus
 `app::tests::automatic_refresh_waits_out_a_short_quiet_period_after_the_last_keystroke`
 in `src/app/tests/git.rs` cover visible, maximized, terminal-covered panes,
 closed-buffer and save-as cache retirement, partial and late responses, and

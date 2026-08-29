@@ -38,6 +38,9 @@ cannot restore a base with no live consumer.
 Partial status and staged-content reads no longer clear the repository-wide
 stale indication, and save-as retires the previous path's base before tracking
 the new path.
+Confirmed explorer filesystem plans now request Git reconciliation directly,
+and moves retire and re-track affected open-file bases even when automatic
+monitoring is disabled.
 
 Coverage includes `git::service::tests::equivalent_refreshes_coalesce_onto_one_worker`
 in `src/git/service.rs`,
@@ -53,7 +56,8 @@ in `src/git/tracker.rs`,
 `app::tests::closing_a_file_retires_its_staged_base` in
 `src/app/tests/git.rs`,
 `app::tests::save_as_retires_the_previous_paths_staged_base` in that same
-file, and the settings registry validation tests in `src/settings.rs`.
+file, `app::tests::an_explorer_move_reconciles_git_with_monitoring_disabled`,
+and the settings registry validation tests in `src/settings.rs`.
 
 ## Report
 

@@ -7,28 +7,28 @@
 use super::parse_session_number;
 use super::{
     ActiveGrammar, App, AppCapabilitySnapshot, ApplyReport, ArgumentKind, Axis, BTreeMap, Buffer,
-    COMMAND_PATH_HINT_LIMIT, COMMANDS, Capabilities, Change, ColonCommand, CommandArguments,
-    CommandAvailability, CommandExecutionContext, CommandId, CommandInvocation, CommandMatch,
-    CommandOutcome, CommandOutcomeHint, CommandState, CommandUnavailable, CompletionSource,
-    ContentAlignment, DEFAULT_MACRO_REGISTER, DeletionAuthorization, DeletionMode, DelimiterPair,
-    DiffScope, EditorCommand, EditorIntent, EntryKind, FileObservation, FilePicker, FinderMode,
-    FsOperation, GeneratedViewIdentity, GrammarContext, GrammarNotice, GrammarOutput,
-    HOVER_PEEK_ROWS, HashSet, HelpInvocation, InputEvent, InputGrammar, Instant,
-    InvocationParameters, KeyCode, KeySequence, KeyStroke, Keymap, LineDirection, ListPicker,
-    LspCommand, MaximizedView, Mode, Modifiers, Motion, Offset, Path, PathBuf, PathHint,
-    PickerTarget, PointerButton, PointerDrag, PointerEvent, PointerEventKind, PointerOutcome,
-    PreparedView, ProgramAction, ProgramActionMenu, ProgramChoice, PromptKind, Range, RangeIntent,
-    RequestKind, ResourceFinder, Result, SearchMode, SearchQuery, Selection, SelectionSemantics,
-    SettingId, SettingType, SettingValue, SignatureContext, StashScope, SyntaxObject,
-    SyntaxObjectPart, SyntaxSelectionTransform, SystemClipboard, Transaction, ViewAlignment,
-    VimMotion, VimOperator, VimRangeTarget, VimTextObject, buffer_language, char_to_byte,
-    display_path, enclosing_area, expand_home_path, external_open, hint_is_not_before,
-    hover_content_rows, is_path_separator, is_path_token_boundary, is_terminal_normal_key, is_word,
-    is_word_completion_character, keymap_for, mapped_applied_path, operative_span,
-    parse_colon_command, persistent_session_availability, pointer_pane, pointer_resize_pair,
-    prompt_backspace, prompt_delete, prompt_delete_range, prompt_insert, prompt_word_backward,
-    prompt_word_forward, quote_path_hint, rect_contains, resolve_command, resolved_operation_path,
-    row_characters, unclosed_or_complete_quoted_path,
+    BufferKind, COMMAND_PATH_HINT_LIMIT, COMMANDS, Capabilities, Change, ColonCommand,
+    CommandArguments, CommandAvailability, CommandExecutionContext, CommandId, CommandInvocation,
+    CommandMatch, CommandOutcome, CommandOutcomeHint, CommandState, CommandUnavailable,
+    CompletionSource, ContentAlignment, DEFAULT_MACRO_REGISTER, DeletionAuthorization,
+    DeletionMode, DelimiterPair, DiffScope, EditorCommand, EditorIntent, EntryKind,
+    FileObservation, FilePicker, FinderMode, FsOperation, GeneratedViewIdentity, GrammarContext,
+    GrammarNotice, GrammarOutput, HOVER_PEEK_ROWS, HashSet, HelpInvocation, InputEvent,
+    InputGrammar, Instant, InvocationParameters, KeyCode, KeySequence, KeyStroke, Keymap,
+    LineDirection, ListPicker, LspCommand, MaximizedView, Mode, Modifiers, Motion, Offset, Path,
+    PathBuf, PathHint, PickerTarget, PointerButton, PointerDrag, PointerEvent, PointerEventKind,
+    PointerOutcome, PreparedView, ProgramAction, ProgramActionMenu, ProgramChoice, PromptKind,
+    Range, RangeIntent, RequestKind, ResourceFinder, Result, SearchMode, SearchQuery, Selection,
+    SelectionSemantics, SettingId, SettingType, SettingValue, SignatureContext, StashScope,
+    SyntaxObject, SyntaxObjectPart, SyntaxSelectionTransform, SystemClipboard, Transaction,
+    ViewAlignment, VimMotion, VimOperator, VimRangeTarget, VimTextObject, buffer_language,
+    char_to_byte, display_path, enclosing_area, expand_home_path, external_open,
+    hint_is_not_before, hover_content_rows, is_path_separator, is_path_token_boundary,
+    is_terminal_normal_key, is_word, is_word_completion_character, keymap_for, mapped_applied_path,
+    operative_span, parse_colon_command, persistent_session_availability, pointer_pane,
+    pointer_resize_pair, prompt_backspace, prompt_delete, prompt_delete_range, prompt_insert,
+    prompt_word_backward, prompt_word_forward, quote_path_hint, rect_contains, resolve_command,
+    resolved_operation_path, row_characters, unclosed_or_complete_quoted_path,
 };
 
 impl App {
@@ -2680,14 +2680,18 @@ impl App {
             .filter_map(|(index, buffer)| {
                 let path = buffer.path.as_deref()?;
                 let mapped = mapped_applied_path(root, path, &report.applied)?;
-                (mapped != path).then_some((index, mapped))
+                (mapped != path).then_some((index, path.to_path_buf(), mapped))
             })
             .collect::<Vec<_>>();
-        for (buffer_id, mapped) in retargeted {
+        for (buffer_id, previous, mapped) in retargeted {
             if self.closed_buffers.contains(&buffer_id) {
                 continue;
             }
-            self.buffers[buffer_id].retarget_path(mapped);
+            self.buffers[buffer_id].retarget_path(mapped.clone());
+            if self.buffers[buffer_id].kind == BufferKind::File {
+                self.git.forget(&previous);
+                self.track_in_git(&mapped);
+            }
             self.reparse_whole(buffer_id);
             // `lsp_touch` compares both path and language against the opened
             // document, closing the old URI before opening the new identity.
@@ -2762,6 +2766,11 @@ impl App {
                     self.buffers[index].display_name()
                 )),
             }
+        }
+        if !report.applied.is_empty() {
+            // These writes are editor-owned and already complete. Reconcile
+            // directly rather than depending on an optional native watcher.
+            self.refresh_git_status();
         }
         warnings.sort();
         warnings.dedup();

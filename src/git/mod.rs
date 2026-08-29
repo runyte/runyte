@@ -1300,6 +1300,10 @@ impl MemoryGitProvider {
         self.calls.get()
     }
 
+    pub fn set_status(&self, status: RepositoryStatus) {
+        *self.status.borrow_mut() = status;
+    }
+
     /// Moves a file's change from one side of the index to the other, so a
     /// test can watch a round trip rather than a frozen answer.
     fn move_side(&self, relative: &Path, stage: bool) {
