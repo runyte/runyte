@@ -191,6 +191,19 @@ had advanced. The Git log test must wait for the `git-log` command row's shared
 availability, which is the exact prerequisite for invoking that command and
 becomes true as soon as repository discovery succeeds.
 
+CI run 33273362707 used that semantic boundary and retained the complete
+failure on burn-in attempt two: repository discovery's
+`git rev-parse --show-toplevel` child was classified as terminated by signal
+9. Every Git child has completed `setsid` before `Command::spawn` returns, so
+sibling cleanup cannot address its unique process group, and same-command
+cancellation paths return typed cancellation, size, timeout, or I/O errors
+rather than an exit-status failure. The remaining classification source was
+`proc_bsdinfo.pbi_xstatus`, a libproc inspection field. Once libproc reports
+`SZOMB`, Darwin must use blocking `waitid(P_PID, ..., WEXITED | WNOWAIT)` for
+the authoritative parent-owned status before process-group cleanup, retain
+that status through the later reap, and log any disagreement among libproc,
+`waitid`, and `Child::wait`.
+
 CI run 33269246467 also showed that the full-content-budget performance gate
 could fail on a single 71.93 ms sample against its 64 ms release budget. The
 picker's score comparator recomputed each candidate's Unicode character count
