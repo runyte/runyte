@@ -1232,7 +1232,7 @@ impl WorkspaceHost {
     pub fn refresh_git_if_due(&mut self, now: Instant) -> bool {
         // A confirmed filesystem plan is a stronger boundary than automatic
         // monitoring and remains required when that monitoring is disabled.
-        let _ = self.app.retry_pending_git_reconciliation();
+        let _ = self.app.retry_pending_git_reconciliation(now);
         let seconds = self.app.periodic_git_refresh_seconds();
         if seconds == 0 {
             self.git_dirty = false;

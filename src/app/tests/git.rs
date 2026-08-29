@@ -3751,6 +3751,36 @@ fn staged_project_with(
     (root, app, provider)
 }
 
+fn empty_repository_snapshot(
+    repository: Repository,
+    generation: RepositoryGeneration,
+    requested: RefreshSpec,
+) -> RepositorySnapshot {
+    RepositorySnapshot {
+        repository,
+        generation,
+        started_at: Instant::now(),
+        requested,
+        status: crate::git::RepositoryStatus {
+            head: crate::git::Head::Branch("main".to_owned()),
+            upstream: None,
+            divergence: crate::git::Divergence::default(),
+            files: Vec::new(),
+        },
+        stats: crate::git::StatusStats::default(),
+        head_oid: Some("a".repeat(40)),
+        staged: Vec::new(),
+        branches: None,
+        staged_diff: None,
+        file_diffs: Vec::new(),
+        worktrees: None,
+        log: None,
+        requested_log_anchors: Vec::new(),
+        reachable_log_anchors: Vec::new(),
+        stashes: None,
+    }
+}
+
 #[test]
 fn closing_a_file_retires_its_staged_base() {
     let (root, mut app, _) = staged_project_with("retire-staged-base", |provider| {
@@ -3925,12 +3955,12 @@ fn a_partial_explorer_report_retries_one_async_post_change_barrier() {
     assert_eq!(app.buffers[file].path.as_deref(), Some(after.as_path()));
     assert!(!app.git.tracks(&before));
     assert!(!app.git.tracks(&after));
-    assert!(!app.retry_pending_git_reconciliation());
+    assert!(!app.retry_pending_git_reconciliation(Instant::now()));
     assert!(matches!(
         paused.next_operation(),
         GitOperation::Discover { .. }
     ));
-    assert!(app.retry_pending_git_reconciliation());
+    assert!(app.retry_pending_git_reconciliation(Instant::now()));
     let mut staged_read = false;
     let reconciliation = loop {
         match paused.next_operation() {
@@ -3941,6 +3971,199 @@ fn a_partial_explorer_report_retries_one_async_post_change_barrier() {
     };
     assert!(!staged_read, "retargeted files were submitted one by one");
     assert_eq!(reconciliation.staged_paths, vec![after]);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn a_pre_change_snapshot_cannot_mark_an_inflight_filesystem_barrier_fresh() {
+    let root = temporary("explorer-barrier-stale-marker");
+    fs::create_dir_all(&root).unwrap();
+    let root = root.canonicalize().unwrap();
+    let path = root.join("moved.rs");
+    fs::write(&path, "base\n").unwrap();
+    let repository = Repository::new(&root);
+    let mut app = App::new_in_isolated_project(
+        &root,
+        HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+            String::new(),
+        ))))),
+    )
+    .unwrap();
+    app.open_file(path.clone()).unwrap();
+    app.git.attach(Some(repository.clone()));
+    let (service, operations) = GitServiceHandle::recording_for_test();
+    app.attach_git_service(service);
+    assert!(matches!(
+        operations.recv_timeout(Duration::from_secs(1)).unwrap(),
+        GitOperation::Discover { .. }
+    ));
+
+    app.reconcile_git_after_filesystem(vec![path]);
+    let reconciliation = operations.recv_timeout(Duration::from_secs(1)).unwrap();
+    let reconciliation_spec = match &reconciliation {
+        GitOperation::Reconcile { spec, .. } => spec.clone(),
+        _ => panic!("filesystem change did not submit its ordering barrier"),
+    };
+    assert!(app.git_state.snapshot_stale());
+
+    app.apply_git_service_event(GitServiceEvent::Completed {
+        id: GitRequestId::from_raw(99),
+        operation: GitOperation::Refresh {
+            repository: repository.clone(),
+            spec: RefreshSpec::default(),
+        },
+        result: Box::new(Ok(GitResponse::Snapshot(Box::new(
+            empty_repository_snapshot(
+                repository.clone(),
+                RepositoryGeneration::default(),
+                RefreshSpec::default(),
+            ),
+        )))),
+        state: GitServiceState::Completed,
+        coalesced: false,
+    });
+    assert!(
+        app.git_state.snapshot_stale(),
+        "the pre-change read hid the pending barrier"
+    );
+
+    app.apply_git_service_event(GitServiceEvent::Completed {
+        id: GitRequestId::from_raw(2),
+        operation: reconciliation,
+        result: Box::new(Ok(GitResponse::Snapshot(Box::new(
+            empty_repository_snapshot(
+                repository,
+                RepositoryGeneration::default(),
+                reconciliation_spec,
+            ),
+        )))),
+        state: GitServiceState::Completed,
+        coalesced: false,
+    });
+    assert!(!app.git_state.snapshot_stale());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn a_failed_filesystem_barrier_retains_its_spec_for_a_bounded_retry() {
+    let root = temporary("explorer-barrier-failure-retry");
+    fs::create_dir_all(&root).unwrap();
+    let root = root.canonicalize().unwrap();
+    let path = root.join("moved.rs");
+    fs::write(&path, "base\n").unwrap();
+    let repository = Repository::new(&root);
+    let mut app = App::new_in_isolated_project(
+        &root,
+        HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+            String::new(),
+        ))))),
+    )
+    .unwrap();
+    app.open_file(path.clone()).unwrap();
+    app.git.attach(Some(repository));
+    let (service, operations) = GitServiceHandle::recording_for_test();
+    app.attach_git_service(service);
+    operations.recv_timeout(Duration::from_secs(1)).unwrap();
+    app.reconcile_git_after_filesystem(vec![path.clone()]);
+    let failed = operations.recv_timeout(Duration::from_secs(1)).unwrap();
+
+    app.apply_git_service_event(GitServiceEvent::Completed {
+        id: GitRequestId::from_raw(2),
+        operation: failed,
+        result: Box::new(Err(crate::git::GitError::Failed {
+            command: "refresh Git".to_owned(),
+            code: Some(1),
+            stderr: "transient failure".to_owned(),
+        })),
+        state: GitServiceState::Failed,
+        coalesced: false,
+    });
+
+    assert!(app.git_state.snapshot_stale());
+    assert!(
+        !app.retry_pending_git_reconciliation(Instant::now()),
+        "a failed worker must not spin an immediate retry loop"
+    );
+    assert!(app.retry_pending_git_reconciliation(Instant::now() + Duration::from_secs(2)));
+    let retried = (0..2)
+        .find_map(
+            |_| match operations.recv_timeout(Duration::from_secs(1)).unwrap() {
+                GitOperation::Reconcile { spec, .. } => Some(spec),
+                _ => None,
+            },
+        )
+        .expect("failed filesystem barrier was not retried");
+    assert!(retried.staged_paths.contains(&path));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn explorer_moves_outside_git_boundaries_are_not_batched_as_staged_reads() {
+    let root = temporary("explorer-move-git-boundaries");
+    let repository_root = root.join("repository");
+    let workspace = repository_root.join("workspace");
+    fs::create_dir_all(&workspace).unwrap();
+    let root = root.canonicalize().unwrap();
+    let repository_root = repository_root.canonicalize().unwrap();
+    let workspace = workspace.canonicalize().unwrap();
+    let first = workspace.join("first.rs");
+    let second = workspace.join("second.rs");
+    let outside_workspace = repository_root.join("outside-workspace.rs");
+    let outside_repository = root.join("outside-repository.rs");
+    fs::write(&first, "first\n").unwrap();
+    fs::write(&second, "second\n").unwrap();
+    let repository = Repository::new(&repository_root);
+    let mut ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    ports.replace_git(Box::new(
+        crate::git::MemoryGitProvider::new(repository)
+            .with_staged("workspace/first.rs", "first\n")
+            .with_staged("workspace/second.rs", "second\n"),
+    ));
+    let mut app = App::new_in_isolated_project(&workspace, ports).unwrap();
+    app.open_file(first.clone()).unwrap();
+    let first_buffer = app.active().buffer;
+    app.open_file(second.clone()).unwrap();
+    let second_buffer = app.active().buffer;
+    assert!(app.git.tracks(&first));
+    assert!(app.git.tracks(&second));
+    let (service, operations) = GitServiceHandle::recording_for_test();
+    app.attach_git_service(service);
+    operations.recv_timeout(Duration::from_secs(1)).unwrap();
+    fs::rename(&first, &outside_workspace).unwrap();
+    fs::rename(&second, &outside_repository).unwrap();
+    let report = ApplyReport {
+        applied: vec![
+            FsOperation::Rename {
+                from: first,
+                to: outside_workspace.clone(),
+                kind: EntryKind::File,
+            },
+            FsOperation::Rename {
+                from: second,
+                to: outside_repository.clone(),
+                kind: EntryKind::File,
+            },
+        ],
+    };
+
+    app.reconcile_applied_filesystem(&workspace, second_buffer, &report, true);
+
+    assert_eq!(
+        app.buffers[first_buffer].path.as_deref(),
+        Some(outside_workspace.as_path())
+    );
+    assert_eq!(
+        app.buffers[second_buffer].path.as_deref(),
+        Some(outside_repository.as_path())
+    );
+    let GitOperation::Reconcile { spec, .. } =
+        operations.recv_timeout(Duration::from_secs(1)).unwrap()
+    else {
+        panic!("explorer move did not submit its Git reconciliation");
+    };
+    assert!(spec.staged_paths.is_empty());
     fs::remove_dir_all(root).unwrap();
 }
 

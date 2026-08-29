@@ -77,7 +77,11 @@ ordered after every read that could have started before the filesystem
 change. Its staged paths are submitted as one snapshot rather than one request
 per moved buffer. If the bounded service queue is full, the editor retains and
 conflates the required snapshot until capacity is available; that retry runs
-even when automatic monitoring is disabled.
+even when automatic monitoring is disabled. A failed accepted barrier retains
+its full repository/specification and retries after a bounded delay, while
+older snapshots cannot mark the cache fresh before that barrier succeeds.
+Moved staged paths retain the same canonical workspace-and-repository
+containment boundary as individual buffer tracking.
 
 Tests: `git_monitor::tests::a_native_burst_produces_one_debounced_invalidation`,
 `git_monitor::tests::linked_worktree_watches_checkout_private_and_shared_metadata`,
@@ -105,7 +109,9 @@ and `app::tests::closing_a_file_retires_its_staged_base`, together with
 `app::tests::save_as_retires_the_previous_paths_staged_base` and
 `app::tests::an_explorer_move_reconciles_git_with_monitoring_disabled`, plus
 `app::tests::a_partial_explorer_report_retries_one_async_post_change_barrier`
-and
+and `app::tests::a_pre_change_snapshot_cannot_mark_an_inflight_filesystem_barrier_fresh`,
+`app::tests::a_failed_filesystem_barrier_retains_its_spec_for_a_bounded_retry`,
+`app::tests::explorer_moves_outside_git_boundaries_are_not_batched_as_staged_reads`, and
 `app::tests::automatic_refresh_waits_out_a_short_quiet_period_after_the_last_keystroke`
 in `src/app/tests/git.rs` cover visible, maximized, terminal-covered panes,
 closed-buffer and save-as cache retirement, partial and late responses, and

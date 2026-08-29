@@ -43,7 +43,9 @@ and moves retire and re-track affected open-file bases even when automatic
 monitoring is disabled.
 Their asynchronous reconciliation is a non-coalescing post-change barrier;
 one conflated snapshot is retained and retried if the bounded service queue is
-temporarily full.
+temporarily full. Accepted barriers retain their specification across failure
+and retry after a bounded delay, remain visibly stale until they succeed, and
+filter moved paths through the workspace and repository containment boundary.
 
 Coverage includes `git::service::tests::equivalent_refreshes_coalesce_onto_one_worker`
 in `src/git/service.rs`,
@@ -61,6 +63,9 @@ in `src/git/tracker.rs`,
 `app::tests::save_as_retires_the_previous_paths_staged_base` in that same
 file, `app::tests::an_explorer_move_reconciles_git_with_monitoring_disabled`,
 `app::tests::a_partial_explorer_report_retries_one_async_post_change_barrier`,
+`app::tests::a_pre_change_snapshot_cannot_mark_an_inflight_filesystem_barrier_fresh`,
+`app::tests::a_failed_filesystem_barrier_retains_its_spec_for_a_bounded_retry`,
+`app::tests::explorer_moves_outside_git_boundaries_are_not_batched_as_staged_reads`,
 and the settings registry validation tests in `src/settings.rs`.
 
 ## Report
