@@ -74,10 +74,21 @@ directory. Every detach path uses that boundary. The adjacent local-protocol
 test now uses its equivalent semantic helper, and diagnostic-log tests classify
 terminal damage alongside complete frames as visual traffic.
 
+A later loaded Ubuntu run exposed one remaining representation assertion in
+the persistence test. It required at least one `TerminalDamage` message even
+though the protocol deliberately permits a complete `Frame` whenever visual
+output is coalesced, resynchronized, or accompanied by another editor-state
+change. The test now asserts only its terminal persistence contract. Compact
+row-damage generation and application are covered directly from an exact base
+frame in `src/protocol/frame.rs`, where scheduling cannot change the permitted
+wire representation.
+
 Coverage is in
 `tests/persistent_host.rs::terminal_pid_output_and_input_survive_detach_disconnect_and_reattach`
 and
-`tests/persistent_host.rs::hidden_terminal_output_while_detached_is_unread_after_reattach`.
+`tests/persistent_host.rs::hidden_terminal_output_while_detached_is_unread_after_reattach`,
+with deterministic row-damage coverage in
+`src/protocol/frame.rs::tests::terminal_row_damage_is_generated_and_applied_from_an_exact_base`.
 Both passed twenty consecutive runs with eight CPU spinners, and the complete
 `cargo test` suite passed after the change. Run `cargo test --test
 persistent_host` for the integration boundary.

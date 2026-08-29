@@ -998,7 +998,6 @@ async fn terminal_pid_output_and_input_survive_detach_disconnect_and_reattach() 
     )
     .await;
     assert!(terminal_wire_frame_text(&replied).contains(&token));
-    assert!(damage_count > 0, "terminal output never used row damage");
 
     // Losing the socket is a detach too. The same terminal remains protected.
     drop(reattached);

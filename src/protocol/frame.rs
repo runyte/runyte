@@ -555,6 +555,104 @@ impl From<OverlayRow> for core::OverlayRow {
 mod tests {
     use super::*;
 
+    fn terminal_frame(id: u64, revision: u64, character: char) -> HostFrame {
+        let (_, theme) = crate::config::Config::default().startup_theme().unwrap();
+        let status = StatusSnapshot {
+            mode: Mode::Normal,
+            workspace_number: None,
+            workspace_directory: "/workspace".to_owned(),
+            dirty: false,
+            external_file_status: ExternalFileStatus::Synchronized,
+            read_only: false,
+            cursor: Position::default(),
+            line_count: 1,
+            selection_count: 1,
+            lsp_summary: None,
+            git_summary: None,
+            long_running_action: None,
+            notification_counts: NotificationCounts::default(),
+            interaction_line: String::new(),
+            interaction_line_error: false,
+            prompt_cursor_column: None,
+        };
+        HostFrame {
+            id: FrameId::from_raw(id),
+            active_buffer: BufferId(1),
+            active_revision: BufferRevision(1),
+            editor: EditorSnapshot {
+                geometry: FrameGeometry::default(),
+                theme: theme.into(),
+                mode: Mode::Normal,
+                panes: vec![PaneSnapshot {
+                    pane_id: 1,
+                    area: Rect::default(),
+                    body: Rect::default(),
+                    active: true,
+                    jump_active: false,
+                    dimmed: false,
+                    drawable: true,
+                    title: PaneTitle {
+                        name: "terminal".to_owned(),
+                        dirty: false,
+                        external_file_status: ExternalFileStatus::Synchronized,
+                        read_only: false,
+                        maximized: None,
+                    },
+                    line_numbers: false,
+                    line_digits: 0,
+                    signs: false,
+                    changes: false,
+                    text_width: 1,
+                    gutter_width: 0,
+                    content_indent: 0,
+                    scroll_row: 0,
+                    scroll_wrap: 0,
+                    wrap_width: 1,
+                    cursor_screen_row: None,
+                    rows: Vec::new(),
+                    terminal: Some(TerminalView {
+                        revision,
+                        columns: 1,
+                        rows: vec![vec![TerminalCell {
+                            character,
+                            combining: Vec::new(),
+                            width: 1,
+                            foreground: TerminalColor::Default,
+                            background: TerminalColor::Default,
+                            attributes: 0,
+                        }]],
+                        line_ids: vec![Some(1)],
+                        cursor: Some((0, 0)),
+                        scrollback: 0,
+                        live: true,
+                        review: false,
+                        newer_output: false,
+                        highlights: Vec::new(),
+                    }),
+                }],
+                status,
+            },
+            overlays: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn terminal_row_damage_is_generated_and_applied_from_an_exact_base() {
+        let base = terminal_frame(7, 10, 'a');
+        let next = terminal_frame(8, 11, 'b');
+
+        let damage = TerminalDamageFrame::between(&base, &next)
+            .expect("a terminal-only row change should use damage");
+        assert_eq!(damage.base, base.id);
+        assert_eq!(damage.id, next.id);
+        assert_eq!(damage.panes.len(), 1);
+        assert_eq!(damage.panes[0].rows.len(), 1);
+
+        let mut applied = base;
+        assert!(damage.apply(&mut applied));
+        assert_eq!(applied, next);
+    }
+
     #[test]
     fn overlay_row_availability_survives_the_wire_round_trip() {
         let row = core::OverlayRow {
