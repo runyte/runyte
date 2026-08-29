@@ -755,8 +755,10 @@ async fn attaching_with_logging_flags_reports_the_retained_configuration() {
         }
     );
     drop(client);
-    tokio::time::sleep(Duration::from_millis(250)).await;
 
+    // `Detached` is the host's acknowledgement that it handled the client
+    // transition. At the retained Warn level, no attach/detach record is
+    // admitted, so there is no elapsed-time barrier to wait through.
     let after = read_log(&log);
     assert_eq!(after, before, "the running session kept its own level");
     for raised in ["INFO", "DEBUG", "TRACE"] {
@@ -937,8 +939,18 @@ async fn no_document_clipboard_terminal_or_environment_value_reaches_a_record() 
         "the language server never reported a stop:\n{}",
         read_log(&log)
     );
-    tokio::time::sleep(Duration::from_millis(750)).await;
+    client.send(&ClientRequest::ForceShutdown).await.unwrap();
+    assert!(matches!(
+        response_ignoring_frames(&mut client).await,
+        HostResponse::ShuttingDown
+    ));
+    drop(client);
+    let status = child.0.take().unwrap().wait().unwrap();
+    assert!(status.success(), "host did not flush and shut down cleanly");
 
+    // Process exit follows the diagnostic logger's bounded flush, so the file
+    // now contains every record this host can emit. This makes the redaction
+    // checks final rather than an absence claim after an arbitrary delay.
     let text = read_log(&log);
     for secret in [IN_FILE, TYPED, ENVIRONMENT, TERMINAL, SERVER_STDERR] {
         assert!(
@@ -950,9 +962,6 @@ async fn no_document_clipboard_terminal_or_environment_value_reaches_a_record() 
         text.contains("TRACE"),
         "the run must actually have recorded at the most detailed level:\n{text}"
     );
-
-    drop(client);
-    drop(child);
 }
 
 #[cfg(debug_assertions)]

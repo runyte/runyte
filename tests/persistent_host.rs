@@ -156,6 +156,59 @@ async fn response(client: &mut LocalClient) -> HostResponse {
         .expect("host disconnected")
 }
 
+async fn connect_interactive_when_available(
+    endpoint: &LocalEndpoint,
+    geometry: FrameGeometry,
+) -> (LocalClient, HostResponse) {
+    let deadline = Instant::now() + EDITOR_STATE_TIMEOUT;
+    loop {
+        let last_observation = match LocalClient::connect(endpoint, geometry, true).await {
+            Ok(mut client) => {
+                match tokio::time::timeout(HOST_RESPONSE_TIMEOUT, client.recv()).await {
+                    Ok(Ok(Some(welcome @ HostResponse::Welcome { .. }))) => {
+                        return (client, welcome);
+                    }
+                    Ok(Ok(Some(response))) => format!("host replied {response:?}"),
+                    Ok(Ok(None)) => "host disconnected".to_owned(),
+                    Ok(Err(error)) => format!("receive failed: {error:#}"),
+                    Err(error) => format!("welcome timed out: {error}"),
+                }
+            }
+            Err(error) => format!("connect failed: {error:#}"),
+        };
+        assert!(
+            Instant::now() < deadline,
+            "interactive attachment was not released after {EDITOR_STATE_TIMEOUT:?}: \
+             {last_observation}"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
+
+async fn wait_for_session_preview(
+    client: &mut LocalClient,
+    waiting_for: &str,
+    matches: impl Fn(&runyte::protocol::SessionPreview) -> bool,
+) -> runyte::protocol::SessionPreview {
+    let deadline = Instant::now() + TERMINAL_STATE_TIMEOUT;
+    loop {
+        client.send(&ClientRequest::SessionPreview).await.unwrap();
+        let preview = match response(client).await {
+            HostResponse::SessionPreview { preview } => preview,
+            response => panic!("expected session preview while {waiting_for}, got {response:?}"),
+        };
+        if matches(&preview) {
+            return preview;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "session preview did not show {waiting_for} after {TERMINAL_STATE_TIMEOUT:?}; \
+             last preview: {preview:?}"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
+
 async fn shutdown(client: &mut LocalClient, request: ClientRequest) {
     client.send(&request).await.unwrap();
     let response = tokio::time::timeout(HOST_RESPONSE_TIMEOUT, client.recv())
@@ -603,12 +656,10 @@ async fn detach_reattach_preserves_live_editor_and_refuses_a_second_tui() {
     assert_eq!(fs::read_to_string(root.join("note.txt")).unwrap(), "base\n");
     let _ = send_input(&mut reattached, KeyStroke::plain(KeyCode::Char('y'))).await;
     drop(reattached);
-    tokio::time::sleep(Duration::from_millis(50)).await;
-    let mut after_disconnect = LocalClient::connect(&endpoint, geometry(), true)
-        .await
-        .unwrap();
+    let (mut after_disconnect, welcome) =
+        connect_interactive_when_available(&endpoint, geometry()).await;
     assert!(matches!(
-        response(&mut after_disconnect).await,
+        welcome,
         HostResponse::Welcome { pid, .. } if pid == host_pid
     ));
     let _ = response(&mut after_disconnect).await;
@@ -829,7 +880,26 @@ async fn terminal_pid_output_and_input_survive_detach_disconnect_and_reattach() 
 
     client.send(&ClientRequest::Detach).await.unwrap();
     while !matches!(response(&mut client).await, HostResponse::Detached { .. }) {}
-    tokio::time::sleep(Duration::from_millis(350)).await;
+    let mut detached_control = LocalClient::connect(&endpoint, geometry(), false)
+        .await
+        .unwrap();
+    assert!(matches!(
+        response(&mut detached_control).await,
+        HostResponse::Welcome { .. }
+    ));
+    wait_for_session_preview(
+        &mut detached_control,
+        "terminal output produced while detached",
+        |preview| {
+            preview
+                .panes
+                .iter()
+                .flat_map(|pane| &pane.lines)
+                .any(|line| line.contains("detached"))
+        },
+    )
+    .await;
+    drop(detached_control);
 
     let mut resized = geometry();
     resized.screen.width = 96;
@@ -868,20 +938,31 @@ async fn terminal_pid_output_and_input_survive_detach_disconnect_and_reattach() 
 
     // Losing the socket is a detach too. The same terminal remains protected.
     drop(reattached);
-    tokio::time::sleep(Duration::from_millis(50)).await;
     let mut control = LocalClient::connect(&endpoint, geometry(), false)
         .await
         .unwrap();
     let _ = response(&mut control).await;
-    control.send(&ClientRequest::Health).await.unwrap();
-    assert!(matches!(
-        response(&mut control).await,
-        HostResponse::Health {
-            live_terminals: 1,
-            terminal_sessions: 1,
-            ..
+    let deadline = Instant::now() + EDITOR_STATE_TIMEOUT;
+    loop {
+        control.send(&ClientRequest::Health).await.unwrap();
+        let health = response(&mut control).await;
+        if matches!(
+            health,
+            HostResponse::Health {
+                interactive_attached: false,
+                live_terminals: 1,
+                terminal_sessions: 1,
+                ..
+            }
+        ) {
+            break;
         }
-    ));
+        assert!(
+            Instant::now() < deadline,
+            "socket loss was not observed after {EDITOR_STATE_TIMEOUT:?}; last health: {health:?}"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
     drop(control);
 
     let refused = run_cli(&root, &["--session-stop"]);
@@ -932,7 +1013,10 @@ async fn hidden_terminal_output_while_detached_is_unread_after_reattach() {
         .send(&ClientRequest::Invoke {
             command: runyte::protocol::CommandRequest {
                 name: "terminal".to_owned(),
-                argument: Some("/bin/sh -c 'sleep 0.3; printf hidden-unread; sleep 30'".to_owned()),
+                argument: Some(
+                    "/bin/sh -c 'sleep 0.3; printf \"hidden-unread\\033]2;hidden-ready\\007\"; sleep 30'"
+                        .to_owned(),
+                ),
                 frame: initial.id,
                 buffer: initial.active_buffer,
                 revision: initial.active_revision,
@@ -978,7 +1062,25 @@ async fn hidden_terminal_output_while_detached_is_unread_after_reattach() {
     .expect("terminal pane never became hidden");
     client.send(&ClientRequest::Detach).await.unwrap();
     while !matches!(response(&mut client).await, HostResponse::Detached { .. }) {}
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    let mut detached_control = LocalClient::connect(&endpoint, geometry(), false)
+        .await
+        .unwrap();
+    assert!(matches!(
+        response(&mut detached_control).await,
+        HostResponse::Welcome { .. }
+    ));
+    wait_for_session_preview(
+        &mut detached_control,
+        "the hidden terminal's processed output marker",
+        |preview| {
+            preview
+                .other_resources
+                .iter()
+                .any(|resource| resource.contains("hidden-ready"))
+        },
+    )
+    .await;
+    drop(detached_control);
 
     let mut reattached = LocalClient::connect(&endpoint, geometry(), true)
         .await

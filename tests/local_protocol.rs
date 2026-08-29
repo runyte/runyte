@@ -579,6 +579,47 @@ async fn wait_child_after_terminal_loss(child: &mut Child) -> ExitStatus {
     }
 }
 
+async fn wait_child_after_terminal_loss_while_draining(
+    child: &mut Child,
+    interactive: &mut LocalClient,
+) -> ExitStatus {
+    let result = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                return status;
+            }
+            tokio::select! {
+                response = interactive.recv() => {
+                    assert!(
+                        response.unwrap().is_some(),
+                        "interactive host connection closed while awaiting wait-client exit"
+                    );
+                }
+                _ = tokio::time::sleep(Duration::from_millis(25)) => {}
+            }
+        }
+    })
+    .await;
+    match result {
+        Ok(status) => status,
+        Err(_) => {
+            let diagnostics = Command::new("ps")
+                .args([
+                    "-o",
+                    "pid=,ppid=,state=,time=,command=",
+                    "-p",
+                    &child.id().to_string(),
+                ])
+                .output()
+                .map(|output| String::from_utf8_lossy(&output.stdout).into_owned())
+                .unwrap_or_else(|error| format!("ps failed: {error}"));
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("wait client did not exit while the TUI drained frames:\n{diagnostics}");
+        }
+    }
+}
+
 const WAIT_PARENT_HELPER_ROOT: &str = "RUNYTE_WAIT_PARENT_HELPER_ROOT";
 const WAIT_PARENT_HELPER_RUNTIME: &str = "RUNYTE_WAIT_PARENT_HELPER_RUNTIME";
 const WAIT_PARENT_HELPER_CACHE: &str = "RUNYTE_WAIT_PARENT_HELPER_CACHE";
@@ -837,7 +878,7 @@ fn type_colon_command(terminal: &mut File, command: &str) {
 }
 
 async fn start_host(root: &Path, endpoint: &LocalEndpoint) -> Option<ChildGuard> {
-    start_host_opening(root, endpoint, Some("other.txt"), None).await
+    start_host_opening(root, endpoint, Some("other.txt")).await
 }
 
 /// Starts a host, optionally on a file. Without one the host keeps the
@@ -847,15 +888,11 @@ async fn start_host_opening(
     root: &Path,
     endpoint: &LocalEndpoint,
     target: Option<&str>,
-    log: Option<&Path>,
 ) -> Option<ChildGuard> {
     let mut command = bundled_runyte();
     command.arg("--serve");
     if let Some(target) = target {
         command.arg(target);
-    }
-    if let Some(log) = log {
-        command.args(["-vvv", "--log"]).arg(log);
     }
     let child = command
         .current_dir(root)
@@ -1035,7 +1072,7 @@ async fn an_edited_scratchpad_leaves_a_workspace_clean_enough_to_stop() {
         Some(test_runtime_dir()),
     )
     .unwrap();
-    let Some(mut host) = start_host_opening(&root, &endpoint, None, None).await else {
+    let Some(mut host) = start_host_opening(&root, &endpoint, None).await else {
         fs::remove_dir_all(root).unwrap();
         return;
     };
@@ -2352,16 +2389,13 @@ async fn attached_wait_client_exits_and_cancels_when_its_terminal_is_lost() {
 #[tokio::test]
 async fn queued_wait_client_exits_and_cancels_when_its_terminal_is_lost() {
     let root = project();
-    let host_log = root.join("queued-host.log");
     let endpoint = LocalEndpoint::discover_with_runtime(
         &root.join(".runyte"),
         &root,
         Some(test_runtime_dir()),
     )
     .unwrap();
-    let Some(mut host) =
-        start_host_opening(&root, &endpoint, Some("other.txt"), Some(&host_log)).await
-    else {
+    let Some(mut host) = start_host(&root, &endpoint).await else {
         fs::remove_dir_all(root).unwrap();
         return;
     };
@@ -2393,59 +2427,13 @@ async fn queued_wait_client_exits_and_cancels_when_its_terminal_is_lost() {
     );
 
     drop(terminal);
-    let terminal_lost_at = Instant::now();
-    let waiter_status = wait_child_after_terminal_loss(&mut waiter).await;
-    let terminal_loss_elapsed = terminal_lost_at.elapsed();
+    let waiter_status =
+        wait_child_after_terminal_loss_while_draining(&mut waiter, &mut interactive).await;
     assert!(!waiter_status.success());
 
     let mut released = false;
     for _ in 0..100 {
-        if let Err(error) = interactive.send(&ClientRequest::Health).await {
-            let host_status = host.0.as_mut().unwrap().try_wait().unwrap();
-            let control_probe =
-                match LocalClient::connect(&endpoint, FrameGeometry::default(), false).await {
-                    Ok(mut control) => {
-                        let welcome =
-                            tokio::time::timeout(Duration::from_secs(2), control.recv()).await;
-                        let health =
-                            if matches!(welcome, Ok(Ok(Some(HostResponse::Welcome { .. })))) {
-                                match control.send(&ClientRequest::Health).await {
-                                    Ok(()) => {
-                                        tokio::time::timeout(Duration::from_secs(2), control.recv())
-                                            .await
-                                            .map_or_else(
-                                                |probe_error| {
-                                                    format!("health timed out: {probe_error}")
-                                                },
-                                                |response| format!("health response: {response:?}"),
-                                            )
-                                    }
-                                    Err(probe_error) => {
-                                        format!("health send failed: {probe_error:#}")
-                                    }
-                                }
-                            } else {
-                                format!("welcome response: {welcome:?}")
-                            };
-                        format!("connected; {health}")
-                    }
-                    Err(probe_error) => format!("connect failed: {probe_error:#}"),
-                };
-            let log = fs::read_to_string(&host_log)
-                .unwrap_or_else(|log_error| format!("cannot read host log: {log_error}"));
-            let stderr = if host_status.is_some() {
-                let output = host.0.take().unwrap().wait_with_output().unwrap();
-                String::from_utf8_lossy(&output.stderr).into_owned()
-            } else {
-                "<host still running>".to_owned()
-            };
-            panic!(
-                "existing interactive connection failed after queued wait terminal loss: \
-                 {error:#}; waiter status: {waiter_status}; terminal-loss exit: \
-                 {terminal_loss_elapsed:?}; host status: {host_status:?}; control probe: \
-                 {control_probe}; host stderr: {stderr:?}; host log:\n{log}"
-            );
-        }
+        interactive.send(&ClientRequest::Health).await.unwrap();
         released = matches!(
             semantic_response(&mut interactive).await,
             HostResponse::Health {
@@ -2581,6 +2569,11 @@ async fn redirected_stdin_uses_dev_tty_for_terminal_loss() {
     let _ = response(&mut interactive).await;
     let _ = response(&mut interactive).await;
     let (mut waiter, terminal) = spawn_wait_with_redirected_stdin_in_pty(&root, "note.txt");
+    // Close redirected stdin before the wait becomes live. Reaching the
+    // durable request below is the acknowledgement that the client selected
+    // `/dev/tty` and survived pipe EOF; an elapsed grace period cannot prove
+    // that absence deterministically.
+    drop(waiter.stdin.take());
 
     let mut requested = None;
     for _ in 0..100 {
@@ -2597,9 +2590,6 @@ async fn redirected_stdin_uses_dev_tty_for_terminal_loss() {
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
     let _requested = requested.expect("wait request did not queue behind the existing TUI");
-
-    drop(waiter.stdin.take());
-    tokio::time::sleep(Duration::from_millis(150)).await;
     assert!(
         waiter.try_wait().unwrap().is_none(),
         "closing redirected stdin was mistaken for loss of /dev/tty"
@@ -3488,7 +3478,7 @@ async fn a_shutting_down_host_finishes_its_last_message_before_exiting() {
         Some(test_runtime_dir()),
     )
     .unwrap();
-    let Some(mut host) = start_host_opening(&root, &endpoint, Some("large.txt"), None).await else {
+    let Some(mut host) = start_host_opening(&root, &endpoint, Some("large.txt")).await else {
         fs::remove_dir_all(root).unwrap();
         return;
     };
