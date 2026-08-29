@@ -897,21 +897,59 @@ async fn wait_for_git_before_tui(endpoint: &LocalEndpoint) {
         InputEvent::Text("git-worktrees".to_owned()),
     )
     .await;
-    let _ = wait_for_frame(
-        &mut interactive,
-        "waiting for git-worktrees to become available before starting the real TUI",
-        |frame| {
-            frame.overlays.iter().any(|overlay| {
-                overlay.title == "Commands"
-                    && overlay.query == "git-worktrees"
-                    && overlay
-                        .rows
-                        .iter()
-                        .any(|row| row.label.contains(":git-worktrees") && row.available)
+    let waiting_for = "waiting for git-worktrees to become available before starting the real TUI";
+    let deadline = Instant::now() + ASYNC_STATE_TIMEOUT;
+    let mut frame = resynchronized_frame(&mut interactive, waiting_for).await;
+    // Git completion publishes a frame because it changes this row. Consume
+    // that event instead of repeatedly forcing the large command palette to
+    // render while the Git worker is trying to finish on a loaded runner.
+    loop {
+        let row = frame
+            .overlays
+            .iter()
+            .find(|overlay| overlay.title == "Commands" && overlay.query == "git-worktrees")
+            .and_then(|overlay| {
+                overlay
+                    .rows
+                    .iter()
+                    .find(|row| row.label.contains(":git-worktrees"))
+            });
+        if row.is_some_and(|row| row.available) {
+            break;
+        }
+        let detail = row
+            .map(|row| row.detail.clone())
+            .unwrap_or_else(|| "git-worktrees row absent".to_owned());
+        let git_summary = frame.editor.status.git_summary.clone();
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        assert!(
+            !remaining.is_zero(),
+            "asynchronous state timed out after {ASYNC_STATE_TIMEOUT:?} while {waiting_for}; \
+             last frame id: {:?}, row detail: {detail:?}, git summary: {git_summary:?}",
+            frame.id,
+        );
+        let response = tokio::time::timeout(remaining, interactive.recv())
+            .await
+            .unwrap_or_else(|_| {
+                panic!(
+                    "asynchronous state timed out after {ASYNC_STATE_TIMEOUT:?} while \
+                     {waiting_for}; last frame id: {:?}, row detail: {detail:?}, \
+                     git summary: {git_summary:?}",
+                    frame.id,
+                )
             })
-        },
-    )
-    .await;
+            .unwrap_or_else(|error| panic!("host response failed while {waiting_for}: {error}"))
+            .unwrap_or_else(|| panic!("host disconnected while {waiting_for}"));
+        match response {
+            HostResponse::Frame { frame: next } => frame = *next,
+            HostResponse::TerminalDamage { damage } => {
+                if !damage.apply(&mut frame) {
+                    frame = resynchronized_frame(&mut interactive, waiting_for).await;
+                }
+            }
+            response => panic!("expected a visual update while {waiting_for}, got {response:?}"),
+        }
+    }
     send_input_expect_frame(
         &mut interactive,
         InputEvent::Key(KeyStroke::new(KeyCode::Escape, Modifiers::NONE)),
