@@ -76,6 +76,17 @@ direct interactive regression now also waits for an idle frame before
 invoking `:quit`, so startup Git discovery cannot make its concurrency token
 stale.
 
+A 2026-08-29 delivery follow-up separated final lifecycle responses from the
+bounded semantic queue. `detach_client` previously ignored a failed
+`try_send(Detached)` and immediately dropped the connection's last response
+sender. If ordinary semantic replies filled that queue, a valid explicit
+detach therefore arrived at the client as clean EOF. `Detached`,
+`SwitchWorkspace`, and `ShuttingDown` now use a dedicated one-response lane;
+the connection drains earlier semantic replies first, then the final response,
+before observing that all senders are closed. The transport regression
+`final_response_survives_a_full_semantic_queue` fills the ordinary queue and
+proves `Detached` still precedes EOF.
+
 This deliberately follows the Vim/Helix distinction between a view-local
 `:q`, an all-view `:qa`, and a buffer-local `:bc`, while retaining Runyte's
 safer `:c` that cannot close the last pane. It also retains Runyte's special

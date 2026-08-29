@@ -1715,6 +1715,7 @@ pub enum ServerEvent {
 #[derive(Clone, Debug)]
 pub struct ResponseSender {
     messages: mpsc::Sender<HostResponse>,
+    final_messages: mpsc::Sender<HostResponse>,
     frame: tokio::sync::watch::Sender<Option<VisualResponse>>,
     next_visual: Arc<AtomicU64>,
     delivered_visual: Arc<AtomicU64>,
@@ -1722,9 +1723,13 @@ pub struct ResponseSender {
 
 pub struct ResponseReceiver {
     messages: mpsc::Receiver<HostResponse>,
+    final_messages: mpsc::Receiver<HostResponse>,
     frame: tokio::sync::watch::Receiver<Option<VisualResponse>>,
     delivered_visual: Arc<AtomicU64>,
     in_flight_visual: Option<u64>,
+    messages_closed: bool,
+    final_messages_closed: bool,
+    frame_closed: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -1735,22 +1740,37 @@ struct VisualResponse {
 
 pub fn response_channel() -> (ResponseSender, ResponseReceiver) {
     let (messages, message_rx) = mpsc::channel(RESPONSE_CAPACITY);
+    let (final_messages, final_message_rx) = mpsc::channel(1);
     let (frame, frame_rx) = tokio::sync::watch::channel(None);
     let next_visual = Arc::new(AtomicU64::new(0));
     let delivered_visual = Arc::new(AtomicU64::new(0));
     (
         ResponseSender {
             messages,
+            final_messages,
             frame,
             next_visual,
             delivered_visual: delivered_visual.clone(),
         },
         ResponseReceiver {
             messages: message_rx,
+            final_messages: final_message_rx,
             frame: frame_rx,
             delivered_visual,
             in_flight_visual: None,
+            messages_closed: false,
+            final_messages_closed: false,
+            frame_closed: false,
         },
+    )
+}
+
+fn is_final_response(response: &HostResponse) -> bool {
+    matches!(
+        response,
+        HostResponse::Detached { .. }
+            | HostResponse::ShuttingDown
+            | HostResponse::SwitchWorkspace { .. }
     )
 }
 
@@ -1769,6 +1789,9 @@ impl ResponseSender {
         &self,
         response: HostResponse,
     ) -> Result<(), mpsc::error::TrySendError<HostResponse>> {
+        if is_final_response(&response) {
+            return self.final_messages.try_send(response);
+        }
         if matches!(
             response,
             HostResponse::Frame { .. } | HostResponse::TerminalDamage { .. }
@@ -1793,6 +1816,9 @@ impl ResponseSender {
         &self,
         response: HostResponse,
     ) -> Result<(), mpsc::error::SendError<HostResponse>> {
+        if is_final_response(&response) {
+            return self.final_messages.send(response).await;
+        }
         if matches!(
             response,
             HostResponse::Frame { .. } | HostResponse::TerminalDamage { .. }
@@ -1815,14 +1841,33 @@ impl ResponseSender {
 impl ResponseReceiver {
     async fn recv(&mut self) -> Option<HostResponse> {
         self.in_flight_visual = None;
-        tokio::select! {
-            biased;
-            response = self.messages.recv() => response,
-            changed = self.frame.changed() => {
-                changed.ok()?;
-                let visual = self.frame.borrow_and_update().clone()?;
-                self.in_flight_visual = Some(visual.sequence);
-                Some(visual.response)
+        loop {
+            tokio::select! {
+                biased;
+                response = self.messages.recv(), if !self.messages_closed => {
+                    match response {
+                        Some(response) => return Some(response),
+                        None => self.messages_closed = true,
+                    }
+                }
+                response = self.final_messages.recv(), if !self.final_messages_closed => {
+                    match response {
+                        Some(response) => return Some(response),
+                        None => self.final_messages_closed = true,
+                    }
+                }
+                changed = self.frame.changed(), if !self.frame_closed => {
+                    match changed {
+                        Ok(()) => {
+                            if let Some(visual) = self.frame.borrow_and_update().clone() {
+                                self.in_flight_visual = Some(visual.sequence);
+                                return Some(visual.response);
+                            }
+                        }
+                        Err(_) => self.frame_closed = true,
+                    }
+                }
+                else => return None,
             }
         }
     }
@@ -3434,6 +3479,40 @@ mod tests {
         );
         receiver.mark_delivered();
         assert!(!responses.visual_pending());
+    }
+
+    #[tokio::test]
+    async fn final_response_survives_a_full_semantic_queue() {
+        let (responses, mut receiver) = response_channel();
+        for index in 0..RESPONSE_CAPACITY {
+            responses
+                .try_send(HostResponse::Error {
+                    message: index.to_string(),
+                })
+                .unwrap();
+        }
+        responses
+            .try_send(HostResponse::Detached {
+                directory_bytes: None,
+            })
+            .unwrap();
+        drop(responses);
+
+        for index in 0..RESPONSE_CAPACITY {
+            assert_eq!(
+                receiver.recv().await,
+                Some(HostResponse::Error {
+                    message: index.to_string(),
+                })
+            );
+        }
+        assert_eq!(
+            receiver.recv().await,
+            Some(HostResponse::Detached {
+                directory_bytes: None,
+            })
+        );
+        assert_eq!(receiver.recv().await, None);
     }
 
     #[tokio::test]
