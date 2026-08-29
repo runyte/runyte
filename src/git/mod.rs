@@ -237,6 +237,7 @@ fn typed_deletion_required(target: &str) -> GitError {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Repository {
     workdir: PathBuf,
+    git_dir: PathBuf,
     common_dir: PathBuf,
 }
 
@@ -244,20 +245,43 @@ impl Repository {
     pub fn new(workdir: impl Into<PathBuf>) -> Self {
         let workdir = workdir.into();
         Self {
+            git_dir: workdir.join(".git"),
             common_dir: workdir.join(".git"),
             workdir,
         }
     }
 
     pub fn with_common_dir(workdir: impl Into<PathBuf>, common_dir: impl Into<PathBuf>) -> Self {
+        let workdir = workdir.into();
+        Self {
+            git_dir: workdir.join(".git"),
+            workdir,
+            common_dir: common_dir.into(),
+        }
+    }
+
+    pub fn with_git_dirs(
+        workdir: impl Into<PathBuf>,
+        git_dir: impl Into<PathBuf>,
+        common_dir: impl Into<PathBuf>,
+    ) -> Self {
         Self {
             workdir: workdir.into(),
+            git_dir: git_dir.into(),
             common_dir: common_dir.into(),
         }
     }
 
     pub fn workdir(&self) -> &Path {
         &self.workdir
+    }
+
+    /// Git directory private to this working tree.
+    ///
+    /// This differs from [`Self::common_dir`] for linked worktrees and can
+    /// live outside the working tree when `.git` is an indirection file.
+    pub fn git_dir(&self) -> &Path {
+        &self.git_dir
     }
 
     /// Directory shared by every linked worktree of this repository.
@@ -1274,6 +1298,10 @@ impl MemoryGitProvider {
 
     pub fn calls(&self) -> usize {
         self.calls.get()
+    }
+
+    pub fn set_status(&self, status: RepositoryStatus) {
+        *self.status.borrow_mut() = status;
     }
 
     /// Moves a file's change from one side of the index to the other, so a

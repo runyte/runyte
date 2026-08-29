@@ -2393,9 +2393,8 @@ pub struct App {
     next_action_id: u64,
     /// When the person last acted in the editor.
     ///
-    /// The automatic Git refresh waits out its own interval after this, so
-    /// reconciliation happens once they have paused rather than moving the
-    /// cursor out from under them mid-navigation.
+    /// Automatic Git refresh waits for a short quiet period after this, so
+    /// reconciliation does not move a projection cursor mid-navigation.
     last_interaction: Instant,
     /// Lazy grammar configurations already reported to the user, keyed by
     /// public language identity and canonical/injection-free variant.

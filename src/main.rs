@@ -30,6 +30,7 @@ use runyte::{
     config::{self, Config, WorkspaceMode},
     external_open, file_monitor, file_picker,
     git::{GitCliProvider, GitService, GitServiceEvent},
+    git_monitor,
     input::{InputEvent, KeyStroke, PointerEvent, PointerEventKind},
     key_hints::{HintEventResult, KeyHintState},
     keymap::{BindingTarget, KeySequence, Lookup},
@@ -1021,6 +1022,13 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
                     note_ended_service(&mut ended_services, "file monitor");
                 }
             }
+            event = services.git_monitor_events.recv() => {
+                if let Some(event) = event {
+                    app.apply_event(HostEvent::GitInvalidation(event));
+                } else {
+                    note_ended_service(&mut ended_services, "Git monitor");
+                }
+            }
             output = services.terminal_events.recv() => {
                 if let Some(output) = output {
                     app.apply_event(HostEvent::Terminal(output));
@@ -1047,6 +1055,7 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
             _ = git_refresh_tick.tick() => {
                 report_logging_failure(app.app_mut());
                 services.file_monitor.sync(app.file_monitor_requests());
+                services.git_monitor.sync(app.git_monitor_repository());
                 let changed = app.refresh_git_if_due(Instant::now());
                 let activity_changed = app.refresh_session_activity();
                 if !changed && !activity_changed {
@@ -1596,6 +1605,14 @@ async fn run_host_server(
                     note_ended_service(&mut ended_services, "file monitor");
                 }
             }
+            event = services.git_monitor_events.recv() => {
+                if let Some(event) = event {
+                    host.apply_event(HostEvent::GitInvalidation(event));
+                    changed = true;
+                } else {
+                    note_ended_service(&mut ended_services, "Git monitor");
+                }
+            }
             output = services.terminal_events.recv() => {
                 if let Some(output) = output {
                     let observed = active.is_some();
@@ -1626,6 +1643,7 @@ async fn run_host_server(
             _ = refresh_tick.tick() => {
                 report_logging_failure(host.app_mut());
                 services.file_monitor.sync(host.file_monitor_requests());
+                services.git_monitor.sync(host.git_monitor_repository());
                 changed = host.refresh_git_if_due(Instant::now());
                 changed |= host.refresh_session_activity();
             }
@@ -3311,6 +3329,8 @@ struct HostServices {
     file_picker_events: tokio::sync::mpsc::Receiver<runyte::file_picker::FilePickerEvent>,
     file_monitor: runyte::file_monitor::FileMonitorHandle,
     file_monitor_events: tokio::sync::mpsc::Receiver<runyte::buffer::FileObservationEvent>,
+    git_monitor: runyte::git_monitor::GitMonitorHandle,
+    git_monitor_events: tokio::sync::mpsc::Receiver<runyte::git_monitor::GitInvalidation>,
     workspace_events: Option<tokio::sync::mpsc::Receiver<HostEvent>>,
     /// Output from every child running on a terminal pane.
     ///
@@ -3351,6 +3371,8 @@ fn start_host_services(
     app.attach_file_scanner(file_scanner);
     let (file_monitor, file_monitor_events) = file_monitor::spawn();
     file_monitor.sync(app.file_monitor_requests());
+    let (git_monitor, git_monitor_events) = git_monitor::spawn();
+    git_monitor.sync(app.git_monitor_repository());
     app.attach_word_index(word_index::spawn());
     #[cfg(unix)]
     let workspace_events = {
@@ -3383,6 +3405,8 @@ fn start_host_services(
         file_picker_events,
         file_monitor,
         file_monitor_events,
+        git_monitor,
+        git_monitor_events,
         workspace_events,
         terminal_events,
     })

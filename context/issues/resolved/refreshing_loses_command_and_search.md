@@ -16,7 +16,7 @@ refreshed projection's selection from a single row identity per pane and
 installs it with `Selection::point`, so any multi-range selection is discarded;
 a search that has selected every match is exactly such a selection. The
 unfinished query was lost for a related reason: it lives in command mode, which
-the refresh had no reason to consult. `App::request_periodic_git_refresh`
+the refresh had no reason to consult. `App::request_automatic_git_refresh`
 declined only while a Git mutation was in flight, so the five-second timer fired
 straight through both situations.
 
@@ -28,7 +28,7 @@ keeping old matches would leave selections pointing at offsets whose content
 had changed — both would present stale or invented state as if it were current,
 which is worse than briefly not refreshing.
 
-`request_periodic_git_refresh` now also declines while a prompt is open, which
+`request_automatic_git_refresh` now also declines while a prompt is open, which
 is how `/`, `s`, and `S` take their query, and while a projection buffer holds a
 deliberate selection. Deliberate reuses the rule `App::scoping_region` already
 applies when deciding whether a search narrows: a bare caret is a one-character
@@ -62,17 +62,18 @@ clamps it to the length of whatever row it lands on, so a shorter replacement
 row leaves the cursor at its end rather than past it.
 
 `App` also records `last_interaction`, stamped in `handle_input` and
-`handle_pointer`, and `interaction_defers_git_refresh` waits out one refresh
-interval after it. The interval is reused rather than configured separately:
-it already expresses how much staleness is acceptable, and a second knob for
-the same judgement would be one more thing to explain. The practical effect is
-that the automatic refresh only lands while the person is idle, which is what
-the report asked for.
+`handle_pointer`, and `interaction_defers_git_refresh` waits out a short quiet
+period after it. The original implementation reused the five-second polling
+interval. Automatic Git refresh is now filesystem-invalidation driven and the
+configured interval is a much longer maximum-staleness fallback, so tying
+interaction deferral to it would make an observed external change needlessly
+slow. The quiet period is fixed at 250 ms instead.
 
 Tests: `periodic_refresh_defers_to_an_open_prompt_and_to_search_matches`,
 `periodic_refresh_ignores_a_selection_outside_a_git_projection`,
-`periodic_refresh_waits_out_the_interval_after_the_last_keystroke`, and
-`refreshing_a_projection_keeps_the_cursor_column`, all in `src/app.rs`.
+`automatic_refresh_waits_out_a_short_quiet_period_after_the_last_keystroke`, and
+`refreshing_a_projection_keeps_the_cursor_column`, all in
+`src/app/tests/git.rs`.
 
 Known limitation: an explicit `:git-refresh`, and the mandatory reconciliation
 that follows a Git mutation, still rebuild the selection from one row identity

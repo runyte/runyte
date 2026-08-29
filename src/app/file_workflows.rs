@@ -1126,6 +1126,12 @@ impl App {
         {
             self.trim_trailing_whitespace(buffer_id);
         }
+        let previous_git_path = path.as_ref().and_then(|destination| {
+            self.buffers[buffer_id]
+                .path
+                .clone()
+                .filter(|previous| previous != destination)
+        });
         let result = if let Some(path) = path {
             self.invalidate_partial_guards(buffer_id);
             self.buffers[buffer_id].save_as_checked(
@@ -1140,6 +1146,9 @@ impl App {
         };
         match result {
             Ok(save_outcome) => {
+                if let Some(previous) = previous_git_path {
+                    self.git.forget(&previous);
+                }
                 // `:write <path>` can give a scratch buffer a language for the
                 // first time, or change the one it already had.
                 self.clear_syntax_history(buffer_id);
@@ -1149,10 +1158,8 @@ impl App {
                 // Writing changes what Git reports without changing any
                 // buffer, and `:write <path>` can put a file under Git that
                 // was not there a moment ago.
-                if let Some(path) = self.buffers[buffer_id].path.clone()
-                    && self.track_in_git(&path)
-                {
-                    self.refresh_git_status();
+                if let Some(path) = self.buffers[buffer_id].path.clone() {
+                    self.reconcile_git_after_file_write(&path);
                 }
                 let path = self.buffers[buffer_id]
                     .path

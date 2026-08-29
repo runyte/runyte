@@ -98,7 +98,7 @@ fn run_worker(
             Ok(WorkerMessage::Native(Ok(event))) => {
                 let now = Instant::now() + DEBOUNCE;
                 for request in registrations.values() {
-                    if event.paths.iter().any(|path| affects(path, &request.path)) {
+                    if native_affects(&event, &request.path) {
                         due.insert(request.buffer, now);
                     }
                 }
@@ -213,6 +213,10 @@ fn affects(event_path: &Path, file_path: &Path) -> bool {
         || event_path.parent() == file_path.parent()
 }
 
+fn native_affects(event: &Event, file_path: &Path) -> bool {
+    !event.kind.is_access() && event.paths.iter().any(|path| affects(path, file_path))
+}
+
 #[cfg(test)]
 mod tests {
     use std::{fs, time::SystemTime};
@@ -267,5 +271,16 @@ mod tests {
             Path::new("/tmp/project/notes.txt")
         ));
         assert!(affects(directory, Path::new("/tmp/project/notes.txt")));
+    }
+
+    #[test]
+    fn reading_a_monitored_file_does_not_observe_itself_forever() {
+        let path = Path::new("/tmp/project/notes.txt");
+        let access = Event::new(notify::EventKind::Access(notify::event::AccessKind::Any))
+            .add_path(path.to_path_buf());
+        let modify = Event::new(notify::EventKind::Modify(notify::event::ModifyKind::Any))
+            .add_path(path.to_path_buf());
+        assert!(!native_affects(&access, path));
+        assert!(native_affects(&modify, path));
     }
 }

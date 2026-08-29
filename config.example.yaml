@@ -16,10 +16,12 @@ editor:
   # Gray out every pane's text while a command prompt is open.
   command_mode_dim: true
 
-# Refresh visible Git views and tracked-file gutters. Zero disables the timer;
+# Refresh visible Git views and tracked-file gutters automatically;
 # :git-refresh remains available.
 git:
-  refresh_interval_seconds: 5
+  # Filesystem events refresh visible Git state promptly; this is the fallback.
+  # Zero disables both watcher-triggered and fallback refreshes.
+  refresh_interval_seconds: 60
 
 # Where this workspace keeps its local runtime state: persistent-host
 # transport and lock files. Keep this ignored. `root` is the original spelling

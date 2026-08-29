@@ -3163,6 +3163,9 @@ impl App {
         self.invalidate_partial_guards(buffer);
 
         let name = self.buffers[buffer].display_name();
+        let git_path = (self.buffers[buffer].kind == BufferKind::File)
+            .then(|| self.buffers[buffer].path.clone())
+            .flatten();
         let explorer_directory = self.buffers[buffer]
             .is_directory()
             .then(|| self.buffers[buffer].path.clone())
@@ -3243,6 +3246,16 @@ impl App {
         self.stale_syntax.remove(&buffer);
         self.syntax[buffer] = None;
         self.closed_buffers.insert(buffer);
+        if let Some(path) = git_path
+            && !self.buffers.iter().enumerate().any(|(candidate, entry)| {
+                candidate != buffer
+                    && !self.closed_buffers.contains(&candidate)
+                    && entry.kind == BufferKind::File
+                    && entry.path.as_ref() == Some(&path)
+            })
+        {
+            self.git.forget(&path);
+        }
         self.special_buffer_recency
             .retain(|recent| *recent != buffer);
         self.word_index_notify_remove(buffer);

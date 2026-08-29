@@ -1227,6 +1227,15 @@ impl GitProvider for GitCliProvider {
             return Ok(None);
         }
         let workdir = PathBuf::from(toplevel);
+        let git_dir = self
+            .run_text(&workdir, &["rev-parse", "--git-dir"])
+            .map(PathBuf::from)?;
+        let git_dir = if git_dir.is_absolute() {
+            git_dir
+        } else {
+            workdir.join(git_dir)
+        };
+        let git_dir = git_dir.canonicalize().unwrap_or(git_dir);
         let common = self
             .run_text(&workdir, &["rev-parse", "--git-common-dir"])
             .map(PathBuf::from)?;
@@ -1236,7 +1245,7 @@ impl GitProvider for GitCliProvider {
             workdir.join(common)
         };
         let common = common.canonicalize().unwrap_or(common);
-        Ok(Some(Repository::with_common_dir(workdir, common)))
+        Ok(Some(Repository::with_git_dirs(workdir, git_dir, common)))
     }
 
     fn status(&self, repository: &Repository) -> Result<RepositoryStatus> {

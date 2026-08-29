@@ -65,7 +65,7 @@ impl RepositoryGeneration {
     }
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct RefreshSpec {
     pub staged_paths: Vec<PathBuf>,
     pub branches: bool,
@@ -79,6 +79,51 @@ pub struct RefreshSpec {
     /// Selected log identities that must survive a refresh while reachable.
     pub log_anchors: Vec<String>,
     pub stashes: bool,
+}
+
+impl RefreshSpec {
+    pub(crate) fn covers(&self, required: &Self) -> bool {
+        required
+            .staged_paths
+            .iter()
+            .all(|path| self.staged_paths.contains(path))
+            && (!required.branches || self.branches)
+            && (!required.stats || self.stats)
+            && (!required.staged_diff || self.staged_diff)
+            && required
+                .file_diffs
+                .iter()
+                .all(|diff| self.file_diffs.contains(diff))
+            && (!required.worktrees || self.worktrees)
+            && (!required.log || self.log)
+            && required
+                .log_anchors
+                .iter()
+                .all(|oid| self.log_anchors.contains(oid))
+            && (!required.stashes || self.stashes)
+    }
+
+    pub(crate) fn merge(&mut self, other: &Self) {
+        self.staged_paths.extend(other.staged_paths.iter().cloned());
+        self.staged_paths.sort();
+        self.staged_paths.dedup();
+        self.branches |= other.branches;
+        self.stats |= other.stats;
+        self.staged_diff |= other.staged_diff;
+        self.file_diffs.extend(other.file_diffs.iter().cloned());
+        self.file_diffs.sort_by(|left, right| {
+            left.0
+                .cmp(&right.0)
+                .then_with(|| (left.1 == DiffScope::Staged).cmp(&(right.1 == DiffScope::Staged)))
+        });
+        self.file_diffs.dedup();
+        self.worktrees |= other.worktrees;
+        self.log |= other.log;
+        self.log_anchors.extend(other.log_anchors.iter().cloned());
+        self.log_anchors.sort();
+        self.log_anchors.dedup();
+        self.stashes |= other.stashes;
+    }
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -262,6 +307,13 @@ pub enum GitOperation {
         repository: Repository,
         spec: RefreshSpec,
     },
+    /// A snapshot ordered after an editor-owned filesystem change. Unlike an
+    /// ordinary refresh, this must never join a read that may have started
+    /// before that change.
+    Reconcile {
+        repository: Repository,
+        spec: RefreshSpec,
+    },
     Mutate {
         repository: Repository,
         mutation: GitMutation,
@@ -288,6 +340,7 @@ impl GitOperation {
             | Self::CommitDetail { repository, .. }
             | Self::Blame { repository, .. }
             | Self::Refresh { repository, .. }
+            | Self::Reconcile { repository, .. }
             | Self::Mutate { repository, .. } => repository.common_dir().to_path_buf(),
         }
     }
@@ -345,6 +398,7 @@ impl GitOperation {
             Self::CommitDetail { .. } => "read commit",
             Self::Blame { .. } => "blame live buffer",
             Self::Refresh { .. } => "refresh repository",
+            Self::Reconcile { .. } => "refresh repository",
             Self::Mutate { mutation, .. } => mutation.label(),
         }
     }
@@ -418,7 +472,7 @@ impl GitOperation {
                 repository.workdir().to_path_buf(),
                 refresh_key(spec),
             )),
-            Self::Mutate { .. } => None,
+            Self::Reconcile { .. } | Self::Mutate { .. } => None,
         }
     }
 }
@@ -427,6 +481,10 @@ impl GitOperation {
 pub struct RepositorySnapshot {
     pub repository: Repository,
     pub generation: RepositoryGeneration,
+    /// Safe freshness barrier captured before the service reads any field.
+    pub started_at: Instant,
+    /// The subset of ambient state this snapshot authoritatively refreshed.
+    pub requested: RefreshSpec,
     pub status: RepositoryStatus,
     /// The line counts for that status, empty where none were asked for.
     pub stats: StatusStats,
@@ -527,6 +585,21 @@ pub struct GitServiceHandle {
     ordered_with_worktrees: bool,
 }
 
+#[cfg(test)]
+pub(crate) struct PausedGitService {
+    requests: Receiver<Request>,
+}
+
+#[cfg(test)]
+impl PausedGitService {
+    pub(crate) fn next_operation(&self) -> GitOperation {
+        self.requests
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .expect("paused Git service received a request")
+            .operation
+    }
+}
+
 impl GitServiceHandle {
     #[cfg(test)]
     pub(crate) fn recording_for_test() -> (Self, Receiver<GitOperation>) {
@@ -548,6 +621,25 @@ impl GitServiceHandle {
             },
             recorded,
         )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn saturated_for_test() -> (Self, PausedGitService) {
+        let (requests, receiver) = sync_channel::<Request>(REQUEST_CAPACITY);
+        let handle = Self {
+            requests,
+            next_id: Arc::new(AtomicU64::new(1)),
+            cancellations: Arc::new(Mutex::new(HashMap::new())),
+            ordered_with_worktrees: false,
+        };
+        for index in 0..REQUEST_CAPACITY {
+            handle
+                .try_submit(GitOperation::Discover {
+                    start: PathBuf::from(format!("/saturated/{index}")),
+                })
+                .unwrap();
+        }
+        (handle, PausedGitService { requests: receiver })
     }
 
     pub fn try_submit(&self, operation: GitOperation) -> Result<GitRequestId> {
@@ -674,9 +766,10 @@ enum ReadKey {
 
 fn refresh_key(spec: &RefreshSpec) -> String {
     format!(
-        "{:?}|{}|{}|{:?}|{}|{}|{:?}|{}",
+        "{:?}|{}|{}|{}|{:?}|{}|{}|{:?}|{}",
         spec.staged_paths,
         spec.branches,
+        spec.stats,
         spec.staged_diff,
         spec.file_diffs,
         spec.worktrees,
@@ -1151,7 +1244,8 @@ fn execute(
                 source: source.clone(),
                 lines,
             }),
-        GitOperation::Refresh { repository, spec } => {
+        GitOperation::Refresh { repository, spec }
+        | GitOperation::Reconcile { repository, spec } => {
             refresh(provider, repository, spec, generation)
                 .map(Box::new)
                 .map(GitResponse::Snapshot)
@@ -1294,6 +1388,7 @@ fn refresh(
     spec: &RefreshSpec,
     generation: RepositoryGeneration,
 ) -> Result<RepositorySnapshot> {
+    let started_at = Instant::now();
     let status = provider.status(repository)?;
     let stats = if spec.stats {
         // Counts decorate an otherwise complete status. A provider that
@@ -1368,6 +1463,8 @@ fn refresh(
     Ok(RepositorySnapshot {
         repository: repository.clone(),
         generation,
+        started_at,
+        requested: spec.clone(),
         status,
         stats,
         head_oid,
@@ -1440,10 +1537,13 @@ mod tests {
                         total_pages: 1,
                     },
                 },
-                GitOperation::Refresh { repository, .. } => {
+                GitOperation::Refresh { repository, spec }
+                | GitOperation::Reconcile { repository, spec } => {
                     GitResponse::Snapshot(Box::new(RepositorySnapshot {
                         repository: repository.clone(),
                         generation,
+                        started_at: Instant::now(),
+                        requested: spec.clone(),
                         status,
                         stats: StatusStats::default(),
                         head_oid: Some("head".to_owned()),
@@ -1461,7 +1561,7 @@ mod tests {
                 GitOperation::Mutate {
                     repository,
                     mutation,
-                    ..
+                    refresh,
                 } => GitResponse::Mutation {
                     mutation: mutation.clone(),
                     applied_paths: Vec::new(),
@@ -1474,6 +1574,8 @@ mod tests {
                     snapshot: Box::new(Ok(RepositorySnapshot {
                         repository: repository.clone(),
                         generation,
+                        started_at: Instant::now(),
+                        requested: refresh.clone(),
                         status,
                         stats: StatusStats::default(),
                         head_oid: Some("head".to_owned()),
@@ -1772,6 +1874,44 @@ mod tests {
                 },
                 GitServiceEvent::Completed {
                     coalesced: true,
+                    ..
+                }
+            )
+        ));
+    }
+
+    #[test]
+    fn post_change_reconciliation_does_not_join_an_active_refresh() {
+        let (worker, started, release, calls) = worker();
+        let (handle, mut events) = GitService::spawn_worker(worker);
+        let repository = Repository::new("/one");
+        let spec = RefreshSpec::default();
+        handle
+            .try_submit(GitOperation::Refresh {
+                repository: repository.clone(),
+                spec: spec.clone(),
+            })
+            .unwrap();
+        started.recv_timeout(Duration::from_secs(1)).unwrap();
+        handle
+            .try_submit(GitOperation::Reconcile { repository, spec })
+            .unwrap();
+
+        release.store(true, Ordering::Release);
+
+        started.recv_timeout(Duration::from_secs(1)).unwrap();
+        let first = completed(&mut events);
+        let second = completed(&mut events);
+        assert_eq!(calls.load(Ordering::Relaxed), 2);
+        assert!(matches!(
+            (first, second),
+            (
+                GitServiceEvent::Completed {
+                    coalesced: false,
+                    ..
+                },
+                GitServiceEvent::Completed {
+                    coalesced: false,
                     ..
                 }
             )

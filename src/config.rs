@@ -45,7 +45,8 @@ pub struct NotificationsConfig {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(default)]
 pub struct GitConfig {
-    /// Automatic refresh interval. Zero disables periodic Git work.
+    /// Maximum staleness for visible Git state. Zero disables filesystem
+    /// invalidation and periodic fallback work.
     pub refresh_interval_seconds: usize,
 }
 
@@ -654,7 +655,7 @@ impl Default for Config {
 impl Default for GitConfig {
     fn default() -> Self {
         Self {
-            refresh_interval_seconds: 5,
+            refresh_interval_seconds: 60,
         }
     }
 }
@@ -1283,6 +1284,11 @@ mod tests {
             invalid.validate_settings().unwrap_err(),
             "notifications.history_limit must be between 1 and 1000"
         );
+    }
+
+    #[test]
+    fn git_reconciliation_defaults_to_sixty_seconds() {
+        assert_eq!(Config::default().git.refresh_interval_seconds, 60);
     }
 
     #[test]

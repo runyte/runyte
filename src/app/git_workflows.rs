@@ -24,6 +24,15 @@ use super::{
     is_refreshed_projection, selection_is_deliberate,
 };
 
+const AUTOMATIC_GIT_INTERACTION_QUIET: Duration = Duration::from_millis(250);
+const FILESYSTEM_RECONCILIATION_RETRY_DELAY: Duration = Duration::from_secs(1);
+
+#[derive(Clone)]
+struct FilesystemReconciliation {
+    repository: Repository,
+    spec: RefreshSpec,
+}
+
 /// Git-service bookkeeping and semantic row identities owned by the editor's
 /// Git integration.
 ///
@@ -40,6 +49,12 @@ pub(super) struct GitWorkflowState {
     progress: HashMap<GitRequestId, GitServiceProgress>,
     action_origins: HashMap<GitRequestId, u64>,
     snapshot_stale: bool,
+    /// Filesystem-plan reconciliation waiting for service capacity. Only one
+    /// barrier is in flight; changes made after it was submitted accumulate
+    /// here for a later barrier rather than being claimed by the older read.
+    pending_filesystem_reconciliation: Option<FilesystemReconciliation>,
+    filesystem_reconciliation_request: Option<(GitRequestId, FilesystemReconciliation)>,
+    filesystem_reconciliation_retry_at: Option<Instant>,
     /// Async diff projections keyed by their durable buffer arena identity.
     diff_buffers: HashMap<usize, (PathBuf, DiffScope)>,
     index_buffer: Option<usize>,
@@ -99,6 +114,9 @@ impl Default for GitWorkflowState {
             progress: HashMap::new(),
             action_origins: HashMap::new(),
             snapshot_stale: false,
+            pending_filesystem_reconciliation: None,
+            filesystem_reconciliation_request: None,
+            filesystem_reconciliation_retry_at: None,
             diff_buffers: HashMap::new(),
             index_buffer: None,
             index_open_requests: HashSet::new(),
@@ -305,18 +323,121 @@ impl App {
         crate::path_safety::ensure_within_root(&self.project_root, path).is_ok()
     }
 
+    fn has_live_file_buffer(&self, path: &Path) -> bool {
+        self.buffers.iter().enumerate().any(|(index, buffer)| {
+            !self.closed_buffers.contains(&index)
+                && buffer.kind == BufferKind::File
+                && buffer.path.as_deref() == Some(path)
+        })
+    }
+
+    pub(super) fn reconcile_git_after_filesystem(&mut self, staged_paths: Vec<PathBuf>) {
+        let Some(repository) = self.git.repository().cloned() else {
+            return;
+        };
+        if self.ports.git_service.is_none() {
+            for path in staged_paths {
+                self.track_in_git(&path);
+            }
+            self.refresh_git_status();
+            return;
+        }
+        let mut spec = self.git_refresh_spec(&repository);
+        spec.staged_paths.extend(
+            staged_paths
+                .into_iter()
+                .filter(|path| self.workspace_contains_path(path) && repository.contains(path)),
+        );
+        spec.staged_paths.sort();
+        spec.staged_paths.dedup();
+        let reconciliation = FilesystemReconciliation { repository, spec };
+        match self.git_state.pending_filesystem_reconciliation.as_mut() {
+            Some(pending) if pending.repository == reconciliation.repository => {
+                pending.spec.merge(&reconciliation.spec);
+            }
+            _ => self.git_state.pending_filesystem_reconciliation = Some(reconciliation),
+        }
+        self.git_state.snapshot_stale = true;
+        let _ = self.retry_pending_git_reconciliation(Instant::now());
+    }
+
+    /// Reconciles a successful buffer write without turning an external file
+    /// into a Git target merely because the workspace has a repository.
+    pub(super) fn reconcile_git_after_file_write(&mut self, path: &Path) -> bool {
+        let Some(repository) = self.git.repository() else {
+            return false;
+        };
+        if !self.workspace_contains_path(path) || !repository.contains(path) {
+            self.git.forget(path);
+            return false;
+        }
+        self.reconcile_git_after_filesystem(vec![path.to_path_buf()]);
+        true
+    }
+
+    /// Retries the one conflated post-filesystem barrier without blocking the
+    /// editor when the bounded service queue is full.
+    pub(crate) fn retry_pending_git_reconciliation(&mut self, now: Instant) -> bool {
+        if self.git_state.filesystem_reconciliation_request.is_some() {
+            self.git_state.snapshot_stale = true;
+            return false;
+        }
+        if self
+            .git_state
+            .filesystem_reconciliation_retry_at
+            .is_some_and(|retry_at| now < retry_at)
+        {
+            self.git_state.snapshot_stale = true;
+            return false;
+        }
+        let Some(reconciliation) = self
+            .git_state
+            .pending_filesystem_reconciliation
+            .as_ref()
+            .cloned()
+        else {
+            return false;
+        };
+        self.git_state.snapshot_stale = true;
+        let Some(service) = self.ports.git_service.as_ref() else {
+            return false;
+        };
+        let Ok(id) = service.try_submit(GitOperation::Reconcile {
+            repository: reconciliation.repository.clone(),
+            spec: reconciliation.spec.clone(),
+        }) else {
+            return false;
+        };
+        self.git_state.pending_filesystem_reconciliation = None;
+        self.git_state.filesystem_reconciliation_request = Some((id, reconciliation));
+        self.git_state.filesystem_reconciliation_retry_at = None;
+        true
+    }
+
     pub(super) fn git_refresh_spec(&self, repository: &Repository) -> RefreshSpec {
-        let visible = self
-            .panes
-            .values()
-            .map(|pane| pane.buffer)
-            .collect::<HashSet<_>>();
-        let mut staged_paths = self
-            .buffers
+        let visible_panes = self
+            .maximized
+            .as_ref()
+            .map_or_else(
+                || self.panes.keys().copied().collect::<Vec<_>>(),
+                |maximized| vec![maximized.pane],
+            )
+            .into_iter()
+            .filter(|pane| {
+                self.panes
+                    .get(pane)
+                    .is_some_and(|pane| pane.terminal.is_none())
+            })
+            .collect::<Vec<_>>();
+        let visible = visible_panes
             .iter()
-            .enumerate()
-            .filter_map(|(index, buffer)| {
-                (!self.closed_buffers.contains(&index) && buffer.kind == BufferKind::File)
+            .filter_map(|pane| self.panes.get(pane).map(|pane| pane.buffer))
+            .collect::<HashSet<_>>();
+        let mut staged_paths = visible
+            .iter()
+            .filter_map(|index| {
+                let buffer = &self.buffers[*index];
+                (!self.closed_buffers.contains(index) && buffer.kind == BufferKind::File)
                     .then_some(buffer.path.as_ref())
                     .flatten()
                     .filter(|path| self.workspace_contains_path(path) && repository.contains(path))
@@ -338,9 +459,9 @@ impl App {
                 .then_with(|| (left.1 == DiffScope::Staged).cmp(&(right.1 == DiffScope::Staged)))
         });
         file_diffs.dedup();
-        let mut log_anchors = self
-            .panes
-            .values()
+        let mut log_anchors = visible_panes
+            .iter()
+            .filter_map(|pane| self.panes.get(pane))
             .filter(|pane| self.buffers[pane.buffer].is_git_log())
             .filter_map(|pane| {
                 let line = self.buffers[pane.buffer].offset_to_row(pane.head());
@@ -356,32 +477,27 @@ impl App {
             branches: visible.iter().any(|index| {
                 !self.closed_buffers.contains(index) && self.buffers[*index].is_git_branches()
             }),
-            // On the buffer rather than on a pane showing it, because the list
-            // is rewritten from the same condition: one that is open but
-            // covered still has its rows replaced, and rows without their
-            // numbers would lose the column until the next refresh.
-            stats: self.git_status_buffer().is_some(),
+            stats: self
+                .git_status_buffer()
+                .is_some_and(|index| visible.contains(&index)),
             staged_diff: self.git_state.index_buffer.is_some_and(|index| {
                 visible.contains(&index) && !self.closed_buffers.contains(&index)
             }),
             file_diffs,
-            worktrees: self
-                .panes
-                .values()
-                .any(|pane| self.buffers[pane.buffer].is_git_worktrees()),
+            worktrees: self.panes.iter().any(|(pane, value)| {
+                visible_panes.contains(pane) && self.buffers[value.buffer].is_git_worktrees()
+            }),
             // Only the first page tracks the branch tip. Every later page sits
             // behind a commit cursor, so its history cannot change under the
             // person and re-reading it would just fight their paging.
             log: self.git_state.log_page == 0
-                && self
-                    .panes
-                    .values()
-                    .any(|pane| self.buffers[pane.buffer].is_git_log()),
+                && self.panes.iter().any(|(pane, value)| {
+                    visible_panes.contains(pane) && self.buffers[value.buffer].is_git_log()
+                }),
             log_anchors,
-            stashes: self
-                .panes
-                .values()
-                .any(|pane| self.buffers[pane.buffer].is_git_stash()),
+            stashes: self.panes.iter().any(|(pane, value)| {
+                visible_panes.contains(pane) && self.buffers[value.buffer].is_git_stash()
+            }),
         }
     }
 
@@ -398,17 +514,51 @@ impl App {
         self.config.git.refresh_interval_seconds
     }
 
+    pub fn git_monitor_repository(&self) -> Option<Repository> {
+        (self.periodic_git_refresh_seconds() != 0)
+            .then(|| self.git.repository().cloned())
+            .flatten()
+    }
+
+    pub(crate) fn mark_git_snapshot_stale(&mut self) {
+        self.git_state.snapshot_stale = true;
+    }
+
+    pub(crate) fn visible_git_refresh_spec(&self) -> Option<RefreshSpec> {
+        self.git
+            .repository()
+            .map(|repository| self.git_refresh_spec(repository))
+    }
+
     pub(crate) fn has_visible_git_state(&self) -> bool {
-        self.panes.values().any(|pane| {
+        let visible_panes = self
+            .maximized
+            .as_ref()
+            .map_or_else(
+                || self.panes.keys().copied().collect::<Vec<_>>(),
+                |maximized| vec![maximized.pane],
+            )
+            .into_iter()
+            .filter(|pane| {
+                self.panes
+                    .get(pane)
+                    .is_some_and(|pane| pane.terminal.is_none())
+            })
+            .collect::<Vec<_>>();
+        visible_panes.iter().any(|pane| {
+            let Some(pane) = self.panes.get(pane) else {
+                return false;
+            };
             let buffer = &self.buffers[pane.buffer];
             is_refreshed_projection(buffer)
-                || buffer.path.as_deref().is_some_and(|path| {
-                    self.workspace_contains_path(path)
-                        && self
-                            .git
-                            .repository()
-                            .is_some_and(|repository| repository.contains(path))
-                })
+                || (buffer.kind == BufferKind::File
+                    && buffer.path.as_deref().is_some_and(|path| {
+                        self.workspace_contains_path(path)
+                            && self
+                                .git
+                                .repository()
+                                .is_some_and(|repository| repository.contains(path))
+                    }))
         })
     }
 
@@ -427,10 +577,11 @@ impl App {
         }
         // A refresh rebuilds the projection and moves the cursor to the
         // nearest surviving row, which is disruptive to walk into while
-        // reading or navigating. Waiting out the refresh interval since the
-        // last keystroke means it only lands once the person has paused.
+        // reading or navigating. The filesystem monitor already debounces a
+        // write burst; this shorter interaction quiet period avoids tying UI
+        // responsiveness to the much longer fallback reconciliation cadence.
         if Instant::now().saturating_duration_since(self.last_interaction)
-            < Duration::from_secs(self.periodic_git_refresh_seconds() as u64)
+            < AUTOMATIC_GIT_INTERACTION_QUIET
         {
             return true;
         }
@@ -443,17 +594,25 @@ impl App {
         })
     }
 
-    pub(crate) fn request_periodic_git_refresh(&mut self) -> bool {
+    pub(crate) fn request_automatic_git_refresh(
+        &mut self,
+        spec: RefreshSpec,
+    ) -> Option<GitRequestId> {
         if self
             .git_state
             .progress
             .values()
-            .any(|progress| progress.mutation)
+            .any(|progress| progress.mutation || progress.operation == "refresh repository")
             || self.interaction_defers_git_refresh()
         {
-            return false;
+            return None;
         }
-        self.request_git_refresh()
+        let repository = self.git.repository().cloned()?;
+        self.request_git(GitOperation::Refresh { repository, spec })
+    }
+
+    pub(crate) fn git_snapshot_generation(&self) -> RepositoryGeneration {
+        self.git_state.generation
     }
 
     pub fn apply_git_service_event(&mut self, event: GitServiceEvent) {
@@ -473,6 +632,31 @@ impl App {
                 coalesced,
             } => {
                 self.git_state.progress.remove(&id);
+                let filesystem_reconciliation = self
+                    .git_state
+                    .filesystem_reconciliation_request
+                    .take_if(|(request, _)| *request == id)
+                    .map(|(_, reconciliation)| reconciliation);
+                let filesystem_reconciliation_succeeded = filesystem_reconciliation.is_some()
+                    && state == GitServiceState::Completed
+                    && matches!(result.as_ref(), Ok(GitResponse::Snapshot(_)));
+                if let Some(reconciliation) = filesystem_reconciliation
+                    .as_ref()
+                    .filter(|_| !filesystem_reconciliation_succeeded)
+                    .cloned()
+                {
+                    match self.git_state.pending_filesystem_reconciliation.as_mut() {
+                        Some(pending) if pending.repository == reconciliation.repository => {
+                            pending.spec.merge(&reconciliation.spec);
+                        }
+                        _ => {
+                            self.git_state.pending_filesystem_reconciliation = Some(reconciliation)
+                        }
+                    }
+                    self.git_state.filesystem_reconciliation_retry_at =
+                        Some(Instant::now() + FILESYSTEM_RECONCILIATION_RETRY_DELAY);
+                    self.git_state.snapshot_stale = true;
+                }
                 let action = self.git_state.action_origins.remove(&id);
                 let mut requested_views = RequestedGitViews {
                     index: self.git_state.index_open_requests.remove(&id),
@@ -580,6 +764,9 @@ impl App {
                         self.error_from("Git", "Git operation failed", message);
                     }
                 }
+                if filesystem_reconciliation_succeeded {
+                    let _ = self.retry_pending_git_reconciliation(Instant::now());
+                }
             }
         }
     }
@@ -668,12 +855,16 @@ impl App {
             }
             GitResponse::Status(status) => {
                 self.git.apply_status(status);
-                self.git_state.snapshot_stale = false;
                 self.refresh_git_status_buffer();
             }
             GitResponse::StagedContent { path, content } => {
-                self.git.apply_staged_content(path, content);
-                self.git_state.snapshot_stale = false;
+                if self.has_live_file_buffer(&path) {
+                    self.git.apply_staged_content(path, content);
+                } else {
+                    // The asynchronous read may finish after its buffer was
+                    // closed. Do not resurrect an otherwise unreferenced base.
+                    self.git.forget(&path);
+                }
             }
             GitResponse::Diff { scope, path, text } => {
                 self.open_git_diff_result(scope, path, text);
@@ -814,13 +1005,20 @@ impl App {
             self.git_state.head_oid.is_some() && self.git_state.head_oid != snapshot.head_oid;
         self.git_state.generation = snapshot.generation;
         self.git_state.head_oid = snapshot.head_oid;
+        let staged = snapshot
+            .staged
+            .into_iter()
+            .filter(|(path, _)| self.has_live_file_buffer(path))
+            .collect();
         self.git.apply_snapshot(
             snapshot.repository,
             snapshot.status,
             snapshot.stats,
-            snapshot.staged,
+            staged,
+            snapshot.requested.stats,
         );
-        self.git_state.snapshot_stale = false;
+        self.git_state.snapshot_stale = self.git_state.pending_filesystem_reconciliation.is_some()
+            || self.git_state.filesystem_reconciliation_request.is_some();
         if head_changed && reload_external_head {
             self.reload_clean_repository_buffers();
         }
@@ -1450,7 +1648,7 @@ impl App {
     }
 
     /// Whether a buffer has a staged text behind it, and so a gutter column.
-    pub(super) fn git_tracks(&self, buffer: usize) -> bool {
+    pub(crate) fn git_tracks(&self, buffer: usize) -> bool {
         self.buffers[buffer]
             .path
             .as_deref()

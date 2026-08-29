@@ -330,6 +330,7 @@ fn discovery_finds_the_working_tree_from_any_directory_inside_it() {
         repository.path().to_path_buf()
     );
     assert_eq!(found.common_dir(), repository.path().join(".git"));
+    assert_eq!(found.git_dir(), repository.path().join(".git"));
 }
 
 #[test]
@@ -346,6 +347,7 @@ fn linked_worktrees_share_a_common_repository_identity() {
 
     assert_ne!(main.workdir(), other.workdir());
     assert_eq!(main.common_dir(), other.common_dir());
+    assert_ne!(main.git_dir(), other.git_dir());
 }
 
 #[test]
@@ -572,6 +574,10 @@ fn a_separate_git_directory_is_not_reported_as_a_linked_worktree() {
     );
 
     assert!(work.join(".git").is_file(), "the checkout uses a gitfile");
+    let discovered = provider().discover(&work).unwrap().unwrap();
+    assert_eq!(discovered.workdir(), work);
+    assert_eq!(discovered.git_dir(), git_dir.canonicalize().unwrap());
+    assert_eq!(discovered.common_dir(), discovered.git_dir());
     let facts = read_workspace_git_facts(&work).expect("the checkout has facts");
     assert_eq!(
         facts.worktree, None,

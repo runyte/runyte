@@ -451,6 +451,48 @@ async fn next_idle_frame(client: &mut LocalClient) -> runyte::protocol::HostFram
     }
 }
 
+/// Invokes a semantic command against the newest frame until the optimistic
+/// concurrency check accepts it. Ambient services may publish another frame
+/// after the caller observed one but before the host reads the request.
+async fn invoke_when_current(
+    client: &mut LocalClient,
+    command: &str,
+    mut frame: runyte::protocol::HostFrame,
+) -> HostResponse {
+    let deadline = Instant::now() + EDITOR_STATE_TIMEOUT;
+    loop {
+        client
+            .send(&ClientRequest::Invoke {
+                command: runyte::protocol::CommandRequest::at(
+                    command,
+                    frame.id,
+                    frame.active_buffer,
+                    frame.active_revision,
+                ),
+            })
+            .await
+            .unwrap();
+        loop {
+            match response(client).await {
+                HostResponse::Frame { .. } => {}
+                HostResponse::Error { message } if message.starts_with("stale editor frame:") => {
+                    assert!(
+                        Instant::now() < deadline,
+                        "editor frames stayed stale while invoking {command}: {message}"
+                    );
+                    client.send(&ClientRequest::Resynchronize).await.unwrap();
+                    frame = next_complete_frame(client).await;
+                    break;
+                }
+                response @ (HostResponse::CommandResult { .. } | HostResponse::Detached { .. }) => {
+                    return response;
+                }
+                response => panic!("expected {command} result, got {response:?}"),
+            }
+        }
+    }
+}
+
 fn selection_count(response: &HostResponse) -> usize {
     let HostResponse::Frame { frame } = response else {
         panic!("expected frame, got {response:?}")
@@ -1771,25 +1813,9 @@ async fn quit_here_reports_its_directory_to_a_handoff_capable_client() {
         HostResponse::Welcome { .. }
     ));
     let frame = next_idle_frame(&mut plain).await;
-    plain
-        .send(&ClientRequest::Invoke {
-            command: runyte::protocol::CommandRequest::at(
-                "quit-here",
-                frame.id,
-                frame.active_buffer,
-                frame.active_revision,
-            ),
-        })
-        .await
-        .unwrap();
-    let outcome = loop {
-        match response(&mut plain).await {
-            HostResponse::CommandResult { outcome } => break outcome,
-            // Services may publish a newer whole-frame snapshot between the
-            // frame used for the invocation and its semantic response.
-            HostResponse::Frame { .. } => {}
-            response => panic!("expected quit-here command result, got {response:?}"),
-        }
+    let outcome = match invoke_when_current(&mut plain, "quit-here", frame).await {
+        HostResponse::CommandResult { outcome } => outcome,
+        response => panic!("expected quit-here command result, got {response:?}"),
     };
     assert!(
         format!("{outcome:?}").contains("runyte()"),
@@ -1812,20 +1838,12 @@ async fn quit_here_reports_its_directory_to_a_handoff_capable_client() {
         HostResponse::Welcome { .. }
     ));
     let frame = next_idle_frame(&mut capable).await;
-    capable
-        .send(&ClientRequest::Invoke {
-            command: runyte::protocol::CommandRequest::at(
-                "quit-here",
-                frame.id,
-                frame.active_buffer,
-                frame.active_revision,
-            ),
-        })
-        .await
-        .unwrap();
+    assert!(matches!(
+        invoke_when_current(&mut capable, "quit-here", frame).await,
+        HostResponse::CommandResult { .. }
+    ));
     let detached = loop {
-        let response = response(&mut capable).await;
-        if let HostResponse::Detached { directory_bytes } = response {
+        if let HostResponse::Detached { directory_bytes } = response(&mut capable).await {
             break directory_bytes;
         }
     };
