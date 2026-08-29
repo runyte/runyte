@@ -447,15 +447,21 @@ filter, with Delete or by backspacing to empty, arms the shortcut again. A
 workspace whose name or path begins with a digit therefore cannot be filtered
 by that first character; type a later part of the name instead.
 
-Numbers are assigned in order of creation, when a workspace is first recorded,
-and stay with it as the list reorders around them, so the digit does not move
-between two visits. A catalog written before Runyte numbered sessions has no
-creation order left to recover, and is numbered most-recently-visited first on
-the next listing. Only nine sessions are numbered; a tenth is reached by name
-or path, and inherits a number when an earlier one is forgotten. Renumber in
-the manager menu opens an empty prompt ready for one digit and sets the shortcut
-for the selected session; an empty answer takes its number away. Giving a
-session a number another one holds swaps the two, so both keep a shortcut.
+Only running sessions are numbered. The digit attaches, so it belongs to a
+session that is up: a stopped row shows none, and the digit it held is free for
+the sessions that are actually running. Its record keeps the digit as a
+preference, so a session that stops and starts again answers to the same one
+whenever nothing running has claimed it meanwhile, and otherwise takes the
+lowest still free. Numbers are otherwise assigned in order of creation, when a
+workspace is first recorded, and stay with it as the list reorders around them,
+so the digit does not move between two visits. A catalog written before Runyte
+numbered sessions has no creation order left to recover, and is numbered
+most-recently-visited first on the next listing. Only nine sessions are
+numbered at a time; a tenth is reached by name or path. Renumber in the manager
+menu opens an empty prompt ready for one digit and sets the shortcut for the
+selected session; an empty answer takes its number away. Giving a session a
+number another one holds swaps the two, so both keep a shortcut. A stopped row's
+menu has no Renumber: there is no digit on it to change.
 A standalone workspace owns no persistent host, so the whole `session`
 namespace is inert there rather than a set of commands that each refuse.
 `Space Space` greys out in the key-hint popup and `:session-list`,
@@ -1924,8 +1930,8 @@ host owns that directory and the runtime state under it, and the removal itself
 has to report success before anything below it happens: a removal Git refuses
 after the confirmation leaves the branch and the history record alone. A stop
 that fails likewise leaves the worktree standing. Once the directory is gone the
-workspace's history record is forgotten too, which is what frees its number for
-the next workspace; that happens whether or not a host was running, so a
+workspace's history record is forgotten too, so nothing is left preferring the
+digit it used to answer to; that happens whether or not a host was running, so a
 worktree opened as a workspace at any point leaves nothing behind.
 
 This part of removal is not a persistent-mode feature. A standalone editor

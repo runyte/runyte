@@ -747,7 +747,6 @@ async fn refresh(
             missing_directory: false,
         });
     }
-    apply_recent_numbers(&mut rows, &remembered);
     apply_recent_activity(&mut rows, &remembered);
     // Git facts and directory existence are filesystem reads, and a listing
     // can hold hundreds of rows, so they are gathered once here rather than
@@ -772,11 +771,15 @@ async fn refresh(
             .unwrap_or(usize::MAX);
         (recency, row.project_root.clone())
     });
+    // Numbering follows the order the listing shows, so a digit two running
+    // sessions both prefer goes to the more recently visited one and the same
+    // listing always numbers the same way.
+    assign_running_workspace_numbers(&mut rows, &remembered);
     if let Some(path) = recents {
         let path = path.to_path_buf();
         let refreshed_rows = rows.clone();
         tokio::task::spawn_blocking(move || {
-            merge_refreshed_names(&path, &recent_snapshot, &refreshed_rows)
+            merge_refreshed_rows(&path, &recent_snapshot, &refreshed_rows)
         })
         .await??;
     }
@@ -795,16 +798,45 @@ fn apply_recent_names(rows: &mut [WorkspaceRow], recent_entries: &[RecentEntry])
     }
 }
 
-/// Supplies catalog numbers to rows discovered as running hosts.
+/// Gives every running session a digit, and no stopped one.
 ///
-/// A number is per-user history rather than host state, so a running host
-/// never answers one and the catalog is the only place it can come from.
-fn apply_recent_numbers(rows: &mut [WorkspaceRow], recent_entries: &[RecentEntry]) {
+/// The digit is a shortcut that attaches, so it belongs to a session somebody
+/// can reach right now: a stopped session releases the one it held rather than
+/// reserving one of the nine against the sessions that are actually up. Its
+/// catalog record survives as what it prefers, so a session that stops and
+/// starts again answers to the same digit whenever nothing running has claimed
+/// it meanwhile, and otherwise takes the lowest one still free.
+///
+/// A number is per-user history rather than host state, so a running host never
+/// answers one and the catalog is the only place a preference can come from.
+fn assign_running_workspace_numbers(rows: &mut [WorkspaceRow], recent_entries: &[RecentEntry]) {
+    let mut taken = [false; MAX_WORKSPACE_NUMBER as usize];
     for row in rows.iter_mut() {
-        row.number = recent_entries
+        row.number = None;
+        if !row.running {
+            continue;
+        }
+        let preferred = recent_entries
             .iter()
             .find(|entry| entry.project_root == row.project_root)
-            .and_then(|entry| entry.number);
+            .and_then(|entry| entry.number)
+            .filter(|number| {
+                (1..=MAX_WORKSPACE_NUMBER).contains(number) && !taken[usize::from(number - 1)]
+            });
+        if let Some(number) = preferred {
+            taken[usize::from(number - 1)] = true;
+            row.number = Some(number);
+        }
+    }
+    for row in rows
+        .iter_mut()
+        .filter(|row| row.running && row.number.is_none())
+    {
+        let free = (1..=MAX_WORKSPACE_NUMBER).find(|candidate| !taken[usize::from(candidate - 1)]);
+        if let Some(number) = free {
+            taken[usize::from(number - 1)] = true;
+            row.number = Some(number);
+        }
     }
 }
 
@@ -2484,7 +2516,7 @@ mod tests {
         // Model a second process recording a workspace while refresh is
         // inspecting the hosts represented by `stale_rows`.
         record_recent_workspace_in(&path, &recorded_during_refresh).unwrap();
-        merge_refreshed_names(&path, &snapshot, &stale_rows).unwrap();
+        merge_refreshed_rows(&path, &snapshot, &stale_rows).unwrap();
 
         assert_eq!(
             named(read_recents(Some(&path)).unwrap()),
@@ -2530,7 +2562,7 @@ mod tests {
             paths[0].name = Some("concurrent-name".to_owned());
         })
         .unwrap();
-        merge_refreshed_names(&path, &snapshot, &stale_rows).unwrap();
+        merge_refreshed_rows(&path, &snapshot, &stale_rows).unwrap();
 
         assert_eq!(
             named(read_recents(Some(&path)).unwrap()),
@@ -2736,7 +2768,7 @@ mod tests {
             git: None,
             missing_directory: true,
         }];
-        apply_recent_numbers(&mut rows, &entries);
+        assign_running_workspace_numbers(&mut rows, &entries);
         assert_eq!(rows[0].number, Some(2));
         assert!(
             !listable_recents(entries)
@@ -2773,6 +2805,125 @@ mod tests {
             assert_eq!(entry.number, None);
             assert!(entry.name.is_some());
         }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// One listing row, in whatever running state the numbering is about.
+    fn numbering_row(project_root: &Path, running: bool) -> WorkspaceRow {
+        WorkspaceRow {
+            id: "aaaaaaaaaaaaaaaa".to_owned(),
+            name: None,
+            number: None,
+            last_active_unix_seconds: None,
+            project_root: project_root.to_path_buf(),
+            running,
+            incompatible_protocol: None,
+            unsaved_buffers: None,
+            open_buffers: None,
+            pending_wait_requests: None,
+            live_terminals: None,
+            terminal_sessions: None,
+            interactive_attached: None,
+            git: None,
+            missing_directory: false,
+        }
+    }
+
+    #[test]
+    fn only_running_sessions_are_numbered_and_a_stopped_one_releases_its_digit() {
+        let stopped = PathBuf::from("/w/stopped");
+        let running = PathBuf::from("/w/running");
+        let started = PathBuf::from("/w/started");
+        let entries = vec![
+            RecentEntry::new(stopped.clone(), None, Some(1), None),
+            RecentEntry::new(running.clone(), None, Some(2), None),
+            RecentEntry::new(started.clone(), None, None, None),
+        ];
+        let mut rows = vec![
+            numbering_row(&stopped, false),
+            numbering_row(&running, true),
+            numbering_row(&started, true),
+        ];
+
+        assign_running_workspace_numbers(&mut rows, &entries);
+
+        assert_eq!(rows[0].number, None, "a stopped session holds no digit");
+        assert_eq!(
+            rows[1].number,
+            Some(2),
+            "a running session keeps the digit its record prefers"
+        );
+        assert_eq!(
+            rows[2].number,
+            Some(1),
+            "the digit a stopped session gave up is the lowest one free"
+        );
+    }
+
+    #[test]
+    fn a_restarted_session_answers_to_its_recorded_digit_again() {
+        let restarted = PathBuf::from("/w/restarted");
+        let entries = vec![RecentEntry::new(restarted.clone(), None, Some(4), None)];
+        let mut rows = vec![numbering_row(&restarted, true)];
+
+        assign_running_workspace_numbers(&mut rows, &entries);
+
+        assert_eq!(rows[0].number, Some(4));
+    }
+
+    /// Records are unique while Runyte writes them, so this is the safety net
+    /// for a catalog edited by hand: the listing still hands one digit to one
+    /// session, and the more recently visited row keeps it.
+    #[test]
+    fn a_digit_two_records_claim_goes_to_the_row_the_listing_shows_first() {
+        let first = PathBuf::from("/w/first");
+        let second = PathBuf::from("/w/second");
+        let entries = vec![
+            RecentEntry::new(first.clone(), None, Some(1), None),
+            RecentEntry::new(second.clone(), None, Some(1), None),
+        ];
+        let mut rows = vec![numbering_row(&first, true), numbering_row(&second, true)];
+
+        assign_running_workspace_numbers(&mut rows, &entries);
+
+        assert_eq!(rows[0].number, Some(1));
+        assert_eq!(rows[1].number, Some(2));
+    }
+
+    #[test]
+    fn a_refresh_records_the_digit_a_running_session_was_given() {
+        let root = unique_test_root("number-writeback");
+        let path = root.join("cache/workspaces.json");
+        let stopped = root.join("stopped");
+        let started = root.join("started");
+        for workspace in [&stopped, &started] {
+            fs::create_dir_all(workspace).unwrap();
+            record_recent_workspace_in(&path, workspace).unwrap();
+        }
+        let stopped = stopped.canonicalize().unwrap();
+        let started = started.canonicalize().unwrap();
+        assert_eq!(recorded_number(&path, &stopped), Some(1));
+        assert_eq!(recorded_number(&path, &started), Some(2));
+
+        let snapshot = read_recents(Some(&path)).unwrap();
+        let mut rows = vec![
+            numbering_row(&started, true),
+            numbering_row(&stopped, false),
+        ];
+        // The running session prefers 2 and keeps it; nothing takes 1, so the
+        // stopped record still holds it.
+        assign_running_workspace_numbers(&mut rows, &snapshot);
+        merge_refreshed_rows(&path, &snapshot, &rows).unwrap();
+        assert_eq!(recorded_number(&path, &started), Some(2));
+        assert_eq!(recorded_number(&path, &stopped), Some(1));
+
+        // Once the running session is given 1, the stopped record loses it
+        // rather than leaving two records claiming the same digit.
+        rows[0].number = Some(1);
+        let snapshot = read_recents(Some(&path)).unwrap();
+        merge_refreshed_rows(&path, &snapshot, &rows).unwrap();
+        assert_eq!(recorded_number(&path, &started), Some(1));
+        assert_eq!(recorded_number(&path, &stopped), None);
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -3420,12 +3571,44 @@ fn rename_recent_workspace_in(path: &Path, project_root: &Path, name: &str) -> R
 /// discard a workspace recorded while inspection was in flight. A name is
 /// updated only when the current value still matches that snapshot, so an
 /// inspection result cannot overwrite a newer name from another refresh.
-fn merge_refreshed_names(
+/// Records the digit each running session was just given, and takes it out of
+/// whichever record still claimed it.
+///
+/// The listing decides the numbers, so this is where a preference catches up
+/// with them: a session keeps a digit across a restart because its record says
+/// so, and a stopped session's record keeps its digit only until a running
+/// session needs it. Writing the answer back is also what lets the status line
+/// name this session's digit on the next start without listing every workspace.
+fn merge_assigned_numbers(paths: &mut [RecentEntry], rows: &[WorkspaceRow]) {
+    let assigned = rows
+        .iter()
+        .filter_map(|row| {
+            row.number
+                .map(|number| (row.project_root.as_path(), number))
+        })
+        .collect::<Vec<_>>();
+    for entry in paths {
+        if let Some((_, number)) = assigned
+            .iter()
+            .find(|(project_root, _)| *project_root == entry.project_root)
+        {
+            entry.number = Some(*number);
+        } else if assigned
+            .iter()
+            .any(|(_, number)| entry.number == Some(*number))
+        {
+            entry.number = None;
+        }
+    }
+}
+
+fn merge_refreshed_rows(
     path: &Path,
     snapshot: &[RecentEntry],
     rows: &[WorkspaceRow],
 ) -> Result<()> {
     update_recents(path, |paths| {
+        merge_assigned_numbers(paths, rows);
         for entry in paths {
             let Some(snapshot_entry) = snapshot
                 .iter()

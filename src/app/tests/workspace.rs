@@ -2220,7 +2220,8 @@ fn workspace_actions_match_the_selected_session_state() {
     );
     key(&mut app, KeyCode::Escape, Modifiers::NONE);
 
-    // A stopped row can be forgotten but neither closed nor force closed.
+    // A stopped row can be forgotten but neither closed nor force closed, and
+    // holds no digit to renumber.
     key(&mut app, KeyCode::Down, Modifiers::NONE);
     key(&mut app, KeyCode::Tab, Modifiers::NONE);
     assert_eq!(
@@ -2228,7 +2229,6 @@ fn workspace_actions_match_the_selected_session_state() {
         vec![
             SessionAction::Open,
             SessionAction::Rename,
-            SessionAction::Number,
             SessionAction::Forget,
         ]
     );
@@ -2244,12 +2244,12 @@ fn workspace_actions_match_the_selected_session_state() {
                 .collect::<Vec<_>>()
         })
         .unwrap();
-    assert_eq!(labels, vec!["Open", "Rename", "Renumber", "Forget"]);
+    assert_eq!(labels, vec!["Open", "Rename", "Forget"]);
 
     // No session service is attached in an isolated project, so the
     // request cannot be served; what matters here is that Forget asks to
     // forget rather than to stop, and that the picker stays open.
-    app.session_action_menu.as_mut().unwrap().selected = 3;
+    app.session_action_menu.as_mut().unwrap().selected = 2;
     key(&mut app, KeyCode::Enter, Modifiers::NONE);
     assert!(app.take_workspace_switch().is_none());
     assert!(app.list.is_some());
@@ -2416,10 +2416,10 @@ fn session_actions_confirm_force_close_and_recheck_state_at_enter() {
     key(&mut app, KeyCode::Escape, Modifiers::NONE);
     key(&mut app, KeyCode::Tab, Modifiers::NONE);
     assert_eq!(
-        app.session_action_menu.as_ref().unwrap().actions[3],
+        app.session_action_menu.as_ref().unwrap().actions[2],
         SessionAction::Forget
     );
-    app.session_action_menu.as_mut().unwrap().selected = 3;
+    app.session_action_menu.as_mut().unwrap().selected = 2;
     refresh(&mut app, true);
     key(&mut app, KeyCode::Enter, Modifiers::NONE);
     assert_eq!(app.status, "stop this session before forgetting it");
