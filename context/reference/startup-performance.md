@@ -32,6 +32,46 @@ drawing alone.
 Absolute values are machine-specific and are not comparable between result sets
 taken on different hardware.
 
+## 2026-08-29 — Lua source fixture
+
+Focused run of the new fixture with the harness at `9aeb784` plus the
+uncommitted `large.lua` generator. Median of 5 runs, 120x40 pty, empty config;
+idle measurement disabled with `--no-idle`.
+
+- neovim: `NVIM v0.12.4`
+- helix: `helix 25.07.1 (a05c151b)`
+- runyte: `runyte 0.1.3`, release build from `9aeb784`
+
+Machine: AMD Ryzen AI 9 365, 20 threads, 27 GB, Linux 7.1.9, btrfs.
+
+### Startup
+
+First paint is the first byte of output; ready is when drawing goes quiet.
+
+| Fixture | Size | neovim first / ready | helix first / ready | runyte first / ready |
+| --- | --- | ---: | ---: | ---: |
+| `large.lua` | 1.0 MB | 6 / 136 ms | 134 / 135 ms | 94 / 95 ms |
+
+### Parser parity and interpretation
+
+All three editors parsed the document with tree-sitter. Neovim reported an
+active tree-sitter highlighter, an empty `syntax` option, and a syntax tree with
+no error nodes. Helix's installed runtime reported its Lua parser and highlight
+queries present. Runyte's release build contains the statically linked
+`tree-sitter-lua` grammar and its highlight, injection, and locals queries.
+
+The fixture contains 30,000 complete lines of generated Lua and deliberately
+contains no comments, long strings, `cdef` calls, Neovim API calls, or query
+sentinels. Those are the constructs matched by the three editors' differing Lua
+injection queries, so this row measures one Lua grammar in each editor rather
+than a different inventory of injected grammars.
+
+**`large.lua` is the first programming-language row where all three editors do
+the same work.** Runyte reached a settled frame in 95 ms, against 135 ms for
+Helix and 136 ms for Neovim. Runyte's roughly 30% difference from the other two
+is larger than the approximately 10% run-to-run variance observed on larger
+fixtures. The 1 ms difference between Helix and Neovim is not signal.
+
 ## 2026-08-29
 
 Harness as committed in this record's own commit; the tool reported HEAD

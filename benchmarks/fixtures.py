@@ -16,9 +16,11 @@ Each fixture isolates one cost:
 ``large.rs``      a document large enough that parsing dominates.
 ``large.txt``     the same bytes with no language, isolating file reading from
                   parsing.
+``large.lua``     source code which every measured editor parses with one
+                  tree-sitter grammar.
 ``large.md``      Markdown, which every measured editor parses with tree-sitter,
-                  making it the one fixture where a cross-editor comparison is
-                  between editors doing the same work.
+                  making it a second fixture where a cross-editor comparison
+                  is between editors doing the same work.
 ``minified.json`` one very long line, which stresses everything that works
                   outward from the start of a line rather than per row.
 """
@@ -31,6 +33,7 @@ from pathlib import Path
 SMALL_LINES = 200
 MEDIUM_LINES = 5_000
 LARGE_LINES = 200_000
+LUA_LINES = 30_000
 MARKDOWN_LINES = 30_000
 MINIFIED_KEYS = 200_000
 SEED = 20260829
@@ -41,6 +44,7 @@ FIXTURES = (
     "medium.rs",
     "large.rs",
     "large.txt",
+    "large.lua",
     "large.md",
     "minified.json",
 )
@@ -124,6 +128,51 @@ def _markdown(lines: int, seed: int = SEED) -> str:
     return "\n".join(out[:lines]) + "\n"
 
 
+def _lua_source(lines: int, seed: int = SEED) -> str:
+    """Lua source with functions, tables, loops, branches and calls.
+
+    Comments are deliberately absent because Helix injects its comment grammar
+    into every Lua comment. Long strings and the special calls recognized by
+    Neovim's and tree-sitter-lua's injection queries are absent too. Keeping
+    those constructs out makes every editor parse only the Lua grammar.
+    """
+    rng = random.Random(seed)
+    verbs = [
+        "collect", "encode", "merge", "parse", "render", "resolve", "scan", "visit",
+    ]
+    out: list[str] = []
+    index = 0
+    while len(out) < lines:
+        name = f"{rng.choice(verbs)}_{index}"
+        values = [rng.randint(1, 99) for _ in range(4)]
+        scale = rng.randint(2, 9)
+        literal = ", ".join(str(value) for value in values)
+        out += [
+            f"local function {name}(values, scale)",
+            f'    local state = {{ total = 0, label = "{name}", enabled = true }}',
+            "    for item_index, value in ipairs(values) do",
+            "        local adjusted = value * scale + item_index",
+            "        if adjusted % 2 == 0 then",
+            "            state.total = state.total + adjusted",
+            "        elseif adjusted > 10 then",
+            "            state.total = state.total - math.floor(adjusted / 3)",
+            "        else",
+            "            state.total = state.total + 1",
+            "        end",
+            "    end",
+            "    state.label = string.upper(state.label)",
+            "    return state",
+            "end",
+            "",
+            f"local result_{index} = {name}({{{literal}}}, {scale})",
+            f"result_{index}.total = math.max(result_{index}.total, 0)",
+            f"assert(result_{index}.enabled and result_{index}.total ~= nil)",
+            "",
+        ]
+        index += 1
+    return "\n".join(out[:lines]) + "\n"
+
+
 def _minified_json(keys: int, seed: int = SEED) -> str:
     rng = random.Random(seed)
     pairs = ",".join(f'"key{i}":{rng.randint(0, 1_000_000)}' for i in range(keys))
@@ -152,6 +201,8 @@ def ensure(directory: Path, names=FIXTURES) -> dict[str, Path]:
             if large_source is None:
                 large_source = _rust_source(LARGE_LINES)
             path.write_text(large_source)
+        elif name == "large.lua":
+            path.write_text(_lua_source(LUA_LINES))
         elif name == "large.md":
             path.write_text(_markdown(MARKDOWN_LINES))
         elif name == "minified.json":

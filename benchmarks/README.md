@@ -60,18 +60,23 @@ does not change when Runyte's own source does.
 | `medium.rs` | A realistic working file. |
 | `large.rs` | A document large enough that parsing dominates everything else. |
 | `large.txt` | The same bytes with no language. The difference from `large.rs` is parsing; what remains is reading the file. |
-| `large.md` | The one fixture every measured editor parses with tree-sitter, so it is the only row where a cross-editor comparison is between editors doing the same work. |
+| `large.lua` | General-purpose source code that every measured editor parses with one tree-sitter grammar. This is the fair cross-editor code row. |
+| `large.md` | Markdown that every measured editor parses with tree-sitter. This is a fair cross-editor markup row, but it uses block and inline grammars through injections. |
 | `minified.json` | One very long line, which stresses everything that works outward from the start of a line rather than per row. |
 
-`large.md` exists because the source-code fixtures do not compare editors fairly:
-an editor without a parser for the language falls back to regular expressions
-over the visible window. Neovim bundles a Markdown parser, Helix ships one, and
-Runyte links one, so all three build a tree over the whole document.
+`large.lua` and `large.md` exist because the Rust source fixtures do not compare
+editors fairly: an editor without a parser for the language falls back to regular
+expressions over the visible window. Neovim, Helix, and Runyte all ship and
+enable Lua and Markdown parsers, so all three build a tree over each document.
 
-Its fenced code blocks deliberately carry no info string. A tagged fence injects
-another language, and each editor injects only the languages it actually has, so
-tagged fences would put the editors' differing grammar inventories back into the
-measurement. Untagged fences inject nothing anywhere.
+The Lua fixture contains no comments, long strings, or calls recognized by any
+editor's Lua injection query. All three therefore parse it with the Lua grammar
+alone, making it the source-code row that supports a cross-editor comparison.
+
+The Markdown fixture's fenced code blocks deliberately carry no info string. A
+tagged fence injects another language, and each editor injects only the languages
+it actually has, so tagged fences would put the editors' differing grammar
+inventories back into the measurement. Untagged fences inject nothing anywhere.
 
 Markdown is two grammars — block and inline — driven through injections, so this
 row reports how the editors compare *on Markdown*. It is not a stand-in for how
@@ -88,7 +93,10 @@ document. Those are different amounts of work and the times are not comparable.
 Three kinds of row, in decreasing order of how much they support a cross-editor
 claim:
 
-- `large.md` — every editor parses it with tree-sitter. This is the fair row.
+- `large.lua` — every editor parses it with the Lua grammar alone. This is the
+  fair source-code row.
+- `large.md` — every editor parses it with tree-sitter. This is the fair markup
+  row, with separate block and inline Markdown grammars.
 - The `.txt` rows — no editor claims a language, so they compare reading and
   drawing alone.
 - The `.rs` and `.json` rows — comparable only if every editor has a parser for
