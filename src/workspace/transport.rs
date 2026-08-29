@@ -290,7 +290,7 @@ impl LocalEndpoint {
         })
     }
 
-    fn from_registered(metadata: &EndpointMetadata, registry: PathBuf) -> Result<Self> {
+    fn from_registered(metadata: &EndpointMetadata, registration: &Path) -> Result<Self> {
         let project_root = decode_path(metadata.project_root_bytes.clone());
         let socket = decode_path(metadata.socket_bytes.clone());
         ensure!(
@@ -315,15 +315,26 @@ impl LocalEndpoint {
             })
             .and_then(Path::parent)
             .map(Path::to_path_buf);
+        let registry = registration
+            .parent()
+            .context("host registration has no registry directory")?
+            .to_path_buf();
+        let inventory_row = registration
+            .file_name()
+            .is_some_and(|name| name == inventory_registration_file_name(metadata).as_str());
         Ok(Self {
             metadata: directory.join("endpoint.json"),
             directory,
             socket,
             project_root,
             id: metadata.id.clone(),
-            registry: Some(registry),
+            registry: (!inventory_row).then_some(registry.clone()),
             secondary_registry: None,
-            inventory_registry: all_hosts_registry_root(),
+            inventory_registry: if inventory_row {
+                Some(registry)
+            } else {
+                all_hosts_registry_root()
+            },
             test_supervisor: None,
             name_file: None,
             runtime_root,
@@ -423,7 +434,6 @@ impl LocalEndpoint {
             Some(_) => match PrivateFileLock::acquire(
                 self.registry.as_deref(),
                 self.secondary_registry.as_deref(),
-                None,
                 self.name_file.as_deref().and_then(Path::parent),
                 ".host-names.lock",
                 "session name",
@@ -624,7 +634,6 @@ impl LocalEndpoint {
         let _name_lock = PrivateFileLock::acquire(
             self.registry.as_deref(),
             self.secondary_registry.as_deref(),
-            None,
             self.name_file.as_deref().and_then(Path::parent),
             ".host-names.lock",
             "session name",
@@ -656,7 +665,6 @@ impl LocalEndpoint {
         let _name_lock = PrivateFileLock::acquire(
             self.registry.as_deref(),
             self.secondary_registry.as_deref(),
-            None,
             self.name_file.as_deref().and_then(Path::parent),
             ".host-names.lock",
             "session name",
@@ -676,16 +684,9 @@ impl LocalEndpoint {
     fn publish_metadata(&self, metadata: &EndpointMetadata) -> Result<()> {
         validate_metadata_fields(metadata)?;
         self.verify_metadata_identity(metadata)?;
-        for registry in [
-            self.registry.as_ref(),
-            self.secondary_registry.as_ref(),
-            self.inventory_registry.as_ref(),
-        ]
-        .into_iter()
-        .flatten()
-        {
-            prepare_private_directory(registry)?;
-            write_json_atomic(&registry.join(format!("{}.json", self.id)), metadata)?;
+        for path in self.registration_paths(metadata) {
+            prepare_private_directory(path.parent().expect("registration has a parent"))?;
+            write_json_atomic(&path, metadata)?;
         }
         // Endpoint metadata is the readiness marker used by startup and
         // connection paths. Publish it only after every registry row so that
@@ -706,15 +707,15 @@ impl LocalEndpoint {
     }
 
     fn registrations_match(&self, expected_pid: Option<u32>) -> Result<bool> {
-        for registry in [
-            self.registry.as_ref(),
-            self.secondary_registry.as_ref(),
-            self.inventory_registry.as_ref(),
-        ]
-        .into_iter()
-        .flatten()
-        {
-            let path = registry.join(format!("{}.json", self.id));
+        let metadata = EndpointMetadata {
+            protocol: PROTOCOL_VERSION,
+            pid: expected_pid.unwrap_or_else(std::process::id),
+            id: self.id.clone(),
+            name: None,
+            project_root_bytes: encode_path(&self.project_root),
+            socket_bytes: encode_path(&self.socket),
+        };
+        for path in self.registration_paths(&metadata) {
             let metadata = match read_endpoint_metadata(&path, "host registry entry") {
                 Ok(metadata) => metadata,
                 Err(error) if is_not_found(&error) => continue,
@@ -728,15 +729,15 @@ impl LocalEndpoint {
     }
 
     fn remove_registrations_if_matches(&self, expected_pid: Option<u32>) -> Result<()> {
-        for registry in [
-            self.registry.as_ref(),
-            self.secondary_registry.as_ref(),
-            self.inventory_registry.as_ref(),
-        ]
-        .into_iter()
-        .flatten()
-        {
-            let path = registry.join(format!("{}.json", self.id));
+        let metadata = EndpointMetadata {
+            protocol: PROTOCOL_VERSION,
+            pid: expected_pid.unwrap_or_else(std::process::id),
+            id: self.id.clone(),
+            name: None,
+            project_root_bytes: encode_path(&self.project_root),
+            socket_bytes: encode_path(&self.socket),
+        };
+        for path in self.registration_paths(&metadata) {
             let metadata = match read_endpoint_metadata(&path, "host registry entry") {
                 Ok(metadata) => metadata,
                 Err(error) if is_not_found(&error) => continue,
@@ -756,11 +757,24 @@ impl LocalEndpoint {
             && expected_pid.is_none_or(|pid| metadata.pid == pid)
     }
 
+    fn registration_paths(&self, metadata: &EndpointMetadata) -> Vec<PathBuf> {
+        let mut paths = [self.registry.as_ref(), self.secondary_registry.as_ref()]
+            .into_iter()
+            .flatten()
+            .map(|registry| registry.join(format!("{}.json", self.id)))
+            .collect::<Vec<_>>();
+        if let Some(inventory) = self.inventory_registry.as_deref() {
+            paths.push(inventory.join(inventory_registration_file_name(metadata)));
+        }
+        paths.sort();
+        paths.dedup();
+        paths
+    }
+
     fn lock_identity(&self) -> Result<PrivateFileLock> {
         PrivateFileLock::acquire(
             self.registry.as_deref(),
             self.secondary_registry.as_deref(),
-            self.inventory_registry.as_deref(),
             self.name_file.as_deref().and_then(Path::parent),
             &format!(".host-{}.lock", self.id),
             "host identity",
@@ -770,11 +784,6 @@ impl LocalEndpoint {
     fn ensure_no_registered_host(&self) -> Result<()> {
         let mut roots = registry_roots_with(self.registry.as_deref());
         if let Some(registry) = self.secondary_registry.as_deref()
-            && !roots.iter().any(|root| root == registry)
-        {
-            roots.push(registry.to_path_buf());
-        }
-        if let Some(registry) = self.inventory_registry.as_deref()
             && !roots.iter().any(|root| root == registry)
         {
             roots.push(registry.to_path_buf());
@@ -911,7 +920,7 @@ pub(super) fn registered_hosts_in(roots: &[PathBuf]) -> Result<Vec<RegisteredHos
             if validate_registered_metadata(&metadata, &path).is_err() {
                 continue;
             }
-            let Ok(endpoint) = LocalEndpoint::from_registered(&metadata, registry.clone()) else {
+            let Ok(endpoint) = LocalEndpoint::from_registered(&metadata, &path) else {
                 continue;
             };
             let process_visible = process_is_alive(metadata.pid)?;
@@ -960,7 +969,7 @@ pub(super) fn registered_hosts_in(roots: &[PathBuf]) -> Result<Vec<RegisteredHos
                 // A saturated or unresponsive endpoint is omitted without
                 // deleting its registration. Timeout is not proof of death.
             }
-            if !seen.insert(live_metadata.id.clone()) {
+            if !seen.insert((live_metadata.id.clone(), live_metadata.socket_bytes.clone())) {
                 continue;
             }
             hosts.push(RegisteredHost {
@@ -1114,13 +1123,20 @@ fn validate_registered_metadata(metadata: &EndpointMetadata, path: &Path) -> Res
         path.display()
     );
     let expected_file = format!("{}.json", metadata.id);
+    let expected_inventory_file = inventory_registration_file_name(metadata);
     ensure!(
-        path.file_name()
-            .is_some_and(|name| name == expected_file.as_str()),
+        path.file_name().is_some_and(|name| {
+            name == expected_file.as_str() || name == expected_inventory_file.as_str()
+        }),
         "host registry filename does not match its ID: {}",
         path.display()
     );
     Ok(())
+}
+
+fn inventory_registration_file_name(metadata: &EndpointMetadata) -> String {
+    let endpoint = &crate::hash::sha256_hex(&metadata.socket_bytes)[..HOST_ID_LENGTH];
+    format!("{}-{endpoint}.json", metadata.id)
 }
 
 fn validate_metadata_fields(metadata: &EndpointMetadata) -> Result<()> {
@@ -1257,14 +1273,13 @@ impl PrivateFileLock {
     fn acquire(
         registry: Option<&Path>,
         secondary_registry: Option<&Path>,
-        inventory_registry: Option<&Path>,
         local_fallback: Option<&Path>,
         file_name: &str,
         description: &str,
     ) -> Result<Self> {
         use std::os::{fd::AsRawFd, unix::fs::OpenOptionsExt};
 
-        let mut roots = [registry, secondary_registry, inventory_registry]
+        let mut roots = [registry, secondary_registry]
             .into_iter()
             .flatten()
             .map(Path::to_path_buf)
@@ -1366,7 +1381,66 @@ fn all_hosts_registry_root() -> Option<PathBuf> {
     {
         return Some(path);
     }
-    Some(PathBuf::from("/tmp").join(format!("runyte-{}-all-hosts", unsafe { libc::geteuid() })))
+    system_home_directory().map(|home| all_hosts_registry_root_for_home(&home))
+}
+
+fn all_hosts_registry_root_for_home(home: &Path) -> PathBuf {
+    if cfg!(target_os = "macos") {
+        home.join("Library/Caches/runyte/all-hosts")
+    } else {
+        home.join(".cache/runyte/all-hosts")
+    }
+}
+
+/// Reads the account database rather than `$HOME`, which may deliberately be
+/// changed alongside XDG variables by a namespace or test harness. The
+/// account-owned parent prevents another user from pre-claiming a predictable
+/// path in the system temporary directory.
+fn system_home_directory() -> Option<PathBuf> {
+    use std::{ffi::CStr, os::unix::ffi::OsStringExt};
+
+    // SAFETY: `sysconf` reads one process configuration value and has no
+    // pointer preconditions.
+    let configured = unsafe { libc::sysconf(libc::_SC_GETPW_R_SIZE_MAX) };
+    let mut capacity = if configured > 0 {
+        usize::try_from(configured).ok()?
+    } else {
+        16 * 1024
+    }
+    .clamp(1024, 1024 * 1024);
+    loop {
+        let mut record = std::mem::MaybeUninit::<libc::passwd>::uninit();
+        let mut result = std::ptr::null_mut();
+        let mut storage = vec![0_u8; capacity];
+        // SAFETY: `record`, `storage`, and `result` are live writable storage;
+        // the buffer length matches the allocation and the UID is valid.
+        let status = unsafe {
+            libc::getpwuid_r(
+                libc::geteuid(),
+                record.as_mut_ptr(),
+                storage.as_mut_ptr().cast::<libc::c_char>(),
+                storage.len(),
+                &mut result,
+            )
+        };
+        if status == libc::ERANGE && capacity < 1024 * 1024 {
+            capacity = (capacity * 2).min(1024 * 1024);
+            continue;
+        }
+        if status != 0 || result.is_null() {
+            return None;
+        }
+        // SAFETY: a successful `getpwuid_r` initialized `record` and returned
+        // its address through `result`.
+        if unsafe { (*result).pw_dir.is_null() } {
+            return None;
+        }
+        // SAFETY: the successful lookup placed a NUL-terminated directory
+        // string inside `storage`, which remains alive for this copy.
+        let directory = unsafe { CStr::from_ptr((*result).pw_dir) };
+        let path = PathBuf::from(std::ffi::OsString::from_vec(directory.to_bytes().to_vec()));
+        return (path.is_absolute() && !path.as_os_str().is_empty()).then_some(path);
+    }
 }
 
 fn registry_roots_with(extra: Option<&Path>) -> Vec<PathBuf> {
@@ -2428,7 +2502,6 @@ mod tests {
                     Some(&first_primary),
                     Some(&first_shared),
                     None,
-                    None,
                     ".test.lock",
                     "test",
                 )
@@ -2443,7 +2516,6 @@ mod tests {
                 let _locks = PrivateFileLock::acquire(
                     Some(&second_primary),
                     Some(&second_shared),
-                    None,
                     None,
                     ".test.lock",
                     "test",
@@ -2536,6 +2608,19 @@ mod tests {
         assert_eq!(rejected.socket(), fallback.socket());
         fs::remove_dir_all(runtime).unwrap();
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn owner_wide_inventory_is_anchored_below_the_account_home() {
+        let home = Path::new("/accounts/example");
+        let inventory = all_hosts_registry_root_for_home(home);
+        assert!(inventory.starts_with(home));
+        assert_eq!(inventory.file_name().unwrap(), "all-hosts");
+        assert!(!inventory.starts_with(std::env::temp_dir()));
+        #[cfg(target_os = "macos")]
+        assert_eq!(inventory, home.join("Library/Caches/runyte/all-hosts"));
+        #[cfg(not(target_os = "macos"))]
+        assert_eq!(inventory, home.join(".cache/runyte/all-hosts"));
     }
 
     async fn bind_or_skip(endpoint: &LocalEndpoint) -> Option<LocalServer> {
@@ -2693,6 +2778,17 @@ mod tests {
         let hosts = registered_hosts_in(std::slice::from_ref(&registry)).unwrap();
         assert_eq!(hosts.len(), 2);
         let inventory = runtime.join("runyte/all-hosts");
+        let inventory_entries = fs::read_dir(&inventory)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .collect::<Vec<_>>();
+        assert_eq!(inventory_entries.len(), 2);
+        assert!(
+            inventory_entries.iter().all(|path| path
+                .extension()
+                .is_some_and(|extension| extension == "json")),
+            "owner-wide inventory must not retain identity lock files"
+        );
         assert_eq!(
             registered_hosts_in(std::slice::from_ref(&inventory))
                 .unwrap()

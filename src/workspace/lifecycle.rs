@@ -27,7 +27,7 @@ use crate::{config, external_open, project_root};
 
 use super::transport::{
     IncompatibleHost, LocalClient, LocalEndpoint, PublishedHost, RegisteredHost, process_is_alive,
-    registered_hosts, registered_hosts_all_namespaces, request_process_exit,
+    registered_hosts, request_process_exit,
 };
 
 /// How long to wait for a freshly started host to accept a connection, and how
@@ -72,16 +72,6 @@ pub async fn connect_control(endpoint: &LocalEndpoint) -> Result<LocalClient> {
 pub fn resolve_registered_host(selector: &Path) -> Result<RegisteredHost> {
     let working_directory = std::env::current_dir().ok();
     resolve_registered_host_from(selector, working_directory.as_deref(), registered_hosts()?)
-}
-
-/// Resolves a running host through the explicit owner-wide inventory.
-pub fn resolve_registered_host_all_namespaces(selector: &Path) -> Result<RegisteredHost> {
-    let working_directory = std::env::current_dir().ok();
-    resolve_registered_host_from(
-        selector,
-        working_directory.as_deref(),
-        registered_hosts_all_namespaces()?,
-    )
 }
 
 /// Resolves a running host while interpreting relative directory selectors

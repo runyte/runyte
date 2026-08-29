@@ -64,6 +64,21 @@ fn test_cache_dir() -> &'static Path {
         .as_path()
 }
 
+fn bundled_runyte() -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_runyte"));
+    isolate_runyte_children(&mut command);
+    command
+}
+
+fn isolate_runyte_children(command: &mut Command) {
+    command
+        .env(
+            "RUNYTE_ALL_HOSTS_DIR",
+            test_runtime_dir().join("runyte/all-hosts"),
+        )
+        .env("RUNYTE_TEST_SUPERVISOR_PID", std::process::id().to_string());
+}
+
 struct ChildGuard(Option<Child>);
 
 impl Drop for ChildGuard {
@@ -76,12 +91,7 @@ impl Drop for ChildGuard {
 }
 
 fn spawn_in_pty(command: &mut Command) -> (Child, File) {
-    command
-        .env(
-            "RUNYTE_ALL_HOSTS_DIR",
-            test_runtime_dir().join("runyte/all-hosts"),
-        )
-        .env("RUNYTE_TEST_SUPERVISOR_PID", std::process::id().to_string());
+    isolate_runyte_children(command);
     let (child, master, _) = spawn_in_pty_with_initial_termios(command);
     (child, master)
 }
@@ -164,7 +174,7 @@ fn terminal_attributes(descriptor: std::os::fd::RawFd) -> libc::termios {
 
 fn spawn_wait_in_pty(root: &Path, target: &str) -> (Child, File) {
     spawn_in_pty(
-        Command::new(env!("CARGO_BIN_EXE_runyte"))
+        bundled_runyte()
             .arg("--wait")
             .arg(target)
             .current_dir(root)
@@ -444,7 +454,7 @@ fn termination_signal_restores_the_terminal_and_preserves_its_exit_status() {
     let root = project();
     let config = default_config(&root);
     let (mut child, master, initial) = spawn_in_pty_with_initial_termios(
-        Command::new(env!("CARGO_BIN_EXE_runyte"))
+        bundled_runyte()
             .args(["--standalone", "--config"])
             .arg(config)
             .arg("note.txt")
@@ -616,7 +626,7 @@ async fn start_host_opening(
     endpoint: &LocalEndpoint,
     target: Option<&str>,
 ) -> Option<ChildGuard> {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_runyte"));
+    let mut command = bundled_runyte();
     command.arg("--serve");
     if let Some(target) = target {
         command.arg(target);
@@ -872,7 +882,7 @@ async fn wait_cli_completes_without_stopping_host_or_unrelated_buffers() {
         .unwrap();
     let _ = response(&mut interactive).await;
     let _ = response(&mut interactive).await;
-    let mut waiter = Command::new(env!("CARGO_BIN_EXE_runyte"))
+    let mut waiter = bundled_runyte()
         .arg("--wait")
         .arg("note.txt")
         .current_dir(&root)
@@ -953,7 +963,7 @@ async fn killing_the_host_fails_an_outstanding_wait_process() {
         .unwrap();
     let _ = response(&mut interactive).await;
     let _ = response(&mut interactive).await;
-    let mut waiter = Command::new(env!("CARGO_BIN_EXE_runyte"))
+    let mut waiter = bundled_runyte()
         .arg("--wait")
         .arg("note.txt")
         .current_dir(&root)
@@ -1011,7 +1021,9 @@ async fn git_commit_wait_closes_its_buffer_without_detaching_an_existing_tui() {
     // enter Insert rather than becoming part of the commit subject.
     send_input_expect_frame(&mut interactive, InputEvent::Key(KeyStroke::char('i'))).await;
     let editor = format!("{} --wait", env!("CARGO_BIN_EXE_runyte"));
-    let mut commit = Command::new("git")
+    let mut commit = Command::new("git");
+    isolate_runyte_children(&mut commit);
+    let mut commit = commit
         .arg("commit")
         .current_dir(&root)
         .env("GIT_EDITOR", editor)
@@ -1311,7 +1323,7 @@ async fn wait_paths_are_resolved_in_the_callers_directory_without_utf8_loss() {
         .unwrap();
     let _ = response(&mut interactive).await;
     let _ = response(&mut interactive).await;
-    let mut wait_command = Command::new(env!("CARGO_BIN_EXE_runyte"));
+    let mut wait_command = bundled_runyte();
     wait_command.arg("--wait").args(&wait_names);
     let mut waiter = wait_command
         .current_dir(&nested)
@@ -1594,7 +1606,7 @@ async fn worktree_switch_reuses_the_destination_host_through_the_real_tui_launch
     let mut source = connect_control(&source_endpoint).await;
     let mut destination = connect_control(&linked_endpoint).await;
     let (switcher, mut terminal) = spawn_in_pty(
-        Command::new(env!("CARGO_BIN_EXE_runyte"))
+        bundled_runyte()
             .arg("--persistent")
             .current_dir(&root)
             .env("XDG_RUNTIME_DIR", test_runtime_dir())
@@ -1716,7 +1728,7 @@ async fn incompatible_worktree_host_returns_the_tui_to_its_source() {
     };
     let mut source = connect_control(&source_endpoint).await;
     let (switcher, mut terminal) = spawn_in_pty(
-        Command::new(env!("CARGO_BIN_EXE_runyte"))
+        bundled_runyte()
             .arg("--persistent")
             .current_dir(&root)
             .env("XDG_RUNTIME_DIR", test_runtime_dir())
@@ -1821,7 +1833,7 @@ async fn creating_a_worktree_starts_and_attaches_its_persistent_session() {
     };
     let mut source = connect_control(&source_endpoint).await;
     let (switcher, mut terminal) = spawn_in_pty(
-        Command::new(env!("CARGO_BIN_EXE_runyte"))
+        bundled_runyte()
             .arg("--persistent")
             .current_dir(&root)
             .env("XDG_RUNTIME_DIR", test_runtime_dir())
@@ -2296,7 +2308,7 @@ async fn wait_preserves_the_error_from_a_live_incompatible_host() {
         return;
     };
 
-    let output = Command::new(env!("CARGO_BIN_EXE_runyte"))
+    let output = bundled_runyte()
         .arg("--wait")
         .arg("note.txt")
         .current_dir(&root)
@@ -2352,7 +2364,7 @@ async fn a_live_incompatible_host_is_listed_and_can_be_force_stopped() {
     };
     record_recent(&root);
 
-    let listed = Command::new(env!("CARGO_BIN_EXE_runyte"))
+    let listed = bundled_runyte()
         .args(["--config".as_ref(), config.as_os_str(), "-l".as_ref()])
         .current_dir(&root)
         .env("XDG_RUNTIME_DIR", test_runtime_dir())
@@ -2369,7 +2381,7 @@ async fn a_live_incompatible_host_is_listed_and_can_be_force_stopped() {
         "{listing}"
     );
 
-    let stopped = Command::new(env!("CARGO_BIN_EXE_runyte"))
+    let stopped = bundled_runyte()
         .args([
             "--config".as_ref(),
             config.as_os_str(),
@@ -2398,7 +2410,7 @@ async fn a_live_incompatible_host_is_listed_and_can_be_force_stopped() {
     assert!(!endpoint.metadata().exists());
     assert!(!endpoint.socket().exists());
 
-    let relisted = Command::new(env!("CARGO_BIN_EXE_runyte"))
+    let relisted = bundled_runyte()
         .args(["--config".as_ref(), config.as_os_str(), "-l".as_ref()])
         .current_dir(&root)
         .env("XDG_RUNTIME_DIR", test_runtime_dir())
@@ -2618,7 +2630,7 @@ async fn relative_workspace_attach_uses_editor_cwd_and_keeps_one_client_process(
     let mut source = connect_control(&source_endpoint).await;
     let mut destination = connect_control(&linked_endpoint).await;
     let (switcher, mut terminal) = spawn_in_pty(
-        Command::new(env!("CARGO_BIN_EXE_runyte"))
+        bundled_runyte()
             .arg("--persistent")
             .current_dir(&root)
             .env("XDG_RUNTIME_DIR", test_runtime_dir())

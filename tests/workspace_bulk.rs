@@ -547,3 +547,83 @@ fn explicit_all_namespaces_lists_and_stops_hosts_outside_the_current_registry() 
 
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn identical_workspace_hosts_remain_isolated_until_an_explicit_owner_wide_stop() {
+    let root = sandbox();
+    let first_runtime = root.join("runtime-one");
+    let second_runtime = root.join("runtime-two");
+    let first_cache = root.join("cache-one");
+    let second_cache = root.join("cache-two");
+    for runtime in [&first_runtime, &second_runtime] {
+        fs::create_dir_all(runtime).unwrap();
+        fs::set_permissions(runtime, fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let project = root.join("project");
+    fs::create_dir_all(project.join(".runyte")).unwrap();
+    let display = project.canonicalize().unwrap().display().to_string();
+
+    let mut first_host = spawn_host(&project, &first_runtime, &first_cache);
+    let mut second_host = spawn_host(&project, &second_runtime, &second_cache);
+    for (runtime, cache, host) in [
+        (&first_runtime, &first_cache, &mut first_host),
+        (&second_runtime, &second_cache, &mut second_host),
+    ] {
+        if wait_for_listing(&root, runtime, cache, &[&display, "running"]).is_none() {
+            if socket_creation_is_unavailable(host) {
+                fs::remove_dir_all(root).unwrap();
+                return;
+            }
+            panic!("same-workspace host did not become running");
+        }
+    }
+
+    let inventory_rows = fs::read_dir(root.join("all-hosts"))
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter(|entry| {
+            entry
+                .path()
+                .extension()
+                .is_some_and(|extension| extension == "json")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(inventory_rows.len(), 2);
+    assert_ne!(inventory_rows[0].file_name(), inventory_rows[1].file_name());
+
+    let listed = run_cli(
+        &root,
+        &first_runtime,
+        &first_cache,
+        &["--session-list", "--all-namespaces"],
+    );
+    assert!(
+        listed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&listed.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(listed.stdout)
+            .unwrap()
+            .lines()
+            .filter(|line| line.contains(&display) && line.contains("running"))
+            .count(),
+        2
+    );
+
+    let stopped = run_cli(
+        &root,
+        &first_runtime,
+        &first_cache,
+        &["--session-stop-all", "--all-namespaces"],
+    );
+    assert!(
+        stopped.status.success(),
+        "{}",
+        String::from_utf8_lossy(&stopped.stderr)
+    );
+    assert!(first_host.0.take().unwrap().wait().unwrap().success());
+    assert!(second_host.0.take().unwrap().wait().unwrap().success());
+
+    fs::remove_dir_all(root).unwrap();
+}

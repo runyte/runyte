@@ -58,6 +58,21 @@ fn test_cache_dir() -> &'static Path {
         .as_path()
 }
 
+fn isolated_runyte(executable: impl AsRef<std::ffi::OsStr>) -> Command {
+    let mut command = Command::new(executable);
+    command
+        .env(
+            "RUNYTE_ALL_HOSTS_DIR",
+            test_runtime_dir().join("runyte/all-hosts"),
+        )
+        .env("RUNYTE_TEST_SUPERVISOR_PID", std::process::id().to_string());
+    command
+}
+
+fn bundled_runyte() -> Command {
+    isolated_runyte(Path::new(env!("CARGO_BIN_EXE_runyte")))
+}
+
 struct ChildGuard(Option<Child>);
 
 impl Drop for ChildGuard {
@@ -79,16 +94,11 @@ fn git(root: &Path, arguments: &[&str]) {
 }
 
 fn run_cli(root: &Path, arguments: &[&str]) -> std::process::Output {
-    Command::new(env!("CARGO_BIN_EXE_runyte"))
+    bundled_runyte()
         .args(arguments)
         .current_dir(root)
         .env("XDG_RUNTIME_DIR", test_runtime_dir())
         .env("XDG_CACHE_HOME", test_cache_dir())
-        .env(
-            "RUNYTE_ALL_HOSTS_DIR",
-            test_runtime_dir().join("runyte/all-hosts"),
-        )
-        .env("RUNYTE_TEST_SUPERVISOR_PID", std::process::id().to_string())
         .output()
         .unwrap()
 }
@@ -459,7 +469,7 @@ fn unread_errors(response: &HostResponse) -> usize {
 async fn detach_reattach_preserves_live_editor_and_refuses_a_second_tui() {
     let root = project();
     let executable = env!("CARGO_BIN_EXE_runyte");
-    let child = Command::new(executable)
+    let child = isolated_runyte(executable)
         .arg("--serve")
         .arg("note.txt")
         .current_dir(&root)
@@ -609,7 +619,7 @@ async fn detach_reattach_preserves_live_editor_and_refuses_a_second_tui() {
 async fn tutorial_persistent_lesson_completes_across_a_real_client_reattachment() {
     let root = project();
     let executable = env!("CARGO_BIN_EXE_runyte");
-    let child = Command::new(executable)
+    let child = isolated_runyte(executable)
         .arg("--serve")
         .arg("note.txt")
         .current_dir(&root)
@@ -699,7 +709,7 @@ async fn tutorial_persistent_lesson_completes_across_a_real_client_reattachment(
 async fn terminal_pid_output_and_input_survive_detach_disconnect_and_reattach() {
     let root = project();
     let executable = env!("CARGO_BIN_EXE_runyte");
-    let child = Command::new(executable)
+    let child = isolated_runyte(executable)
         .arg("--serve")
         .current_dir(&root)
         .env("XDG_RUNTIME_DIR", test_runtime_dir())
@@ -828,7 +838,7 @@ async fn terminal_pid_output_and_input_survive_detach_disconnect_and_reattach() 
 #[tokio::test]
 async fn hidden_terminal_output_while_detached_is_unread_after_reattach() {
     let root = project();
-    let child = Command::new(env!("CARGO_BIN_EXE_runyte"))
+    let child = bundled_runyte()
         .arg("--serve")
         .current_dir(&root)
         .env("XDG_RUNTIME_DIR", test_runtime_dir())
@@ -965,7 +975,7 @@ async fn hidden_terminal_output_while_detached_is_unread_after_reattach() {
 async fn detach_reattach_preserves_notification_history_and_unread_state() {
     let root = project();
     let executable = env!("CARGO_BIN_EXE_runyte");
-    let child = Command::new(executable)
+    let child = isolated_runyte(executable)
         .arg("--serve")
         .arg("note.txt")
         .current_dir(&root)
@@ -1059,7 +1069,7 @@ async fn killed_host_leaves_files_intact_and_its_endpoint_is_recoverable() {
     let root = project();
     let executable = env!("CARGO_BIN_EXE_runyte");
     let spawn = || {
-        Command::new(executable)
+        isolated_runyte(executable)
             .arg("--serve")
             .arg("note.txt")
             .current_dir(&root)
@@ -1141,7 +1151,7 @@ async fn sessions_list_rename_restart_and_resolve_by_id_name_or_directory() {
     let cwd_file = cwd_file.to_str().unwrap();
     let executable = env!("CARGO_BIN_EXE_runyte");
     let spawn = || {
-        Command::new(executable)
+        isolated_runyte(executable)
             .arg("--serve")
             .current_dir(&root)
             .env("XDG_RUNTIME_DIR", test_runtime_dir())
@@ -1269,7 +1279,7 @@ async fn sessions_list_rename_restart_and_resolve_by_id_name_or_directory() {
 async fn a_new_workspace_is_listed_and_resolved_by_its_default_directory_name() {
     let root = project();
     let name = root.file_name().unwrap().to_str().unwrap().to_owned();
-    let child = Command::new(env!("CARGO_BIN_EXE_runyte"))
+    let child = bundled_runyte()
         .arg("--serve")
         .current_dir(&root)
         .env("XDG_RUNTIME_DIR", test_runtime_dir())
@@ -1311,7 +1321,7 @@ async fn restart_keeps_a_fallback_host_on_its_original_endpoint() {
     let root = project();
     let cache = root.join("xdg-cache");
     let mut original = ChildGuard(Some(
-        Command::new(env!("CARGO_BIN_EXE_runyte"))
+        bundled_runyte()
             .arg("--serve")
             .current_dir(&root)
             .env_remove("XDG_RUNTIME_DIR")
@@ -1329,7 +1339,7 @@ async fn restart_keeps_a_fallback_host_on_its_original_endpoint() {
     );
 
     let mut duplicate = ChildGuard(Some(
-        Command::new(env!("CARGO_BIN_EXE_runyte"))
+        bundled_runyte()
             .arg("--serve")
             .current_dir(&root)
             .env("XDG_RUNTIME_DIR", test_runtime_dir())
@@ -1353,19 +1363,18 @@ async fn restart_keeps_a_fallback_host_on_its_original_endpoint() {
     duplicate.0.take();
 
     let selector = root.to_string_lossy();
-    let restart = Command::new(env!("CARGO_BIN_EXE_runyte"))
+    let restart = bundled_runyte()
         .args(["--session-restart", selector.as_ref()])
         .current_dir(&root)
         .env("XDG_RUNTIME_DIR", test_runtime_dir())
         .env("XDG_CACHE_HOME", &cache)
-        .env("RUNYTE_TEST_SUPERVISOR_PID", std::process::id().to_string())
         .output()
         .unwrap();
     assert_cli_success(&restart);
     assert!(original.0.take().unwrap().wait().unwrap().success());
     assert!(endpoint.verify_for_connect().is_ok());
 
-    let shutdown = Command::new(env!("CARGO_BIN_EXE_runyte"))
+    let shutdown = bundled_runyte()
         .args(["--session-stop", selector.as_ref()])
         .current_dir(&root)
         .env("XDG_RUNTIME_DIR", test_runtime_dir())
@@ -1396,7 +1405,7 @@ async fn an_exact_name_wins_over_another_hosts_id_prefix() {
     let name = &prefixed_endpoint.id()[..1];
     let spawn = |root: &Path| {
         ChildGuard(Some(
-            Command::new(env!("CARGO_BIN_EXE_runyte"))
+            bundled_runyte()
                 .arg("--serve")
                 .current_dir(root)
                 .env("XDG_RUNTIME_DIR", test_runtime_dir())
@@ -1436,7 +1445,7 @@ async fn an_unusable_cache_registry_falls_back_to_the_runtime_registry() {
     let unusable_cache = root.join("cache-is-a-file");
     fs::write(&unusable_cache, b"not a directory").unwrap();
     let mut host = ChildGuard(Some(
-        Command::new(env!("CARGO_BIN_EXE_runyte"))
+        bundled_runyte()
             .arg("--serve")
             .current_dir(&root)
             .env("XDG_RUNTIME_DIR", test_runtime_dir())
@@ -1458,7 +1467,7 @@ async fn an_unusable_cache_registry_falls_back_to_the_runtime_registry() {
         "host did not fall back to its runtime registry"
     );
 
-    let listing = Command::new(env!("CARGO_BIN_EXE_runyte"))
+    let listing = bundled_runyte()
         .arg("--session-list")
         .current_dir(&root)
         .env("XDG_RUNTIME_DIR", test_runtime_dir())
@@ -1472,7 +1481,7 @@ async fn an_unusable_cache_registry_falls_back_to_the_runtime_registry() {
             .contains(&endpoint.id()[..ABBREVIATED_WORKSPACE_ID])
     );
 
-    let shutdown = Command::new(env!("CARGO_BIN_EXE_runyte"))
+    let shutdown = bundled_runyte()
         .arg("--session-stop")
         .current_dir(&root)
         .env("XDG_RUNTIME_DIR", test_runtime_dir())
@@ -1564,12 +1573,11 @@ async fn persistent_mode_starts_the_missing_workspace_before_it_reaches_a_termin
     )
     .unwrap();
 
-    let persistent = Command::new(env!("CARGO_BIN_EXE_runyte"))
+    let persistent = bundled_runyte()
         .arg("--persistent")
         .current_dir(&root)
         .env("XDG_RUNTIME_DIR", test_runtime_dir())
         .env("XDG_CACHE_HOME", test_cache_dir())
-        .env("RUNYTE_TEST_SUPERVISOR_PID", std::process::id().to_string())
         .stdin(Stdio::null())
         .output()
         .unwrap();
@@ -1730,7 +1738,7 @@ async fn quit_here_reports_its_directory_to_a_handoff_capable_client() {
     let root = project();
     fs::create_dir(root.join("nested")).unwrap();
     fs::write(root.join("nested/deep.txt"), "deep\n").unwrap();
-    let child = Command::new(env!("CARGO_BIN_EXE_runyte"))
+    let child = bundled_runyte()
         .arg("--serve")
         .arg("nested/deep.txt")
         .current_dir(&root)

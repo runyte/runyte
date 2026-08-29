@@ -60,14 +60,14 @@ use runyte::protocol::{MAX_POINTER_REPETITIONS, WaitStatus, WaitToken, validate_
 #[cfg(unix)]
 use runyte::workspace::lifecycle::{
     HostStartup, connect_control, ensure_workspace_host, force_restart_host, force_shutdown_host,
-    resolve_registered_host, resolve_registered_host_all_namespaces,
-    resolve_registered_host_from_directory, resolve_workspace_endpoint, restart_host,
-    shutdown_host, start_detached_host, terminate_incompatible_host,
+    resolve_registered_host, resolve_registered_host_from_directory, resolve_workspace_endpoint,
+    restart_host, shutdown_host, start_detached_host, terminate_incompatible_host,
 };
 #[cfg(unix)]
 use runyte::workspace::transport::{
     ClientRequest, FeatureGroup, HostResponse, IncompatibleHost, LocalClient, LocalEndpoint,
     LocalServer, ServerEvent, TransportChange, decode_path, encode_path,
+    registered_hosts_all_namespaces,
 };
 #[cfg(unix)]
 use runyte::workspace::{
@@ -187,9 +187,17 @@ fn terminated(signal: i32) -> anyhow::Error {
 
 #[cfg(unix)]
 #[derive(Clone, Copy)]
-enum HostSupervisor {
-    Parent(libc::pid_t),
-    TestProcess(libc::pid_t),
+enum HostSupervisorKind {
+    Parent,
+    TestProcess,
+}
+
+#[cfg(unix)]
+struct HostSupervisor {
+    kind: HostSupervisorKind,
+    pid: libc::pid_t,
+    #[cfg(target_os = "linux")]
+    pidfd: Option<std::os::fd::OwnedFd>,
 }
 
 #[cfg(unix)]
@@ -204,36 +212,100 @@ impl HostSupervisor {
                 .parse::<libc::pid_t>()
                 .context("RUNYTE_TEST_SUPERVISOR_PID must be a positive process ID")?;
             anyhow::ensure!(pid > 0, "RUNYTE_TEST_SUPERVISOR_PID must be positive");
-            return Ok(Some(Self::TestProcess(pid)));
+            return Self::new(HostSupervisorKind::TestProcess, pid).map(Some);
         }
         if arguments.detached_host {
             return Ok(None);
         }
         // SAFETY: `getppid` has no preconditions and only reads process
         // metadata maintained by the kernel.
-        Ok(Some(Self::Parent(unsafe { libc::getppid() })))
+        Self::new(HostSupervisorKind::Parent, unsafe { libc::getppid() }).map(Some)
     }
 
-    fn exited(self) -> bool {
-        match self {
-            Self::Parent(parent) => {
+    fn new(kind: HostSupervisorKind, pid: libc::pid_t) -> Result<Self> {
+        #[cfg(target_os = "linux")]
+        let pidfd = open_pidfd(pid)?;
+        Ok(Self {
+            kind,
+            pid,
+            #[cfg(target_os = "linux")]
+            pidfd,
+        })
+    }
+
+    fn exited(&self) -> bool {
+        #[cfg(target_os = "linux")]
+        if let Some(pidfd) = self.pidfd.as_ref()
+            && pidfd_has_exited(pidfd)
+        {
+            return true;
+        }
+        match self.kind {
+            HostSupervisorKind::Parent => {
                 // SAFETY: `getppid` has no preconditions.
-                (unsafe { libc::getppid() }) != parent
+                (unsafe { libc::getppid() }) != self.pid
             }
-            Self::TestProcess(process) => {
+            HostSupervisorKind::TestProcess => {
                 // SAFETY: signal zero does not deliver a signal; it only asks
                 // the kernel whether this positive PID is observable.
-                let result = unsafe { libc::kill(process, 0) };
+                let result = unsafe { libc::kill(self.pid, 0) };
                 result == -1 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+                    || process_is_zombie(self.pid)
             }
         }
     }
 
-    fn pid(self) -> libc::pid_t {
-        match self {
-            Self::Parent(pid) | Self::TestProcess(pid) => pid,
-        }
+    fn pid(&self) -> libc::pid_t {
+        self.pid
     }
+}
+
+#[cfg(target_os = "linux")]
+fn open_pidfd(pid: libc::pid_t) -> Result<Option<std::os::fd::OwnedFd>> {
+    use std::os::fd::FromRawFd;
+
+    // SAFETY: `pid` is positive and the pidfd syscall takes no pointer
+    // arguments. A successful return transfers one fresh descriptor.
+    let descriptor = unsafe { libc::syscall(libc::SYS_pidfd_open, pid, 0) };
+    if descriptor >= 0 {
+        // SAFETY: a non-negative pidfd result is a fresh owned descriptor.
+        return Ok(Some(unsafe {
+            std::os::fd::OwnedFd::from_raw_fd(descriptor as libc::c_int)
+        }));
+    }
+    let error = std::io::Error::last_os_error();
+    match error.raw_os_error() {
+        Some(libc::ENOSYS | libc::EINVAL | libc::EPERM) => Ok(None),
+        Some(libc::ESRCH) => anyhow::bail!("host supervisor process {pid} already exited"),
+        _ => Err(error).context("cannot observe host supervisor process"),
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn pidfd_has_exited(pidfd: &std::os::fd::OwnedFd) -> bool {
+    use std::os::fd::AsRawFd;
+
+    let mut descriptor = libc::pollfd {
+        fd: pidfd.as_raw_fd(),
+        events: libc::POLLIN,
+        revents: 0,
+    };
+    (unsafe { libc::poll(&mut descriptor, 1, 0) }) > 0
+        && descriptor.revents & (libc::POLLIN | libc::POLLHUP | libc::POLLERR) != 0
+}
+
+#[cfg(target_os = "linux")]
+fn process_is_zombie(pid: libc::pid_t) -> bool {
+    fs::read_to_string(format!("/proc/{pid}/stat"))
+        .ok()
+        .and_then(|stat| stat.rsplit_once(") ").map(|(_, suffix)| suffix.to_owned()))
+        .and_then(|suffix| suffix.chars().next())
+        .is_some_and(|state| matches!(state, 'Z' | 'X'))
+}
+
+#[cfg(all(unix, not(target_os = "linux")))]
+fn process_is_zombie(_pid: libc::pid_t) -> bool {
+    false
 }
 
 #[cfg(not(unix))]
@@ -1478,11 +1550,14 @@ async fn run_host_server(
                 changed |= host.refresh_session_activity();
             }
             _ = idle_tick.tick() => {
-                if supervising_parent.is_some_and(HostSupervisor::exited) {
+                if supervising_parent
+                    .as_ref()
+                    .is_some_and(HostSupervisor::exited)
+                {
                     log_info!(
                         "host",
                         "foreground supervisor exited; retiring persistent session";
-                        "parent" => supervising_parent.expect("checked as some").pid()
+                        "parent" => supervising_parent.as_ref().expect("checked as some").pid()
                     );
                     shutting_down = true;
                     continue;
@@ -3018,12 +3093,26 @@ async fn stop_all_sessions(
     force: bool,
     all_namespaces: bool,
 ) -> Result<()> {
-    let workspaces = if all_namespaces {
-        known_workspaces_all_namespaces(state).await?
-    } else {
-        known_workspaces(state).await?
-    };
-    let running = workspaces
+    if all_namespaces {
+        let hosts = registered_hosts_all_namespaces()?;
+        let total = hosts.len();
+        let mut stopped = 0;
+        let mut failures = Vec::new();
+        for host in hosts {
+            match stop_selected_session(host.endpoint(), force).await {
+                Ok(()) => stopped += 1,
+                Err(error) => failures.push(format!(
+                    "{} ({}): {error:#}",
+                    host.name.as_deref().unwrap_or("unnamed"),
+                    host.project_root.display()
+                )),
+            }
+        }
+        return report_stop_all(stopped, total, failures);
+    }
+
+    let running = known_workspaces(state)
+        .await?
         .into_iter()
         .filter(|workspace| workspace.running)
         .collect::<Vec<_>>();
@@ -3031,16 +3120,8 @@ async fn stop_all_sessions(
     let mut stopped = 0;
     let mut failures = Vec::new();
     for workspace in running {
-        let endpoint = if all_namespaces {
-            resolve_registered_host_all_namespaces(&workspace.project_root)
-                .map(|host| host.endpoint().clone())
-                .or_else(|_| {
-                    resolve_registered_host(&workspace.project_root)
-                        .map(|host| host.endpoint().clone())
-                })
-        } else {
-            resolve_registered_host(&workspace.project_root).map(|host| host.endpoint().clone())
-        };
+        let endpoint =
+            resolve_registered_host(&workspace.project_root).map(|host| host.endpoint().clone());
         let result = match endpoint {
             Ok(endpoint) => stop_selected_session(&endpoint, force).await,
             Err(_) => {
@@ -3060,6 +3141,11 @@ async fn stop_all_sessions(
             )),
         }
     }
+    report_stop_all(stopped, total, failures)
+}
+
+#[cfg(unix)]
+fn report_stop_all(stopped: usize, total: usize, failures: Vec<String>) -> Result<()> {
     if failures.is_empty() {
         println!(
             "stopped {stopped} session{}",

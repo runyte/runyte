@@ -248,8 +248,13 @@ Persistent mode uses a local host process that owns the workspace state and a
 client TUI that displays it. `--persistent` starts the host when necessary and
 connects the TUI. `--serve` runs the host in the foreground instead, for direct
 supervision or diagnostics; it is also the mechanism Runyte uses when starting
-or restarting a persistent session. A foreground `--serve` host exits when its
-supervising parent process exits. Hosts detached internally by Runyte remain
+or restarting a persistent session. After a foreground `--serve` process has
+begun startup, it observes its supervising parent for the rest of its lifetime
+and exits when that process exits. Linux uses a stable process descriptor when
+the kernel provides one, so PID reuse cannot transfer that ownership. Unix
+cannot identify an original parent that disappeared before Runyte began
+executing; a service manager launching `--serve` should therefore retain and
+stop the Runyte process directly. Hosts detached internally by Runyte remain
 independent of the launcher and continue serving after it returns.
 
 `:quit` closes the active pane; from the last pane it stops a clean persistent
@@ -271,7 +276,10 @@ most recently visited first. By default it reads only the runtime and cache
 registry namespace selected by the current environment. Add
 `--all-namespaces` to include every validated live Runyte host in the current
 user's owner-wide inventory. Stopped recent-history rows remain local to the
-current namespace because there is no live host to publish them elsewhere.
+current namespace because there is no live host to publish them elsewhere. If
+two deliberately isolated namespaces host the same workspace, the broad list
+shows both live endpoints even though their workspace IDs and directories are
+the same.
 `STATE` is `running`, `stopped`, or `running (protocol N)` for a host left over
 from another version of Runyte. Such a host still holds the workspace, so
 nothing can attach to it or open a file through it, and its unsaved-buffer
@@ -323,7 +331,8 @@ non-default configuration, pass the same `--config PATH` while restarting it.
 `--session-stop-all` applies the same protected-state checks to every running
 session in the current registry namespace and continues after refusals so
 unrelated clean hosts still stop. Add `--all-namespaces` to apply it to every
-validated live host in the owner-wide inventory instead.
+validated live endpoint in the owner-wide inventory instead, including each
+copy of a workspace hosted independently in more than one namespace.
 Add `--force` to make the protected-state loss explicit for every host.
 `--session-clear-all` removes every stopped row from recent history after
 rechecking the inventory; running sessions and project directories are left
@@ -335,14 +344,19 @@ owner-only permissions. A private user-wide cache registry makes both endpoint
 locations listable, while XDG-backed hosts also publish a runtime copy so a
 missing or unusable cache does not prevent discovery. Dead registrations are
 removed while listing, and stale sockets are recovered when a new host starts.
-Each host also publishes an owner-private inventory row below the system
-temporary directory. Ordinary discovery never reads that row; it exists so an
-explicit `--all-namespaces` operation can find hosts whose XDG runtime and
-cache namespaces differ from its own. Inventory scans accept only private,
-non-symlinked records whose workspace identity, endpoint metadata, live process,
-and responsive Unix socket agree where process visibility is available. A
-responsive endpoint is retained when a PID namespace hides its process; an
-endpoint that cannot be observed conclusively is omitted without being removed.
+Each host also publishes an owner-private inventory row below the account's
+native home cache (`~/.cache/runyte/all-hosts` on Unix other than macOS and
+`~/Library/Caches/runyte/all-hosts` on macOS), resolved through the operating
+system account database rather than `$HOME`. That stable, account-owned parent
+cannot be pre-claimed by another user in the system temporary directory.
+Ordinary discovery and identity locking never read the broad inventory; it
+exists so an explicit `--all-namespaces` operation can find hosts whose XDG
+runtime and cache namespaces differ from its own. Inventory scans accept only
+private, non-symlinked records whose workspace identity, endpoint metadata,
+live process, and responsive Unix socket agree where process visibility is
+available. A responsive endpoint is retained when a PID namespace hides its
+process; an endpoint that cannot be observed conclusively is omitted without
+being removed.
 Graceful host retirement also removes its now-empty private endpoint directory.
 Persistent-session names live under the configured workspace state root,
 normally `.runyte/host-names/`. Detached startup carries the already-resolved

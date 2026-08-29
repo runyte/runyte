@@ -21,6 +21,13 @@ and unpublication when the supervisor disappears; no additional timer or idle
 wake-up was added. The internal `--detached-host` marker keeps ordinary
 production persistent sessions independent of their short-lived launcher.
 
+A follow-up hardening pass made supervisor identity stable on Linux with a
+`pidfd` when the kernel supports it, with signal-zero and zombie detection as
+the portability fallback. Every integration-test subprocess constructor now
+installs both the isolated inventory root and the test-runner supervisor, so a
+direct `--serve`, an internally detached host, and a Runyte process launched
+indirectly as Git's editor all retain the same test ownership boundary.
+
 `LocalEndpoint::publish_metadata` also publishes each live host into an
 owner-private inventory independent of XDG runtime and cache namespaces.
 Ordinary discovery, names, recent history, and lifecycle commands continue to
@@ -33,6 +40,16 @@ the Unix socket before accepting a row and does not remove a responsive host
 solely because its PID is hidden by another namespace. Graceful cleanup now
 also removes an empty per-host endpoint directory.
 
+The broad registry is publication only. It is anchored below the native
+account home returned by the operating-system account database rather than at
+a predictable system-temporary path, and it never participates in ordinary
+host identity or name locking. Inventory filenames combine the workspace
+identity with the endpoint identity, so two deliberately isolated namespaces
+may host the same workspace without overwriting or blocking each other. Broad
+listing reports both endpoints, and broad stop iterates the exact registered
+hosts rather than resolving the ambiguous workspace identity back to one of
+them.
+
 The common scope option was chosen instead of the proposed
 `--session-list-all` spelling so list and stop operations express the same
 scope without changing the established default meaning of
@@ -43,16 +60,23 @@ Regression coverage is in
 `tests/workspace_bulk.rs`:
 `detached_host_exits_and_unpublishes_when_its_test_runner_is_killed`,
 `child_guard_reaps_a_test_host_during_panic_unwinding`, and
-`explicit_all_namespaces_lists_and_stops_hosts_outside_the_current_registry`.
+`explicit_all_namespaces_lists_and_stops_hosts_outside_the_current_registry`,
+and
+`identical_workspace_hosts_remain_isolated_until_an_explicit_owner_wide_stop`.
 `src/workspace/transport.rs` adds
 `symlinked_owner_wide_inventory_is_refused_without_following_it`,
 `an_unobservable_pid_does_not_remove_a_responsive_endpoint`, and inventory
 publication and cleanup assertions in
-`registry_lists_names_rejects_duplicates_and_preserves_a_name_across_restart`.
+`registry_lists_names_rejects_duplicates_and_preserves_a_name_across_restart`;
+`owner_wide_inventory_is_anchored_below_the_account_home` covers the stable
+account-owned location.
 `tests/release_packaging.rs` verifies the public and hidden CLI surfaces.
 
 Known limitation: owner-wide discovery covers live hosts. Stopped recent
 history remains namespace-local because no live host exists to publish it.
+Unix also cannot recover the identity of an original foreground parent that
+disappeared before the Runyte executable began running; service managers must
+retain and stop the foreground process directly.
 
 ## Report
 
