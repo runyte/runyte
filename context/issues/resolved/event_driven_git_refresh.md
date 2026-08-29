@@ -82,6 +82,9 @@ its full repository/specification and retries after a bounded delay, while
 older snapshots cannot mark the cache fresh before that barrier succeeds.
 Moved staged paths retain the same canonical workspace-and-repository
 containment boundary as individual buffer tracking.
+Successful buffer saves and save-as writes use that same post-change barrier,
+so their staged base and status cannot coalesce with a read that began before
+the write or disappear when the queue is full.
 
 Tests: `git_monitor::tests::a_native_burst_produces_one_debounced_invalidation`,
 `git_monitor::tests::linked_worktree_watches_checkout_private_and_shared_metadata`,
@@ -107,6 +110,7 @@ in `src/git/service.rs` covers the post-filesystem ordering barrier;
 `app::tests::async_refresh_requests_staged_bases_only_for_visible_open_files`
 and `app::tests::closing_a_file_retires_its_staged_base`, together with
 `app::tests::save_as_retires_the_previous_paths_staged_base` and
+`app::tests::save_as_retains_one_post_write_git_barrier_when_the_queue_is_full`,
 `app::tests::an_explorer_move_reconciles_git_with_monitoring_disabled`, plus
 `app::tests::a_partial_explorer_report_retries_one_async_post_change_barrier`
 and `app::tests::a_pre_change_snapshot_cannot_mark_an_inflight_filesystem_barrier_fresh`,

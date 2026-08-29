@@ -1158,10 +1158,8 @@ impl App {
                 // Writing changes what Git reports without changing any
                 // buffer, and `:write <path>` can put a file under Git that
                 // was not there a moment ago.
-                if let Some(path) = self.buffers[buffer_id].path.clone()
-                    && self.track_in_git(&path)
-                {
-                    self.refresh_git_status();
+                if let Some(path) = self.buffers[buffer_id].path.clone() {
+                    self.reconcile_git_after_file_write(&path);
                 }
                 let path = self.buffers[buffer_id]
                     .path

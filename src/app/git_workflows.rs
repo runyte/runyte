@@ -361,6 +361,20 @@ impl App {
         let _ = self.retry_pending_git_reconciliation(Instant::now());
     }
 
+    /// Reconciles a successful buffer write without turning an external file
+    /// into a Git target merely because the workspace has a repository.
+    pub(super) fn reconcile_git_after_file_write(&mut self, path: &Path) -> bool {
+        let Some(repository) = self.git.repository() else {
+            return false;
+        };
+        if !self.workspace_contains_path(path) || !repository.contains(path) {
+            self.git.forget(path);
+            return false;
+        }
+        self.reconcile_git_after_filesystem(vec![path.to_path_buf()]);
+        true
+    }
+
     /// Retries the one conflated post-filesystem barrier without blocking the
     /// editor when the bounded service queue is full.
     pub(crate) fn retry_pending_git_reconciliation(&mut self, now: Instant) -> bool {

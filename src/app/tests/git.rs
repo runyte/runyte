@@ -3879,6 +3879,54 @@ fn save_as_retires_the_previous_paths_staged_base() {
 }
 
 #[test]
+fn save_as_retains_one_post_write_git_barrier_when_the_queue_is_full() {
+    let (root, mut app, _) = staged_project_with("save-as-async-barrier", |provider| {
+        provider
+            .with_staged("before.rs", "base\n")
+            .with_staged("after.rs", "base\n")
+    });
+    app.config.git.refresh_interval_seconds = 0;
+    let before = root.join("before.rs");
+    let after = root.join("after.rs");
+    fs::write(&before, "base\n").unwrap();
+    app.open_file(before.clone()).unwrap();
+    assert!(app.git.tracks(&before));
+    let buffer = app.active().buffer;
+    let end = app.buffers[buffer].len_chars();
+    app.buffers[buffer].apply(&Transaction::insert(end, "saved\n"));
+    let (service, paused) = GitServiceHandle::saturated_for_test();
+    app.attach_git_service(service);
+
+    app.save(Some(after.clone()), false).unwrap();
+
+    assert!(!app.status_error, "{}", app.status);
+    assert_eq!(app.buffers[buffer].path.as_deref(), Some(after.as_path()));
+    assert!(!app.git.tracks(&before));
+    assert!(!app.git.tracks(&after));
+    assert!(app.git_state.snapshot_stale());
+    assert!(!app.retry_pending_git_reconciliation(Instant::now()));
+    assert!(matches!(
+        paused.next_operation(),
+        GitOperation::Discover { .. }
+    ));
+    assert!(app.retry_pending_git_reconciliation(Instant::now()));
+    let mut ordinary_staged_read = false;
+    let reconciliation = loop {
+        match paused.next_operation() {
+            GitOperation::StagedContent { .. } => ordinary_staged_read = true,
+            GitOperation::Reconcile { spec, .. } => break spec,
+            _ => {}
+        }
+    };
+    assert!(
+        !ordinary_staged_read,
+        "save-as submitted a coalescible staged-content read"
+    );
+    assert_eq!(reconciliation.staged_paths, vec![after]);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn an_explorer_move_reconciles_git_with_monitoring_disabled() {
     let (root, mut app, provider) = staged_project_with("explorer-move-git", |provider| {
         provider
