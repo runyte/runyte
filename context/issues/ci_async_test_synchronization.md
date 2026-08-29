@@ -97,6 +97,26 @@ be isolated from the lifecycle executor until the upstream EOF and stream
 handoff fixes are available in a release; a wedged third-party reader cannot
 be allowed to block request cancellation.
 
+The same run confirmed that the preceding Git completion change was not
+portable as written. Multiple macOS tests continued receiving fresh host
+frames for 30 seconds while the Git worker never returned from repository
+discovery. Darwin's `waitid(WNOWAIT)` path was the new unbounded boundary.
+Darwin must register an `EVFILT_PROC`/`NOTE_EXIT` observer immediately after
+spawn, observe exit without reaping, stop the still-anchored process group, and
+only then collect the child status. Pipe finalizer wakes must also take
+priority over simultaneous pipe readiness: Darwin's poll adapter can otherwise
+keep reporting stale readiness around EOF and prevent the reader join from
+settling.
+
+Full parallel validation exposed the corresponding stdin race. The gated
+writer was released before the finalizer published child completion, and a
+concurrently forked process could briefly inherit the close-on-exec pipe reader
+long enough for the small test write to succeed. Kernel acceptance did not
+prove that the completed Git child consumed the bytes. Finalization must be
+published before gated workers are released, and a writer with remaining input
+must reject that completed boundary even if a foreign inherited descriptor
+makes the pipe writable.
+
 The expected behavior is that asynchronous integration tests wait on semantic
 state or explicit process acknowledgements with bounded deadlines. PTY output
 must still be drained to prevent backpressure and retained for failure

@@ -118,6 +118,23 @@ the discovery error distinct from completion-without-a-repository, so command
 availability and protocol frames report a failed Git discovery instead of
 mislabeling it or waiting indefinitely for a capability that cannot appear.
 
+A later lifecycle-gate follow-up made that identity-preserving completion
+platform-specific. Darwin's `waitid(WNOWAIT)` path could fail to publish a
+completed child under load, leaving repository discovery blocked while the
+editor continued producing frames. Git children on macOS now receive an
+`EVFILT_PROC`/`NOTE_EXIT` kqueue registration immediately after spawn. The
+knote reports exit without reaping the leader, so Runyte can stop the process
+group while its identity is still anchored and collect the status afterward.
+Other Unix targets retain `waitid(WNOWAIT)`. The pipe wait also gives the
+explicit finalizer wake priority over simultaneous data readiness, preventing
+Darwin's poll adapter from repeatedly selecting stale EOF readiness instead
+of beginning the final nonblocking drain. Child completion is published before
+test-gated pipe workers are released, and an input writer rejects remaining
+bytes after that boundary. A concurrently forked process may briefly inherit a
+close-on-exec pipe descriptor, but its kernel reader can no longer make input
+look consumed by a Git child that has already exited. Output readers still use
+the same boundary to perform one final nonblocking drain.
+
 Follow-up regression coverage is provided by
 `git::cli::tests::fast_output_survives_readers_held_until_after_child_exit`,
 `finalizer_wake_is_followed_by_a_fresh_eof_read`,
@@ -129,6 +146,8 @@ Follow-up regression coverage is provided by
 `src/git/cli.rs`, together with
 `repository_discovery_rejects_empty_required_rev_parse_output` in
 `src/git/cli.rs`,
+`finalizer_wake_wins_when_pipe_data_is_ready_too` and the macOS-only
+`darwin_child_exit_observer_reports_without_reaping` in `src/git/cli.rs`,
 `git_project_availability_distinguishes_missing_git_and_non_repository` in
 `src/app/tests/language.rs`,
 `linked_worktrees_share_a_common_repository_identity` in `tests/git_provider.rs`

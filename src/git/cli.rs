@@ -214,6 +214,17 @@ impl NonblockingPipe for &mut std::io::Cursor<&[u8]> {
     }
 }
 
+#[cfg(all(test, unix))]
+impl NonblockingPipe for std::os::unix::net::UnixStream {
+    fn make_nonblocking(&self) -> io::Result<()> {
+        set_nonblocking(self)
+    }
+
+    fn raw_fd(&self) -> std::os::fd::RawFd {
+        std::os::fd::AsRawFd::as_raw_fd(self)
+    }
+}
+
 #[cfg(not(unix))]
 macro_rules! impl_nonblocking_pipe {
     ($($pipe:ty),+ $(,)?) => {
@@ -293,8 +304,8 @@ impl PipeFinalizer {
         // The readers can now drain everything the owned group wrote and use
         // this signal only to escape a pipe retained by a descendant which
         // created a different session.
-        self.release_reader_gate();
         self.request_finish();
+        self.release_reader_gate();
     }
 
     fn request_finish(&self) {
@@ -306,11 +317,11 @@ impl PipeFinalizer {
 
 impl Drop for PipeFinalizer {
     fn drop(&mut self) {
+        self.request_finish();
         #[cfg(test)]
         if let Some(gate) = &self.reader_gate {
             gate.release();
         }
-        self.request_finish();
     }
 }
 
@@ -388,10 +399,17 @@ fn wait_for_pipe(
         loop {
             let ready = unsafe { libc::poll(descriptors.as_mut_ptr(), descriptors.len() as _, -1) };
             if ready >= 0 {
+                // The finalizer is the causal boundary for the child and all
+                // of its owned descendants. Darwin's poll adapter can report
+                // stale pipe readiness at EOF, so a simultaneously ready wake
+                // must move the reader into its final nonblocking drain first.
+                if signal.should_finish() || descriptors[1].revents != 0 {
+                    return Ok(!signal.should_finish());
+                }
                 if descriptors[0].revents != 0 {
                     return Ok(true);
                 }
-                return Ok(!signal.should_finish());
+                continue;
             }
             let error = io::Error::last_os_error();
             if error.kind() != io::ErrorKind::Interrupted {
@@ -512,6 +530,12 @@ fn write_input(
     let mut written = 0;
     let mut finalizing = false;
     while written < input.len() {
+        if finish.should_finish() {
+            return Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "Git exited before consuming all command input",
+            ));
+        }
         match writer.write(&input[written..]) {
             Ok(0) => return Err(io::ErrorKind::WriteZero.into()),
             Ok(bytes) => written += bytes,
@@ -766,7 +790,7 @@ impl GitCliProvider {
     ) -> Result<Vec<u8>> {
         let described = self.describe(arguments);
         let pipe_finalizer = self.pipe_finalizer(directory)?;
-        let mut child = self.spawn(directory, arguments, false, false)?;
+        let (mut child, child_exit) = self.spawn(directory, arguments, false, false)?;
 
         // Both pipes are drained away from the worker so it can observe
         // cancellation even when Git or one of its hooks is still running.
@@ -784,7 +808,7 @@ impl GitCliProvider {
         });
 
         let status = loop {
-            match try_finish_child(&mut child) {
+            match try_finish_child(&mut child, &child_exit) {
                 Ok(Some(status)) => break status,
                 Ok(None) => {}
                 Err(error) => {
@@ -809,6 +833,7 @@ impl GitCliProvider {
             }
             std::thread::sleep(NETWORK_POLL_INTERVAL);
         };
+        #[cfg(not(unix))]
         pipe_finalizer.release_reader_gate();
         #[cfg(unix)]
         pipe_finalizer.finish();
@@ -868,7 +893,7 @@ impl GitCliProvider {
     ) -> Result<Vec<u8>> {
         let described = self.describe(arguments);
         let pipe_finalizer = self.pipe_finalizer(directory)?;
-        let mut child = self.spawn(directory, arguments, false, false)?;
+        let (mut child, child_exit) = self.spawn(directory, arguments, false, false)?;
         let stderr_pipe = child.stderr.take().expect("stderr was piped");
         let stderr_finish = pipe_finalizer.signal();
         let stderr_reader =
@@ -882,7 +907,7 @@ impl GitCliProvider {
         });
         let started = std::time::Instant::now();
         let status = loop {
-            match try_finish_child(&mut child) {
+            match try_finish_child(&mut child, &child_exit) {
                 Ok(Some(status)) => break status,
                 Ok(None) => {}
                 Err(error) => {
@@ -914,6 +939,7 @@ impl GitCliProvider {
             }
             std::thread::sleep(NETWORK_POLL_INTERVAL);
         };
+        #[cfg(not(unix))]
         pipe_finalizer.release_reader_gate();
         #[cfg(unix)]
         pipe_finalizer.finish();
@@ -963,7 +989,7 @@ impl GitCliProvider {
     ) -> Result<Vec<u8>> {
         let described = self.describe(arguments);
         let pipe_finalizer = self.pipe_finalizer(directory)?;
-        let mut child = self.spawn(directory, arguments, false, true)?;
+        let (mut child, child_exit) = self.spawn(directory, arguments, false, true)?;
         let stdin = child.stdin.take().expect("stdin was piped");
         let input = input.to_vec();
         let stdin_finish = pipe_finalizer.signal();
@@ -981,7 +1007,7 @@ impl GitCliProvider {
         });
         let started = std::time::Instant::now();
         let status = loop {
-            match try_finish_child(&mut child) {
+            match try_finish_child(&mut child, &child_exit) {
                 Ok(Some(status)) => break status,
                 Ok(None) => {}
                 Err(error) => {
@@ -1013,6 +1039,7 @@ impl GitCliProvider {
             }
             std::thread::sleep(NETWORK_POLL_INTERVAL);
         };
+        #[cfg(not(unix))]
         pipe_finalizer.release_reader_gate();
         #[cfg(unix)]
         pipe_finalizer.finish();
@@ -1075,7 +1102,7 @@ impl GitCliProvider {
         arguments: &[S],
         network: bool,
         pipe_stdin: bool,
-    ) -> Result<std::process::Child> {
+    ) -> Result<(std::process::Child, ChildExitObserver)> {
         if !directory.is_dir() {
             return Err(GitError::Io {
                 action: "start Git in",
@@ -1101,9 +1128,25 @@ impl GitCliProvider {
                 });
             }
         }
-        command.spawn().map_err(|error| GitError::Unavailable {
+        let child = command.spawn().map_err(|error| GitError::Unavailable {
             detail: format!("cannot start `{}`: {error}", self.program.display()),
-        })
+        })?;
+        #[cfg(target_os = "macos")]
+        let (child, observer) = {
+            let mut child = child;
+            let observer = ChildExitObserver::new(&child).map_err(|error| {
+                stop_child_tree(&mut child);
+                GitError::Io {
+                    action: "observe Git process in",
+                    path: directory.to_path_buf(),
+                    detail: error.to_string(),
+                }
+            })?;
+            (child, observer)
+        };
+        #[cfg(not(target_os = "macos"))]
+        let observer = ChildExitObserver;
+        Ok((child, observer))
     }
 
     fn command<S: AsRef<OsStr>>(
@@ -1191,7 +1234,7 @@ impl GitCliProvider {
     ) -> Result<String> {
         let described = self.describe(arguments);
         let pipe_finalizer = self.pipe_finalizer(directory)?;
-        let mut child = self.spawn(directory, arguments, true, false)?;
+        let (mut child, child_exit) = self.spawn(directory, arguments, true, false)?;
         let limit = self.max_output_bytes;
 
         let stdout_pipe = child.stdout.take().expect("stdout was piped");
@@ -1208,7 +1251,7 @@ impl GitCliProvider {
 
         let deadline = std::time::Instant::now() + timeout;
         let status = loop {
-            match try_finish_child(&mut child) {
+            match try_finish_child(&mut child, &child_exit) {
                 Ok(Some(status)) => break status,
                 Ok(None) => {}
                 Err(error) => {
@@ -1246,6 +1289,7 @@ impl GitCliProvider {
             std::thread::sleep(NETWORK_POLL_INTERVAL);
         };
 
+        #[cfg(not(unix))]
         pipe_finalizer.release_reader_gate();
         #[cfg(unix)]
         pipe_finalizer.finish();
@@ -1589,16 +1633,112 @@ fn read_bounded_file(root: &Path, path: &Path, limit: usize) -> Option<Vec<u8>> 
     (final_length == content.len() as u64).then_some(content)
 }
 
+#[cfg(target_os = "macos")]
+struct ChildExitObserver {
+    queue: std::os::fd::OwnedFd,
+    pid: libc::pid_t,
+}
+
+#[cfg(not(target_os = "macos"))]
+struct ChildExitObserver;
+
+#[cfg(target_os = "macos")]
+impl ChildExitObserver {
+    fn new(child: &std::process::Child) -> io::Result<Self> {
+        use std::os::fd::FromRawFd;
+
+        let pid = i32::try_from(child.id()).map_err(|_| {
+            io::Error::new(io::ErrorKind::InvalidInput, "child PID does not fit pid_t")
+        })?;
+        // SAFETY: `kqueue` has no preconditions and returns a fresh descriptor.
+        let descriptor = unsafe { libc::kqueue() };
+        if descriptor == -1 {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: a successful `kqueue` call returns a fresh owned descriptor.
+        let queue = unsafe { std::os::fd::OwnedFd::from_raw_fd(descriptor) };
+        let change = libc::kevent {
+            ident: pid as libc::uintptr_t,
+            filter: libc::EVFILT_PROC,
+            flags: libc::EV_ADD | libc::EV_ENABLE | libc::EV_CLEAR,
+            fflags: libc::NOTE_EXIT,
+            data: 0,
+            udata: std::ptr::null_mut(),
+        };
+        // SAFETY: `queue` is live and `change` is one complete process-filter
+        // registration. The child has not been reaped, so its PID still names
+        // the process whose group Runyte owns.
+        if unsafe {
+            libc::kevent(
+                descriptor,
+                &change,
+                1,
+                std::ptr::null_mut(),
+                0,
+                std::ptr::null(),
+            )
+        } == -1
+        {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(Self { queue, pid })
+    }
+
+    fn exited(&self) -> io::Result<bool> {
+        use std::os::fd::AsRawFd;
+
+        let mut event = std::mem::MaybeUninit::<libc::kevent>::uninit();
+        let timeout = libc::timespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        };
+        // SAFETY: the queue is live, `event` has storage for one result, and
+        // the zero timeout makes this a nonblocking identity-safe observation.
+        let count = unsafe {
+            libc::kevent(
+                self.queue.as_raw_fd(),
+                std::ptr::null(),
+                0,
+                event.as_mut_ptr(),
+                1,
+                &timeout,
+            )
+        };
+        if count == -1 {
+            return Err(io::Error::last_os_error());
+        }
+        if count == 0 {
+            return Ok(false);
+        }
+        // SAFETY: one event was initialized when `kevent` returned one.
+        let event = unsafe { event.assume_init() };
+        if event.flags & libc::EV_ERROR != 0 {
+            return Err(i32::try_from(event.data)
+                .ok()
+                .filter(|code| *code > 0)
+                .map(io::Error::from_raw_os_error)
+                .unwrap_or_else(|| io::Error::from_raw_os_error(libc::EIO)));
+        }
+        Ok(event.ident == self.pid as libc::uintptr_t
+            && event.filter == libc::EVFILT_PROC
+            && event.fflags & libc::NOTE_EXIT != 0)
+    }
+}
+
 /// Observes a completed Unix child without releasing its process identity,
 /// stops any descendants still in its owned group, and only then reaps it.
 ///
 /// `Child::try_wait` reaps immediately. Sending a signal to `-child.id()`
 /// after that would address a reusable number rather than the group Runyte
-/// created. `waitid(WNOWAIT)` keeps the exited leader waitable, which anchors
-/// both its PID and process-group identity through cleanup.
-#[cfg(unix)]
+/// created. Linux and other Unix targets use `waitid(WNOWAIT)` to keep the
+/// exited leader waitable. Darwin uses a process knote registered immediately
+/// after spawn because its `waitid` implementation does not provide a reliable
+/// nonblocking completion boundary here. Both keep the PID and process-group
+/// identity anchored through cleanup.
+#[cfg(all(unix, not(target_os = "macos")))]
 fn try_finish_child(
     child: &mut std::process::Child,
+    _observer: &ChildExitObserver,
 ) -> io::Result<Option<std::process::ExitStatus>> {
     let pid = i32::try_from(child.id())
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "child PID does not fit pid_t"))?;
@@ -1627,9 +1767,22 @@ fn try_finish_child(
     child.wait().map(Some)
 }
 
+#[cfg(target_os = "macos")]
+fn try_finish_child(
+    child: &mut std::process::Child,
+    observer: &ChildExitObserver,
+) -> io::Result<Option<std::process::ExitStatus>> {
+    if !observer.exited()? {
+        return Ok(None);
+    }
+    stop_child_group(child);
+    child.wait().map(Some)
+}
+
 #[cfg(not(unix))]
 fn try_finish_child(
     child: &mut std::process::Child,
+    _observer: &ChildExitObserver,
 ) -> io::Result<Option<std::process::ExitStatus>> {
     child.try_wait()
 }
@@ -4144,6 +4297,51 @@ mod tests {
         assert!(parked, "both pipe readers did not reach kernel readiness");
         assert_eq!(output, b"complete\n");
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn finalizer_wake_wins_when_pipe_data_is_ready_too() {
+        use std::io::Write as _;
+
+        let (reader, mut writer) = std::os::unix::net::UnixStream::pair().unwrap();
+        let finalizer = PipeFinalizer::new().unwrap();
+        let signal = finalizer.signal();
+        writer.write_all(b"queued output").unwrap();
+        finalizer.request_finish();
+
+        assert!(
+            !wait_for_pipe(&reader, PIPE_READ_READY, &signal).unwrap(),
+            "a simultaneously readable pipe hid the finalizer wake"
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn darwin_child_exit_observer_reports_without_reaping() {
+        use std::io::Write as _;
+        use std::process::Stdio;
+
+        let mut child = Command::new("sh")
+            .arg("-c")
+            .arg("read release")
+            .stdin(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let observer = ChildExitObserver::new(&child).unwrap();
+        child.stdin.take().unwrap().write_all(b"go\n").unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        let mut exited = observer.exited().unwrap();
+        while !exited && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(1));
+            exited = observer.exited().unwrap();
+        }
+
+        assert!(exited, "the process knote never reported exit");
+        assert!(
+            child.wait().unwrap().success(),
+            "observing NOTE_EXIT reaped or changed the child status"
+        );
     }
 
     #[cfg(unix)]
