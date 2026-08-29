@@ -4136,6 +4136,8 @@ impl App {
     }
 
     pub(super) fn close_prompt(&mut self) {
+        #[cfg(unix)]
+        let session_manager_return_target = self.session_manager_return_target.take();
         self.command.clear();
         self.command_cursor = 0;
         self.command_selection = 0;
@@ -4154,6 +4156,19 @@ impl App {
         self.git_worktree_start = None;
         self.git_worktree_new_branch = None;
         self.mode = self.grammar.preferred_mode().unwrap_or(Mode::Normal);
+        #[cfg(unix)]
+        if let Some(target) = session_manager_return_target {
+            self.rebuild_workspace_picker();
+            if let Some(selected) = self
+                .workspace_rows
+                .iter()
+                .position(|row| row.project_root == target)
+                && let Some(picker) = self.list.as_mut()
+            {
+                picker.selected = selected;
+            }
+            self.request_selected_workspace_preview();
+        }
     }
 
     pub(super) fn normal_mode_selection(

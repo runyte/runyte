@@ -2114,6 +2114,7 @@ fn a_digit_no_session_holds_reports_that_rather_than_attaching() {
 fn the_manager_renumber_action_opens_an_empty_prompt() {
     let (mut app, root, roots) = numbered_sessions("session-number-prompt");
 
+    app.list.as_mut().unwrap().selected = 1;
     key(&mut app, KeyCode::Tab, Modifiers::NONE);
     app.session_action_menu.as_mut().unwrap().selected = 2;
     key(&mut app, KeyCode::Enter, Modifiers::NONE);
@@ -2124,10 +2125,50 @@ fn the_manager_renumber_action_opens_an_empty_prompt() {
     );
     assert_eq!(
         app.session_number_target.as_deref(),
-        Some(roots[0].as_path())
+        Some(roots[1].as_path())
     );
+    assert!(app.list.is_none(), "the scalar prompt owns its input");
+    press(&mut app, '3');
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert!(app.session_number_target.is_none());
+    assert_eq!(app.mode, Mode::Normal);
+    assert!(
+        app.list.is_some(),
+        "accepting Renumber returns to the session manager"
+    );
+    assert_eq!(
+        app.list.as_ref().unwrap().selected,
+        1,
+        "the session being renumbered remains selected"
+    );
+
+    key(&mut app, KeyCode::Tab, Modifiers::NONE);
+    app.session_action_menu.as_mut().unwrap().selected = 2;
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
     key(&mut app, KeyCode::Escape, Modifiers::NONE);
     assert!(app.session_number_target.is_none());
+    assert!(
+        app.list.is_some(),
+        "cancelling Renumber also returns to the session manager"
+    );
+    assert_eq!(app.list.as_ref().unwrap().selected, 1);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn the_session_manager_initially_selects_the_current_session() {
+    let (mut app, root, roots) = numbered_sessions("session-current-selection");
+    app.project_root = roots[1].clone();
+    open_session_manager_for_refresh(&mut app);
+
+    app.rebuild_workspace_picker();
+
+    assert_eq!(
+        app.list.as_ref().unwrap().selected,
+        1,
+        "the initial row follows the current workspace instead of the first row"
+    );
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -2403,6 +2444,14 @@ fn session_actions_confirm_force_close_and_recheck_state_at_enter() {
     assert!(app.session_action_menu.is_some());
     key(&mut app, KeyCode::Enter, Modifiers::NONE);
     assert_eq!(app.status, "this session is already stopped");
+
+    // Renumber is guarded the same way, so a row cannot regain a number after
+    // it stops while its old running-row menu remains open.
+    app.session_action_menu.as_mut().unwrap().selected = 2;
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert_eq!(app.status, "this session is already stopped");
+    assert_ne!(app.prompt_kind, PromptKind::SessionNumber);
+    assert!(app.session_number_target.is_none());
 
     // Force close is refused the same way, and never arms for a row that
     // is no longer running.

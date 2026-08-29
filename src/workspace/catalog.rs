@@ -738,6 +738,7 @@ async fn refresh_with_name_persistence(
         number: _,
         last_active_unix_seconds,
         number_declined: _,
+        number_pinned: _,
     } in openable
     {
         if rows.iter().any(|row| row.project_root == project_root) {
@@ -833,10 +834,11 @@ fn apply_recent_names(rows: &mut [WorkspaceRow], recent_entries: &[RecentEntry])
 ///
 /// The digit is a shortcut that attaches, so it belongs to a session somebody
 /// can reach right now: a stopped session releases the one it held rather than
-/// reserving one of the nine against the sessions that are actually up. Its
-/// catalog record survives as what it prefers, so a session that stops and
-/// starts again answers to the same digit whenever nothing running has claimed
-/// it meanwhile, and otherwise takes the lowest one still free.
+/// reserving one of the nine against the sessions that are actually up.
+/// Explicitly renumbered running sessions reserve their chosen digits first;
+/// automatic assignments then compact into the lowest remaining digits while
+/// preserving their previous relative order. A new fourth running session is
+/// therefore 4 even when stopped history used to hold that number.
 ///
 /// A workspace whose record declines a digit is left alone. Taking one away is
 /// a decision, and handing the row the lowest free digit on the next listing
@@ -860,16 +862,30 @@ fn assign_running_workspace_numbers(rows: &mut [WorkspaceRow], recent_entries: &
         if !row.running || declined {
             continue;
         }
-        let preferred = entry.and_then(|entry| entry.number).filter(|number| {
-            (1..=MAX_WORKSPACE_NUMBER).contains(number) && !taken[usize::from(number - 1)]
-        });
+        let preferred = entry
+            .filter(|entry| entry.number_pinned)
+            .and_then(|entry| entry.number)
+            .filter(|number| {
+                (1..=MAX_WORKSPACE_NUMBER).contains(number) && !taken[usize::from(number - 1)]
+            });
         if let Some(number) = preferred {
             taken[usize::from(number - 1)] = true;
             row.number = Some(number);
         }
     }
-    for (row, wanted) in rows.iter_mut().zip(wanted) {
-        if !wanted || row.number.is_some() {
+    let mut automatic = rows
+        .iter()
+        .enumerate()
+        .filter(|(index, row)| wanted[*index] && row.number.is_none())
+        .map(|(index, row)| {
+            let previous = record(row).and_then(|entry| entry.number);
+            (index, previous)
+        })
+        .collect::<Vec<_>>();
+    automatic.sort_by_key(|(index, previous)| (previous.is_none(), previous.unwrap_or(0), *index));
+    for (index, _) in automatic {
+        let row = &mut rows[index];
+        if row.number.is_some() {
             continue;
         }
         let free = (1..=MAX_WORKSPACE_NUMBER).find(|candidate| !taken[usize::from(candidate - 1)]);
@@ -1360,8 +1376,8 @@ fn normalize_session_name(name: &str) -> String {
 /// Gives one workspace a number shortcut, or clears it.
 ///
 /// Unlike a name, a number is never host state: it is this user's shortcut for
-/// reaching a project, so a running host is neither consulted nor required and
-/// a stopped workspace can be numbered exactly like a running one.
+/// reaching a running session. The inventory is re-read before changing it so
+/// a session that stopped after its action menu opened is refused.
 async fn number_workspace(
     roots: &[PathBuf],
     recents: Option<&Path>,
@@ -1373,6 +1389,11 @@ async fn number_workspace(
     let rows = refresh(roots, recents, state, None).await?;
     let project_root = resolve_known_workspace_from_rows(&rows, selector, Some(working_directory))?
         .with_context(|| format!("no session matches {}", selector.display()))?;
+    anyhow::ensure!(
+        rows.iter()
+            .any(|row| row.project_root == project_root && row.running),
+        "cannot renumber a stopped session"
+    );
     set_recent_workspace_number_in(recents, &project_root, number)
 }
 
@@ -1835,6 +1856,7 @@ mod tests {
                 number: None,
                 last_active_unix_seconds: None,
                 number_declined: false,
+                number_pinned: false,
             })
             .collect::<Vec<_>>();
         fs::write(&path, serde_json::to_vec(&repeated).unwrap()).unwrap();
@@ -1847,6 +1869,7 @@ mod tests {
             number: None,
             last_active_unix_seconds: None,
             number_declined: false,
+            number_pinned: false,
         }];
         fs::write(&path, serde_json::to_vec(&invalid_path).unwrap()).unwrap();
         let error = read_recents(Some(&path)).unwrap_err().to_string();
@@ -1858,6 +1881,7 @@ mod tests {
             number: None,
             last_active_unix_seconds: None,
             number_declined: false,
+            number_pinned: false,
         }];
         fs::write(&path, serde_json::to_vec(&invalid_name).unwrap()).unwrap();
         let error = read_recents(Some(&path)).unwrap_err().to_string();
@@ -2294,6 +2318,7 @@ mod tests {
 
         let entries = read_recents(Some(&path)).unwrap();
         assert_eq!(entries[0].last_active_unix_seconds, None);
+        assert!(!entries[0].number_pinned);
 
         record_recent_workspace_in(&path, &workspace).unwrap();
         let entries = read_recents(Some(&path)).unwrap();
@@ -2932,7 +2957,11 @@ mod tests {
             missing_directory: true,
         }];
         assign_running_workspace_numbers(&mut rows, &entries);
-        assert_eq!(rows[0].number, Some(2));
+        assert_eq!(
+            rows[0].number,
+            Some(1),
+            "an automatic assignment compacts while the host remains reachable"
+        );
         assert!(
             !listable_recents(entries)
                 .iter()
@@ -2993,7 +3022,7 @@ mod tests {
     }
 
     #[test]
-    fn only_running_sessions_are_numbered_and_a_stopped_one_releases_its_digit() {
+    fn automatic_running_numbers_compact_after_a_stopped_session_releases_its_digit() {
         let stopped = PathBuf::from("/w/stopped");
         let running = PathBuf::from("/w/running");
         let started = PathBuf::from("/w/started");
@@ -3013,23 +3042,35 @@ mod tests {
         assert_eq!(rows[0].number, None, "a stopped session holds no digit");
         assert_eq!(
             rows[1].number,
-            Some(2),
-            "a running session keeps the digit its record prefers"
+            Some(1),
+            "the first automatic running assignment closes the gap"
         );
         assert_eq!(
             rows[2].number,
-            Some(1),
-            "the digit a stopped session gave up is the lowest one free"
+            Some(2),
+            "the next running session follows it in order"
         );
     }
 
     #[test]
-    fn a_restarted_session_answers_to_its_recorded_digit_again() {
+    fn an_automatic_session_does_not_retain_its_old_number_after_a_stop() {
         let restarted = PathBuf::from("/w/restarted");
         let entries = vec![RecentEntry::new(restarted.clone(), None, Some(4), None)];
         let mut rows = vec![numbering_row(&restarted, true)];
 
         assign_running_workspace_numbers(&mut rows, &entries);
+
+        assert_eq!(rows[0].number, Some(1));
+    }
+
+    #[test]
+    fn an_explicitly_renumbered_running_session_keeps_its_chosen_digit() {
+        let workspace = PathBuf::from("/w/pinned");
+        let mut entry = RecentEntry::new(workspace.clone(), None, Some(4), None);
+        entry.number_pinned = true;
+        let mut rows = vec![numbering_row(&workspace, true)];
+
+        assign_running_workspace_numbers(&mut rows, &[entry]);
 
         assert_eq!(rows[0].number, Some(4));
     }
@@ -3114,6 +3155,7 @@ mod tests {
         assert_eq!(recorded_number(&path, &workspace), Some(4));
         let entries = read_recents(Some(&path)).unwrap();
         assert!(!entries[0].number_declined);
+        assert!(entries[0].number_pinned);
         let mut rows = vec![numbering_row(&workspace, true)];
         assign_running_workspace_numbers(&mut rows, &entries);
         assert_eq!(rows[0].number, Some(4));
@@ -3223,21 +3265,61 @@ mod tests {
             numbering_row(&started, true),
             numbering_row(&stopped, false),
         ];
-        // The running session prefers 2 and keeps it; nothing takes 1, so the
-        // stopped record still holds it.
+        // Automatic running numbers close gaps, and stopped rows retain no
+        // numbering state after the refresh is persisted.
         assign_running_workspace_numbers(&mut rows, &snapshot);
-        merge_refreshed_rows(&path, &snapshot, &rows).unwrap();
-        assert_eq!(recorded_number(&path, &started), Some(2));
-        assert_eq!(recorded_number(&path, &stopped), Some(1));
-
-        // Once the running session is given 1, the stopped record loses it
-        // rather than leaving two records claiming the same digit.
-        rows[0].number = Some(1);
-        let snapshot = read_recents(Some(&path)).unwrap();
         merge_refreshed_rows(&path, &snapshot, &rows).unwrap();
         assert_eq!(recorded_number(&path, &started), Some(1));
         assert_eq!(recorded_number(&path, &stopped), None);
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_new_running_session_takes_the_gap_and_the_stopped_session_forgets_it() {
+        let first = PathBuf::from("/w/first");
+        let second = PathBuf::from("/w/second");
+        let third = PathBuf::from("/w/third");
+        let stopped = PathBuf::from("/w/stopped");
+        let new = PathBuf::from("/w/new");
+        let mut stopped_entry = RecentEntry::new(stopped.clone(), None, Some(4), None);
+        stopped_entry.number_pinned = true;
+        let snapshot = vec![
+            RecentEntry::new(new.clone(), None, Some(5), None),
+            stopped_entry,
+            RecentEntry::new(third.clone(), None, Some(3), None),
+            RecentEntry::new(second.clone(), None, Some(2), None),
+            RecentEntry::new(first.clone(), None, Some(1), None),
+        ];
+        let mut rows = vec![
+            numbering_row(&new, true),
+            numbering_row(&stopped, false),
+            numbering_row(&third, true),
+            numbering_row(&second, true),
+            numbering_row(&first, true),
+        ];
+
+        assign_running_workspace_numbers(&mut rows, &snapshot);
+
+        let number_of = |target: &Path| {
+            rows.iter()
+                .find(|row| row.project_root == target)
+                .and_then(|row| row.number)
+        };
+        assert_eq!(number_of(&first), Some(1));
+        assert_eq!(number_of(&second), Some(2));
+        assert_eq!(number_of(&third), Some(3));
+        assert_eq!(number_of(&new), Some(4));
+        assert_eq!(number_of(&stopped), None);
+
+        let mut persisted = snapshot.clone();
+        merge_assigned_numbers(&mut persisted, &snapshot, &rows);
+        let stopped = persisted
+            .iter()
+            .find(|entry| entry.project_root == stopped)
+            .unwrap();
+        assert_eq!(stopped.number, None);
+        assert!(!stopped.number_pinned);
+        assert!(!stopped.number_declined);
     }
 
     #[test]
@@ -3455,6 +3537,13 @@ struct RecentWorkspace {
     /// the same as never having declined one.
     #[serde(default)]
     number_declined: bool,
+    /// Whether `number` was chosen explicitly through Renumber.
+    ///
+    /// Older catalogs omit this and therefore treat their assignments as
+    /// automatic, which lets the first refresh close any gaps left by stopped
+    /// sessions.
+    #[serde(default)]
+    number_pinned: bool,
 }
 
 /// The largest number a workspace can carry.
@@ -3465,13 +3554,12 @@ struct RecentWorkspace {
 pub const MAX_WORKSPACE_NUMBER: u8 = 9;
 
 /// One remembered workspace: where it is, what it is called, and the digit
-/// that selects it in the session manager.
+/// metadata used to order automatic assignments while it is running.
 ///
 /// The recents file is ordered most-recently-visited first, so an entry's
-/// position is deliberately not its number. A number is claimed once, when
-/// the workspace is first recorded, and then stays put even as the workspace
-/// moves up and down the history. That is what makes it a shortcut somebody
-/// can learn rather than a label that moves under them between two visits.
+/// position is deliberately not its automatic order. Explicit Renumber pins
+/// the current digit while the session runs; a refresh clears every numbering
+/// field once it observes that session stopped.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RecentEntry {
     pub project_root: PathBuf,
@@ -3489,6 +3577,9 @@ pub struct RecentEntry {
     /// again on the next listing, and the manager would undo the decision
     /// before it could be seen. Numbering the workspace again ends it.
     pub number_declined: bool,
+    /// The current number was explicitly chosen and must not be compacted
+    /// while this session remains running.
+    pub number_pinned: bool,
 }
 
 impl RecentEntry {
@@ -3506,6 +3597,7 @@ impl RecentEntry {
             number,
             last_active_unix_seconds,
             number_declined: false,
+            number_pinned: false,
         }
     }
 }
@@ -3621,6 +3713,9 @@ fn set_recent_workspace_number_in(
             // why an unnumbered one leaves the other without a number rather
             // than duplicating the one it just gave away.
             paths[holder].number = vacated;
+            if vacated.is_none() {
+                paths[holder].number_pinned = false;
+            }
             // The displaced workspace did not ask to lose its digit, so it is
             // left open to being given another one; only the workspace that
             // was cleared on purpose declines.
@@ -3628,6 +3723,7 @@ fn set_recent_workspace_number_in(
         }
         paths[index].number = number;
         paths[index].number_declined = number.is_none();
+        paths[index].number_pinned = number.is_some();
         Ok(())
     })?;
     Ok(displaced)
@@ -3660,16 +3756,18 @@ fn record_recent_workspace_name_in(
                     entry.number,
                     entry.last_active_unix_seconds,
                     entry.number_declined,
+                    entry.number_pinned,
                 )
             });
         paths.retain(|entry| entry.project_root != canonical);
         let declined = previous
             .as_ref()
-            .is_some_and(|(_, _, _, declined)| *declined);
-        let (previous_name, previous_number, last_active_unix_seconds) = previous
-            .map_or((None, None, None), |(name, number, active, _)| {
-                (name, Some(number), active)
-            });
+            .is_some_and(|(_, _, _, declined, _)| *declined);
+        let (previous_name, previous_number, last_active_unix_seconds, number_pinned) = previous
+            .map_or(
+                (None, None, None, false),
+                |(name, number, active, _, pinned)| (name, Some(number), active, pinned),
+            );
         let name = previous_name
             .unwrap_or_else(|| unique_default_workspace_name(&canonical, paths.as_slice()));
         // Revisiting keeps the number this workspace already answered to.
@@ -3689,6 +3787,7 @@ fn record_recent_workspace_name_in(
         });
         let mut entry = RecentEntry::new(canonical, Some(name), number, last_active_unix_seconds);
         entry.number_declined = declined;
+        entry.number_pinned = number_pinned;
         paths.insert(0, entry);
         // Truncation drops the least recently visited tail, which can free a
         // number. The next new workspace claims it; the survivors keep theirs.
@@ -3916,14 +4015,15 @@ fn rename_recent_workspace_in(path: &Path, project_root: &Path, name: &str) -> R
 /// discard a workspace recorded while inspection was in flight. A name is
 /// updated only when the current value still matches that snapshot, so an
 /// inspection result cannot overwrite a newer name from another refresh.
-/// Records the digit each running session was just given, and takes it out of
-/// whichever record still claimed it.
+/// Records the digit each running session was just given and clears numbering
+/// state from stopped sessions.
 ///
-/// The listing decides the numbers, so this is where a preference catches up
-/// with them: a session keeps a digit across a restart because its record says
-/// so, and a stopped session's record keeps its digit only until a running
-/// session needs it. Writing the answer back is also what lets the status line
-/// name this session's digit on the next start without listing every workspace.
+/// The listing decides the numbers, so this is where automatic assignments
+/// catch up after a gap closes. A stopped session retains neither an assigned
+/// digit, an explicit pin, nor an explicit decision to stay unnumbered; if it
+/// starts again, it joins the running sessions as a new automatic assignment.
+/// Writing the answer back is also what lets the status line name this
+/// session's digit without listing every workspace.
 ///
 /// A record that changed while the listing was being gathered is not written,
 /// for the same reason a concurrently renamed one is not: the person who
@@ -3933,13 +4033,6 @@ fn merge_assigned_numbers(
     snapshot: &[RecentEntry],
     rows: &[WorkspaceRow],
 ) {
-    let assigned = rows
-        .iter()
-        .filter_map(|row| {
-            row.number
-                .map(|number| (row.project_root.as_path(), number))
-        })
-        .collect::<Vec<_>>();
     for entry in paths {
         // These digits were decided against the catalog as the refresh found
         // it. A record that has changed since then holds somebody else's newer
@@ -3952,19 +4045,27 @@ fn merge_assigned_numbers(
         else {
             continue;
         };
-        if snapshot_entry.number != entry.number || entry.number_declined {
+        if snapshot_entry.number != entry.number
+            || snapshot_entry.number_declined != entry.number_declined
+            || snapshot_entry.number_pinned != entry.number_pinned
+        {
             continue;
         }
-        if let Some((_, number)) = assigned
+        let Some(row) = rows
             .iter()
-            .find(|(project_root, _)| *project_root == entry.project_root)
-        {
-            entry.number = Some(*number);
-        } else if assigned
-            .iter()
-            .any(|(_, number)| entry.number == Some(*number))
-        {
+            .find(|row| row.project_root == entry.project_root)
+        else {
+            continue;
+        };
+        if !row.running {
             entry.number = None;
+            entry.number_declined = false;
+            entry.number_pinned = false;
+        } else if !entry.number_declined {
+            entry.number = row.number;
+            if row.number.is_none() {
+                entry.number_pinned = false;
+            }
         }
     }
 }
@@ -4102,6 +4203,7 @@ fn write_recents(path: &Path, paths: &[RecentEntry], _lock: &RecentFileLock) -> 
             number: entry.number,
             last_active_unix_seconds: entry.last_active_unix_seconds,
             number_declined: entry.number_declined,
+            number_pinned: entry.number_pinned,
         })
         .collect::<Vec<_>>();
     let Some(parent) = path.parent() else {
@@ -4126,8 +4228,7 @@ fn write_recents(path: &Path, paths: &[RecentEntry], _lock: &RecentFileLock) -> 
 ///
 /// A stopped workspace whose directory is gone has nothing left to open, so it
 /// stays out of the listing. Its record survives in the file, because the
-/// directory may come back — an unmounted volume, a detached external disk —
-/// and the number it answers to should come back with it.
+/// directory may come back — an unmounted volume or a detached external disk.
 fn listable_recents(entries: Vec<RecentEntry>) -> Vec<RecentEntry> {
     entries
         .into_iter()
@@ -4139,10 +4240,10 @@ fn listable_recents(entries: Vec<RecentEntry>) -> Vec<RecentEntry> {
 ///
 /// A directory that has gone from disk is deliberately still returned. Every
 /// write goes back through this reader, so filtering here would erase the
-/// record — and with it the workspace's number — the first time anything
-/// touched the file after the directory disappeared, including for a host
-/// still running in it. [`listable_recents`] drops those rows on the way to a
-/// listing instead, which is the only place the distinction matters.
+/// record the first time anything touched the file after the directory
+/// disappeared, including for a host still running in it.
+/// [`listable_recents`] drops those rows on the way to a listing instead,
+/// which is the only place the distinction matters.
 fn read_recents(path: Option<&Path>) -> Result<Vec<RecentEntry>> {
     let Some(path) = path else {
         return Ok(Vec::new());
@@ -4168,6 +4269,7 @@ fn read_recents(path: Option<&Path>) -> Result<Vec<RecentEntry>> {
             number: entry.number,
             last_active_unix_seconds: entry.last_active_unix_seconds,
             number_declined: entry.number_declined,
+            number_pinned: entry.number_pinned,
         })
         .collect::<Vec<_>>();
     // A number identifies one workspace, so a file hand-edited into holding a
@@ -4176,7 +4278,10 @@ fn read_recents(path: Option<&Path>) -> Result<Vec<RecentEntry>> {
     let mut claimed = Vec::new();
     for entry in &mut entries {
         match entry.number {
-            Some(number) if claimed.contains(&number) => entry.number = None,
+            Some(number) if claimed.contains(&number) => {
+                entry.number = None;
+                entry.number_pinned = false;
+            }
             Some(number) => claimed.push(number),
             None => {}
         }

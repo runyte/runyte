@@ -2626,11 +2626,15 @@ impl App {
                         self.command = name.unwrap_or_default();
                         self.command_cursor = self.command.chars().count();
                     }
-                    Some((selector, _, _, SessionAction::Number)) => {
+                    Some((selector, _, true, SessionAction::Number)) => {
                         self.list = None;
                         self.session_action_menu = None;
-                        self.session_number_target = Some(selector);
+                        self.session_number_target = Some(selector.clone());
+                        self.session_manager_return_target = Some(selector);
                         self.open_prompt(PromptKind::SessionNumber);
+                    }
+                    Some((_, _, false, SessionAction::Number)) => {
+                        self.status("this session is already stopped")
                     }
                     Some((selector, _, true, SessionAction::Close)) => self.stop_session(selector),
                     Some((_, _, false, SessionAction::Close)) => {
