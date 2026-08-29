@@ -28,13 +28,22 @@ name, and index/diff selection by unified-diff hunk and line identity. Refresh
 failures retain the last known projection and mark it stale instead of clearing
 it.
 
+A later completion-aware refinement made narrow snapshots merge only their
+requested staged bases and statistics. Automatic freshness is now recorded on
+successful snapshot completion rather than submission, so a failed or
+coalesced read cannot suppress the reconciliation that still needs to run.
+
 Coverage includes `git::service::tests::equivalent_refreshes_coalesce_onto_one_worker`
 in `src/git/service.rs`,
 `app::tests::the_caret_follows_the_file_it_was_on_across_a_refresh` and
 `app::tests::a_refreshed_diff_follows_the_same_line_in_the_same_hunk` in
 `src/app/tests/git.rs`,
 `workspace::host::tests::git_invalidation_is_retained_until_visible_and_fallback_is_not_polling`
-in `src/workspace/host.rs`, and the settings registry validation tests in
+and
+`workspace::host::tests::a_failed_automatic_refresh_does_not_claim_reconciliation`
+in `src/workspace/host.rs`,
+`git::tracker::tests::a_narrow_snapshot_preserves_other_staged_bases_and_unrequested_stats`
+in `src/git/tracker.rs`, and the settings registry validation tests in
 `src/settings.rs`.
 
 ## Report

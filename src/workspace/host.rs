@@ -13,7 +13,10 @@ use crate::{
     buffer::FileObservationEvent,
     command::CommandInvocation,
     file_picker::{FilePickerEvent, FileScanner},
-    git::GitServiceEvent,
+    git::{
+        GitOperation, GitRequestId, GitResponse, GitServiceEvent, GitServiceState, RefreshSpec,
+        RepositoryGeneration,
+    },
     git_monitor::GitInvalidation,
     input::{InputEvent, PointerEvent},
     key_hints::KeyHintState,
@@ -37,6 +40,7 @@ const SESSION_PREVIEW_PANES: usize = 8;
 const SESSION_PREVIEW_LINES: usize = 8;
 const SESSION_PREVIEW_COLUMNS: usize = 240;
 const SESSION_PREVIEW_OTHER_RESOURCES: usize = 8;
+const AUTOMATIC_GIT_RETRY_DELAY: Duration = Duration::from_secs(1);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum BufferRequestError {
@@ -202,6 +206,31 @@ struct PreparedFrame {
     view: PreparedView,
 }
 
+#[derive(Clone, Debug)]
+struct PendingAutomaticGitRefresh {
+    id: GitRequestId,
+    spec: RefreshSpec,
+    fallback: bool,
+}
+
+#[derive(Clone, Debug)]
+struct AppliedGitReconciliation {
+    repository: PathBuf,
+    captured_at: Instant,
+    spec: RefreshSpec,
+}
+
+#[derive(Clone, Debug)]
+struct CompletedGitSnapshot {
+    repository: PathBuf,
+    generation: RepositoryGeneration,
+    captured_at: Instant,
+    spec: RefreshSpec,
+    state: GitServiceState,
+    coalesced: bool,
+    mutation: bool,
+}
+
 /// The only owner allowed to mutate one live editor/application workspace.
 ///
 /// Standalone mode uses this value directly. Persistent mode will keep the
@@ -214,7 +243,11 @@ pub struct WorkspaceHost {
     prepared: Option<PreparedFrame>,
     last_git_refresh: Instant,
     git_dirty: bool,
-    git_reconciled: Option<crate::git::RefreshSpec>,
+    git_reconciled: Option<RefreshSpec>,
+    pending_git_refresh: Option<PendingAutomaticGitRefresh>,
+    last_git_reconciliation: Option<AppliedGitReconciliation>,
+    latest_git_observation: Option<Instant>,
+    next_git_retry: Option<Instant>,
     next_wait_token: u64,
     wait_requests: HashMap<WaitToken, WaitRequest>,
     wait_order: VecDeque<WaitToken>,
@@ -280,6 +313,10 @@ impl WorkspaceHost {
             last_git_refresh: Instant::now(),
             git_dirty: false,
             git_reconciled: None,
+            pending_git_refresh: None,
+            last_git_reconciliation: None,
+            latest_git_observation: None,
+            next_git_retry: None,
             next_wait_token: 1,
             wait_requests: HashMap::new(),
             wait_order: VecDeque::new(),
@@ -1026,7 +1063,7 @@ impl WorkspaceHost {
             HostEvent::FilePicker(event) => self.app.apply_file_picker_event(event),
             HostEvent::FileObservation(event) => self.app.apply_file_observation(event),
             HostEvent::GitInvalidation(event) => self.apply_git_invalidation(event),
-            HostEvent::Git(event) => self.app.apply_git_service_event(event),
+            HostEvent::Git(event) => self.apply_git_service_event(event),
             HostEvent::Terminal(output) => self.app.apply_terminal_output(output),
             #[cfg(unix)]
             HostEvent::Workspace(event) => self.app.apply_workspace_event(event),
@@ -1064,15 +1101,127 @@ impl WorkspaceHost {
         self.app.attach_file_scanner(scanner);
     }
 
+    fn completed_git_snapshot(event: &GitServiceEvent) -> Option<CompletedGitSnapshot> {
+        let GitServiceEvent::Completed {
+            id: _,
+            operation,
+            result,
+            state,
+            coalesced,
+        } = event
+        else {
+            return None;
+        };
+        let response = result.as_ref().as_ref().ok()?;
+        let (snapshot, mutation) = match response {
+            GitResponse::Snapshot(snapshot) => (snapshot.as_ref(), false),
+            GitResponse::Mutation { snapshot, .. } => (snapshot.as_ref().as_ref().ok()?, true),
+            _ => return None,
+        };
+        Some(CompletedGitSnapshot {
+            repository: snapshot.repository.workdir().to_path_buf(),
+            generation: snapshot.generation,
+            captured_at: snapshot.captured_at,
+            spec: snapshot.requested.clone(),
+            state: *state,
+            coalesced: *coalesced,
+            mutation: mutation || matches!(operation, GitOperation::Mutate { .. }),
+        })
+    }
+
+    fn apply_git_service_event(&mut self, event: GitServiceEvent) {
+        let generation_before = self.app.git_snapshot_generation();
+        let completed_id = match &event {
+            GitServiceEvent::Completed { id, .. } => Some(*id),
+            GitServiceEvent::Progress(_) => None,
+        };
+        let completed = Self::completed_git_snapshot(&event);
+        self.app.apply_git_service_event(event);
+        let pending = completed_id
+            .and_then(|id| self.pending_git_refresh.take_if(|pending| pending.id == id));
+        let Some(completed) = completed else {
+            if pending.is_some() {
+                self.next_git_retry = Some(Instant::now() + AUTOMATIC_GIT_RETRY_DELAY);
+                if self.git_dirty {
+                    self.app.mark_git_snapshot_stale();
+                }
+            }
+            return;
+        };
+        let accepted = completed.generation >= generation_before
+            && (completed.state == GitServiceState::Completed
+                || (completed.mutation && completed.state == GitServiceState::Failed));
+        if let Some(pending) = pending {
+            if accepted && completed.state == GitServiceState::Completed && !completed.coalesced {
+                debug_assert_eq!(pending.spec, completed.spec);
+                self.record_git_reconciliation(completed, pending.fallback);
+            } else {
+                self.next_git_retry = Some(Instant::now() + AUTOMATIC_GIT_RETRY_DELAY);
+                if self.git_dirty {
+                    self.app.mark_git_snapshot_stale();
+                }
+            }
+        } else if accepted && !completed.coalesced {
+            // Initial, explicit, and mutation-owned snapshots are freshness
+            // barriers too. Resetting coverage matters because each one is a
+            // deliberately narrow read of the consumers visible at that time.
+            self.record_git_reconciliation(completed, true);
+        }
+    }
+
+    fn record_git_reconciliation(&mut self, completed: CompletedGitSnapshot, reset: bool) {
+        if self
+            .latest_git_observation
+            .is_some_and(|observed| observed > completed.captured_at)
+        {
+            self.app.mark_git_snapshot_stale();
+            return;
+        }
+        self.last_git_refresh = completed.captured_at;
+        self.next_git_retry = None;
+        self.last_git_reconciliation = Some(AppliedGitReconciliation {
+            repository: completed.repository,
+            captured_at: completed.captured_at,
+            spec: completed.spec.clone(),
+        });
+        if self.app.periodic_git_refresh_seconds() == 0 {
+            self.git_dirty = false;
+            self.git_reconciled = None;
+            return;
+        }
+        self.git_dirty = true;
+        if reset {
+            self.git_reconciled = Some(completed.spec);
+        } else {
+            self.git_reconciled
+                .get_or_insert_with(Default::default)
+                .merge(&completed.spec);
+        }
+    }
+
     fn apply_git_invalidation(&mut self, event: GitInvalidation) {
         if self
             .app
             .git_monitor_repository()
             .is_some_and(|repository| repository.workdir() == event.repository)
         {
+            self.latest_git_observation = Some(
+                self.latest_git_observation
+                    .map_or(event.observed_at, |latest| latest.max(event.observed_at)),
+            );
+            self.next_git_retry = None;
             self.git_dirty = true;
-            self.git_reconciled = None;
-            self.app.mark_git_snapshot_stale();
+            let covered = self
+                .last_git_reconciliation
+                .as_ref()
+                .filter(|reconciliation| reconciliation.repository == event.repository)
+                .filter(|reconciliation| event.observed_at <= reconciliation.captured_at);
+            if let Some(reconciliation) = covered {
+                self.git_reconciled = Some(reconciliation.spec.clone());
+            } else {
+                self.git_reconciled = None;
+                self.app.mark_git_snapshot_stale();
+            }
         }
     }
 
@@ -1085,6 +1234,13 @@ impl WorkspaceHost {
         if seconds == 0 {
             self.git_dirty = false;
             self.git_reconciled = None;
+            self.pending_git_refresh = None;
+            self.next_git_retry = None;
+            return false;
+        }
+        if self.pending_git_refresh.is_some()
+            || self.next_git_retry.is_some_and(|retry| now < retry)
+        {
             return false;
         }
         if !self.app.has_visible_git_state() {
@@ -1103,13 +1259,12 @@ impl WorkspaceHost {
         if !dirty_due && !fallback_due {
             return false;
         }
-        if self.app.request_automatic_git_refresh(spec.clone()) {
-            if self.git_dirty {
-                self.git_reconciled
-                    .get_or_insert_with(Default::default)
-                    .merge(&spec);
-            }
-            self.last_git_refresh = now;
+        if let Some(id) = self.app.request_automatic_git_refresh(spec.clone()) {
+            self.pending_git_refresh = Some(PendingAutomaticGitRefresh {
+                id,
+                spec,
+                fallback: fallback_due && !dirty_due,
+            });
             true
         } else {
             false
@@ -1184,7 +1339,11 @@ mod tests {
         clipboard::SystemClipboard,
         command::{CommandExecutionContext, EditorCommand, Mode},
         config::Config,
-        git::{GitCliProvider, GitOperation, GitService, GitServiceEvent},
+        git::{
+            BaseContent, Divergence, GitCliProvider, GitError, GitMutation, GitOperation,
+            GitRequestId, GitResponse, GitService, GitServiceEvent, Head, Repository,
+            RepositorySnapshot, RepositoryStatus,
+        },
         git_monitor::GitInvalidation,
         input::{KeyStroke, Modifiers, PointerButton, PointerEventKind},
         launch::LaunchTarget,
@@ -1281,6 +1440,104 @@ mod tests {
     }
 
     #[test]
+    fn a_mutation_snapshot_covers_its_delayed_native_invalidation() {
+        let mut host = host();
+        let root = host.project_root.clone();
+        let path = root.join("covered-by-mutation.rs");
+        host.buffers[0].kind = BufferKind::File;
+        host.buffers[0].path = Some(path.clone());
+        let repository = Repository::new(&root);
+        let spec = RefreshSpec {
+            staged_paths: vec![path.clone()],
+            ..RefreshSpec::default()
+        };
+        let captured_at = Instant::now();
+        let mutation = GitMutation::Stage(vec![path.clone()]);
+        host.apply_event(HostEvent::Git(GitServiceEvent::Completed {
+            id: GitRequestId::from_raw(91),
+            operation: GitOperation::Mutate {
+                repository: repository.clone(),
+                mutation: mutation.clone(),
+                refresh: spec.clone(),
+            },
+            result: Box::new(Ok(GitResponse::Mutation {
+                mutation,
+                applied_paths: vec![path.clone()],
+                summary: None,
+                failure: None,
+                snapshot: Box::new(Ok(RepositorySnapshot {
+                    repository,
+                    generation: RepositoryGeneration::from_raw(1),
+                    captured_at,
+                    requested: spec.clone(),
+                    status: RepositoryStatus {
+                        head: Head::Branch("main".to_owned()),
+                        upstream: None,
+                        divergence: Divergence::default(),
+                        files: Vec::new(),
+                    },
+                    stats: Default::default(),
+                    head_oid: Some("a".repeat(40)),
+                    staged: vec![(path, BaseContent::Text(String::new()))],
+                    branches: None,
+                    staged_diff: None,
+                    file_diffs: Vec::new(),
+                    worktrees: None,
+                    log: None,
+                    requested_log_anchors: Vec::new(),
+                    reachable_log_anchors: Vec::new(),
+                    stashes: None,
+                })),
+            })),
+            state: GitServiceState::Completed,
+            coalesced: false,
+        }));
+
+        host.apply_event(HostEvent::GitInvalidation(GitInvalidation {
+            repository: root,
+            observed_at: captured_at.checked_sub(Duration::from_millis(1)).unwrap(),
+            overflowed: false,
+        }));
+
+        assert!(host.git_dirty);
+        assert!(host.git_reconciled.as_ref().unwrap().covers(&spec));
+    }
+
+    #[test]
+    fn a_failed_automatic_refresh_does_not_claim_reconciliation() {
+        let mut host = host();
+        let repository = Repository::new(host.project_root.clone());
+        let spec = RefreshSpec::default();
+        let last_success = host.last_git_refresh;
+        host.git_dirty = true;
+        host.pending_git_refresh = Some(PendingAutomaticGitRefresh {
+            id: GitRequestId::from_raw(92),
+            spec,
+            fallback: false,
+        });
+
+        host.apply_event(HostEvent::Git(GitServiceEvent::Completed {
+            id: GitRequestId::from_raw(92),
+            operation: GitOperation::Refresh {
+                repository,
+                spec: RefreshSpec::default(),
+            },
+            result: Box::new(Err(GitError::Failed {
+                command: "git status".to_owned(),
+                code: Some(1),
+                stderr: "temporary failure".to_owned(),
+            })),
+            state: GitServiceState::Failed,
+            coalesced: false,
+        }));
+
+        assert!(host.pending_git_refresh.is_none());
+        assert!(host.git_reconciled.is_none());
+        assert_eq!(host.last_git_refresh, last_success);
+        assert!(host.next_git_retry.is_some());
+    }
+
+    #[test]
     fn git_invalidation_is_retained_until_visible_and_fallback_is_not_polling() {
         let root = std::env::temp_dir().join(format!(
             "runyte-host-git-invalidation-{}-{}-{}",
@@ -1359,6 +1616,7 @@ mod tests {
         host.panes.get_mut(&active_pane).unwrap().buffer = directory_buffer;
         host.apply_event(HostEvent::GitInvalidation(GitInvalidation {
             repository: root.clone(),
+            observed_at: Instant::now(),
             overflowed: false,
         }));
         assert!(host.git_dirty);
@@ -1386,6 +1644,13 @@ mod tests {
         let reconciled = host.git_reconciled.as_ref().unwrap();
         assert!(reconciled.staged_paths.contains(&tracked));
         assert!(reconciled.staged_paths.contains(&second));
+        assert!(host.git_tracks(tracked_buffer));
+        assert!(host.git_tracks(second_buffer));
+        host.panes.get_mut(&active_pane).unwrap().buffer = tracked_buffer;
+        assert!(
+            !host.refresh_git_if_due(before_fallback),
+            "returning to a reconciled gutter scheduled a redundant refresh"
+        );
 
         let fallback = host.last_git_refresh + Duration::from_secs(60);
         assert!(host.refresh_git_if_due(fallback));
@@ -1394,6 +1659,7 @@ mod tests {
         host.config.git.refresh_interval_seconds = 0;
         host.apply_event(HostEvent::GitInvalidation(GitInvalidation {
             repository: root.clone(),
+            observed_at: Instant::now(),
             overflowed: true,
         }));
         assert!(!host.refresh_git_if_due(fallback + Duration::from_secs(600)));

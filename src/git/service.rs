@@ -472,6 +472,10 @@ impl GitOperation {
 pub struct RepositorySnapshot {
     pub repository: Repository,
     pub generation: RepositoryGeneration,
+    /// When the service finished reading the fields in this snapshot.
+    pub captured_at: Instant,
+    /// The subset of ambient state this snapshot authoritatively refreshed.
+    pub requested: RefreshSpec,
     pub status: RepositoryStatus,
     /// The line counts for that status, empty where none were asked for.
     pub stats: StatusStats,
@@ -1414,6 +1418,8 @@ fn refresh(
     Ok(RepositorySnapshot {
         repository: repository.clone(),
         generation,
+        captured_at: Instant::now(),
+        requested: spec.clone(),
         status,
         stats,
         head_oid,
@@ -1486,10 +1492,12 @@ mod tests {
                         total_pages: 1,
                     },
                 },
-                GitOperation::Refresh { repository, .. } => {
+                GitOperation::Refresh { repository, spec } => {
                     GitResponse::Snapshot(Box::new(RepositorySnapshot {
                         repository: repository.clone(),
                         generation,
+                        captured_at: Instant::now(),
+                        requested: spec.clone(),
                         status,
                         stats: StatusStats::default(),
                         head_oid: Some("head".to_owned()),
@@ -1507,7 +1515,7 @@ mod tests {
                 GitOperation::Mutate {
                     repository,
                     mutation,
-                    ..
+                    refresh,
                 } => GitResponse::Mutation {
                     mutation: mutation.clone(),
                     applied_paths: Vec::new(),
@@ -1520,6 +1528,8 @@ mod tests {
                     snapshot: Box::new(Ok(RepositorySnapshot {
                         repository: repository.clone(),
                         generation,
+                        captured_at: Instant::now(),
+                        requested: refresh.clone(),
                         status,
                         stats: StatusStats::default(),
                         head_oid: Some("head".to_owned()),

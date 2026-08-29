@@ -80,33 +80,47 @@ impl GitTracker {
 
     /// Atomically installs one service-owned repository snapshot.
     ///
-    /// Counts that were not read this time are dropped rather than kept: they
-    /// described the previous status, and numbers beside a file that has since
-    /// moved are worse than no numbers at all.
+    /// A refresh may be deliberately narrow. Staged bases outside its request
+    /// remain valid until the host observes another invalidation and asks for
+    /// them again. Counts follow the same rule: the host does not consider
+    /// them reconciled across an invalidation unless a snapshot requested
+    /// them, so a narrow snapshot must not erase a previously completed read.
     pub fn apply_snapshot(
         &mut self,
         repository: Repository,
         status: RepositoryStatus,
         stats: StatusStats,
         staged: Vec<(PathBuf, BaseContent)>,
+        stats_requested: bool,
     ) {
+        let same_repository = self.repository.as_ref() == Some(&repository);
+        if !same_repository {
+            self.files.clear();
+        }
         self.repository = Some(repository);
         self.status = Some(status);
-        self.stats = stats;
-        self.files = staged
-            .into_iter()
-            .filter_map(|(path, content)| match content {
-                BaseContent::Text(base) if base.len() <= MAX_BASE_BYTES => Some((
-                    path,
-                    TrackedFile {
-                        base,
-                        rows: Vec::new(),
-                        revision: None,
-                    },
-                )),
-                BaseContent::Absent | BaseContent::Binary | BaseContent::Text(_) => None,
-            })
-            .collect();
+        if stats_requested {
+            self.stats = stats;
+        } else if !same_repository {
+            self.stats = StatusStats::default();
+        }
+        for (path, content) in staged {
+            match content {
+                BaseContent::Text(base) if base.len() <= MAX_BASE_BYTES => {
+                    self.files.insert(
+                        path,
+                        TrackedFile {
+                            base,
+                            rows: Vec::new(),
+                            revision: None,
+                        },
+                    );
+                }
+                BaseContent::Absent | BaseContent::Binary | BaseContent::Text(_) => {
+                    self.files.remove(&path);
+                }
+            }
+        }
     }
 
     /// Installs a status read on its own, without the counts that describe it.
@@ -247,7 +261,9 @@ impl GitTracker {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::git::{Divergence, FileState, FileStatus, GitError, Head, MemoryGitProvider};
+    use crate::git::{
+        DiffScope, Divergence, FileState, FileStatus, GitError, Head, LineStats, MemoryGitProvider,
+    };
 
     fn repository() -> Repository {
         Repository::new("/project")
@@ -306,6 +322,49 @@ mod tests {
         assert!(tracker.tracks(Path::new("/project/tracked.rs")));
         assert!(!tracker.tracks(Path::new("/project/image.png")));
         assert!(!tracker.tracks(Path::new("/project/untracked.rs")));
+    }
+
+    #[test]
+    fn a_narrow_snapshot_preserves_other_staged_bases_and_unrequested_stats() {
+        let mut tracker = GitTracker::new();
+        let status = RepositoryStatus {
+            head: Head::Branch("main".to_owned()),
+            upstream: None,
+            divergence: Divergence::default(),
+            files: Vec::new(),
+        };
+        let first = PathBuf::from("/project/first.rs");
+        let second = PathBuf::from("/project/second.rs");
+        let mut stats = StatusStats::default();
+        stats.insert(
+            DiffScope::Unstaged,
+            PathBuf::from("first.rs"),
+            LineStats::new(3, 1),
+        );
+        tracker.apply_snapshot(
+            repository(),
+            status.clone(),
+            stats,
+            vec![(first.clone(), BaseContent::Text("first\n".to_owned()))],
+            true,
+        );
+
+        tracker.apply_snapshot(
+            repository(),
+            status,
+            StatusStats::default(),
+            vec![(second.clone(), BaseContent::Text("second\n".to_owned()))],
+            false,
+        );
+
+        assert!(tracker.tracks(&first));
+        assert!(tracker.tracks(&second));
+        assert_eq!(
+            tracker
+                .stats()
+                .get(DiffScope::Unstaged, Path::new("first.rs")),
+            Some(LineStats::new(3, 1))
+        );
     }
 
     #[test]

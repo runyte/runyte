@@ -1211,6 +1211,8 @@ fn log_selection_is_object_stable_and_stale_blame_is_discarded() {
         RepositorySnapshot {
             repository: repository.clone(),
             generation: RepositoryGeneration::from_raw(1),
+            captured_at: Instant::now(),
+            requested: RefreshSpec::default(),
             status: crate::git::RepositoryStatus {
                 head: crate::git::Head::Branch("main".to_owned()),
                 upstream: None,
@@ -1302,6 +1304,8 @@ fn log_selection_is_object_stable_and_stale_blame_is_discarded() {
         RepositorySnapshot {
             repository: repository.clone(),
             generation: RepositoryGeneration::from_raw(1),
+            captured_at: Instant::now(),
+            requested: RefreshSpec::default(),
             status: crate::git::RepositoryStatus {
                 head: crate::git::Head::Branch("main".to_owned()),
                 upstream: None,
@@ -1390,6 +1394,7 @@ fn log_selection_is_object_stable_and_stale_blame_is_discarded() {
         },
         crate::git::StatusStats::default(),
         Vec::new(),
+        false,
     );
     let stale = BlameSource {
         buffer: crate::workspace::BufferId::from_index(source),
@@ -1510,6 +1515,7 @@ fn blame_refuses_oversized_and_binary_buffers_before_service_submission() {
         },
         crate::git::StatusStats::default(),
         Vec::new(),
+        false,
     );
     app.buffers[0]
         .discard_changes_to(&"x".repeat(MAX_BLAME_INPUT_BYTES + 1))
@@ -4583,6 +4589,12 @@ fn async_refresh_requests_staged_bases_only_for_visible_open_files() {
         "a directory buffer became an empty Git pathspec"
     );
 
+    let active_pane = app.active_pane;
+    app.panes.get_mut(&active_pane).unwrap().terminal = Some(TerminalId::from_raw(1));
+    assert!(!app.has_visible_git_state());
+    assert!(app.git_refresh_spec(&repository).staged_paths.is_empty());
+    app.panes.get_mut(&active_pane).unwrap().terminal = None;
+
     app.split(Axis::Horizontal, Some(first.clone())).unwrap();
     app.toggle_maximized(MaximizedView::Fullscreen);
     let maximized = app.git_refresh_spec(&repository);
@@ -4931,6 +4943,8 @@ fn commit_open_waits_for_the_refreshed_index() {
         result: Box::new(Ok(GitResponse::Snapshot(Box::new(RepositorySnapshot {
             repository: repository.clone(),
             generation: RepositoryGeneration::default(),
+            captured_at: Instant::now(),
+            requested: RefreshSpec::default(),
             status: stale_status,
             stats: StatusStats::default(),
             head_oid: Some("a".repeat(40)),
@@ -4971,6 +4985,8 @@ fn commit_open_waits_for_the_refreshed_index() {
         result: Box::new(Ok(GitResponse::Snapshot(Box::new(RepositorySnapshot {
             repository,
             generation: RepositoryGeneration::default(),
+            captured_at: Instant::now(),
+            requested: RefreshSpec::default(),
             status,
             stats: StatusStats::default(),
             head_oid: Some("a".repeat(40)),
@@ -5042,6 +5058,8 @@ fn cancelling_a_coalesced_commit_check_does_not_reopen_the_intent() {
         result: Box::new(Ok(GitResponse::Snapshot(Box::new(RepositorySnapshot {
             repository: Repository::new(&root),
             generation: RepositoryGeneration::default(),
+            captured_at: Instant::now(),
+            requested: RefreshSpec::default(),
             status: RepositoryStatus {
                 head: Head::Branch("main".to_owned()),
                 upstream: None,

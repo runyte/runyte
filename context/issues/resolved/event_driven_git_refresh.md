@@ -38,6 +38,16 @@ interaction quiet period preserves prompt, search, deliberate-selection, and
 row-identity protections without delaying an observed change for the full
 fallback interval.
 
+A review follow-up made partial snapshots explicitly self-describing and
+completion-aware. `GitTracker::apply_snapshot` now replaces only staged bases
+and statistics the snapshot actually requested, so revealing file B cannot
+evict file A's already reconciled gutter base. Terminal-covered buffers are
+not visible Git consumers. The host records coverage only after a successful,
+non-coalesced snapshot and uses the snapshot's capture time to recognize a
+delayed watcher event already covered by an editor-owned mutation. Failed
+automatic reads keep the repository dirty and retry after a bounded delay
+rather than claiming freshness until the fallback interval.
+
 Tests: `git_monitor::tests::a_native_burst_produces_one_debounced_invalidation`,
 `git_monitor::tests::linked_worktree_watches_checkout_private_and_shared_metadata`,
 and `git_monitor::tests::worktree_index_head_refs_and_packed_refs_are_relevant`
@@ -45,10 +55,17 @@ in `src/git_monitor.rs` cover native coalescing and metadata scope;
 `workspace::host::tests::git_invalidation_is_retained_until_visible_and_fallback_is_not_polling`
 in `src/workspace/host.rs` covers the visibility gate, retained dirty state,
 narrow requirements, fallback, and zero setting;
+`workspace::host::tests::a_mutation_snapshot_covers_its_delayed_native_invalidation`
+and
+`workspace::host::tests::a_failed_automatic_refresh_does_not_claim_reconciliation`
+cover direct mutation reconciliation and completion-aware failures;
+`git::tracker::tests::a_narrow_snapshot_preserves_other_staged_bases_and_unrequested_stats`
+in `src/git/tracker.rs` covers non-destructive partial snapshots;
 `app::tests::async_refresh_requests_staged_bases_only_for_visible_open_files`
 and
 `app::tests::automatic_refresh_waits_out_a_short_quiet_period_after_the_last_keystroke`
-in `src/app/tests/git.rs` cover visible/maximized panes and interaction;
+in `src/app/tests/git.rs` cover visible, maximized, terminal-covered panes and
+interaction;
 `config::tests::git_reconciliation_defaults_to_sixty_seconds` in
 `src/config.rs` covers the new default; and discovery coverage in
 `tests/git_provider.rs` verifies main, linked-worktree, and separate Git

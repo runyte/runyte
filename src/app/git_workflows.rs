@@ -308,10 +308,20 @@ impl App {
     }
 
     pub(super) fn git_refresh_spec(&self, repository: &Repository) -> RefreshSpec {
-        let visible_panes = self.maximized.as_ref().map_or_else(
-            || self.panes.keys().copied().collect::<Vec<_>>(),
-            |maximized| vec![maximized.pane],
-        );
+        let visible_panes = self
+            .maximized
+            .as_ref()
+            .map_or_else(
+                || self.panes.keys().copied().collect::<Vec<_>>(),
+                |maximized| vec![maximized.pane],
+            )
+            .into_iter()
+            .filter(|pane| {
+                self.panes
+                    .get(pane)
+                    .is_some_and(|pane| pane.terminal.is_none())
+            })
+            .collect::<Vec<_>>();
         let visible = visible_panes
             .iter()
             .filter_map(|pane| self.panes.get(pane).map(|pane| pane.buffer))
@@ -414,10 +424,20 @@ impl App {
     }
 
     pub(crate) fn has_visible_git_state(&self) -> bool {
-        let visible_panes = self.maximized.as_ref().map_or_else(
-            || self.panes.keys().copied().collect::<Vec<_>>(),
-            |maximized| vec![maximized.pane],
-        );
+        let visible_panes = self
+            .maximized
+            .as_ref()
+            .map_or_else(
+                || self.panes.keys().copied().collect::<Vec<_>>(),
+                |maximized| vec![maximized.pane],
+            )
+            .into_iter()
+            .filter(|pane| {
+                self.panes
+                    .get(pane)
+                    .is_some_and(|pane| pane.terminal.is_none())
+            })
+            .collect::<Vec<_>>();
         visible_panes.iter().any(|pane| {
             let Some(pane) = self.panes.get(pane) else {
                 return false;
@@ -467,7 +487,10 @@ impl App {
         })
     }
 
-    pub(crate) fn request_automatic_git_refresh(&mut self, spec: RefreshSpec) -> bool {
+    pub(crate) fn request_automatic_git_refresh(
+        &mut self,
+        spec: RefreshSpec,
+    ) -> Option<GitRequestId> {
         if self
             .git_state
             .progress
@@ -475,13 +498,14 @@ impl App {
             .any(|progress| progress.mutation || progress.operation == "refresh repository")
             || self.interaction_defers_git_refresh()
         {
-            return false;
+            return None;
         }
-        let Some(repository) = self.git.repository().cloned() else {
-            return false;
-        };
+        let repository = self.git.repository().cloned()?;
         self.request_git(GitOperation::Refresh { repository, spec })
-            .is_some()
+    }
+
+    pub(crate) fn git_snapshot_generation(&self) -> RepositoryGeneration {
+        self.git_state.generation
     }
 
     pub fn apply_git_service_event(&mut self, event: GitServiceEvent) {
@@ -847,6 +871,7 @@ impl App {
             snapshot.status,
             snapshot.stats,
             snapshot.staged,
+            snapshot.requested.stats,
         );
         self.git_state.snapshot_stale = false;
         if head_changed && reload_external_head {
@@ -1478,7 +1503,7 @@ impl App {
     }
 
     /// Whether a buffer has a staged text behind it, and so a gutter column.
-    pub(super) fn git_tracks(&self, buffer: usize) -> bool {
+    pub(crate) fn git_tracks(&self, buffer: usize) -> bool {
         self.buffers[buffer]
             .path
             .as_deref()

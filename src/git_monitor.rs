@@ -30,6 +30,8 @@ const DEBOUNCE: Duration = Duration::from_millis(150);
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct GitInvalidation {
     pub repository: PathBuf,
+    /// Latest native observation represented by this debounced event.
+    pub observed_at: Instant,
     /// A watcher error or bounded-queue overflow loses path precision. The
     /// host treats both forms as the same full repository invalidation.
     pub overflowed: bool,
@@ -105,6 +107,7 @@ fn run_worker(
     let mut repository = None::<Repository>;
     let mut watched = HashSet::<PathBuf>::new();
     let mut deadline = None::<Instant>;
+    let mut last_observed = None::<Instant>;
     let mut full = false;
     let mut ready = None::<GitInvalidation>;
 
@@ -116,11 +119,13 @@ fn run_worker(
                         sync_registration(watcher.as_deref_mut(), &mut watched, next.as_ref());
                     repository = next;
                     deadline = None;
+                    last_observed = None;
                     full = false;
                     ready = None;
                     if !complete && repository.is_some() {
+                        last_observed = Some(Instant::now());
                         full = true;
-                        deadline = Some(Instant::now() + DEBOUNCE);
+                        deadline = last_observed.map(|observed| observed + DEBOUNCE);
                     }
                 }
             }
@@ -129,13 +134,17 @@ fn run_worker(
                     .as_ref()
                     .is_some_and(|repository| affects(&event, repository))
                 {
-                    deadline = Some(Instant::now() + DEBOUNCE);
+                    let observed = Instant::now();
+                    last_observed = Some(observed);
+                    deadline = Some(observed + DEBOUNCE);
                 }
             }
             Ok(WorkerMessage::Native(Err(_))) => {
                 if repository.is_some() {
+                    let observed = Instant::now();
+                    last_observed = Some(observed);
                     full = true;
-                    deadline = Some(Instant::now() + DEBOUNCE);
+                    deadline = Some(observed + DEBOUNCE);
                 }
             }
             Ok(WorkerMessage::Stop) => break,
@@ -144,8 +153,10 @@ fn run_worker(
         }
 
         if overflowed.swap(false, Ordering::AcqRel) && repository.is_some() {
+            let observed = Instant::now();
+            last_observed = Some(observed);
             full = true;
-            deadline = Some(Instant::now() + DEBOUNCE);
+            deadline = Some(observed + DEBOUNCE);
         }
 
         let now = Instant::now();
@@ -154,6 +165,7 @@ fn run_worker(
             if let Some(repository) = repository.as_ref() {
                 ready = Some(GitInvalidation {
                     repository: repository.workdir().to_path_buf(),
+                    observed_at: last_observed.take().unwrap_or(now),
                     overflowed: full,
                 });
                 full = false;
