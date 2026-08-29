@@ -887,17 +887,10 @@ impl LocalEndpoint {
     }
 
     fn prepare_directory(&self) -> Result<()> {
-        if self.directory.exists() {
-            verify_private(&self.directory, true)?;
-        } else {
-            if let Some(parent) = self.directory.parent() {
-                fs::create_dir_all(parent).with_context(|| {
-                    format!("cannot create host directory parent {}", parent.display())
-                })?;
-            }
-            create_private_directory(&self.directory)?;
-        }
-        Ok(())
+        // Two host children may race before either reaches the identity lock.
+        // The common helper accepts a directory another child just created
+        // only after applying the same ownership, mode, and symlink checks.
+        prepare_private_directory(&self.directory)
     }
 
     fn recorded_host_is_alive(&self) -> Result<bool> {
