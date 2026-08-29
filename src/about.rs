@@ -4,6 +4,8 @@
 
 use unicode_width::UnicodeWidthStr;
 
+use crate::help_document::{HelpDocument, HelpDocumentWriter, HelpRole};
+
 const LOGO: &str = include_str!("../logo/ascii/logo.txt");
 const DESCRIPTION: &str = "A fast modal terminal editor with selection-first editing.";
 const TAGLINE: &str = "Navigate. Select. Act.";
@@ -30,6 +32,10 @@ const FIRST_STEPS: &[(&str, &str)] = &[
 /// and the pane recomputes that space as it is resized. The result is still an
 /// ordinary searchable, scrollable buffer, just like help.
 pub fn render() -> String {
+    render_document().text().to_owned()
+}
+
+pub(crate) fn render_document() -> HelpDocument {
     let logo = LOGO.lines().map(str::to_owned).collect::<Vec<_>>();
     let version = vec![format!("Runyte {}", env!("CARGO_PKG_VERSION"))];
     let description = vec![DESCRIPTION.to_owned()];
@@ -54,7 +60,22 @@ pub fn render() -> String {
     push_block(&mut text, &heading, width);
     text.push('\n');
     push_block(&mut text, &steps, width);
-    text
+    let mut document = HelpDocumentWriter::new();
+    document.write(&text);
+    for line in LOGO.lines().filter(|line| !line.is_empty()) {
+        document.mark_since(0, line, HelpRole::Heading);
+    }
+    document.mark_since(0, &version[0], HelpRole::Heading);
+    document.mark_since(0, HEADING, HelpRole::Heading);
+    for (key, _) in FIRST_STEPS {
+        let role = if key.starts_with(':') {
+            HelpRole::Command
+        } else {
+            HelpRole::KeyBinding
+        };
+        document.mark_since(0, key, role);
+    }
+    document.finish()
 }
 
 /// The key table, each key padded to the widest so the separators line up.
@@ -153,5 +174,23 @@ mod tests {
             quit.width() - quit.trim_start().width(),
             (width - steps) / 2
         );
+    }
+
+    #[test]
+    fn about_assigns_one_schema_to_titles_commands_and_keys() {
+        let rendered = render_document();
+        let scopes = |needle: &str| {
+            let from = rendered.text().find(needle).unwrap();
+            let from = rendered.text()[..from].chars().count();
+            rendered
+                .spans()
+                .iter()
+                .find(|span| span.from <= from && span.to > from)
+                .map(|span| span.scope.name())
+        };
+
+        assert_eq!(scopes("Getting around"), Some("markup.heading"));
+        assert_eq!(scopes(":tutorial"), Some("function"));
+        assert_eq!(scopes("Space ?"), Some("keyword"));
     }
 }

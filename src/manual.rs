@@ -9,6 +9,8 @@
 
 use std::fmt::Write as _;
 
+use crate::help_document::{HelpDocument, HelpDocumentWriter, HelpRole};
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ManualTopic {
     GettingStarted,
@@ -155,6 +157,10 @@ pub fn available_topics() -> String {
 }
 
 pub fn render() -> String {
+    render_document().text().to_owned()
+}
+
+pub(crate) fn render_document() -> HelpDocument {
     let mut out = String::from(
         "Help · RUNYTE\n\n\
          This is the general Runyte manual. Use Space ? for contextual help about\n\
@@ -168,7 +174,138 @@ pub fn render() -> String {
     for topic in ManualTopic::ALL {
         let _ = write!(out, "\n{}\n\n{}\n", topic.heading(), topic.body());
     }
-    out
+    let mut document = HelpDocumentWriter::new();
+    document.write_prose(&out);
+
+    for heading in ["Help · RUNYTE", "Topics"] {
+        document.mark_since(0, heading, HelpRole::Heading);
+    }
+    for topic in ManualTopic::ALL {
+        document.mark_since(0, &topic.heading(), HelpRole::Heading);
+    }
+
+    for command in [
+        ":file-picker-directory",
+        ":help <topic>",
+        ":lsp-restart [language]",
+        ":notifications",
+        ":service-health",
+        ":tutorial",
+        ":settings",
+        ":log-open",
+        ":lsp-status",
+        ":about",
+        ":close",
+        ":detach",
+        ":theme",
+        ":quit",
+        ":help",
+        ":not",
+        ":c!",
+        ":c",
+        ":q",
+        "runyte --session-restart [WORKSPACE]",
+    ] {
+        document.mark_token_since(0, command, HelpRole::Command);
+    }
+
+    for key in [
+        "Space / /",
+        "Space / f",
+        "Space / g",
+        "Space / s",
+        "Space b b",
+        "Space c P",
+        "Space c p",
+        "Space c y",
+        "Space g",
+        "Space l",
+        "Space o o",
+        "Space w",
+        "Space e",
+        "Space f",
+        "Space ?",
+        "Alt-o/Alt-i",
+        "Ctrl-o/Ctrl-i",
+        "Ctrl-t",
+        "Escape",
+        "Enter",
+        "NORMAL",
+        "Space",
+        "Tab",
+        "x/X",
+        "n/N",
+        "v",
+        "s",
+        "/",
+        ";",
+        ":",
+    ] {
+        document.mark_token_since(0, key, HelpRole::KeyBinding);
+    }
+
+    for path in [
+        "~/.config/runyte/config.yaml",
+        "docs/lsp/",
+        ".runyte/",
+        ".runyte",
+        "standalone-<pid>.log",
+        "host.log",
+    ] {
+        document.mark_token_since(0, path, HelpRole::FilePath);
+    }
+
+    for literal in [
+        "editor.mouse",
+        "lsp.servers.<language>",
+        "rust-analyzer",
+        "--config PATH",
+        "--log PATH",
+        "--keep-index",
+        "--persistent",
+        "[WORKSPACE]",
+        "[explorer]",
+        "[RO]",
+        "[STALE]",
+        "(?-i)",
+        "(?i)hello",
+        "/hello/i",
+        "[abc]",
+        "[^abc]",
+        "x|y",
+        "(?:x)",
+        "{n,m}",
+        "\\A",
+        "\\z",
+        "\\b",
+        "\\B",
+        "\\d",
+        "\\s",
+        "\\w",
+        "\\p{Greek}",
+        "(?i)",
+        "(?m)",
+        "(?s)",
+        "(?R)",
+        "(?U)",
+        "(?u)",
+        "(?x)",
+        "(?i:hello)",
+        "(?-i:WORLD)",
+        "\\n",
+        "lsp:",
+        "markdown:",
+        "command: marksman",
+        "args: [\"server\"]",
+        "PATH",
+        "INFO",
+        "DEBUG",
+        "TRACE",
+    ] {
+        document.mark_token_since(0, literal, HelpRole::Code);
+    }
+
+    document.finish()
 }
 
 pub fn topic_offset(text: &str, topic: ManualTopic) -> usize {
@@ -220,6 +357,26 @@ mod tests {
         ] {
             assert!(regex.contains(required), "missing {required:?}");
         }
+    }
+
+    #[test]
+    fn manual_schema_distinguishes_headings_commands_paths_keys_and_code() {
+        let rendered = render_document();
+        let scope_at = |needle: &str| {
+            let byte = rendered.text().find(needle).unwrap();
+            let offset = rendered.text()[..byte].chars().count();
+            rendered
+                .spans()
+                .iter()
+                .find(|span| span.from <= offset && span.to > offset)
+                .map(|span| span.scope.name())
+        };
+
+        assert_eq!(scope_at("REGULAR EXPRESSIONS"), Some("markup.heading"));
+        assert_eq!(scope_at(":tutorial"), Some("function"));
+        assert_eq!(scope_at("Space ?"), Some("keyword"));
+        assert_eq!(scope_at("~/.config/runyte/config.yaml"), Some("string"));
+        assert_eq!(scope_at("editor.mouse"), Some("markup.raw"));
     }
 
     #[test]

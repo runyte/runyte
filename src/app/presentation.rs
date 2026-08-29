@@ -557,7 +557,7 @@ impl App {
         } else {
             HelpTopic::for_context(self.key_binding_scope())
         };
-        let text = crate::help::render(
+        let document = crate::help::render_document(
             topic,
             self.grammar.kind(),
             self.key_binding_scope(),
@@ -569,15 +569,17 @@ impl App {
         });
         let buffer = match existing {
             Some(existing) => {
-                self.buffers[existing].replace_virtual_text(&text);
+                self.buffers[existing].replace_virtual_text(document.text());
                 existing
             }
             None => {
-                self.buffers.push(Buffer::help(&text));
+                self.buffers.push(Buffer::help(document.text()));
                 self.syntax.push(None);
                 self.buffers.len() - 1
             }
         };
+        self.generated_highlights
+            .insert(buffer, document.spans().to_vec());
         self.push_jump();
         let pane = self.active_mut();
         pane.retarget(buffer);
@@ -604,14 +606,18 @@ impl App {
             }
             None => None,
         };
-        let text = crate::manual::render();
+        let document = crate::manual::render_document();
         let buffer = self.open_virtual_page(
             GeneratedViewIdentity::Manual,
             "[help]".to_owned(),
-            &text,
+            document.text(),
             ContentAlignment::default(),
         );
-        let offset = topic.map_or(0, |topic| crate::manual::topic_offset(&text, topic));
+        self.generated_highlights
+            .insert(buffer, document.spans().to_vec());
+        let offset = topic.map_or(0, |topic| {
+            crate::manual::topic_offset(document.text(), topic)
+        });
         let row = self.buffers[buffer].offset_to_row(offset);
         let pane = self.active_mut();
         pane.replace_selection(Selection::point(offset));
@@ -623,13 +629,15 @@ impl App {
     /// Opens the small product front page as an ordinary read-only buffer,
     /// centred in whatever pane it lands in.
     pub(super) fn open_about(&mut self) {
-        let text = crate::about::render();
-        self.open_virtual_page(
+        let document = crate::about::render_document();
+        let buffer = self.open_virtual_page(
             GeneratedViewIdentity::About,
             "[about]".to_owned(),
-            &text,
+            document.text(),
             ContentAlignment::CENTERED,
         );
+        self.generated_highlights
+            .insert(buffer, document.spans().to_vec());
     }
 
     /// Whether a modal overlay owns the next key before normal/select dispatch.

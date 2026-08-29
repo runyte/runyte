@@ -171,6 +171,9 @@ impl App {
     /// Highlight spans for a character range of a buffer, empty when the
     /// buffer has no syntax tree.
     pub fn highlights(&self, buffer_id: usize, from: Offset, to: Offset) -> Vec<Span> {
+        if let Some(spans) = self.generated_highlights.get(&buffer_id) {
+            return crate::help_document::clip_spans(spans, from, to);
+        }
         if self.buffers[buffer_id].is_git_branches() {
             return self.git_branch_highlights(buffer_id, from, to);
         }

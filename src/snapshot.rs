@@ -1419,6 +1419,7 @@ fn terminal_title(session: &crate::terminal::TerminalSession, active_mode: Optio
 mod tests {
     use super::*;
     use crate::{
+        command::{CommandExecutionContext, CommandInvocation, EditorCommand},
         config::Config,
         input::{KeyCode, KeyStroke, Modifiers},
         selection::Range,
@@ -2349,6 +2350,39 @@ mod tests {
                 } if scope.name() == "keyword"
             )
         }));
+    }
+
+    #[test]
+    fn generated_help_colours_reach_the_semantic_snapshot() {
+        let mut app = App::new(Config::default(), None).unwrap();
+        app.execute(
+            CommandInvocation::editor(EditorCommand::ShowAbout, CommandExecutionContext::default())
+                .unwrap(),
+        )
+        .unwrap();
+
+        let snapshot = prepared_snapshot(&mut app, 100, 32);
+        let scopes = snapshot
+            .pane(0)
+            .unwrap()
+            .rows
+            .iter()
+            .filter_map(|row| match row {
+                SnapshotRow::Text(row) => Some(&row.runs),
+                _ => None,
+            })
+            .flatten()
+            .filter_map(|run| match run.kind {
+                TextRunKind::Text {
+                    scope: Some(scope), ..
+                } => Some(scope.name()),
+                _ => None,
+            })
+            .collect::<std::collections::HashSet<_>>();
+
+        assert!(scopes.contains("markup.heading"));
+        assert!(scopes.contains("function"));
+        assert!(scopes.contains("keyword"));
     }
 
     #[test]

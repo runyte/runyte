@@ -63,7 +63,11 @@ them, regardless of which extensibility direction is chosen.
   `GitStash`, `WorkspaceSearch`, `Help`, `CommitMessage`, and `Diff` in
   `BindingScope`. The notification buffer, the diagnostic-log buffer, and the
   about page are special too, but use the global scope because they have no
-  actions of their own yet.
+  actions of their own yet. Generated help and about pages may carry semantic
+  colour spans for headings, commands, keys, paths, links, and technical
+  literals. Those spans are presentation metadata over ordinary buffer
+  character offsets: they add no markup characters, actions, or alternate
+  coordinates.
 - **Pane-backed filterable list** — a bounded-lifetime special buffer whose
   stable rows are actions or destinations. Filtering is an operation on the
   view; the list otherwise speaks normal Runyte and does not permanently own

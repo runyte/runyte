@@ -7,14 +7,16 @@
 //! actually do — a hand-maintained key table is a second source of truth, and
 //! the one that goes stale.
 //!
-//! The rendered document is plain text because it is opened as an ordinary
-//! read-only buffer. That is what makes help searchable, scrollable, and
-//! splittable without this module knowing anything about drawing.
+//! The rendered document carries semantic colour spans over plain text and is
+//! opened as an ordinary read-only buffer. That is what makes help searchable,
+//! scrollable, and splittable without this module knowing anything about
+//! drawing.
 
 use std::fmt::Write as _;
 
 use crate::{
     command::{EditorCommand, GrammarKind, Mode},
+    help_document::{HelpDocument, HelpDocumentWriter, HelpRole},
     input::{KeyCode, Modifiers},
     keymap::{BindingScope, BindingTarget, Key, KeySequence, Keymap, Lookup},
 };
@@ -247,6 +249,18 @@ pub fn render(
     keymap: &Keymap,
     read_only: bool,
 ) -> String {
+    render_document(topic, grammar, scope, keymap, read_only)
+        .text()
+        .to_owned()
+}
+
+pub(crate) fn render_document(
+    topic: HelpTopic,
+    grammar: GrammarKind,
+    scope: BindingScope,
+    keymap: &Keymap,
+    read_only: bool,
+) -> HelpDocument {
     // Normal and Select bind the same sequences to the same commands, so
     // either answers for both. `normal_and_select_bind_the_same_sequences` in
     // keymap.rs fails if that stops being true, since this would then be
@@ -384,7 +398,124 @@ pub fn render(
         }
     }
 
-    out
+    let mut document = HelpDocumentWriter::new();
+    document.write_prose(&out);
+
+    let title = topic.title_for(grammar, read_only);
+    for heading in [
+        title.trim(),
+        "Mouse",
+        "Buffer keys",
+        "Where to start",
+        "Direct keys",
+        "Letters and punctuation",
+        "Ctrl chords",
+        "Alt chords",
+        "Arrows and named keys",
+        "Creating a stash",
+    ] {
+        document.mark_token_since(0, heading, HelpRole::Heading);
+    }
+
+    // Key execution and help styling obtain their spellings from the same
+    // registry. The prose-specific additions are names that live above the
+    // registry (mouse actions and modal terminology), not a second keymap.
+    for binding in keymap.bindings_for_scope(mode, scope) {
+        document.mark_token_since(0, &binding.sequence.to_string(), HelpRole::KeyBinding);
+    }
+    for action in keymap.context_actions(scope) {
+        document.mark_token_since(
+            0,
+            &format!("Tab {}", action.mnemonic.label()),
+            HelpRole::KeyBinding,
+        );
+    }
+    for key in [
+        "Shift-click",
+        "right-click",
+        "left-button drag",
+        "Ctrl-h/j/k/l",
+        "Ctrl-u/Ctrl-d",
+        "Ctrl-b/Ctrl-f",
+        "C/Alt-C",
+        "Ctrl-w",
+        "Ctrl-\\",
+        "Ctrl-c",
+        "Ctrl-o",
+        "Space c y",
+        "Space ?",
+        "Escape",
+        "Enter",
+        "NORMAL",
+        "SELECT",
+        "INSERT",
+        "Tab",
+        "x/X",
+        "n/N",
+        "v/s",
+        "i",
+        "v",
+        "s",
+        "/",
+        "y",
+        "p",
+        "u",
+    ] {
+        document.mark_token_since(0, key, HelpRole::KeyBinding);
+    }
+
+    for command in [
+        ":git-stash-untracked",
+        ":git-stash-tracked",
+        ":git-stash-apply",
+        ":git-stash-drop",
+        ":git-stashes",
+        ":git-stash-all",
+        ":service-health",
+        ":notifications",
+        ":write-quit",
+        ":tutorial sessions",
+        ":tutorial",
+        ":log-open",
+        ":help diagnostics",
+        ":help <topic>",
+        ":help",
+        ":not",
+        ":write",
+        ":c!",
+        ":c",
+    ] {
+        document.mark_token_since(0, command, HelpRole::Command);
+    }
+
+    for literal in [
+        "editor.fast_pane_keys",
+        "editor.mouse",
+        "--config PATH",
+        "--keep-index",
+        "[worktree: /local/path]",
+        "[↑2 ↓1]",
+        "[gone]",
+        "[missing]",
+        "[prunable]",
+        "[RO]",
+        "[STALE]",
+        "NORMAL/review",
+        "SGR",
+    ] {
+        document.mark_token_since(0, literal, HelpRole::Code);
+    }
+    for path in [
+        "~/.config/runyte/config.yaml",
+        "/local/path",
+        "docs/lsp/",
+        ".runyte/",
+        ".runyte",
+    ] {
+        document.mark_token_since(0, path, HelpRole::FilePath);
+    }
+
+    document.finish()
 }
 
 /// How a key is typed, which is how someone looks for it.
@@ -787,5 +918,37 @@ mod tests {
         // buffer-specific section appears at all.
         assert!(!rendered.contains("Buffer keys"));
         assert!(!rendered.contains("Different here"));
+    }
+
+    #[test]
+    fn contextual_schema_styles_registry_keys_and_authored_technical_text() {
+        let rendered = render_document(
+            HelpTopic::GitBranches,
+            GrammarKind::Runyte,
+            BindingScope::GitBranches,
+            default_keymap(),
+            true,
+        );
+        let scope_at = |needle: &str| {
+            let byte = rendered
+                .text()
+                .find(needle)
+                .unwrap_or_else(|| panic!("missing {needle:?}"));
+            let offset = rendered.text()[..byte].chars().count();
+            rendered
+                .spans()
+                .iter()
+                .find(|span| span.from <= offset && span.to > offset)
+                .map(|span| span.scope.name())
+        };
+
+        assert_eq!(
+            scope_at("Help · RUNYTE · GIT BRANCHES"),
+            Some("markup.heading")
+        );
+        assert_eq!(scope_at(":help"), Some("function"));
+        assert_eq!(scope_at("Space ?"), Some("keyword"));
+        assert_eq!(scope_at("/local/path"), Some("string"));
+        assert_eq!(scope_at("editor.mouse"), Some("markup.raw"));
     }
 }
