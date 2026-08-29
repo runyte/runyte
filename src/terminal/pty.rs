@@ -270,11 +270,35 @@ impl Pty {
 }
 
 fn terminate_child(child: &mut Child) {
-    let pid = child.id() as libc::pid_t;
-    unsafe {
-        libc::kill(-pid, libc::SIGHUP);
-        libc::kill(-pid, libc::SIGKILL);
+    terminate_child_with(child, |process_group, signal| {
+        // SAFETY: `terminate_child_with` calls this only while the direct
+        // child still anchors its private process-group identity.
+        unsafe {
+            libc::kill(process_group, signal);
+        }
+    });
+}
+
+fn terminate_child_with(child: &mut Child, mut signal_group: impl FnMut(libc::pid_t, libc::c_int)) {
+    match child.try_wait() {
+        // `try_wait` retains this result for subsequent calls, but it has
+        // already reaped the child and released the numeric PID. Never use
+        // that stale number as a process-group identity.
+        Ok(Some(_)) => return,
+        Ok(None) => {}
+        Err(error) => {
+            crate::log_warn!(
+                "terminal",
+                "could not prove PTY child ownership before termination";
+                "pid" => child.id(),
+                "error" => error,
+            );
+            return;
+        }
     }
+    let process_group = -(child.id() as libc::pid_t);
+    signal_group(process_group, libc::SIGHUP);
+    signal_group(process_group, libc::SIGKILL);
     let _ = child.wait();
 }
 
@@ -486,6 +510,47 @@ mod tests {
                 "post-spawn failure at {failed_at:?} left process group {pid} alive"
             );
         }
+    }
+
+    #[test]
+    fn completed_child_teardown_never_signals_a_reusable_process_group() {
+        let mut running = collect("/bin/sh", &["-c", "exit 0"]);
+        assert!(wait_until(Duration::from_secs(5), || running
+            .pty
+            .finished()
+            .is_some()));
+
+        let mut signals = Vec::new();
+        terminate_child_with(&mut running.pty.child, |group, signal| {
+            signals.push((group, signal));
+        });
+
+        assert!(signals.is_empty(), "reaped child triggered {signals:?}");
+    }
+
+    #[test]
+    fn running_child_teardown_still_signals_and_reaps_its_private_group() {
+        let mut running = collect("/bin/sh", &["-c", "while :; do sleep 1; done"]);
+        let pid = running.pty.child.id();
+        let mut signals = Vec::new();
+
+        terminate_child_with(&mut running.pty.child, |group, signal| {
+            signals.push((group, signal));
+            // SAFETY: the unreaped child still anchors this private group.
+            unsafe {
+                libc::kill(group, signal);
+            }
+        });
+
+        let process_group = -(pid as libc::pid_t);
+        assert_eq!(
+            signals,
+            [
+                (process_group, libc::SIGHUP),
+                (process_group, libc::SIGKILL),
+            ]
+        );
+        assert!(!process_group_exists(pid));
     }
 
     #[test]

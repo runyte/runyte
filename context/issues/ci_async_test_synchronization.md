@@ -204,6 +204,17 @@ the authoritative parent-owned status before process-group cleanup, retain
 that status through the later reap, and log any disagreement among libproc,
 `waitid`, and `Child::wait`.
 
+CI run 33273673718 classified the same failure through that authoritative
+`waitid` boundary, proving that the Git child really received `SIGKILL`. The
+killer was the integrated-terminal cleanup path. `Pty::finished` reaped a
+completed terminal leader with `Child::try_wait`; `TerminalSessions::apply`
+then dropped the `Pty`, whose unconditional cleanup sent `SIGHUP` and
+`SIGKILL` to the negative value of the now-reusable PID. A concurrently
+spawned Git child uses `setsid`, so PID reuse could give it exactly that stale
+process-group number. PTY teardown must probe its owned child immediately
+before signalling: a still-running child anchors the group and may be stopped,
+while an already-reaped child makes teardown signal-free.
+
 CI run 33269246467 also showed that the full-content-budget performance gate
 could fail on a single 71.93 ms sample against its 64 ms release budget. The
 picker's score comparator recomputed each candidate's Unicode character count

@@ -18,12 +18,25 @@ after the reader thread exists and no fallible setup remains.
 The cleanup path shares `terminate_child` with normal PTY termination so setup
 failure, explicit shutdown, and `Drop` retain the same process-group behavior.
 
+A later macOS lifecycle burn-in exposed an ownership gap after normal child
+exit. `Pty::finished` reaped the leader, after which dropping that `Pty` still
+sent `SIGHUP` and `SIGKILL` to its negative numeric PID. Once reaped, that
+number no longer identified the terminal's process group and could be reused
+by an unrelated child. `terminate_child` now checks the owned `Child`
+immediately before signalling: completed children make teardown signal-free,
+while a live unreaped leader continues to anchor process-group termination and
+reaping.
+
 Coverage lives in `src/terminal/pty.rs` in
 `every_post_spawn_setup_failure_terminates_and_reaps_the_child`. Its injected
 checkpoints cover failures before reader duplication, writer duplication,
 writer-thread creation, and reader-thread creation. The surrounding PTY tests
 in that module and terminal-session integration in `tests/terminal.rs` cover
 the successful lifecycle.
+`completed_child_teardown_never_signals_a_reusable_process_group` covers the
+reaped-child boundary, and
+`running_child_teardown_still_signals_and_reaps_its_private_group` retains the
+live-child cleanup contract.
 
 ## Report
 
