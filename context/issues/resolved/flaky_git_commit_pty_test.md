@@ -102,6 +102,20 @@ now drains the lifecycle replies before further socket input, allowing the
 wait client to complete cleanly instead of falling into control recovery
 after the host endpoint has retired.
 
+A later CI hardening run exposed the corresponding client-side ordering race.
+After `:wq`, the host could have already queued `WaitState::Completed`, closed
+its read side, and begun its clean shutdown while the attached client's 100 ms
+status tick was also ready. If the tick won the unbiased selection, its final
+`WaitStatus` write returned `EPIPE` before the client read the durable
+completion; recovery through the independent control connection was then too
+late because the endpoint had retired. A failed attached status write now
+drains only already-serialized visual responses and older matching pending
+states until it observes the matching completion or cancellation. Completion
+is success, cancellation retains its reason, and EOF or any other semantic
+response retains the write failure. The Git PTY regression continues to cover
+the end-to-end race without changing its timeouts, input pacing, or process
+parallelism.
+
 Known limitation: the escape-to-command-line transition still relies on a
 fixed delay rather than an observed signal, because the protocol has no way
 to report editor mode to a control client. Sustained scheduling delay past

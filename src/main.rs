@@ -3308,13 +3308,77 @@ async fn run_attached(
                 }
             }
             _ = wait_tick.tick(), if wait_token.is_some() => {
-                client.send(&ClientRequest::WaitStatus {
-                    token: wait_token.expect("guarded by is_some"),
-                }).await?;
+                let token = wait_token.expect("guarded by is_some");
+                if let Err(error) = client.send(&ClientRequest::WaitStatus { token }).await {
+                    recover_attached_wait_after_status_write(&mut client, token, error).await?;
+                    break;
+                }
             }
         }
     }
     Ok(AttachOutcome::Detached)
+}
+
+/// Reads a durable completion that can already be queued when the final
+/// attached status poll loses a race with host shutdown.
+///
+/// The host sends semantic lifecycle replies before closing its write side,
+/// but it can close its read side first. A simultaneously ready status tick
+/// then observes `EPIPE` even though `WaitState::Completed` is already in this
+/// socket's receive queue. Visual responses and an older pending status may
+/// precede that completion, so drain only those and require the authoritative
+/// terminal state before treating the failed write as success.
+#[cfg(unix)]
+async fn recover_attached_wait_after_status_write(
+    client: &mut LocalClient,
+    token: WaitToken,
+    write_error: anyhow::Error,
+) -> Result<()> {
+    let mut write_error = Some(write_error);
+    let recovery = tokio::time::timeout(SHUTDOWN_FLUSH_BUDGET, async {
+        loop {
+            match client.recv().await {
+                Ok(Some(HostResponse::Frame { .. } | HostResponse::TerminalDamage { .. })) => {}
+                Ok(Some(HostResponse::WaitState {
+                    token: response_token,
+                    status: WaitStatus::Pending { .. },
+                    ..
+                })) if response_token == token => {}
+                Ok(Some(HostResponse::WaitState {
+                    token: response_token,
+                    status: WaitStatus::Completed,
+                    ..
+                })) if response_token == token => return Ok(()),
+                Ok(Some(HostResponse::WaitState {
+                    token: response_token,
+                    status: WaitStatus::Cancelled { reason },
+                    ..
+                })) if response_token == token => anyhow::bail!(reason),
+                Ok(Some(response)) => {
+                    return Err(write_error.take().unwrap().context(format!(
+                        "wait status write failed before completion; next host response was {response:?}"
+                    )));
+                }
+                Ok(None) => {
+                    return Err(write_error.take().unwrap().context(
+                        "wait status write failed and the host closed without a completion response",
+                    ));
+                }
+                Err(read_error) => {
+                    return Err(write_error.take().unwrap().context(format!(
+                        "wait status write failed and completion could not be read: {read_error:#}"
+                    )));
+                }
+            }
+        }
+    })
+    .await;
+    match recovery {
+        Ok(result) => result,
+        Err(error) => Err(write_error.take().unwrap().context(format!(
+            "wait status write failed and completion did not arrive before the host flush deadline: {error}"
+        ))),
+    }
 }
 
 #[cfg(unix)]
