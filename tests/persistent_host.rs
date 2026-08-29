@@ -84,6 +84,11 @@ fn run_cli(root: &Path, arguments: &[&str]) -> std::process::Output {
         .current_dir(root)
         .env("XDG_RUNTIME_DIR", test_runtime_dir())
         .env("XDG_CACHE_HOME", test_cache_dir())
+        .env(
+            "RUNYTE_ALL_HOSTS_DIR",
+            test_runtime_dir().join("runyte/all-hosts"),
+        )
+        .env("RUNYTE_TEST_SUPERVISOR_PID", std::process::id().to_string())
         .output()
         .unwrap()
 }
@@ -1353,6 +1358,7 @@ async fn restart_keeps_a_fallback_host_on_its_original_endpoint() {
         .current_dir(&root)
         .env("XDG_RUNTIME_DIR", test_runtime_dir())
         .env("XDG_CACHE_HOME", &cache)
+        .env("RUNYTE_TEST_SUPERVISOR_PID", std::process::id().to_string())
         .output()
         .unwrap();
     assert_cli_success(&restart);
@@ -1563,6 +1569,7 @@ async fn persistent_mode_starts_the_missing_workspace_before_it_reaches_a_termin
         .current_dir(&root)
         .env("XDG_RUNTIME_DIR", test_runtime_dir())
         .env("XDG_CACHE_HOME", test_cache_dir())
+        .env("RUNYTE_TEST_SUPERVISOR_PID", std::process::id().to_string())
         .stdin(Stdio::null())
         .output()
         .unwrap();

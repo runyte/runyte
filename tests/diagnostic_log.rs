@@ -124,6 +124,11 @@ fn runyte(root: &Path, arguments: &[&str]) -> std::process::Output {
         .current_dir(root)
         .env("XDG_RUNTIME_DIR", test_runtime_dir(root))
         .env("XDG_CACHE_HOME", test_cache_dir(root))
+        .env(
+            "RUNYTE_ALL_HOSTS_DIR",
+            test_runtime_dir(root).join("runyte/all-hosts"),
+        )
+        .env("RUNYTE_TEST_SUPERVISOR_PID", std::process::id().to_string())
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

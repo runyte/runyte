@@ -77,6 +77,14 @@ pub struct LaunchArguments {
     /// Explicit permission for a lifecycle command to discard protected host
     /// state, including live terminal children.
     pub force: bool,
+    /// Include the owner-wide host inventory instead of limiting a lifecycle
+    /// operation to the registries selected by this process's environment.
+    pub all_namespaces: bool,
+    /// Marks the `--serve` child created by Runyte itself. Unlike a foreground
+    /// host, that child is intentionally independent of its launching process.
+    /// This is an internal transport between bundled processes, not a public
+    /// session mode.
+    pub detached_host: bool,
     /// How many times `-v` was given. Zero leaves the default warning level;
     /// each repetition raises it, and [`crate::log::Level::from_verbosity`]
     /// caps the result at trace.
@@ -209,6 +217,8 @@ impl LaunchArguments {
                     LaunchMode::StopSession,
                 )?,
                 "-f" | "--force" => parsed.force = true,
+                "--all-namespaces" => parsed.all_namespaces = true,
+                "--detached-host" => parsed.detached_host = true,
                 // `-vv` and `-vvv` are how repetition is normally written, so
                 // the one clustered short option Runyte accepts is this one.
                 "--verbose" => parsed.verbosity = parsed.verbosity.saturating_add(1),
@@ -301,6 +311,18 @@ impl LaunchArguments {
                         | LaunchMode::StopAllSessions
                 ),
             "--force is available only with --session-stop, --session-stop-all, or --session-restart"
+        );
+        ensure!(
+            !parsed.all_namespaces
+                || matches!(
+                    parsed.mode,
+                    LaunchMode::ListSessions | LaunchMode::StopAllSessions
+                ),
+            "--all-namespaces is available only with --session-list or --session-stop-all"
+        );
+        ensure!(
+            !parsed.detached_host || parsed.mode == LaunchMode::Serve,
+            "--detached-host is available only with --serve"
         );
         ensure!(
             parsed.init.is_none() || parsed.project_root.is_none(),
@@ -812,6 +834,28 @@ mod tests {
             let parsed = LaunchArguments::parse_from([mode.into(), "--force".into()]).unwrap();
             assert!(parsed.force);
         }
+    }
+
+    #[test]
+    fn all_namespaces_is_explicit_and_limited_to_list_or_stop_all() {
+        for mode in ["--session-list", "--session-stop-all"] {
+            let parsed =
+                LaunchArguments::parse_from([mode.into(), "--all-namespaces".into()]).unwrap();
+            assert!(parsed.all_namespaces);
+        }
+        for mode in ["--standalone", "--serve", "--session-stop"] {
+            assert!(LaunchArguments::parse_from([mode.into(), "--all-namespaces".into()]).is_err());
+        }
+    }
+
+    #[test]
+    fn detached_host_marker_is_internal_to_serve_mode() {
+        let parsed =
+            LaunchArguments::parse_from(["--serve".into(), "--detached-host".into()]).unwrap();
+        assert!(parsed.detached_host);
+        assert!(
+            LaunchArguments::parse_from(["--standalone".into(), "--detached-host".into()]).is_err()
+        );
     }
 
     use std::ffi::OsString;

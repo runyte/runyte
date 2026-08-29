@@ -133,7 +133,23 @@ pub struct LocalEndpoint {
     id: String,
     registry: Option<PathBuf>,
     secondary_registry: Option<PathBuf>,
+    /// Owner-wide discovery used only by explicit all-namespace lifecycle
+    /// operations. It never participates in ordinary session selection or
+    /// name allocation, so deliberately isolated namespaces stay isolated.
+    inventory_registry: Option<PathBuf>,
+    /// Integration-only ownership carried by explicitly injected endpoints.
+    /// Detached children inherit it so abrupt test-runner termination retires
+    /// them just like foreground test hosts.
+    test_supervisor: Option<u32>,
     name_file: Option<PathBuf>,
+    runtime_root: Option<PathBuf>,
+}
+
+struct EndpointPublication {
+    registry: Option<PathBuf>,
+    secondary_registry: Option<PathBuf>,
+    inventory_registry: Option<PathBuf>,
+    test_supervisor: Option<u32>,
     runtime_root: Option<PathBuf>,
 }
 
@@ -178,18 +194,26 @@ impl LocalEndpoint {
                 runyte.join(&id),
                 state_root,
                 project_root,
-                registry.clone().or_else(|| Some(runtime_registry.clone())),
-                registry.map(|_| runtime_registry),
-                Some(runtime.to_path_buf()),
+                EndpointPublication {
+                    registry: registry.clone().or_else(|| Some(runtime_registry.clone())),
+                    secondary_registry: registry.map(|_| runtime_registry),
+                    inventory_registry: all_hosts_registry_root(),
+                    test_supervisor: None,
+                    runtime_root: Some(runtime.to_path_buf()),
+                },
             );
         }
         Self::at_directory(
             state_root.join("host"),
             state_root,
             project_root,
-            usable_fallback_registry_root(),
-            None,
-            None,
+            EndpointPublication {
+                registry: usable_fallback_registry_root(),
+                secondary_registry: None,
+                inventory_registry: all_hosts_registry_root(),
+                test_supervisor: None,
+                runtime_root: None,
+            },
         )
     }
 
@@ -210,9 +234,13 @@ impl LocalEndpoint {
                 runyte.join(&id),
                 state_root,
                 project_root,
-                Some(runyte.join("hosts")),
-                None,
-                Some(runtime.to_path_buf()),
+                EndpointPublication {
+                    registry: Some(runyte.join("hosts")),
+                    secondary_registry: None,
+                    inventory_registry: Some(runyte.join("all-hosts")),
+                    test_supervisor: Some(std::process::id()),
+                    runtime_root: Some(runtime.to_path_buf()),
+                },
             );
         }
         Self::new(state_root, project_root)
@@ -223,9 +251,13 @@ impl LocalEndpoint {
             state_root.join("host"),
             state_root,
             project_root,
-            None,
-            None,
-            None,
+            EndpointPublication {
+                registry: None,
+                secondary_registry: None,
+                inventory_registry: None,
+                test_supervisor: None,
+                runtime_root: None,
+            },
         )
     }
 
@@ -233,9 +265,7 @@ impl LocalEndpoint {
         directory: PathBuf,
         state_root: &Path,
         project_root: &Path,
-        registry: Option<PathBuf>,
-        secondary_registry: Option<PathBuf>,
-        runtime_root: Option<PathBuf>,
+        publication: EndpointPublication,
     ) -> Result<Self> {
         let socket = directory.join("workspace.sock");
         let id = workspace_id(project_root);
@@ -252,9 +282,11 @@ impl LocalEndpoint {
             project_root: project_root.to_path_buf(),
             name_file: Some(state_root.join("host-names").join(format!("{id}.json"))),
             id,
-            registry,
-            secondary_registry,
-            runtime_root,
+            registry: publication.registry,
+            secondary_registry: publication.secondary_registry,
+            inventory_registry: publication.inventory_registry,
+            test_supervisor: publication.test_supervisor,
+            runtime_root: publication.runtime_root,
         })
     }
 
@@ -291,6 +323,8 @@ impl LocalEndpoint {
             id: metadata.id.clone(),
             registry: Some(registry),
             secondary_registry: None,
+            inventory_registry: all_hosts_registry_root(),
+            test_supervisor: None,
             name_file: None,
             runtime_root,
         })
@@ -306,6 +340,14 @@ impl LocalEndpoint {
 
     pub fn runtime_root(&self) -> Option<&Path> {
         self.runtime_root.as_deref()
+    }
+
+    pub(crate) fn inventory_registry(&self) -> Option<&Path> {
+        self.inventory_registry.as_deref()
+    }
+
+    pub(crate) fn test_supervisor(&self) -> Option<u32> {
+        self.test_supervisor
     }
 
     pub fn socket(&self) -> &Path {
@@ -381,6 +423,7 @@ impl LocalEndpoint {
             Some(_) => match PrivateFileLock::acquire(
                 self.registry.as_deref(),
                 self.secondary_registry.as_deref(),
+                None,
                 self.name_file.as_deref().and_then(Path::parent),
                 ".host-names.lock",
                 "session name",
@@ -521,6 +564,7 @@ impl LocalEndpoint {
         remove_if_exists(&self.socket)?;
         remove_if_exists(&self.metadata)?;
         self.remove_registrations_if_matches(Some(pid))?;
+        remove_empty_directory(&self.directory)?;
         Ok(())
     }
 
@@ -571,6 +615,7 @@ impl LocalEndpoint {
             remove_if_exists(&self.metadata)?;
         }
         self.remove_registrations_if_matches(Some(pid))?;
+        remove_empty_directory(&self.directory)?;
         Ok(())
     }
 
@@ -579,6 +624,7 @@ impl LocalEndpoint {
         let _name_lock = PrivateFileLock::acquire(
             self.registry.as_deref(),
             self.secondary_registry.as_deref(),
+            None,
             self.name_file.as_deref().and_then(Path::parent),
             ".host-names.lock",
             "session name",
@@ -610,6 +656,7 @@ impl LocalEndpoint {
         let _name_lock = PrivateFileLock::acquire(
             self.registry.as_deref(),
             self.secondary_registry.as_deref(),
+            None,
             self.name_file.as_deref().and_then(Path::parent),
             ".host-names.lock",
             "session name",
@@ -629,9 +676,13 @@ impl LocalEndpoint {
     fn publish_metadata(&self, metadata: &EndpointMetadata) -> Result<()> {
         validate_metadata_fields(metadata)?;
         self.verify_metadata_identity(metadata)?;
-        for registry in [self.registry.as_ref(), self.secondary_registry.as_ref()]
-            .into_iter()
-            .flatten()
+        for registry in [
+            self.registry.as_ref(),
+            self.secondary_registry.as_ref(),
+            self.inventory_registry.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
         {
             prepare_private_directory(registry)?;
             write_json_atomic(&registry.join(format!("{}.json", self.id)), metadata)?;
@@ -655,9 +706,13 @@ impl LocalEndpoint {
     }
 
     fn registrations_match(&self, expected_pid: Option<u32>) -> Result<bool> {
-        for registry in [self.registry.as_ref(), self.secondary_registry.as_ref()]
-            .into_iter()
-            .flatten()
+        for registry in [
+            self.registry.as_ref(),
+            self.secondary_registry.as_ref(),
+            self.inventory_registry.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
         {
             let path = registry.join(format!("{}.json", self.id));
             let metadata = match read_endpoint_metadata(&path, "host registry entry") {
@@ -673,9 +728,13 @@ impl LocalEndpoint {
     }
 
     fn remove_registrations_if_matches(&self, expected_pid: Option<u32>) -> Result<()> {
-        for registry in [self.registry.as_ref(), self.secondary_registry.as_ref()]
-            .into_iter()
-            .flatten()
+        for registry in [
+            self.registry.as_ref(),
+            self.secondary_registry.as_ref(),
+            self.inventory_registry.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
         {
             let path = registry.join(format!("{}.json", self.id));
             let metadata = match read_endpoint_metadata(&path, "host registry entry") {
@@ -701,6 +760,7 @@ impl LocalEndpoint {
         PrivateFileLock::acquire(
             self.registry.as_deref(),
             self.secondary_registry.as_deref(),
+            self.inventory_registry.as_deref(),
             self.name_file.as_deref().and_then(Path::parent),
             &format!(".host-{}.lock", self.id),
             "host identity",
@@ -710,6 +770,11 @@ impl LocalEndpoint {
     fn ensure_no_registered_host(&self) -> Result<()> {
         let mut roots = registry_roots_with(self.registry.as_deref());
         if let Some(registry) = self.secondary_registry.as_deref()
+            && !roots.iter().any(|root| root == registry)
+        {
+            roots.push(registry.to_path_buf());
+        }
+        if let Some(registry) = self.inventory_registry.as_deref()
             && !roots.iter().any(|root| root == registry)
         {
             roots.push(registry.to_path_buf());
@@ -794,6 +859,14 @@ pub fn registered_hosts() -> Result<Vec<RegisteredHost>> {
     registered_hosts_in(&registry_roots())
 }
 
+/// Enumerates every live host that opted into the owner-wide inventory.
+///
+/// Current-namespace roots are included as a compatibility path for hosts
+/// started by an older build which did not publish the additional row.
+pub fn registered_hosts_all_namespaces() -> Result<Vec<RegisteredHost>> {
+    registered_hosts_in(&all_registry_roots())
+}
+
 pub(super) fn registered_hosts_in(roots: &[PathBuf]) -> Result<Vec<RegisteredHost>> {
     let mut hosts = Vec::new();
     let mut seen = std::collections::HashSet::new();
@@ -838,21 +911,30 @@ pub(super) fn registered_hosts_in(roots: &[PathBuf]) -> Result<Vec<RegisteredHos
             if validate_registered_metadata(&metadata, &path).is_err() {
                 continue;
             }
-            if !process_is_alive(metadata.pid)? {
-                remove_registration_if_pid_matches(&path, metadata.pid)?;
-                continue;
-            }
             let Ok(endpoint) = LocalEndpoint::from_registered(&metadata, registry.clone()) else {
                 continue;
             };
+            let process_visible = process_is_alive(metadata.pid)?;
             let live_metadata = match endpoint.verify_for_connect() {
                 Ok(metadata) => metadata,
                 // Publication writes the registry row before endpoint metadata
-                // because the latter is the readiness marker. The process was
-                // confirmed alive above, so a missing endpoint here can be the
-                // intentional publication window rather than a dead row. Keep
-                // it for the next scan; dead processes were already reaped.
-                Err(error) if is_stale_endpoint_error(&error) => continue,
+                // because the latter is the readiness marker. A visible
+                // process with a missing endpoint can therefore be in the
+                // intentional publication window rather than dead.
+                // If the PID is not visible, only a conclusively dead socket
+                // permits mutation: another PID namespace can hide a live
+                // process from `kill(pid, 0)` while its endpoint remains real.
+                Err(error) if is_stale_endpoint_error(&error) => {
+                    if !process_visible
+                        && matches!(
+                            probe_unix_socket(endpoint.socket(), Duration::from_millis(250)),
+                            Ok(Some(false))
+                        )
+                    {
+                        remove_registration_if_pid_matches(&path, metadata.pid)?;
+                    }
+                    continue;
+                }
                 Err(_) => continue,
             };
             if live_metadata.protocol != metadata.protocol
@@ -866,6 +948,11 @@ pub(super) fn registered_hosts_in(roots: &[PathBuf]) -> Result<Vec<RegisteredHos
             match probe_unix_socket(endpoint.socket(), Duration::from_millis(250)) {
                 Ok(Some(true)) => {}
                 Ok(Some(false)) => {
+                    // Once endpoint metadata is complete, a refused or absent
+                    // socket is conclusive even if the recorded PID has been
+                    // reused by an unrelated process. The publication-window
+                    // exception above applies only before that readiness
+                    // marker exists.
                     remove_registration_if_pid_matches(&path, metadata.pid)?;
                     continue;
                 }
@@ -1170,13 +1257,14 @@ impl PrivateFileLock {
     fn acquire(
         registry: Option<&Path>,
         secondary_registry: Option<&Path>,
+        inventory_registry: Option<&Path>,
         local_fallback: Option<&Path>,
         file_name: &str,
         description: &str,
     ) -> Result<Self> {
         use std::os::{fd::AsRawFd, unix::fs::OpenOptionsExt};
 
-        let mut roots = [registry, secondary_registry]
+        let mut roots = [registry, secondary_registry, inventory_registry]
             .into_iter()
             .flatten()
             .map(Path::to_path_buf)
@@ -1250,6 +1338,35 @@ pub(super) fn registry_roots() -> Vec<PathBuf> {
         roots.push(fallback);
     }
     roots
+}
+
+/// Registry roots used only when a lifecycle command explicitly requests the
+/// broader owner-wide scope.
+pub(super) fn all_registry_roots() -> Vec<PathBuf> {
+    let mut roots = registry_roots();
+    if let Some(inventory) = all_hosts_registry_root()
+        && !roots.contains(&inventory)
+    {
+        roots.push(inventory);
+    }
+    roots
+}
+
+/// A location independent of XDG runtime and cache namespaces.
+///
+/// Integration tests override it so subprocess tests never inspect or mutate
+/// the person's real inventory. Unit tests do not publish outside their
+/// temporary endpoints at all.
+fn all_hosts_registry_root() -> Option<PathBuf> {
+    if cfg!(test) {
+        return None;
+    }
+    if let Some(path) = std::env::var_os("RUNYTE_ALL_HOSTS_DIR").map(PathBuf::from)
+        && path.is_absolute()
+    {
+        return Some(path);
+    }
+    Some(PathBuf::from("/tmp").join(format!("runyte-{}-all-hosts", unsafe { libc::geteuid() })))
 }
 
 fn registry_roots_with(extra: Option<&Path>) -> Vec<PathBuf> {
@@ -2184,6 +2301,26 @@ fn remove_if_exists(path: &Path) -> Result<()> {
     }
 }
 
+/// Retires the per-host directory after its socket and metadata are gone.
+/// Shared registry and runtime roots remain; a concurrent file causes the
+/// ordinary non-empty result and is never removed.
+fn remove_empty_directory(path: &Path) -> Result<()> {
+    match fs::remove_dir(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error)
+            if matches!(
+                error.raw_os_error(),
+                Some(libc::ENOTEMPTY) | Some(libc::EEXIST)
+            ) =>
+        {
+            Ok(())
+        }
+        Err(error) => Err(error)
+            .with_context(|| format!("cannot remove retired host directory {}", path.display())),
+    }
+}
+
 fn is_conclusive_stale(error: &io::Error) -> bool {
     matches!(
         error.kind(),
@@ -2291,6 +2428,7 @@ mod tests {
                     Some(&first_primary),
                     Some(&first_shared),
                     None,
+                    None,
                     ".test.lock",
                     "test",
                 )
@@ -2305,6 +2443,7 @@ mod tests {
                 let _locks = PrivateFileLock::acquire(
                     Some(&second_primary),
                     Some(&second_shared),
+                    None,
                     None,
                     ".test.lock",
                     "test",
@@ -2340,6 +2479,36 @@ mod tests {
         let error = endpoint.prepare_directory().unwrap_err().to_string();
         assert!(error.contains("symlinked host endpoint"), "{error}");
         assert_eq!(fs::metadata(&target).unwrap().mode() & 0o777, 0o755);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn symlinked_owner_wide_inventory_is_refused_without_following_it() {
+        use std::os::unix::fs::symlink;
+
+        let (root, fallback) = endpoint("symlink-inventory");
+        let runtime = temporary_root();
+        fs::create_dir(&runtime).unwrap();
+        fs::set_permissions(&runtime, fs::Permissions::from_mode(0o700)).unwrap();
+        let endpoint = LocalEndpoint::discover_with_runtime(
+            fallback.directory.parent().unwrap(),
+            &root,
+            Some(&runtime),
+        )
+        .unwrap();
+        let target = root.join("inventory-target");
+        fs::create_dir(&target).unwrap();
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o755)).unwrap();
+        symlink(&target, runtime.join("runyte/all-hosts")).unwrap();
+
+        let error = match LocalServer::bind(&endpoint).await {
+            Ok(_) => panic!("symlinked owner-wide inventory was accepted"),
+            Err(error) => error.to_string(),
+        };
+        assert!(error.contains("symlinked host endpoint"), "{error}");
+        assert_eq!(fs::metadata(&target).unwrap().mode() & 0o777, 0o755);
+
+        fs::remove_dir_all(runtime).unwrap();
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -2523,6 +2692,13 @@ mod tests {
         let registry = runtime.join("runyte/hosts");
         let hosts = registered_hosts_in(std::slice::from_ref(&registry)).unwrap();
         assert_eq!(hosts.len(), 2);
+        let inventory = runtime.join("runyte/all-hosts");
+        assert_eq!(
+            registered_hosts_in(std::slice::from_ref(&inventory))
+                .unwrap()
+                .len(),
+            2
+        );
         assert_eq!(
             hosts
                 .iter()
@@ -2543,8 +2719,15 @@ mod tests {
         drop(second_server);
         first.cleanup().unwrap();
         second.cleanup().unwrap();
+        assert!(!first.directory.exists());
+        assert!(!second.directory.exists());
         assert!(
             registered_hosts_in(std::slice::from_ref(&registry))
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            registered_hosts_in(std::slice::from_ref(&inventory))
                 .unwrap()
                 .is_empty()
         );
@@ -2649,12 +2832,20 @@ mod tests {
             Some(&runtime),
         )
         .unwrap();
-        let first_server = LocalServer::bind(&first)
-            .await
-            .expect("first concurrent-name host must bind");
-        let second_server = LocalServer::bind(&second)
-            .await
-            .expect("second concurrent-name host must bind");
+        let Some(first_server) = bind_or_skip(&first).await else {
+            fs::remove_dir_all(runtime).unwrap();
+            fs::remove_dir_all(first_root).unwrap();
+            fs::remove_dir_all(second_root).unwrap();
+            return;
+        };
+        let Some(second_server) = bind_or_skip(&second).await else {
+            drop(first_server);
+            first.cleanup().unwrap();
+            fs::remove_dir_all(runtime).unwrap();
+            fs::remove_dir_all(first_root).unwrap();
+            fs::remove_dir_all(second_root).unwrap();
+            return;
+        };
 
         let barrier = std::sync::Arc::new(std::sync::Barrier::new(3));
         let (first_result, second_result) = std::thread::scope(|scope| {
@@ -2711,24 +2902,41 @@ mod tests {
             runtime.join("first"),
             workspace,
             &root,
-            Some(registry.clone()),
-            None,
-            None,
+            EndpointPublication {
+                registry: Some(registry.clone()),
+                secondary_registry: None,
+                inventory_registry: None,
+                test_supervisor: None,
+                runtime_root: None,
+            },
         )
         .unwrap();
         let second = LocalEndpoint::at_directory(
             runtime.join("second"),
             workspace,
             &root,
-            Some(registry.clone()),
-            None,
-            None,
+            EndpointPublication {
+                registry: Some(registry.clone()),
+                secondary_registry: None,
+                inventory_registry: None,
+                test_supervisor: None,
+                runtime_root: None,
+            },
         )
         .unwrap();
 
-        let first_server = LocalServer::bind(&first).await.unwrap();
+        let Some(first_server) = bind_or_skip(&first).await else {
+            fs::remove_dir_all(runtime).unwrap();
+            fs::remove_dir_all(root).unwrap();
+            return;
+        };
         drop(first_server);
-        let second_server = LocalServer::bind(&second).await.unwrap();
+        let Some(second_server) = bind_or_skip(&second).await else {
+            first.cleanup().unwrap();
+            fs::remove_dir_all(runtime).unwrap();
+            fs::remove_dir_all(root).unwrap();
+            return;
+        };
         first.cleanup().unwrap();
 
         assert!(second.verify_for_connect().is_ok());
@@ -2778,6 +2986,45 @@ mod tests {
         );
         assert!(!record.exists());
 
+        endpoint.cleanup().unwrap();
+        fs::remove_dir_all(runtime).unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn an_unobservable_pid_does_not_remove_a_responsive_endpoint() {
+        let (root, fallback) = endpoint("hidden-pid-registry");
+        let runtime = temporary_root();
+        fs::create_dir(&runtime).unwrap();
+        fs::set_permissions(&runtime, fs::Permissions::from_mode(0o700)).unwrap();
+        let endpoint = LocalEndpoint::discover_with_runtime(
+            fallback.directory.parent().unwrap(),
+            &root,
+            Some(&runtime),
+        )
+        .unwrap();
+        let Some(server) = bind_or_skip(&endpoint).await else {
+            fs::remove_dir_all(runtime).unwrap();
+            fs::remove_dir_all(root).unwrap();
+            return;
+        };
+        let record = runtime
+            .join("runyte/hosts")
+            .join(format!("{}.json", endpoint.id()));
+        let mut metadata: EndpointMetadata =
+            serde_json::from_slice(&fs::read(endpoint.metadata()).unwrap()).unwrap();
+        metadata.pid = 2_000_000_000;
+        write_json_atomic(endpoint.metadata(), &metadata).unwrap();
+        write_json_atomic(&record, &metadata).unwrap();
+
+        let hosts = registered_hosts_in(&[runtime.join("runyte/hosts")]).unwrap();
+        assert_eq!(hosts.len(), 1);
+        assert!(record.exists());
+
+        metadata.pid = std::process::id();
+        write_json_atomic(endpoint.metadata(), &metadata).unwrap();
+        write_json_atomic(&record, &metadata).unwrap();
+        drop(server);
         endpoint.cleanup().unwrap();
         fs::remove_dir_all(runtime).unwrap();
         fs::remove_dir_all(root).unwrap();

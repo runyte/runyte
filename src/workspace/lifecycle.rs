@@ -27,7 +27,7 @@ use crate::{config, external_open, project_root};
 
 use super::transport::{
     IncompatibleHost, LocalClient, LocalEndpoint, PublishedHost, RegisteredHost, process_is_alive,
-    registered_hosts, request_process_exit,
+    registered_hosts, registered_hosts_all_namespaces, request_process_exit,
 };
 
 /// How long to wait for a freshly started host to accept a connection, and how
@@ -72,6 +72,16 @@ pub async fn connect_control(endpoint: &LocalEndpoint) -> Result<LocalClient> {
 pub fn resolve_registered_host(selector: &Path) -> Result<RegisteredHost> {
     let working_directory = std::env::current_dir().ok();
     resolve_registered_host_from(selector, working_directory.as_deref(), registered_hosts()?)
+}
+
+/// Resolves a running host through the explicit owner-wide inventory.
+pub fn resolve_registered_host_all_namespaces(selector: &Path) -> Result<RegisteredHost> {
+    let working_directory = std::env::current_dir().ok();
+    resolve_registered_host_from(
+        selector,
+        working_directory.as_deref(),
+        registered_hosts_all_namespaces()?,
+    )
 }
 
 /// Resolves a running host while interpreting relative directory selectors
@@ -438,6 +448,7 @@ pub async fn start_detached_host(endpoint: &LocalEndpoint, startup: HostStartup)
     let mut command = Command::new(&startup.executable);
     command
         .arg("--serve")
+        .arg("--detached-host")
         // The endpoint already names the workspace this host is being started
         // for, so the child is told it rather than left to rediscover it. Its
         // stdin is null, so a project whose root cannot be derived from the
@@ -456,6 +467,12 @@ pub async fn start_detached_host(endpoint: &LocalEndpoint, startup: HostStartup)
         // fallback endpoint must start at that same fallback endpoint even when
         // this process happens to have a usable XDG runtime directory.
         command.env_remove("XDG_RUNTIME_DIR");
+    }
+    if let Some(inventory_registry) = endpoint.inventory_registry() {
+        command.env("RUNYTE_ALL_HOSTS_DIR", inventory_registry);
+    }
+    if let Some(supervisor) = endpoint.test_supervisor() {
+        command.env("RUNYTE_TEST_SUPERVISOR_PID", supervisor.to_string());
     }
     for (key, value) in &startup.env {
         command.env(key, value);

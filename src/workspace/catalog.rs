@@ -29,8 +29,9 @@ use super::{
         resolve_workspace_endpoint_with_runtime, shutdown_host, terminate_incompatible_host,
     },
     transport::{
-        LocalEndpoint, MAX_HOST_NAME_BYTES, MAX_PERSISTED_PATH_BYTES, RegisteredHost, decode_path,
-        encode_path, registered_hosts_in, registry_roots, validate_host_name, workspace_id,
+        LocalEndpoint, MAX_HOST_NAME_BYTES, MAX_PERSISTED_PATH_BYTES, RegisteredHost,
+        all_registry_roots, decode_path, encode_path, registered_hosts_in, registry_roots,
+        validate_host_name, workspace_id,
     },
 };
 
@@ -569,6 +570,15 @@ impl WorkspaceService {
 /// connecting client does.
 pub async fn known_workspaces(state: &Path) -> Result<Vec<WorkspaceRow>> {
     refresh(&registry_roots(), recent_file().as_deref(), state, None).await
+}
+
+/// Enumerates the current namespace's recent history together with every live
+/// host in the explicit owner-wide inventory.
+///
+/// Recent history remains namespace-local: a stopped workspace has no host to
+/// discover outside the namespace that recorded it.
+pub async fn known_workspaces_all_namespaces(state: &Path) -> Result<Vec<WorkspaceRow>> {
+    refresh(&all_registry_roots(), recent_file().as_deref(), state, None).await
 }
 
 /// Removes every stopped session from the visited history and returns the

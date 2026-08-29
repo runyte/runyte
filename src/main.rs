@@ -60,8 +60,9 @@ use runyte::protocol::{MAX_POINTER_REPETITIONS, WaitStatus, WaitToken, validate_
 #[cfg(unix)]
 use runyte::workspace::lifecycle::{
     HostStartup, connect_control, ensure_workspace_host, force_restart_host, force_shutdown_host,
-    resolve_registered_host, resolve_registered_host_from_directory, resolve_workspace_endpoint,
-    restart_host, shutdown_host, start_detached_host, terminate_incompatible_host,
+    resolve_registered_host, resolve_registered_host_all_namespaces,
+    resolve_registered_host_from_directory, resolve_workspace_endpoint, restart_host,
+    shutdown_host, start_detached_host, terminate_incompatible_host,
 };
 #[cfg(unix)]
 use runyte::workspace::transport::{
@@ -71,8 +72,9 @@ use runyte::workspace::transport::{
 #[cfg(unix)]
 use runyte::workspace::{
     WorkspaceService, abbreviated_id_width, clear_stopped_sessions, ensure_recent_workspace,
-    known_workspaces, record_recent_workspace, record_workspace_activity, rename_known_workspace,
-    resolve_known_workspace, resolve_known_workspace_from_directory,
+    known_workspaces, known_workspaces_all_namespaces, record_recent_workspace,
+    record_workspace_activity, rename_known_workspace, resolve_known_workspace,
+    resolve_known_workspace_from_directory,
 };
 
 fn main() -> Result<()> {
@@ -183,6 +185,57 @@ fn terminated(signal: i32) -> anyhow::Error {
     TerminatedBySignal(signal).into()
 }
 
+#[cfg(unix)]
+#[derive(Clone, Copy)]
+enum HostSupervisor {
+    Parent(libc::pid_t),
+    TestProcess(libc::pid_t),
+}
+
+#[cfg(unix)]
+impl HostSupervisor {
+    fn for_launch(arguments: &LaunchArguments) -> Result<Option<Self>> {
+        if arguments.mode != LaunchMode::Serve {
+            return Ok(None);
+        }
+        if let Some(value) = std::env::var_os("RUNYTE_TEST_SUPERVISOR_PID") {
+            let pid = value
+                .to_string_lossy()
+                .parse::<libc::pid_t>()
+                .context("RUNYTE_TEST_SUPERVISOR_PID must be a positive process ID")?;
+            anyhow::ensure!(pid > 0, "RUNYTE_TEST_SUPERVISOR_PID must be positive");
+            return Ok(Some(Self::TestProcess(pid)));
+        }
+        if arguments.detached_host {
+            return Ok(None);
+        }
+        // SAFETY: `getppid` has no preconditions and only reads process
+        // metadata maintained by the kernel.
+        Ok(Some(Self::Parent(unsafe { libc::getppid() })))
+    }
+
+    fn exited(self) -> bool {
+        match self {
+            Self::Parent(parent) => {
+                // SAFETY: `getppid` has no preconditions.
+                (unsafe { libc::getppid() }) != parent
+            }
+            Self::TestProcess(process) => {
+                // SAFETY: signal zero does not deliver a signal; it only asks
+                // the kernel whether this positive PID is observable.
+                let result = unsafe { libc::kill(process, 0) };
+                result == -1 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+            }
+        }
+    }
+
+    fn pid(self) -> libc::pid_t {
+        match self {
+            Self::Parent(pid) | Self::TestProcess(pid) => pid,
+        }
+    }
+}
+
 #[cfg(not(unix))]
 struct TerminationSignals;
 
@@ -199,6 +252,8 @@ impl TerminationSignals {
 
 async fn run(startup: &mut StartupTrace) -> Result<()> {
     let mut arguments = LaunchArguments::parse()?;
+    #[cfg(unix)]
+    let supervising_parent = HostSupervisor::for_launch(&arguments)?;
     let show_startup_about = starts_on_about(&arguments);
     startup.mark(StartupPhase::CliParsed);
     if arguments.help {
@@ -235,7 +290,7 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
             return match arguments.mode {
                 LaunchMode::ListSessions => {
                     let config = Config::load(arguments.config.as_deref())?.0;
-                    list_sessions(&config.workspace.state).await
+                    list_sessions(&config.workspace.state, arguments.all_namespaces).await
                 }
                 LaunchMode::StartSession => {
                     let selector = arguments
@@ -256,6 +311,7 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
                         &config.workspace.state,
                         config_path.as_deref(),
                         arguments.force,
+                        arguments.all_namespaces,
                     )
                     .await
                 }
@@ -625,7 +681,14 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
             if let Some(recorded) = recorded_workspace.as_ref() {
                 endpoint.store_name_if_absent(&recorded.name)?;
             }
-            return run_host_server(app, endpoint, startup, config_path.as_deref()).await;
+            return run_host_server(
+                app,
+                endpoint,
+                startup,
+                config_path.as_deref(),
+                supervising_parent,
+            )
+            .await;
         }
         #[cfg(not(unix))]
         anyhow::bail!("persistent mode is not yet supported on this platform");
@@ -1000,6 +1063,7 @@ async fn run_host_server(
     endpoint: LocalEndpoint,
     startup: &mut StartupTrace,
     config_path: Option<&Path>,
+    supervising_parent: Option<HostSupervisor>,
 ) -> Result<()> {
     let mut termination = TerminationSignals::new()?;
     host.enable_persistent_session();
@@ -1414,6 +1478,15 @@ async fn run_host_server(
                 changed |= host.refresh_session_activity();
             }
             _ = idle_tick.tick() => {
+                if supervising_parent.is_some_and(HostSupervisor::exited) {
+                    log_info!(
+                        "host",
+                        "foreground supervisor exited; retiring persistent session";
+                        "parent" => supervising_parent.expect("checked as some").pid()
+                    );
+                    shutting_down = true;
+                    continue;
+                }
                 // Read per tick rather than once at startup: the settings view
                 // applies this immediately, and a host that had to be restarted
                 // to honor its own retirement interval would be answering with
@@ -2765,8 +2838,12 @@ async fn run_wait(
 }
 
 #[cfg(unix)]
-async fn list_sessions(state: &Path) -> Result<()> {
-    let workspaces = known_workspaces(state).await?;
+async fn list_sessions(state: &Path, all_namespaces: bool) -> Result<()> {
+    let workspaces = if all_namespaces {
+        known_workspaces_all_namespaces(state).await?
+    } else {
+        known_workspaces(state).await?
+    };
     let width = abbreviated_id_width(workspaces.iter().map(|workspace| workspace.id.as_str()));
     let mut rows = workspaces
         .iter()
@@ -2935,9 +3012,18 @@ async fn stop_selected_session(endpoint: &LocalEndpoint, force: bool) -> Result<
 /// Tries every running host even when one refuses, so a protected session
 /// cannot prevent unrelated clean sessions from stopping.
 #[cfg(unix)]
-async fn stop_all_sessions(state: &Path, config_path: Option<&Path>, force: bool) -> Result<()> {
-    let running = known_workspaces(state)
-        .await?
+async fn stop_all_sessions(
+    state: &Path,
+    config_path: Option<&Path>,
+    force: bool,
+    all_namespaces: bool,
+) -> Result<()> {
+    let workspaces = if all_namespaces {
+        known_workspaces_all_namespaces(state).await?
+    } else {
+        known_workspaces(state).await?
+    };
+    let running = workspaces
         .into_iter()
         .filter(|workspace| workspace.running)
         .collect::<Vec<_>>();
@@ -2945,11 +3031,26 @@ async fn stop_all_sessions(state: &Path, config_path: Option<&Path>, force: bool
     let mut stopped = 0;
     let mut failures = Vec::new();
     for workspace in running {
-        let result =
-            match resolve_lifecycle_endpoint(&workspace.project_root, state, config_path).await {
-                Ok(endpoint) => stop_selected_session(&endpoint, force).await,
-                Err(error) => Err(error),
-            };
+        let endpoint = if all_namespaces {
+            resolve_registered_host_all_namespaces(&workspace.project_root)
+                .map(|host| host.endpoint().clone())
+                .or_else(|_| {
+                    resolve_registered_host(&workspace.project_root)
+                        .map(|host| host.endpoint().clone())
+                })
+        } else {
+            resolve_registered_host(&workspace.project_root).map(|host| host.endpoint().clone())
+        };
+        let result = match endpoint {
+            Ok(endpoint) => stop_selected_session(&endpoint, force).await,
+            Err(_) => {
+                match resolve_lifecycle_endpoint(&workspace.project_root, state, config_path).await
+                {
+                    Ok(endpoint) => stop_selected_session(&endpoint, force).await,
+                    Err(error) => Err(error),
+                }
+            }
+        };
         match result {
             Ok(()) => stopped += 1,
             Err(error) => failures.push(format!(
@@ -3679,7 +3780,9 @@ PERSISTENT SESSIONS:
     -s, --session-stop [WORKSPACE]
                          Stop the selected or current session
         --session-stop-all
-                         Stop every running session
+                         Stop every running session in the current namespace
+        --all-namespaces With session-list or session-stop-all, include every
+                         validated live session owned by the current user
         --session-clear-all
                          Clear every stopped session from the recent list
         --session-restart [WORKSPACE]

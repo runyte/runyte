@@ -76,6 +76,12 @@ impl Drop for ChildGuard {
 }
 
 fn spawn_in_pty(command: &mut Command) -> (Child, File) {
+    command
+        .env(
+            "RUNYTE_ALL_HOSTS_DIR",
+            test_runtime_dir().join("runyte/all-hosts"),
+        )
+        .env("RUNYTE_TEST_SUPERVISOR_PID", std::process::id().to_string());
     let (child, master, _) = spawn_in_pty_with_initial_termios(command);
     (child, master)
 }
