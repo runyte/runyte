@@ -58,6 +58,15 @@ entry. Monitor shutdown uses an atomic stop request in addition to the bounded
 command channel, so a saturated queue cannot keep the worker and its callback
 sender alive.
 
+A further queue-ordering refinement keeps observation time monotonic across
+queued events and overflow, while measuring the debounce quiet period from
+worker receipt rather than callback time. Snapshot coverage now requires an
+observation to be strictly earlier than the first-read barrier, avoiding an
+ambiguous equal-timestamp edge. Partial status and staged-content reads no
+longer clear repository-wide stale state, because they cannot prove they cover
+an invalidation. Save-as also retires the previous path's staged base before
+tracking the new path.
+
 Tests: `git_monitor::tests::a_native_burst_produces_one_debounced_invalidation`,
 `git_monitor::tests::linked_worktree_watches_checkout_private_and_shared_metadata`,
 and `git_monitor::tests::worktree_index_head_refs_and_packed_refs_are_relevant`
@@ -73,12 +82,17 @@ completion-aware failures;
 `git::tracker::tests::a_narrow_snapshot_preserves_other_staged_bases_and_unrequested_stats`
 in `src/git/tracker.rs` covers non-destructive partial snapshots;
 `git_monitor::tests::dropping_the_handle_requests_shutdown_even_when_the_queue_is_full`
-in `src/git_monitor.rs` covers bounded-queue shutdown;
+and
+`git_monitor::tests::queued_observations_never_regress_freshness_or_expire_the_debounce`
+in `src/git_monitor.rs` cover bounded-queue shutdown, monotonic observation
+time, and delayed-queue debouncing;
 `app::tests::async_refresh_requests_staged_bases_only_for_visible_open_files`
 and `app::tests::closing_a_file_retires_its_staged_base`, together with
+`app::tests::save_as_retires_the_previous_paths_staged_base` and
 `app::tests::automatic_refresh_waits_out_a_short_quiet_period_after_the_last_keystroke`
 in `src/app/tests/git.rs` cover visible, maximized, terminal-covered panes,
-closed-buffer cache retirement, late responses, and interaction;
+closed-buffer and save-as cache retirement, partial and late responses, and
+interaction;
 `config::tests::git_reconciliation_defaults_to_sixty_seconds` in
 `src/config.rs` covers the new default; and discovery coverage in
 `tests/git_provider.rs` verifies main, linked-worktree, and separate Git

@@ -35,6 +35,9 @@ coalesced read cannot suppress the reconciliation that still needs to run.
 The freshness timestamp is taken before the first Git read, and staged bases
 are retired when their last file buffer closes; a late asynchronous response
 cannot restore a base with no live consumer.
+Partial status and staged-content reads no longer clear the repository-wide
+stale indication, and save-as retires the previous path's base before tracking
+the new path.
 
 Coverage includes `git::service::tests::equivalent_refreshes_coalesce_onto_one_worker`
 in `src/git/service.rs`,
@@ -48,8 +51,9 @@ in `src/workspace/host.rs`,
 `git::tracker::tests::a_narrow_snapshot_preserves_other_staged_bases_and_unrequested_stats`
 in `src/git/tracker.rs`,
 `app::tests::closing_a_file_retires_its_staged_base` in
-`src/app/tests/git.rs`, and the settings registry validation tests in
-`src/settings.rs`.
+`src/app/tests/git.rs`,
+`app::tests::save_as_retires_the_previous_paths_staged_base` in that same
+file, and the settings registry validation tests in `src/settings.rs`.
 
 ## Report
 

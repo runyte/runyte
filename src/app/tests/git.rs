@@ -3768,6 +3768,18 @@ fn closing_a_file_retires_its_staged_base() {
     app.close_buffer(buffer);
 
     assert!(!app.git.tracks(&path));
+    app.mark_git_snapshot_stale();
+    app.apply_git_response(
+        GitOperation::Status {
+            repository: repository.clone(),
+        },
+        GitResponse::Status(status.clone()),
+        (None, GitServiceState::Completed),
+        RequestedGitViews::default(),
+        None,
+        None,
+    );
+    assert!(app.git_state.snapshot_stale());
     app.apply_git_response(
         GitOperation::StagedContent {
             repository: repository.clone(),
@@ -3783,6 +3795,7 @@ fn closing_a_file_retires_its_staged_base() {
         None,
     );
     assert!(!app.git.tracks(&path));
+    assert!(app.git_state.snapshot_stale());
     app.apply_repository_snapshot(
         RepositorySnapshot {
             repository,
@@ -3812,6 +3825,26 @@ fn closing_a_file_retires_its_staged_base() {
         false,
     );
     assert!(!app.git.tracks(&path));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn save_as_retires_the_previous_paths_staged_base() {
+    let (root, mut app, _) = staged_project_with("save-as-staged-base", |provider| {
+        provider
+            .with_staged("before.rs", "base\n")
+            .with_staged("after.rs", "base\n")
+    });
+    let before = root.join("before.rs");
+    let after = root.join("after.rs");
+    fs::write(&before, "base\n").unwrap();
+    app.open_file(before.clone()).unwrap();
+    assert!(app.git.tracks(&before));
+
+    app.save(Some(after.clone()), false).unwrap();
+
+    assert!(!app.git.tracks(&before));
+    assert!(app.git.tracks(&after));
     fs::remove_dir_all(root).unwrap();
 }
 

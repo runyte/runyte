@@ -728,7 +728,6 @@ impl App {
             }
             GitResponse::Status(status) => {
                 self.git.apply_status(status);
-                self.git_state.snapshot_stale = false;
                 self.refresh_git_status_buffer();
             }
             GitResponse::StagedContent { path, content } => {
@@ -739,7 +738,6 @@ impl App {
                     // closed. Do not resurrect an otherwise unreferenced base.
                     self.git.forget(&path);
                 }
-                self.git_state.snapshot_stale = false;
             }
             GitResponse::Diff { scope, path, text } => {
                 self.open_git_diff_result(scope, path, text);

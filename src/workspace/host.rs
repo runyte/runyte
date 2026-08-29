@@ -1172,7 +1172,7 @@ impl WorkspaceHost {
     fn record_git_reconciliation(&mut self, completed: CompletedGitSnapshot, reset: bool) {
         if self
             .latest_git_observation
-            .is_some_and(|observed| observed > completed.started_at)
+            .is_some_and(|observed| observed >= completed.started_at)
         {
             self.app.mark_git_snapshot_stale();
             return;
@@ -1215,7 +1215,7 @@ impl WorkspaceHost {
                 .last_git_reconciliation
                 .as_ref()
                 .filter(|reconciliation| reconciliation.repository == event.repository)
-                .filter(|reconciliation| event.observed_at <= reconciliation.started_at);
+                .filter(|reconciliation| event.observed_at < reconciliation.started_at);
             if let Some(reconciliation) = covered {
                 self.git_reconciled = Some(reconciliation.spec.clone());
             } else {
@@ -1504,7 +1504,7 @@ mod tests {
 
         host.apply_event(HostEvent::GitInvalidation(GitInvalidation {
             repository: host.project_root.clone(),
-            observed_at: started_at + Duration::from_millis(1),
+            observed_at: started_at,
             overflowed: false,
         }));
 

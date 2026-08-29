@@ -143,9 +143,8 @@ fn run_worker(
                     full = false;
                     ready = None;
                     if !complete && repository.is_some() {
-                        last_observed = Some(Instant::now());
+                        note_observation(&mut last_observed, &mut deadline, Instant::now());
                         full = true;
-                        deadline = last_observed.map(|observed| observed + DEBOUNCE);
                     }
                 }
             }
@@ -157,8 +156,7 @@ fn run_worker(
                     .as_ref()
                     .is_some_and(|repository| affects(&event, repository))
                 {
-                    last_observed = Some(observed_at);
-                    deadline = Some(observed_at + DEBOUNCE);
+                    note_observation(&mut last_observed, &mut deadline, observed_at);
                 }
             }
             Ok(WorkerMessage::Native {
@@ -166,9 +164,8 @@ fn run_worker(
                 event: Err(_),
             }) => {
                 if repository.is_some() {
-                    last_observed = Some(observed_at);
+                    note_observation(&mut last_observed, &mut deadline, observed_at);
                     full = true;
-                    deadline = Some(observed_at + DEBOUNCE);
                 }
             }
             Ok(WorkerMessage::Stop) => break,
@@ -177,10 +174,8 @@ fn run_worker(
         }
 
         if overflowed.swap(false, Ordering::AcqRel) && repository.is_some() {
-            let observed = Instant::now();
-            last_observed = Some(observed);
+            note_observation(&mut last_observed, &mut deadline, Instant::now());
             full = true;
-            deadline = Some(observed + DEBOUNCE);
         }
 
         let now = Instant::now();
@@ -211,6 +206,18 @@ fn run_worker(
             }
         }
     }
+}
+
+fn note_observation(
+    last_observed: &mut Option<Instant>,
+    deadline: &mut Option<Instant>,
+    observed_at: Instant,
+) {
+    *last_observed = Some(last_observed.map_or(observed_at, |last| last.max(observed_at)));
+    // Callback time orders an observation against a snapshot. Quiet time is
+    // local to the worker: queued observations may already be older than the
+    // debounce interval by the time they can be processed.
+    *deadline = Some(Instant::now() + DEBOUNCE);
 }
 
 fn sync_registration(
@@ -333,6 +340,22 @@ mod tests {
         assert!(stopped.load(Ordering::Acquire));
         let (events, _) = mpsc::channel(1);
         run_worker(None, receiver, events, overflowed, stopped);
+    }
+
+    #[test]
+    fn queued_observations_never_regress_freshness_or_expire_the_debounce() {
+        let now = Instant::now();
+        let older = now.checked_sub(Duration::from_secs(1)).unwrap();
+        let newer = now.checked_sub(Duration::from_millis(500)).unwrap();
+        let mut last_observed = None;
+        let mut deadline = None;
+
+        note_observation(&mut last_observed, &mut deadline, newer);
+        let before_delayed_message = Instant::now();
+        note_observation(&mut last_observed, &mut deadline, older);
+
+        assert_eq!(last_observed, Some(newer));
+        assert!(deadline.unwrap() >= before_delayed_message + DEBOUNCE);
     }
 
     #[tokio::test]
