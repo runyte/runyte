@@ -1,3 +1,58 @@
+---
+title: "SQL, Lua, C#, Zig, CMake, Protobuf, Make, and INI open without syntax capabilities"
+status: resolved
+reported: 2026-08-29
+resolved: 2026-08-29
+commit: 1f4187e
+---
+
+## Resolution
+
+Commit `1f4187e` (`Add eight statically linked language grammars`) resolves
+the issue. `BUILTIN_LANGUAGES` had no definitions for these file types, so
+path detection could not choose a language and none of the lazy parser-owned
+highlight, indentation, fold, outline, or text-object capabilities could be
+constructed.
+
+The commit exact-pins the eight audited grammar crates and registers their
+extensions, exact filenames, Lua shebang, and explicit line-comment markers.
+Each language now has highlighting, newline indentation, and folds. SQL, Lua,
+C#, and Zig have document outlines; Lua, C#, and Zig also have function,
+class-like, and parameter text objects. Protobuf's packaged highlight query is
+carried locally because its Rust crate exports no query constant. Zig and CMake
+highlight queries are carried locally to translate unsupported
+`#lua-match?` predicates, and Zig's unsupported priority property is omitted.
+Upstream indentation files that use captures beyond Runyte's bounded
+`@indent.begin` and `@indent.always` dialect are reduced to the same node
+coverage within Runyte's owned semantics. Every copied or adapted query records
+its exact upstream version and license.
+
+INI deliberately uses `;` for comments inserted by `toggle-comments`; both
+`;` and `#` continue to parse as comments. CMake, Protobuf, Make, and INI
+retain the issue's conservative two-capability structural shape and do not
+invent outlines or text objects. A stripped LTO release build grew from
+34,244,352 bytes at baseline `06e859d` to 43,168,320 bytes, an increase of
+8,923,968 bytes (8.51 MiB, 26.1%).
+
+Coverage lives in `tests/syntax.rs`:
+`filename_extension_and_bounded_shebang_inference_have_stable_precedence`,
+`extensions_map_to_languages_case_insensitively`,
+`additional_language_grammars_highlight_representative_documents`,
+`indentation_and_folds_cover_the_truthful_language_matrix`,
+`outline_queries_cover_the_supported_language_inventory`,
+`lua_c_sharp_and_zig_structural_objects_match_real_declarations`, and
+`every_bundled_grammar_loads_without_error`. Query compilation and explicit
+comment markers are covered by
+`src/syntax/mod.rs::every_canonical_plain_and_owned_capability_query_compiles`
+and
+`src/syntax/mod.rs::every_built_in_language_declares_its_line_comment`.
+
+Known limitation: CMake functions/macros and Make targets do not yet appear in
+the document outline; adding those capabilities remains a separate product
+choice rather than being inferred from this grammar-registration change.
+
+## Report
+
 # Statically linked grammars for SQL, Lua, C#, Zig, CMake, Protobuf, Make, and INI
 
 Runyte compiles tree-sitter grammars into the binary from `tree-sitter-*`
