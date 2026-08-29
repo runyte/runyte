@@ -1,3 +1,43 @@
+---
+title: "Startup benchmark has no programming-language fixture every editor parses"
+status: resolved
+reported: 2026-08-29
+resolved: 2026-08-29
+commit: d558a3f
+---
+
+## Resolution
+
+Commit `d558a3f` (`Add a shared Lua benchmark fixture`) resolves the issue.
+`benchmarks/fixtures.py::FIXTURES` and `ensure` had no source-code fixture for a
+language that every measured editor parses with tree-sitter. The new
+`_lua_source` generator deterministically emits 30,000 complete lines (1.0 MB)
+of functions, tables, loops, branches, strings, operators, and calls from the
+existing seed, and `ensure` now makes that document available as `large.lua`.
+
+The generator deliberately emits no comments because Helix injects a comment
+grammar into Lua comments, and no long strings, `cdef` calls, Neovim API calls,
+or query sentinels matched by the other installed injection queries. That shape
+keeps the comparison to one Lua grammar in each editor. Neovim reported an
+active tree-sitter highlighter, no regular-expression syntax fallback, and a
+tree with no error nodes; Helix reported its Lua parser and highlight queries;
+and the measured Runyte release contained its statically linked Lua grammar and
+queries.
+
+`benchmarks/README.md` now distinguishes the fair Lua source-code row from the
+fair Markdown markup row. A focused median-of-five result recorded in
+`context/reference/startup-performance.md` measured settled frames at 136 ms
+for Neovim, 135 ms for Helix, and 95 ms for Runyte on the documented machine.
+The roughly 30% Runyte difference is larger than the recorded approximately 10%
+variance; the 1 ms difference between Neovim and Helix is not treated as signal.
+
+Coverage lives in `benchmarks/test_fixtures.py`:
+`test_large_lua_is_deterministic_complete_source`,
+`test_large_lua_avoids_every_editors_injection_triggers`, and
+`test_ensure_generates_large_lua`.
+
+## Report
+
 # Benchmark lacks a programming-language fixture every editor parses
 
 The startup benchmark in `benchmarks/` measures Runyte alongside Neovim and
