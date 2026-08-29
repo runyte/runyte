@@ -288,12 +288,13 @@ impl PipeFinalizer {
 
     #[cfg(unix)]
     fn finish(&self, child: &mut std::process::Child) {
-        let process_group = i32::try_from(child.id()).unwrap_or(-1);
+        // `try_wait` has already observed and reaped the top-level process.
+        // Signal its former process group once so helpers cannot retain locks,
+        // then finish from the bounded pipe state. Polling `kill(-pgid, 0)` is
+        // not a completion event: after the leader is reaped the numeric PGID
+        // can remain visible during teardown or be reused by another group.
         stop_child_tree(child);
         self.release_reader_gate();
-        while process_group > 0 && process_group_is_alive(process_group) {
-            std::thread::yield_now();
-        }
         self.request_finish();
     }
 
@@ -361,14 +362,6 @@ fn set_cloexec(descriptor: &impl std::os::fd::AsRawFd) -> io::Result<()> {
         return Err(io::Error::last_os_error());
     }
     Ok(())
-}
-
-#[cfg(unix)]
-fn process_group_is_alive(process_group: i32) -> bool {
-    if unsafe { libc::kill(-process_group, 0) } == 0 {
-        return true;
-    }
-    io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
 }
 
 fn wait_for_pipe(

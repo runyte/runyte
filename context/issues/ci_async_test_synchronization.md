@@ -46,6 +46,14 @@ replaceable frame to already be queued. The subsequent `Detached` response is
 the causal FIFO barrier for the input, and the first frame after reattachment
 is the behavior boundary that proves the two-selection state survived.
 
+CI run 33267355386 exposed an unbounded production-side wait behind a semantic
+Git-discovery barrier. After reaping the top-level Git process, the pipe
+finalizer polled `kill(-pgid, 0)` until no process used that numeric process
+group identifier. macOS could continue to report it as present during teardown
+or after reuse, so the Git worker never delivered its completion event even as
+the host continued serving frames. Process-group liveness by reusable integer
+identifier is not a valid completion acknowledgement.
+
 The expected behavior is that asynchronous integration tests wait on semantic
 state or explicit process acknowledgements with bounded deadlines. PTY output
 must still be drained to prevent backpressure and retained for failure

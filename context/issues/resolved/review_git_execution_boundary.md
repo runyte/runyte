@@ -83,15 +83,19 @@ stress coverage on loaded macOS runners. Reader completion had still been
 decided by whether the stdout and stderr threads were scheduled within a 50 ms
 grace period after a successful child exit. Unix pipe workers now wait in the
 kernel for pipe readiness or a private finalizer wake and finish from
-observable pipe EOF or owned process-group state, so thread scheduling cannot
-turn a completed `rev-parse` into an I/O error. A descendant in Git's process
-group is stopped and drained; a process that escaped the group while retaining
-a pipe cannot delay the completed Git result or retain a reader thread: after
-the owned process group is quiescent, Runyte keeps all bytes already available
-and closes the stream at `EAGAIN`. This cutoff is necessary because an escaped
-writer and a CLOEXEC descriptor temporarily inherited by a concurrent fork
-are indistinguishable from pipe state alone. Input-writer failures are joined
-and propagated rather than discarded. `GitCliProvider::discover` also
+observable pipe EOF or the explicit top-level completion boundary, so thread
+scheduling cannot turn a completed `rev-parse` into an I/O error. Descendants
+in Git's process group are signalled and their queued output is drained; a
+process that escaped the group while retaining a pipe cannot delay the
+completed Git result or retain a reader thread: after
+the top-level exit, Runyte signals the former process group once, keeps all
+bytes already available, and closes the stream at `EAGAIN`. It does not poll
+`kill(-pgid, 0)`: once the group leader has been reaped, that numeric identifier
+is not an ownership-safe completion event and can remain visible or be reused.
+This cutoff is necessary because an escaped writer and a CLOEXEC descriptor
+temporarily inherited by a concurrent fork are indistinguishable from pipe
+state alone. Input-writer failures are joined and propagated rather than
+discarded. `GitCliProvider::discover` also
 identifies ordinary repository absence from `.git` ancestry before starting
 Git. A directory marker requires a regular `HEAD`, and a file marker requires
 a bounded, nonempty `gitdir: ` target; malformed and unreadable markers produce
@@ -118,10 +122,13 @@ and the semantic Git-discovery barrier in
 
 Known limitation: a descendant that starts a new session cannot be killed
 portably through Git's original process-group ID. On Unix, it cannot extend
-the worker after that original group is quiescent, but output it writes later
-is outside the completed command's retained result. Other platforms retain the
-bounded reader-grace behavior. External processes also do not participate in
-Runyte's repository lock, leaving an irreducible interval
+the worker after the top-level command completes, but output it writes later is
+outside the completed command's retained result. Runyte requests termination
+of helpers in the original group without synchronously proving that every
+descendant has exited; doing that portably requires a process supervisor or
+identity-bearing platform handles. Other platforms retain the bounded
+reader-grace behavior. External processes also do not participate in Runyte's
+repository lock, leaving an irreducible interval
 between the last partial-stage precondition check and `git apply`; Git still
 checks patch applicability. Canonical containment followed by a pathname open
 retains the usual symlink-swap race; closing it portably requires
