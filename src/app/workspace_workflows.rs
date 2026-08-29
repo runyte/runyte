@@ -299,7 +299,17 @@ impl App {
             .filter(|picker| picker.title.starts_with("Sessions"))
             .map_or_else(
                 || (String::new(), 0),
-                |picker| (picker.filter.clone(), picker.selected),
+                |picker| {
+                    let selected = if picker.title == "Sessions · loading…" {
+                        self.workspace_rows
+                            .iter()
+                            .position(|row| row.project_root == self.project_root)
+                            .unwrap_or(0)
+                    } else {
+                        picker.selected
+                    };
+                    (picker.filter.clone(), selected)
+                },
             );
         self.list_actions = (0..self.workspace_rows.len())
             .map(ListAction::Workspace)

@@ -2484,6 +2484,9 @@ pub struct App {
     session_rename_target: Option<PathBuf>,
     #[cfg(unix)]
     session_number_target: Option<PathBuf>,
+    /// The session-manager row restored after its Renumber prompt closes.
+    #[cfg(unix)]
+    session_manager_return_target: Option<PathBuf>,
     session_action_menu: Option<SessionActionMenu>,
     terminal_action_menu: Option<TerminalActionMenu>,
     /// The buffer a commit message was opened over, returned to once the
@@ -2859,6 +2862,8 @@ impl App {
             session_rename_target: None,
             #[cfg(unix)]
             session_number_target: None,
+            #[cfg(unix)]
+            session_manager_return_target: None,
             session_action_menu: None,
             terminal_action_menu: None,
             commit_origin: None,

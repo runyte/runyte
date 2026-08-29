@@ -411,8 +411,9 @@ not a public automation API.
 `Space Space` or `:session-list` (`:sl`) opens the session manager: a
 filterable list of running and recently visited persistent sessions, numbered
 sessions first in digit order and the rest least recently visited first. The
-current session is marked with `*` wherever its digit puts it. Enter attaches to
-the selected workspace's session in the same TUI and starts it when necessary.
+current session is marked with `*` wherever its digit puts it and is the
+initially selected row. Enter attaches to the selected workspace's session in
+the same TUI and starts it when necessary.
 A stopped session holds no digit, so it is listed below the numbered ones, and
 is drawn in the theme's dimmed text colour, the one a command prompt grays the
 panes behind it with, so the running hosts stand out without any row being
@@ -422,7 +423,7 @@ not a prefix with subcommands. A third `Space` closes the manager, just like
 Escape or `Ctrl-c`. Tab opens one manager menu listing only the
 actions the selected row's own state can answer: a running row offers Open,
 Rename, Renumber, Close, and Force close, and a stopped row offers Open,
-Rename, Renumber, and Forget. Open is identical to Enter. Close stops the host
+Rename, and Forget. Open is identical to Enter. Close stops the host
 and leaves the workspace listed as a stopped row; nothing below the session is
 touched, because a session is the only level that means nothing on its own.
 
@@ -431,10 +432,10 @@ list so they line up down it:
 
 ```text
   No. Name                    Branch            Path                             Last active
-  2 * runyte-dev              dev               ~/code/runyte-dev               0min ago
   1   main                    main              ~/code/runyte                   3h ago
-  4   runyte.github.io        main              ~/code/runyte.github.io         5days ago
+  2 * runyte-dev              dev               ~/code/runyte-dev               0min ago
   3   Brain                   -                 ~/Brain                         12days ago
+  4   runyte.github.io        main              ~/code/runyte.github.io         5days ago
   5   runyte-enh-render-space enh/render-space  ~/code/runyte-enh-render-space  1min ago
 ```
 
@@ -503,33 +504,34 @@ filter, with Delete or by backspacing to empty, arms the shortcut again. A
 workspace whose name or path begins with a digit therefore cannot be filtered
 by that first character; type a later part of the name instead.
 
-The digit also pins its session. Numbered sessions lead the manager in digit
-order, so the shortcut says where the row is as well as which key reaches it,
-and the top of the list stops rearranging itself as sessions are visited.
-Everything below them is ordered by the `Last active` column, least recently
-visited first, with the sessions nothing has ever attached to at the very
-bottom: `-` there means unknown rather than old.
+The digit also determines the session's place. Numbered sessions lead the
+manager in digit order, so the shortcut says where the row is as well as which
+key reaches it, and the top of the list stops rearranging itself as sessions
+are visited. Everything below them is ordered by the `Last active` column,
+least recently visited first, with the sessions nothing has ever attached to at
+the very bottom: `-` there means unknown rather than old.
 
 Only running sessions are numbered. The digit attaches, so it belongs to a
 session that is up: a stopped row shows none, drops below the numbered ones,
-and leaves the digit it held free for the sessions that are actually running.
-Its record keeps that digit as a preference, so a session that stops and starts
-again answers to the same one whenever nothing running has claimed it
-meanwhile, and otherwise takes the lowest still free. Numbers are otherwise
-assigned in order of creation, when a workspace is first recorded, so a session
-started in a new worktree is pinned without being asked for. A catalog written
-before Runyte numbered sessions has no creation order left to recover, and is
-numbered most-recently-visited first on the next listing. Only nine sessions
-are numbered at a time; a tenth is reached by name or path.
+and gives up all numbering state. Automatically numbered running sessions close
+the gap in their existing order, and a newly started session takes the lowest
+remaining digit: with three ordinary running sessions, the next one is `4`
+even when stopped history used to occupy it. A number chosen explicitly through
+Renumber is pinned while that session remains running and is reserved before
+automatic assignments. A catalog written before Runyte numbered sessions has
+no creation order left to recover, and is numbered most-recently-visited first
+on the next listing. Only nine sessions are numbered at a time; a tenth is
+reached by name or path.
 
 Renumber in the manager menu opens an empty prompt ready for one digit and sets
-the shortcut for the selected session. Giving a session a number another one
-holds swaps the two, so both keep a shortcut. An empty answer takes the number
-away and keeps it away: unpinning is a decision, so the session is not handed
+the shortcut for the selected session. Accepting the prompt returns to the
+session manager. Giving a session a number another one holds swaps the two, so
+both keep a shortcut. An empty answer takes the number away and keeps it away
+while the session runs: unpinning is a decision, so the session is not handed
 the lowest free digit again on the next listing, and it stays in the by-visit
-part of the list until it is numbered by hand. The session displaced by a swap
-is not unpinned that way and may be numbered again automatically. A stopped
-row's menu has no Renumber: there is no digit on it to change.
+part of the list until it is numbered by hand or stopped. The session displaced
+by a swap is not unpinned that way and may be numbered again automatically. A
+stopped row's menu has no Renumber: there is no digit on it to change.
 A standalone workspace owns no persistent host, so the whole `session`
 namespace is inert there rather than a set of commands that each refuse.
 `Space Space` greys out in the key-hint popup and `:session-list`,
