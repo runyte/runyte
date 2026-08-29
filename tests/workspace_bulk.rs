@@ -9,8 +9,13 @@ use std::{
     path::{Path, PathBuf},
     process::{Child, Command, Output, Stdio},
     thread,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
+
+use runyte::workspace::transport::LocalEndpoint;
+
+const EVENTUALLY_TIMEOUT: Duration = Duration::from_secs(10);
+const EVENTUALLY_INTERVAL: Duration = Duration::from_millis(25);
 
 struct ChildGuard(Option<Child>);
 
@@ -37,8 +42,9 @@ fn sandbox() -> PathBuf {
     root
 }
 
-fn run_cli(directory: &Path, runtime: &Path, cache: &Path, args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_runyte"))
+fn cli_command(directory: &Path, runtime: &Path, cache: &Path, args: &[&str]) -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_runyte"));
+    command
         .args(args)
         .current_dir(directory)
         .env("XDG_RUNTIME_DIR", runtime)
@@ -47,7 +53,12 @@ fn run_cli(directory: &Path, runtime: &Path, cache: &Path, args: &[&str]) -> Out
             "RUNYTE_ALL_HOSTS_DIR",
             cache.parent().unwrap().join("all-hosts"),
         )
-        .env("RUNYTE_TEST_SUPERVISOR_PID", std::process::id().to_string())
+        .env("RUNYTE_TEST_SUPERVISOR_PID", std::process::id().to_string());
+    command
+}
+
+fn run_cli(directory: &Path, runtime: &Path, cache: &Path, args: &[&str]) -> Output {
+    cli_command(directory, runtime, cache, args)
         .output()
         .unwrap()
 }
@@ -88,7 +99,8 @@ fn wait_for_listing_with_running_count(
     needles: &[&str],
     running_count: usize,
 ) -> Option<String> {
-    for _ in 0..200 {
+    let deadline = Instant::now() + EVENTUALLY_TIMEOUT;
+    loop {
         let listing = run_cli(directory, runtime, cache, &["--session-list"]);
         if listing.status.success() {
             let output = String::from_utf8(listing.stdout).unwrap();
@@ -98,9 +110,12 @@ fn wait_for_listing_with_running_count(
                 return Some(output);
             }
         }
-        thread::sleep(Duration::from_millis(25));
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return None;
+        }
+        thread::sleep(EVENTUALLY_INTERVAL.min(remaining));
     }
-    None
 }
 
 fn socket_creation_is_unavailable(child: &mut ChildGuard) -> bool {
@@ -154,7 +169,14 @@ fn detached_host_supervision_helper() {
     let runtime = root.join("runtime");
     let cache = root.join("cache");
     let project = root.join("project");
-    let started = run_cli(&project, &runtime, &cache, &["--persistent"]);
+    let launcher = cli_command(&project, &runtime, &cache, &["--persistent"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    fs::write(root.join("launcher.pid"), launcher.id().to_string()).unwrap();
+    let started = launcher.wait_with_output().unwrap();
     assert!(
         !started.status.success(),
         "the non-terminal attachment unexpectedly reached a TUI"
@@ -164,24 +186,10 @@ fn detached_host_supervision_helper() {
         "detached host launch failed before attachment: {}",
         String::from_utf8_lossy(&started.stderr)
     );
-    let inventory = root.join("all-hosts");
-    let row = fs::read_dir(&inventory)
-        .unwrap()
-        .filter_map(Result::ok)
-        .find(|entry| {
-            entry
-                .path()
-                .extension()
-                .is_some_and(|extension| extension == "json")
-        })
-        .expect("detached host did not publish its owner-wide inventory row");
-    let metadata: serde_json::Value =
-        serde_json::from_slice(&fs::read(row.path()).unwrap()).unwrap();
-    let pid = metadata["pid"]
-        .as_u64()
-        .and_then(|pid| u32::try_from(pid).ok())
-        .expect("detached host inventory row did not contain a valid PID");
-    fs::write(root.join("host.pid"), pid.to_string()).unwrap();
+    // Host readiness is observed independently by the parent through the
+    // endpoint. This marker says only that the launcher exited and the helper
+    // has finished launching children and is parked for the kill.
+    fs::write(root.join("helper.ready"), b"ready").unwrap();
     loop {
         thread::park();
     }
@@ -212,14 +220,15 @@ fn detached_host_exits_and_unpublishes_when_its_test_runner_is_killed() {
             .spawn()
             .unwrap(),
     ));
-    let marker = root.join("host.pid");
-    let mut host_pid = None;
-    for _ in 0..200 {
-        if let Ok(value) = fs::read_to_string(&marker) {
-            host_pid = value.parse::<u32>().ok();
-            if host_pid.is_some() {
-                break;
-            }
+    let project_display = project.canonicalize().unwrap().display().to_string();
+    let deadline = Instant::now() + EVENTUALLY_TIMEOUT;
+    let running = loop {
+        let listing = run_cli(&root, &runtime, &cache, &["--session-list"]);
+        let running = listing.status.success()
+            && String::from_utf8_lossy(&listing.stdout).contains(&project_display)
+            && String::from_utf8_lossy(&listing.stdout).contains("running");
+        if running {
+            break true;
         }
         if helper.0.as_mut().unwrap().try_wait().unwrap().is_some() {
             let mut stderr = String::new();
@@ -238,20 +247,13 @@ fn detached_host_exits_and_unpublishes_when_its_test_runner_is_killed() {
             }
             panic!("supervision helper exited before starting its host: {stderr}");
         }
-        thread::sleep(Duration::from_millis(25));
-    }
-    let host_pid = host_pid.expect("supervision helper did not report its host PID");
-    if wait_for_listing(
-        &root,
-        &runtime,
-        &cache,
-        &[
-            &project.canonicalize().unwrap().display().to_string(),
-            "running",
-        ],
-    )
-    .is_none()
-    {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            break false;
+        }
+        thread::sleep(EVENTUALLY_INTERVAL.min(remaining));
+    };
+    if !running {
         let status = helper.0.as_mut().unwrap().try_wait().unwrap();
         let mut stderr = String::new();
         if status.is_some() {
@@ -273,9 +275,50 @@ fn detached_host_exits_and_unpublishes_when_its_test_runner_is_killed() {
         panic!("supervised host did not publish its endpoint: {status:?}: {stderr}");
     }
 
+    let endpoint = LocalEndpoint::discover_with_runtime(
+        &project.join(".runyte"),
+        &project.canonicalize().unwrap(),
+        Some(&runtime),
+    )
+    .unwrap();
+    let metadata: serde_json::Value =
+        serde_json::from_slice(&fs::read(endpoint.metadata()).unwrap()).unwrap();
+    let host_pid = metadata["pid"]
+        .as_u64()
+        .and_then(|pid| u32::try_from(pid).ok())
+        .expect("detached host endpoint did not contain a valid PID");
+
+    let marker = root.join("helper.ready");
+    let deadline = Instant::now() + EVENTUALLY_TIMEOUT;
+    loop {
+        if fs::read(&marker).is_ok_and(|value| value == b"ready") {
+            break;
+        }
+        if helper.0.as_mut().unwrap().try_wait().unwrap().is_some() {
+            let mut stderr = String::new();
+            helper
+                .0
+                .as_mut()
+                .unwrap()
+                .stderr
+                .as_mut()
+                .unwrap()
+                .read_to_string(&mut stderr)
+                .unwrap();
+            panic!("supervision helper exited before parking: {stderr}");
+        }
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            let launcher = fs::read_to_string(root.join("launcher.pid")).ok();
+            panic!("supervision helper did not park after launcher {launcher:?} exited");
+        }
+        thread::sleep(EVENTUALLY_INTERVAL.min(remaining));
+    }
+
     helper.0.as_mut().unwrap().kill().unwrap();
     let _ = helper.0.take().unwrap().wait();
-    for _ in 0..200 {
+    let deadline = Instant::now() + EVENTUALLY_TIMEOUT;
+    loop {
         let listing = run_cli(
             &root,
             &runtime,
@@ -307,7 +350,11 @@ fn detached_host_exits_and_unpublishes_when_its_test_runner_is_killed() {
             fs::remove_dir_all(root).unwrap();
             return;
         }
-        thread::sleep(Duration::from_millis(25));
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            break;
+        }
+        thread::sleep(EVENTUALLY_INTERVAL.min(remaining));
     }
 
     let listing = run_cli(
@@ -392,7 +439,6 @@ fn stop_all_then_clean_manages_the_complete_workspace_inventory() {
 
     let mut first_host = spawn_host(&first, &runtime, &cache);
     let mut second_host = spawn_host(&second, &runtime, &cache);
-    thread::sleep(Duration::from_millis(100));
     if socket_creation_is_unavailable(&mut first_host)
         || socket_creation_is_unavailable(&mut second_host)
     {

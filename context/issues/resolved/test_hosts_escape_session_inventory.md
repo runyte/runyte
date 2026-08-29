@@ -29,6 +29,15 @@ installs both the isolated inventory root and the test-runner supervisor, so a
 direct `--serve`, an internally detached host, and a Runyte process launched
 indirectly as Git's editor all retain the same test ownership boundary.
 
+A later CI hardening pass separated the supervision regression's readiness
+barriers. The helper now records its foreground launcher immediately, while
+the parent waits for the known workspace to appear as running and reads the
+host PID from that exact endpoint's metadata. A distinct acknowledgement says
+only that the expected non-terminal launcher failure has completed and the
+helper is parked before it is killed. These phases use wall-clock deadlines;
+they no longer treat a counted number of scheduler-delayed sleeps or an
+arbitrary owner-wide inventory row as evidence that startup completed.
+
 `LocalEndpoint::publish_metadata` also publishes each live host into an
 owner-private inventory independent of XDG runtime and cache namespaces.
 Ordinary discovery, names, recent history, and lifecycle commands continue to
