@@ -215,6 +215,42 @@ process-group number. PTY teardown must probe its owned child immediately
 before signalling: a still-running child anchors the group and may be stopped,
 while an already-reaped child makes teardown signal-free.
 
+That teardown defect was real, but it was not the only source of a stale
+process-group signal. CI run 33274038405 carried the fix and failed the same
+way in both macOS jobs:
+`creating_a_worktree_starts_and_attaches_its_persistent_session` in the
+lifecycle stress job and
+`persistent_worktree_switch_detaches_to_a_new_root_without_retargeting_the_host`
+in the ordinary macOS test job, each with repository discovery's
+`git rev-parse --show-toplevel` classified through the authoritative `waitid`
+boundary as terminated by signal 9. No statement that PTY teardown was the
+killer survives that run. A signal sent to a recycled process-group number is
+invisible from inside the process that receives it, so identifying the
+remaining sender requires the senders to record themselves: every production
+negative-process-group signal needs one place that states, before sending,
+which subsystem and call site is sending, what the signed target is, which
+child the caller owns, whether that child is still running or already reaped,
+and what `getpgid` and `getsid` say about the number. Recording Git child
+spawns and authoritative Darwin `waitid` completions alongside those signals
+is what lets a killed child be matched to a sender. That journal must be
+opt-in through an environment variable set only by the lifecycle integration
+tests, must be bounded, must never write during ordinary application use, and
+must not change whether a signal is sent. A later `SIGKILL` with no
+corresponding sender record points at macOS process-exit details or runner and
+kernel termination rather than at Runyte.
+
+The clipboard helper has the same ownership defect PTY teardown had.
+`run_helper` observes and reaps the helper through `Child::try_wait`, and a
+later unsuccessful outcome or pipe-collection error then enters cleanup, which
+sends `kill(-child.id(), SIGKILL)` after ownership of that PID and process
+group has ended. Cleanup must probe the direct child first: an already-reaped
+child makes cleanup signal-free, a live direct child anchors the group and may
+be terminated and reaped, and a probe error proves nothing and must not
+produce a raw negative-PID signal. The local-protocol suite does not appear to
+exercise the clipboard or the integrated terminal directly, so this is a
+correction of the same class rather than an explanation of the observed
+failure.
+
 CI run 33278087061 then failed
 `terminal::pty::tests::running_child_teardown_still_signals_and_reaps_its_private_group`
 on Ubuntu. The test signalled the group, let teardown reap the leader, and
@@ -291,6 +327,11 @@ Reproduction:
 7. Replace every runtime-written executable a test runs with a checked-in
    one, and keep parallel coverage that installs and runs them at the same
    time.
-8. Do not use retries, longer arbitrary sleeps, suite serialization, or test
-   thread reduction as fixes. Require a green CI result for the exact commit
-   before a release is tagged or published.
+8. Centralize every production negative-process-group signal behind an
+   ownership proof, and add the bounded, opt-in audit that lets a diagnostic
+   run name the sender of a signal its victim can only report as its own
+   death.
+9. Give clipboard-helper cleanup the same ownership probe as PTY teardown.
+10. Do not use retries, longer arbitrary sleeps, suite serialization, or test
+    thread reduction as fixes. Require a green CI result for the exact commit
+    before a release is tagged or published.

@@ -77,7 +77,54 @@ fn isolate_runyte_children(command: &mut Command) {
             "RUNYTE_ALL_HOSTS_DIR",
             test_runtime_dir().join("runyte/all-hosts"),
         )
-        .env("RUNYTE_TEST_SUPERVISOR_PID", std::process::id().to_string());
+        .env("RUNYTE_TEST_SUPERVISOR_PID", std::process::id().to_string())
+        .env(runyte::process_group::AUDIT_PATH_VARIABLE, process_audit());
+}
+
+/// Where every Runyte process this binary starts records the process-group
+/// signals it sends.
+///
+/// A signal aimed at a recycled process-group number is invisible from inside
+/// the process that receives it, so a failure here can only name its sender
+/// if the senders wrote themselves down first. One journal for the whole
+/// binary is what makes cross-process attribution possible: the record that
+/// explains a killed Git child is very often written by a different process
+/// from the one that hosts it.
+fn process_audit() -> &'static Path {
+    static AUDIT: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    AUDIT
+        .get_or_init(|| test_runtime_dir().join("process-audit.log"))
+        .as_path()
+}
+
+/// What the audit journal says, for a failure that has to name a sender.
+///
+/// Every delivered group signal is reported however old it is, because that is
+/// the record a stale-identity failure needs and there are very few of them.
+/// The rest is a bounded tail, which is where the spawn and completion records
+/// around the failure itself sit.
+fn process_audit_tail() -> String {
+    const TAIL_RECORDS: usize = 40;
+    const MAX_REPORTED_SIGNALS: usize = 40;
+    let Ok(contents) = fs::read_to_string(process_audit()) else {
+        return "<no process audit was recorded>".to_owned();
+    };
+    let records: Vec<&str> = contents.lines().collect();
+    let sent: Vec<&str> = records
+        .iter()
+        .copied()
+        .filter(|line| line.contains("event=signal") && line.contains("outcome=sent"))
+        .collect();
+    let reported = sent.len().min(MAX_REPORTED_SIGNALS);
+    format!(
+        "{} record(s); {} delivered group signal(s), first {reported}: {:?}; last \
+         {} record(s): {:?}",
+        records.len(),
+        sent.len(),
+        &sent[..reported],
+        TAIL_RECORDS.min(records.len()),
+        &records[records.len().saturating_sub(TAIL_RECORDS)..],
+    )
 }
 
 struct ChildGuard(Option<Child>);
@@ -948,7 +995,8 @@ async fn wait_for_git_command(
                  full notifications: {notifications:?}; last frame id: {failed_frame_id:?}, \
                  git summary: {git_summary:?}, long-running action: {long_running_action:?}, \
                  interaction line: {interaction_line:?}, notification counts: \
-                 {notification_counts:?}",
+                 {notification_counts:?}; process audit: {}",
+                process_audit_tail(),
             );
         }
         let remaining = deadline.saturating_duration_since(Instant::now());
@@ -1064,6 +1112,55 @@ async fn start_host_opening(
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
     panic!("host endpoint did not become ready");
+}
+
+/// Every process-group signal a host sends names a group it still owns.
+///
+/// A negative PID is recycled the moment its leader is reaped, so a signal
+/// sent after that point is delivered to whichever unrelated process inherited
+/// the number — a Git child of another test in this same binary, for
+/// instance. The victim can only report that it died by a signal, never who
+/// sent it, so the audit journal is where that correspondence lives. This
+/// checks the journal's own invariant: a signal record says it was sent only
+/// when the same record also names the anchor that made the number Runyte's.
+#[tokio::test]
+async fn host_process_group_signals_always_name_an_owned_group() {
+    let root = project();
+    git(&root, &["add", "note.txt", "other.txt"]);
+    git(&root, &["commit", "--quiet", "-m", "base"]);
+    let endpoint = LocalEndpoint::discover_with_runtime(
+        &root.join(".runyte"),
+        &root,
+        Some(test_runtime_dir()),
+    )
+    .unwrap();
+    let Some(_host) = start_host(&root, &endpoint).await else {
+        fs::remove_dir_all(root).unwrap();
+        return;
+    };
+    // Repository discovery is the shortest path to a spawned, reaped, and
+    // torn-down Git child inside the host.
+    wait_for_git_before_tui(&endpoint).await;
+
+    let audit = fs::read_to_string(process_audit()).unwrap_or_default();
+    assert!(
+        audit
+            .lines()
+            .any(|line| line.contains("event=spawn") && line.contains("subsystem=git")),
+        "no Git spawn reached the audit journal at {:?}: {audit:?}",
+        process_audit(),
+    );
+    for line in audit.lines().filter(|line| line.contains("event=signal")) {
+        let claimed_owned = line.contains("child_state=running_leader")
+            || line.contains("child_state=unreaped_leader");
+        assert_eq!(
+            line.contains("outcome=sent"),
+            claimed_owned,
+            "a signal record disagrees with its own ownership proof: {line:?}",
+        );
+    }
+
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[tokio::test]

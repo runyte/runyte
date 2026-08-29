@@ -1146,6 +1146,8 @@ impl GitCliProvider {
         let child = command.spawn().map_err(|error| GitError::Unavailable {
             detail: format!("cannot start `{}`: {error}", self.program.display()),
         })?;
+        #[cfg(unix)]
+        crate::process_group::record_spawn("git", &self.describe(arguments), child.id());
         #[cfg(target_os = "macos")]
         let (child, observer) = {
             let mut child = child;
@@ -1879,7 +1881,8 @@ fn try_finish_child(
     if unsafe { information.si_pid() } == 0 {
         return Ok(None);
     }
-    stop_child_group(child);
+    crate::process_group::record_completion("git", "waitid_wnowait", child.id(), None, None);
+    stop_anchored_child_group(child);
     child.wait().map(Some)
 }
 
@@ -1892,7 +1895,14 @@ fn try_finish_child(
         return Ok(None);
     };
     let pid = child.id();
-    stop_child_group(child);
+    crate::process_group::record_completion(
+        "git",
+        "darwin_waitid_wnowait",
+        pid,
+        observed.waited.code(),
+        exit_signal(&observed.waited),
+    );
+    stop_anchored_child_group(child);
     let reaped = child.wait()?;
     if observed.inspected != observed.waited || reaped != observed.waited {
         crate::log_warn!(
@@ -1920,21 +1930,38 @@ fn try_finish_child(
     child.try_wait()
 }
 
+/// Ends the group of a child whose exit has been observed without reaping it.
+///
+/// Only [`try_finish_child`] may call this. Its observation is what keeps the
+/// number Runyte's: probing again would reap the leader and hand the identity
+/// straight back to the kernel for reuse.
 #[cfg(unix)]
-fn stop_child_group(child: &std::process::Child) {
-    if let Ok(pid) = i32::try_from(child.id()) {
-        // SAFETY: Git children create a process group whose ID is the child's
-        // PID in `spawn`; a negative PID addresses that group.
-        unsafe {
-            libc::kill(-pid, libc::SIGKILL);
-        }
-    }
+fn stop_anchored_child_group(child: &std::process::Child) {
+    let Ok(pid) = libc::pid_t::try_from(child.id()) else {
+        return;
+    };
+    crate::process_group::claim_anchored_group(
+        crate::process_group::Site::new("git", "try_finish_child"),
+        pid,
+        crate::process_group::GroupAnchor::UnreapedLeader,
+    )
+    .signal(libc::SIGKILL);
 }
 
 /// Stops the command and, on Unix, every helper it started.
+///
+/// Ownership of the group number is proven before it is addressed. Several of
+/// the callers below run after `try_finish_child` has already reaped the
+/// leader, and a Git child creates its own session, so a stale `-pid` here
+/// would name whichever later `setsid` child inherited that number — including
+/// another Git command of Runyte's own.
 fn stop_child_tree(child: &mut std::process::Child) {
     #[cfg(unix)]
-    stop_child_group(child);
+    crate::process_group::signal_child_group(
+        crate::process_group::Site::new("git", "stop_child_tree"),
+        child,
+        libc::SIGKILL,
+    );
     let _ = child.kill();
     let _ = child.wait();
 }

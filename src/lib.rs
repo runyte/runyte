@@ -41,6 +41,8 @@ pub mod manual;
 pub mod notification;
 pub mod path_safety;
 pub mod picker;
+#[cfg(unix)]
+pub mod process_group;
 pub mod project_root;
 #[cfg(unix)]
 pub mod protocol;

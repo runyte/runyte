@@ -24,6 +24,8 @@ use std::{
     thread,
 };
 
+use crate::process_group;
+
 /// How much of one read is handed upward at a time.
 const READ_CHUNK: usize = 64 * 1024;
 const WRITE_CHUNK: usize = 16 * 1024;
@@ -269,36 +271,29 @@ impl Pty {
     }
 }
 
+const TERMINATION: process_group::Site = process_group::Site::new("terminal", "terminate_child");
+
 fn terminate_child(child: &mut Child) {
-    terminate_child_with(child, |process_group, signal| {
-        // SAFETY: `terminate_child_with` calls this only while the direct
-        // child still anchors its private process-group identity.
+    terminate_child_with(child, |target, signal| {
+        // SAFETY: `terminate_child_with` only reaches this while an owned
+        // group claim proves the target is Runyte's own process group.
         unsafe {
-            libc::kill(process_group, signal);
+            libc::kill(target, signal);
         }
     });
 }
 
 fn terminate_child_with(child: &mut Child, mut signal_group: impl FnMut(libc::pid_t, libc::c_int)) {
-    match child.try_wait() {
-        // `try_wait` retains this result for subsequent calls, but it has
-        // already reaped the child and released the numeric PID. Never use
-        // that stale number as a process-group identity.
-        Ok(Some(_)) => return,
-        Ok(None) => {}
-        Err(error) => {
-            crate::log_warn!(
-                "terminal",
-                "could not prove PTY child ownership before termination";
-                "pid" => child.id(),
-                "error" => error,
-            );
-            return;
-        }
+    // One claim covers both signals: nothing here reaps the leader, so a
+    // child that `SIGHUP` ends becomes an unreaped zombie that still holds
+    // the group number until the `wait` below.
+    let process_group::Claim::Owned(group) = process_group::claim_child_group(TERMINATION, child)
+    else {
+        return;
+    };
+    for signal in [libc::SIGHUP, libc::SIGKILL] {
+        group.signal_with(signal, &mut signal_group);
     }
-    let process_group = -(child.id() as libc::pid_t);
-    signal_group(process_group, libc::SIGHUP);
-    signal_group(process_group, libc::SIGKILL);
     let _ = child.wait();
 }
 
