@@ -31,6 +31,121 @@ pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
         .syntax
         .insert("property".into(), base16.foreground.clone());
     themes.insert("base16".into(), base16);
+    // Runyte's branded pair starts from the runyte.com workspace palette.
+    // The dark surface, text, and red accent are the site's own values; the
+    // remaining hues keep its Cyberpunk-inspired mode vocabulary. The light
+    // variant lowers those same hues against a light-gray ground rather than
+    // inventing a second visual identity.
+    let mut default_dark_syntax = syntax_theme(&[
+        ("attribute", "#d2a8ff"),
+        ("comment", "#8b8b90"),
+        ("constant", "#f0a868"),
+        ("constructor", "#6cb6ff"),
+        ("function", "#6cb6ff"),
+        ("keyword", "#d2a8ff"),
+        ("label", "#f0a868"),
+        ("namespace", "#62d6d7"),
+        ("number", "#f0a868"),
+        ("operator", "#b9b9be"),
+        ("property", "#b9b9be"),
+        ("punctuation", "#8b8b90"),
+        ("string", "#8ddb8c"),
+        ("tag", "#c96870"),
+        ("type", "#62d6d7"),
+        ("variable", "#b9b9be"),
+    ]);
+    default_dark_syntax.insert("markup.heading".into(), "#c96870".into());
+    themes.insert(
+        "default-dark".into(),
+        ThemeDefinition {
+            background: "#16181d".into(),
+            foreground: "#b9b9be".into(),
+            muted: "#8b8b90".into(),
+            whitespace: Some("#272a31".into()),
+            jump_text_muted: None,
+            accent: "#c96870".into(),
+            cursor_normal: Some("#6cb6ff".into()),
+            cursor_insert: Some("#c96870".into()),
+            cursor_replace: Some("#8ddb8c".into()),
+            cursor_select: Some("#f0a868".into()),
+            cursor_command: Some("#d2a8ff".into()),
+            directory: Some("#6cb6ff".into()),
+            selection: "#30475f".into(),
+            selection_primary: Some("#593d2d".into()),
+            fuzzy_match_secondary: None,
+            fuzzy_match_primary: None,
+            status_background: "#111318".into(),
+            status_foreground: "#b9b9be".into(),
+            error: "#d06a73".into(),
+            warning: Some("#f0a868".into()),
+            info: Some("#8ddb8c".into()),
+            jump_label_immediate: Some("#ef7078".into()),
+            jump_label_primary: JUMP_LABEL_DARK_PRIMARY.into(),
+            jump_label_secondary: JUMP_LABEL_DARK_SECONDARY.into(),
+            change_added: Some("#8ddb8c".into()),
+            change_modified: Some("#f0a868".into()),
+            change_removed: Some("#d06a73".into()),
+            diff_added: Some("#18271d".into()),
+            diff_removed: Some("#2d1b20".into()),
+            diff_changed: Some("#2d251b".into()),
+            syntax: default_dark_syntax,
+        },
+    );
+    let mut default_light_syntax = syntax_theme(&[
+        ("attribute", "#754b97"),
+        ("comment", "#656872"),
+        ("constant", "#9a5518"),
+        ("constructor", "#1f65a6"),
+        ("function", "#1f65a6"),
+        ("keyword", "#754b97"),
+        ("label", "#9a5518"),
+        ("namespace", "#176d70"),
+        ("number", "#9a5518"),
+        ("operator", "#292a30"),
+        ("property", "#292a30"),
+        ("punctuation", "#656872"),
+        ("string", "#23733a"),
+        ("tag", "#a33d49"),
+        ("type", "#176d70"),
+        ("variable", "#292a30"),
+    ]);
+    default_light_syntax.insert("markup.heading".into(), "#a33d49".into());
+    themes.insert(
+        "default-light".into(),
+        ThemeDefinition {
+            background: "#ececef".into(),
+            foreground: "#292a30".into(),
+            muted: "#656872".into(),
+            whitespace: Some("#cdced3".into()),
+            jump_text_muted: Some("#878a92".into()),
+            accent: "#a33d49".into(),
+            cursor_normal: Some("#1f65a6".into()),
+            cursor_insert: Some("#a33d49".into()),
+            cursor_replace: Some("#23733a".into()),
+            cursor_select: Some("#9a5518".into()),
+            cursor_command: Some("#754b97".into()),
+            directory: Some("#1f65a6".into()),
+            selection: "#bfd6ea".into(),
+            selection_primary: Some("#e9cdb2".into()),
+            fuzzy_match_secondary: None,
+            fuzzy_match_primary: None,
+            status_background: "#d9dade".into(),
+            status_foreground: "#292a30".into(),
+            error: "#a33d49".into(),
+            warning: Some("#9a5518".into()),
+            info: Some("#23733a".into()),
+            jump_label_immediate: Some("#a33d49".into()),
+            jump_label_primary: JUMP_LABEL_LIGHT_PRIMARY.into(),
+            jump_label_secondary: JUMP_LABEL_LIGHT_SECONDARY.into(),
+            change_added: Some("#23733a".into()),
+            change_modified: Some("#9a5518".into()),
+            change_removed: Some("#a33d49".into()),
+            diff_added: Some("#d9e8dc".into()),
+            diff_removed: Some("#efd8da".into()),
+            diff_changed: Some("#ecdfce".into()),
+            syntax: default_light_syntax,
+        },
+    );
     // `dark` and `light` are the two themes people reach for by name, so
     // they are neutral by design: no palette identity of their own, just a
     // legible pair that reads correctly on a dark and on a light terminal.

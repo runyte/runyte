@@ -189,6 +189,8 @@ mod tests {
                 .map(|span| span.scope.name())
         };
 
+        let logo_line = LOGO.lines().find(|line| !line.is_empty()).unwrap();
+        assert_eq!(scopes(logo_line), Some("markup.heading"));
         assert_eq!(scopes("Getting around"), Some("markup.heading"));
         assert_eq!(scopes(":tutorial"), Some("function"));
         assert_eq!(scopes("Space ?"), Some("keyword"));

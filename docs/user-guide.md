@@ -2796,7 +2796,7 @@ workspace:
 notifications:
   history_limit: 50 # newest workspace-lifetime notifications kept in memory
 
-# Optional. Leave it out to use the light theme.
+# Optional. Leave it out to use the default-dark theme.
 theme: gruvbox
 ```
 
@@ -2838,7 +2838,8 @@ own root while naming the state directory nested inside it. The old spelling is
 still accepted.
 
 
-Built-in themes are `dark`, `light`, `base16`, `paper`, `gruvbox`,
+Built-in themes are `default-dark`, `default-light`, `dark`, `light`,
+`base16`, `paper`, `gruvbox`,
 `atom-one-light`, `github-light`, all four
 Catppuccin flavours (`latte`, `frappe`, `macchiato`, and `mocha`), and the six
 Everforest variants (`everforest-dark-hard`, `everforest-dark-medium`,
@@ -2873,16 +2874,20 @@ it is `nordbones-dark` with the ordinary text brought down from 10.6:1 against
 the background to 7:1, for reading at length without the glare. Everything
 else — the background, the accents, the selections, and the diff rows — is
 Nordbones unchanged.
-`dark` and `light` are the neutral pair: no palette identity of
-their own, just a legible default for each kind of terminal. Switch directly
-with a command such as `:theme atom-one-light`, `:theme mocha`, or
+`default-dark` and `default-light` are Runyte's branded pair. They share red
+accents and a blue Normal, red Insert, orange Select, green Replace, and purple
+Command mode vocabulary. The dark theme takes its surface, text, and accent
+from runyte.com; the light theme carries darker forms of the same hues on a
+light-gray background. `dark` and `light` remain the neutral pair: no palette
+identity of their own, just a legible option for each kind of terminal. Switch
+directly with a command such as `:theme atom-one-light`, `:theme mocha`, or
 `:theme everforest-dark-medium`, or run `:theme` with no name to choose one in
 the settings menu. The same theme choice is available from the `theme` row in
 `:config`.
 
 Whichever theme is selected is written to `theme:` in the configuration file
 and used the next time Runyte starts. With no configured theme, Runyte starts
-in `light`. A custom theme can be declared in the same file:
+in `default-dark`. A custom theme can be declared in the same file:
 
 ```yaml
 theme: midnight

@@ -1322,6 +1322,8 @@ mod tests {
                 "atom-one-light",
                 "base16",
                 "dark",
+                "default-dark",
+                "default-light",
                 "duckbones-dark",
                 "everforest-dark-hard",
                 "everforest-dark-medium",

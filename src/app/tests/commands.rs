@@ -2291,12 +2291,12 @@ fn theme_names_activate_the_matching_theme() {
 
     let mut app = App::new(Config::default(), None).unwrap();
     private_theme_config(&mut app, &directory);
-    assert_eq!(app.theme_name, "light", "light is the default");
+    assert_eq!(app.theme_name, "default-dark");
     assert_eq!(
         app.terminals.default_colors(),
-        DefaultColors::new(Some((0x24, 0x29, 0x2f)), Some((0xfb, 0xfb, 0xfa)))
+        DefaultColors::new(Some((0xb9, 0xb9, 0xbe)), Some((0x16, 0x18, 0x1d)))
     );
-    let light = app.theme.background;
+    let default_accent = app.theme.accent;
 
     type_command(&mut app, "theme dark");
     assert_eq!(app.theme_name, "dark");
@@ -2305,7 +2305,7 @@ fn theme_names_activate_the_matching_theme() {
         DefaultColors::new(Some((0xd6, 0xda, 0xe0)), Some((0x16, 0x18, 0x1d)))
     );
     let dark = app.theme.background;
-    assert_ne!(dark, light);
+    assert_ne!(app.theme.accent, default_accent);
 
     type_command(&mut app, "theme base16");
     assert_eq!(app.theme_name, "base16");

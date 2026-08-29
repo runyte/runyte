@@ -60,7 +60,7 @@ pub(crate) const MAX_GIT_REFRESH_INTERVAL_SECONDS: usize = 3_600;
 pub(crate) const MAX_IDLE_RETIREMENT_MINUTES: usize = 43_200;
 
 /// The theme Runyte starts in when nothing else has been chosen.
-pub const DEFAULT_THEME: &str = "light";
+pub const DEFAULT_THEME: &str = "default-dark";
 
 // Two-key jump labels use one neon-cyan hue. The second key recedes on dark
 // backgrounds and advances on light backgrounds without changing hue.
@@ -1845,6 +1845,8 @@ mod tests {
                 "atom-one-light",
                 "base16",
                 "dark",
+                "default-dark",
+                "default-light",
                 "duckbones-dark",
                 "everforest-dark-hard",
                 "everforest-dark-medium",
@@ -1892,6 +1894,52 @@ mod tests {
         let light = config.resolve_theme("light").unwrap();
         assert_ne!(dark.background, light.background);
         assert_ne!(dark.foreground, light.foreground);
+    }
+
+    #[test]
+    fn runyte_default_themes_share_the_brand_and_mode_palette() {
+        let config = Config::default();
+        let rgb = |(red, green, blue)| Color::Rgb(red, green, blue);
+        let heading = crate::syntax::Scope::named("markup.heading").unwrap();
+
+        for (name, background, foreground, accent, normal, insert, replace, select, command) in [
+            (
+                "default-dark",
+                (0x16, 0x18, 0x1d),
+                (0xb9, 0xb9, 0xbe),
+                (0xc9, 0x68, 0x70),
+                (0x6c, 0xb6, 0xff),
+                (0xc9, 0x68, 0x70),
+                (0x8d, 0xdb, 0x8c),
+                (0xf0, 0xa8, 0x68),
+                (0xd2, 0xa8, 0xff),
+            ),
+            (
+                "default-light",
+                (0xec, 0xec, 0xef),
+                (0x29, 0x2a, 0x30),
+                (0xa3, 0x3d, 0x49),
+                (0x1f, 0x65, 0xa6),
+                (0xa3, 0x3d, 0x49),
+                (0x23, 0x73, 0x3a),
+                (0x9a, 0x55, 0x18),
+                (0x75, 0x4b, 0x97),
+            ),
+        ] {
+            let theme = config.resolve_theme(name).unwrap();
+            assert_eq!(theme.background, rgb(background));
+            assert_eq!(theme.foreground, rgb(foreground));
+            assert_eq!(theme.accent, rgb(accent));
+            assert_eq!(theme.cursor_normal, rgb(normal));
+            assert_eq!(theme.cursor_insert, rgb(insert));
+            assert_eq!(theme.cursor_replace, rgb(replace));
+            assert_eq!(theme.cursor_select, rgb(select));
+            assert_eq!(theme.cursor_command, rgb(command));
+            assert_eq!(theme.directory, theme.cursor_normal);
+            assert_eq!(theme.syntax_color(heading), Some(theme.accent));
+        }
+
+        assert_eq!(DEFAULT_THEME, "default-dark");
     }
 
     #[test]
