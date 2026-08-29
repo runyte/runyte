@@ -109,14 +109,16 @@ struct PickerFile {
 
 /// One ranking candidate: a path, or one matching line of one.
 ///
-/// Carries an index into the picker's file table rather than a path, so a line
-/// costs its own text and four bytes.
+/// Carries an index into the picker's file table rather than a path. Its
+/// character count is computed once at admission because the score sort uses
+/// it as a tiebreaker many times while the candidate text remains immutable.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FileEntry {
     file: u32,
     row: Option<usize>,
     column: usize,
     text: Option<String>,
+    candidate_characters: usize,
 }
 
 /// An entry with its file resolved, which is how anything outside the picker
@@ -451,11 +453,13 @@ impl FilePicker {
         let first_new = self.entries.len();
         for entry in paths {
             let file = self.intern(entry.path, entry.is_dir);
+            let candidate_characters = self.files[file as usize].relative.chars().count();
             self.entries.push(FileEntry {
                 file,
                 row: None,
                 column: 0,
                 text: None,
+                candidate_characters,
             });
         }
         self.rank_new_entries(first_new, selected);
@@ -476,13 +480,16 @@ impl FilePicker {
             }
             available -= hits.lines.len();
             let file = self.intern(hits.path, false);
-            self.entries
-                .extend(hits.lines.into_iter().map(|line| FileEntry {
+            self.entries.extend(hits.lines.into_iter().map(|line| {
+                let candidate_characters = line.text.chars().count();
+                FileEntry {
                     file,
                     row: Some(line.row),
                     column: line.column,
                     text: Some(line.text),
-                }));
+                    candidate_characters,
+                }
+            }));
         }
         self.rank_new_entries(first_new, selected.flatten());
     }
@@ -827,11 +834,9 @@ impl FilePicker {
                     .score
                     .cmp(&left.score)
                     .then_with(|| {
-                        view(left)
-                            .candidate()
-                            .chars()
-                            .count()
-                            .cmp(&view(right).candidate().chars().count())
+                        entries[left.entry]
+                            .candidate_characters
+                            .cmp(&entries[right.entry].candidate_characters)
                     })
                     .then_with(|| {
                         let (left, right) = (view(left), view(right));
@@ -2355,6 +2360,51 @@ mod tests {
         picker.backspace_query();
         assert_eq!(picker.query, "p");
         assert_eq!(picker.selected_entry().unwrap().relative, "src/picker.rs");
+    }
+
+    #[test]
+    fn equal_scores_prefer_fewer_unicode_characters() {
+        let root = PathBuf::from("/project");
+        let mut picker = FilePicker::grep(1, root.clone());
+        picker.add_content(vec![FileHits {
+            path: root.join("content.txt"),
+            lines: vec![
+                LineHit {
+                    row: 0,
+                    column: 0,
+                    text: "abx".to_owned(),
+                },
+                LineHit {
+                    row: 1,
+                    column: 0,
+                    text: "界x".to_owned(),
+                },
+            ],
+        }]);
+        picker.query = "x".to_owned();
+        picker.matches = vec![
+            FuzzyMatch {
+                entry: 0,
+                score: 10,
+                positions: vec![2],
+            },
+            FuzzyMatch {
+                entry: 1,
+                score: 10,
+                positions: vec![1],
+            },
+        ];
+
+        picker.sort_matches();
+
+        assert_eq!(
+            picker
+                .ranked()
+                .map(|entry| entry.text.unwrap())
+                .collect::<Vec<_>>(),
+            ["界x", "abx"],
+            "candidate length is measured in characters, not UTF-8 bytes"
+        );
     }
 
     #[test]

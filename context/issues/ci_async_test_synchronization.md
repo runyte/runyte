@@ -151,6 +151,16 @@ signal the group only after `SZOMB` makes the leader's wait status stable. The
 command-row diagnostic must also recognize the failure suffix in a row whose
 description precedes its availability reason.
 
+CI run 33269246467 also showed that the full-content-budget performance gate
+could fail on a single 71.93 ms sample against its 64 ms release budget. The
+picker's score comparator recomputed each candidate's Unicode character count
+throughout an `O(n log n)` sort, even though candidate text is immutable for
+the lifetime of an entry. Candidate character counts must be cached at
+admission. The performance gate must execute a fixed odd sample set from the
+same pre-keystroke state after one warmup, report every sample, and compare the
+median with the budget. This distinguishes a sustained regression from an
+unrelated scheduler interruption without retrying a failure into success.
+
 The expected behavior is that asynchronous integration tests wait on semantic
 state or explicit process acknowledgements with bounded deadlines. PTY output
 must still be drained to prevent backpressure and retained for failure
