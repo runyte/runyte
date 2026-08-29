@@ -1635,9 +1635,8 @@ fn read_bounded_file(root: &Path, path: &Path, limit: usize) -> Option<Vec<u8>> 
 
 #[cfg(target_os = "macos")]
 struct ChildExitObserver {
-    queue: std::os::fd::OwnedFd,
     pid: libc::pid_t,
-    already_exited: bool,
+    already_zombie: bool,
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -1646,127 +1645,27 @@ struct ChildExitObserver;
 #[cfg(target_os = "macos")]
 impl ChildExitObserver {
     fn new(child: &std::process::Child) -> io::Result<Self> {
-        use std::os::fd::FromRawFd;
-
         let pid = i32::try_from(child.id()).map_err(|_| {
             io::Error::new(io::ErrorKind::InvalidInput, "child PID does not fit pid_t")
         })?;
-        // SAFETY: `kqueue` has no preconditions and returns a fresh descriptor.
-        let descriptor = unsafe { libc::kqueue() };
-        if descriptor == -1 {
-            return Err(io::Error::last_os_error());
-        }
-        // SAFETY: a successful `kqueue` call returns a fresh owned descriptor.
-        let queue = unsafe { std::os::fd::OwnedFd::from_raw_fd(descriptor) };
-        let change = libc::kevent {
-            ident: pid as libc::uintptr_t,
-            filter: libc::EVFILT_PROC,
-            flags: libc::EV_ADD | libc::EV_ENABLE | libc::EV_CLEAR,
-            fflags: libc::NOTE_EXIT,
-            data: 0,
-            udata: std::ptr::null_mut(),
-        };
-        // SAFETY: `queue` is live and `change` is one complete process-filter
-        // registration. The child has not been reaped, so its PID still names
-        // the process whose group Runyte owns.
-        let registration = unsafe {
-            libc::kevent(
-                descriptor,
-                &change,
-                1,
-                std::ptr::null_mut(),
-                0,
-                std::ptr::null(),
-            )
-        };
-        // This observer exclusively owns a direct, unreaped Child. ESRCH can
-        // therefore only mean that the child has left the live-process table;
-        // its zombie still anchors both PID and the setsid process-group ID
-        // until `child.wait()` below. This interpretation is deliberately not
-        // a general PID liveness probe.
-        let already_exited = if registration == -1 {
-            let error = io::Error::last_os_error();
-            if error.raw_os_error() == Some(libc::ESRCH) {
-                true
-            } else {
-                return Err(error);
-            }
-        } else {
-            // EVFILT_PROC is edge-triggered on Darwin, and XNU can begin an
-            // irreversible exit while the registration syscall is still
-            // attaching its knote. Snapshot only after registration. INEXIT,
-            // SZOMB, or ESRCH covers an edge posted before attachment; a live
-            // snapshot leaves every later edge covered by the knote.
-            darwin_process_has_exited(pid)?
-        };
+        // A direct, unreaped Child remains in either XNU's live or zombie
+        // process table. Query both tables so the observer is level-triggered
+        // and has no spawn-to-registration gap. INEXIT precedes SZOMB and may
+        // not authorize group cleanup: signalling the group then would also
+        // signal the still-exiting Git leader and could replace its successful
+        // status with SIGKILL.
+        let already_zombie = darwin_process_is_zombie(pid)?;
         Ok(Self {
-            queue,
             pid,
-            already_exited,
+            already_zombie,
         })
     }
 
     fn exited(&self) -> io::Result<bool> {
-        self.wait_for_exit(std::time::Duration::ZERO)
-    }
-
-    fn wait_for_exit(&self, timeout: std::time::Duration) -> io::Result<bool> {
-        use std::os::fd::AsRawFd;
-
-        if self.already_exited {
+        if self.already_zombie {
             return Ok(true);
         }
-        let mut event = std::mem::MaybeUninit::<libc::kevent>::uninit();
-        let timeout = libc::timespec {
-            tv_sec: libc::time_t::try_from(timeout.as_secs()).unwrap_or(libc::time_t::MAX),
-            tv_nsec: libc::c_long::from(timeout.subsec_nanos()),
-        };
-        // SAFETY: the queue is live, `event` has storage for one result, and
-        // the caller supplies a bounded timeout (zero in production polling).
-        let count = unsafe {
-            libc::kevent(
-                self.queue.as_raw_fd(),
-                std::ptr::null(),
-                0,
-                event.as_mut_ptr(),
-                1,
-                &timeout,
-            )
-        };
-        if count == -1 {
-            return Err(io::Error::last_os_error());
-        }
-        if count == 0 {
-            // A level snapshot is also the fallback for any NOTE_EXIT edge
-            // lost inside the registration syscall. Event first, snapshot
-            // second makes the transition between these checks visible to one
-            // of them without reaping the child.
-            return darwin_process_has_exited(self.pid);
-        }
-        // SAFETY: one event was initialized when `kevent` returned one.
-        let event = unsafe { event.assume_init() };
-        if event.flags & libc::EV_ERROR != 0 {
-            let error = i32::try_from(event.data)
-                .ok()
-                .filter(|code| *code > 0)
-                .map(io::Error::from_raw_os_error)
-                .unwrap_or_else(|| io::Error::from_raw_os_error(libc::EIO));
-            return if error.raw_os_error() == Some(libc::ESRCH) {
-                Ok(true)
-            } else {
-                Err(error)
-            };
-        }
-        if event.ident != self.pid as libc::uintptr_t
-            || event.filter != libc::EVFILT_PROC
-            || event.fflags & libc::NOTE_EXIT == 0
-        {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "process queue returned an unrelated event",
-            ));
-        }
-        Ok(true)
+        darwin_process_is_zombie(self.pid)
     }
 }
 
@@ -1774,9 +1673,10 @@ impl ChildExitObserver {
 const DARWIN_PROC_FLAG_INEXIT: u32 = 4;
 
 #[cfg(target_os = "macos")]
-fn darwin_process_has_exited(pid: libc::pid_t) -> io::Result<bool> {
-    // Public XNU proc_info ABI: the process is irreversibly working through
-    // exit. libc exposes proc_bsdinfo but not this pbi_flags value.
+const DARWIN_INCLUDE_ZOMBIES: u64 = 1;
+
+#[cfg(target_os = "macos")]
+fn darwin_process_is_zombie(pid: libc::pid_t) -> io::Result<bool> {
     let mut information = std::mem::MaybeUninit::<libc::proc_bsdinfo>::zeroed();
     let size = std::mem::size_of::<libc::proc_bsdinfo>();
     let buffer_size = libc::c_int::try_from(size)
@@ -1787,16 +1687,13 @@ fn darwin_process_has_exited(pid: libc::pid_t) -> io::Result<bool> {
         libc::proc_pidinfo(
             pid,
             libc::PROC_PIDTBSDINFO,
-            0,
+            DARWIN_INCLUDE_ZOMBIES,
             information.as_mut_ptr().cast(),
             buffer_size,
         )
     };
     if read != buffer_size {
         let error = io::Error::last_os_error();
-        if read <= 0 && error.raw_os_error() == Some(libc::ESRCH) {
-            return Ok(true);
-        }
         return Err(
             if read <= 0 && error.raw_os_error().is_some_and(|code| code != 0) {
                 error
@@ -1817,15 +1714,29 @@ fn darwin_process_has_exited(pid: libc::pid_t) -> io::Result<bool> {
             "process state described a different PID",
         ));
     }
-    Ok(darwin_process_snapshot_has_exited(
-        information.pbi_status,
-        information.pbi_flags,
+    Ok(matches!(
+        darwin_process_snapshot_state(information.pbi_status, information.pbi_flags),
+        DarwinProcessState::Zombie
     ))
 }
 
 #[cfg(target_os = "macos")]
-fn darwin_process_snapshot_has_exited(status: u32, flags: u32) -> bool {
-    status == libc::SZOMB || flags & DARWIN_PROC_FLAG_INEXIT != 0
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DarwinProcessState {
+    Live,
+    Exiting,
+    Zombie,
+}
+
+#[cfg(target_os = "macos")]
+fn darwin_process_snapshot_state(status: u32, flags: u32) -> DarwinProcessState {
+    if status == libc::SZOMB {
+        DarwinProcessState::Zombie
+    } else if flags & DARWIN_PROC_FLAG_INEXIT != 0 {
+        DarwinProcessState::Exiting
+    } else {
+        DarwinProcessState::Live
+    }
 }
 
 /// Observes a completed Unix child without releasing its process identity,
@@ -1834,10 +1745,10 @@ fn darwin_process_snapshot_has_exited(status: u32, flags: u32) -> bool {
 /// `Child::try_wait` reaps immediately. Sending a signal to `-child.id()`
 /// after that would address a reusable number rather than the group Runyte
 /// created. Linux and other Unix targets use `waitid(WNOWAIT)` to keep the
-/// exited leader waitable. Darwin uses a process knote registered immediately
-/// after spawn because its `waitid` implementation does not provide a reliable
-/// nonblocking completion boundary here. Both keep the PID and process-group
-/// identity anchored through cleanup.
+/// exited leader waitable. Darwin level-queries both the live and zombie
+/// process tables because its `waitid` implementation does not provide a
+/// reliable nonblocking completion boundary here. Both keep the PID and
+/// process-group identity anchored through cleanup.
 #[cfg(all(unix, not(target_os = "macos")))]
 fn try_finish_child(
     child: &mut std::process::Child,
@@ -4421,7 +4332,7 @@ mod tests {
 
     #[cfg(target_os = "macos")]
     #[test]
-    fn darwin_child_exit_observer_covers_registration_after_exit() {
+    fn darwin_child_exit_observer_covers_exit_before_and_after_creation() {
         use std::io::Write as _;
         use std::process::Stdio;
 
@@ -4433,33 +4344,44 @@ mod tests {
             .unwrap();
         let observer_before_exit = ChildExitObserver::new(&child).unwrap();
         child.stdin.take().unwrap().write_all(b"go\n").unwrap();
-        assert!(
-            observer_before_exit
-                .wait_for_exit(std::time::Duration::from_secs(2))
-                .unwrap(),
-            "the process knote never reported exit"
-        );
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while !observer_before_exit.exited().unwrap() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the observer never reached the child's stable zombie state"
+            );
+            std::thread::yield_now();
+        }
 
         let observer_after_exit = ChildExitObserver::new(&child).unwrap();
         assert!(
             observer_after_exit.exited().unwrap(),
-            "registration after NOTE_EXIT did not recognize the unreaped zombie"
+            "observer creation after exit did not recognize the unreaped zombie"
         );
         assert!(
-            child.wait().unwrap().success(),
-            "observing NOTE_EXIT reaped or changed the child status"
+            try_finish_child(&mut child, &observer_after_exit)
+                .unwrap()
+                .expect("the zombie snapshot did not finish the child")
+                .success(),
+            "post-zombie group cleanup changed the child status"
         );
     }
 
     #[cfg(target_os = "macos")]
     #[test]
-    fn darwin_process_snapshot_covers_exit_during_knote_attachment() {
-        assert!(darwin_process_snapshot_has_exited(
-            libc::SRUN,
-            DARWIN_PROC_FLAG_INEXIT,
-        ));
-        assert!(darwin_process_snapshot_has_exited(libc::SZOMB, 0));
-        assert!(!darwin_process_snapshot_has_exited(libc::SRUN, 0));
+    fn darwin_process_snapshot_requires_a_stable_zombie_before_cleanup() {
+        assert_eq!(
+            darwin_process_snapshot_state(libc::SRUN, DARWIN_PROC_FLAG_INEXIT),
+            DarwinProcessState::Exiting,
+        );
+        assert_eq!(
+            darwin_process_snapshot_state(libc::SZOMB, 0),
+            DarwinProcessState::Zombie,
+        );
+        assert_eq!(
+            darwin_process_snapshot_state(libc::SRUN, 0),
+            DarwinProcessState::Live,
+        );
     }
 
     #[cfg(unix)]

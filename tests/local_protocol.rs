@@ -916,7 +916,7 @@ async fn wait_for_git_command(
         let interaction_line = frame.editor.status.interaction_line.clone();
         let notification_counts = frame.editor.status.notification_counts;
         assert!(
-            !detail.starts_with("Git repository discovery failed:"),
+            !detail.contains("Git repository discovery failed:"),
             "Git repository discovery failed while {waiting_for}: {detail}; \
              last frame id: {:?}, git summary: {git_summary:?}, long-running action: \
              {long_running_action:?}, interaction line: {interaction_line:?}, notification \

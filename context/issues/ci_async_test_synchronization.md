@@ -140,6 +140,17 @@ The timeout diagnostic must retain the row's reason, the long-running action,
 the interaction line, and notification counts so a later failure identifies
 the actual phase rather than being labelled as a process-observation failure.
 
+CI run 33271126529 supplied that phase information on burn-in attempt 9. Git
+discovery completed with ``git rev-parse --show-toplevel` failed` but no exit
+code or stderr, which is the shape of a signal-terminated child rather than an
+ordinary repository refusal. The Darwin observer treated `PROC_FLAG_INEXIT`
+and `NOTE_EXIT` as completed states, even though XNU exposes both before
+`SZOMB`, then sent `SIGKILL` to the process group including the still-exiting
+leader. Darwin cleanup must level-query a zombie-aware process snapshot and
+signal the group only after `SZOMB` makes the leader's wait status stable. The
+command-row diagnostic must also recognize the failure suffix in a row whose
+description precedes its availability reason.
+
 The expected behavior is that asynchronous integration tests wait on semantic
 state or explicit process acknowledgements with bounded deadlines. PTY output
 must still be drained to prevent backpressure and retained for failure

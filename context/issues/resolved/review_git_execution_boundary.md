@@ -139,13 +139,14 @@ The initial Darwin observer still had a spawn-to-registration gap for commands
 that exited immediately. XNU's process filter reports edges only after
 attachment. A child that has already left the live-process table can make
 registration return `ESRCH`, and an exit racing a successful registration can
-be irreversibly in progress before the process becomes `SZOMB`. The observer
-now treats registration-time `ESRCH` as completion for its exclusively owned,
-unreaped child, then queries `PROC_PIDTBSDINFO` after successful registration
-and after empty event polls. `PROC_FLAG_INEXIT`, `SZOMB`, and snapshot-time
-`ESRCH` record the missed transition without reaping; a live snapshot leaves
-every subsequent exit covered by the installed knote. In every case the leader
-remains waitable until Runyte has stopped its still-anchored process group.
+set `PROC_FLAG_INEXIT` before the process becomes `SZOMB`. Neither `INEXIT` nor
+`NOTE_EXIT` makes the wait status stable, however. Treating either as the
+cleanup boundary allowed Runyte's group `SIGKILL` to include the still-exiting
+Git leader and replace a successful status. The observer now level-queries
+`PROC_PIDTBSDINFO` with zombie lookup enabled and stops the still-anchored
+process group only after a `SZOMB` snapshot. This has no registration edge to
+lose. The leader remains waitable, with its final status fixed, until cleanup
+completes.
 
 Follow-up regression coverage is provided by
 `git::cli::tests::fast_output_survives_readers_held_until_after_child_exit`,
@@ -159,8 +160,8 @@ Follow-up regression coverage is provided by
 `repository_discovery_rejects_empty_required_rev_parse_output` in
 `src/git/cli.rs`,
 `finalizer_wake_wins_when_pipe_data_is_ready_too` and the macOS-only
-`darwin_child_exit_observer_covers_registration_after_exit` and
-`darwin_process_snapshot_covers_exit_during_knote_attachment` in
+`darwin_child_exit_observer_covers_exit_before_and_after_creation` and
+`darwin_process_snapshot_requires_a_stable_zombie_before_cleanup` in
 `src/git/cli.rs`,
 `git_project_availability_distinguishes_missing_git_and_non_repository` in
 `src/app/tests/language.rs`,
