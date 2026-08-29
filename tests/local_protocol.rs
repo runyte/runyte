@@ -881,8 +881,8 @@ async fn start_host(root: &Path, endpoint: &LocalEndpoint) -> Option<ChildGuard>
     start_host_opening(root, endpoint, Some("other.txt")).await
 }
 
-/// Settles startup Git discovery through an interactive semantic frame before
-/// a real PTY client needs a Git-only command to be available.
+/// Waits for the command palette's own Git-project capability before a real
+/// PTY client needs a Git-only command to be available.
 async fn wait_for_git_before_tui(endpoint: &LocalEndpoint) {
     let mut interactive = LocalClient::connect(endpoint, tui_geometry(), true)
         .await
@@ -891,10 +891,36 @@ async fn wait_for_git_before_tui(endpoint: &LocalEndpoint) {
         receive_response(&mut interactive, "receiving the Git readiness welcome").await,
         HostResponse::Welcome { .. }
     ));
+    send_input_expect_frame(&mut interactive, InputEvent::Key(KeyStroke::char(':'))).await;
+    send_input_expect_frame(
+        &mut interactive,
+        InputEvent::Text("git-worktrees".to_owned()),
+    )
+    .await;
     let _ = wait_for_frame(
         &mut interactive,
-        "waiting for Git discovery before starting the real TUI",
-        |frame| frame.editor.status.git_summary.is_some(),
+        "waiting for git-worktrees to become available before starting the real TUI",
+        |frame| {
+            frame.overlays.iter().any(|overlay| {
+                overlay.title == "Commands"
+                    && overlay.query == "git-worktrees"
+                    && overlay
+                        .rows
+                        .iter()
+                        .any(|row| row.label.contains(":git-worktrees") && row.available)
+            })
+        },
+    )
+    .await;
+    send_input_expect_frame(
+        &mut interactive,
+        InputEvent::Key(KeyStroke::new(KeyCode::Escape, Modifiers::NONE)),
+    )
+    .await;
+    let _ = wait_for_frame(
+        &mut interactive,
+        "waiting for the Git readiness prompt to return to Normal mode",
+        |frame| frame.overlays.is_empty() && frame.editor.status.prompt_cursor_column.is_none(),
     )
     .await;
     interactive.send(&ClientRequest::Detach).await.unwrap();
