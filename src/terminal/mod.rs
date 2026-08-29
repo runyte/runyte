@@ -1017,11 +1017,11 @@ impl TerminalSession {
             if head_row >= anchor_row {
                 Range::new(
                     review.lines[anchor_row].text_start,
-                    review.lines[head_row].text_end.saturating_sub(1),
+                    review_line_last_offset(&review.lines[head_row]),
                 )
             } else {
                 Range::new(
-                    review.lines[anchor_row].text_end.saturating_sub(1),
+                    review_line_last_offset(&review.lines[anchor_row]),
                     review.lines[head_row].text_start,
                 )
             }
@@ -1638,6 +1638,14 @@ fn inclusive_review_range(range: Range) -> Range {
     } else {
         Range::new(range.anchor.saturating_sub(1), range.head)
     }
+}
+
+/// The offset a whole-line selection ends on. A blank row holds no
+/// character, so its own start is the only offset that still resolves back to
+/// it; `text_end - 1` would land on the previous row's separator and stall
+/// `x`/`X` there.
+fn review_line_last_offset(line: &ReviewLine) -> usize {
+    line.text_end.saturating_sub(1).max(line.text_start)
 }
 
 fn review_column_for_offset(line: &ReviewLine, offset: usize) -> usize {
@@ -2820,6 +2828,41 @@ mod tests {
         assert_eq!(session.review_selection_text(), "two");
         session.select_review_line(false, true);
         assert_eq!(session.review_selection_text(), "one\ntwo");
+    }
+
+    #[test]
+    fn review_line_selection_walks_over_blank_rows() {
+        let mut session = session(12, 6);
+        session.feed(b"one\r\n\r\ntwo\r\n\r\nthree");
+        assert_eq!(session.search_review("one", false).unwrap(), 1);
+
+        session.select_review_line(true, false);
+        assert_eq!(session.review_selection_text(), "one");
+        session.select_review_line(true, true);
+        assert_eq!(session.review_selection_text(), "one\n\n");
+        session.select_review_line(true, true);
+        assert_eq!(session.review_selection_text(), "one\n\ntwo");
+
+        assert_eq!(session.search_review("three", false).unwrap(), 1);
+        session.select_review_line(false, false);
+        assert_eq!(session.review_selection_text(), "three");
+        session.select_review_line(false, true);
+        assert_eq!(session.review_selection_text(), "\nthree");
+        session.select_review_line(false, true);
+        assert_eq!(session.review_selection_text(), "two\n\nthree");
+    }
+
+    #[test]
+    fn review_line_selection_starting_on_a_blank_row_walks_on() {
+        let mut session = session(12, 6);
+        session.feed(b"one\r\n\r\ntwo");
+        assert_eq!(session.search_review("one", false).unwrap(), 1);
+        assert!(session.move_review(ReviewMotion::Down, false));
+
+        session.select_review_line(true, false);
+        assert_eq!(session.review_selection_text(), "\n");
+        session.select_review_line(true, true);
+        assert_eq!(session.review_selection_text(), "\ntwo");
     }
 
     #[test]

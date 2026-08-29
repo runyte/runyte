@@ -279,14 +279,16 @@ may still manage the host.
 `runyte --session-list` (or `runyte -l`) lists running and recently visited
 persistent sessions with `ID`, `NAME`, `DIRECTORY`, `STATE`, `UNSAVED`, `TERMINALS`,
 `WAITING`, and `TUI` columns,
-most recently visited first. By default it reads only the runtime and cache
-registry namespace selected by the current environment. Add
-`--all-namespaces` to include every validated live Runyte host in the current
-user's owner-wide inventory. Stopped recent-history rows remain local to the
-current namespace because there is no live host to publish them elsewhere. If
-two deliberately isolated namespaces host the same workspace, the broad list
-shows both live endpoints even though their workspace IDs and directories are
-the same.
+in the manager's order: numbered sessions first in digit order, then the rest
+least recently visited first. The listing has no number column of its own, so
+that reads as the running sessions ahead of the stopped ones. By default it
+reads only the runtime and cache registry namespace selected by the current
+environment. Add `--all-namespaces` to include every validated live Runyte host
+in the current user's owner-wide inventory. Stopped recent-history rows remain
+local to the current namespace because there is no live host to publish them
+elsewhere. If two deliberately isolated namespaces host the same workspace, the
+broad list shows both live endpoints even though their workspace IDs and
+directories are the same.
 `STATE` is `running`, `stopped`, or `running (protocol N)` for a host left over
 from another version of Runyte. Such a host still holds the workspace, so
 nothing can attach to it or open a file through it, and its unsaved-buffer
@@ -405,12 +407,14 @@ use the private, versioned Unix local protocol; it is a bundled-client contract,
 not a public automation API.
 
 `Space Space` or `:session-list` (`:sl`) opens the session manager: a
-filterable list of running and recently visited persistent sessions, most
-recently visited first, with the current session at its head. Enter attaches to
+filterable list of running and recently visited persistent sessions, numbered
+sessions first in digit order and the rest least recently visited first. The
+current session is marked with `*` wherever its digit puts it. Enter attaches to
 the selected workspace's session in the same TUI and starts it when necessary.
-A stopped session keeps its place in that order but is drawn in the theme's
-dimmed text colour, the one a command prompt grays the panes behind it with, so
-the running hosts stand out without any row being hidden or moved.
+A stopped session holds no digit, so it is listed below the numbered ones, and
+is drawn in the theme's dimmed text colour, the one a command prompt grays the
+panes behind it with, so the running hosts stand out without any row being
+hidden.
 `Space Space` is the complete binding,
 not a prefix with subcommands. A third `Space` closes the manager, just like
 Escape or `Ctrl-c`. Tab opens one manager menu listing only the
@@ -497,15 +501,33 @@ filter, with Delete or by backspacing to empty, arms the shortcut again. A
 workspace whose name or path begins with a digit therefore cannot be filtered
 by that first character; type a later part of the name instead.
 
-Numbers are assigned in order of creation, when a workspace is first recorded,
-and stay with it as the list reorders around them, so the digit does not move
-between two visits. A catalog written before Runyte numbered sessions has no
-creation order left to recover, and is numbered most-recently-visited first on
-the next listing. Only nine sessions are numbered; a tenth is reached by name
-or path, and inherits a number when an earlier one is forgotten. Renumber in
-the manager menu opens an empty prompt ready for one digit and sets the shortcut
-for the selected session; an empty answer takes its number away. Giving a
-session a number another one holds swaps the two, so both keep a shortcut.
+The digit also pins its session. Numbered sessions lead the manager in digit
+order, so the shortcut says where the row is as well as which key reaches it,
+and the top of the list stops rearranging itself as sessions are visited.
+Everything below them is ordered by the `Last active` column, least recently
+visited first, with the sessions nothing has ever attached to at the very
+bottom: `-` there means unknown rather than old.
+
+Only running sessions are numbered. The digit attaches, so it belongs to a
+session that is up: a stopped row shows none, drops below the numbered ones,
+and leaves the digit it held free for the sessions that are actually running.
+Its record keeps that digit as a preference, so a session that stops and starts
+again answers to the same one whenever nothing running has claimed it
+meanwhile, and otherwise takes the lowest still free. Numbers are otherwise
+assigned in order of creation, when a workspace is first recorded, so a session
+started in a new worktree is pinned without being asked for. A catalog written
+before Runyte numbered sessions has no creation order left to recover, and is
+numbered most-recently-visited first on the next listing. Only nine sessions
+are numbered at a time; a tenth is reached by name or path.
+
+Renumber in the manager menu opens an empty prompt ready for one digit and sets
+the shortcut for the selected session. Giving a session a number another one
+holds swaps the two, so both keep a shortcut. An empty answer takes the number
+away and keeps it away: unpinning is a decision, so the session is not handed
+the lowest free digit again on the next listing, and it stays in the by-visit
+part of the list until it is numbered by hand. The session displaced by a swap
+is not unpinned that way and may be numbered again automatically. A stopped
+row's menu has no Renumber: there is no digit on it to change.
 A standalone workspace owns no persistent host, so the whole `session`
 namespace is inert there rather than a set of commands that each refuse.
 `Space Space` greys out in the key-hint popup and `:session-list`,
@@ -1976,8 +1998,8 @@ host owns that directory and the runtime state under it, and the removal itself
 has to report success before anything below it happens: a removal Git refuses
 after the confirmation leaves the branch and the history record alone. A stop
 that fails likewise leaves the worktree standing. Once the directory is gone the
-workspace's history record is forgotten too, which is what frees its number for
-the next workspace; that happens whether or not a host was running, so a
+workspace's history record is forgotten too, so nothing is left preferring the
+digit it used to answer to; that happens whether or not a host was running, so a
 worktree opened as a workspace at any point leaves nothing behind.
 
 This part of removal is not a persistent-mode feature. A standalone editor

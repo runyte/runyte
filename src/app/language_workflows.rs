@@ -2541,8 +2541,10 @@ impl App {
         let Some(entry) = self.workspace_rows.get(row) else {
             return;
         };
-        // Only what the row's own state can answer: stopping belongs to a
-        // running session, forgetting the history record to a stopped one.
+        // Only what the row's own state can answer: stopping and the digit
+        // belong to a running session, forgetting the history record to a
+        // stopped one. A stopped session holds no digit to change, so offering
+        // to set one would be an answer nothing in the manager could show.
         let actions = if entry.running {
             vec![
                 SessionAction::Open,
@@ -2555,7 +2557,6 @@ impl App {
             vec![
                 SessionAction::Open,
                 SessionAction::Rename,
-                SessionAction::Number,
                 SessionAction::Forget,
             ]
         };

@@ -3216,13 +3216,12 @@ fn counted_colon_binding_echoes_failure_and_retains_its_info_notification() {
     assert!(app.status_error);
     assert_eq!(
         app.status,
-        "Reload the active file or refresh the active explorer or Git list does not support a count"
+        "Reload the active view does not support a count"
     );
     assert_eq!(
         app.displayed_status_message(),
-        "2 Space r (Reload the active file or refresh the active explorer or Git list · failed: \
-             Reload the active file or refresh the active explorer or Git list does not support a \
-             count)"
+        "2 Space r (Reload the active view · failed: Reload the active view does not \
+             support a count)"
     );
     assert!(app.displayed_status_message_is_error());
     assert_eq!(app.unread_notification_counts().infos, 1);

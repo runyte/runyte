@@ -1862,7 +1862,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "reload",
         [],
         "reload",
-        "Reload the active file or refresh the active explorer or Git list",
+        "Reload the active view",
         NoArguments
     ),
     spec!(
