@@ -119,13 +119,16 @@ makes the pipe writable.
 
 CI run 33269779053 showed that registering the Darwin process knote after
 `Command::spawn` still left a gap for short-lived Git commands. XNU's process
-filter is edge-triggered: a child can exit before the knote attaches, remain as
-an unreaped zombie that still accepts the registration, and never produce a
-future `NOTE_EXIT`. A successful registration therefore is not itself proof
-that the exit edge remains observable. The observer must install the knote and
-then take a non-reaping process-state snapshot. A zombie snapshot covers an
-exit before registration; a live snapshot means every later exit is covered by
-the already-installed knote.
+filter captures exit edges only after attachment. CI run 33270234080 then
+showed both forms of that gap: a child that is already gone can make the
+registration itself fail with `ESRCH`, while a successful registration can
+race an exit that has set the public `PROC_FLAG_INEXIT` state but has not yet
+become `SZOMB`. The observer must treat registration-time `ESRCH` as completion
+for its exclusively owned, unreaped child, then snapshot `PROC_PIDTBSDINFO`
+after successful registration and while polling. `PROC_FLAG_INEXIT`, `SZOMB`,
+or snapshot-time `ESRCH` records irreversible completion without reaping the
+leader; a live snapshot leaves every later exit covered by the installed
+knote.
 
 The expected behavior is that asynchronous integration tests wait on semantic
 state or explicit process acknowledgements with bounded deadlines. PTY output

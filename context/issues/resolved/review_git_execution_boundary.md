@@ -136,13 +136,16 @@ look consumed by a Git child that has already exited. Output readers still use
 the same boundary to perform one final nonblocking drain.
 
 The initial Darwin observer still had a spawn-to-registration gap for commands
-that exited immediately. XNU's process filter reports edges after attachment;
-it does not replay an earlier `NOTE_EXIT` merely because the unreaped zombie
-still accepts a knote. The observer now installs the knote first and immediately
-queries `PROC_PIDTBSDINFO` without reaping. A zombie snapshot records the
-already-completed child, while a live snapshot leaves every subsequent exit
-covered by the installed knote. In both cases the leader remains waitable until
-Runyte has stopped its still-anchored process group.
+that exited immediately. XNU's process filter reports edges only after
+attachment. A child that has already left the live-process table can make
+registration return `ESRCH`, and an exit racing a successful registration can
+be irreversibly in progress before the process becomes `SZOMB`. The observer
+now treats registration-time `ESRCH` as completion for its exclusively owned,
+unreaped child, then queries `PROC_PIDTBSDINFO` after successful registration
+and after empty event polls. `PROC_FLAG_INEXIT`, `SZOMB`, and snapshot-time
+`ESRCH` record the missed transition without reaping; a live snapshot leaves
+every subsequent exit covered by the installed knote. In every case the leader
+remains waitable until Runyte has stopped its still-anchored process group.
 
 Follow-up regression coverage is provided by
 `git::cli::tests::fast_output_survives_readers_held_until_after_child_exit`,
@@ -156,7 +159,9 @@ Follow-up regression coverage is provided by
 `repository_discovery_rejects_empty_required_rev_parse_output` in
 `src/git/cli.rs`,
 `finalizer_wake_wins_when_pipe_data_is_ready_too` and the macOS-only
-`darwin_child_exit_observer_covers_registration_after_exit` in `src/git/cli.rs`,
+`darwin_child_exit_observer_covers_registration_after_exit` and
+`darwin_process_snapshot_covers_exit_during_knote_attachment` in
+`src/git/cli.rs`,
 `git_project_availability_distinguishes_missing_git_and_non_repository` in
 `src/app/tests/language.rs`,
 `linked_worktrees_share_a_common_repository_identity` in `tests/git_provider.rs`
