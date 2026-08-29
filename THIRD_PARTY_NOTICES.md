@@ -172,26 +172,45 @@ injection queries shipped inside them:
 
 - `tree-sitter-bash 0.25.1`;
 - `tree-sitter-c 0.24.2`;
+- `tree-sitter-c-sharp 0.23.5`;
+- `tree-sitter-cmake 0.7.4`;
 - `tree-sitter-cpp 0.23.4`;
 - `tree-sitter-css 0.25.0`;
 - `tree-sitter-go 0.25.0`;
 - `tree-sitter-html 0.23.2`;
+- `tree-sitter-ini 1.4.0`;
 - `tree-sitter-java 0.23.5`;
 - `tree-sitter-javascript 0.25.0`;
 - `tree-sitter-json 0.24.8`;
 - `tree-sitter-kotlin-sg 0.4.1`;
+- `tree-sitter-lua 0.5.0`;
+- `tree-sitter-make 1.1.1`;
 - `tree-sitter-md 0.5.3`;
+- `tree-sitter-proto 0.5.0`;
 - `tree-sitter-python 0.25.0`;
 - `tree-sitter-rust 0.24.2`;
+- `tree-sitter-sequel 0.3.11`;
 - `tree-sitter-swift 0.7.3`;
 - `tree-sitter-toml-ng 0.7.0`;
-- `tree-sitter-typescript 0.23.2`; and
-- `tree-sitter-yaml 0.7.2`.
+- `tree-sitter-typescript 0.23.2`;
+- `tree-sitter-yaml 0.7.2`; and
+- `tree-sitter-zig 1.1.2`.
 
-Each grammar crate declares the MIT License. The supporting
-`tree-sitter-language 0.1.7` crate also declares MIT. Package repositories,
-exact upstream revisions, Cargo checksums, and the query material used by
-Runyte are recorded in `docs/dependency-license-inventory.md`.
+Each grammar crate declares the MIT License except `tree-sitter-ini 1.4.0`,
+which declares Apache-2.0. The supporting `tree-sitter-language 0.1.7` crate
+declares MIT. Package repositories, exact upstream revisions, Cargo checksums,
+and the query material used by Runyte are recorded in
+`docs/dependency-license-inventory.md`.
+
+Runyte carries attributed query files from these exact releases under
+`src/syntax/queries/`: the `tree-sitter-proto` highlight query; indentation
+queries adapted from `tree-sitter-sequel`, `tree-sitter-zig`,
+`tree-sitter-cmake`, and `tree-sitter-proto`; fold queries from
+`tree-sitter-zig`, `tree-sitter-cmake`, `tree-sitter-proto`, and
+`tree-sitter-ini`; and highlight queries from `tree-sitter-zig` and
+`tree-sitter-cmake` adapted to replace unsupported predicates. Those files
+retain the upstream MIT or Apache-2.0 SPDX identifier. The complete Apache-2.0
+text is preserved in `licenses/Apache-2.0.txt`.
 
 Copyright notices present in the audited crate archives include:
 
@@ -202,6 +221,10 @@ Copyright notices present in the audited crate archives include:
 - Copyright (c) 2014 Max Brunsfeld (`tree-sitter-go`);
 - Copyright (c) 2017 Ayman Nadeem (`tree-sitter-java`);
 - Copyright (c) 2019 fwcd (`tree-sitter-kotlin-sg`);
+- Copyright (c) 2014-2023 Max Brunsfeld, Damien Guard, Amaan Qureshi, and
+  contributors (`tree-sitter-c-sharp`);
+- Copyright (c) 2025 Uy Ha (`tree-sitter-cmake`);
+- Copyright (c) 2024-2025 Mohammad Ashar Khan (`tree-sitter-proto`);
 - Copyright (c) 2016 Max Brunsfeld (`tree-sitter-python`);
 - Copyright (c) 2017 Maxim Sokolov (`tree-sitter-rust`);
 - Copyright (c) 2021 alex-pinkus (`tree-sitter-swift`); and

@@ -8,8 +8,8 @@ For the project overview and quick start, see the [main README](../README.md).
 
 - Normal, Insert, Replace, Select, and Command modes
 - Tree-sitter syntax highlighting for Python, Rust, Swift, C, C++, JavaScript,
-  TypeScript, TSX, HTML, CSS, Go, Bash, Java, Kotlin, Markdown, TOML, YAML, and
-  JSON
+  TypeScript, TSX, HTML, CSS, Go, Bash, Java, Kotlin, SQL, Lua, C#, Zig, CMake,
+  Protobuf, Make, INI, Markdown, TOML, YAML, and JSON
 - Language servers: diagnostics, completion, hover, signature help, goto,
   references, rename, code actions, formatting, and symbol pickers
 - Word completion from every open buffer, including the explorer, with no
@@ -67,7 +67,10 @@ language means adding a dependency and a row to `src/syntax/grammars.rs`.
 Language detection checks an exact filename, then a case-insensitive
 extension, then a bounded first-line shebang; Bash currently recognizes
 `.bashrc`, `.bash_profile`, `sh`/`bash`/`ebuild`/`eclass` extensions, and
-`sh`/`bash`/`dash` interpreters.
+`sh`/`bash`/`dash` interpreters. CMake recognizes `CMakeLists.txt`, Make
+recognizes `Makefile`, `makefile`, and `GNUmakefile`, and Lua recognizes a
+`lua` interpreter in a shebang. INI parses both `;` and `#` comments;
+`toggle-comments` inserts `;` when adding one.
 
 Kotlin support recognizes `.kt` and `.kts`, including Kotlin 2 multi-dollar
 strings and guarded `when` branches. The pinned grammar does not yet model
@@ -129,8 +132,9 @@ Servers are keyed by the language names in `src/syntax/grammars.rs`, so a
 buffer's language is the same question for highlighting and for LSP. The
 available keys are `rust`, `python`, `swift`, `c`, `cpp`, `javascript`,
 `typescript`, `tsx`, `html`, `css`, `go`, `bash`, `java`, `kotlin`, `json`,
-`toml`, `yaml`, and `markdown`. Other keys below `lsp` are rejected, apart from
-the reserved `enable` setting and legacy `servers` wrapper. Use `:lsp-status`
+`sql`, `lua`, `c-sharp`, `zig`, `cmake`, `proto`, `make`, `ini`, `toml`,
+`yaml`, and `markdown`. Other keys below `lsp` are rejected, apart from the
+reserved `enable` setting and legacy `servers` wrapper. Use `:lsp-status`
 to see servers that have started or failed, `:lsp-restart <language>` to bring
 back a loaded server that stopped, and `:service-health` to see whether the
 active document has a configured and attached server. A process-launch error

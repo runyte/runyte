@@ -44,8 +44,19 @@ Against the audited `tree-sitter-kotlin-ng 1.1.0` candidate, SG models Kotlin 2
 guarded `when` conditions and multi-dollar interpolation, and ships a
 compatible highlight query plus its MIT license. NG lacked those current
 Kotlin 2 nodes, query files, and a packaged license file.
+The sixth batch exact-pins `tree-sitter-sequel` at `=0.3.11`,
+`tree-sitter-lua` at `=0.5.0`, `tree-sitter-c-sharp` at `=0.23.5`,
+`tree-sitter-zig` at `=1.1.2`, `tree-sitter-cmake` at `=0.7.4`,
+`tree-sitter-proto` at `=0.5.0`, `tree-sitter-make` at `=1.1.1`, and
+`tree-sitter-ini` at `=1.4.0`. These pins protect local capability queries and
+the adapted query files carried for Zig, CMake, and Protobuf from silent node
+or predicate changes.
 Future grammar upgrades must repeat the query, checksum, revision, archive, and
 license review below rather than arriving through a compatible-version update.
+
+On 2026-08-29, stripped LTO release builds on `x86_64-unknown-linux-gnu`
+measured 34,244,352 bytes at baseline commit `06e859d` and 43,168,320 bytes with
+the sixth grammar batch, an increase of 8,923,968 bytes (8.51 MiB, 26.1%).
 
 ## Audited syntax stack
 
@@ -66,6 +77,14 @@ the package's directory in its upstream repository.
 | `tree-sitter-bash 0.25.1` | MIT | `tree-sitter/tree-sitter-bash` at `a06c2e4415e9bc0346c6b86d401879ffb44058f7` | `9e5ec769279cc91b561d3df0d8a5deb26b0ad40d183127f409494d6d8fc53062` | Grammar plus the upstream `queries/highlights.scm`; Runyte-authored structural queries truthfully expose functions and leave class/parameter capabilities unsupported |
 | `tree-sitter-java 0.23.5` | MIT | `tree-sitter/tree-sitter-java` at `94703d5a6bed02b98e438d7cad1136c01a60ba2c` | `0aa6cbcdc8c679b214e616fd3300da67da0e492e066df01bcf5a5921a71e90d6` | Grammar ABI 14 plus upstream `queries/highlights.scm`; Runyte-authored structural queries cover methods, constructors, lambdas, classes, interfaces, enums, records, annotation types, formal/receiver/vararg/inferred parameters, modules, and the document outline |
 | `tree-sitter-kotlin-sg 0.4.1` | MIT for the grammar; its highlight query records Apache-2.0 provenance | `ast-grep/tree-sitter-kotlin` at `1a6f9b1ee1125a7357493eeb95da48d16ac302b4` | `c06ec43ae3c12165d4ac08afe4e1f5fc6757ffe274fa7bd5af9007ef11ba4319` | Grammar ABI 14, external scanner, and the packaged `queries/highlights.scm`, substantially adapted from nvim-treesitter revision `f8ab59861eed4a1c168505e3433462ed800f2bae`: `#lua-match?` patterns are removed and comment, string/interpolation, regex, null, operator, keyword-node, and related patterns differ; Runyte-authored structural queries cover functions, constructors, lambdas, classes/interfaces/enums/objects, primary/function/lambda parameters, properties, aliases, constants, and the outline |
+| `tree-sitter-sequel 0.3.11` | MIT | `derekstride/tree-sitter-sql` at `7b51ecda191d36b92f5a90a8d1bc3faef1c7b8b8` | `9d198ad3c319c02e43c21efa1ec796b837afcb96ffaef1a40c1978fbdcec7d17` | Grammar and upstream `queries/highlights.scm`; the local indentation query adapts the packaged node coverage to Runyte's capture dialect, while Runyte authors the folds and outline |
+| `tree-sitter-lua 0.5.0` | MIT | `tree-sitter-grammars/tree-sitter-lua` at `10fe0054734eec83049514ea2e718b2a56acd0c9` | `8daaf5f4235188a58603c39760d5fa5d4b920d36a299c934adddae757f32a10c` | Grammar plus upstream highlight, C injection, and locals queries; Runyte-authored queries provide function, class-like table, and parameter objects, outline, indentation, and folds |
+| `tree-sitter-c-sharp 0.23.5` | MIT | `tree-sitter/tree-sitter-c-sharp` at `cac6d5fb595f5811a076336682d5d595ac1c9e85` | `c1aac67f1ad71de1d6d39708d34811081c26dfa495658de6c14c34200849357c` | Grammar plus upstream `queries/highlights.scm`; the published archive has no injection or locals query, and Runyte authors all structural, indentation, and fold queries |
+| `tree-sitter-zig 1.1.2` | MIT | `tree-sitter-grammars/tree-sitter-zig` at `b670c8df85a1568f498aa5c8cae42f51a90473c0` | `ab11fc124851b0db4dd5e55983bbd9631192e93238389dcd44521715e5d53e28` | Grammar and upstream injection query; the packaged highlight query is carried locally with `#lua-match?` translated to `#match?` and its unsupported priority property removed, and the packaged indentation/fold node coverage is adapted or adopted locally; Runyte authors structural objects and outline |
+| `tree-sitter-cmake 0.7.4` | MIT | `uyha/tree-sitter-cmake` at `ca627bb5828616b6246aafdc3c3222789e728e37` | `164e0c4f4236ec5ceff14824a5528615cf462e100467e49826442ff57d327061` | Grammar and upstream injection query; the packaged highlight query is carried locally with Lua-pattern predicates translated to supported regular expressions, and packaged indentation/fold node coverage is adapted or adopted locally |
+| `tree-sitter-proto 0.5.0` | MIT | `coder3101/tree-sitter-proto` at `5a256fe3b6be3bd2ea4d03e1213d847c7093c2e1` | `daf199052df77bd434c30a71c148773c21a3252e3545a8528151fc7bb931a723` | Grammar plus the packaged highlight query carried locally because the Rust crate exports no query constants; packaged indentation/fold node coverage is adapted or adopted locally |
+| `tree-sitter-make 1.1.1` | MIT | `tree-sitter-grammars/tree-sitter-make` at `5e9e8f8ff3387b0edcaa90f46ddf3629f4cfeb1d` | `c5998dc7cbcbdab19fae8aefef982bf2d6544513d8d2e69cc44aec4c63810104` | Grammar plus upstream `queries/highlights.scm`; Runyte authors indentation and folds |
+| `tree-sitter-ini 1.4.0` | Apache-2.0 | `justinmk/tree-sitter-ini` at `d1f6ae18e86de3c21bb6ab634ff9ab549ceb1249` | `387f79682cd53b7c0a5777c96e601a02b9965a787984ef86dbb8952bdab2d62f` | Grammar plus upstream `queries/highlights.scm`; Runyte authors indentation and carries the packaged section fold query locally |
 | `tree-sitter-rust 0.24.2` | MIT | `tree-sitter/tree-sitter-rust` at `e2bee853694a1d3e0f6ef308fe3674542fec95d7` | `439e577dbe07423ec2582ac62c7531120dbfccfa6e5f92406f93dd271a120e45` | Grammar plus `queries/highlights.scm` and `queries/injections.scm` |
 | `tree-sitter-python 0.25.0` | MIT | `tree-sitter/tree-sitter-python` at `293fdc02038ee2bf0e2e206711b69c90ac0d413f` | `6bf85fd39652e740bf60f46f4cda9492c3a9ad75880575bf14960f775cb74a1c` | Grammar plus `queries/highlights.scm` |
 | `tree-sitter-swift 0.7.3` | MIT | `alex-pinkus/tree-sitter-swift` at `b8b22bffbb3441780e6471665bacfb263741c86a` | `fe36052155b9dd69ca82b3b8f1b4ccfb2d867125ac1a4db1dd7331829242668c` | Grammar and upstream `queries/highlights.scm`, extended by one Runyte-authored comment query; upstream injections are deliberately disabled |
@@ -76,37 +95,44 @@ the package's directory in its upstream repository.
 | `tree-sitter-yaml 0.7.2` | MIT | `tree-sitter-grammars/tree-sitter-yaml` at `7708026449bed86239b1cd5bce6e3c34dbca6415` | `53c223db85f05e34794f065454843b0668ebc15d240ada63e2b5939f43ce7c97` | Grammar plus `queries/highlights.scm` |
 | `tree-sitter-md 0.5.3` | MIT | `tree-sitter-grammars/tree-sitter-markdown` at `f969cd3ae3f9fbd4e43205431d0ae286014c05b5` | `2efd398be546456c814598ee56c0f51769a77241511b4a58077815d120afa882` | Block grammar plus `tree-sitter-markdown/queries/highlights.scm` and `queries/injections.scm` |
 
-All upstream query strings named above are compiled into their grammar crates
-and used through crate constants. They are ordinary dependency use rather than
-query files copied into this repository. The Swift comment query in
-`src/syntax/grammars.rs` and the structural, indentation, and fold queries
-under `src/syntax/queries/` are Runyte-authored MPL-2.0 material and name their
-target grammar and version inline. Indentation uses only Runyte's bounded
-`@indent.begin` and `@indent.always` dialect; the owned query compiler rejects
-Helix predicates rather than silently accepting semantics Runyte does not
-implement. C++ composes the C indentation/fold base, while TypeScript and TSX
-compose the JavaScript base (and TSX also composes TypeScript additions).
-Markdown intentionally has no root indentation query; all 18 languages have
-conservative fold queries, including TOML tables, table arrays, arrays, and
-inline tables. No upstream indentation or fold query text was copied. The
-Kotlin crate is the exception to the otherwise MIT-only
-upstream query inventory: its packaged highlight query explicitly says it is
-based on nvim-treesitter's Apache-2.0 Kotlin query at revision
+Most upstream highlight, injection, and locals query strings named above are
+compiled into their grammar crates and used through crate constants. The
+exceptions are the packaged Protobuf highlight query and the Zig and CMake
+highlight queries adapted to Runyte's supported predicate set. Selected
+upstream indentation and fold queries are also carried locally, either adopted
+unchanged or reduced to Runyte's bounded `@indent.begin` and
+`@indent.always` dialect. Every copied or adapted file names its exact source
+release and retains the applicable SPDX identifier. Other structural,
+indentation, fold, and outline files under `src/syntax/queries/` are
+Runyte-authored MPL-2.0 material and name their target grammar and version
+inline. The owned query compiler rejects unsupported captures and predicates
+rather than silently accepting semantics Runyte does not implement. C++
+composes the C indentation/fold base, while TypeScript and TSX compose the
+JavaScript base (and TSX also composes TypeScript additions). Markdown
+intentionally has no root indentation query; all 26 languages have
+conservative fold queries.
+
+The Kotlin highlight query has separate Apache-2.0 provenance: its packaged
+header says it is based on nvim-treesitter's query at revision
 `f8ab59861eed4a1c168505e3433462ed800f2bae`. An exact comparison with that
 revision shows broader grammar-specific adaptations than the packaged header's
 stated removal of `#lua-match?`: comment, string/interpolation, regex, null,
 operator, keyword-node, and related patterns also differ. The full Apache-2.0
-terms are preserved in `licenses/Apache-2.0.txt`.
+terms preserved in `licenses/Apache-2.0.txt` also cover `tree-sitter-ini` and
+the adopted INI fold query.
 
-The audited crate archives declare every grammar MIT. Seven archives
+The audited crate archives declare every grammar MIT except
+`tree-sitter-ini`, which declares Apache-2.0. Eleven archives
 (`tree-sitter-cpp`, `tree-sitter-json`, `tree-sitter-md`, and
 `tree-sitter-toml-ng`, plus `tree-sitter-typescript`, `tree-sitter-html`, and
-`tree-sitter-java`) do not include a top-level license file even though their
-Cargo metadata declares MIT. Their repository and packaged revision are
-therefore retained above and must be checked deliberately when they are
-upgraded or assembled into a release license bundle. The exact HTML revision's
-repository license is MIT, copyright (c) 2014 Max Brunsfeld. The exact Java
-revision's repository license is MIT, copyright (c) 2017 Ayman Nadeem.
+`tree-sitter-java`, plus `tree-sitter-sequel`, `tree-sitter-lua`,
+`tree-sitter-zig`, and `tree-sitter-make`) do not include a top-level license
+file even though their Cargo metadata declares MIT. Their repository and
+packaged revision are therefore retained above and must be checked deliberately
+when they are upgraded or assembled into a release license bundle. The exact
+HTML revision's repository license is MIT, copyright (c) 2014 Max Brunsfeld.
+The exact Java revision's repository license is MIT, copyright (c) 2017 Ayman
+Nadeem.
 `tree-sitter-javascript 0.25.0` and
 `tree-sitter-css 0.25.0` do ship their MIT license files. The exact Go and Bash
 archives also ship MIT license files, carrying copyright (c) 2014 and 2017 Max

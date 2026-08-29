@@ -3667,20 +3667,28 @@ mod tests {
             ("c", Some("//")),
             ("cpp", Some("//")),
             ("css", None),
+            ("c-sharp", Some("//")),
+            ("cmake", Some("#")),
             ("go", Some("//")),
             ("html", None),
+            ("ini", Some(";")),
             ("java", Some("//")),
             ("javascript", Some("//")),
             ("json", None),
             ("kotlin", Some("//")),
+            ("lua", Some("--")),
+            ("make", Some("#")),
             ("markdown", None),
+            ("proto", Some("//")),
             ("python", Some("#")),
             ("rust", Some("//")),
+            ("sql", Some("--")),
             ("swift", Some("//")),
             ("toml", Some("#")),
             ("tsx", Some("//")),
             ("typescript", Some("//")),
             ("yaml", Some("#")),
+            ("zig", Some("//")),
         ];
         expected.sort_unstable();
         assert_eq!(markers, expected);
@@ -4300,8 +4308,8 @@ mod tests {
             "public languages need canonical/plain configurations and Markdown needs one internal inline configuration"
         );
         assert_eq!(
-            plain_count, 3,
-            "Rust, HTML, and Markdown have plain variants"
+            plain_count, 6,
+            "Rust, HTML, Markdown, Lua, Zig, and CMake have plain variants"
         );
 
         for definition in grammars::BUILTIN_LANGUAGES

@@ -793,6 +793,304 @@ pub(super) const BUILTIN_LANGUAGES: &[LanguageDefinition] = &[
         )]),
     },
     LanguageDefinition {
+        name: "sql",
+        extensions: &["sql"],
+        filenames: &[],
+        shebangs: &[],
+        line_comment: Some("--"),
+        grammar: tree_sitter_sequel::LANGUAGE,
+        queries: LanguageQueries {
+            highlights: QuerySource::new(&[upstream(
+                tree_sitter_sequel::HIGHLIGHTS_QUERY,
+                "tree-sitter-sequel 0.3.11 highlights",
+            )]),
+            injections: QuerySource::EMPTY,
+            locals: QuerySource::EMPTY,
+        },
+        text_objects: &[],
+        outline: QuerySource::new(&[runyte(
+            include_str!("queries/sql/outline.scm"),
+            "Runyte SQL outline",
+        )]),
+        indentation: QuerySource::new(&[runyte(
+            include_str!("queries/sql/indentation.scm"),
+            "tree-sitter-sequel 0.3.11 indentation adapted for Runyte",
+        )]),
+        folds: QuerySource::new(&[runyte(
+            include_str!("queries/sql/folds.scm"),
+            "Runyte SQL folds",
+        )]),
+    },
+    LanguageDefinition {
+        name: "lua",
+        extensions: &["lua"],
+        filenames: &[],
+        shebangs: &["lua"],
+        line_comment: Some("--"),
+        grammar: tree_sitter_lua::LANGUAGE,
+        queries: LanguageQueries {
+            highlights: QuerySource::new(&[upstream(
+                tree_sitter_lua::HIGHLIGHTS_QUERY,
+                "tree-sitter-lua 0.5.0 highlights",
+            )]),
+            injections: QuerySource::new(&[upstream(
+                tree_sitter_lua::INJECTIONS_QUERY,
+                "tree-sitter-lua 0.5.0 C injections",
+            )]),
+            locals: QuerySource::new(&[upstream(
+                tree_sitter_lua::LOCALS_QUERY,
+                "tree-sitter-lua 0.5.0 locals",
+            )]),
+        },
+        text_objects: &[
+            TextObjectDefinition {
+                object: SyntaxObject::Function,
+                query: QuerySource::new(&[runyte(
+                    include_str!("queries/lua/functions.scm"),
+                    "Runyte Lua function text objects",
+                )]),
+            },
+            TextObjectDefinition {
+                object: SyntaxObject::Class,
+                query: QuerySource::new(&[runyte(
+                    include_str!("queries/lua/classes.scm"),
+                    "Runyte Lua class-like table text objects",
+                )]),
+            },
+            TextObjectDefinition {
+                object: SyntaxObject::Parameter,
+                query: QuerySource::new(&[runyte(
+                    include_str!("queries/lua/parameters.scm"),
+                    "Runyte Lua parameter text objects",
+                )]),
+            },
+        ],
+        outline: QuerySource::new(&[runyte(
+            include_str!("queries/lua/outline.scm"),
+            "Runyte Lua outline",
+        )]),
+        indentation: QuerySource::new(&[runyte(
+            include_str!("queries/lua/indentation.scm"),
+            "Runyte Lua indentation",
+        )]),
+        folds: QuerySource::new(&[runyte(
+            include_str!("queries/lua/folds.scm"),
+            "Runyte Lua folds",
+        )]),
+    },
+    LanguageDefinition {
+        name: "c-sharp",
+        extensions: &["cs", "csx"],
+        filenames: &[],
+        shebangs: &[],
+        line_comment: Some("//"),
+        grammar: tree_sitter_c_sharp::LANGUAGE,
+        queries: LanguageQueries {
+            highlights: QuerySource::new(&[upstream(
+                tree_sitter_c_sharp::HIGHLIGHTS_QUERY,
+                "tree-sitter-c-sharp 0.23.5 highlights",
+            )]),
+            injections: QuerySource::EMPTY,
+            locals: QuerySource::EMPTY,
+        },
+        text_objects: &[
+            TextObjectDefinition {
+                object: SyntaxObject::Function,
+                query: QuerySource::new(&[runyte(
+                    include_str!("queries/c-sharp/functions.scm"),
+                    "Runyte C# function text objects",
+                )]),
+            },
+            TextObjectDefinition {
+                object: SyntaxObject::Class,
+                query: QuerySource::new(&[runyte(
+                    include_str!("queries/c-sharp/classes.scm"),
+                    "Runyte C# class-like text objects",
+                )]),
+            },
+            TextObjectDefinition {
+                object: SyntaxObject::Parameter,
+                query: QuerySource::new(&[runyte(
+                    include_str!("queries/c-sharp/parameters.scm"),
+                    "Runyte C# parameter text objects",
+                )]),
+            },
+        ],
+        outline: QuerySource::new(&[runyte(
+            include_str!("queries/c-sharp/outline.scm"),
+            "Runyte C# outline",
+        )]),
+        indentation: QuerySource::new(&[runyte(
+            include_str!("queries/c-sharp/indentation.scm"),
+            "Runyte C# indentation",
+        )]),
+        folds: QuerySource::new(&[runyte(
+            include_str!("queries/c-sharp/folds.scm"),
+            "Runyte C# folds",
+        )]),
+    },
+    LanguageDefinition {
+        name: "zig",
+        extensions: &["zig", "zon"],
+        filenames: &[],
+        shebangs: &[],
+        line_comment: Some("//"),
+        grammar: tree_sitter_zig::LANGUAGE,
+        queries: LanguageQueries {
+            highlights: QuerySource::new(&[runyte(
+                include_str!("queries/zig/highlights.scm"),
+                "tree-sitter-zig 1.1.2 highlights adapted for Runyte predicates",
+            )]),
+            injections: QuerySource::new(&[upstream(
+                tree_sitter_zig::INJECTIONS_QUERY,
+                "tree-sitter-zig 1.1.2 comment injections",
+            )]),
+            locals: QuerySource::EMPTY,
+        },
+        text_objects: &[
+            TextObjectDefinition {
+                object: SyntaxObject::Function,
+                query: QuerySource::new(&[runyte(
+                    include_str!("queries/zig/functions.scm"),
+                    "Runyte Zig function text objects",
+                )]),
+            },
+            TextObjectDefinition {
+                object: SyntaxObject::Class,
+                query: QuerySource::new(&[runyte(
+                    include_str!("queries/zig/classes.scm"),
+                    "Runyte Zig class-like container text objects",
+                )]),
+            },
+            TextObjectDefinition {
+                object: SyntaxObject::Parameter,
+                query: QuerySource::new(&[runyte(
+                    include_str!("queries/zig/parameters.scm"),
+                    "Runyte Zig parameter text objects",
+                )]),
+            },
+        ],
+        outline: QuerySource::new(&[runyte(
+            include_str!("queries/zig/outline.scm"),
+            "Runyte Zig outline",
+        )]),
+        indentation: QuerySource::new(&[runyte(
+            include_str!("queries/zig/indentation.scm"),
+            "tree-sitter-zig 1.1.2 indentation adapted for Runyte",
+        )]),
+        folds: QuerySource::new(&[runyte(
+            include_str!("queries/zig/folds.scm"),
+            "tree-sitter-zig 1.1.2 folds",
+        )]),
+    },
+    LanguageDefinition {
+        name: "cmake",
+        extensions: &["cmake"],
+        filenames: &["CMakeLists.txt"],
+        shebangs: &[],
+        line_comment: Some("#"),
+        grammar: tree_sitter_cmake::LANGUAGE,
+        queries: LanguageQueries {
+            highlights: QuerySource::new(&[runyte(
+                include_str!("queries/cmake/highlights.scm"),
+                "tree-sitter-cmake 0.7.4 highlights adapted for Runyte predicates",
+            )]),
+            injections: QuerySource::new(&[upstream(
+                tree_sitter_cmake::INJECTIONS_QUERY,
+                "tree-sitter-cmake 0.7.4 comment injections",
+            )]),
+            locals: QuerySource::EMPTY,
+        },
+        text_objects: &[],
+        outline: QuerySource::EMPTY,
+        indentation: QuerySource::new(&[runyte(
+            include_str!("queries/cmake/indentation.scm"),
+            "tree-sitter-cmake 0.7.4 indentation adapted for Runyte",
+        )]),
+        folds: QuerySource::new(&[runyte(
+            include_str!("queries/cmake/folds.scm"),
+            "tree-sitter-cmake 0.7.4 folds",
+        )]),
+    },
+    LanguageDefinition {
+        name: "proto",
+        extensions: &["proto"],
+        filenames: &[],
+        shebangs: &[],
+        line_comment: Some("//"),
+        grammar: tree_sitter_proto::LANGUAGE,
+        queries: LanguageQueries {
+            highlights: QuerySource::new(&[runyte(
+                include_str!("queries/proto/highlights.scm"),
+                "tree-sitter-proto 0.5.0 packaged highlights",
+            )]),
+            injections: QuerySource::EMPTY,
+            locals: QuerySource::EMPTY,
+        },
+        text_objects: &[],
+        outline: QuerySource::EMPTY,
+        indentation: QuerySource::new(&[runyte(
+            include_str!("queries/proto/indentation.scm"),
+            "tree-sitter-proto 0.5.0 indentation adapted for Runyte",
+        )]),
+        folds: QuerySource::new(&[runyte(
+            include_str!("queries/proto/folds.scm"),
+            "tree-sitter-proto 0.5.0 folds",
+        )]),
+    },
+    LanguageDefinition {
+        name: "make",
+        extensions: &["mk", "mak"],
+        filenames: &["Makefile", "makefile", "GNUmakefile"],
+        shebangs: &[],
+        line_comment: Some("#"),
+        grammar: tree_sitter_make::LANGUAGE,
+        queries: LanguageQueries {
+            highlights: QuerySource::new(&[upstream(
+                tree_sitter_make::HIGHLIGHTS_QUERY,
+                "tree-sitter-make 1.1.1 highlights",
+            )]),
+            injections: QuerySource::EMPTY,
+            locals: QuerySource::EMPTY,
+        },
+        text_objects: &[],
+        outline: QuerySource::EMPTY,
+        indentation: QuerySource::new(&[runyte(
+            include_str!("queries/make/indentation.scm"),
+            "Runyte Make indentation",
+        )]),
+        folds: QuerySource::new(&[runyte(
+            include_str!("queries/make/folds.scm"),
+            "Runyte Make folds",
+        )]),
+    },
+    LanguageDefinition {
+        name: "ini",
+        extensions: &["ini"],
+        filenames: &[],
+        shebangs: &[],
+        line_comment: Some(";"),
+        grammar: tree_sitter_ini::LANGUAGE,
+        queries: LanguageQueries {
+            highlights: QuerySource::new(&[upstream(
+                tree_sitter_ini::HIGHLIGHTS_QUERY,
+                "tree-sitter-ini 1.4.0 highlights",
+            )]),
+            injections: QuerySource::EMPTY,
+            locals: QuerySource::EMPTY,
+        },
+        text_objects: &[],
+        outline: QuerySource::EMPTY,
+        indentation: QuerySource::new(&[runyte(
+            include_str!("queries/ini/indentation.scm"),
+            "Runyte INI indentation",
+        )]),
+        folds: QuerySource::new(&[runyte(
+            include_str!("queries/ini/folds.scm"),
+            "tree-sitter-ini 1.4.0 folds",
+        )]),
+    },
+    LanguageDefinition {
         name: "json",
         extensions: &["json"],
         filenames: &[],
@@ -976,6 +1274,14 @@ mod tests {
                 ("bash", &["sh", "bash", "ebuild", "eclass"][..]),
                 ("java", &["java"][..]),
                 ("kotlin", &["kt", "kts"][..]),
+                ("sql", &["sql"][..]),
+                ("lua", &["lua"][..]),
+                ("c-sharp", &["cs", "csx"][..]),
+                ("zig", &["zig", "zon"][..]),
+                ("cmake", &["cmake"][..]),
+                ("proto", &["proto"][..]),
+                ("make", &["mk", "mak"][..]),
+                ("ini", &["ini"][..]),
                 ("json", &["json"][..]),
                 ("toml", &["toml"][..]),
                 ("yaml", &["yaml", "yml"][..]),
@@ -1021,6 +1327,24 @@ mod tests {
             .unwrap();
         assert_eq!(bash.filenames, &[".bashrc", ".bash_profile"]);
         assert_eq!(bash.shebangs, &["sh", "bash", "dash"]);
+
+        let lua = BUILTIN_LANGUAGES
+            .iter()
+            .find(|definition| definition.name == "lua")
+            .unwrap();
+        assert_eq!(lua.shebangs, &["lua"]);
+
+        let cmake = BUILTIN_LANGUAGES
+            .iter()
+            .find(|definition| definition.name == "cmake")
+            .unwrap();
+        assert_eq!(cmake.filenames, &["CMakeLists.txt"]);
+
+        let make = BUILTIN_LANGUAGES
+            .iter()
+            .find(|definition| definition.name == "make")
+            .unwrap();
+        assert_eq!(make.filenames, &["Makefile", "makefile", "GNUmakefile"]);
     }
 
     #[test]

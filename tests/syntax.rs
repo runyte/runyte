@@ -158,10 +158,17 @@ fn filename_extension_and_bounded_shebang_inference_have_stable_precedence() {
     let registry = Registry::new();
     let name = |language| registry.language_name(language);
 
-    for filename in [".bashrc", ".bash_profile"] {
+    for (filename, language) in [
+        (".bashrc", "bash"),
+        (".bash_profile", "bash"),
+        ("CMakeLists.txt", "cmake"),
+        ("Makefile", "make"),
+        ("makefile", "make"),
+        ("GNUmakefile", "make"),
+    ] {
         assert_eq!(
             registry.language_for_document(Some(Path::new(filename)), &Text::from_str("")),
-            registry.language_for_name("bash"),
+            registry.language_for_name(language),
             "{filename}"
         );
     }
@@ -208,11 +215,17 @@ fn filename_extension_and_bounded_shebang_inference_have_stable_precedence() {
         "#!/usr/bin/env bash\necho ok\n",
         "#!/usr/bin/env -S bash -eu\necho ok\n",
         "#!/usr/bin/env RUNYTE=1 bash\necho ok\n",
+        "#!/usr/bin/env lua\nprint('ok')\n",
     ] {
         let language = registry
             .language_for_document(None, &Text::from_str(source))
             .expect(source);
-        assert_eq!(name(language), "bash", "{source:?}");
+        let expected = if source.contains("lua") {
+            "lua"
+        } else {
+            "bash"
+        };
+        assert_eq!(name(language), expected, "{source:?}");
     }
 
     for source in [
@@ -428,6 +441,49 @@ fn outline_queries_cover_the_supported_language_inventory() {
                 ("get", OutlineKind::Method),
                 ("top", OutlineKind::Function),
                 ("global", OutlineKind::Property),
+            ],
+        ),
+        (
+            "sql",
+            "CREATE TABLE users (id INT);\nCREATE VIEW active_users AS SELECT id FROM users;\nCREATE FUNCTION count_users() RETURNS INT AS 'SELECT 1';\n",
+            vec![
+                ("users", OutlineKind::Type),
+                ("active_users", OutlineKind::Type),
+                ("count_users", OutlineKind::Function),
+            ],
+        ),
+        (
+            "lua",
+            "function top(value) return value end\nfunction Model:load(id) return id end\nhelper = function() return 1 end\n",
+            vec![
+                ("top", OutlineKind::Function),
+                ("load", OutlineKind::Method),
+                ("helper", OutlineKind::Function),
+            ],
+        ),
+        (
+            "c-sharp",
+            "namespace Demo { class Model { int Value { get; set; } Model() {} int Load(int id) { return id; } } struct Point {} interface Store {} enum State { On } record Item(int Id); }\n",
+            vec![
+                ("Demo", OutlineKind::Module),
+                ("Model", OutlineKind::Class),
+                ("Value", OutlineKind::Property),
+                ("Model", OutlineKind::Method),
+                ("Load", OutlineKind::Method),
+                ("Point", OutlineKind::Struct),
+                ("Store", OutlineKind::Interface),
+                ("State", OutlineKind::Enum),
+                ("Item", OutlineKind::Class),
+            ],
+        ),
+        (
+            "zig",
+            "const Model = struct { value: i32, fn load(self: Model) i32 { return self.value; } };\nconst State = enum { on, off };\nfn main() void {}\n",
+            vec![
+                ("Model", OutlineKind::Struct),
+                ("load", OutlineKind::Method),
+                ("State", OutlineKind::Enum),
+                ("main", OutlineKind::Function),
             ],
         ),
     ];
@@ -854,6 +910,14 @@ fn indentation_and_folds_cover_the_truthful_language_matrix() {
         ("bash", "if true; then\n    echo yes\nfi\n"),
         ("java", "class Demo {\n    int value;\n}\n"),
         ("kotlin", "class Demo {\n    val value = 1\n}\n"),
+        ("sql", "CREATE TABLE demo (\n    id INT\n);\n"),
+        ("lua", "function main()\n    return 1\nend\n"),
+        ("c-sharp", "class Demo {\n    int Value;\n}\n"),
+        ("zig", "fn main() void {\n    return;\n}\n"),
+        ("cmake", "if(TRUE)\n    message(STATUS ok)\nendif()\n"),
+        ("proto", "message Demo {\n    string name = 1;\n}\n"),
+        ("make", "all:\n\t@echo ok\n\t@echo done\n"),
+        ("ini", "[editor]\nname=runyte\ncolor=blue\n"),
         ("json", "{\n    \"value\": 1\n}\n"),
         ("toml", "values = [\n    1,\n    2,\n]\n"),
         ("yaml", "root:\n  child: value\n  other: value\n"),
@@ -2224,6 +2288,52 @@ fn kotlin_context_receiver_prefix_is_an_explicit_structural_limitation() {
 }
 
 #[test]
+fn lua_c_sharp_and_zig_structural_objects_match_real_declarations() {
+    let cases = [
+        (
+            "lua",
+            "local Model = { value = 1 }\nfunction Model:load(id, fallback) return id or fallback end\n",
+            "function Model:load",
+            "{ value = 1 }",
+            "id",
+        ),
+        (
+            "c-sharp",
+            "class Model { int Load(int id, int fallback) { return id; } }\n",
+            "int Load",
+            "class Model",
+            "int id",
+        ),
+        (
+            "zig",
+            "const Model = struct { value: i32 };\nfn load(id: i32, fallback: i32) i32 { return id; }\n",
+            "fn load",
+            "const Model = struct",
+            "id: i32",
+        ),
+    ];
+
+    for (language, source, function_needle, class_needle, parameter_needle) in cases {
+        for (object, needle) in [
+            (SyntaxObject::Function, function_needle),
+            (SyntaxObject::Class, class_needle),
+            (SyntaxObject::Parameter, parameter_needle),
+        ] {
+            let (text, _, captures) =
+                text_object_captures(source, language, object, SyntaxObjectPart::Around);
+            let captured = captures
+                .iter()
+                .map(|capture| capture_text(&text, capture).join(""))
+                .collect::<Vec<_>>();
+            assert!(
+                captured.iter().any(|text| text.contains(needle)),
+                "{language} {object:?} did not capture {needle:?}: {captured:?}"
+            );
+        }
+    }
+}
+
+#[test]
 fn markdown_sections_and_paragraphs_are_captured() {
     let source = "# One\n\nFirst paragraph.\n\n## Two\n\nSecond paragraph.\n";
     let (text, _, sections) = text_object_captures(
@@ -2652,6 +2762,48 @@ fn cpp_inherits_c_highlights_and_adds_cpp_constructs() {
 }
 
 #[test]
+fn additional_language_grammars_highlight_representative_documents() {
+    for (language, source, text, scope) in [
+        (
+            "sql",
+            "-- note\nSELECT name FROM users;\n",
+            "SELECT",
+            "keyword",
+        ),
+        (
+            "lua",
+            "-- note\nlocal function greet(name) return name end\n",
+            "greet",
+            "function",
+        ),
+        (
+            "c-sharp",
+            "// note\nclass Greeting { string Text = \"hi\"; }\n",
+            "Greeting",
+            "type",
+        ),
+        (
+            "zig",
+            "// note\nfn greet() void { return; }\n",
+            "greet",
+            "function",
+        ),
+        ("cmake", "# note\nproject(runyte)\n", "project", "function"),
+        (
+            "proto",
+            "// note\nmessage Greeting { string text = 1; }\n",
+            "message",
+            "keyword",
+        ),
+        ("make", "# note\nall:\n\t@echo ok\n", "# note", "comment"),
+        ("ini", "; note\n[editor]\nname=runyte\n", "name", "property"),
+    ] {
+        let scopes = scopes(source, language);
+        assert_scope(&scopes, text, scope);
+    }
+}
+
+#[test]
 fn json_highlights_keys_strings_and_numbers() {
     let scopes = scopes(r#"{"name": "runyte", "count": 42, "ok": true}"#, "json");
     assert!(
@@ -2738,6 +2890,16 @@ fn every_bundled_grammar_loads_without_error() {
         "css",
         "go",
         "bash",
+        "java",
+        "kotlin",
+        "sql",
+        "lua",
+        "c-sharp",
+        "zig",
+        "cmake",
+        "proto",
+        "make",
+        "ini",
         "json",
         "toml",
         "yaml",
@@ -2785,6 +2947,21 @@ fn extensions_map_to_languages_case_insensitively() {
         ("src/Main.JAVA", "java"),
         ("src/Main.KT", "kotlin"),
         ("build/settings.KTS", "kotlin"),
+        ("db/schema.SQL", "sql"),
+        ("scripts/plugin.LUA", "lua"),
+        ("src/Program.CS", "c-sharp"),
+        ("scripts/sample.CSX", "c-sharp"),
+        ("src/main.ZIG", "zig"),
+        ("build/package.ZON", "zig"),
+        ("cmake/helpers.CMAKE", "cmake"),
+        ("proto/model.PROTO", "proto"),
+        ("build/rules.MK", "make"),
+        ("build/rules.MAK", "make"),
+        ("config/settings.INI", "ini"),
+        ("CMakeLists.txt", "cmake"),
+        ("Makefile", "make"),
+        ("makefile", "make"),
+        ("GNUmakefile", "make"),
         ("Cargo.toml", "toml"),
         ("data.JSON", "json"),
         ("config.yml", "yaml"),

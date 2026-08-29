@@ -101,7 +101,7 @@ approved.
 - Selection-first modal editing with multiple selections, counts, named
   registers, macros, transactional undo, jumplists, structural text objects,
   syntax-aware indentation, folds, and Unicode-aware wrapping.
-- Statically linked Tree-sitter highlighting for 18 languages, with no grammar
+- Statically linked Tree-sitter highlighting for 26 languages, with no grammar
   download or plugin manager required.
 - Asynchronous language-server support for diagnostics, completion, hover,
   signature help, navigation, references, symbols, rename, code actions, and
