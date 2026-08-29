@@ -466,7 +466,7 @@ mod tests {
     }
 
     #[test]
-    fn reload_hint_describes_every_view_the_dispatcher_refreshes() {
+    fn reload_hint_reads_its_description_from_the_registry() {
         let mut hints = KeyHintState::default();
         hints.observe(event(' '), Mode::Normal, default_keymap());
 
@@ -475,10 +475,7 @@ mod tests {
             .into_iter()
             .find(|row| row.target == Some(BindingTarget::Colon(ColonCommand::Reload)))
             .expect("the Space namespace lists reload");
-        assert_eq!(
-            reload.description,
-            "Reload the active file or refresh the active explorer or Git list"
-        );
+        assert_eq!(reload.description, "Reload the active view");
     }
 
     #[test]
