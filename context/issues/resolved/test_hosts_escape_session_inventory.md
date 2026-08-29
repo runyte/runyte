@@ -38,6 +38,15 @@ helper is parked before it is killed. These phases use wall-clock deadlines;
 they no longer treat a counted number of scheduler-delayed sleeps or an
 arbitrary owner-wide inventory row as evidence that startup completed.
 
+Another CI hardening pass made each `workspace_bulk` sandbox collision-proof.
+Its former name truncated a wall-clock nanosecond value, so concurrent tests on
+a coarse macOS clock could reuse one runtime and owner-wide inventory. Sandbox
+creation now combines the process ID with a process-local atomic sequence and
+uses exclusive directory creation, advancing past a stale directory left by a
+reused PID. Cleanup checks retain the exact inventory registration and endpoint
+directory published by their own host instead of asserting that a shared
+parent directory contains no rows from any source.
+
 `LocalEndpoint::publish_metadata` also publishes each live host into an
 owner-private inventory independent of XDG runtime and cache namespaces.
 Ordinary discovery, names, recent history, and lifecycle commands continue to

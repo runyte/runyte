@@ -8,8 +8,9 @@ use std::{
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
     process::{Child, Command, Output, Stdio},
+    sync::atomic::{AtomicU64, Ordering},
     thread,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant},
 };
 
 use runyte::workspace::transport::LocalEndpoint;
@@ -29,17 +30,38 @@ impl Drop for ChildGuard {
 }
 
 fn sandbox() -> PathBuf {
-    let root = std::env::temp_dir().join(format!(
-        "rwb-{}-{}",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-            % 1_000_000_007
-    ));
-    fs::create_dir_all(&root).unwrap();
-    root
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    loop {
+        let sequence = NEXT.fetch_add(1, Ordering::Relaxed);
+        let root = std::env::temp_dir().join(format!("rwb-{}-{sequence}", std::process::id()));
+        match fs::create_dir(&root) {
+            Ok(()) => return root,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => panic!("cannot create workspace test sandbox: {error}"),
+        }
+    }
+}
+
+fn inventory_registrations(root: &Path) -> Vec<PathBuf> {
+    fs::read_dir(root.join("all-hosts"))
+        .unwrap()
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "json")
+        })
+        .collect()
+}
+
+fn sole_inventory_registration(root: &Path) -> PathBuf {
+    let registrations = inventory_registrations(root);
+    assert_eq!(
+        registrations.len(),
+        1,
+        "one test host must publish exactly one owner-wide registration"
+    );
+    registrations.into_iter().next().unwrap()
 }
 
 fn cli_command(directory: &Path, runtime: &Path, cache: &Path, args: &[&str]) -> Command {
@@ -283,6 +305,8 @@ fn detached_host_exits_and_unpublishes_when_its_test_runner_is_killed() {
     .unwrap();
     let metadata: serde_json::Value =
         serde_json::from_slice(&fs::read(endpoint.metadata()).unwrap()).unwrap();
+    let endpoint_directory = endpoint.socket().parent().unwrap().to_path_buf();
+    let inventory_registration = sole_inventory_registration(&root);
     let host_pid = metadata["pid"]
         .as_u64()
         .and_then(|pid| u32::try_from(pid).ok())
@@ -330,21 +354,9 @@ fn detached_host_exits_and_unpublishes_when_its_test_runner_is_killed() {
             .lines()
             .find(|line| line.contains(&project.display().to_string()))
             .is_none_or(|line| line.contains("stopped"));
-        let inventory_is_empty = fs::read_dir(root.join("all-hosts"))
-            .into_iter()
-            .flatten()
-            .filter_map(Result::ok)
-            .all(|entry| entry.path().extension().is_none_or(|value| value != "json"));
-        if !process_is_running(host_pid) && row_is_stopped && inventory_is_empty {
-            let leaked_host_directories = fs::read_dir(runtime.join("runyte"))
-                .into_iter()
-                .flatten()
-                .filter_map(Result::ok)
-                .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
-                .filter(|entry| entry.file_name() != "hosts")
-                .collect::<Vec<_>>();
+        if !process_is_running(host_pid) && row_is_stopped && !inventory_registration.exists() {
             assert!(
-                leaked_host_directories.is_empty(),
+                !endpoint_directory.exists(),
                 "retired test host left its private endpoint directory"
             );
             fs::remove_dir_all(root).unwrap();
@@ -393,6 +405,7 @@ fn child_guard_reaps_a_test_host_during_panic_unwinding() {
         panic!("workspace host did not become running");
     };
     let pid = host.0.as_ref().unwrap().id();
+    let inventory_registration = sole_inventory_registration(&root);
 
     let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let _guard = host;
@@ -410,17 +423,7 @@ fn child_guard_reaps_a_test_host_during_panic_unwinding() {
         &["--session-list", "--include-hidden"],
     );
     assert!(listing.status.success());
-    let inventory_rows = fs::read_dir(root.join("all-hosts"))
-        .unwrap()
-        .filter_map(Result::ok)
-        .filter(|entry| {
-            entry
-                .path()
-                .extension()
-                .is_some_and(|value| value == "json")
-        })
-        .count();
-    assert_eq!(inventory_rows, 0);
+    assert!(!inventory_registration.exists());
     fs::remove_dir_all(root).unwrap();
 }
 
