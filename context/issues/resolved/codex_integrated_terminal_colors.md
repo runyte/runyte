@@ -24,6 +24,11 @@ theme colour set to `reset` receives no answer because Runyte cannot know the
 outer terminal's resolved RGB value. Colour setters, palette queries, and OSC
 52 remain deliberately unsupported.
 
+When Runyte's branded `default-dark` theme later became the application
+default, the real-PTY OSC 11 fixture was updated to expect that theme's
+`#16181d` background. The emulator behavior was already correct; the fixture
+had retained the previous default theme's `#fbfbfa` value.
+
 The behavior is covered by
 `default_colour_queries_answer_with_the_current_theme_colours` and
 `default_colour_queries_do_not_expand_into_palette_or_clipboard_access` in

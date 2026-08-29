@@ -28,6 +28,17 @@ already-recorded completion wins the race while a genuinely abandoned request
 is cancelled. The existing SIGHUP status retains priority when terminal loss
 and signal delivery arrive together.
 
+A later release-gate follow-up, `Fix wait client terminal cleanup`, closed two
+races exposed by those regression tests. A pending wait is now owned by the
+control connection that created it, so host-side disconnect cleanup cancels it
+even when the client's final `CancelWait` frame and process exit overtake one
+another. The wait attachment also reconciles a frame-write failure with the
+terminal watcher and signal handler before choosing its exit status. When the
+PTY is already unreachable, it suppresses Ratatui's destructor retry instead
+of letting Ratatui report a failed cursor restore through the same dead stderr;
+that report previously panicked and replaced the intended SIGHUP status with
+exit code 101.
+
 Regression coverage lives in `tests/local_protocol.rs`:
 
 - `attached_wait_client_exits_and_cancels_when_its_terminal_is_lost`

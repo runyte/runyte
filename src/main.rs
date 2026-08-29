@@ -105,6 +105,16 @@ fn main() -> Result<()> {
     {
         std::process::exit(128 + signal.0);
     }
+    #[cfg(unix)]
+    if result
+        .as_ref()
+        .is_err_and(|error| error.downcast_ref::<WaitTerminalLost>().is_some())
+    {
+        // The terminal is already gone, so returning this error would make
+        // Rust's top-level Result reporter write it to a dead stderr. That
+        // write panics and changes the intended failure into exit status 101.
+        std::process::exit(1);
+    }
     result
 }
 
@@ -118,6 +128,20 @@ impl std::fmt::Display for TerminatedBySignal {
 }
 
 impl std::error::Error for TerminatedBySignal {}
+
+#[cfg(unix)]
+#[derive(Debug)]
+struct WaitTerminalLost;
+
+#[cfg(unix)]
+impl std::fmt::Display for WaitTerminalLost {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("wait request lost its terminal before completion")
+    }
+}
+
+#[cfg(unix)]
+impl std::error::Error for WaitTerminalLost {}
 
 #[cfg(unix)]
 struct TerminationSignals {
@@ -314,7 +338,7 @@ async fn terminal_loss_error(termination: &mut TerminationSignals) -> anyhow::Er
         biased;
         signal = termination.recv() => terminated(signal),
         _ = tokio::time::sleep(Duration::from_millis(50)) => {
-            anyhow::anyhow!("wait request lost its terminal before completion")
+            WaitTerminalLost.into()
         }
     }
 }
@@ -1436,6 +1460,8 @@ async fn run_host_server(
     let mut active: Option<AttachedClient> = None;
     let mut controls: std::collections::HashMap<u64, runyte::workspace::transport::ResponseSender> =
         std::collections::HashMap::new();
+    let mut control_wait_tokens: std::collections::HashMap<u64, Vec<WaitToken>> =
+        std::collections::HashMap::new();
     let mut refresh_tick = tokio::time::interval(Duration::from_millis(250));
     refresh_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut status_animation_tick = tokio::time::interval(STATUS_ANIMATION_INTERVAL);
@@ -1518,6 +1544,7 @@ async fn run_host_server(
                         }).is_ok() {
                             log_debug!("client", "control client attached"; "connection" => id);
                             controls.insert(id, responses);
+                            control_wait_tokens.insert(id, Vec::new());
                         }
                     }
                     ServerEvent::Request { id, request } => {
@@ -1567,6 +1594,12 @@ async fn run_host_server(
                                 active.is_some(),
                                 false,
                             ) {
+                                if let HostResponse::WaitCreated { token, .. } = &reply.response
+                                    && let Some(tokens) = control_wait_tokens.get_mut(&id)
+                                    && !tokens.contains(token)
+                                {
+                                    tokens.push(*token);
+                                }
                                 if let HostResponse::WaitCreated { token, .. } = &reply.response
                                     && let Some(client) = active.as_mut()
                                     && !client.wait_tokens.contains(token)
@@ -1748,7 +1781,14 @@ async fn run_host_server(
                         );
                     }
                     ServerEvent::Disconnected { id } => {
-                        let control = controls.remove(&id).is_some();
+                        let control = controls.remove(&id).is_some()
+                            || control_wait_tokens.contains_key(&id);
+                        for token in control_wait_tokens.remove(&id).unwrap_or_default() {
+                            let _ = host.cancel_wait(
+                                token.into(),
+                                "wait client disconnected before completion",
+                            );
+                        }
                         if active.as_ref().is_some_and(|client| client.id == id) {
                             key_hints.clear();
                             active = None;
@@ -2747,18 +2787,21 @@ async fn attach_for_wait(
     let mut terminal = Terminal::new(CrosstermBackend::new(stdout()))?;
     let mut geometry = current_frame_geometry()?;
     let mut terminal_events = EventStream::new();
-    let attachment = tokio::select! {
+    let (mut attachment, reconcile_lifecycle) = tokio::select! {
         biased;
-        signal = termination.recv() => return Err(terminated(signal)),
+        signal = termination.recv() => (Err(terminated(signal)), false),
         parent = launching_parent.recv() => {
-            Err(parent.map_or_else(
+            (Err(parent.map_or_else(
                 |error| error.context("failed while watching the wait client's launching process"),
                 |()| anyhow::anyhow!("wait request lost its launching process before completion"),
-            ))
+            )), false)
         }
         loss = terminal_loss.recv() => {
-            loss?;
-            Err(terminal_loss_error(termination).await)
+            let error = match loss {
+                Ok(()) => terminal_loss_error(termination).await,
+                Err(error) => error,
+            };
+            (Err(error), false)
         }
         attachment = run_attached(
             endpoint,
@@ -2768,8 +2811,12 @@ async fn attach_for_wait(
             Some(token),
             None,
             None,
-        ) => attachment,
+        ) => (attachment, true),
     };
+    if reconcile_lifecycle && let Err(error) = attachment {
+        attachment = Err(prefer_wait_lifecycle_error(error, termination, terminal_loss).await);
+    }
+    release_wait_terminal(terminal);
     match attachment {
         Err(attachment_error)
             if attachment_error
@@ -2790,6 +2837,45 @@ async fn attach_for_wait(
             anyhow::bail!("wait request cannot switch workspaces")
         }
         Ok(AttachOutcome::Refused(message)) => anyhow::bail!(message),
+    }
+}
+
+/// Prevents Ratatui's destructor from reporting a failed cursor restore to a
+/// stderr that disappeared with the same PTY.
+///
+/// A reachable terminal accepts the explicit cursor restore and Ratatui then
+/// has no destructor work left. An unreachable one cannot be restored; leaking
+/// this small process-local renderer avoids Ratatui retrying the write through
+/// `eprintln!`, whose own failure would panic and replace the lifecycle status
+/// with exit code 101. The wait client exits immediately afterward.
+#[cfg(unix)]
+fn release_wait_terminal(mut terminal: Terminal<CrosstermBackend<std::io::Stdout>>) {
+    if terminal.show_cursor().is_err() {
+        std::mem::forget(terminal);
+    }
+}
+
+/// Lets terminal lifecycle evidence outrank a rendering or transport failure
+/// that became observable at the same instant.
+///
+/// Closing a PTY can make a frame write fail before the exceptional-condition
+/// watcher or SIGHUP handler is scheduled. Without this bounded reconciliation
+/// window that ordinary I/O error bypasses the terminal-loss status and signal
+/// semantics even though all three events have the same cause.
+#[cfg(unix)]
+async fn prefer_wait_lifecycle_error(
+    attachment_error: anyhow::Error,
+    termination: &mut TerminationSignals,
+    terminal_loss: &mut TerminalLoss,
+) -> anyhow::Error {
+    tokio::select! {
+        biased;
+        signal = termination.recv() => terminated(signal),
+        loss = terminal_loss.recv() => match loss {
+            Ok(()) => terminal_loss_error(termination).await,
+            Err(error) => error,
+        },
+        _ = tokio::time::sleep(Duration::from_millis(50)) => attachment_error,
     }
 }
 
