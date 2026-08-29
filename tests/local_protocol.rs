@@ -906,10 +906,11 @@ async fn start_host(root: &Path, endpoint: &LocalEndpoint) -> Option<ChildGuard>
 /// current normal-mode frame.
 async fn wait_for_git_command(
     interactive: &mut LocalClient,
+    command: &str,
     waiting_for: &str,
 ) -> runyte::protocol::HostFrame {
     send_input_expect_frame(interactive, InputEvent::Key(KeyStroke::char(':'))).await;
-    send_input_expect_frame(interactive, InputEvent::Text("git-worktrees".to_owned())).await;
+    send_input_expect_frame(interactive, InputEvent::Text(command.to_owned())).await;
     let deadline = Instant::now() + ASYNC_STATE_TIMEOUT;
     let mut frame = resynchronized_frame(interactive, waiting_for).await;
     // Git completion publishes a frame because it changes this row. Consume
@@ -919,19 +920,19 @@ async fn wait_for_git_command(
         let row = frame
             .overlays
             .iter()
-            .find(|overlay| overlay.title == "Commands" && overlay.query == "git-worktrees")
+            .find(|overlay| overlay.title == "Commands" && overlay.query == command)
             .and_then(|overlay| {
                 overlay
                     .rows
                     .iter()
-                    .find(|row| row.label.contains(":git-worktrees"))
+                    .find(|row| row.label.contains(&format!(":{command}")))
             });
         if row.is_some_and(|row| row.available) {
             break;
         }
         let detail = row
             .map(|row| row.detail.clone())
-            .unwrap_or_else(|| "git-worktrees row absent".to_owned());
+            .unwrap_or_else(|| format!("{command} row absent"));
         let git_summary = frame.editor.status.git_summary.clone();
         let long_running_action = frame.editor.status.long_running_action.clone();
         let interaction_line = frame.editor.status.interaction_line.clone();
@@ -1007,6 +1008,7 @@ async fn wait_for_git_before_tui(endpoint: &LocalEndpoint) {
     ));
     let _ = wait_for_git_command(
         &mut interactive,
+        "git-worktrees",
         "waiting for git-worktrees to become available before starting the real TUI",
     )
     .await;
@@ -1832,6 +1834,7 @@ async fn persistent_worktree_switch_detaches_to_a_new_root_without_retargeting_t
     ));
     let initial = wait_for_git_command(
         &mut interactive,
+        "git-worktrees",
         "waiting for git-worktrees capability before opening the worktree view",
     )
     .await;
@@ -2312,14 +2315,11 @@ async fn persistent_tui_opens_async_log_and_shared_commit_detail() {
         .await
         .unwrap();
     let _ = response(&mut interactive).await;
-    let frame = wait_for_frame(&mut interactive, "waiting for Git discovery", |frame| {
-        frame
-            .editor
-            .status
-            .git_summary
-            .as_deref()
-            .is_some_and(|summary| !summary.contains(":git-cancel"))
-    })
+    let frame = wait_for_git_command(
+        &mut interactive,
+        "git-log",
+        "waiting for git-log to become available",
+    )
     .await;
     invoke_when_current(&mut interactive, "git-log", frame).await;
     let _ = wait_for_frame(&mut interactive, "waiting for the Git log view", |frame| {

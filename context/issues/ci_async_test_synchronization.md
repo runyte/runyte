@@ -180,6 +180,17 @@ status, and use the post-cleanup `Child::wait` solely to reap and diagnose any
 status change. This keeps genuine external signals visible without letting
 Runyte's descendant cleanup rewrite a successful Git result.
 
+CI run 33273153073 passed the previously failing worktree-switch test after
+that status-preservation change, then exposed the same ambiguous readiness
+predicate in `persistent_tui_opens_async_log_and_shared_commit_detail`. Its
+`git_summary` check waited not only for discovery but also for the unrelated
+startup refresh, while pending discovery, pending refresh, a typed failure,
+and repository absence all made the predicate false. Repeated resynchronization
+also generated new frame identifiers without proving that asynchronous state
+had advanced. The Git log test must wait for the `git-log` command row's shared
+availability, which is the exact prerequisite for invoking that command and
+becomes true as soon as repository discovery succeeds.
+
 CI run 33269246467 also showed that the full-content-budget performance gate
 could fail on a single 71.93 ms sample against its 64 ms release budget. The
 picker's score comparator recomputed each candidate's Unicode character count
