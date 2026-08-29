@@ -3894,6 +3894,56 @@ fn an_explorer_move_reconciles_git_with_monitoring_disabled() {
     fs::remove_dir_all(root).unwrap();
 }
 
+#[test]
+fn a_partial_explorer_report_retries_one_async_post_change_barrier() {
+    let (root, mut app, _) = staged_project_with("explorer-move-async-barrier", |provider| {
+        provider.with_staged("before.rs", "base\n")
+    });
+    app.config.git.refresh_interval_seconds = 0;
+    let before = root.join("before.rs");
+    let after = root.join("after.rs");
+    fs::write(&before, "base\n").unwrap();
+    app.open_file(before.clone()).unwrap();
+    let file = app.active().buffer;
+    assert!(app.git.tracks(&before));
+    let (service, paused) = GitServiceHandle::saturated_for_test();
+    app.attach_git_service(service);
+    fs::rename(&before, &after).unwrap();
+    let report = ApplyReport {
+        applied: vec![FsOperation::Rename {
+            from: PathBuf::from("before.rs"),
+            to: PathBuf::from("after.rs"),
+            kind: EntryKind::File,
+        }],
+    };
+
+    assert_eq!(
+        app.reconcile_applied_filesystem(&root, file, &report, false),
+        None
+    );
+
+    assert_eq!(app.buffers[file].path.as_deref(), Some(after.as_path()));
+    assert!(!app.git.tracks(&before));
+    assert!(!app.git.tracks(&after));
+    assert!(!app.retry_pending_git_reconciliation());
+    assert!(matches!(
+        paused.next_operation(),
+        GitOperation::Discover { .. }
+    ));
+    assert!(app.retry_pending_git_reconciliation());
+    let mut staged_read = false;
+    let reconciliation = loop {
+        match paused.next_operation() {
+            GitOperation::StagedContent { .. } => staged_read = true,
+            GitOperation::Reconcile { spec, .. } => break spec,
+            _ => {}
+        }
+    };
+    assert!(!staged_read, "retargeted files were submitted one by one");
+    assert_eq!(reconciliation.staged_paths, vec![after]);
+    fs::remove_dir_all(root).unwrap();
+}
+
 /// The template answers "what am I committing" and "how do I finish"
 /// without the reader leaving the buffer.
 #[test]

@@ -307,6 +307,13 @@ pub enum GitOperation {
         repository: Repository,
         spec: RefreshSpec,
     },
+    /// A snapshot ordered after an editor-owned filesystem change. Unlike an
+    /// ordinary refresh, this must never join a read that may have started
+    /// before that change.
+    Reconcile {
+        repository: Repository,
+        spec: RefreshSpec,
+    },
     Mutate {
         repository: Repository,
         mutation: GitMutation,
@@ -333,6 +340,7 @@ impl GitOperation {
             | Self::CommitDetail { repository, .. }
             | Self::Blame { repository, .. }
             | Self::Refresh { repository, .. }
+            | Self::Reconcile { repository, .. }
             | Self::Mutate { repository, .. } => repository.common_dir().to_path_buf(),
         }
     }
@@ -390,6 +398,7 @@ impl GitOperation {
             Self::CommitDetail { .. } => "read commit",
             Self::Blame { .. } => "blame live buffer",
             Self::Refresh { .. } => "refresh repository",
+            Self::Reconcile { .. } => "refresh repository",
             Self::Mutate { mutation, .. } => mutation.label(),
         }
     }
@@ -463,7 +472,7 @@ impl GitOperation {
                 repository.workdir().to_path_buf(),
                 refresh_key(spec),
             )),
-            Self::Mutate { .. } => None,
+            Self::Reconcile { .. } | Self::Mutate { .. } => None,
         }
     }
 }
@@ -576,6 +585,21 @@ pub struct GitServiceHandle {
     ordered_with_worktrees: bool,
 }
 
+#[cfg(test)]
+pub(crate) struct PausedGitService {
+    requests: Receiver<Request>,
+}
+
+#[cfg(test)]
+impl PausedGitService {
+    pub(crate) fn next_operation(&self) -> GitOperation {
+        self.requests
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .expect("paused Git service received a request")
+            .operation
+    }
+}
+
 impl GitServiceHandle {
     #[cfg(test)]
     pub(crate) fn recording_for_test() -> (Self, Receiver<GitOperation>) {
@@ -597,6 +621,25 @@ impl GitServiceHandle {
             },
             recorded,
         )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn saturated_for_test() -> (Self, PausedGitService) {
+        let (requests, receiver) = sync_channel::<Request>(REQUEST_CAPACITY);
+        let handle = Self {
+            requests,
+            next_id: Arc::new(AtomicU64::new(1)),
+            cancellations: Arc::new(Mutex::new(HashMap::new())),
+            ordered_with_worktrees: false,
+        };
+        for index in 0..REQUEST_CAPACITY {
+            handle
+                .try_submit(GitOperation::Discover {
+                    start: PathBuf::from(format!("/saturated/{index}")),
+                })
+                .unwrap();
+        }
+        (handle, PausedGitService { requests: receiver })
     }
 
     pub fn try_submit(&self, operation: GitOperation) -> Result<GitRequestId> {
@@ -1201,7 +1244,8 @@ fn execute(
                 source: source.clone(),
                 lines,
             }),
-        GitOperation::Refresh { repository, spec } => {
+        GitOperation::Refresh { repository, spec }
+        | GitOperation::Reconcile { repository, spec } => {
             refresh(provider, repository, spec, generation)
                 .map(Box::new)
                 .map(GitResponse::Snapshot)
@@ -1493,7 +1537,8 @@ mod tests {
                         total_pages: 1,
                     },
                 },
-                GitOperation::Refresh { repository, spec } => {
+                GitOperation::Refresh { repository, spec }
+                | GitOperation::Reconcile { repository, spec } => {
                     GitResponse::Snapshot(Box::new(RepositorySnapshot {
                         repository: repository.clone(),
                         generation,
@@ -1829,6 +1874,44 @@ mod tests {
                 },
                 GitServiceEvent::Completed {
                     coalesced: true,
+                    ..
+                }
+            )
+        ));
+    }
+
+    #[test]
+    fn post_change_reconciliation_does_not_join_an_active_refresh() {
+        let (worker, started, release, calls) = worker();
+        let (handle, mut events) = GitService::spawn_worker(worker);
+        let repository = Repository::new("/one");
+        let spec = RefreshSpec::default();
+        handle
+            .try_submit(GitOperation::Refresh {
+                repository: repository.clone(),
+                spec: spec.clone(),
+            })
+            .unwrap();
+        started.recv_timeout(Duration::from_secs(1)).unwrap();
+        handle
+            .try_submit(GitOperation::Reconcile { repository, spec })
+            .unwrap();
+
+        release.store(true, Ordering::Release);
+
+        started.recv_timeout(Duration::from_secs(1)).unwrap();
+        let first = completed(&mut events);
+        let second = completed(&mut events);
+        assert_eq!(calls.load(Ordering::Relaxed), 2);
+        assert!(matches!(
+            (first, second),
+            (
+                GitServiceEvent::Completed {
+                    coalesced: false,
+                    ..
+                },
+                GitServiceEvent::Completed {
+                    coalesced: false,
                     ..
                 }
             )

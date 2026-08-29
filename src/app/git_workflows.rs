@@ -42,6 +42,11 @@ pub(super) struct GitWorkflowState {
     progress: HashMap<GitRequestId, GitServiceProgress>,
     action_origins: HashMap<GitRequestId, u64>,
     snapshot_stale: bool,
+    /// Filesystem-plan reconciliation waiting for service capacity. Only one
+    /// barrier is in flight; changes made after it was submitted accumulate
+    /// here for a later barrier rather than being claimed by the older read.
+    pending_filesystem_reconciliation: Option<RefreshSpec>,
+    filesystem_reconciliation_request: Option<GitRequestId>,
     /// Async diff projections keyed by their durable buffer arena identity.
     diff_buffers: HashMap<usize, (PathBuf, DiffScope)>,
     index_buffer: Option<usize>,
@@ -101,6 +106,8 @@ impl Default for GitWorkflowState {
             progress: HashMap::new(),
             action_origins: HashMap::new(),
             snapshot_stale: false,
+            pending_filesystem_reconciliation: None,
+            filesystem_reconciliation_request: None,
             diff_buffers: HashMap::new(),
             index_buffer: None,
             index_open_requests: HashSet::new(),
@@ -313,6 +320,59 @@ impl App {
                 && buffer.kind == BufferKind::File
                 && buffer.path.as_deref() == Some(path)
         })
+    }
+
+    pub(super) fn reconcile_git_after_filesystem(&mut self, staged_paths: Vec<PathBuf>) {
+        let Some(repository) = self.git.repository().cloned() else {
+            return;
+        };
+        if self.ports.git_service.is_none() {
+            for path in staged_paths {
+                self.track_in_git(&path);
+            }
+            self.refresh_git_status();
+            return;
+        }
+        let mut spec = self.git_refresh_spec(&repository);
+        spec.staged_paths.extend(staged_paths);
+        spec.staged_paths.sort();
+        spec.staged_paths.dedup();
+        if let Some(pending) = self.git_state.pending_filesystem_reconciliation.as_mut() {
+            pending.merge(&spec);
+        } else {
+            self.git_state.pending_filesystem_reconciliation = Some(spec);
+        }
+        self.git_state.snapshot_stale = true;
+        let _ = self.retry_pending_git_reconciliation();
+    }
+
+    /// Retries the one conflated post-filesystem barrier without blocking the
+    /// editor when the bounded service queue is full.
+    pub(crate) fn retry_pending_git_reconciliation(&mut self) -> bool {
+        if self.git_state.filesystem_reconciliation_request.is_some() {
+            return false;
+        }
+        let Some(spec) = self
+            .git_state
+            .pending_filesystem_reconciliation
+            .as_ref()
+            .cloned()
+        else {
+            return false;
+        };
+        self.git_state.snapshot_stale = true;
+        let Some(repository) = self.git.repository().cloned() else {
+            return false;
+        };
+        let Some(service) = self.ports.git_service.as_ref() else {
+            return false;
+        };
+        let Ok(id) = service.try_submit(GitOperation::Reconcile { repository, spec }) else {
+            return false;
+        };
+        self.git_state.pending_filesystem_reconciliation = None;
+        self.git_state.filesystem_reconciliation_request = Some(id);
+        true
     }
 
     pub(super) fn git_refresh_spec(&self, repository: &Repository) -> RefreshSpec {
@@ -533,6 +593,11 @@ impl App {
                 coalesced,
             } => {
                 self.git_state.progress.remove(&id);
+                let filesystem_reconciliation = self
+                    .git_state
+                    .filesystem_reconciliation_request
+                    .take_if(|request| *request == id)
+                    .is_some();
                 let action = self.git_state.action_origins.remove(&id);
                 let mut requested_views = RequestedGitViews {
                     index: self.git_state.index_open_requests.remove(&id),
@@ -639,6 +704,9 @@ impl App {
                         }
                         self.error_from("Git", "Git operation failed", message);
                     }
+                }
+                if filesystem_reconciliation {
+                    let _ = self.retry_pending_git_reconciliation();
                 }
             }
         }

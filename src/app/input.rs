@@ -2683,6 +2683,7 @@ impl App {
                 (mapped != path).then_some((index, path.to_path_buf(), mapped))
             })
             .collect::<Vec<_>>();
+        let mut git_paths = Vec::new();
         for (buffer_id, previous, mapped) in retargeted {
             if self.closed_buffers.contains(&buffer_id) {
                 continue;
@@ -2690,7 +2691,7 @@ impl App {
             self.buffers[buffer_id].retarget_path(mapped.clone());
             if self.buffers[buffer_id].kind == BufferKind::File {
                 self.git.forget(&previous);
-                self.track_in_git(&mapped);
+                git_paths.push(mapped);
             }
             self.reparse_whole(buffer_id);
             // `lsp_touch` compares both path and language against the opened
@@ -2770,7 +2771,7 @@ impl App {
         if !report.applied.is_empty() {
             // These writes are editor-owned and already complete. Reconcile
             // directly rather than depending on an optional native watcher.
-            self.refresh_git_status();
+            self.reconcile_git_after_filesystem(git_paths);
         }
         warnings.sort();
         warnings.dedup();

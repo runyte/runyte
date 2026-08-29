@@ -72,6 +72,12 @@ successfully applied portion, including partial failures. File and directory
 moves retire each retargeted file buffer's old staged base and track its new
 path, so editor-owned filesystem changes neither depend on watcher delivery
 nor leak old keys when automatic monitoring is disabled.
+Asynchronous plan reconciliation is a distinct non-coalescing service read,
+ordered after every read that could have started before the filesystem
+change. Its staged paths are submitted as one snapshot rather than one request
+per moved buffer. If the bounded service queue is full, the editor retains and
+conflates the required snapshot until capacity is available; that retry runs
+even when automatic monitoring is disabled.
 
 Tests: `git_monitor::tests::a_native_burst_produces_one_debounced_invalidation`,
 `git_monitor::tests::linked_worktree_watches_checkout_private_and_shared_metadata`,
@@ -92,10 +98,14 @@ and
 `git_monitor::tests::queued_observations_never_regress_freshness_or_expire_the_debounce`
 in `src/git_monitor.rs` cover bounded-queue shutdown, monotonic observation
 time, and delayed-queue debouncing;
+`git::service::tests::post_change_reconciliation_does_not_join_an_active_refresh`
+in `src/git/service.rs` covers the post-filesystem ordering barrier;
 `app::tests::async_refresh_requests_staged_bases_only_for_visible_open_files`
 and `app::tests::closing_a_file_retires_its_staged_base`, together with
 `app::tests::save_as_retires_the_previous_paths_staged_base` and
 `app::tests::an_explorer_move_reconciles_git_with_monitoring_disabled`, plus
+`app::tests::a_partial_explorer_report_retries_one_async_post_change_barrier`
+and
 `app::tests::automatic_refresh_waits_out_a_short_quiet_period_after_the_last_keystroke`
 in `src/app/tests/git.rs` cover visible, maximized, terminal-covered panes,
 closed-buffer and save-as cache retirement, partial and late responses, and
