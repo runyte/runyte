@@ -196,6 +196,15 @@ opened `[log]` buffer through `ListBuffers` and `ReadBuffer`. The related
 consumes the detach response, so it measures the host's retained log level
 without manufacturing a transport failure.
 
+A later rotation-fixture follow-up removes one remaining ordering assumption.
+`rotation_bounds_the_host_log_across_a_restart` previously treated the
+synchronous appearance of the rotated file as evidence that the asynchronous
+writer had also persisted the subsequent publication record. The test now
+requests a clean host shutdown, receives its protocol acknowledgement, and
+waits for successful process exit before inspecting either file. Host exit
+follows the logger's bounded flush, so the assertions describe final rotation
+state without polling or sleeping for writer progress.
+
 Known limitations. An explicit `--log` is honoured only by processes that own
 editor state. Passing it to a session-management command that neither starts
 nor attaches to a session — `--session-list`, `--session-stop`,

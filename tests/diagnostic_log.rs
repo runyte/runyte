@@ -822,8 +822,24 @@ async fn rotation_bounds_the_host_log_across_a_restart() {
     if !wait_for_endpoint(&mut child, &endpoint).await {
         return;
     }
+    let mut client = LocalClient::connect(&endpoint, geometry(), false)
+        .await
+        .unwrap();
+    assert!(matches!(
+        response(&mut client).await,
+        HostResponse::Welcome { .. }
+    ));
+    client.send(&ClientRequest::Shutdown).await.unwrap();
+    assert!(matches!(
+        response_ignoring_visuals(&mut client).await,
+        HostResponse::ShuttingDown
+    ));
+    drop(client);
+    let status = child.0.take().unwrap().wait().unwrap();
+    assert!(status.success(), "host did not flush and shut down cleanly");
+
     assert!(
-        wait_until(|| previous_path(&log).exists()).await,
+        previous_path(&log).exists(),
         "a host that inherits a full file rotates it before recording"
     );
     assert_eq!(
@@ -832,8 +848,6 @@ async fn rotation_bounds_the_host_log_across_a_restart() {
     );
     assert!(fs::metadata(&log).unwrap().len() < MAX_LOG_BYTES);
     assert!(read_log(&log).contains("persistent session published"));
-
-    drop(child);
 }
 
 #[tokio::test]
