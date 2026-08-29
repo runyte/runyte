@@ -3556,6 +3556,8 @@ async fn relative_workspace_attach_uses_editor_cwd_and_keeps_one_client_process(
     );
     fs::create_dir(root.join("nested")).unwrap();
     let linked = root.join("linked").canonicalize().unwrap();
+    fs::write(root.join("source-ready.txt"), b"source\n").unwrap();
+    fs::write(linked.join("linked-ready.txt"), b"linked\n").unwrap();
     let source_endpoint = LocalEndpoint::discover_with_runtime(
         &root.join(".runyte"),
         &root,
@@ -3568,11 +3570,15 @@ async fn relative_workspace_attach_uses_editor_cwd_and_keeps_one_client_process(
         Some(test_runtime_dir()),
     )
     .unwrap();
-    let Some(mut source_host) = start_host(&root, &source_endpoint).await else {
+    let Some(mut source_host) =
+        start_host_opening(&root, &source_endpoint, Some("source-ready.txt")).await
+    else {
         fs::remove_dir_all(root).unwrap();
         return;
     };
-    let Some(mut linked_host) = start_host(&linked, &linked_endpoint).await else {
+    let Some(mut linked_host) =
+        start_host_opening(&linked, &linked_endpoint, Some("linked-ready.txt")).await
+    else {
         let mut source = connect_control(&source_endpoint).await;
         shutdown(&mut source).await;
         let _ = source_host.0.take().unwrap().wait();
@@ -3612,7 +3618,7 @@ async fn relative_workspace_attach_uses_editor_cwd_and_keeps_one_client_process(
     }
     assert!(attached_to_source, "the source host never received the TUI");
     let root_display = root.to_string_lossy().into_owned();
-    wait_for_terminal_screen(&output, "│ master").await;
+    wait_for_terminal_screen(&output, "source-ready.txt").await;
 
     // The client process stays at `root`, while `:cd` changes only the
     // editor-owned directory to `root/nested`. Resolving `../linked` against
@@ -3648,7 +3654,7 @@ async fn relative_workspace_attach_uses_editor_cwd_and_keeps_one_client_process(
     // Return through the worktree list to retain the original regression that
     // switching both ways stays inside one client process. The linked
     // worktree is the second row, so the main worktree is immediately above it.
-    wait_for_terminal_screen(&output, "│ linked").await;
+    wait_for_terminal_screen(&output, "linked-ready.txt").await;
     type_colon_command(&mut terminal, "git-worktrees");
     wait_for_buffer_text(
         &mut destination,
