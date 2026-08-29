@@ -279,6 +279,11 @@ fn wait_client_terminal() -> Result<Option<std::os::fd::OwnedFd>> {
 
 /// Blocks without consuming input until `terminal` reports loss, or until
 /// `cancel` becomes readable. `None` is the ordinary cancellation path.
+///
+/// Darwin does not register a poll filter for a descriptor whose requested
+/// events are zero. Requesting `POLLHUP` makes PTY EOF observable there while
+/// avoiding `POLLIN`, which would wake repeatedly for ordinary terminal input
+/// that this watcher deliberately leaves for Crossterm.
 #[cfg(unix)]
 fn wait_for_terminal_loss(
     terminal: std::os::fd::RawFd,
@@ -287,7 +292,7 @@ fn wait_for_terminal_loss(
     let mut descriptors = [
         libc::pollfd {
             fd: terminal,
-            events: 0,
+            events: libc::POLLHUP,
             revents: 0,
         },
         libc::pollfd {
@@ -4444,6 +4449,58 @@ mod tests {
         tui::input::convert_event,
         workspace::WorkspaceHost,
     };
+
+    #[cfg(unix)]
+    #[test]
+    fn terminal_loss_watcher_observes_pty_peer_close() {
+        use std::{
+            io::Write,
+            os::fd::{AsRawFd, FromRawFd},
+            sync::mpsc,
+        };
+
+        let mut master = -1;
+        let mut slave = -1;
+        // SAFETY: `openpty` initializes both descriptors on success. Null
+        // termios and window-size pointers request the platform defaults.
+        assert_eq!(
+            unsafe {
+                libc::openpty(
+                    &mut master,
+                    &mut slave,
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                )
+            },
+            0,
+            "openpty failed: {}",
+            std::io::Error::last_os_error()
+        );
+        // SAFETY: successful `openpty` returned two fresh owned descriptors.
+        let master = unsafe { std::fs::File::from_raw_fd(master) };
+        // SAFETY: successful `openpty` returned two fresh owned descriptors.
+        let slave = unsafe { std::fs::File::from_raw_fd(slave) };
+        let (mut cancel, cancel_reader) = std::os::unix::net::UnixStream::pair().unwrap();
+        let (sender, receiver) = mpsc::channel();
+        let watcher = std::thread::spawn(move || {
+            let result =
+                super::wait_for_terminal_loss(slave.as_raw_fd(), cancel_reader.as_raw_fd());
+            sender.send(result).unwrap();
+        });
+
+        drop(master);
+        let result = match receiver.recv_timeout(Duration::from_secs(2)) {
+            Ok(result) => result,
+            Err(error) => {
+                cancel.write_all(&[0]).unwrap();
+                watcher.join().unwrap();
+                panic!("terminal-loss watcher did not observe PTY close: {error}");
+            }
+        };
+        watcher.join().unwrap();
+        assert!(matches!(result, Some(Ok(()))));
+    }
 
     #[cfg(target_os = "macos")]
     #[tokio::test]

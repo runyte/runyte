@@ -20,6 +20,7 @@ The automated boundary is reproducible with:
 cargo test --test terminal
 cargo test --test persistent_host terminal_pid_output_and_input_survive_detach_disconnect_and_reattach
 cargo test terminal::tests --lib
+cargo test --test local_protocol queued_wait_client_exits_and_cancels_when_its_terminal_is_lost
 ```
 
 Those tests use fixed `/bin/sh`, `cat`, and terminal control sequences rather
@@ -28,6 +29,11 @@ control input, alternate and primary screens, wide and combining characters,
 top-anchored inline scroll regions, review stability, SGR mouse encoding,
 simultaneous noisy/quiet sessions, process-group close, resize, frame damage,
 default foreground/background queries, client loss, and detach/reattach.
+
+Wait-client PTY loss is exercised on both Linux and macOS CI. Its descriptor
+watcher requests `POLLHUP` explicitly because Darwin does not register a poll
+filter for a descriptor whose event mask is zero. It does not request or read
+`POLLIN`, so it cannot consume input owned by Crossterm.
 
 Deliberate limits:
 
