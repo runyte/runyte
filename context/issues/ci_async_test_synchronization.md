@@ -130,6 +130,16 @@ or snapshot-time `ESRCH` records irreversible completion without reaping the
 leader; a live snapshot leaves every later exit covered by the installed
 knote.
 
+CI run 33270632231 showed the same worktree-test timeout after that observer
+state machine was complete, but the test's `git_summary` predicate could not
+attribute it to discovery. A summary is populated only by the refresh requested
+after successful discovery; pending discovery, pending refresh, a typed Git
+failure, and a lost worker completion all leave it absent. Tests that need a
+Git-only command must wait for that command row's shared availability instead.
+The timeout diagnostic must retain the row's reason, the long-running action,
+the interaction line, and notification counts so a later failure identifies
+the actual phase rather than being labelled as a process-observation failure.
+
 The expected behavior is that asynchronous integration tests wait on semantic
 state or explicit process acknowledgements with bounded deadlines. PTY output
 must still be drained to prevent backpressure and retained for failure

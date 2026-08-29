@@ -881,25 +881,16 @@ async fn start_host(root: &Path, endpoint: &LocalEndpoint) -> Option<ChildGuard>
     start_host_opening(root, endpoint, Some("other.txt")).await
 }
 
-/// Waits for the command palette's own Git-project capability before a real
-/// PTY client needs a Git-only command to be available.
-async fn wait_for_git_before_tui(endpoint: &LocalEndpoint) {
-    let mut interactive = LocalClient::connect(endpoint, tui_geometry(), true)
-        .await
-        .unwrap();
-    assert!(matches!(
-        receive_response(&mut interactive, "receiving the Git readiness welcome").await,
-        HostResponse::Welcome { .. }
-    ));
-    send_input_expect_frame(&mut interactive, InputEvent::Key(KeyStroke::char(':'))).await;
-    send_input_expect_frame(
-        &mut interactive,
-        InputEvent::Text("git-worktrees".to_owned()),
-    )
-    .await;
-    let waiting_for = "waiting for git-worktrees to become available before starting the real TUI";
+/// Waits for the command palette's own Git-project capability and returns a
+/// current normal-mode frame.
+async fn wait_for_git_command(
+    interactive: &mut LocalClient,
+    waiting_for: &str,
+) -> runyte::protocol::HostFrame {
+    send_input_expect_frame(interactive, InputEvent::Key(KeyStroke::char(':'))).await;
+    send_input_expect_frame(interactive, InputEvent::Text("git-worktrees".to_owned())).await;
     let deadline = Instant::now() + ASYNC_STATE_TIMEOUT;
-    let mut frame = resynchronized_frame(&mut interactive, waiting_for).await;
+    let mut frame = resynchronized_frame(interactive, waiting_for).await;
     // Git completion publishes a frame because it changes this row. Consume
     // that event instead of repeatedly forcing the large command palette to
     // render while the Git worker is trying to finish on a loaded runner.
@@ -921,17 +912,24 @@ async fn wait_for_git_before_tui(endpoint: &LocalEndpoint) {
             .map(|row| row.detail.clone())
             .unwrap_or_else(|| "git-worktrees row absent".to_owned());
         let git_summary = frame.editor.status.git_summary.clone();
+        let long_running_action = frame.editor.status.long_running_action.clone();
+        let interaction_line = frame.editor.status.interaction_line.clone();
+        let notification_counts = frame.editor.status.notification_counts;
         assert!(
             !detail.starts_with("Git repository discovery failed:"),
             "Git repository discovery failed while {waiting_for}: {detail}; \
-             last frame id: {:?}, git summary: {git_summary:?}",
+             last frame id: {:?}, git summary: {git_summary:?}, long-running action: \
+             {long_running_action:?}, interaction line: {interaction_line:?}, notification \
+             counts: {notification_counts:?}",
             frame.id,
         );
         let remaining = deadline.saturating_duration_since(Instant::now());
         assert!(
             !remaining.is_zero(),
             "asynchronous state timed out after {ASYNC_STATE_TIMEOUT:?} while {waiting_for}; \
-             last frame id: {:?}, row detail: {detail:?}, git summary: {git_summary:?}",
+             last frame id: {:?}, row detail: {detail:?}, git summary: {git_summary:?}, \
+             long-running action: {long_running_action:?}, interaction line: \
+             {interaction_line:?}, notification counts: {notification_counts:?}",
             frame.id,
         );
         let response = tokio::time::timeout(remaining, interactive.recv())
@@ -940,7 +938,9 @@ async fn wait_for_git_before_tui(endpoint: &LocalEndpoint) {
                 panic!(
                     "asynchronous state timed out after {ASYNC_STATE_TIMEOUT:?} while \
                      {waiting_for}; last frame id: {:?}, row detail: {detail:?}, \
-                     git summary: {git_summary:?}",
+                     git summary: {git_summary:?}, long-running action: \
+                     {long_running_action:?}, interaction line: {interaction_line:?}, \
+                     notification counts: {notification_counts:?}",
                     frame.id,
                 )
             })
@@ -950,21 +950,37 @@ async fn wait_for_git_before_tui(endpoint: &LocalEndpoint) {
             HostResponse::Frame { frame: next } => frame = *next,
             HostResponse::TerminalDamage { damage } => {
                 if !damage.apply(&mut frame) {
-                    frame = resynchronized_frame(&mut interactive, waiting_for).await;
+                    frame = resynchronized_frame(interactive, waiting_for).await;
                 }
             }
             response => panic!("expected a visual update while {waiting_for}, got {response:?}"),
         }
     }
     send_input_expect_frame(
-        &mut interactive,
+        interactive,
         InputEvent::Key(KeyStroke::new(KeyCode::Escape, Modifiers::NONE)),
     )
     .await;
-    let _ = wait_for_frame(
-        &mut interactive,
+    wait_for_frame(
+        interactive,
         "waiting for the Git readiness prompt to return to Normal mode",
         |frame| frame.overlays.is_empty() && frame.editor.status.prompt_cursor_column.is_none(),
+    )
+    .await
+}
+
+/// Waits for Git readiness before a real PTY client needs a Git-only command.
+async fn wait_for_git_before_tui(endpoint: &LocalEndpoint) {
+    let mut interactive = LocalClient::connect(endpoint, tui_geometry(), true)
+        .await
+        .unwrap();
+    assert!(matches!(
+        receive_response(&mut interactive, "receiving the Git readiness welcome").await,
+        HostResponse::Welcome { .. }
+    ));
+    let _ = wait_for_git_command(
+        &mut interactive,
+        "waiting for git-worktrees to become available before starting the real TUI",
     )
     .await;
     interactive.send(&ClientRequest::Detach).await.unwrap();
@@ -1787,17 +1803,9 @@ async fn persistent_worktree_switch_detaches_to_a_new_root_without_retargeting_t
         receive_response(&mut interactive, "receiving the interactive welcome").await,
         HostResponse::Welcome { .. }
     ));
-    let initial = wait_for_frame(
+    let initial = wait_for_git_command(
         &mut interactive,
-        "waiting for Git discovery before opening the worktree view",
-        |frame| {
-            frame
-                .editor
-                .status
-                .git_summary
-                .as_deref()
-                .is_some_and(|summary| !summary.contains(":git-cancel"))
-        },
+        "waiting for git-worktrees capability before opening the worktree view",
     )
     .await;
     invoke_when_current(&mut interactive, "git-worktrees", initial).await;
