@@ -679,13 +679,6 @@ fn selection_count(response: &HostResponse) -> usize {
     frame.editor.status.selection_count
 }
 
-fn unread_errors(response: &HostResponse) -> usize {
-    let HostResponse::Frame { frame } = response else {
-        panic!("expected frame, got {response:?}")
-    };
-    frame.editor.status.notification_counts.errors
-}
-
 #[tokio::test]
 async fn detach_reattach_preserves_live_editor_and_refuses_a_second_tui() {
     let sandbox = TestSandbox::new();
@@ -1237,7 +1230,8 @@ async fn hidden_terminal_output_while_detached_is_unread_after_reattach() {
 #[tokio::test]
 async fn detach_reattach_preserves_notification_history_and_unread_state() {
     let sandbox = TestSandbox::new();
-    let root = project();
+    let root = plain_project();
+    fs::create_dir(root.join(".runyte")).unwrap();
     let executable = env!("CARGO_BIN_EXE_runyte");
     let child = sandbox
         .runyte(executable)
@@ -1270,18 +1264,48 @@ async fn detach_reattach_preserves_notification_history_and_unread_state() {
         response(&mut first).await,
         HostResponse::Welcome { .. }
     ));
-    let _ = response(&mut first).await;
-    let missing = root.join("directory-that-does-not-exist");
-    let _ = send_input(&mut first, KeyStroke::plain(KeyCode::Char(':'))).await;
-    let _ = send_input(
+    let startup = next_idle_frame(&mut first).await;
+    assert!(matches!(
+        invoke_when_current(&mut first, "notifications", startup).await,
+        HostResponse::CommandResult { .. }
+    ));
+    first.send(&ClientRequest::Resynchronize).await.unwrap();
+    let first_baseline_response = response(&mut first).await;
+    let baseline = wait_for_editor_frame(
         &mut first,
-        InputEvent::Text(format!("cd {}", missing.display())),
+        first_baseline_response,
+        "waiting for startup notifications to be acknowledged",
+        |frame| frame.editor.status.notification_counts.errors == 0,
     )
     .await;
-    let mut failed = send_input(&mut first, KeyStroke::plain(KeyCode::Enter)).await;
-    while unread_errors(&failed) == 0 {
-        failed = response(&mut first).await;
-    }
+
+    let missing = root.join("missing-notification-marker");
+    let outcome = invoke_with_argument_when_current(
+        &mut first,
+        "cd",
+        Some(&missing.to_string_lossy()),
+        baseline,
+    )
+    .await;
+    assert!(
+        matches!(
+            outcome,
+            HostResponse::CommandResult {
+                outcome: runyte::protocol::CommandOutcome::UserError(ref message),
+            } if message.contains("missing-notification-marker")
+        ),
+        "the missing-directory command did not return its own error: {outcome:?}"
+    );
+    first.send(&ClientRequest::Resynchronize).await.unwrap();
+    let first_failure_response = response(&mut first).await;
+    let failed = wait_for_editor_frame(
+        &mut first,
+        first_failure_response,
+        "waiting for the missing-directory notification",
+        |frame| frame.editor.status.notification_counts.errors > 0,
+    )
+    .await;
+    assert!(failed.editor.status.notification_counts.errors > 0);
     assert_eq!(
         detach(&mut first, "detaching after a failed command").await,
         None
@@ -1294,14 +1318,58 @@ async fn detach_reattach_preserves_notification_history_and_unread_state() {
         response(&mut reattached).await,
         HostResponse::Welcome { .. }
     ));
-    let retained = response(&mut reattached).await;
-    assert_eq!(unread_errors(&retained), 1);
+    let retained = next_idle_frame(&mut reattached).await;
+    assert!(retained.editor.status.notification_counts.errors > 0);
 
-    let _ = send_input(&mut reattached, KeyStroke::plain(KeyCode::Char(':'))).await;
-    let _ = send_input(&mut reattached, InputEvent::Text("not".to_owned())).await;
-    let notifications = send_input(&mut reattached, KeyStroke::plain(KeyCode::Enter)).await;
-    assert!(frame_text(&notifications).contains("ERROR"));
-    assert_eq!(unread_errors(&notifications), 0);
+    assert!(matches!(
+        invoke_when_current(&mut reattached, "notifications", retained).await,
+        HostResponse::CommandResult { .. }
+    ));
+    reattached.send(&ClientRequest::ListBuffers).await.unwrap();
+    let notification_buffer = match semantic_response_after(
+        &mut reattached,
+        None,
+        "listing buffers after opening notifications",
+    )
+    .await
+    {
+        HostResponse::Buffers { buffers } => buffers
+            .into_iter()
+            .find(|buffer| !buffer.closed && buffer.name == "[notifications]")
+            .expect("the notifications command did not open its buffer"),
+        response => panic!("expected buffers after opening notifications, got {response:?}"),
+    };
+    reattached
+        .send(&ClientRequest::ReadBuffer {
+            buffer: notification_buffer.id,
+        })
+        .await
+        .unwrap();
+    let notifications =
+        match semantic_response_after(&mut reattached, None, "reading the retained notifications")
+            .await
+        {
+            HostResponse::Buffer { buffer } => buffer.text,
+            response => panic!("expected retained notification contents, got {response:?}"),
+        };
+    assert!(
+        notifications.contains("ERROR") && notifications.contains("missing-notification-marker"),
+        "the command's notification was not retained:\n{notifications}"
+    );
+
+    reattached
+        .send(&ClientRequest::Resynchronize)
+        .await
+        .unwrap();
+    let first_acknowledged_response = response(&mut reattached).await;
+    let acknowledged = wait_for_editor_frame(
+        &mut reattached,
+        first_acknowledged_response,
+        "waiting for the notification history to be acknowledged",
+        |frame| frame.editor.status.notification_counts.errors == 0,
+    )
+    .await;
+    assert_eq!(acknowledged.editor.status.notification_counts.errors, 0);
     assert_eq!(
         detach(&mut reattached, "detaching after reading notifications").await,
         None

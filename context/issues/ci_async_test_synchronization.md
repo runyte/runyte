@@ -72,6 +72,14 @@ and queued frames could obscure which request produced the observed state.
 The test must acknowledge its own failing command semantically and identify
 that command's notification before asserting detach and reattach behavior.
 
+CI run 33272519457 reproduced that attribution error after Git failure
+classification was added: the retained unread count was two rather than the
+hard-coded one. Notification history is process-global state, so an exact
+count does not identify an event. This test must run in a confirmed non-Git
+workspace, use the failing command's semantic result and detach response as
+FIFO barriers, and inspect the retained notification by its unique missing
+path through `ListBuffers` and `ReadBuffer`.
+
 CI run 33268205970 confirmed that per-test host catalogs removed the Ubuntu
 lifecycle collision, then exposed another macOS Git-discovery failure during
 the burn-in. The command palette remained at “this project is not in a Git
