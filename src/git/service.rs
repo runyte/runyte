@@ -668,6 +668,7 @@ impl GitServiceHandle {
                 TrySendError::Full(_) => GitError::Failed {
                     command: "Git service".to_owned(),
                     code: None,
+                    signal: None,
                     stderr: "request queue is full; retry after current Git work advances"
                         .to_owned(),
                 },
@@ -870,6 +871,7 @@ fn schedule<W: GitServiceWorker>(
                     Err(GitError::Failed {
                         command: completion.operation.label().to_owned(),
                         code: None,
+                        signal: None,
                         stderr: "cancelled; the read result was discarded".to_owned(),
                     })
                 } else {
@@ -919,6 +921,7 @@ fn schedule<W: GitServiceWorker>(
                         result: Box::new(Err(GitError::Failed {
                             command: job.operation.label().to_owned(),
                             code: None,
+                            signal: None,
                             stderr: "cancelled before the Git operation started".to_owned(),
                         })),
                         state: GitServiceState::Cancelled,
@@ -1099,6 +1102,7 @@ fn schedule<W: GitServiceWorker>(
                 let error = GitError::Failed {
                     command: request.operation.label().to_owned(),
                     code: None,
+                    signal: None,
                     stderr: "an equivalent mutation is already queued or running".to_owned(),
                 };
                 let _ = events.blocking_send(GitServiceEvent::Completed {
@@ -1569,6 +1573,7 @@ mod tests {
                     failure: self.mutation_failure.then(|| GitError::Failed {
                         command: mutation.label().to_owned(),
                         code: Some(1),
+                        signal: None,
                         stderr: "mutation refused".to_owned(),
                     }),
                     snapshot: Box::new(Ok(RepositorySnapshot {

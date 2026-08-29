@@ -78,6 +78,8 @@ pub enum GitError {
     Failed {
         command: String,
         code: Option<i32>,
+        /// Unix signal that terminated Git before it produced an exit code.
+        signal: Option<i32>,
         stderr: String,
     },
     /// A branch switch was refused because the index or working tree differs
@@ -133,9 +135,10 @@ impl GitError {
         match self {
             Self::Unavailable { .. } => "Git is unavailable".to_owned(),
             Self::NotARepository { .. } => "path is not in a Git repository".to_owned(),
-            Self::Failed { code, .. } => match code {
-                Some(code) => format!("Git refused with status {code}"),
-                None => "Git refused".to_owned(),
+            Self::Failed { code, signal, .. } => match (code, signal) {
+                (Some(code), _) => format!("Git refused with status {code}"),
+                (None, Some(signal)) => format!("Git was terminated by signal {signal}"),
+                (None, None) => "Git refused".to_owned(),
             },
             Self::DirtyWorktree { files } => {
                 format!("worktree differs from HEAD in {files} file(s)")
@@ -162,11 +165,14 @@ impl fmt::Display for GitError {
             Self::Failed {
                 command,
                 code,
+                signal,
                 stderr,
             } => {
                 write!(formatter, "`{command}` failed")?;
                 if let Some(code) = code {
                     write!(formatter, " with status {code}")?;
+                } else if let Some(signal) = signal {
+                    write!(formatter, " after termination by signal {signal}")?;
                 }
                 if !stderr.is_empty() {
                     write!(formatter, ": {stderr}")?;
@@ -217,6 +223,7 @@ fn stale_deletion(target: &str) -> GitError {
     GitError::Failed {
         command: format!("delete {target}"),
         code: None,
+        signal: None,
         stderr: format!("the {target} changed after it was reviewed; review the deletion again"),
     }
 }
@@ -225,6 +232,7 @@ fn typed_deletion_required(target: &str) -> GitError {
     GitError::Failed {
         command: format!("delete {target}"),
         code: None,
+        signal: None,
         stderr: format!("the {target} has unpublished history and needs typed confirmation"),
     }
 }
@@ -701,6 +709,7 @@ pub trait GitProvider {
             .ok_or_else(|| GitError::Failed {
                 command: "git worktree list".to_owned(),
                 code: None,
+                signal: None,
                 stderr: format!("{} is no longer a registered worktree", path.display()),
             })?;
         let branch = worktree.branch.as_deref().map(|branch| {
@@ -858,6 +867,7 @@ pub trait GitProvider {
             .ok_or_else(|| GitError::Failed {
                 command: "git branch".to_owned(),
                 code: None,
+                signal: None,
                 stderr: format!("`{branch}` is not a local branch"),
             })?;
         let retaining_branches = target
@@ -1332,6 +1342,7 @@ impl MemoryGitProvider {
         Err(GitError::Failed {
             command: "git".to_owned(),
             code: Some(128),
+            signal: None,
             stderr: "fatal: test provider refuses".to_owned(),
         })
     }
@@ -1816,6 +1827,7 @@ mod tests {
         let error = GitError::Failed {
             command: "git commit --cleanup=whitespace -m Refactor the SECRET parser".to_owned(),
             code: Some(128),
+            signal: None,
             stderr: "fatal: SECRET-FROM-STDERR".to_owned(),
         };
 
@@ -1830,6 +1842,7 @@ mod tests {
             GitError::Failed {
                 command: "git push origin SECRET-BRANCH".to_owned(),
                 code: None,
+                signal: None,
                 stderr: "SECRET".to_owned(),
             },
             GitError::TooLarge {
@@ -1866,6 +1879,22 @@ mod tests {
             );
             assert!(!redacted.is_empty());
         }
+    }
+
+    #[test]
+    fn a_signal_terminated_failure_keeps_its_typed_classification() {
+        let error = GitError::Failed {
+            command: "git rev-parse --show-toplevel".to_owned(),
+            code: None,
+            signal: Some(9),
+            stderr: String::new(),
+        };
+
+        assert_eq!(error.redacted(), "Git was terminated by signal 9");
+        assert_eq!(
+            error.to_string(),
+            "`git rev-parse --show-toplevel` failed after termination by signal 9"
+        );
     }
 
     fn status_of(files: Vec<FileStatus>) -> RepositoryStatus {

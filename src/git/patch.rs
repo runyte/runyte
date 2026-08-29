@@ -316,6 +316,7 @@ fn refused<T>(detail: &str) -> Result<T> {
     Err(GitError::Failed {
         command: "partial staging".to_owned(),
         code: None,
+        signal: None,
         stderr: detail.to_owned(),
     })
 }

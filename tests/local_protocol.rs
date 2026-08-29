@@ -804,6 +804,27 @@ async fn wait_for_buffer_text(
     }
 }
 
+async fn read_open_buffer_text(client: &mut LocalClient, name: &str) -> Option<String> {
+    client.send(&ClientRequest::ListBuffers).await.unwrap();
+    let buffer =
+        match receive_semantic_response(client, &format!("listing buffers while reading {name:?}"))
+            .await
+        {
+            HostResponse::Buffers { buffers } => buffers
+                .into_iter()
+                .find(|buffer| !buffer.closed && buffer.name == name),
+            response => panic!("expected buffers while reading {name:?}, got {response:?}"),
+        }?;
+    client
+        .send(&ClientRequest::ReadBuffer { buffer: buffer.id })
+        .await
+        .unwrap();
+    match receive_semantic_response(client, &format!("reading {name:?}")).await {
+        HostResponse::Buffer { buffer } => Some(buffer.text),
+        response => panic!("expected {name:?} contents, got {response:?}"),
+    }
+}
+
 struct TerminalCapture {
     screen: std::sync::Arc<std::sync::Mutex<Emulator>>,
     raw: std::sync::Arc<std::sync::Mutex<Vec<u8>>>,
@@ -915,14 +936,20 @@ async fn wait_for_git_command(
         let long_running_action = frame.editor.status.long_running_action.clone();
         let interaction_line = frame.editor.status.interaction_line.clone();
         let notification_counts = frame.editor.status.notification_counts;
-        assert!(
-            !detail.contains("Git repository discovery failed:"),
-            "Git repository discovery failed while {waiting_for}: {detail}; \
-             last frame id: {:?}, git summary: {git_summary:?}, long-running action: \
-             {long_running_action:?}, interaction line: {interaction_line:?}, notification \
-             counts: {notification_counts:?}",
-            frame.id,
-        );
+        if detail.contains("Git repository discovery failed:") {
+            let failed_frame_id = frame.id;
+            invoke_when_current(interactive, "notifications", frame).await;
+            let notifications = read_open_buffer_text(interactive, "[notifications]")
+                .await
+                .unwrap_or_else(|| "<notifications buffer was not opened>".to_owned());
+            panic!(
+                "Git repository discovery failed while {waiting_for}: {detail}; \
+                 full notifications: {notifications:?}; last frame id: {failed_frame_id:?}, \
+                 git summary: {git_summary:?}, long-running action: {long_running_action:?}, \
+                 interaction line: {interaction_line:?}, notification counts: \
+                 {notification_counts:?}",
+            );
+        }
         let remaining = deadline.saturating_duration_since(Instant::now());
         assert!(
             !remaining.is_zero(),

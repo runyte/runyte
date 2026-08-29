@@ -151,6 +151,16 @@ signal the group only after `SZOMB` makes the leader's wait status stable. The
 command-row diagnostic must also recognize the failure suffix in a row whose
 description precedes its availability reason.
 
+CI run 33272088159 failed at the same discovery boundary after the stable
+zombie observer had passed a complete macOS burn-in in run 33271776091. The
+command-palette row is prepared for the current terminal width, however, so
+its text can end at ``failed`` even when the underlying error continues with
+an exit status and stderr. A clipped presentation value cannot classify a
+process failure. Git failures must retain a Unix termination signal separately
+from an exit code, redacted logs must preserve that classification, and this
+test's failure path must read the full retained notification through the local
+protocol before diagnosing the child lifecycle.
+
 CI run 33269246467 also showed that the full-content-budget performance gate
 could fail on a single 71.93 ms sample against its 64 ms release budget. The
 picker's score comparator recomputed each candidate's Unicode character count

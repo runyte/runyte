@@ -467,6 +467,7 @@ fn an_asynchronous_removal_takes_nothing_further_down_until_git_reports_success(
             (!succeeds).then(|| crate::git::GitError::Failed {
                 command: "git worktree remove".to_owned(),
                 code: Some(1),
+                signal: None,
                 stderr: "the worktree changed after it was reviewed".to_owned(),
             }),
             (request, GitServiceState::Completed),
@@ -1063,6 +1064,7 @@ fn an_outer_git_removal_error_abandons_the_matching_teardown() {
         result: Box::new(Err(crate::git::GitError::Failed {
             command: "remove worktree".to_owned(),
             code: None,
+            signal: None,
             stderr: "cancelled before the Git operation started".to_owned(),
         })),
         state: GitServiceState::Cancelled,

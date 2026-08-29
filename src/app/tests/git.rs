@@ -4121,6 +4121,7 @@ fn a_failed_filesystem_barrier_retains_its_spec_for_a_bounded_retry() {
         result: Box::new(Err(crate::git::GitError::Failed {
             command: "refresh Git".to_owned(),
             code: Some(1),
+            signal: None,
             stderr: "transient failure".to_owned(),
         })),
         state: GitServiceState::Failed,
@@ -5347,6 +5348,7 @@ fn a_failed_mutation_snapshot_schedules_immediate_reconciliation() {
             snapshot: Box::new(Err(crate::git::GitError::Failed {
                 command: "git status".to_owned(),
                 code: Some(1),
+                signal: None,
                 stderr: "transient refresh failure".to_owned(),
             })),
         },
@@ -5516,6 +5518,7 @@ fn cancelling_a_coalesced_commit_check_does_not_reopen_the_intent() {
         result: Box::new(Err(crate::git::GitError::Failed {
             command: "refresh Git".to_owned(),
             code: None,
+            signal: None,
             stderr: "cancelled; the read result was discarded".to_owned(),
         })),
         state: GitServiceState::Cancelled,
@@ -5982,6 +5985,7 @@ fn failed_stash_apply_reloads_clean_buffers_to_the_conflict_state() {
         Some(crate::git::GitError::Failed {
             command: "git stash apply".to_owned(),
             code: Some(1),
+            signal: None,
             stderr: "stash retained".to_owned(),
         }),
         GitServiceState::Failed,

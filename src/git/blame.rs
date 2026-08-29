@@ -96,6 +96,7 @@ pub fn parse_blame(output: &[u8]) -> Result<Vec<BlameLine>> {
             return Err(GitError::Failed {
                 command: "git blame".to_owned(),
                 code: None,
+                signal: None,
                 stderr: format!("blame output is limited to {MAX_BLAME_LINES} lines"),
             });
         }

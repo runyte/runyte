@@ -587,6 +587,18 @@ fn failure_output_text(stdout: &str, stderr: &str) -> String {
     parts.join("\n")
 }
 
+#[cfg(unix)]
+fn exit_signal(status: &std::process::ExitStatus) -> Option<i32> {
+    use std::os::unix::process::ExitStatusExt as _;
+
+    status.signal()
+}
+
+#[cfg(not(unix))]
+fn exit_signal(_status: &std::process::ExitStatus) -> Option<i32> {
+    None
+}
+
 fn truncate_failure_stream(value: &str, limit: usize, label: &str) -> String {
     if value.len() <= limit {
         return value.to_owned();
@@ -869,6 +881,7 @@ impl GitCliProvider {
             return Err(GitError::Failed {
                 command: described,
                 code: status.code(),
+                signal: exit_signal(&status),
                 stderr: failure_output(&stdout, &stderr),
             });
         }
@@ -974,6 +987,7 @@ impl GitCliProvider {
             return Err(GitError::Failed {
                 command: described,
                 code: status.code(),
+                signal: exit_signal(&status),
                 stderr: failure_output(&stdout, &stderr),
             });
         }
@@ -1084,6 +1098,7 @@ impl GitCliProvider {
             return Err(GitError::Failed {
                 command: described,
                 code: status.code(),
+                signal: exit_signal(&status),
                 stderr: failure_output(&stdout, &stderr),
             });
         }
@@ -1325,6 +1340,7 @@ impl GitCliProvider {
             return Err(GitError::Failed {
                 command: described,
                 code: status.code(),
+                signal: exit_signal(&status),
                 stderr: failure_output_text(&String::from_utf8_lossy(&stdout), &stderr),
             });
         }
@@ -1370,11 +1386,13 @@ impl GitCliProvider {
             [] => Err(GitError::Failed {
                 command: "git push".to_owned(),
                 code: None,
+                signal: None,
                 stderr: "this repository has no remote to push to".to_owned(),
             }),
             many => Err(GitError::Failed {
                 command: "git push".to_owned(),
                 code: None,
+                signal: None,
                 stderr: format!(
                     "this branch tracks nothing and there is no `origin` to choose: set an \
                      upstream, or push to one of {}",
@@ -1404,6 +1422,7 @@ impl GitCliProvider {
                 return Err(GitError::Failed {
                     command: command.to_owned(),
                     code: None,
+                    signal: None,
                     stderr: "this branch has no commits yet".to_owned(),
                 });
             }
@@ -1411,6 +1430,7 @@ impl GitCliProvider {
                 return Err(GitError::Failed {
                     command: command.to_owned(),
                     code: None,
+                    signal: None,
                     stderr: format!("HEAD is detached, so there is no branch to {into}"),
                 });
             }
@@ -1419,6 +1439,7 @@ impl GitCliProvider {
             return Err(GitError::Failed {
                 command: command.to_owned(),
                 code: None,
+                signal: None,
                 stderr: format!("this branch tracks nothing to {from}"),
             });
         }
@@ -1789,8 +1810,21 @@ fn try_finish_child(
     if !observer.exited()? {
         return Ok(None);
     }
+    let pid = child.id();
     stop_child_group(child);
-    child.wait().map(Some)
+    let status = child.wait()?;
+    if !status.success() {
+        crate::log_warn!(
+            "git",
+            "Git child failed after stable process-group cleanup";
+            "pid" => pid,
+            "observed_state" => "zombie",
+            "group_signal" => libc::SIGKILL,
+            "exit_code" => format_args!("{:?}", status.code()),
+            "exit_signal" => format_args!("{:?}", exit_signal(&status)),
+        );
+    }
+    Ok(Some(status))
 }
 
 #[cfg(not(unix))]
@@ -2055,6 +2089,7 @@ impl GitCliProvider {
             .ok_or_else(|| GitError::Failed {
                 command: "git branch".to_owned(),
                 code: None,
+                signal: None,
                 stderr: format!("`{branch}` is not a local branch"),
             })?;
         let unexpected_checkout = target
@@ -2065,6 +2100,7 @@ impl GitCliProvider {
             return Err(GitError::Failed {
                 command: "git branch".to_owned(),
                 code: None,
+                signal: None,
                 stderr: format!("`{branch}` is checked out in a worktree"),
             });
         }
@@ -2246,6 +2282,7 @@ impl GitProvider for GitCliProvider {
             return Err(GitError::Failed {
                 command: "git worktree add".to_owned(),
                 code: None,
+                signal: None,
                 stderr: "branch names beginning with `-` are refused".to_owned(),
             });
         }
@@ -2261,6 +2298,7 @@ impl GitProvider for GitCliProvider {
             return Err(GitError::Failed {
                 command: "git worktree add".to_owned(),
                 code: None,
+                signal: None,
                 stderr: format!("`{}` is not a local branch", request.start),
             });
         }
@@ -2295,6 +2333,7 @@ impl GitProvider for GitCliProvider {
             .ok_or_else(|| GitError::Failed {
                 command: "git worktree list".to_owned(),
                 code: None,
+                signal: None,
                 stderr: format!("{} is no longer a registered worktree", path.display()),
             })?;
         let target_repository =
@@ -2304,6 +2343,7 @@ impl GitProvider for GitCliProvider {
             return Err(GitError::Failed {
                 command: "git worktree remove".to_owned(),
                 code: None,
+                signal: None,
                 stderr: format!(
                     "worktree {} has uncommitted changes ({} file{}); commit, stash, or discard them first",
                     worktree.path.display(),
@@ -2325,6 +2365,7 @@ impl GitProvider for GitCliProvider {
                 .ok_or_else(|| GitError::Failed {
                     command: "git branch --format".to_owned(),
                     code: None,
+                    signal: None,
                     stderr: format!(
                         "worktree {} names branch {name}, but that branch could not be inspected",
                         worktree.path.display()
@@ -2386,6 +2427,7 @@ impl GitProvider for GitCliProvider {
             return Err(GitError::Failed {
                 command: "git worktree remove".to_owned(),
                 code: None,
+                signal: None,
                 stderr: "the worktree changed after it was reviewed; review the removal again"
                     .to_owned(),
             });
@@ -2394,6 +2436,7 @@ impl GitProvider for GitCliProvider {
             return Err(GitError::Failed {
                 command: "git worktree remove".to_owned(),
                 code: None,
+                signal: None,
                 stderr: "this worktree has unpublished history and needs typed confirmation"
                     .to_owned(),
             });
@@ -2406,6 +2449,7 @@ impl GitProvider for GitCliProvider {
             return Err(GitError::Failed {
                 command: "git log".to_owned(),
                 code: None,
+                signal: None,
                 stderr: format!("history page size must be between 1 and {MAX_LOG_PAGE_SIZE}"),
             });
         }
@@ -2524,6 +2568,7 @@ impl GitProvider for GitCliProvider {
                     return Err(GitError::Failed {
                         command: "git stash push".to_owned(),
                         code: None,
+                        signal: None,
                         stderr: "a named stash needs a non-empty name".to_owned(),
                     });
                 }
@@ -2552,6 +2597,7 @@ impl GitProvider for GitCliProvider {
                     .ok_or_else(|| GitError::Failed {
                         command: "git stash apply".to_owned(),
                         code: None,
+                        signal: None,
                         stderr: "the selected stash no longer exists; refresh the list".to_owned(),
                     })?;
                 self.run_text(repository.workdir(), &["stash", "apply", &entry.oid])
@@ -2565,6 +2611,7 @@ impl GitProvider for GitCliProvider {
                     .ok_or_else(|| GitError::Failed {
                         command: "git stash drop".to_owned(),
                         code: None,
+                        signal: None,
                         stderr: "the selected stash no longer exists; refresh the list".to_owned(),
                     })?;
                 self.run_text(repository.workdir(), &["stash", "drop", &entry.selector])
@@ -2695,12 +2742,14 @@ impl GitProvider for GitCliProvider {
             .ok_or_else(|| GitError::Failed {
                 command: "partial staging".to_owned(),
                 code: None,
+                signal: None,
                 stderr: "the path has no Git changes".to_owned(),
             })?;
         if file.is_conflicted() || file.is_untracked() || file.original_path.is_some() {
             return Err(GitError::Failed {
                 command: "partial staging".to_owned(),
                 code: None,
+                signal: None,
                 stderr:
                     "conflicts, untracked files, and renames require Lazygit or a whole-file action"
                         .to_owned(),
@@ -2715,6 +2764,7 @@ impl GitProvider for GitCliProvider {
                 .ok_or_else(|| GitError::Failed {
                     command: "partial staging".to_owned(),
                     code: None,
+                    signal: None,
                     stderr: "stale hunk: the diff changed; refresh and retry".to_owned(),
                 })?
         } else if let Some((first, last)) = selection.lines {
@@ -2724,12 +2774,14 @@ impl GitProvider for GitCliProvider {
             let hunk = matching.next().ok_or_else(|| GitError::Failed {
                 command: "selected-line staging".to_owned(),
                 code: None,
+                signal: None,
                 stderr: "the selection contains no stageable added or modified lines".to_owned(),
             })?;
             if matching.next().is_some() {
                 return Err(GitError::Failed {
                     command: "selected-line staging".to_owned(),
                     code: None,
+                    signal: None,
                     stderr: "the selection crosses multiple hunks; stage each hunk or use Lazygit"
                         .to_owned(),
                 });
@@ -2827,6 +2879,7 @@ impl GitProvider for GitCliProvider {
             return Err(GitError::Failed {
                 command: "git blame --contents".to_owned(),
                 code: None,
+                signal: None,
                 stderr: "binary buffers cannot be blamed".to_owned(),
             });
         }
@@ -2834,6 +2887,7 @@ impl GitProvider for GitCliProvider {
             return Err(GitError::Failed {
                 command: "git blame --contents".to_owned(),
                 code: None,
+                signal: None,
                 stderr: format!("full-file blame is limited to {MAX_BLAME_LINES} lines"),
             });
         }
@@ -2842,6 +2896,7 @@ impl GitProvider for GitCliProvider {
             .map_err(|_| GitError::Failed {
                 command: "git blame".to_owned(),
                 code: None,
+                signal: None,
                 stderr: "the buffer is outside this working tree".to_owned(),
             })?;
         let status = self.status(repository)?;
@@ -2895,6 +2950,7 @@ impl GitProvider for GitCliProvider {
             return Err(GitError::Failed {
                 command: "git checkout".to_owned(),
                 code: None,
+                signal: None,
                 stderr: format!("`{branch}` is not a local branch"),
             });
         }
@@ -2925,6 +2981,7 @@ impl GitProvider for GitCliProvider {
             return Err(GitError::Failed {
                 command: "git branch".to_owned(),
                 code: None,
+                signal: None,
                 stderr: format!("`{branch}` cannot be used as a branch name"),
             });
         }
@@ -2936,6 +2993,7 @@ impl GitProvider for GitCliProvider {
             return Err(GitError::Failed {
                 command: "git branch".to_owned(),
                 code: None,
+                signal: None,
                 stderr: format!("`{start_point}` is not a local branch"),
             });
         }
@@ -2960,6 +3018,7 @@ impl GitProvider for GitCliProvider {
             return Err(GitError::Failed {
                 command: "git branch".to_owned(),
                 code: None,
+                signal: None,
                 stderr: format!("`{branch}` is not a local branch"),
             });
         };
@@ -2967,6 +3026,7 @@ impl GitProvider for GitCliProvider {
             return Err(GitError::Failed {
                 command: "git branch".to_owned(),
                 code: None,
+                signal: None,
                 stderr: format!("`{branch}` is the branch this working tree is on"),
             });
         }
@@ -3010,6 +3070,7 @@ impl GitProvider for GitCliProvider {
             return Err(GitError::Failed {
                 command: "git branch".to_owned(),
                 code: None,
+                signal: None,
                 stderr: "the branch changed after it was reviewed; review the deletion again"
                     .to_owned(),
             });
@@ -3018,6 +3079,7 @@ impl GitProvider for GitCliProvider {
             return Err(GitError::Failed {
                 command: "git branch".to_owned(),
                 code: None,
+                signal: None,
                 stderr: "this branch has unpublished history and needs typed confirmation"
                     .to_owned(),
             });
@@ -3149,6 +3211,7 @@ impl GitProvider for GitCliProvider {
             return Err(GitError::Failed {
                 command: format!("discard {}", relative.display()),
                 code: None,
+                signal: None,
                 stderr: "the path is a submodule; refusing to remove files below it".to_owned(),
             });
         }
@@ -3157,6 +3220,7 @@ impl GitProvider for GitCliProvider {
                 return Err(GitError::Failed {
                     command: format!("discard {}", relative.display()),
                     code: None,
+                    signal: None,
                     stderr: "the path is a directory; refusing to remove files below it".to_owned(),
                 });
             }
@@ -3194,6 +3258,7 @@ impl GitProvider for GitCliProvider {
             return Err(GitError::Failed {
                 command: format!("discard {}", relative.display()),
                 code: None,
+                signal: None,
                 stderr: "the path is untracked and has no committed version to restore".to_owned(),
             });
         }
@@ -3293,6 +3358,7 @@ impl GitProvider for GitCliProvider {
                     return Err(GitError::Failed {
                         command: "git rebase --abort".to_owned(),
                         code: None,
+                        signal: None,
                         stderr: format!(
                             "replaying {branch} stopped partway and undoing it failed ({abort}); \
                              the working tree is mid-rebase. Finish or abort it with `git rebase` \
@@ -3310,6 +3376,7 @@ impl GitProvider for GitCliProvider {
                 Err(GitError::Failed {
                     command: "git pull --rebase".to_owned(),
                     code: None,
+                    signal: None,
                     // A status line is one row wide, so the part that says the
                     // repository is untouched comes before the part that says
                     // where to go next.
@@ -3328,6 +3395,7 @@ impl GitProvider for GitCliProvider {
             return Err(GitError::Failed {
                 command: "git push".to_owned(),
                 code: None,
+                signal: None,
                 stderr: format!("`{branch}` is not a local branch"),
             });
         };
@@ -3380,10 +3448,12 @@ impl GitProvider for GitCliProvider {
             Err(GitError::Failed {
                 command,
                 code,
+                signal,
                 stderr,
             }) if rejected_as_stale(&stderr) => Err(GitError::Failed {
                 command,
                 code,
+                signal,
                 stderr: format!(
                     "{stderr}; {branch} is behind what the remote holds. Pull it first, which \
                      offers to replay these commits on top"
@@ -3449,6 +3519,7 @@ fn validate_push_destination(remote: &str, reference: Option<&str>) -> Result<()
         return Err(GitError::Failed {
             command: "git push".to_owned(),
             code: None,
+            signal: None,
             stderr: format!("{kind} beginning with `-` are refused"),
         });
     }
@@ -3681,10 +3752,12 @@ fn stash_apply_error(error: GitError) -> GitError {
         GitError::Failed {
             command,
             code,
+            signal,
             stderr,
         } => GitError::Failed {
             command,
             code,
+            signal,
             stderr: format!(
                 "{stderr}{}the stash was retained; resolve conflicts with an external Git tool",
                 if stderr.is_empty() { "" } else { "; " }
@@ -3698,6 +3771,7 @@ fn stale_partial<T>() -> Result<T> {
     Err(GitError::Failed {
         command: "partial staging".to_owned(),
         code: None,
+        signal: None,
         stderr: "stale patch: HEAD, index, or working-tree file changed; refresh and retry"
             .to_owned(),
     })
@@ -4358,13 +4432,16 @@ mod tests {
             observer_after_exit.exited().unwrap(),
             "observer creation after exit did not recognize the unreaped zombie"
         );
+        let status = try_finish_child(&mut child, &observer_after_exit)
+            .unwrap()
+            .expect("the zombie snapshot did not finish the child");
         assert!(
-            try_finish_child(&mut child, &observer_after_exit)
-                .unwrap()
-                .expect("the zombie snapshot did not finish the child")
-                .success(),
+            status.success(),
             "post-zombie group cleanup changed the child status"
         );
+        use std::os::unix::process::ExitStatusExt as _;
+        assert_eq!(status.code(), Some(0));
+        assert_eq!(status.signal(), None);
     }
 
     #[cfg(target_os = "macos")]

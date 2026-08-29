@@ -1537,6 +1537,7 @@ mod tests {
             result: Box::new(Err(GitError::Failed {
                 command: "git status".to_owned(),
                 code: Some(1),
+                signal: None,
                 stderr: "temporary failure".to_owned(),
             })),
             state: GitServiceState::Failed,

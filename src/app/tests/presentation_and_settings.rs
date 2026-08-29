@@ -1452,6 +1452,7 @@ fn delayed_git_failure_never_marks_a_newer_action_echo() {
         result: Box::new(Err(crate::git::GitError::Failed {
             command: "git add".to_owned(),
             code: Some(1),
+            signal: None,
             stderr: "refused".to_owned(),
         })),
         state: GitServiceState::Failed,
@@ -1484,6 +1485,7 @@ fn asynchronous_git_mutation_failure_echoes_its_message_inline() {
         result: Box::new(Err(crate::git::GitError::Failed {
             command: "git add".to_owned(),
             code: Some(1),
+            signal: None,
             stderr: "refused".to_owned(),
         })),
         state: GitServiceState::Failed,
@@ -1620,6 +1622,7 @@ fn uncertain_worktree_creation_never_requests_attachment() {
         Some(crate::git::GitError::Failed {
             command: "git worktree add".to_owned(),
             code: None,
+            signal: None,
             stderr: "outcome unknown".to_owned(),
         }),
         GitServiceState::CompletedWithUncertainState,
