@@ -117,6 +117,16 @@ published before gated workers are released, and a writer with remaining input
 must reject that completed boundary even if a foreign inherited descriptor
 makes the pipe writable.
 
+CI run 33269779053 showed that registering the Darwin process knote after
+`Command::spawn` still left a gap for short-lived Git commands. XNU's process
+filter is edge-triggered: a child can exit before the knote attaches, remain as
+an unreaped zombie that still accepts the registration, and never produce a
+future `NOTE_EXIT`. A successful registration therefore is not itself proof
+that the exit edge remains observable. The observer must install the knote and
+then take a non-reaping process-state snapshot. A zombie snapshot covers an
+exit before registration; a live snapshot means every later exit is covered by
+the already-installed knote.
+
 The expected behavior is that asynchronous integration tests wait on semantic
 state or explicit process acknowledgements with bounded deadlines. PTY output
 must still be drained to prevent backpressure and retained for failure

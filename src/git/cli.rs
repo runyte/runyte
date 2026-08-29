@@ -1637,6 +1637,7 @@ fn read_bounded_file(root: &Path, path: &Path, limit: usize) -> Option<Vec<u8>> 
 struct ChildExitObserver {
     queue: std::os::fd::OwnedFd,
     pid: libc::pid_t,
+    already_exited: bool,
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -1681,19 +1682,37 @@ impl ChildExitObserver {
         {
             return Err(io::Error::last_os_error());
         }
-        Ok(Self { queue, pid })
+        // EVFILT_PROC is edge-triggered on Darwin. A short-lived Git child can
+        // exit after `Command::spawn` returns but before the knote attaches;
+        // attaching to that unreaped zombie succeeds without replaying the
+        // earlier NOTE_EXIT edge. Snapshot process state only after the knote
+        // is installed: an exit before or during registration is now visible
+        // as SZOMB, while an exit after a live snapshot must reach the knote.
+        let already_exited = darwin_process_is_zombie(pid)?;
+        Ok(Self {
+            queue,
+            pid,
+            already_exited,
+        })
     }
 
     fn exited(&self) -> io::Result<bool> {
+        self.wait_for_exit(std::time::Duration::ZERO)
+    }
+
+    fn wait_for_exit(&self, timeout: std::time::Duration) -> io::Result<bool> {
         use std::os::fd::AsRawFd;
 
+        if self.already_exited {
+            return Ok(true);
+        }
         let mut event = std::mem::MaybeUninit::<libc::kevent>::uninit();
         let timeout = libc::timespec {
-            tv_sec: 0,
-            tv_nsec: 0,
+            tv_sec: libc::time_t::try_from(timeout.as_secs()).unwrap_or(libc::time_t::MAX),
+            tv_nsec: libc::c_long::from(timeout.subsec_nanos()),
         };
         // SAFETY: the queue is live, `event` has storage for one result, and
-        // the zero timeout makes this a nonblocking identity-safe observation.
+        // the caller supplies a bounded timeout (zero in production polling).
         let count = unsafe {
             libc::kevent(
                 self.queue.as_raw_fd(),
@@ -1723,6 +1742,48 @@ impl ChildExitObserver {
             && event.filter == libc::EVFILT_PROC
             && event.fflags & libc::NOTE_EXIT != 0)
     }
+}
+
+#[cfg(target_os = "macos")]
+fn darwin_process_is_zombie(pid: libc::pid_t) -> io::Result<bool> {
+    let mut information = std::mem::MaybeUninit::<libc::proc_bsdinfo>::zeroed();
+    let size = std::mem::size_of::<libc::proc_bsdinfo>();
+    let buffer_size = libc::c_int::try_from(size)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "process state is too large"))?;
+    // SAFETY: `information` is writable storage for exactly one
+    // `proc_bsdinfo`; PROC_PIDTBSDINFO writes at most `buffer_size` bytes.
+    let read = unsafe {
+        libc::proc_pidinfo(
+            pid,
+            libc::PROC_PIDTBSDINFO,
+            0,
+            information.as_mut_ptr().cast(),
+            buffer_size,
+        )
+    };
+    if read != buffer_size {
+        let error = io::Error::last_os_error();
+        return Err(
+            if read <= 0 && error.raw_os_error().is_some_and(|code| code != 0) {
+                error
+            } else {
+                io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    format!("process state returned {read} of {buffer_size} bytes"),
+                )
+            },
+        );
+    }
+    // SAFETY: a full proc_bsdinfo was initialized when proc_pidinfo returned
+    // its exact size.
+    let information = unsafe { information.assume_init() };
+    if information.pbi_pid != pid as u32 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "process state described a different PID",
+        ));
+    }
+    Ok(information.pbi_status == libc::SZOMB)
 }
 
 /// Observes a completed Unix child without releasing its process identity,
@@ -4318,7 +4379,7 @@ mod tests {
 
     #[cfg(target_os = "macos")]
     #[test]
-    fn darwin_child_exit_observer_reports_without_reaping() {
+    fn darwin_child_exit_observer_covers_registration_after_exit() {
         use std::io::Write as _;
         use std::process::Stdio;
 
@@ -4328,16 +4389,20 @@ mod tests {
             .stdin(Stdio::piped())
             .spawn()
             .unwrap();
-        let observer = ChildExitObserver::new(&child).unwrap();
+        let observer_before_exit = ChildExitObserver::new(&child).unwrap();
         child.stdin.take().unwrap().write_all(b"go\n").unwrap();
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-        let mut exited = observer.exited().unwrap();
-        while !exited && std::time::Instant::now() < deadline {
-            std::thread::sleep(std::time::Duration::from_millis(1));
-            exited = observer.exited().unwrap();
-        }
+        assert!(
+            observer_before_exit
+                .wait_for_exit(std::time::Duration::from_secs(2))
+                .unwrap(),
+            "the process knote never reported exit"
+        );
 
-        assert!(exited, "the process knote never reported exit");
+        let observer_after_exit = ChildExitObserver::new(&child).unwrap();
+        assert!(
+            observer_after_exit.exited().unwrap(),
+            "registration after NOTE_EXIT did not recognize the unreaped zombie"
+        );
         assert!(
             child.wait().unwrap().success(),
             "observing NOTE_EXIT reaped or changed the child status"
