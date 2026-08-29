@@ -1447,19 +1447,37 @@ async fn git_commit_wait_tui_completes_through_write_quit() {
         // Give the drain thread a moment to catch up with whatever the
         // exiting process wrote last, so the diagnostic below is complete.
         tokio::time::sleep(Duration::from_millis(50)).await;
-        let output = drained.lock().unwrap().raw_text();
-        control
+        let capture = drained.lock().unwrap();
+        let output = capture.raw_text();
+        let screen = capture.screen_text();
+        drop(capture);
+        let buffer_text = match control
             .send(&ClientRequest::ReadBuffer {
                 buffer: commit_buffer,
             })
             .await
-            .unwrap();
-        let buffer_text = match response(&mut control).await {
-            HostResponse::Buffer { buffer } => buffer.text,
-            other => format!("<unavailable: {other:?}>"),
+        {
+            Ok(()) => match tokio::time::timeout(HOST_RESPONSE_TIMEOUT, control.recv()).await {
+                Ok(Ok(Some(HostResponse::Buffer { buffer }))) => buffer.text,
+                Ok(Ok(Some(other))) => format!("<unexpected response: {other:?}>"),
+                Ok(Ok(None)) => "<host disconnected before the buffer reply>".to_owned(),
+                Ok(Err(error)) => format!("<buffer reply failed: {error:#}>"),
+                Err(error) => format!("<buffer reply timed out: {error}>"),
+            },
+            Err(error) => format!("<buffer request failed: {error:#}>"),
         };
+        let host_status = host.0.as_mut().unwrap().try_wait().unwrap();
+        let host_stderr = host_status.map_or_else(
+            || "<host still running>".to_owned(),
+            |_| {
+                let output = host.0.take().unwrap().wait_with_output().unwrap();
+                String::from_utf8_lossy(&output.stderr).into_owned()
+            },
+        );
         panic!(
-            "Git commit failed after :wq: {status}\npty output: {output:?}\ncommit buffer: {buffer_text:?}"
+            "Git commit failed after :wq: {status}\npty screen: {screen:?}\npty output: \
+             {output:?}\ncommit buffer: {buffer_text:?}\nhost status: {host_status:?}\nhost \
+             stderr: {host_stderr:?}"
         );
     }
     let _ = commit.0.take().unwrap().wait();

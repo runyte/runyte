@@ -458,20 +458,20 @@ impl HostSupervisor {
         })
     }
 
-    fn exited(&self) -> bool {
+    fn exited(&self) -> Result<bool> {
         #[cfg(target_os = "linux")]
         if let Some(pidfd) = self.pidfd.as_ref()
             && pidfd_has_exited(pidfd.get_ref())
         {
-            return true;
+            return Ok(true);
         }
         #[cfg(target_os = "macos")]
         if let Some(process_queue) = self.process_queue.as_ref()
-            && process_queue_has_exited(process_queue.get_ref())
+            && process_queue_has_exited(process_queue.get_ref(), self.pid)?
         {
-            return true;
+            return Ok(true);
         }
-        match self.kind {
+        Ok(match self.kind {
             HostSupervisorKind::Parent => {
                 // SAFETY: `getppid` has no preconditions.
                 (unsafe { libc::getppid() }) != self.pid
@@ -483,7 +483,7 @@ impl HostSupervisor {
                 result == -1 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
                     || process_is_zombie(self.pid)
             }
-        }
+        })
     }
 
     fn pid(&self) -> libc::pid_t {
@@ -505,7 +505,7 @@ impl HostSupervisor {
         if let Some(process_queue) = self.process_queue.as_ref() {
             loop {
                 let mut ready = process_queue.readable().await?;
-                if process_queue_has_exited(process_queue.get_ref()) {
+                if process_queue_has_exited(process_queue.get_ref(), self.pid)? {
                     return Ok(());
                 }
                 ready.clear_ready();
@@ -516,7 +516,7 @@ impl HostSupervisor {
         // ordinary Linux/macOS waits block on the descriptor above.
         loop {
             tokio::time::sleep(Duration::from_millis(500)).await;
-            if self.exited() {
+            if self.exited()? {
                 return Ok(());
             }
         }
@@ -603,7 +603,10 @@ fn open_process_queue(pid: libc::pid_t) -> Result<Option<std::os::fd::OwnedFd>> 
 }
 
 #[cfg(target_os = "macos")]
-fn process_queue_has_exited(process_queue: &std::os::fd::OwnedFd) -> bool {
+fn process_queue_has_exited(
+    process_queue: &std::os::fd::OwnedFd,
+    pid: libc::pid_t,
+) -> Result<bool> {
     use std::os::fd::AsRawFd;
 
     let mut event = std::mem::MaybeUninit::<libc::kevent>::uninit();
@@ -613,7 +616,7 @@ fn process_queue_has_exited(process_queue: &std::os::fd::OwnedFd) -> bool {
     };
     // SAFETY: the kqueue descriptor is live, the output has capacity for one
     // event, and the zero timeout performs a non-blocking observation.
-    (unsafe {
+    let count = unsafe {
         libc::kevent(
             process_queue.as_raw_fd(),
             std::ptr::null(),
@@ -622,7 +625,27 @@ fn process_queue_has_exited(process_queue: &std::os::fd::OwnedFd) -> bool {
             1,
             &timeout,
         )
-    }) > 0
+    };
+    if count == -1 {
+        return Err(std::io::Error::last_os_error())
+            .context("cannot read host supervisor process queue");
+    }
+    if count == 0 {
+        return Ok(false);
+    }
+    // SAFETY: `kevent` returned one event into the initialized output slot.
+    let event = unsafe { event.assume_init() };
+    if event.flags & libc::EV_ERROR != 0 {
+        let error = i32::try_from(event.data)
+            .ok()
+            .filter(|code| *code > 0)
+            .map(std::io::Error::from_raw_os_error)
+            .unwrap_or_else(|| std::io::Error::from_raw_os_error(libc::EIO));
+        return Err(error).context("host supervisor process queue reported an error");
+    }
+    Ok(event.ident == pid as libc::uintptr_t
+        && event.filter == libc::EVFILT_PROC
+        && event.fflags & libc::NOTE_EXIT != 0)
 }
 
 #[cfg(target_os = "linux")]
@@ -1884,9 +1907,8 @@ async fn run_host_server(
                 changed |= host.refresh_session_activity();
             }
             _ = idle_tick.tick() => {
-                if supervising_parent
-                    .as_ref()
-                    .is_some_and(HostSupervisor::exited)
+                if let Some(supervisor) = supervising_parent.as_ref()
+                    && supervisor.exited()?
                 {
                     log_info!(
                         "host",
@@ -4435,6 +4457,14 @@ mod tests {
             child.id() as libc::pid_t,
         )
         .unwrap();
+
+        for _ in 0..32 {
+            assert!(!supervisor.exited().unwrap());
+            tokio::task::yield_now().await;
+        }
+        let unrelated = std::process::Command::new("true").status().unwrap();
+        assert!(unrelated.success());
+        assert!(!supervisor.exited().unwrap());
 
         child.kill().unwrap();
         let _ = child.wait().unwrap();
