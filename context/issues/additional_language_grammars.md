@@ -1,0 +1,217 @@
+# Statically linked grammars for SQL, Lua, C#, Zig, CMake, Protobuf, Make, and INI
+
+Runyte compiles tree-sitter grammars into the binary from `tree-sitter-*`
+crates rather than loading them from shared libraries at runtime. The languages
+currently registered in `src/syntax/grammars.rs` are Bash, C, C++, CSS, Go,
+HTML, Java, JavaScript, JSON, Kotlin, Markdown, Python, Rust, Swift,
+TypeScript, TSX, TOML, and YAML.
+
+SQL, Lua, C#, Zig, CMake, Protobuf, Make, and INI are not registered. Documents
+in those languages open as plain text: no highlighting, no syntax-aware
+indentation, no folds, no outline, and no structural text objects. Language
+detection has no entry to match, so `Registry::language_for_path` and
+`language_for_document` return `None` for them.
+
+## Expected behavior
+
+Each of the eight languages is registered as a `LanguageDefinition` in
+`BUILTIN_LANGUAGES` and detected from its file extensions, and from exact file
+names where the language has them. Detected documents receive highlighting,
+indentation, and folds. Languages with a meaningful declaration structure also
+receive an outline and function, class, and parameter text objects.
+
+Grammar handles and raw query sources remain private to `src/syntax`, as the
+module documentation requires. No grammar is downloaded or read from a runtime
+path.
+
+## Grammar crates
+
+The eight crates below were resolved against the pinned `tree-sitter-language`
+`0.1.7` and compiled together. Every one exposes `pub const LANGUAGE:
+LanguageFn`, so each fits the existing `grammar:` field without an adapter.
+Every crate declares `tree-sitter-language 0.1`.
+
+| Language | Crate | Version | License |
+| --- | --- | --- | --- |
+| SQL | `tree-sitter-sequel` | 0.3.11 | MIT |
+| Lua | `tree-sitter-lua` | 0.5.0 | MIT |
+| C# | `tree-sitter-c-sharp` | 0.23.5 | MIT |
+| Zig | `tree-sitter-zig` | 1.1.2 | MIT |
+| CMake | `tree-sitter-cmake` | 0.7.4 | MIT |
+| Protobuf | `tree-sitter-proto` | 0.5.0 | MIT |
+| Make | `tree-sitter-make` | 1.1.1 | MIT |
+| INI | `tree-sitter-ini` | 1.4.0 | Apache-2.0 |
+
+`tree-sitter-sql` is a separate and unrelated crate last published as 0.0.2 in
+2021. `tree-sitter-sequel` is the maintained SQL grammar and is the crate named
+above.
+
+### Exported query constants
+
+The set of query constants a crate exposes is narrower than the set of `.scm`
+files it ships. Several crates gate the constants behind `cfg` flags their
+build script sets from the files present in the package, and several others
+carry the declarations commented out. The constants that exist are:
+
+| Crate | `HIGHLIGHTS_QUERY` | `INJECTIONS_QUERY` | `LOCALS_QUERY` |
+| --- | --- | --- | --- |
+| `tree-sitter-sequel` | yes | no | no |
+| `tree-sitter-lua` | yes | yes | yes |
+| `tree-sitter-c-sharp` | yes | no | no |
+| `tree-sitter-zig` | yes | yes | no |
+| `tree-sitter-cmake` | yes | yes | no |
+| `tree-sitter-proto` | no | no | no |
+| `tree-sitter-make` | yes | no | no |
+| `tree-sitter-ini` | yes | no | no |
+
+`tree-sitter-proto` exports `LANGUAGE` and `NODE_TYPES` only. Its
+`queries/highlights.scm` is packaged in the crate but has no constant, so the
+Protobuf highlight query has to be carried as a Runyte-owned file under
+`src/syntax/queries/proto/` and attributed to the upstream crate and version,
+in the way `SWIFT_COMMENT_HIGHLIGHTS` already records a Runyte-authored query
+against a specific upstream release.
+
+`tree-sitter-c-sharp` packages only `highlights.scm` and `tags.scm`. Its
+`INJECTIONS_QUERY` and `LOCALS_QUERY` declarations are `cfg`-gated on files
+absent from the published package, so referring to either is a compile error
+rather than an empty query.
+
+## Query work
+
+Existing languages fall into two shapes. Data and markup formats — CSS, HTML,
+JSON, TOML, TSX, YAML — carry two Runyte-authored queries, `folds.scm` and
+`indentation.scm`. Full programming languages — Go, Java, JavaScript, Kotlin,
+Python, Rust, TypeScript — carry six, adding `functions.scm`, `classes.scm`,
+`parameters.scm`, and `outline.scm`. C, C++, Swift, and Bash sit between the
+two.
+
+Runyte's indentation queries use the `@indent.always`, `@indent.begin`,
+`@indent.branch`, `@indent.end`, and `@indent.ignore` captures. Four of the
+crates ship indent or fold queries written against the same captures, so those
+files can be adopted as Runyte-owned queries with attribution rather than
+written from the grammar's node types:
+
+| Crate | Reusable files |
+| --- | --- |
+| `tree-sitter-sequel` | `indents.scm` |
+| `tree-sitter-zig` | `indents.scm`, `folds.scm` |
+| `tree-sitter-cmake` | `indents.scm`, `folds.scm` |
+| `tree-sitter-proto` | `indents.scm`, `folds.scm` |
+| `tree-sitter-ini` | `folds.scm` |
+
+`tree-sitter-lua`, `tree-sitter-c-sharp`, and `tree-sitter-make` ship no indent
+or fold queries; theirs are written from the grammar node types.
+
+The suggested target shape per language is:
+
+- **Six queries** for C#, Lua, and Zig: these have functions, types, and
+  parameter lists that outline and text objects can address.
+- **Three queries** for SQL: `folds.scm`, `indentation.scm`, and `outline.scm`,
+  the outline addressing statements and named definitions.
+- **Two queries** for CMake, Protobuf, Make, and INI: `folds.scm` and
+  `indentation.scm`. CMake and Make may additionally warrant an outline over
+  function, macro, and target definitions.
+
+## Language definition values
+
+| Language | `name` | `extensions` | `filenames` | `line_comment` |
+| --- | --- | --- | --- | --- |
+| SQL | `sql` | `sql` | — | `--` |
+| Lua | `lua` | `lua` | — | `--` |
+| C# | `c-sharp` | `cs`, `csx` | — | `//` |
+| Zig | `zig` | `zig`, `zon` | — | `//` |
+| CMake | `cmake` | `cmake` | `CMakeLists.txt` | `#` |
+| Protobuf | `proto` | `proto` | — | `//` |
+| Make | `make` | `mk`, `mak` | `Makefile`, `makefile`, `GNUmakefile` | `#` |
+| INI | `ini` | `ini` | — | see below |
+
+Extensions are matched case-insensitively and exact file names win over them,
+so extension entries stay lowercase while file names are written as they appear
+on disk.
+
+The INI grammar accepts both `;` and `#` as comment introducers, matching
+`[;#]` at the start of a comment. `line_comment` holds a single marker and is
+what `toggle-comments` inserts, so one has to be chosen; both parse correctly
+in either direction, and the choice only decides which marker new comments
+receive.
+
+Lua may also warrant a `lua` shebang entry, consistent with the existing use of
+`shebangs` for interpreted languages.
+
+## Constraints
+
+Grammar crates are third-party material and require entries in
+`THIRD_PARTY_NOTICES.md`, together with any query file adopted from a crate,
+recorded against the crate name and exact version the query was taken from.
+Seven of the eight crates are MIT and one, `tree-sitter-ini`, is Apache-2.0;
+both are compatible with MPL-2.0 for this use.
+
+`Cargo.toml` pins several existing grammar crates to exact versions with `=`
+and leaves others on caret requirements. The new entries follow whichever
+convention applies, and an exact pin is appropriate wherever a Runyte-authored
+query is written against a specific upstream node set, since a grammar update
+can rename or restructure nodes and silently empty a query.
+
+Parser tables are the dominant contribution to binary size, and two of these
+grammars are large relative to what is already linked. Measured as generated C
+source, with the already-shipped Rust grammar at 6.5 MB as the reference point:
+C# is 29.7 MB, SQL 17.4 MB, Zig 5.8 MB, Make 1.0 MB, CMake 0.54 MB, Lua
+0.36 MB, Protobuf 0.28 MB, and INI 0.03 MB. Generated source size is not
+linked size — the release profile applies `lto = true` and `strip = true` — so
+the actual growth is measured from a release build, and the C# and SQL entries
+are the two worth measuring before and after.
+
+The `include` list in `Cargo.toml` governs what the published crate carries.
+New query files under `src/syntax/queries/` are covered by the existing
+`/src/**` entry, but the list is confirmed rather than assumed.
+
+## Existing tests that change
+
+Query compilation is lazy. `Registry::new` registers identities only, and
+`LazyLanguageConfig::get` compiles a language's queries through a `OnceLock` on
+first use, so a query that fails to compile surfaces when a document in that
+language is first opened rather than at startup. Three existing tests in
+`src/syntax/mod.rs` therefore carry the inventory and have to be updated as part
+of the change rather than after it:
+
+- `every_built_in_language_declares_its_line_comment` compares every registered
+  language against a hardcoded list of expected markers. It fails until each new
+  language's `line_comment` is added, which is its intended behavior — the
+  comment marker has to be decided rather than inherited.
+- `every_canonical_plain_and_owned_capability_query_compiles` compiles every
+  canonical and plain configuration, and is where a malformed query is actually
+  caught. It asserts `plain_count == 3` with the message "Rust, HTML, and
+  Markdown have plain variants". A plain variant is generated for any language
+  whose injections query is non-empty, so wiring the available
+  `INJECTIONS_QUERY` for Lua, Zig, and CMake raises that count and both the
+  assertion and its message need updating. It also asserts
+  `registry.configs.len() == BUILTIN_LANGUAGES.len() + plain_count + 1`, which
+  follows automatically once `plain_count` is correct.
+- `registry_construction_registers_every_identity_without_compiling_queries`
+  iterates the inventory and needs no edit, but confirms the new languages are
+  addressable by name.
+
+`is_builtin_language_name` draws on the same inventory, so each added name also
+becomes valid as a language-server configuration key. Language-server
+configuration for these languages is out of scope here; only the name becoming
+valid is in scope.
+
+## Validation
+
+Each language needs coverage at the behavior boundary in `tests/syntax.rs`:
+detection from every declared extension and file name, a highlight query that
+produces scopes on a representative document, indentation applied on a newline,
+and folds where they are defined. Languages given an outline or text objects
+need those exercised too, since a query that compiles but matches nothing is
+otherwise indistinguishable from one that works.
+
+Documentation updates: the language count and list in `README.md`, and the
+explicit language list in `docs/user-guide.md`.
+
+Then:
+
+```sh
+cargo fmt --check
+cargo clippy --all-targets -- -D warnings
+cargo test
+```
