@@ -156,8 +156,36 @@ struct EndpointPublication {
 #[derive(Clone, Debug)]
 enum InventoryRegistry {
     Disabled,
-    ResolveForPublication,
+    ResolveForPublication(std::sync::Arc<std::sync::OnceLock<Option<PathBuf>>>),
     Exact(PathBuf),
+}
+
+impl InventoryRegistry {
+    fn resolve_for_publication() -> Self {
+        Self::ResolveForPublication(std::sync::Arc::new(std::sync::OnceLock::new()))
+    }
+
+    fn resolve(&self) -> Result<Option<PathBuf>> {
+        self.resolve_with(all_hosts_registry_root)
+    }
+
+    fn resolve_with(
+        &self,
+        resolver: impl FnOnce() -> Result<Option<PathBuf>>,
+    ) -> Result<Option<PathBuf>> {
+        match self {
+            Self::Disabled => Ok(None),
+            Self::Exact(path) => Ok(Some(path.clone())),
+            Self::ResolveForPublication(resolved) => {
+                if let Some(path) = resolved.get() {
+                    return Ok(path.clone());
+                }
+                let path = resolver()?;
+                let _ = resolved.set(path.clone());
+                Ok(path)
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -204,7 +232,7 @@ impl LocalEndpoint {
                 EndpointPublication {
                     registry: registry.clone().or_else(|| Some(runtime_registry.clone())),
                     secondary_registry: registry.map(|_| runtime_registry),
-                    inventory_registry: InventoryRegistry::ResolveForPublication,
+                    inventory_registry: InventoryRegistry::resolve_for_publication(),
                     test_supervisor: None,
                     runtime_root: Some(runtime.to_path_buf()),
                 },
@@ -217,7 +245,7 @@ impl LocalEndpoint {
             EndpointPublication {
                 registry: usable_fallback_registry_root(),
                 secondary_registry: None,
-                inventory_registry: InventoryRegistry::ResolveForPublication,
+                inventory_registry: InventoryRegistry::resolve_for_publication(),
                 test_supervisor: None,
                 runtime_root: None,
             },
@@ -367,7 +395,10 @@ impl LocalEndpoint {
     pub(crate) fn inventory_registry(&self) -> Option<&Path> {
         match &self.inventory_registry {
             InventoryRegistry::Exact(path) => Some(path),
-            InventoryRegistry::Disabled | InventoryRegistry::ResolveForPublication => None,
+            InventoryRegistry::ResolveForPublication(resolved) => {
+                resolved.get().and_then(Option::as_deref)
+            }
+            InventoryRegistry::Disabled => None,
         }
     }
 
@@ -777,11 +808,7 @@ impl LocalEndpoint {
             .flatten()
             .map(|registry| registry.join(format!("{}.json", self.id)))
             .collect::<Vec<_>>();
-        let inventory = match &self.inventory_registry {
-            InventoryRegistry::Disabled => None,
-            InventoryRegistry::ResolveForPublication => all_hosts_registry_root()?,
-            InventoryRegistry::Exact(path) => Some(path.clone()),
-        };
+        let inventory = self.inventory_registry.resolve()?;
         if let Some(inventory) = inventory.as_deref() {
             paths.push(inventory.join(inventory_registration_file_name(metadata)));
         }
@@ -2738,6 +2765,24 @@ mod tests {
         assert_eq!(first, second);
         assert_eq!(first.len(), HOST_ID_LENGTH);
         assert!(first.bytes().all(|byte| byte.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn publication_inventory_resolution_is_retained_for_cleanup() {
+        let inventory = temporary_root().join("owner-wide");
+        let publication = InventoryRegistry::resolve_for_publication();
+        assert_eq!(
+            publication
+                .resolve_with(|| Ok(Some(inventory.clone())))
+                .unwrap(),
+            Some(inventory.clone())
+        );
+        assert_eq!(
+            publication
+                .resolve_with(|| anyhow::bail!("resolver became unavailable"))
+                .unwrap(),
+            Some(inventory)
+        );
     }
 
     async fn bind_or_skip(endpoint: &LocalEndpoint) -> Option<LocalServer> {

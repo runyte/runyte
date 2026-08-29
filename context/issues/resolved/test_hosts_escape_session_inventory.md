@@ -51,13 +51,16 @@ silently disabling broad publication. The identity is resolved lazily, so
 attaching to an existing local endpoint and scanning the ordinary namespace do
 not depend on NSS, account state, or the boot-identity source. Reconstructed
 local endpoints omit broad cleanup; their owning host removes its row during a
-graceful stop, while an explicit broad scan retires a row left by an abrupt
-stop. The registry never participates in ordinary host identity or name
-locking. Inventory filenames combine the workspace identity with the endpoint
-identity, so two deliberately isolated namespaces may host the same workspace
-without overwriting or blocking each other. Broad listing reports both
-endpoints, and broad stop iterates the exact registered hosts rather than
-resolving the ambiguous workspace identity back to one of them.
+graceful stop using the exact inventory path cached by successful publication,
+while an explicit broad scan retires a row left by an abrupt stop. A broad
+listing reads current-namespace recents for presentation but does not merge a
+name learned from an outside namespace back into that history. The registry
+never participates in ordinary host identity or name locking. Inventory
+filenames combine the workspace identity with the endpoint identity, so two
+deliberately isolated namespaces may host the same workspace without
+overwriting or blocking each other. Broad listing reports both endpoints, and
+broad stop iterates the exact registered hosts rather than resolving the
+ambiguous workspace identity back to one of them.
 
 The common scope option was chosen instead of the proposed
 `--session-list-all` spelling so list and stop operations express the same
@@ -78,7 +81,11 @@ and
 publication and cleanup assertions in
 `registry_lists_names_rejects_duplicates_and_preserves_a_name_across_restart`;
 `owner_wide_inventory_is_durable_and_boot_scoped` covers the durable,
-machine-local account-owned location.
+machine-local account-owned location, and
+`publication_inventory_resolution_is_retained_for_cleanup` covers lookup
+failure after publication. `src/workspace/catalog.rs` adds
+`owner_wide_refresh_does_not_merge_host_names_into_local_recents` for the
+read-only broad refresh boundary.
 `tests/release_packaging.rs` verifies the public and hidden CLI surfaces.
 
 Known limitation: owner-wide discovery covers live hosts. Stopped recent

@@ -362,7 +362,9 @@ inventory. Attaching to an already-running host and ordinary namespace listing
 do not resolve or depend on the broad inventory.
 Ordinary discovery and identity locking never read the broad inventory; it
 exists so an explicit `--all-namespaces` operation can find hosts whose XDG
-runtime and cache namespaces differ from its own. Inventory scans accept only
+runtime and cache namespaces differ from its own. Broad listing reads the
+current namespace's recent history for display but never rewrites it from a
+host found outside that namespace. Inventory scans accept only
 private, non-symlinked records whose workspace identity, endpoint metadata,
 live process, and responsive Unix socket agree where process visibility is
 available. A responsive endpoint is retained when a PID namespace hides its
