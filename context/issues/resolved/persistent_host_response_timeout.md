@@ -49,6 +49,20 @@ semantic invocation they make. Terminal polling now fails immediately on
 protocol errors and includes the last complete frame, reconstructed terminal
 screen, and damage count in deadline diagnostics.
 
+A subsequent macOS failure exposed the same mixed response stream at the
+shutdown boundary. A successful command publishes its semantic result before
+its visual frame, and the test also requested an additional resynchronization.
+The command frame and resynchronized frame could both be serialized before
+`ForceShutdown`, leaving a valid visual response ahead of `ShuttingDown` in
+the FIFO stream. The shared shutdown helper now sends the request once and,
+under one absolute host-response deadline, drains only complete frames and
+terminal damage until it observes `ShuttingDown` or EOF. Any other semantic
+response still fails immediately. Redundant resynchronizations after accepted
+commands were also removed; command publication and the terminal polling
+barrier already provide the required frames. The hidden-terminal test queues
+one resynchronization immediately before shutdown as a deterministic
+regression for the mixed visual and semantic response lanes.
+
 Coverage is in
 `tests/persistent_host.rs::terminal_pid_output_and_input_survive_detach_disconnect_and_reattach`
 and

@@ -211,10 +211,16 @@ async fn wait_for_session_preview(
 
 async fn shutdown(client: &mut LocalClient, request: ClientRequest) {
     client.send(&request).await.unwrap();
-    let response = tokio::time::timeout(HOST_RESPONSE_TIMEOUT, client.recv())
-        .await
-        .expect("host shutdown timed out")
-        .unwrap();
+    let response = tokio::time::timeout(HOST_RESPONSE_TIMEOUT, async {
+        loop {
+            match client.recv().await.unwrap() {
+                Some(HostResponse::Frame { .. } | HostResponse::TerminalDamage { .. }) => {}
+                response => return response,
+            }
+        }
+    })
+    .await
+    .expect("host shutdown timed out");
     assert!(
         matches!(response, Some(HostResponse::ShuttingDown) | None),
         "expected host shutdown, got {response:?}"
@@ -886,7 +892,6 @@ async fn terminal_pid_output_and_input_survive_detach_disconnect_and_reattach() 
         matches!(outcome, HostResponse::CommandResult { .. }),
         "expected terminal command result, got {outcome:?}"
     );
-    client.send(&ClientRequest::Resynchronize).await.unwrap();
     let mut current = None;
     let first = frame_containing(&mut client, &mut current, &mut damage_count, "token:").await;
     let token = terminal_wire_frame_text(&first)
@@ -1036,7 +1041,6 @@ async fn hidden_terminal_output_while_detached_is_unread_after_reattach() {
         matches!(outcome, HostResponse::CommandResult { .. }),
         "expected terminal command result, got {outcome:?}"
     );
-    client.send(&ClientRequest::Resynchronize).await.unwrap();
     let mut current = None;
     let mut damage_count = 0;
     let terminal_frame = frame_matching(&mut client, &mut current, &mut damage_count, |frame| {
@@ -1059,7 +1063,6 @@ async fn hidden_terminal_output_while_detached_is_unread_after_reattach() {
         matches!(outcome, HostResponse::CommandResult { .. }),
         "expected open command result, got {outcome:?}"
     );
-    client.send(&ClientRequest::Resynchronize).await.unwrap();
     current = None;
     frame_matching(&mut client, &mut current, &mut damage_count, |frame| {
         frame
@@ -1105,10 +1108,6 @@ async fn hidden_terminal_output_while_detached_is_unread_after_reattach() {
         matches!(outcome, HostResponse::CommandResult { .. }),
         "expected terminals command result, got {outcome:?}"
     );
-    reattached
-        .send(&ClientRequest::Resynchronize)
-        .await
-        .unwrap();
     let first = response(&mut reattached).await;
     let manager = wait_for_editor_frame(
         &mut reattached,
@@ -1135,6 +1134,13 @@ async fn hidden_terminal_output_while_detached_is_unread_after_reattach() {
         "detached output was marked viewed without an attached observer"
     );
 
+    // Keep a visual response deliberately in flight before shutdown. The
+    // interactive protocol multiplexes replaceable frames with semantic
+    // replies, so shutdown must drain this frame before its acknowledgement.
+    reattached
+        .send(&ClientRequest::Resynchronize)
+        .await
+        .unwrap();
     shutdown(&mut reattached, ClientRequest::ForceShutdown).await;
     let status = tokio::task::spawn_blocking(move || child.0.take().unwrap().wait())
         .await
