@@ -287,6 +287,61 @@ async fn response_ignoring_visuals(client: &mut LocalClient) -> HostResponse {
     }
 }
 
+async fn wait_for_git_discovery(endpoint: &LocalEndpoint) {
+    let mut client = LocalClient::connect(endpoint, geometry(), true)
+        .await
+        .unwrap();
+    assert!(matches!(
+        response(&mut client).await,
+        HostResponse::Welcome { .. }
+    ));
+    for event in [
+        InputEvent::from(runyte::input::KeyStroke::new(
+            runyte::input::KeyCode::Char(':'),
+            runyte::input::Modifiers::NONE,
+        )),
+        InputEvent::Text("git-worktrees".to_owned()),
+    ] {
+        client
+            .send(&ClientRequest::Input {
+                event: event.into(),
+                repeated: false,
+            })
+            .await
+            .unwrap();
+    }
+    loop {
+        match response(&mut client).await {
+            HostResponse::Frame { frame } => {
+                let row = frame
+                    .overlays
+                    .iter()
+                    .find(|overlay| overlay.title == "Commands")
+                    .and_then(|overlay| {
+                        overlay
+                            .rows
+                            .iter()
+                            .find(|row| row.label.contains(":git-worktrees"))
+                    });
+                if row.is_some_and(|row| {
+                    row.available || !row.detail.contains("discovery is still in progress")
+                }) {
+                    break;
+                }
+            }
+            HostResponse::TerminalDamage { .. } => {
+                client.send(&ClientRequest::Resynchronize).await.unwrap();
+            }
+            response => panic!("expected a Git discovery frame, got {response:?}"),
+        }
+    }
+    client.send(&ClientRequest::Detach).await.unwrap();
+    assert!(matches!(
+        response_ignoring_visuals(&mut client).await,
+        HostResponse::Detached { .. }
+    ));
+}
+
 async fn response(client: &mut LocalClient) -> HostResponse {
     tokio::time::timeout(Duration::from_secs(5), client.recv())
         .await
@@ -715,6 +770,7 @@ async fn attaching_with_logging_flags_reports_the_retained_configuration() {
     }
     let log = root.join(".runyte").join(HOST_LOG_NAME);
     assert!(wait_until(|| log.exists()).await);
+    wait_for_git_discovery(&endpoint).await;
     let before = read_log(&log);
 
     let output = runyte(

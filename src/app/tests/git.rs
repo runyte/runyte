@@ -4913,12 +4913,22 @@ fn synchronous_discard_closes_a_removed_staged_addition_buffer() {
     )))));
     ports.replace_git(Box::new(crate::git::GitCliProvider::new("git")));
     let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    assert!(
+        app.git.repository().is_some(),
+        "repository discovery did not attach"
+    );
     app.open_file(added.clone()).unwrap();
     let buffer = app.active().buffer;
 
     app.execute_command("git-discard").unwrap();
+    assert!(
+        app.git_discard_confirmation.is_some(),
+        "discard confirmation was not prepared: {}",
+        app.status
+    );
     key(&mut app, KeyCode::Enter, Modifiers::NONE);
 
+    assert!(!app.status_error, "{}", app.status);
     assert!(!added.exists(), "discard kept the staged addition on disk");
     assert!(
         app.closed_buffers.contains(&buffer),

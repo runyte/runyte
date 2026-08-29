@@ -975,9 +975,10 @@ fn a_directory_outside_any_repository_has_none() {
     ));
     fs::create_dir_all(&outside).unwrap();
 
-    // The system temporary directory is not itself in a repository on any
-    // machine this runs on; if it were, this assertion would be meaningless
-    // rather than wrong, so it is checked against Git's own answer.
+    // The system temporary directory is not necessarily marker-free: a
+    // machine may contain a valid or corrupt `.git` entry above this fixture.
+    // Only assert ordinary absence when both Git and that local precondition
+    // agree; controlled unit coverage exercises the marker states themselves.
     let inside = Command::new("git")
         .args(["rev-parse", "--show-toplevel"])
         .current_dir(&outside)
@@ -985,7 +986,11 @@ fn a_directory_outside_any_repository_has_none() {
         .unwrap()
         .status
         .success();
-    if !inside {
+    let marker_free = outside.ancestors().all(|directory| {
+        fs::symlink_metadata(directory.join(".git"))
+            .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
+    });
+    if !inside && marker_free {
         assert!(provider().discover(&outside).unwrap().is_none());
     }
 

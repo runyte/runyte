@@ -73,15 +73,384 @@ const MAX_UNTRACKED_STAT_BUDGET: usize = 16 * 1024 * 1024;
 const MAX_STDERR_BYTES: usize = 1024 * 1024;
 const STDERR_TRUNCATED: &[u8] = b"\n[Runyte truncated stderr after 1048576 bytes]";
 const MAX_FAILURE_OUTPUT_BYTES: usize = 1024 * 1024;
+const MAX_GIT_MARKER_BYTES: usize = 64 * 1024;
+#[cfg(unix)]
+const PIPE_READ_READY: i16 = libc::POLLIN;
+#[cfg(not(unix))]
+const PIPE_READ_READY: i16 = 0;
+#[cfg(unix)]
+const PIPE_WRITE_READY: i16 = libc::POLLOUT;
+#[cfg(not(unix))]
+const PIPE_WRITE_READY: i16 = 0;
 
-fn read_bounded_stderr(mut reader: impl Read) -> Vec<u8> {
+struct PipeFinalizer {
+    requested: Arc<AtomicBool>,
+    #[cfg(unix)]
+    wake_reader: Arc<std::os::unix::net::UnixStream>,
+    #[cfg(unix)]
+    wake_writer: std::sync::Mutex<Option<std::os::unix::net::UnixStream>>,
+    #[cfg(test)]
+    reader_gate: Option<Arc<TestPipeReaderGate>>,
+    #[cfg(test)]
+    poll_observer: Option<Arc<TestPipePollObserver>>,
+}
+
+#[derive(Clone)]
+struct PipeFinishSignal {
+    requested: Arc<AtomicBool>,
+    #[cfg(unix)]
+    wake_reader: Arc<std::os::unix::net::UnixStream>,
+    #[cfg(test)]
+    reader_gate: Option<Arc<TestPipeReaderGate>>,
+    #[cfg(test)]
+    poll_observer: Option<Arc<TestPipePollObserver>>,
+}
+
+#[cfg(test)]
+#[derive(Debug, Default)]
+struct TestPipeReaderGate {
+    released: std::sync::Mutex<bool>,
+    ready: std::sync::Condvar,
+}
+
+#[cfg(test)]
+impl TestPipeReaderGate {
+    fn wait(&self) {
+        let mut released = self.released.lock().unwrap();
+        while !*released {
+            released = self.ready.wait(released).unwrap();
+        }
+    }
+
+    fn release(&self) {
+        *self.released.lock().unwrap() = true;
+        self.ready.notify_all();
+    }
+}
+
+#[cfg(test)]
+#[derive(Debug, Default)]
+struct TestPipePollObserver {
+    entered: std::sync::Mutex<usize>,
+    changed: std::sync::Condvar,
+}
+
+#[cfg(test)]
+impl TestPipePollObserver {
+    fn note(&self) {
+        *self.entered.lock().unwrap() += 1;
+        self.changed.notify_all();
+    }
+
+    fn wait_for(&self, expected: usize, timeout: std::time::Duration) -> bool {
+        let deadline = std::time::Instant::now() + timeout;
+        let mut entered = self.entered.lock().unwrap();
+        while *entered < expected {
+            let Some(remaining) = deadline.checked_duration_since(std::time::Instant::now()) else {
+                return false;
+            };
+            let (next, result) = self.changed.wait_timeout(entered, remaining).unwrap();
+            entered = next;
+            if result.timed_out() && *entered < expected {
+                return false;
+            }
+        }
+        true
+    }
+}
+
+trait NonblockingPipe {
+    fn make_nonblocking(&self) -> io::Result<()>;
+
+    #[cfg(unix)]
+    fn raw_fd(&self) -> std::os::fd::RawFd;
+}
+
+#[cfg(unix)]
+macro_rules! impl_nonblocking_pipe {
+    ($($pipe:ty),+ $(,)?) => {
+        $(
+            impl NonblockingPipe for $pipe {
+                fn make_nonblocking(&self) -> io::Result<()> {
+                    set_nonblocking(self)
+                }
+
+                fn raw_fd(&self) -> std::os::fd::RawFd {
+                    std::os::fd::AsRawFd::as_raw_fd(self)
+                }
+            }
+        )+
+    };
+}
+
+#[cfg(unix)]
+impl_nonblocking_pipe!(
+    std::process::ChildStdout,
+    std::process::ChildStderr,
+    std::process::ChildStdin,
+);
+
+#[cfg(test)]
+impl NonblockingPipe for &[u8] {
+    fn make_nonblocking(&self) -> io::Result<()> {
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    fn raw_fd(&self) -> std::os::fd::RawFd {
+        -1
+    }
+}
+
+#[cfg(test)]
+impl NonblockingPipe for &mut std::io::Cursor<&[u8]> {
+    fn make_nonblocking(&self) -> io::Result<()> {
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    fn raw_fd(&self) -> std::os::fd::RawFd {
+        -1
+    }
+}
+
+#[cfg(not(unix))]
+macro_rules! impl_nonblocking_pipe {
+    ($($pipe:ty),+ $(,)?) => {
+        $(
+            impl NonblockingPipe for $pipe {
+                fn make_nonblocking(&self) -> io::Result<()> {
+                    Ok(())
+                }
+            }
+        )+
+    };
+}
+
+#[cfg(not(unix))]
+impl_nonblocking_pipe!(
+    std::process::ChildStdout,
+    std::process::ChildStderr,
+    std::process::ChildStdin,
+);
+
+impl PipeFinalizer {
+    fn new() -> io::Result<Self> {
+        #[cfg(unix)]
+        let (wake_reader, wake_writer) = std::os::unix::net::UnixStream::pair()?;
+        #[cfg(unix)]
+        {
+            set_cloexec(&wake_reader)?;
+            set_cloexec(&wake_writer)?;
+        }
+        Ok(Self {
+            requested: Arc::new(AtomicBool::new(false)),
+            #[cfg(unix)]
+            wake_reader: Arc::new(wake_reader),
+            #[cfg(unix)]
+            wake_writer: std::sync::Mutex::new(Some(wake_writer)),
+            #[cfg(test)]
+            reader_gate: None,
+            #[cfg(test)]
+            poll_observer: None,
+        })
+    }
+
+    #[cfg(test)]
+    fn with_test_hooks(
+        reader_gate: Option<Arc<TestPipeReaderGate>>,
+        poll_observer: Option<Arc<TestPipePollObserver>>,
+    ) -> io::Result<Self> {
+        let mut finalizer = Self::new()?;
+        finalizer.reader_gate = reader_gate;
+        finalizer.poll_observer = poll_observer;
+        Ok(finalizer)
+    }
+
+    fn signal(&self) -> PipeFinishSignal {
+        PipeFinishSignal {
+            requested: Arc::clone(&self.requested),
+            #[cfg(unix)]
+            wake_reader: Arc::clone(&self.wake_reader),
+            #[cfg(test)]
+            reader_gate: self.reader_gate.clone(),
+            #[cfg(test)]
+            poll_observer: self.poll_observer.clone(),
+        }
+    }
+
+    fn release_reader_gate(&self) {
+        #[cfg(test)]
+        if let Some(gate) = &self.reader_gate {
+            gate.release();
+        }
+    }
+
+    #[cfg(unix)]
+    fn finish(&self, child: &mut std::process::Child) {
+        let process_group = i32::try_from(child.id()).unwrap_or(-1);
+        stop_child_tree(child);
+        self.release_reader_gate();
+        while process_group > 0 && process_group_is_alive(process_group) {
+            std::thread::yield_now();
+        }
+        self.request_finish();
+    }
+
+    fn request_finish(&self) {
+        self.requested.store(true, Ordering::Release);
+        #[cfg(unix)]
+        self.wake_writer.lock().unwrap().take();
+    }
+}
+
+impl Drop for PipeFinalizer {
+    fn drop(&mut self) {
+        #[cfg(test)]
+        if let Some(gate) = &self.reader_gate {
+            gate.release();
+        }
+        self.request_finish();
+    }
+}
+
+impl PipeFinishSignal {
+    fn wait_until_reader_may_start(&self) {
+        #[cfg(test)]
+        if let Some(gate) = &self.reader_gate {
+            gate.wait();
+        }
+    }
+
+    fn should_finish(&self) -> bool {
+        if !self.requested.load(Ordering::Acquire) {
+            return false;
+        }
+        true
+    }
+
+    fn note_poll(&self) {
+        #[cfg(test)]
+        if let Some(observer) = &self.poll_observer {
+            observer.note();
+        }
+    }
+}
+
+#[cfg(unix)]
+fn set_nonblocking(reader: &impl std::os::fd::AsRawFd) -> io::Result<()> {
+    let descriptor = reader.as_raw_fd();
+    let flags = unsafe { libc::fcntl(descriptor, libc::F_GETFL) };
+    if flags == -1 {
+        return Err(io::Error::last_os_error());
+    }
+    if unsafe { libc::fcntl(descriptor, libc::F_SETFL, flags | libc::O_NONBLOCK) } == -1 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn set_cloexec(descriptor: &impl std::os::fd::AsRawFd) -> io::Result<()> {
+    let descriptor = descriptor.as_raw_fd();
+    let flags = unsafe { libc::fcntl(descriptor, libc::F_GETFD) };
+    if flags == -1 {
+        return Err(io::Error::last_os_error());
+    }
+    if unsafe { libc::fcntl(descriptor, libc::F_SETFD, flags | libc::FD_CLOEXEC) } == -1 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn process_group_is_alive(process_group: i32) -> bool {
+    if unsafe { libc::kill(-process_group, 0) } == 0 {
+        return true;
+    }
+    io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+}
+
+fn wait_for_pipe(
+    pipe: &impl NonblockingPipe,
+    events: i16,
+    signal: &PipeFinishSignal,
+) -> io::Result<bool> {
+    #[cfg(unix)]
+    {
+        use std::os::fd::AsRawFd;
+
+        let mut descriptors = [
+            libc::pollfd {
+                fd: pipe.raw_fd(),
+                events,
+                revents: 0,
+            },
+            libc::pollfd {
+                fd: signal.wake_reader.as_raw_fd(),
+                events: libc::POLLIN,
+                revents: 0,
+            },
+        ];
+        signal.note_poll();
+        loop {
+            let ready = unsafe { libc::poll(descriptors.as_mut_ptr(), descriptors.len() as _, -1) };
+            if ready >= 0 {
+                if descriptors[0].revents != 0 {
+                    return Ok(true);
+                }
+                return Ok(!signal.should_finish());
+            }
+            let error = io::Error::last_os_error();
+            if error.kind() != io::ErrorKind::Interrupted {
+                return Err(error);
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (pipe, events);
+        signal.note_poll();
+        Ok(!signal.should_finish())
+    }
+}
+
+fn read_bounded_stderr(
+    mut reader: impl Read + NonblockingPipe,
+    finish: &PipeFinishSignal,
+) -> (Vec<u8>, bool) {
     let mut stderr = Vec::new();
     let mut truncated = false;
     let mut buffer = [0_u8; 8192];
+    finish.wait_until_reader_may_start();
+    if reader.make_nonblocking().is_err() {
+        return (stderr, false);
+    }
+    let mut settled = false;
+    let mut finalizing = false;
     loop {
         let read = match reader.read(&mut buffer) {
-            Ok(0) | Err(_) => break,
+            Ok(0) => {
+                settled = true;
+                break;
+            }
             Ok(read) => read,
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock && finalizing => {
+                settled = true;
+                break;
+            }
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                match wait_for_pipe(&reader, PIPE_READ_READY, finish) {
+                    Ok(true) => continue,
+                    Ok(false) => {
+                        finalizing = true;
+                        continue;
+                    }
+                    Err(_) => break,
+                }
+            }
+            Err(_) => break,
         };
         let retained = MAX_STDERR_BYTES.saturating_sub(stderr.len());
         stderr.extend_from_slice(&buffer[..read.min(retained)]);
@@ -90,7 +459,7 @@ fn read_bounded_stderr(mut reader: impl Read) -> Vec<u8> {
     if truncated {
         stderr.extend_from_slice(STDERR_TRUNCATED);
     }
-    stderr
+    (stderr, settled)
 }
 
 /// Drains a child stream while retaining only enough bytes to classify it.
@@ -100,18 +469,38 @@ fn read_bounded_stderr(mut reader: impl Read) -> Vec<u8> {
 /// change in command behavior. The parent observes `exceeded` and kills the
 /// whole child process group instead.
 fn read_bounded_output(
-    mut reader: impl Read,
+    mut reader: impl Read + NonblockingPipe,
     limit: usize,
     exceeded: &AtomicBool,
-) -> (Vec<u8>, io::Result<()>) {
+    finish: &PipeFinishSignal,
+) -> (Vec<u8>, io::Result<()>, bool) {
     let mut output = Vec::new();
     let retained_limit = limit.saturating_add(1);
     let mut buffer = [0_u8; 8192];
+    finish.wait_until_reader_may_start();
+    if let Err(error) = reader.make_nonblocking() {
+        return (output, Err(error), false);
+    }
+    let mut finalizing = false;
     loop {
         let read = match reader.read(&mut buffer) {
-            Ok(0) => return (output, Ok(())),
+            Ok(0) => return (output, Ok(()), true),
             Ok(read) => read,
-            Err(error) => return (output, Err(error)),
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock && finalizing => {
+                return (output, Ok(()), true);
+            }
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                match wait_for_pipe(&reader, PIPE_READ_READY, finish) {
+                    Ok(true) => continue,
+                    Ok(false) => {
+                        finalizing = true;
+                        continue;
+                    }
+                    Err(error) => return (output, Err(error), false),
+                }
+            }
+            Err(error) => return (output, Err(error), false),
         };
         let retained = retained_limit.saturating_sub(output.len());
         output.extend_from_slice(&buffer[..read.min(retained)]);
@@ -119,6 +508,34 @@ fn read_bounded_output(
             exceeded.store(true, Ordering::Release);
         }
     }
+}
+
+fn write_input(
+    mut writer: impl Write + NonblockingPipe,
+    input: &[u8],
+    finish: &PipeFinishSignal,
+) -> io::Result<()> {
+    finish.wait_until_reader_may_start();
+    writer.make_nonblocking()?;
+    let mut written = 0;
+    let mut finalizing = false;
+    while written < input.len() {
+        match writer.write(&input[written..]) {
+            Ok(0) => return Err(io::ErrorKind::WriteZero.into()),
+            Ok(bytes) => written += bytes,
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock && finalizing => {
+                return Err(error);
+            }
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                if !wait_for_pipe(&writer, PIPE_WRITE_READY, finish)? {
+                    finalizing = true;
+                }
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(())
 }
 
 fn failure_output(stdout: &[u8], stderr: &[u8]) -> String {
@@ -201,6 +618,10 @@ pub struct GitCliProvider {
     max_output_bytes: usize,
     cancellation: Option<Arc<AtomicBool>>,
     local_read_timeout: std::time::Duration,
+    #[cfg(test)]
+    pipe_reader_gate: Option<Arc<TestPipeReaderGate>>,
+    #[cfg(test)]
+    pipe_poll_observer: Option<Arc<TestPipePollObserver>>,
 }
 
 impl GitCliProvider {
@@ -210,6 +631,10 @@ impl GitCliProvider {
             max_output_bytes: DEFAULT_MAX_OUTPUT_BYTES,
             cancellation: None,
             local_read_timeout: LOCAL_READ_TIMEOUT,
+            #[cfg(test)]
+            pipe_reader_gate: None,
+            #[cfg(test)]
+            pipe_poll_observer: None,
         }
     }
 
@@ -292,6 +717,33 @@ impl GitCliProvider {
         self
     }
 
+    #[cfg(test)]
+    fn with_pipe_reader_gate(mut self, gate: Arc<TestPipeReaderGate>) -> Self {
+        self.pipe_reader_gate = Some(gate);
+        self
+    }
+
+    #[cfg(test)]
+    fn with_pipe_poll_observer(mut self, observer: Arc<TestPipePollObserver>) -> Self {
+        self.pipe_poll_observer = Some(observer);
+        self
+    }
+
+    fn pipe_finalizer(&self, directory: &Path) -> Result<PipeFinalizer> {
+        #[cfg(test)]
+        let finalizer = PipeFinalizer::with_test_hooks(
+            self.pipe_reader_gate.clone(),
+            self.pipe_poll_observer.clone(),
+        );
+        #[cfg(not(test))]
+        let finalizer = PipeFinalizer::new();
+        finalizer.map_err(|error| GitError::Io {
+            action: "prepare Git output readers in",
+            path: directory.to_path_buf(),
+            detail: error.to_string(),
+        })
+    }
+
     /// Runs Git in `directory` and returns its standard output.
     pub fn run<S: AsRef<OsStr>>(&self, directory: &Path, arguments: &[S]) -> Result<Vec<u8>> {
         self.run_bounded(directory, arguments, self.max_output_bytes)
@@ -321,18 +773,23 @@ impl GitCliProvider {
         limit: usize,
     ) -> Result<Vec<u8>> {
         let described = self.describe(arguments);
+        let pipe_finalizer = self.pipe_finalizer(directory)?;
         let mut child = self.spawn(directory, arguments, false, false)?;
 
         // Both pipes are drained away from the worker so it can observe
         // cancellation even when Git or one of its hooks is still running.
         let stderr_pipe = child.stderr.take().expect("stderr was piped");
-        let stderr_reader = std::thread::spawn(move || read_bounded_stderr(stderr_pipe));
+        let stderr_finish = pipe_finalizer.signal();
+        let stderr_reader =
+            std::thread::spawn(move || read_bounded_stderr(stderr_pipe, &stderr_finish));
 
         let stdout_pipe = child.stdout.take().expect("stdout was piped");
         let output_exceeded = Arc::new(AtomicBool::new(false));
         let reader_exceeded = Arc::clone(&output_exceeded);
-        let stdout_reader =
-            std::thread::spawn(move || read_bounded_output(stdout_pipe, limit, &reader_exceeded));
+        let stdout_finish = pipe_finalizer.signal();
+        let stdout_reader = std::thread::spawn(move || {
+            read_bounded_output(stdout_pipe, limit, &reader_exceeded, &stdout_finish)
+        });
 
         let status = loop {
             match child.try_wait() {
@@ -360,23 +817,30 @@ impl GitCliProvider {
             }
             std::thread::sleep(NETWORK_POLL_INTERVAL);
         };
+        pipe_finalizer.release_reader_gate();
+        #[cfg(unix)]
+        pipe_finalizer.finish(&mut child);
+        #[cfg(not(unix))]
         if !finish_readers_or_stop(&mut child, || {
             stdout_reader.is_finished() && stderr_reader.is_finished()
         }) {
             return Err(unclosed_output_error(directory));
         }
-        let (stdout, read) = stdout_reader.join().map_err(|_| GitError::Io {
+        let (stdout, read, stdout_settled) = stdout_reader.join().map_err(|_| GitError::Io {
             action: "read the output of Git in",
             path: directory.to_path_buf(),
             detail: "Git output reader stopped unexpectedly".to_owned(),
         })?;
-        let stderr = stderr_reader.join().unwrap_or_default();
+        let (stderr, stderr_settled) = stderr_reader.join().unwrap_or_default();
 
         read.map_err(|error| GitError::Io {
             action: "read the output of Git in",
             path: directory.to_path_buf(),
             detail: error.to_string(),
         })?;
+        if !stdout_settled || !stderr_settled {
+            return Err(unclosed_output_error(directory));
+        }
         if stdout.len() > limit || output_exceeded.load(Ordering::Acquire) {
             stop_child_tree(&mut child);
             return Err(GitError::TooLarge {
@@ -411,14 +875,19 @@ impl GitCliProvider {
         timeout: std::time::Duration,
     ) -> Result<Vec<u8>> {
         let described = self.describe(arguments);
+        let pipe_finalizer = self.pipe_finalizer(directory)?;
         let mut child = self.spawn(directory, arguments, false, false)?;
         let stderr_pipe = child.stderr.take().expect("stderr was piped");
-        let stderr_reader = std::thread::spawn(move || read_bounded_stderr(stderr_pipe));
+        let stderr_finish = pipe_finalizer.signal();
+        let stderr_reader =
+            std::thread::spawn(move || read_bounded_stderr(stderr_pipe, &stderr_finish));
         let stdout_pipe = child.stdout.take().expect("stdout was piped");
         let output_exceeded = Arc::new(AtomicBool::new(false));
         let reader_exceeded = Arc::clone(&output_exceeded);
-        let stdout_reader =
-            std::thread::spawn(move || read_bounded_output(stdout_pipe, limit, &reader_exceeded));
+        let stdout_finish = pipe_finalizer.signal();
+        let stdout_reader = std::thread::spawn(move || {
+            read_bounded_output(stdout_pipe, limit, &reader_exceeded, &stdout_finish)
+        });
         let started = std::time::Instant::now();
         let status = loop {
             match child.try_wait() {
@@ -453,22 +922,29 @@ impl GitCliProvider {
             }
             std::thread::sleep(NETWORK_POLL_INTERVAL);
         };
+        pipe_finalizer.release_reader_gate();
+        #[cfg(unix)]
+        pipe_finalizer.finish(&mut child);
+        #[cfg(not(unix))]
         if !finish_readers_or_stop(&mut child, || {
             stdout_reader.is_finished() && stderr_reader.is_finished()
         }) {
             return Err(unclosed_output_error(directory));
         }
-        let (stdout, read) = stdout_reader.join().map_err(|_| GitError::Io {
+        let (stdout, read, stdout_settled) = stdout_reader.join().map_err(|_| GitError::Io {
             action: "read the output of Git in",
             path: directory.to_path_buf(),
             detail: "Git output reader stopped unexpectedly".to_owned(),
         })?;
-        let stderr = stderr_reader.join().unwrap_or_default();
+        let (stderr, stderr_settled) = stderr_reader.join().unwrap_or_default();
         read.map_err(|error| GitError::Io {
             action: "read the output of Git in",
             path: directory.to_path_buf(),
             detail: error.to_string(),
         })?;
+        if !stdout_settled || !stderr_settled {
+            return Err(unclosed_output_error(directory));
+        }
         if stdout.len() > limit || output_exceeded.load(Ordering::Acquire) {
             stop_child_tree(&mut child);
             return Err(GitError::TooLarge {
@@ -494,17 +970,23 @@ impl GitCliProvider {
         limit: usize,
     ) -> Result<Vec<u8>> {
         let described = self.describe(arguments);
+        let pipe_finalizer = self.pipe_finalizer(directory)?;
         let mut child = self.spawn(directory, arguments, false, true)?;
-        let mut stdin = child.stdin.take().expect("stdin was piped");
+        let stdin = child.stdin.take().expect("stdin was piped");
         let input = input.to_vec();
-        let stdin_writer = std::thread::spawn(move || stdin.write_all(&input));
+        let stdin_finish = pipe_finalizer.signal();
+        let stdin_writer = std::thread::spawn(move || write_input(stdin, &input, &stdin_finish));
         let stderr_pipe = child.stderr.take().expect("stderr was piped");
-        let stderr_reader = std::thread::spawn(move || read_bounded_stderr(stderr_pipe));
+        let stderr_finish = pipe_finalizer.signal();
+        let stderr_reader =
+            std::thread::spawn(move || read_bounded_stderr(stderr_pipe, &stderr_finish));
         let stdout_pipe = child.stdout.take().expect("stdout was piped");
         let output_exceeded = Arc::new(AtomicBool::new(false));
         let reader_exceeded = Arc::clone(&output_exceeded);
-        let stdout_reader =
-            std::thread::spawn(move || read_bounded_output(stdout_pipe, limit, &reader_exceeded));
+        let stdout_finish = pipe_finalizer.signal();
+        let stdout_reader = std::thread::spawn(move || {
+            read_bounded_output(stdout_pipe, limit, &reader_exceeded, &stdout_finish)
+        });
         let started = std::time::Instant::now();
         let status = loop {
             match child.try_wait() {
@@ -539,23 +1021,39 @@ impl GitCliProvider {
             }
             std::thread::sleep(NETWORK_POLL_INTERVAL);
         };
+        pipe_finalizer.release_reader_gate();
+        #[cfg(unix)]
+        pipe_finalizer.finish(&mut child);
+        #[cfg(not(unix))]
         if !finish_readers_or_stop(&mut child, || {
             stdin_writer.is_finished() && stdout_reader.is_finished() && stderr_reader.is_finished()
         }) {
             return Err(unclosed_output_error(directory));
         }
-        let _ = stdin_writer.join();
-        let (stdout, read) = stdout_reader.join().map_err(|_| GitError::Io {
+        let written = stdin_writer.join().map_err(|_| GitError::Io {
+            action: "write the input of Git in",
+            path: directory.to_path_buf(),
+            detail: "Git input writer stopped unexpectedly".to_owned(),
+        })?;
+        written.map_err(|error| GitError::Io {
+            action: "write the input of Git in",
+            path: directory.to_path_buf(),
+            detail: error.to_string(),
+        })?;
+        let (stdout, read, stdout_settled) = stdout_reader.join().map_err(|_| GitError::Io {
             action: "read the output of Git in",
             path: directory.to_path_buf(),
             detail: "Git output reader stopped unexpectedly".to_owned(),
         })?;
-        let stderr = stderr_reader.join().unwrap_or_default();
+        let (stderr, stderr_settled) = stderr_reader.join().unwrap_or_default();
         read.map_err(|error| GitError::Io {
             action: "read the output of Git in",
             path: directory.to_path_buf(),
             detail: error.to_string(),
         })?;
+        if !stdout_settled || !stderr_settled {
+            return Err(unclosed_output_error(directory));
+        }
         if stdout.len() > limit || output_exceeded.load(Ordering::Acquire) {
             stop_child_tree(&mut child);
             return Err(GitError::TooLarge {
@@ -700,16 +1198,21 @@ impl GitCliProvider {
         timeout: std::time::Duration,
     ) -> Result<String> {
         let described = self.describe(arguments);
+        let pipe_finalizer = self.pipe_finalizer(directory)?;
         let mut child = self.spawn(directory, arguments, true, false)?;
         let limit = self.max_output_bytes;
 
         let stdout_pipe = child.stdout.take().expect("stdout was piped");
         let output_exceeded = Arc::new(AtomicBool::new(false));
         let reader_exceeded = Arc::clone(&output_exceeded);
-        let stdout_reader =
-            std::thread::spawn(move || read_bounded_output(stdout_pipe, limit, &reader_exceeded).0);
+        let stdout_finish = pipe_finalizer.signal();
+        let stdout_reader = std::thread::spawn(move || {
+            read_bounded_output(stdout_pipe, limit, &reader_exceeded, &stdout_finish)
+        });
         let stderr_pipe = child.stderr.take().expect("stderr was piped");
-        let stderr_reader = std::thread::spawn(move || read_bounded_stderr(stderr_pipe));
+        let stderr_finish = pipe_finalizer.signal();
+        let stderr_reader =
+            std::thread::spawn(move || read_bounded_stderr(stderr_pipe, &stderr_finish));
 
         let deadline = std::time::Instant::now() + timeout;
         let status = loop {
@@ -751,13 +1254,29 @@ impl GitCliProvider {
             std::thread::sleep(NETWORK_POLL_INTERVAL);
         };
 
+        pipe_finalizer.release_reader_gate();
+        #[cfg(unix)]
+        pipe_finalizer.finish(&mut child);
+        #[cfg(not(unix))]
         if !finish_readers_or_stop(&mut child, || {
             stdout_reader.is_finished() && stderr_reader.is_finished()
         }) {
             return Err(unclosed_output_error(directory));
         }
-        let stdout = stdout_reader.join().unwrap_or_default();
-        let stderr = stderr_reader.join().unwrap_or_default();
+        let (stdout, read, stdout_settled) = stdout_reader.join().map_err(|_| GitError::Io {
+            action: "read the output of Git in",
+            path: directory.to_path_buf(),
+            detail: "Git output reader stopped unexpectedly".to_owned(),
+        })?;
+        let (stderr, stderr_settled) = stderr_reader.join().unwrap_or_default();
+        read.map_err(|error| GitError::Io {
+            action: "read the output of Git in",
+            path: directory.to_path_buf(),
+            detail: error.to_string(),
+        })?;
+        if !stdout_settled || !stderr_settled {
+            return Err(unclosed_output_error(directory));
+        }
         if stdout.len() > limit || output_exceeded.load(Ordering::Acquire) {
             stop_child_tree(&mut child);
             return Err(GitError::TooLarge {
@@ -1100,6 +1619,7 @@ fn stop_child_tree(child: &mut std::process::Child) {
 /// command has completed. A descendant that escaped the process group can
 /// keep its detached reader thread until it closes the pipe, but never the
 /// caller waiting on an unbounded join.
+#[cfg(not(unix))]
 fn finish_readers_or_stop(
     child: &mut std::process::Child,
     mut readers_finished: impl FnMut() -> bool,
@@ -1127,7 +1647,169 @@ fn unclosed_output_error(directory: &Path) -> GitError {
     }
 }
 
+fn has_git_marker(start: &Path) -> Result<bool> {
+    let start = start.canonicalize().map_err(|error| GitError::Io {
+        action: "inspect repository ancestry from",
+        path: start.to_path_buf(),
+        detail: error.to_string(),
+    })?;
+    let temporary = std::env::temp_dir().canonicalize().ok();
+    has_git_marker_in(start.ancestors(), |directory| {
+        directory != start
+            && (temporary.as_deref() == Some(directory) || is_shared_scratch_directory(directory))
+    })
+}
+
+fn has_git_marker_in<'a>(
+    directories: impl IntoIterator<Item = &'a Path>,
+    mut stop_before: impl FnMut(&Path) -> bool,
+) -> Result<bool> {
+    for directory in directories {
+        if stop_before(directory) {
+            break;
+        }
+        let marker = directory.join(".git");
+        match std::fs::symlink_metadata(&marker) {
+            Ok(metadata) if metadata.file_type().is_dir() => {
+                let head = marker.join("HEAD");
+                let metadata = std::fs::symlink_metadata(&head).map_err(|error| GitError::Io {
+                    action: "inspect repository marker at",
+                    path: marker.clone(),
+                    detail: format!("HEAD is unavailable: {error}"),
+                })?;
+                if !metadata.file_type().is_file() {
+                    return Err(GitError::Io {
+                        action: "inspect repository marker at",
+                        path: marker,
+                        detail: "HEAD is not a regular file".to_owned(),
+                    });
+                }
+                return Ok(true);
+            }
+            Ok(metadata) if metadata.file_type().is_file() => {
+                let file = std::fs::File::open(&marker).map_err(|error| GitError::Io {
+                    action: "inspect repository marker at",
+                    path: marker.clone(),
+                    detail: error.to_string(),
+                })?;
+                let mut content = Vec::new();
+                file.take(MAX_GIT_MARKER_BYTES as u64 + 1)
+                    .read_to_end(&mut content)
+                    .map_err(|error| GitError::Io {
+                        action: "inspect repository marker at",
+                        path: marker.clone(),
+                        detail: error.to_string(),
+                    })?;
+                if content.len() > MAX_GIT_MARKER_BYTES {
+                    return Err(GitError::Io {
+                        action: "inspect repository marker at",
+                        path: marker,
+                        detail: format!("the gitdir file exceeds {MAX_GIT_MARKER_BYTES} bytes"),
+                    });
+                }
+                let first_line = content
+                    .split(|byte| *byte == b'\n')
+                    .next()
+                    .unwrap_or_default();
+                let target = first_line
+                    .strip_prefix(b"gitdir: ")
+                    .unwrap_or_default()
+                    .iter()
+                    .copied()
+                    .filter(|byte| !byte.is_ascii_whitespace())
+                    .collect::<Vec<_>>();
+                if target.is_empty() {
+                    return Err(GitError::Io {
+                        action: "inspect repository marker at",
+                        path: marker,
+                        detail: "the gitdir file has no target".to_owned(),
+                    });
+                }
+                return Ok(true);
+            }
+            Ok(_) => {
+                return Err(GitError::Io {
+                    action: "inspect repository marker at",
+                    path: marker,
+                    detail: "the marker is not a file or directory".to_owned(),
+                });
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(GitError::Io {
+                    action: "inspect repository marker at",
+                    path: marker,
+                    detail: error.to_string(),
+                });
+            }
+        }
+    }
+    Ok(false)
+}
+
+fn is_shared_scratch_directory(path: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        std::fs::metadata(path).is_ok_and(|metadata| {
+            metadata.is_dir() && metadata.permissions().mode() & 0o1002 == 0o1002
+        })
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        false
+    }
+}
+
 impl GitCliProvider {
+    fn discover_with_marker_probe(
+        &self,
+        start: &Path,
+        marker_probe: impl FnOnce(&Path) -> Result<bool>,
+    ) -> Result<Option<Repository>> {
+        if !start.exists() {
+            return Err(GitError::Io {
+                action: "look for a repository at",
+                path: start.to_path_buf(),
+                detail: "the path does not exist".to_owned(),
+            });
+        }
+        // A missing marker is the ordinary, stable absence case. Once a
+        // repository marker exists, Git is the authority for its layout and
+        // every failure is material: converting a transient reader or
+        // permissions failure into `None` would cache a false absence for the
+        // lifetime of this workspace.
+        if !marker_probe(start)? {
+            return Ok(None);
+        }
+        let toplevel = self.run_text(start, &["rev-parse", "--show-toplevel"])?;
+        if toplevel.is_empty() {
+            return Ok(None);
+        }
+        let workdir = PathBuf::from(toplevel);
+        let git_dir = self
+            .run_text(&workdir, &["rev-parse", "--git-dir"])
+            .map(PathBuf::from)?;
+        let git_dir = if git_dir.is_absolute() {
+            git_dir
+        } else {
+            workdir.join(git_dir)
+        };
+        let git_dir = git_dir.canonicalize().unwrap_or(git_dir);
+        let common = self
+            .run_text(&workdir, &["rev-parse", "--git-common-dir"])
+            .map(PathBuf::from)?;
+        let common = if common.is_absolute() {
+            common
+        } else {
+            workdir.join(common)
+        };
+        let common = common.canonicalize().unwrap_or(common);
+        Ok(Some(Repository::with_git_dirs(workdir, git_dir, common)))
+    }
+
     /// Reviews a branch deletion, optionally tolerating the one checkout a
     /// cascade is removing on the way to it.
     ///
@@ -1205,47 +1887,7 @@ impl GitCliProvider {
 
 impl GitProvider for GitCliProvider {
     fn discover(&self, start: &Path) -> Result<Option<Repository>> {
-        if !start.exists() {
-            return Err(GitError::Io {
-                action: "look for a repository at",
-                path: start.to_path_buf(),
-                detail: "the path does not exist".to_owned(),
-            });
-        }
-        // Every way this question can fail — no repository above the
-        // directory, a repository the person cannot read, a bare one with no
-        // working tree — has the same answer for the editor: there is no
-        // working tree here to report changes against. Only an absent Git is
-        // worth propagating, because it means the whole surface is off rather
-        // than empty.
-        let toplevel = match self.run_text(start, &["rev-parse", "--show-toplevel"]) {
-            Ok(toplevel) => toplevel,
-            Err(error) if error.is_unavailable() => return Err(error),
-            Err(_) => return Ok(None),
-        };
-        if toplevel.is_empty() {
-            return Ok(None);
-        }
-        let workdir = PathBuf::from(toplevel);
-        let git_dir = self
-            .run_text(&workdir, &["rev-parse", "--git-dir"])
-            .map(PathBuf::from)?;
-        let git_dir = if git_dir.is_absolute() {
-            git_dir
-        } else {
-            workdir.join(git_dir)
-        };
-        let git_dir = git_dir.canonicalize().unwrap_or(git_dir);
-        let common = self
-            .run_text(&workdir, &["rev-parse", "--git-common-dir"])
-            .map(PathBuf::from)?;
-        let common = if common.is_absolute() {
-            common
-        } else {
-            workdir.join(common)
-        };
-        let common = common.canonicalize().unwrap_or(common);
-        Ok(Some(Repository::with_git_dirs(workdir, git_dir, common)))
+        self.discover_with_marker_probe(start, has_git_marker)
     }
 
     fn status(&self, repository: &Repository) -> Result<RepositoryStatus> {
@@ -2846,13 +3488,18 @@ mod tests {
     #[test]
     fn long_failure_logs_are_large_and_explicitly_bounded() {
         let short = vec![b'x'; 128 * 1024];
-        assert_eq!(read_bounded_stderr(short.as_slice()), short);
+        let finish = PipeFinalizer::new().unwrap();
+        assert_eq!(
+            read_bounded_stderr(short.as_slice(), &finish.signal()),
+            (short, true)
+        );
 
         let long = vec![b'x'; MAX_STDERR_BYTES + 100];
         let mut source = std::io::Cursor::new(long.as_slice());
-        let retained = read_bounded_stderr(&mut source);
+        let (retained, eof) = read_bounded_stderr(&mut source, &finish.signal());
         assert!(retained.starts_with(&long[..MAX_STDERR_BYTES]));
         assert!(retained.ends_with(STDERR_TRUNCATED));
+        assert!(eof);
         assert_eq!(source.position(), long.len() as u64, "the pipe was drained");
     }
 
@@ -2860,9 +3507,12 @@ mod tests {
     fn oversized_stdout_is_signalled_after_the_retained_bound() {
         let source = vec![b'x'; 4096];
         let exceeded = AtomicBool::new(false);
-        let (retained, read) = read_bounded_output(source.as_slice(), 128, &exceeded);
+        let finish = PipeFinalizer::new().unwrap();
+        let (retained, read, eof) =
+            read_bounded_output(source.as_slice(), 128, &exceeded, &finish.signal());
 
         read.unwrap();
+        assert!(eof);
         assert_eq!(retained.len(), 129);
         assert!(exceeded.load(Ordering::Acquire));
     }
@@ -3335,10 +3985,10 @@ mod tests {
 
     /// Even a descendant that creates a new session and therefore cannot be
     /// reached through Git's process group must not turn a completed command
-    /// into an unbounded reader join.
+    /// into an unbounded reader join or change Git's completed result.
     #[cfg(unix)]
     #[test]
-    fn a_session_escaping_helper_fails_without_blocking_the_worker() {
+    fn a_session_escaping_helper_cannot_hold_the_completed_worker() {
         use std::os::unix::fs::PermissionsExt;
 
         if Command::new("setsid").arg("true").status().is_err() {
@@ -3358,15 +4008,274 @@ mod tests {
         std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
         let started = std::time::Instant::now();
 
-        let error = GitCliProvider::new(&program)
+        GitCliProvider::new(&program)
             .run(&root, &["status"])
-            .unwrap_err();
+            .unwrap();
 
-        assert!(matches!(error, GitError::Io { .. }), "{error:?}");
         assert!(
             started.elapsed() < std::time::Duration::from_secs(1),
             "an escaped helper kept the completed command's pipes open"
         );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// A fast child may exit before either pipe worker is scheduled. Output
+    /// completion is EOF, not whether those workers happened to run within a
+    /// grace period after the process status became available.
+    #[cfg(unix)]
+    #[test]
+    fn fast_output_survives_readers_held_until_after_child_exit() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "runyte-git-gated-readers-{}-{nonce}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let program = root.join("git-with-fast-output");
+        std::fs::write(
+            &program,
+            "#!/bin/sh\nprintf 'complete\\n'\nprintf 'diagnostic\\n' >&2\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let gate = Arc::new(TestPipeReaderGate::default());
+        let provider = GitCliProvider::new(&program).with_pipe_reader_gate(gate);
+
+        assert_eq!(provider.run(&root, &["status"]).unwrap(), b"complete\n");
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn finalizer_wake_is_followed_by_a_fresh_eof_read() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "runyte-git-parked-readers-{}-{nonce}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let release = root.join("release");
+        let program = root.join("git-with-parked-readers");
+        std::fs::write(
+            &program,
+            format!(
+                "#!/bin/sh\nwhile [ ! -e '{}' ]; do :; done\nprintf 'complete\\n'\n",
+                release.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let observer = Arc::new(TestPipePollObserver::default());
+        let provider = GitCliProvider::new(&program).with_pipe_poll_observer(Arc::clone(&observer));
+        let worker_root = root.clone();
+        let worker = std::thread::spawn(move || provider.run(&worker_root, &["status"]));
+
+        let parked = observer.wait_for(2, std::time::Duration::from_secs(2));
+        std::fs::write(&release, "go\n").unwrap();
+        let output = worker.join().unwrap().unwrap();
+
+        assert!(parked, "both pipe readers did not reach kernel readiness");
+        assert_eq!(output, b"complete\n");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn failed_input_write_cannot_be_reported_as_git_success() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "runyte-git-gated-input-{}-{nonce}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let program = root.join("git-ignoring-input");
+        std::fs::write(&program, "#!/bin/sh\nexit 0\n").unwrap();
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let gate = Arc::new(TestPipeReaderGate::default());
+        let provider = GitCliProvider::new(&program).with_pipe_reader_gate(gate);
+
+        let error = provider
+            .run_with_input_bounded(&root, &["apply"], b"required input", 1024)
+            .unwrap_err();
+
+        assert!(matches!(error, GitError::Io { .. }), "{error:?}");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn discovery_without_a_marker_does_not_invoke_git() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "runyte-git-marker-absence-{}-{nonce}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let invoked = root.join("invoked");
+        let program = root.join("failing-git");
+        std::fs::write(
+            &program,
+            format!(
+                "#!/bin/sh\nprintf invoked > '{}'\nexit 1\n",
+                invoked.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        assert!(!has_git_marker_in(std::iter::once(root.as_path()), |_| false).unwrap());
+        assert!(
+            GitCliProvider::new(&program)
+                .discover_with_marker_probe(&root, |_| Ok(false))
+                .unwrap()
+                .is_none()
+        );
+        assert!(!invoked.exists(), "Git ran despite there being no marker");
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn repository_marker_probe_distinguishes_absent_present_and_invalid() {
+        use std::os::unix::fs::symlink;
+
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "runyte-git-marker-probe-{}-{nonce}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let probe = || has_git_marker_in(std::iter::once(root.as_path()), |_| false);
+
+        assert!(!probe().unwrap());
+        std::fs::create_dir(root.join(".git")).unwrap();
+        assert!(matches!(probe(), Err(GitError::Io { .. })));
+        std::fs::write(root.join(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
+        assert!(probe().unwrap());
+
+        std::fs::remove_dir_all(root.join(".git")).unwrap();
+        std::fs::write(root.join(".git"), "not a gitdir file\n").unwrap();
+        assert!(matches!(probe(), Err(GitError::Io { .. })));
+        std::fs::write(root.join(".git"), "gitdir: ../metadata/worktrees/linked\n").unwrap();
+        assert!(probe().unwrap());
+
+        std::fs::remove_file(root.join(".git")).unwrap();
+        symlink("elsewhere", root.join(".git")).unwrap();
+        assert!(matches!(probe(), Err(GitError::Io { .. })));
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn shared_scratch_marker_is_a_ceiling_but_private_markers_remain_decisive() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "runyte-git-marker-ceiling-{}-{nonce}",
+            std::process::id()
+        ));
+        let ceiling = root.join("shared");
+        let private = ceiling.join("private");
+        let workspace = private.join("workspace");
+        std::fs::create_dir_all(ceiling.join(".git")).unwrap();
+        std::fs::create_dir_all(&workspace).unwrap();
+        let invoked = root.join("invoked");
+        let program = root.join("failing-git");
+        std::fs::write(
+            &program,
+            format!(
+                "#!/bin/sh\nprintf invoked > '{}'\nexit 1\n",
+                invoked.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let probe =
+            |start: &Path| has_git_marker_in(start.ancestors(), |directory| directory == ceiling);
+        let provider = GitCliProvider::new(&program);
+
+        assert!(
+            provider
+                .discover_with_marker_probe(&workspace, probe)
+                .unwrap()
+                .is_none()
+        );
+        assert!(!invoked.exists(), "Git ran past the shared scratch ceiling");
+
+        std::fs::create_dir(workspace.join(".git")).unwrap();
+        assert!(matches!(
+            provider.discover_with_marker_probe(&workspace, probe),
+            Err(GitError::Io { .. })
+        ));
+        std::fs::remove_dir_all(workspace.join(".git")).unwrap();
+
+        std::fs::create_dir(private.join(".git")).unwrap();
+        std::fs::write(private.join(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
+        std::fs::create_dir(workspace.join(".git")).unwrap();
+        assert!(matches!(
+            provider.discover_with_marker_probe(&workspace, probe),
+            Err(GitError::Io { path, .. }) if path == workspace.join(".git")
+        ));
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn discovery_with_a_marker_propagates_git_failure() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "runyte-git-marker-failure-{}-{nonce}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(root.join(".git")).unwrap();
+        std::fs::write(root.join(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
+        let program = root.join("failing-git");
+        std::fs::write(
+            &program,
+            "#!/bin/sh\nprintf 'broken repository' >&2\nexit 1\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let error = GitCliProvider::new(&program).discover(&root).unwrap_err();
+        assert!(matches!(error, GitError::Failed { .. }), "{error:?}");
+
         std::fs::remove_dir_all(root).unwrap();
     }
 

@@ -57,7 +57,7 @@ Regression coverage is provided by:
 - `git::cli::tests::long_failure_logs_are_large_and_explicitly_bounded`,
   `oversized_stdout_is_signalled_after_the_retained_bound`,
   `a_detached_helper_cannot_hold_completed_command_pipes_open`,
-  `a_session_escaping_helper_fails_without_blocking_the_worker`,
+  `a_session_escaping_helper_cannot_hold_the_completed_worker`,
   `inherited_git_authority_is_removed_from_every_command`,
   `local_reads_refuse_traversal_and_symlinked_parent_escapes`, and
   `a_non_executable_git_reads_as_unavailable` in `src/git/cli.rs`;
@@ -78,11 +78,50 @@ The non-UTF-8 filesystem fixtures remain active on Unix filesystems that can
 represent arbitrary filename bytes and are ignored on macOS, which rejects
 their setup with `EILSEQ`.
 
+A 2026-08-29 follow-up corrected two related assumptions exposed by lifecycle
+stress coverage on loaded macOS runners. Reader completion had still been
+decided by whether the stdout and stderr threads were scheduled within a 50 ms
+grace period after a successful child exit. Unix pipe workers now wait in the
+kernel for pipe readiness or a private finalizer wake and finish from
+observable pipe EOF or owned process-group state, so thread scheduling cannot
+turn a completed `rev-parse` into an I/O error. A descendant in Git's process
+group is stopped and drained; a process that escaped the group while retaining
+a pipe cannot delay the completed Git result or retain a reader thread: after
+the owned process group is quiescent, Runyte keeps all bytes already available
+and closes the stream at `EAGAIN`. This cutoff is necessary because an escaped
+writer and a CLOEXEC descriptor temporarily inherited by a concurrent fork
+are indistinguishable from pipe state alone. Input-writer failures are joined
+and propagated rather than discarded. `GitCliProvider::discover` also
+identifies ordinary repository absence from `.git` ancestry before starting
+Git. A directory marker requires a regular `HEAD`, and a file marker requires
+a bounded, nonempty `gitdir: ` target; malformed and unreadable markers produce
+typed I/O errors. Once a valid marker exists, all `rev-parse` errors propagate
+instead of being converted into a cached `None` result. A strict descendant of
+the canonical system temporary directory, or of another sticky world-writable
+directory, stops discovery before that shared ancestor: a `.git` entry in a
+shared scratch root cannot claim or poison every private workspace below it.
+Markers below that ceiling remain decisive, including malformed markers.
+
+Follow-up regression coverage is provided by
+`git::cli::tests::fast_output_survives_readers_held_until_after_child_exit`,
+`finalizer_wake_is_followed_by_a_fresh_eof_read`,
+`failed_input_write_cannot_be_reported_as_git_success`,
+`discovery_without_a_marker_does_not_invoke_git`,
+`discovery_with_a_marker_propagates_git_failure`,
+`repository_marker_probe_distinguishes_absent_present_and_invalid`, and
+`shared_scratch_marker_is_a_ceiling_but_private_markers_remain_decisive` in
+`src/git/cli.rs`, together with
+`linked_worktrees_share_a_common_repository_identity` in `tests/git_provider.rs`
+and the semantic Git-discovery barrier in
+`attaching_with_logging_flags_reports_the_retained_configuration` in
+`tests/diagnostic_log.rs`.
+
 Known limitation: a descendant that starts a new session cannot be killed
-portably through Git's original process-group ID. Runyte now bounds its wait
-and reports the failure, but a detached reader thread remains until that
-descendant closes the inherited pipe. External processes also do not
-participate in Runyte's repository lock, leaving an irreducible interval
+portably through Git's original process-group ID. On Unix, it cannot extend
+the worker after that original group is quiescent, but output it writes later
+is outside the completed command's retained result. Other platforms retain the
+bounded reader-grace behavior. External processes also do not participate in
+Runyte's repository lock, leaving an irreducible interval
 between the last partial-stage precondition check and `git apply`; Git still
 checks patch applicability. Canonical containment followed by a pathname open
 retains the usual symlink-swap race; closing it portably requires
