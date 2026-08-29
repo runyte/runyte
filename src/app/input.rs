@@ -203,6 +203,8 @@ impl App {
         };
         let git_project = if !self.has_git() {
             CommandAvailability::Unavailable("no `git` executable was found".to_owned())
+        } else if let Some(error) = self.git_state.discovery_error() {
+            CommandAvailability::Unavailable(format!("Git repository discovery failed: {error}"))
         } else if self.git.repository().is_some() {
             CommandAvailability::Available
         } else if self.git_state.discovery_complete() {

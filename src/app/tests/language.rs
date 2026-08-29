@@ -178,6 +178,28 @@ fn git_project_availability_distinguishes_missing_git_and_non_repository() {
 
     app.git.attach(Some(Repository::new(&app.project_root)));
     assert!(app.command_capabilities().git_project.is_available());
+
+    let (service, operations) = GitServiceHandle::recording_for_test();
+    app.attach_git_service(service);
+    let operation = operations
+        .recv_timeout(Duration::from_secs(1))
+        .expect("Git discovery request");
+    app.apply_git_service_event(GitServiceEvent::Completed {
+        id: GitRequestId::from_raw(1),
+        operation,
+        result: Box::new(Err(crate::git::GitError::Malformed {
+            command: "git rev-parse --show-toplevel".to_owned(),
+            detail: "empty repository root".to_owned(),
+        })),
+        state: GitServiceState::Failed,
+        coalesced: false,
+    });
+    assert!(
+        app.command_capabilities()
+            .git_project
+            .reason()
+            .is_some_and(|reason| reason.starts_with("Git repository discovery failed:"))
+    );
 }
 
 fn diagnostic(row: u32, from: u32, to: u32, message: &str) -> crate::lsp::Diagnostic {

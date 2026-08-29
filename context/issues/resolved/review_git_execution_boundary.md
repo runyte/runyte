@@ -106,6 +106,18 @@ directory, stops discovery before that shared ancestor: a `.git` entry in a
 shared scratch root cannot claim or poison every private workspace below it.
 Markers below that ceiling remain decisive, including malformed markers.
 
+A later 2026-08-29 follow-up removed the remaining identity and classification
+ambiguity. Successful Unix commands are now observed with
+`waitid(WEXITED | WNOHANG | WNOWAIT)`: the exited leader remains waitable while
+Runyte stops its process group, so cleanup cannot signal a newly reused group
+number. Only then is the leader reaped and the final pipe drain released.
+Repository discovery treats empty `--show-toplevel`, `--git-dir`, and
+`--git-common-dir` results as malformed output once the marker probe succeeds;
+marker absence is the only ordinary `None` result. The application also keeps
+the discovery error distinct from completion-without-a-repository, so command
+availability and protocol frames report a failed Git discovery instead of
+mislabeling it or waiting indefinitely for a capability that cannot appear.
+
 Follow-up regression coverage is provided by
 `git::cli::tests::fast_output_survives_readers_held_until_after_child_exit`,
 `finalizer_wake_is_followed_by_a_fresh_eof_read`,
@@ -115,6 +127,10 @@ Follow-up regression coverage is provided by
 `repository_marker_probe_distinguishes_absent_present_and_invalid`, and
 `shared_scratch_marker_is_a_ceiling_but_private_markers_remain_decisive` in
 `src/git/cli.rs`, together with
+`repository_discovery_rejects_empty_required_rev_parse_output` in
+`src/git/cli.rs`,
+`git_project_availability_distinguishes_missing_git_and_non_repository` in
+`src/app/tests/language.rs`,
 `linked_worktrees_share_a_common_repository_identity` in `tests/git_provider.rs`
 and the semantic Git-discovery barrier in
 `attaching_with_logging_flags_reports_the_retained_configuration` in

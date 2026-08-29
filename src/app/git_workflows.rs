@@ -44,6 +44,10 @@ pub(super) struct GitWorkflowState {
     /// Kept separate from `GitTracker::repository`: `None` means "not a
     /// repository" only after discovery finishes.
     discovery_complete: bool,
+    /// The typed discovery failure kept distinct from an authoritative
+    /// non-repository result. Command discovery exposes this text so a failed
+    /// Git worker cannot masquerade as ordinary capability absence.
+    discovery_error: Option<String>,
     generation: RepositoryGeneration,
     head_oid: Option<String>,
     progress: HashMap<GitRequestId, GitServiceProgress>,
@@ -109,6 +113,7 @@ impl Default for GitWorkflowState {
     fn default() -> Self {
         Self {
             discovery_complete: false,
+            discovery_error: None,
             generation: RepositoryGeneration::default(),
             head_oid: None,
             progress: HashMap::new(),
@@ -175,6 +180,10 @@ pub(super) struct RequestedGitViews {
 impl GitWorkflowState {
     pub(super) fn discovery_complete(&self) -> bool {
         self.discovery_complete
+    }
+
+    pub(super) fn discovery_error(&self) -> Option<&str> {
+        self.discovery_error.as_deref()
     }
 
     pub(super) fn status_counts(&self) -> &[Option<crate::git::CountColumns>] {
@@ -265,9 +274,13 @@ impl App {
             self.git_state.discovery_complete = true;
             return;
         };
-        let repository = provider.discover(&project_root).unwrap_or_default();
+        let (repository, discovery_error) = match provider.discover(&project_root) {
+            Ok(repository) => (repository, None),
+            Err(error) => (None, Some(error.to_string())),
+        };
         tracker.attach(repository);
         let _ = tracker.refresh_status(provider);
+        self.git_state.discovery_error = discovery_error;
         self.git_state.discovery_complete = true;
         let paths = self
             .buffers
@@ -286,6 +299,7 @@ impl App {
         self.ports.git_service = Some(service);
         self.ports.git = None;
         self.git_state.discovery_complete = false;
+        self.git_state.discovery_error = None;
         let _ = self.request_git(GitOperation::Discover {
             start: self.project_root.clone(),
         });
@@ -740,6 +754,7 @@ impl App {
                         };
                         if matches!(&operation, GitOperation::Discover { .. }) {
                             self.git_state.discovery_complete = true;
+                            self.git_state.discovery_error = Some(error.to_string());
                         }
                         if let GitOperation::PreparePartial { selection, .. } = &operation
                             && let (Some((buffer, _)), Some(guard)) =
@@ -847,6 +862,7 @@ impl App {
         match response {
             GitResponse::Discovered(repository) => {
                 self.git_state.discovery_complete = true;
+                self.git_state.discovery_error = None;
                 self.git.attach(repository.clone());
                 if let Some(repository) = repository {
                     let spec = self.git_refresh_spec(&repository);

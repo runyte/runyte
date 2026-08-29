@@ -72,6 +72,20 @@ and queued frames could obscure which request produced the observed state.
 The test must acknowledge its own failing command semantically and identify
 that command's notification before asserting detach and reattach behavior.
 
+CI run 33268205970 confirmed that per-test host catalogs removed the Ubuntu
+lifecycle collision, then exposed another macOS Git-discovery failure during
+the burn-in. The command palette remained at “this project is not in a Git
+repository” for a freshly initialized repository. That text also represented
+a failed discovery: the application discarded the typed error, marked
+discovery complete, and made failure indistinguishable from authoritative
+absence. In addition, a valid marker followed by successful but empty
+`rev-parse` output was accepted as no repository. Successful child cleanup
+also signalled a process group only after reaping its leader, when the numeric
+group ID was no longer an ownership-safe identity. Git completion must retain
+the exited leader until its group is finalized, required discovery fields must
+reject empty output, and the capability snapshot must expose discovery failure
+separately from marker absence.
+
 The expected behavior is that asynchronous integration tests wait on semantic
 state or explicit process acknowledgements with bounded deadlines. PTY output
 must still be drained to prevent backpressure and retained for failure

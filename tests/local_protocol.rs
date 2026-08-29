@@ -921,6 +921,12 @@ async fn wait_for_git_before_tui(endpoint: &LocalEndpoint) {
             .map(|row| row.detail.clone())
             .unwrap_or_else(|| "git-worktrees row absent".to_owned());
         let git_summary = frame.editor.status.git_summary.clone();
+        assert!(
+            !detail.starts_with("Git repository discovery failed:"),
+            "Git repository discovery failed while {waiting_for}: {detail}; \
+             last frame id: {:?}, git summary: {git_summary:?}",
+            frame.id,
+        );
         let remaining = deadline.saturating_duration_since(Instant::now());
         assert!(
             !remaining.is_zero(),

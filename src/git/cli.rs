@@ -287,13 +287,12 @@ impl PipeFinalizer {
     }
 
     #[cfg(unix)]
-    fn finish(&self, child: &mut std::process::Child) {
-        // `try_wait` has already observed and reaped the top-level process.
-        // Signal its former process group once so helpers cannot retain locks,
-        // then finish from the bounded pipe state. Polling `kill(-pgid, 0)` is
-        // not a completion event: after the leader is reaped the numeric PGID
-        // can remain visible during teardown or be reused by another group.
-        stop_child_tree(child);
+    fn finish(&self) {
+        // `try_finish_child` has observed the leader without reaping it, ended
+        // that still-anchored process group, and then collected its status.
+        // The readers can now drain everything the owned group wrote and use
+        // this signal only to escape a pipe retained by a descendant which
+        // created a different session.
         self.release_reader_gate();
         self.request_finish();
     }
@@ -785,7 +784,7 @@ impl GitCliProvider {
         });
 
         let status = loop {
-            match child.try_wait() {
+            match try_finish_child(&mut child) {
                 Ok(Some(status)) => break status,
                 Ok(None) => {}
                 Err(error) => {
@@ -812,7 +811,7 @@ impl GitCliProvider {
         };
         pipe_finalizer.release_reader_gate();
         #[cfg(unix)]
-        pipe_finalizer.finish(&mut child);
+        pipe_finalizer.finish();
         #[cfg(not(unix))]
         if !finish_readers_or_stop(&mut child, || {
             stdout_reader.is_finished() && stderr_reader.is_finished()
@@ -883,7 +882,7 @@ impl GitCliProvider {
         });
         let started = std::time::Instant::now();
         let status = loop {
-            match child.try_wait() {
+            match try_finish_child(&mut child) {
                 Ok(Some(status)) => break status,
                 Ok(None) => {}
                 Err(error) => {
@@ -917,7 +916,7 @@ impl GitCliProvider {
         };
         pipe_finalizer.release_reader_gate();
         #[cfg(unix)]
-        pipe_finalizer.finish(&mut child);
+        pipe_finalizer.finish();
         #[cfg(not(unix))]
         if !finish_readers_or_stop(&mut child, || {
             stdout_reader.is_finished() && stderr_reader.is_finished()
@@ -982,7 +981,7 @@ impl GitCliProvider {
         });
         let started = std::time::Instant::now();
         let status = loop {
-            match child.try_wait() {
+            match try_finish_child(&mut child) {
                 Ok(Some(status)) => break status,
                 Ok(None) => {}
                 Err(error) => {
@@ -1016,7 +1015,7 @@ impl GitCliProvider {
         };
         pipe_finalizer.release_reader_gate();
         #[cfg(unix)]
-        pipe_finalizer.finish(&mut child);
+        pipe_finalizer.finish();
         #[cfg(not(unix))]
         if !finish_readers_or_stop(&mut child, || {
             stdin_writer.is_finished() && stdout_reader.is_finished() && stderr_reader.is_finished()
@@ -1209,7 +1208,7 @@ impl GitCliProvider {
 
         let deadline = std::time::Instant::now() + timeout;
         let status = loop {
-            match child.try_wait() {
+            match try_finish_child(&mut child) {
                 Ok(Some(status)) => break status,
                 Ok(None) => {}
                 Err(error) => {
@@ -1249,7 +1248,7 @@ impl GitCliProvider {
 
         pipe_finalizer.release_reader_gate();
         #[cfg(unix)]
-        pipe_finalizer.finish(&mut child);
+        pipe_finalizer.finish();
         #[cfg(not(unix))]
         if !finish_readers_or_stop(&mut child, || {
             stdout_reader.is_finished() && stderr_reader.is_finished()
@@ -1590,16 +1589,66 @@ fn read_bounded_file(root: &Path, path: &Path, limit: usize) -> Option<Vec<u8>> 
     (final_length == content.len() as u64).then_some(content)
 }
 
-/// Stops the network command and, on Unix, every helper it started.
-fn stop_child_tree(child: &mut std::process::Child) {
-    #[cfg(unix)]
+/// Observes a completed Unix child without releasing its process identity,
+/// stops any descendants still in its owned group, and only then reaps it.
+///
+/// `Child::try_wait` reaps immediately. Sending a signal to `-child.id()`
+/// after that would address a reusable number rather than the group Runyte
+/// created. `waitid(WNOWAIT)` keeps the exited leader waitable, which anchors
+/// both its PID and process-group identity through cleanup.
+#[cfg(unix)]
+fn try_finish_child(
+    child: &mut std::process::Child,
+) -> io::Result<Option<std::process::ExitStatus>> {
+    let pid = i32::try_from(child.id())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "child PID does not fit pid_t"))?;
+    let mut information = std::mem::MaybeUninit::<libc::siginfo_t>::zeroed();
+    // SAFETY: `information` points to writable storage for `siginfo_t`; P_PID
+    // limits the observation to this live Child handle, and WNOWAIT leaves the
+    // reported exit available for `Child::wait` below.
+    let result = unsafe {
+        libc::waitid(
+            libc::P_PID,
+            pid as libc::id_t,
+            information.as_mut_ptr(),
+            libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+        )
+    };
+    if result == -1 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: successful waitid initializes the supplied structure. With
+    // WNOHANG, si_pid is zero when the child has not exited yet.
+    let information = unsafe { information.assume_init() };
+    if unsafe { information.si_pid() } == 0 {
+        return Ok(None);
+    }
+    stop_child_group(child);
+    child.wait().map(Some)
+}
+
+#[cfg(not(unix))]
+fn try_finish_child(
+    child: &mut std::process::Child,
+) -> io::Result<Option<std::process::ExitStatus>> {
+    child.try_wait()
+}
+
+#[cfg(unix)]
+fn stop_child_group(child: &std::process::Child) {
     if let Ok(pid) = i32::try_from(child.id()) {
-        // SAFETY: network children enter a session whose process-group ID is
-        // the child's PID in `spawn`; a negative PID addresses that group.
+        // SAFETY: Git children create a process group whose ID is the child's
+        // PID in `spawn`; a negative PID addresses that group.
         unsafe {
             libc::kill(-pid, libc::SIGKILL);
         }
     }
+}
+
+/// Stops the command and, on Unix, every helper it started.
+fn stop_child_tree(child: &mut std::process::Child) {
+    #[cfg(unix)]
+    stop_child_group(child);
     let _ = child.kill();
     let _ = child.wait();
 }
@@ -1779,21 +1828,35 @@ impl GitCliProvider {
         }
         let toplevel = self.run_text(start, &["rev-parse", "--show-toplevel"])?;
         if toplevel.is_empty() {
-            return Ok(None);
+            return Err(GitError::Malformed {
+                command: self.describe(&["rev-parse", "--show-toplevel"]),
+                detail: "Git reported an empty repository root after a repository marker was found"
+                    .to_owned(),
+            });
         }
         let workdir = PathBuf::from(toplevel);
-        let git_dir = self
-            .run_text(&workdir, &["rev-parse", "--git-dir"])
-            .map(PathBuf::from)?;
+        let git_dir_text = self.run_text(&workdir, &["rev-parse", "--git-dir"])?;
+        if git_dir_text.is_empty() {
+            return Err(GitError::Malformed {
+                command: self.describe(&["rev-parse", "--git-dir"]),
+                detail: "Git reported an empty repository metadata directory".to_owned(),
+            });
+        }
+        let git_dir = PathBuf::from(git_dir_text);
         let git_dir = if git_dir.is_absolute() {
             git_dir
         } else {
             workdir.join(git_dir)
         };
         let git_dir = git_dir.canonicalize().unwrap_or(git_dir);
-        let common = self
-            .run_text(&workdir, &["rev-parse", "--git-common-dir"])
-            .map(PathBuf::from)?;
+        let common_text = self.run_text(&workdir, &["rev-parse", "--git-common-dir"])?;
+        if common_text.is_empty() {
+            return Err(GitError::Malformed {
+                command: self.describe(&["rev-parse", "--git-common-dir"]),
+                detail: "Git reported an empty common metadata directory".to_owned(),
+            });
+        }
+        let common = PathBuf::from(common_text);
         let common = if common.is_absolute() {
             common
         } else {
@@ -4270,6 +4333,49 @@ mod tests {
         assert!(matches!(error, GitError::Failed { .. }), "{error:?}");
 
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn repository_discovery_rejects_empty_required_rev_parse_output() {
+        use std::os::unix::fs::PermissionsExt;
+
+        for empty_argument in ["--show-toplevel", "--git-dir", "--git-common-dir"] {
+            let nonce = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            let root = std::env::temp_dir().join(format!(
+                "runyte-git-empty-discovery-{}-{nonce}",
+                std::process::id()
+            ));
+            std::fs::create_dir_all(root.join(".git")).unwrap();
+            std::fs::write(root.join(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
+            let program = root.join("git-with-empty-discovery-field");
+            std::fs::write(
+                &program,
+                format!(
+                    "#!/bin/sh\n\
+                     case \"$*\" in\n\
+                       *{empty_argument}*) exit 0 ;;\n\
+                       *--show-toplevel*) printf '%s\\n' '{}' ;;\n\
+                       *--git-dir*) printf '.git\\n' ;;\n\
+                       *--git-common-dir*) printf '.git\\n' ;;\n\
+                     esac\n",
+                    root.display()
+                ),
+            )
+            .unwrap();
+            std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+            let error = GitCliProvider::new(&program).discover(&root).unwrap_err();
+            assert!(
+                matches!(error, GitError::Malformed { ref command, .. } if command.contains(empty_argument)),
+                "{empty_argument} produced {error:?}"
+            );
+
+            std::fs::remove_dir_all(root).unwrap();
+        }
     }
 
     #[test]
