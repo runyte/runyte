@@ -136,7 +136,7 @@ pub struct LocalEndpoint {
     /// Owner-wide discovery used only by explicit all-namespace lifecycle
     /// operations. It never participates in ordinary session selection or
     /// name allocation, so deliberately isolated namespaces stay isolated.
-    inventory_registry: Option<PathBuf>,
+    inventory_registry: InventoryRegistry,
     /// Integration-only ownership carried by explicitly injected endpoints.
     /// Detached children inherit it so abrupt test-runner termination retires
     /// them just like foreground test hosts.
@@ -148,9 +148,16 @@ pub struct LocalEndpoint {
 struct EndpointPublication {
     registry: Option<PathBuf>,
     secondary_registry: Option<PathBuf>,
-    inventory_registry: Option<PathBuf>,
+    inventory_registry: InventoryRegistry,
     test_supervisor: Option<u32>,
     runtime_root: Option<PathBuf>,
+}
+
+#[derive(Clone, Debug)]
+enum InventoryRegistry {
+    Disabled,
+    ResolveForPublication,
+    Exact(PathBuf),
 }
 
 #[derive(Clone, Debug)]
@@ -197,7 +204,7 @@ impl LocalEndpoint {
                 EndpointPublication {
                     registry: registry.clone().or_else(|| Some(runtime_registry.clone())),
                     secondary_registry: registry.map(|_| runtime_registry),
-                    inventory_registry: all_hosts_registry_root()?,
+                    inventory_registry: InventoryRegistry::ResolveForPublication,
                     test_supervisor: None,
                     runtime_root: Some(runtime.to_path_buf()),
                 },
@@ -210,7 +217,7 @@ impl LocalEndpoint {
             EndpointPublication {
                 registry: usable_fallback_registry_root(),
                 secondary_registry: None,
-                inventory_registry: all_hosts_registry_root()?,
+                inventory_registry: InventoryRegistry::ResolveForPublication,
                 test_supervisor: None,
                 runtime_root: None,
             },
@@ -237,7 +244,7 @@ impl LocalEndpoint {
                 EndpointPublication {
                     registry: Some(runyte.join("hosts")),
                     secondary_registry: None,
-                    inventory_registry: Some(runyte.join("all-hosts")),
+                    inventory_registry: InventoryRegistry::Exact(runyte.join("all-hosts")),
                     test_supervisor: Some(std::process::id()),
                     runtime_root: Some(runtime.to_path_buf()),
                 },
@@ -254,7 +261,7 @@ impl LocalEndpoint {
             EndpointPublication {
                 registry: None,
                 secondary_registry: None,
-                inventory_registry: None,
+                inventory_registry: InventoryRegistry::Disabled,
                 test_supervisor: None,
                 runtime_root: None,
             },
@@ -331,13 +338,13 @@ impl LocalEndpoint {
             registry: (!inventory_row).then_some(registry.clone()),
             secondary_registry: None,
             inventory_registry: if inventory_row {
-                Some(registry)
+                InventoryRegistry::Exact(registry)
             } else {
-                // Ordinary namespace discovery must not depend on the broad
-                // inventory being available. Publication and explicit broad
-                // operations resolve it fallibly and report failures; this
-                // reconstructed endpoint uses it only for best-effort cleanup.
-                all_hosts_registry_root().ok().flatten()
+                // Reconstructed local endpoints are used for discovery and
+                // lifecycle requests, never publication. The owning host
+                // removes its broad row during graceful shutdown; an abrupt
+                // stop is retired by the next explicit broad scan.
+                InventoryRegistry::Disabled
             },
             test_supervisor: None,
             name_file: None,
@@ -358,7 +365,10 @@ impl LocalEndpoint {
     }
 
     pub(crate) fn inventory_registry(&self) -> Option<&Path> {
-        self.inventory_registry.as_deref()
+        match &self.inventory_registry {
+            InventoryRegistry::Exact(path) => Some(path),
+            InventoryRegistry::Disabled | InventoryRegistry::ResolveForPublication => None,
+        }
     }
 
     pub(crate) fn test_supervisor(&self) -> Option<u32> {
@@ -688,7 +698,7 @@ impl LocalEndpoint {
     fn publish_metadata(&self, metadata: &EndpointMetadata) -> Result<()> {
         validate_metadata_fields(metadata)?;
         self.verify_metadata_identity(metadata)?;
-        for path in self.registration_paths(metadata) {
+        for path in self.registration_paths(metadata)? {
             prepare_private_directory(path.parent().expect("registration has a parent"))?;
             write_json_atomic(&path, metadata)?;
         }
@@ -719,7 +729,7 @@ impl LocalEndpoint {
             project_root_bytes: encode_path(&self.project_root),
             socket_bytes: encode_path(&self.socket),
         };
-        for path in self.registration_paths(&metadata) {
+        for path in self.registration_paths(&metadata)? {
             let metadata = match read_endpoint_metadata(&path, "host registry entry") {
                 Ok(metadata) => metadata,
                 Err(error) if is_not_found(&error) => continue,
@@ -741,7 +751,7 @@ impl LocalEndpoint {
             project_root_bytes: encode_path(&self.project_root),
             socket_bytes: encode_path(&self.socket),
         };
-        for path in self.registration_paths(&metadata) {
+        for path in self.registration_paths(&metadata)? {
             let metadata = match read_endpoint_metadata(&path, "host registry entry") {
                 Ok(metadata) => metadata,
                 Err(error) if is_not_found(&error) => continue,
@@ -761,18 +771,23 @@ impl LocalEndpoint {
             && expected_pid.is_none_or(|pid| metadata.pid == pid)
     }
 
-    fn registration_paths(&self, metadata: &EndpointMetadata) -> Vec<PathBuf> {
+    fn registration_paths(&self, metadata: &EndpointMetadata) -> Result<Vec<PathBuf>> {
         let mut paths = [self.registry.as_ref(), self.secondary_registry.as_ref()]
             .into_iter()
             .flatten()
             .map(|registry| registry.join(format!("{}.json", self.id)))
             .collect::<Vec<_>>();
-        if let Some(inventory) = self.inventory_registry.as_deref() {
+        let inventory = match &self.inventory_registry {
+            InventoryRegistry::Disabled => None,
+            InventoryRegistry::ResolveForPublication => all_hosts_registry_root()?,
+            InventoryRegistry::Exact(path) => Some(path.clone()),
+        };
+        if let Some(inventory) = inventory.as_deref() {
             paths.push(inventory.join(inventory_registration_file_name(metadata)));
         }
         paths.sort();
         paths.dedup();
-        paths
+        Ok(paths)
     }
 
     fn lock_identity(&self) -> Result<PrivateFileLock> {
@@ -3103,7 +3118,7 @@ mod tests {
             EndpointPublication {
                 registry: Some(registry.clone()),
                 secondary_registry: None,
-                inventory_registry: None,
+                inventory_registry: InventoryRegistry::Disabled,
                 test_supervisor: None,
                 runtime_root: None,
             },
@@ -3116,7 +3131,7 @@ mod tests {
             EndpointPublication {
                 registry: Some(registry.clone()),
                 secondary_registry: None,
-                inventory_registry: None,
+                inventory_registry: InventoryRegistry::Disabled,
                 test_supervisor: None,
                 runtime_root: None,
             },

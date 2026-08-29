@@ -356,8 +356,10 @@ directory never overwrite or inspect one another's machine-local PIDs and Unix
 sockets, and a new boot does not inherit stale live-process identity. That
 stable, account-owned parent cannot be pre-claimed by another user in the
 system temporary directory. If the account home or boot identity cannot be
-resolved, persistent-host startup and explicit all-namespace operations fail
-with an error instead of silently using an incomplete inventory.
+resolved, publishing a new persistent host and explicit all-namespace
+operations fail with an error instead of silently using an incomplete
+inventory. Attaching to an already-running host and ordinary namespace listing
+do not resolve or depend on the broad inventory.
 Ordinary discovery and identity locking never read the broad inventory; it
 exists so an explicit `--all-namespaces` operation can find hosts whose XDG
 runtime and cache namespaces differ from its own. Inventory scans accept only

@@ -46,13 +46,18 @@ below the native account home returned by the operating-system account database
 rather than at a predictable system-temporary or disposable cache path. A
 kernel boot-identity component makes the registry machine- and boot-local even
 when multiple machines mount the same home; failure to resolve either identity
-is reported instead of silently disabling broad publication. The registry
-never participates in ordinary host identity or name locking. Inventory
-filenames combine the workspace identity with the endpoint identity, so two
-deliberately isolated namespaces may host the same workspace without
-overwriting or blocking each other. Broad listing reports both endpoints, and
-broad stop iterates the exact registered hosts rather than resolving the
-ambiguous workspace identity back to one of them.
+is reported when a new host publishes or a broad operation begins instead of
+silently disabling broad publication. The identity is resolved lazily, so
+attaching to an existing local endpoint and scanning the ordinary namespace do
+not depend on NSS, account state, or the boot-identity source. Reconstructed
+local endpoints omit broad cleanup; their owning host removes its row during a
+graceful stop, while an explicit broad scan retires a row left by an abrupt
+stop. The registry never participates in ordinary host identity or name
+locking. Inventory filenames combine the workspace identity with the endpoint
+identity, so two deliberately isolated namespaces may host the same workspace
+without overwriting or blocking each other. Broad listing reports both
+endpoints, and broad stop iterates the exact registered hosts rather than
+resolving the ambiguous workspace identity back to one of them.
 
 The common scope option was chosen instead of the proposed
 `--session-list-all` spelling so list and stop operations express the same
