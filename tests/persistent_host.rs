@@ -19,58 +19,82 @@ use runyte::{
     workspace::transport::{ClientRequest, HostResponse, LocalClient, LocalEndpoint},
 };
 
-/// A private runtime directory for every Runyte process this test binary
-/// spawns. Tests must not publish host endpoints into the person's real
-/// `XDG_RUNTIME_DIR`, which `LocalEndpoint::discover` prefers by default.
-/// One directory per test binary is enough: each test uses a distinct
-/// project root, and the endpoint key is derived from that root.
-fn test_runtime_dir() -> &'static Path {
-    static RUNTIME: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
-    RUNTIME
-        .get_or_init(|| {
-            use std::os::unix::fs::PermissionsExt;
-            // Unix socket paths are capped near 100 bytes and the endpoint
-            // adds "/runyte/<32 hex>/workspace.sock" below this, so the base
-            // name has to stay short.
-            let unique = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-                % 1_000_000_007;
-            let path = std::env::temp_dir().join(format!("ryt-{}-{unique}", std::process::id()));
-            fs::create_dir_all(&path).unwrap();
-            fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
-            path
-        })
-        .as_path()
+/// A private runtime, cache, and host catalog for the processes owned by one
+/// test. Endpoint keys separate project sockets, but session names and catalog
+/// publication also take locks below these shared roots, so concurrently
+/// running tests must not share them.
+struct TestSandbox {
+    runtime: PathBuf,
+    cache: PathBuf,
 }
 
-fn test_cache_dir() -> &'static Path {
-    static CACHE: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
-    CACHE
-        .get_or_init(|| {
-            use std::os::unix::fs::PermissionsExt;
-            let path = test_runtime_dir().join("cache");
-            fs::create_dir_all(&path).unwrap();
-            fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
-            path
-        })
-        .as_path()
-}
+impl TestSandbox {
+    fn new() -> Self {
+        use std::os::unix::fs::PermissionsExt;
 
-fn isolated_runyte(executable: impl AsRef<std::ffi::OsStr>) -> Command {
-    let mut command = Command::new(executable);
-    command
-        .env(
-            "RUNYTE_ALL_HOSTS_DIR",
-            test_runtime_dir().join("runyte/all-hosts"),
-        )
-        .env("RUNYTE_TEST_SUPERVISOR_PID", std::process::id().to_string());
-    command
-}
+        static NEXT_SANDBOX: AtomicU64 = AtomicU64::new(0);
+        // Unix socket paths are capped near 100 bytes and the endpoint adds
+        // "/runyte/<32 hex>/workspace.sock" below this, so keep the base short.
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+            % 1_000_000_007;
+        let sequence = NEXT_SANDBOX.fetch_add(1, Ordering::Relaxed);
+        let runtime =
+            std::env::temp_dir().join(format!("ryt-{}-{unique}-{sequence}", std::process::id()));
+        let cache = runtime.join("cache");
+        fs::create_dir_all(&cache).unwrap();
+        fs::set_permissions(&runtime, fs::Permissions::from_mode(0o700)).unwrap();
+        fs::set_permissions(&cache, fs::Permissions::from_mode(0o700)).unwrap();
+        Self { runtime, cache }
+    }
 
-fn bundled_runyte() -> Command {
-    isolated_runyte(Path::new(env!("CARGO_BIN_EXE_runyte")))
+    fn runtime_dir(&self) -> &Path {
+        &self.runtime
+    }
+
+    fn cache_dir(&self) -> &Path {
+        &self.cache
+    }
+
+    fn runyte(&self, executable: impl AsRef<std::ffi::OsStr>) -> Command {
+        let mut command = Command::new(executable);
+        command
+            .env(
+                "RUNYTE_ALL_HOSTS_DIR",
+                self.runtime.join("runyte/all-hosts"),
+            )
+            .env("RUNYTE_TEST_SUPERVISOR_PID", std::process::id().to_string());
+        command
+    }
+
+    fn bundled_runyte(&self) -> Command {
+        self.runyte(Path::new(env!("CARGO_BIN_EXE_runyte")))
+    }
+
+    fn host_startup(
+        &self,
+        executable: impl Into<PathBuf>,
+        description: &'static str,
+    ) -> HostStartup {
+        HostStartup::new(executable, description)
+            .with_env("XDG_RUNTIME_DIR", self.runtime_dir())
+            .with_env(
+                "RUNYTE_ALL_HOSTS_DIR",
+                self.runtime.join("runyte/all-hosts"),
+            )
+    }
+
+    fn run_cli(&self, root: &Path, arguments: &[&str]) -> std::process::Output {
+        self.bundled_runyte()
+            .args(arguments)
+            .current_dir(root)
+            .env("XDG_RUNTIME_DIR", self.runtime_dir())
+            .env("XDG_CACHE_HOME", self.cache_dir())
+            .output()
+            .unwrap()
+    }
 }
 
 struct ChildGuard(Option<Child>);
@@ -91,16 +115,6 @@ fn git(root: &Path, arguments: &[&str]) {
         .status()
         .unwrap();
     assert!(status.success());
-}
-
-fn run_cli(root: &Path, arguments: &[&str]) -> std::process::Output {
-    bundled_runyte()
-        .args(arguments)
-        .current_dir(root)
-        .env("XDG_RUNTIME_DIR", test_runtime_dir())
-        .env("XDG_CACHE_HOME", test_cache_dir())
-        .output()
-        .unwrap()
 }
 
 fn assert_cli_success(output: &std::process::Output) {
@@ -314,9 +328,21 @@ fn geometry() -> FrameGeometry {
 }
 
 async fn wait_for_endpoint(child: &mut ChildGuard, endpoint: &LocalEndpoint) -> bool {
-    for _ in 0..100 {
+    let deadline = Instant::now() + Duration::from_millis(2_500);
+    loop {
         if endpoint.metadata().exists() {
-            return true;
+            let handshake = tokio::time::timeout(Duration::from_millis(100), async {
+                let mut client = LocalClient::connect(endpoint, geometry(), false).await?;
+                client.recv().await
+            })
+            .await;
+            match handshake {
+                Ok(Ok(Some(HostResponse::Welcome { .. }))) => return true,
+                Ok(Ok(Some(response))) => {
+                    panic!("host returned {response:?} during its readiness handshake")
+                }
+                Ok(Ok(None) | Err(_)) | Err(_) => {}
+            }
         }
         if child.0.as_mut().unwrap().try_wait().unwrap().is_some() {
             let output = child.0.take().unwrap().wait_with_output().unwrap();
@@ -326,9 +352,12 @@ async fn wait_for_endpoint(child: &mut ChildGuard, endpoint: &LocalEndpoint) -> 
             }
             panic!("host exited before endpoint discovery: {}", stderr);
         }
+        assert!(
+            Instant::now() < deadline,
+            "host endpoint was published but did not complete a readiness handshake"
+        );
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
-    panic!("host endpoint was not published");
 }
 
 fn process_is_running(pid: u32) -> bool {
@@ -659,14 +688,16 @@ fn unread_errors(response: &HostResponse) -> usize {
 
 #[tokio::test]
 async fn detach_reattach_preserves_live_editor_and_refuses_a_second_tui() {
+    let sandbox = TestSandbox::new();
     let root = project();
     let executable = env!("CARGO_BIN_EXE_runyte");
-    let child = isolated_runyte(executable)
+    let child = sandbox
+        .runyte(executable)
         .arg("--serve")
         .arg("note.txt")
         .current_dir(&root)
-        .env("XDG_RUNTIME_DIR", test_runtime_dir())
-        .env("XDG_CACHE_HOME", test_cache_dir())
+        .env("XDG_RUNTIME_DIR", sandbox.runtime_dir())
+        .env("XDG_CACHE_HOME", sandbox.cache_dir())
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
@@ -676,7 +707,7 @@ async fn detach_reattach_preserves_live_editor_and_refuses_a_second_tui() {
     let endpoint = LocalEndpoint::discover_with_runtime(
         &root.join(".runyte"),
         &root,
-        Some(test_runtime_dir()),
+        Some(sandbox.runtime_dir()),
     )
     .unwrap();
     if !wait_for_endpoint(&mut child, &endpoint).await {
@@ -806,14 +837,16 @@ async fn detach_reattach_preserves_live_editor_and_refuses_a_second_tui() {
 
 #[tokio::test]
 async fn tutorial_persistent_lesson_completes_across_a_real_client_reattachment() {
+    let sandbox = TestSandbox::new();
     let root = project();
     let executable = env!("CARGO_BIN_EXE_runyte");
-    let child = isolated_runyte(executable)
+    let child = sandbox
+        .runyte(executable)
         .arg("--serve")
         .arg("note.txt")
         .current_dir(&root)
-        .env("XDG_RUNTIME_DIR", test_runtime_dir())
-        .env("XDG_CACHE_HOME", test_cache_dir())
+        .env("XDG_RUNTIME_DIR", sandbox.runtime_dir())
+        .env("XDG_CACHE_HOME", sandbox.cache_dir())
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
@@ -823,7 +856,7 @@ async fn tutorial_persistent_lesson_completes_across_a_real_client_reattachment(
     let endpoint = LocalEndpoint::discover_with_runtime(
         &root.join(".runyte"),
         &root,
-        Some(test_runtime_dir()),
+        Some(sandbox.runtime_dir()),
     )
     .unwrap();
     if !wait_for_endpoint(&mut child, &endpoint).await {
@@ -896,13 +929,15 @@ async fn tutorial_persistent_lesson_completes_across_a_real_client_reattachment(
 
 #[tokio::test]
 async fn terminal_pid_output_and_input_survive_detach_disconnect_and_reattach() {
+    let sandbox = TestSandbox::new();
     let root = project();
     let executable = env!("CARGO_BIN_EXE_runyte");
-    let child = isolated_runyte(executable)
+    let child = sandbox
+        .runyte(executable)
         .arg("--serve")
         .current_dir(&root)
-        .env("XDG_RUNTIME_DIR", test_runtime_dir())
-        .env("XDG_CACHE_HOME", test_cache_dir())
+        .env("XDG_RUNTIME_DIR", sandbox.runtime_dir())
+        .env("XDG_CACHE_HOME", sandbox.cache_dir())
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
@@ -912,7 +947,7 @@ async fn terminal_pid_output_and_input_survive_detach_disconnect_and_reattach() 
     let endpoint = LocalEndpoint::discover_with_runtime(
         &root.join(".runyte"),
         &root,
-        Some(test_runtime_dir()),
+        Some(sandbox.runtime_dir()),
     )
     .unwrap();
     if !wait_for_endpoint(&mut child, &endpoint).await {
@@ -1033,25 +1068,27 @@ async fn terminal_pid_output_and_input_survive_detach_disconnect_and_reattach() 
     }
     drop(control);
 
-    let refused = run_cli(&root, &["--session-stop"]);
+    let refused = sandbox.run_cli(&root, &["--session-stop"]);
     assert!(!refused.status.success());
     assert!(String::from_utf8_lossy(&refused.stderr).contains("live terminal"));
-    let refused_restart = run_cli(&root, &["--session-restart"]);
+    let refused_restart = sandbox.run_cli(&root, &["--session-restart"]);
     assert!(!refused_restart.status.success());
     assert!(String::from_utf8_lossy(&refused_restart.stderr).contains("live terminal"));
-    assert_cli_success(&run_cli(&root, &["--session-stop", "--force"]));
+    assert_cli_success(&sandbox.run_cli(&root, &["--session-stop", "--force"]));
     assert!(child.0.take().unwrap().wait().unwrap().success());
     fs::remove_dir_all(root).unwrap();
 }
 
 #[tokio::test]
 async fn hidden_terminal_output_while_detached_is_unread_after_reattach() {
+    let sandbox = TestSandbox::new();
     let root = project();
-    let child = bundled_runyte()
+    let child = sandbox
+        .bundled_runyte()
         .arg("--serve")
         .current_dir(&root)
-        .env("XDG_RUNTIME_DIR", test_runtime_dir())
-        .env("XDG_CACHE_HOME", test_cache_dir())
+        .env("XDG_RUNTIME_DIR", sandbox.runtime_dir())
+        .env("XDG_CACHE_HOME", sandbox.cache_dir())
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
@@ -1061,7 +1098,7 @@ async fn hidden_terminal_output_while_detached_is_unread_after_reattach() {
     let endpoint = LocalEndpoint::discover_with_runtime(
         &root.join(".runyte"),
         &root,
-        Some(test_runtime_dir()),
+        Some(sandbox.runtime_dir()),
     )
     .unwrap();
     if !wait_for_endpoint(&mut child, &endpoint).await {
@@ -1199,14 +1236,16 @@ async fn hidden_terminal_output_while_detached_is_unread_after_reattach() {
 
 #[tokio::test]
 async fn detach_reattach_preserves_notification_history_and_unread_state() {
+    let sandbox = TestSandbox::new();
     let root = project();
     let executable = env!("CARGO_BIN_EXE_runyte");
-    let child = isolated_runyte(executable)
+    let child = sandbox
+        .runyte(executable)
         .arg("--serve")
         .arg("note.txt")
         .current_dir(&root)
-        .env("XDG_RUNTIME_DIR", test_runtime_dir())
-        .env("XDG_CACHE_HOME", test_cache_dir())
+        .env("XDG_RUNTIME_DIR", sandbox.runtime_dir())
+        .env("XDG_CACHE_HOME", sandbox.cache_dir())
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
@@ -1216,7 +1255,7 @@ async fn detach_reattach_preserves_notification_history_and_unread_state() {
     let endpoint = LocalEndpoint::discover_with_runtime(
         &root.join(".runyte"),
         &root,
-        Some(test_runtime_dir()),
+        Some(sandbox.runtime_dir()),
     )
     .unwrap();
     if !wait_for_endpoint(&mut child, &endpoint).await {
@@ -1286,15 +1325,17 @@ async fn detach_reattach_preserves_notification_history_and_unread_state() {
 
 #[tokio::test]
 async fn killed_host_leaves_files_intact_and_its_endpoint_is_recoverable() {
+    let sandbox = TestSandbox::new();
     let root = project();
     let executable = env!("CARGO_BIN_EXE_runyte");
     let spawn = || {
-        isolated_runyte(executable)
+        sandbox
+            .runyte(executable)
             .arg("--serve")
             .arg("note.txt")
             .current_dir(&root)
-            .env("XDG_RUNTIME_DIR", test_runtime_dir())
-            .env("XDG_CACHE_HOME", test_cache_dir())
+            .env("XDG_RUNTIME_DIR", sandbox.runtime_dir())
+            .env("XDG_CACHE_HOME", sandbox.cache_dir())
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
@@ -1304,7 +1345,7 @@ async fn killed_host_leaves_files_intact_and_its_endpoint_is_recoverable() {
     let endpoint = LocalEndpoint::discover_with_runtime(
         &root.join(".runyte"),
         &root,
-        Some(test_runtime_dir()),
+        Some(sandbox.runtime_dir()),
     )
     .unwrap();
     let mut first_host = ChildGuard(Some(spawn()));
@@ -1365,17 +1406,19 @@ async fn killed_host_leaves_files_intact_and_its_endpoint_is_recoverable() {
 
 #[tokio::test]
 async fn sessions_list_rename_restart_and_resolve_by_id_name_or_directory() {
+    let sandbox = TestSandbox::new();
     let root = project();
     let cwd_file = root.join("shell-cwd");
     fs::write(&cwd_file, []).unwrap();
     let cwd_file = cwd_file.to_str().unwrap();
     let executable = env!("CARGO_BIN_EXE_runyte");
     let spawn = || {
-        isolated_runyte(executable)
+        sandbox
+            .runyte(executable)
             .arg("--serve")
             .current_dir(&root)
-            .env("XDG_RUNTIME_DIR", test_runtime_dir())
-            .env("XDG_CACHE_HOME", test_cache_dir())
+            .env("XDG_RUNTIME_DIR", sandbox.runtime_dir())
+            .env("XDG_CACHE_HOME", sandbox.cache_dir())
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
@@ -1385,7 +1428,7 @@ async fn sessions_list_rename_restart_and_resolve_by_id_name_or_directory() {
     let endpoint = LocalEndpoint::discover_with_runtime(
         &root.join(".runyte"),
         &root,
-        Some(test_runtime_dir()),
+        Some(sandbox.runtime_dir()),
     )
     .unwrap();
     let display_id = endpoint.id()[..12].to_owned();
@@ -1404,7 +1447,7 @@ async fn sessions_list_rename_restart_and_resolve_by_id_name_or_directory() {
         wait_for_endpoint(&mut original, &endpoint).await,
         "host did not become ready"
     );
-    assert_cli_success(&run_cli(
+    assert_cli_success(&sandbox.run_cli(
         &root,
         &[
             "--cwd-file",
@@ -1414,7 +1457,7 @@ async fn sessions_list_rename_restart_and_resolve_by_id_name_or_directory() {
             &first_name,
         ],
     ));
-    let listing = run_cli(&root, &["--session-list"]);
+    let listing = sandbox.run_cli(&root, &["--session-list"]);
     assert_cli_success(&listing);
     let listing = String::from_utf8(listing.stdout).unwrap();
     assert!(listing.contains("ID"));
@@ -1425,11 +1468,8 @@ async fn sessions_list_rename_restart_and_resolve_by_id_name_or_directory() {
     assert!(listing.contains(&first_name));
     assert!(listing.contains(root.to_string_lossy().as_ref()));
 
-    assert_cli_success(&run_cli(
-        &root,
-        &["--session-rename", &first_name, &second_name],
-    ));
-    assert_cli_success(&run_cli(
+    assert_cli_success(&sandbox.run_cli(&root, &["--session-rename", &first_name, &second_name]));
+    assert_cli_success(&sandbox.run_cli(
         &root,
         &[
             "--session-rename",
@@ -1437,10 +1477,10 @@ async fn sessions_list_rename_restart_and_resolve_by_id_name_or_directory() {
             &third_name,
         ],
     ));
-    assert_cli_success(&run_cli(&root, &["--session-restart", &third_name]));
+    assert_cli_success(&sandbox.run_cli(&root, &["--session-restart", &third_name]));
     let status = original.0.take().unwrap().wait().unwrap();
     assert!(status.success());
-    let listing = run_cli(&root, &["--cwd-file", cwd_file, "-l"]);
+    let listing = sandbox.run_cli(&root, &["--cwd-file", cwd_file, "-l"]);
     assert_cli_success(&listing);
     let listing = String::from_utf8(listing.stdout).unwrap();
     assert!(listing.contains(&third_name));
@@ -1450,17 +1490,16 @@ async fn sessions_list_rename_restart_and_resolve_by_id_name_or_directory() {
     // A host can remain live while its catalog rows are lost. Directory
     // selectors should still reach the endpoint owned by the project.
     for registry in [
-        test_runtime_dir().join("runyte/hosts"),
-        test_cache_dir().join("runyte/hosts"),
+        sandbox.runtime_dir().join("runyte/hosts"),
+        sandbox.cache_dir().join("runyte/hosts"),
     ] {
         let registration = registry.join(format!("{}.json", endpoint.id()));
         let _ = fs::remove_file(registration);
     }
 
-    assert_cli_success(&run_cli(
-        &root,
-        &["--session-stop", root.to_string_lossy().as_ref()],
-    ));
+    assert_cli_success(
+        &sandbox.run_cli(&root, &["--session-stop", root.to_string_lossy().as_ref()]),
+    );
     for _ in 0..200 {
         if !endpoint.metadata().exists() {
             break;
@@ -1475,15 +1514,15 @@ async fn sessions_list_rename_restart_and_resolve_by_id_name_or_directory() {
         endpoint.verify_for_connect().unwrap().name.as_deref(),
         Some(third_name.as_str())
     );
-    assert_cli_success(&run_cli(&root, &["--session-stop", &third_name]));
+    assert_cli_success(&sandbox.run_cli(&root, &["--session-stop", &third_name]));
     assert!(by_name.0.take().unwrap().wait().unwrap().success());
 
     let mut by_id = ChildGuard(Some(spawn()));
     assert!(wait_for_endpoint(&mut by_id, &endpoint).await);
-    assert_cli_success(&run_cli(&root, &["--session-stop", &display_id]));
+    assert_cli_success(&sandbox.run_cli(&root, &["--session-stop", &display_id]));
     assert!(by_id.0.take().unwrap().wait().unwrap().success());
 
-    let stopped_listing = run_cli(&root, &["--session-list"]);
+    let stopped_listing = sandbox.run_cli(&root, &["--session-list"]);
     assert_cli_success(&stopped_listing);
     let stopped_listing = String::from_utf8(stopped_listing.stdout).unwrap();
     assert!(stopped_listing.contains("stopped"), "{stopped_listing}");
@@ -1497,13 +1536,15 @@ async fn sessions_list_rename_restart_and_resolve_by_id_name_or_directory() {
 
 #[tokio::test]
 async fn a_new_workspace_is_listed_and_resolved_by_its_default_directory_name() {
+    let sandbox = TestSandbox::new();
     let root = project();
     let name = root.file_name().unwrap().to_str().unwrap().to_owned();
-    let child = bundled_runyte()
+    let child = sandbox
+        .bundled_runyte()
         .arg("--serve")
         .current_dir(&root)
-        .env("XDG_RUNTIME_DIR", test_runtime_dir())
-        .env("XDG_CACHE_HOME", test_cache_dir())
+        .env("XDG_RUNTIME_DIR", sandbox.runtime_dir())
+        .env("XDG_CACHE_HOME", sandbox.cache_dir())
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
@@ -1513,7 +1554,7 @@ async fn a_new_workspace_is_listed_and_resolved_by_its_default_directory_name() 
     let endpoint = LocalEndpoint::discover_with_runtime(
         &root.join(".runyte"),
         &root,
-        Some(test_runtime_dir()),
+        Some(sandbox.runtime_dir()),
     )
     .unwrap();
     assert!(wait_for_endpoint(&mut child, &endpoint).await);
@@ -1522,7 +1563,7 @@ async fn a_new_workspace_is_listed_and_resolved_by_its_default_directory_name() 
         Some(name.as_str())
     );
 
-    let listing = run_cli(&root, &["-l"]);
+    let listing = sandbox.run_cli(&root, &["-l"]);
     assert_cli_success(&listing);
     let listing = String::from_utf8(listing.stdout).unwrap();
     let row = listing
@@ -1531,17 +1572,19 @@ async fn a_new_workspace_is_listed_and_resolved_by_its_default_directory_name() 
         .unwrap_or_else(|| panic!("new workspace missing from listing:\n{listing}"));
     assert_eq!(row.split_whitespace().nth(1), Some(name.as_str()));
 
-    assert_cli_success(&run_cli(&root, &["--session-stop", &name]));
+    assert_cli_success(&sandbox.run_cli(&root, &["--session-stop", &name]));
     assert!(child.0.take().unwrap().wait().unwrap().success());
     fs::remove_dir_all(root).unwrap();
 }
 
 #[tokio::test]
 async fn restart_keeps_a_fallback_host_on_its_original_endpoint() {
+    let sandbox = TestSandbox::new();
     let root = project();
     let cache = root.join("xdg-cache");
     let mut original = ChildGuard(Some(
-        bundled_runyte()
+        sandbox
+            .bundled_runyte()
             .arg("--serve")
             .current_dir(&root)
             .env_remove("XDG_RUNTIME_DIR")
@@ -1559,10 +1602,11 @@ async fn restart_keeps_a_fallback_host_on_its_original_endpoint() {
     );
 
     let mut duplicate = ChildGuard(Some(
-        bundled_runyte()
+        sandbox
+            .bundled_runyte()
             .arg("--serve")
             .current_dir(&root)
-            .env("XDG_RUNTIME_DIR", test_runtime_dir())
+            .env("XDG_RUNTIME_DIR", sandbox.runtime_dir())
             .env("XDG_CACHE_HOME", &cache)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
@@ -1583,10 +1627,11 @@ async fn restart_keeps_a_fallback_host_on_its_original_endpoint() {
     duplicate.0.take();
 
     let selector = root.to_string_lossy();
-    let restart = bundled_runyte()
+    let restart = sandbox
+        .bundled_runyte()
         .args(["--session-restart", selector.as_ref()])
         .current_dir(&root)
-        .env("XDG_RUNTIME_DIR", test_runtime_dir())
+        .env("XDG_RUNTIME_DIR", sandbox.runtime_dir())
         .env("XDG_CACHE_HOME", &cache)
         .output()
         .unwrap();
@@ -1594,10 +1639,11 @@ async fn restart_keeps_a_fallback_host_on_its_original_endpoint() {
     assert!(original.0.take().unwrap().wait().unwrap().success());
     let replacement_pid = endpoint.verify_for_connect().unwrap().pid;
 
-    let shutdown = bundled_runyte()
+    let shutdown = sandbox
+        .bundled_runyte()
         .args(["--session-stop", selector.as_ref()])
         .current_dir(&root)
-        .env("XDG_RUNTIME_DIR", test_runtime_dir())
+        .env("XDG_RUNTIME_DIR", sandbox.runtime_dir())
         .env("XDG_CACHE_HOME", &cache)
         .output()
         .unwrap();
@@ -1618,22 +1664,28 @@ async fn restart_keeps_a_fallback_host_on_its_original_endpoint() {
 
 #[tokio::test]
 async fn an_exact_name_wins_over_another_hosts_id_prefix() {
+    let sandbox = TestSandbox::new();
     let named_root = project();
     let prefixed_root = project();
     let endpoint = |root: &Path| {
-        LocalEndpoint::discover_with_runtime(&root.join(".runyte"), root, Some(test_runtime_dir()))
-            .unwrap()
+        LocalEndpoint::discover_with_runtime(
+            &root.join(".runyte"),
+            root,
+            Some(sandbox.runtime_dir()),
+        )
+        .unwrap()
     };
     let named_endpoint = endpoint(&named_root);
     let prefixed_endpoint = endpoint(&prefixed_root);
     let name = &prefixed_endpoint.id()[..1];
     let spawn = |root: &Path| {
         ChildGuard(Some(
-            bundled_runyte()
+            sandbox
+                .bundled_runyte()
                 .arg("--serve")
                 .current_dir(root)
-                .env("XDG_RUNTIME_DIR", test_runtime_dir())
-                .env("XDG_CACHE_HOME", test_cache_dir())
+                .env("XDG_RUNTIME_DIR", sandbox.runtime_dir())
+                .env("XDG_CACHE_HOME", sandbox.cache_dir())
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
                 .stderr(Stdio::piped())
@@ -1645,18 +1697,17 @@ async fn an_exact_name_wins_over_another_hosts_id_prefix() {
     let mut prefixed = spawn(&prefixed_root);
     assert!(wait_for_endpoint(&mut named, &named_endpoint).await);
     assert!(wait_for_endpoint(&mut prefixed, &prefixed_endpoint).await);
-    assert_cli_success(&run_cli(
+    assert_cli_success(&sandbox.run_cli(
         &named_root,
         &["--session-rename", named_endpoint.id(), name],
     ));
 
-    assert_cli_success(&run_cli(&named_root, &["--session-stop", name]));
+    assert_cli_success(&sandbox.run_cli(&named_root, &["--session-stop", name]));
     assert!(named.0.take().unwrap().wait().unwrap().success());
     assert!(prefixed_endpoint.verify_for_connect().is_ok());
-    assert_cli_success(&run_cli(
-        &prefixed_root,
-        &["--session-stop", prefixed_endpoint.id()],
-    ));
+    assert_cli_success(
+        &sandbox.run_cli(&prefixed_root, &["--session-stop", prefixed_endpoint.id()]),
+    );
     assert!(prefixed.0.take().unwrap().wait().unwrap().success());
 
     fs::remove_dir_all(named_root).unwrap();
@@ -1665,14 +1716,16 @@ async fn an_exact_name_wins_over_another_hosts_id_prefix() {
 
 #[tokio::test]
 async fn an_unusable_cache_registry_falls_back_to_the_runtime_registry() {
+    let sandbox = TestSandbox::new();
     let root = project();
     let unusable_cache = root.join("cache-is-a-file");
     fs::write(&unusable_cache, b"not a directory").unwrap();
     let mut host = ChildGuard(Some(
-        bundled_runyte()
+        sandbox
+            .bundled_runyte()
             .arg("--serve")
             .current_dir(&root)
-            .env("XDG_RUNTIME_DIR", test_runtime_dir())
+            .env("XDG_RUNTIME_DIR", sandbox.runtime_dir())
             .env("XDG_CACHE_HOME", &unusable_cache)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
@@ -1683,7 +1736,7 @@ async fn an_unusable_cache_registry_falls_back_to_the_runtime_registry() {
     let endpoint = LocalEndpoint::discover_with_runtime(
         &root.join(".runyte"),
         &root,
-        Some(test_runtime_dir()),
+        Some(sandbox.runtime_dir()),
     )
     .unwrap();
     assert!(
@@ -1691,10 +1744,11 @@ async fn an_unusable_cache_registry_falls_back_to_the_runtime_registry() {
         "host did not fall back to its runtime registry"
     );
 
-    let listing = bundled_runyte()
+    let listing = sandbox
+        .bundled_runyte()
         .arg("--session-list")
         .current_dir(&root)
-        .env("XDG_RUNTIME_DIR", test_runtime_dir())
+        .env("XDG_RUNTIME_DIR", sandbox.runtime_dir())
         .env("XDG_CACHE_HOME", &unusable_cache)
         .output()
         .unwrap();
@@ -1705,10 +1759,11 @@ async fn an_unusable_cache_registry_falls_back_to_the_runtime_registry() {
             .contains(&endpoint.id()[..ABBREVIATED_WORKSPACE_ID])
     );
 
-    let shutdown = bundled_runyte()
+    let shutdown = sandbox
+        .bundled_runyte()
         .arg("--session-stop")
         .current_dir(&root)
-        .env("XDG_RUNTIME_DIR", test_runtime_dir())
+        .env("XDG_RUNTIME_DIR", sandbox.runtime_dir())
         .env("XDG_CACHE_HOME", &unusable_cache)
         .output()
         .unwrap();
@@ -1723,16 +1778,18 @@ async fn an_unusable_cache_registry_falls_back_to_the_runtime_registry() {
 /// connect would report that race as a failure even though a host is serving.
 #[tokio::test]
 async fn racing_starts_for_one_workspace_both_reach_the_winning_host() {
+    let sandbox = TestSandbox::new();
     let root = project();
     let endpoint = LocalEndpoint::discover_with_runtime(
         &root.join(".runyte"),
         &root,
-        Some(test_runtime_dir()),
+        Some(sandbox.runtime_dir()),
     )
     .unwrap();
     let startup = || {
-        HostStartup::new(env!("CARGO_BIN_EXE_runyte"), "raced")
-            .with_env("XDG_CACHE_HOME", test_cache_dir())
+        sandbox
+            .host_startup(env!("CARGO_BIN_EXE_runyte"), "raced")
+            .with_env("XDG_CACHE_HOME", sandbox.cache_dir())
     };
 
     let (first, second) = tokio::join!(
@@ -1743,7 +1800,7 @@ async fn racing_starts_for_one_workspace_both_reach_the_winning_host() {
 
     // Shut the host down before asserting, so a failure cannot leave a stray
     // host holding this test's endpoint.
-    let shutdown = run_cli(&root, &["--session-stop"]);
+    let shutdown = sandbox.run_cli(&root, &["--session-stop"]);
     outcome.unwrap();
     assert_cli_success(&shutdown);
     fs::remove_dir_all(root).unwrap();
@@ -1760,27 +1817,29 @@ async fn racing_starts_for_one_workspace_both_reach_the_winning_host() {
 /// test run without a pseudoterminal.
 #[tokio::test]
 async fn persistent_mode_starts_the_missing_workspace_before_it_reaches_a_terminal() {
+    let sandbox = TestSandbox::new();
     let root = project();
     let endpoint = LocalEndpoint::discover_with_runtime(
         &root.join(".runyte"),
         &root,
-        Some(test_runtime_dir()),
+        Some(sandbox.runtime_dir()),
     )
     .unwrap();
 
-    let persistent = bundled_runyte()
+    let persistent = sandbox
+        .bundled_runyte()
         .arg("--persistent")
         .current_dir(&root)
-        .env("XDG_RUNTIME_DIR", test_runtime_dir())
-        .env("XDG_CACHE_HOME", test_cache_dir())
+        .env("XDG_RUNTIME_DIR", sandbox.runtime_dir())
+        .env("XDG_CACHE_HOME", sandbox.cache_dir())
         .stdin(Stdio::null())
         .output()
         .unwrap();
-    let listing = run_cli(&root, &["--session-list"]);
+    let listing = sandbox.run_cli(&root, &["--session-list"]);
 
     // Stop before asserting, so a failing assertion cannot leave a stray host
     // holding this test's endpoint.
-    let shutdown = run_cli(&root, &["--session-stop"]);
+    let shutdown = sandbox.run_cli(&root, &["--session-stop"]);
     assert_cli_success(&listing);
     let listed = String::from_utf8(listing.stdout).unwrap();
     assert!(
@@ -1794,18 +1853,20 @@ async fn persistent_mode_starts_the_missing_workspace_before_it_reaches_a_termin
 
 #[tokio::test]
 async fn detached_host_keeps_the_requested_editor_directory_below_the_project_root() {
+    let sandbox = TestSandbox::new();
     let root = project();
     let nested = root.join("nested");
     fs::create_dir(&nested).unwrap();
     let endpoint = LocalEndpoint::discover_with_runtime(
         &root.join(".runyte"),
         &root,
-        Some(test_runtime_dir()),
+        Some(sandbox.runtime_dir()),
     )
     .unwrap();
-    let startup = HostStartup::new(env!("CARGO_BIN_EXE_runyte"), "nested")
+    let startup = sandbox
+        .host_startup(env!("CARGO_BIN_EXE_runyte"), "nested")
         .with_working_directory(&nested)
-        .with_env("XDG_CACHE_HOME", test_cache_dir());
+        .with_env("XDG_CACHE_HOME", sandbox.cache_dir());
     if let Err(error) = start_detached_host(&endpoint, startup).await {
         if format!("{error:#}").contains("Operation not permitted") {
             fs::remove_dir_all(root).unwrap();
@@ -1840,7 +1901,7 @@ async fn detached_host_keeps_the_requested_editor_directory_below_the_project_ro
     })
     .await;
     if stopped.is_err() {
-        let _ = run_cli(&root, &["--session-stop", "--force"]);
+        let _ = sandbox.run_cli(&root, &["--session-stop", "--force"]);
         panic!(":quit-here did not stop the persistent session");
     }
     fs::remove_dir_all(root).unwrap();
@@ -1848,17 +1909,19 @@ async fn detached_host_keeps_the_requested_editor_directory_below_the_project_ro
 
 #[tokio::test]
 async fn detached_host_rejects_a_working_directory_outside_its_project_before_spawn() {
+    let sandbox = TestSandbox::new();
     let root = project();
     let outside = root.with_extension("outside");
     fs::create_dir(&outside).unwrap();
     let endpoint = LocalEndpoint::discover_with_runtime(
         &root.join(".runyte"),
         &root,
-        Some(test_runtime_dir()),
+        Some(sandbox.runtime_dir()),
     )
     .unwrap();
-    let startup =
-        HostStartup::new(root.join("missing-runyte"), "outside").with_working_directory(&outside);
+    let startup = sandbox
+        .host_startup(root.join("missing-runyte"), "outside")
+        .with_working_directory(&outside);
 
     let error = start_detached_host(&endpoint, startup).await.unwrap_err();
     assert!(
@@ -1880,17 +1943,19 @@ async fn detached_host_rejects_a_working_directory_outside_its_project_before_sp
 /// rediscovering the project there would reach a prompt nothing can answer.
 #[tokio::test]
 async fn detached_host_serves_a_project_it_could_not_have_discovered() {
+    let sandbox = TestSandbox::new();
     let root = plain_project();
     let endpoint = LocalEndpoint::discover_with_runtime(
         &root.join(".runyte"),
         &root,
-        Some(test_runtime_dir()),
+        Some(sandbox.runtime_dir()),
     )
     .unwrap();
     assert!(!root.join(".git").exists());
     assert!(!root.join(".runyte").exists());
-    let startup = HostStartup::new(env!("CARGO_BIN_EXE_runyte"), "undiscoverable")
-        .with_env("XDG_CACHE_HOME", test_cache_dir());
+    let startup = sandbox
+        .host_startup(env!("CARGO_BIN_EXE_runyte"), "undiscoverable")
+        .with_env("XDG_CACHE_HOME", sandbox.cache_dir());
     if let Err(error) = start_detached_host(&endpoint, startup).await {
         if format!("{error:#}").contains("Operation not permitted") {
             fs::remove_dir_all(root).unwrap();
@@ -1913,7 +1978,7 @@ async fn detached_host_serves_a_project_it_could_not_have_discovered() {
     // management command resolves its own project the same way the host would
     // have, and this one is deliberately standing in a directory that cannot
     // be resolved that way.
-    assert_cli_success(&run_cli(&root, &["--session-stop", root.to_str().unwrap()]));
+    assert_cli_success(&sandbox.run_cli(&root, &["--session-stop", root.to_str().unwrap()]));
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -1923,15 +1988,17 @@ async fn detached_host_serves_a_project_it_could_not_have_discovered() {
 /// host, and only for a client that said it can deliver one.
 #[tokio::test]
 async fn quit_here_reports_its_directory_to_a_handoff_capable_client() {
+    let sandbox = TestSandbox::new();
     let root = project();
     fs::create_dir(root.join("nested")).unwrap();
     fs::write(root.join("nested/deep.txt"), "deep\n").unwrap();
-    let child = bundled_runyte()
+    let child = sandbox
+        .bundled_runyte()
         .arg("--serve")
         .arg("nested/deep.txt")
         .current_dir(&root)
-        .env("XDG_RUNTIME_DIR", test_runtime_dir())
-        .env("XDG_CACHE_HOME", test_cache_dir())
+        .env("XDG_RUNTIME_DIR", sandbox.runtime_dir())
+        .env("XDG_CACHE_HOME", sandbox.cache_dir())
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
@@ -1941,7 +2008,7 @@ async fn quit_here_reports_its_directory_to_a_handoff_capable_client() {
     let endpoint = LocalEndpoint::discover_with_runtime(
         &root.join(".runyte"),
         &root,
-        Some(test_runtime_dir()),
+        Some(sandbox.runtime_dir()),
     )
     .unwrap();
     if !wait_for_endpoint(&mut child, &endpoint).await {

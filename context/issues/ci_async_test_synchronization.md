@@ -54,6 +54,24 @@ or after reuse, so the Git worker never delivered its completion event even as
 the host continued serving frames. Process-group liveness by reusable integer
 identifier is not a valid completion acknowledgement.
 
+CI run 33267736646 exposed a test-sandbox race in `persistent_host`. All tests
+in the integration binary shared one runtime directory, cache directory, and
+all-host catalog. Host publication and session rename therefore contended on
+the same global name lock even when the projects were unrelated. One test
+timed out renaming its host while another could not publish its endpoint.
+Distinct endpoint IDs do not isolate the shared catalog or its locks; every
+test needs a private sandbox, while the processes within one test must share
+that sandbox. Endpoint readiness must also include a completed control
+`Welcome` handshake rather than stopping when the metadata file appears.
+
+The macOS stress job in the same run exposed another response-attribution
+error in the notification-history test. The test stopped at the first frame
+with any unread error, then assumed the count belonged to the invalid `cd`
+command it had typed. A background error could satisfy that predicate first,
+and queued frames could obscure which request produced the observed state.
+The test must acknowledge its own failing command semantically and identify
+that command's notification before asserting detach and reattach behavior.
+
 The expected behavior is that asynchronous integration tests wait on semantic
 state or explicit process acknowledgements with bounded deadlines. PTY output
 must still be drained to prevent backpressure and retained for failure
