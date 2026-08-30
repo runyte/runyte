@@ -147,7 +147,7 @@ impl HelpTopic {
             Self::GitStash => GIT_STASH_OVERVIEW,
             Self::WorkspaceSearch => &[
                 "Workspace search results are a retained query snapshot. Move, select, search, split, and copy from this buffer like any other read-only document.",
-                "Enter opens the typed path and source range represented by the current result row. The clean result remains available while it is among the two most recently active special buffers; run workspace search again for fresh results.",
+                "Enter opens the typed path and source range represented by the current result row. The clean result remains available while it is among the eight most recently active special buffers; run workspace search again for fresh results.",
             ],
             Self::CommitMessage => COMMIT_MESSAGE_OVERVIEW,
             Self::Diff => DIFF_OVERVIEW,

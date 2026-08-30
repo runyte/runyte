@@ -4558,7 +4558,7 @@ fn retained_clean_special_buffers_remain_discoverable_after_their_panes_leave() 
 }
 
 #[test]
-fn opening_a_third_clean_special_buffer_retires_the_least_recent_detached_one() {
+fn opening_one_clean_special_buffer_past_the_limit_retires_the_least_recent_detached_one() {
     let mut app = App::new(Config::default(), None).unwrap();
 
     app.execute(CommandInvocation::help(HelpInvocation::ActiveView))
@@ -4570,12 +4570,18 @@ fn opening_a_third_clean_special_buffer_retires_the_least_recent_detached_one() 
     // Revisiting contextual help makes the manual the least recent view.
     key(&mut app, KeyCode::Char('o'), Modifiers::ALT);
     assert_eq!(app.active().buffer, help);
+    // Fill the rest of the limit with pages newer than both, so the manual is
+    // still the one the next activation has to give up.
+    let filler = open_filler_special_buffers(&mut app, SPECIAL_BUFFER_RETENTION_LIMIT - 2);
     app.execute_command("config").unwrap();
     let config = app.active().buffer;
 
     assert!(app.closed_buffers.contains(&manual));
     assert!(!app.closed_buffers.contains(&help));
     assert!(!app.closed_buffers.contains(&config));
+    for buffer in &filler {
+        assert!(!app.closed_buffers.contains(buffer));
+    }
     assert_eq!(
         app.buffers
             .iter()
@@ -4588,7 +4594,11 @@ fn opening_a_third_clean_special_buffer_retires_the_least_recent_detached_one() 
     );
 
     key(&mut app, KeyCode::Char('o'), Modifiers::ALT);
-    assert_eq!(app.active().buffer, help);
+    assert_eq!(
+        app.active().buffer,
+        filler.last().copied().unwrap_or(help),
+        "history left the view the retained set was entered from"
+    );
 }
 
 #[test]
@@ -4621,7 +4631,15 @@ fn an_async_special_view_precedes_the_buffer_reached_by_immediate_history_naviga
     let worktrees = app.active().buffer;
     key(&mut app, KeyCode::Char('o'), Modifiers::ALT);
     assert_eq!(app.active().buffer, manual);
+
+    // Fill the rest of the limit only now, so the three views under test keep
+    // the relative order the asynchronous activation gave them: contextual
+    // help is the oldest, and the worktrees view is older than the manual the
+    // immediate history jump returned to.
+    open_filler_special_buffers(&mut app, SPECIAL_BUFFER_RETENTION_LIMIT - 2);
+    app.retire_detached_ephemeral_buffers();
     assert!(app.closed_buffers.contains(&help));
+    assert!(!app.closed_buffers.contains(&worktrees));
 
     app.execute_command("notifications").unwrap();
     let notifications = app.active().buffer;
