@@ -2522,6 +2522,8 @@ impl App {
             pane.scroll_row = 0;
             pane.scroll_wrap = 0;
             pane.scroll_col = 0;
+        }
+        if activate {
             self.mode = Mode::Normal;
         }
     }
@@ -3362,7 +3364,9 @@ impl App {
         if activate && existing.is_none() {
             self.active_mut().replace_selection(Selection::point(0));
         }
-        self.mode = Mode::Normal;
+        if activate {
+            self.mode = Mode::Normal;
+        }
     }
 
     /// The stash under the cursor, or a refusal naming the way to a cursor
@@ -3654,7 +3658,7 @@ impl App {
             self.active_mut()
                 .replace_selection(Selection::point(first_commit));
         }
-        if activate || existing.is_some_and(|index| self.active().buffer == index) {
+        if activate {
             self.mode = Mode::Normal;
         }
     }
