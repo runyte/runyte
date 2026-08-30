@@ -1,5 +1,8 @@
 # Runyte
 
+[![CI](https://github.com/runyte/runyte/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/runyte/runyte/actions/workflows/ci.yml)
+[![Coverage](https://img.shields.io/badge/coverage-%E2%89%A583%25-brightgreen)](context/reference/test-coverage.md)
+
 Runyte is an editor-first, agent-ready terminal workspace for software
 development. It combines modal text editing, file management, terminal
 multiplexing, a Git interface with worktree support, and persistent sessions

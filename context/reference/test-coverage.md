@@ -33,6 +33,10 @@ The enforced line floor begins at 83%. A later baseline should record the tool,
 toolchain, target, covered and total counts, and the reason for changing the
 floor.
 
+The README coverage badge states this floor rather than a measured
+percentage, so changing the floor means editing the badge in the same
+commit.
+
 ### Interpretation
 
 `cargo-llvm-cov` excludes standalone files under directories named `tests`, but
