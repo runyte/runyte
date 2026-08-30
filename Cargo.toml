@@ -2,7 +2,7 @@
 
 [package]
 name = "runyte"
-version = "0.1.4"
+version = "0.1.5"
 edition = "2024"
 # Edition 2024 needs 1.85; the resolved dependency graph raises the floor to
 # 1.88. Declaring it turns an obscure build failure into a clear message.
