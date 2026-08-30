@@ -49,14 +49,14 @@ use crate::{
         TrashBackend,
     },
     git::{
-        BlameLine, BlameRequest, BlameSource, Branch, BranchDeletionPlan, BufferRevisionGuard,
-        CommitDetail, CommitSearchResult, CommitSummary, DeletionAuthorization, DiffScope,
-        FileComparison, GitMutation, GitOperation, GitProvider, GitRequestId, GitResponse,
-        GitServiceEvent, GitServiceHandle, GitServiceProgress, GitServiceState, GitTracker,
-        LineChange, LogCursor, LogPage, LogRequest, MAX_BLAME_INPUT_BYTES, MAX_BLAME_LINES,
-        PartialStageSelection, PatchHunk, RefreshSpec, Repository, RepositoryGeneration,
-        RepositorySnapshot, StashEntry, StashMutation, StashScope, StatusSide, Worktree,
-        WorktreeCreate, WorktreeRemovalPlan,
+        BlameLine, BlameRequest, BlameSource, Branch, BranchDeletionPlan, BranchList,
+        BufferRevisionGuard, CommitDetail, CommitSearchResult, CommitSummary,
+        DeletionAuthorization, DiffScope, FileComparison, GitMutation, GitOperation, GitProvider,
+        GitRequestId, GitResponse, GitServiceEvent, GitServiceHandle, GitServiceProgress,
+        GitServiceState, GitTracker, LineChange, LogCursor, LogPage, LogRequest,
+        MAX_BLAME_INPUT_BYTES, MAX_BLAME_LINES, PartialStageSelection, PatchHunk, RefreshSpec,
+        RemoteBranch, Repository, RepositoryGeneration, RepositorySnapshot, StashEntry,
+        StashMutation, StashScope, StatusSide, Worktree, WorktreeCreate, WorktreeRemovalPlan,
     },
     help::HelpTopic,
     input::{
@@ -1143,14 +1143,25 @@ struct BranchDeletionConfirmation {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum BranchSwitch {
-    Checkout { branch: String },
-    Create { branch: String, start: String },
+    Checkout {
+        branch: String,
+    },
+    Create {
+        branch: String,
+        start: String,
+    },
+    Track {
+        branch: String,
+        upstream: RemoteBranch,
+    },
 }
 
 impl BranchSwitch {
     fn branch(&self) -> &str {
         match self {
-            Self::Checkout { branch } | Self::Create { branch, .. } => branch,
+            Self::Checkout { branch }
+            | Self::Create { branch, .. }
+            | Self::Track { branch, .. } => branch,
         }
     }
 
@@ -1158,6 +1169,12 @@ impl BranchSwitch {
         let action = match self {
             Self::Checkout { branch } => format!("Switch to branch {branch}."),
             Self::Create { branch, .. } => format!("Create and switch to branch {branch}."),
+            Self::Track { branch, upstream } => {
+                format!(
+                    "Create branch {branch} tracking {} and switch to it.",
+                    upstream.name
+                )
+            }
         };
         format!(
             "{action}\nA terminal session is still running in this workspace and will keep using the same working directory while Git replaces files.\nType {} exactly to continue.\nEscape keeps the current branch.",
@@ -1168,9 +1185,17 @@ impl BranchSwitch {
     fn cancelled_message(&self) -> &'static str {
         match self {
             Self::Checkout { .. } => "checkout cancelled; the branch was not changed",
-            Self::Create { .. } => "branch creation cancelled; nothing was changed",
+            Self::Create { .. } | Self::Track { .. } => {
+                "branch creation cancelled; nothing was changed"
+            }
         }
     }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum BranchStart {
+    Local(String),
+    Remote(RemoteBranch),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -2462,7 +2487,7 @@ pub struct App {
     /// whether to replay their commits on top of it.
     git_pull_rebase: Option<PullRebaseConfirmation>,
     /// The branch a new one would start from, held while its name is typed.
-    git_branch_start: Option<String>,
+    git_branch_start: Option<BranchStart>,
     /// The typed path a confirmed `D` would remove from the worktree list.
     /// Never reconstructed from the lossy row text.
     git_worktree_removal: Option<WorktreeRemovalConfirmation>,
@@ -2475,6 +2500,7 @@ pub struct App {
     worktree_removal_generation: u64,
     git_worktree_start: Option<String>,
     git_worktree_new_branch: Option<String>,
+    git_worktree_upstream: Option<String>,
     git_stash_confirmation: Option<GitStashConfirmation>,
     workspace_switch: Option<WorkspaceSwitchRequest>,
     /// A persistent session can keep owning its buffers after a TUI detaches or
@@ -2862,6 +2888,7 @@ impl App {
             worktree_removal_generation: 0,
             git_worktree_start: None,
             git_worktree_new_branch: None,
+            git_worktree_upstream: None,
             git_stash_confirmation: None,
             workspace_switch: None,
             persistent_session: false,
@@ -3008,6 +3035,8 @@ enum ListAction {
     },
     Macro(char),
     GitCommit(String),
+    CheckoutGitBranch(String),
+    WorktreeGitBranch(String),
     Terminal(TerminalId),
     TutorialMotionHints(MotionHints),
     #[cfg(unix)]

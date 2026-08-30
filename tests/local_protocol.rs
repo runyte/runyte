@@ -2350,7 +2350,7 @@ async fn creating_a_worktree_starts_and_attaches_its_persistent_session() {
     let root_display = root.to_string_lossy().into_owned();
     wait_for_buffer_text(&mut source, Some(&output), "[git worktrees]", &root_display).await;
     terminal
-        .write_all(format!("\tNcreated-from-ui\r{}\r", created.to_string_lossy()).as_bytes())
+        .write_all(format!("\tncreated-from-ui\r{}\r", created.to_string_lossy()).as_bytes())
         .unwrap();
     terminal.flush().unwrap();
 

@@ -81,9 +81,13 @@ impl TempRepository {
 }
 
 fn git_output(repository: &TempRepository, arguments: &[&str]) -> String {
+    git_output_from(repository.path(), arguments)
+}
+
+fn git_output_from(repository: &Path, arguments: &[&str]) -> String {
     let output = Command::new("git")
         .args(arguments)
-        .current_dir(repository.path())
+        .current_dir(repository)
         .output()
         .unwrap();
     assert!(
@@ -401,6 +405,7 @@ fn typed_worktree_discovery_and_creation_preserve_paths_and_common_identity() {
                     head => panic!("expected branch, got {head:?}"),
                 },
                 new_branch: Some("linked-worktree".to_owned()),
+                upstream: None,
             },
         )
         .unwrap();
@@ -444,6 +449,7 @@ fn removing_a_clean_worktree_keeps_its_branch_and_clears_checkout_annotation() {
                 destination: destination.clone(),
                 start: "HEAD".to_owned(),
                 new_branch: Some("kept-branch".to_owned()),
+                upstream: None,
             },
         )
         .unwrap();
@@ -487,6 +493,7 @@ fn a_cascade_reviews_a_checked_out_branch_and_deletes_it_once_the_checkout_is_go
                 destination: checkout.clone(),
                 start: "HEAD".to_owned(),
                 new_branch: Some("cascaded".to_owned()),
+                upstream: None,
             },
         )
         .unwrap();
@@ -561,6 +568,7 @@ fn workspace_git_facts_match_what_git_writes_for_a_worktree_and_a_main_checkout(
                 destination: checkout.clone(),
                 start: "HEAD".to_owned(),
                 new_branch: Some("enh/facts".to_owned()),
+                upstream: None,
             },
         )
         .unwrap();
@@ -633,6 +641,7 @@ fn removing_a_dirty_or_locked_worktree_never_forces_it() {
                 destination: untracked.clone(),
                 start: "HEAD".to_owned(),
                 new_branch: Some("untracked-branch".to_owned()),
+                upstream: None,
             },
         )
         .unwrap();
@@ -654,6 +663,7 @@ fn removing_a_dirty_or_locked_worktree_never_forces_it() {
                 destination: dirty.clone(),
                 start: "HEAD".to_owned(),
                 new_branch: Some("dirty-branch".to_owned()),
+                upstream: None,
             },
         )
         .unwrap();
@@ -675,6 +685,7 @@ fn removing_a_dirty_or_locked_worktree_never_forces_it() {
                 destination: locked.clone(),
                 start: "HEAD".to_owned(),
                 new_branch: Some("locked-branch".to_owned()),
+                upstream: None,
             },
         )
         .unwrap();
@@ -704,6 +715,7 @@ fn worktree_preflight_refuses_dirty_files_and_requires_typing_for_unpushed_commi
                 destination: destination.clone(),
                 start: "feature".to_owned(),
                 new_branch: None,
+                upstream: None,
             },
         )
         .unwrap();
@@ -823,6 +835,7 @@ fn worktree_preflight_fails_closed_when_its_attached_branch_cannot_be_inspected(
                 destination: destination.clone(),
                 start: "feature".to_owned(),
                 new_branch: None,
+                upstream: None,
             },
         )
         .unwrap();
@@ -856,6 +869,7 @@ fn async_worktree_removal_reconciles_worktrees_and_branches() {
                 destination: destination.clone(),
                 start: "HEAD".to_owned(),
                 new_branch: Some("async-kept".to_owned()),
+                upstream: None,
             },
         )
         .unwrap();
@@ -902,6 +916,7 @@ fn async_worktree_removal_reconciles_worktrees_and_branches() {
                 let branch = snapshot
                     .branches
                     .expect("branches were reconciled")
+                    .local
                     .into_iter()
                     .find(|branch| branch.name == "async-kept")
                     .expect("the branch remains");
@@ -937,6 +952,7 @@ fn worktree_discovery_keeps_a_non_utf8_destination_addressable() {
                 destination: destination.clone(),
                 start: "HEAD".to_owned(),
                 new_branch: Some("encoded-worktree".to_owned()),
+                upstream: None,
             },
         )
         .unwrap();
@@ -985,6 +1001,7 @@ fn failed_atomic_worktree_creation_leaves_no_destination_or_branch() {
                 destination: destination.clone(),
                 start: "missing-start-point".to_owned(),
                 new_branch: Some("must-not-remain".to_owned()),
+                upstream: None,
             },
         )
         .unwrap_err();
@@ -1409,6 +1426,159 @@ fn branches_report_upstream_drift_and_whether_they_are_merged() {
         .expect("the second branch");
     assert_eq!(unmerged.upstream, None);
     assert!(!unmerged.merged, "its commit is not on the current branch");
+}
+
+#[test]
+fn branch_list_inverts_exact_upstreams_and_omits_symbolic_remote_head() {
+    let clone = TempClone::new("remote-branches");
+    clone.in_peer(&["checkout", "-qb", "review/42"]);
+    clone.in_peer(&["commit", "--allow-empty", "-qm", "review"]);
+    clone.in_peer(&["push", "-q", "-u", "origin", "review/42"]);
+    clone.in_peer(&["checkout", "-q", "main"]);
+    clone.git(&["fetch", "-q"]);
+    let provider = provider();
+
+    let listing = provider.branch_list(&clone.repository()).unwrap();
+
+    assert!(
+        listing
+            .remote
+            .iter()
+            .all(|branch| branch.name != "origin/HEAD")
+    );
+    assert_eq!(
+        listing
+            .remote
+            .iter()
+            .find(|branch| branch.name == "origin/main")
+            .unwrap()
+            .tracked_by,
+        vec!["main"]
+    );
+    assert!(
+        listing
+            .remote
+            .iter()
+            .find(|branch| branch.name == "origin/review/42")
+            .unwrap()
+            .tracked_by
+            .is_empty()
+    );
+}
+
+#[test]
+fn branch_list_retains_a_slash_containing_configured_remote_identity() {
+    let clone = TempClone::new("slash-remote");
+    clone.git(&["remote", "rename", "origin", "fork/team"]);
+    let provider = provider();
+
+    let listing = provider.branch_list(&clone.repository()).unwrap();
+
+    let remote = listing
+        .remote
+        .iter()
+        .find(|branch| branch.name == "fork/team/main")
+        .unwrap();
+    assert_eq!(remote.remote, "fork/team");
+    assert_eq!(remote.branch, "main");
+    assert_eq!(remote.reference, "refs/remotes/fork/team/main");
+}
+
+#[test]
+fn a_remote_tracking_branch_can_be_checked_out_as_a_new_local_branch() {
+    let clone = TempClone::new("tracking-checkout");
+    clone.in_peer(&["checkout", "-qb", "topic"]);
+    clone.in_peer(&["commit", "--allow-empty", "-qm", "topic"]);
+    clone.in_peer(&["push", "-q", "-u", "origin", "topic"]);
+    clone.git(&["fetch", "-q"]);
+    clone.git(&["branch", "origin/topic", "main"]);
+    let provider = provider();
+
+    provider
+        .create_tracking_branch(
+            &clone.repository(),
+            "local-topic",
+            "refs/remotes/origin/topic",
+        )
+        .unwrap();
+    assert_eq!(
+        git_output_from(
+            &clone.work,
+            &["config", "--get", "branch.local-topic.remote"]
+        ),
+        "origin\n"
+    );
+    assert_eq!(
+        git_output_from(
+            &clone.work,
+            &["config", "--get", "branch.local-topic.merge"]
+        ),
+        "refs/heads/topic\n"
+    );
+
+    let listing = provider.branch_list(&clone.repository()).unwrap();
+    assert!(
+        listing
+            .local
+            .iter()
+            .any(|branch| branch.name == "local-topic" && branch.current)
+    );
+    assert_eq!(
+        listing
+            .remote
+            .iter()
+            .find(|branch| branch.name == "origin/topic")
+            .unwrap()
+            .tracked_by,
+        vec!["local-topic"]
+    );
+}
+
+#[test]
+fn a_remote_tracking_branch_can_start_a_tracking_worktree() {
+    let clone = TempClone::new("tracking-worktree");
+    clone.in_peer(&["checkout", "-qb", "topic"]);
+    clone.in_peer(&["commit", "--allow-empty", "-qm", "topic"]);
+    clone.in_peer(&["push", "-q", "-u", "origin", "topic"]);
+    clone.git(&["fetch", "-q"]);
+    clone.git(&["branch", "origin/topic", "main"]);
+    let provider = provider();
+    let destination = clone.path().parent().unwrap().join("linked-topic");
+
+    provider
+        .create_worktree(
+            &clone.repository(),
+            &WorktreeCreate {
+                destination: destination.clone(),
+                start: "refs/remotes/origin/topic".to_owned(),
+                new_branch: Some("local-topic".to_owned()),
+                upstream: Some("refs/remotes/origin/topic".to_owned()),
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        git_output_from(
+            &clone.work,
+            &["config", "--get", "branch.local-topic.remote"]
+        ),
+        "origin\n"
+    );
+    assert_eq!(
+        git_output_from(
+            &clone.work,
+            &["config", "--get", "branch.local-topic.merge"]
+        ),
+        "refs/heads/topic\n"
+    );
+
+    let listing = provider.branch_list(&clone.repository()).unwrap();
+    let local = listing
+        .local
+        .iter()
+        .find(|branch| branch.name == "local-topic")
+        .unwrap();
+    assert_eq!(local.checkouts, vec![destination]);
+    assert_eq!(local.upstream.as_ref().unwrap().name, "origin/topic");
 }
 
 /// A pull takes what the remote has when nothing local competes with it, and

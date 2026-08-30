@@ -3415,6 +3415,12 @@ impl App {
             }
             Some(ListAction::Macro(register)) => self.replay_macro(register, 1)?,
             Some(ListAction::GitCommit(oid)) => self.open_git_commit_oid(oid),
+            Some(ListAction::CheckoutGitBranch(branch)) => {
+                self.checkout_local_branch_named(&branch)
+            }
+            Some(ListAction::WorktreeGitBranch(branch)) => {
+                self.create_branch_worktree_for_local(&branch)
+            }
             Some(ListAction::Terminal(id)) => self.show_terminal(id),
             Some(ListAction::TutorialMotionHints(_)) => {
                 unreachable!("tutorial choices return before closing the shared picker")

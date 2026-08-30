@@ -4,6 +4,21 @@ use super::*;
 use crate::app::git_workflows::RequestedGitViews;
 use crate::git::BaseContent;
 
+fn select_remote_branch(app: &mut App, name: &str) {
+    let row = app
+        .git_state
+        .branch_rows()
+        .iter()
+        .position(|row| {
+            row.remote
+                .as_ref()
+                .is_some_and(|branch| branch.name == name)
+        })
+        .expect("remote branch row");
+    let offset = app.active_buffer().line_to_offset(row);
+    app.active_mut().replace_selection(Selection::point(offset));
+}
+
 #[test]
 fn saving_an_external_file_does_not_ask_git_about_it() {
     use crate::git::{MemoryGitProvider, Repository};
@@ -356,6 +371,41 @@ fn worktree_view_preserves_path_selection_and_switches_only_in_persistent_mode()
     app.open_selected_worktree();
     assert!(app.take_workspace_switch().is_none());
     assert!(app.status.contains("only available in the worktree list"));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn tab_n_in_the_worktree_list_creates_a_new_branch_and_worktree() {
+    let root = temporary("general-worktree-new-branch");
+    fs::create_dir_all(&root).unwrap();
+    let root = root.canonicalize().unwrap();
+    let mut app = App::new_in_isolated_project(
+        &root,
+        HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+            String::new(),
+        ))))),
+    )
+    .unwrap();
+    app.open_git_worktrees_result(
+        vec![Worktree {
+            path: root.clone(),
+            head: Some("0123456789abcdef".to_owned()),
+            branch: Some("refs/heads/main".to_owned()),
+            detached: false,
+            bare: false,
+            locked: None,
+            prunable: None,
+            missing: false,
+            common_dir: root.join(".git"),
+        }],
+        true,
+    );
+
+    context_action(&mut app, 'n');
+
+    assert_eq!(app.prompt_kind, PromptKind::NewWorktreeBranch);
+    assert_eq!(app.git_worktree_start.as_deref(), Some("main"));
+    assert!(app.git_worktree_new_branch.is_none());
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -1955,7 +2005,10 @@ fn space_g_b_opens_local_branches_and_enter_checks_one_out() {
     assert!(app.active_buffer().is_git_branches());
     assert!(app.active_buffer().is_read_only());
     assert_eq!(app.key_binding_scope(), BindingScope::GitBranches);
-    assert_eq!(app.active_buffer().to_string(), "  feature\n* main");
+    assert_eq!(
+        app.active_buffer().to_string(),
+        "Local\n  feature\n* main\n\nRemote\n  no remote branches known"
+    );
     // Opening follows the current branch. Move to the branch above it and
     // activate the row through the branch-list binding.
     press(&mut app, 'k');
@@ -1963,9 +2016,272 @@ fn space_g_b_opens_local_branches_and_enter_checks_one_out() {
 
     assert_eq!(provider.checkouts(), vec!["feature"]);
     assert_eq!(app.status, "checked out feature");
-    assert_eq!(app.active_buffer().to_string(), "* feature\n  main");
-    assert_eq!(app.cursor_position(), Position::new(0, 0));
+    assert_eq!(
+        app.active_buffer().to_string(),
+        "Local\n* feature\n  main\n\nRemote\n  no remote branches known"
+    );
+    assert_eq!(app.cursor_position(), Position::new(1, 0));
 
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn an_untracked_remote_row_creates_and_checks_out_a_tracking_local_branch() {
+    use crate::git::{MemoryGitProvider, Repository};
+
+    let root = temporary("git-remote-branch-checkout");
+    fs::create_dir_all(&root).unwrap();
+    let root = root.canonicalize().unwrap();
+    let mut ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    let provider = Rc::new(
+        MemoryGitProvider::new(Repository::new(&root))
+            .with_branches(&["main"], "main")
+            .with_remote_branches(&["origin/topic"]),
+    );
+    ports.replace_git(Box::new(Rc::clone(&provider)));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    app.execute_command("git-branches").unwrap();
+    select_remote_branch(&mut app, "origin/topic");
+
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+
+    assert_eq!(
+        provider.creations(),
+        vec![("topic".to_owned(), "refs/remotes/origin/topic".to_owned())]
+    );
+    assert_eq!(provider.checkouts(), vec!["topic"]);
+    assert_eq!(app.status, "created topic tracking origin/topic");
+    assert!(
+        app.active_buffer()
+            .to_string()
+            .contains("origin/topic [tracked by: topic]")
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn a_remote_row_checks_out_its_existing_local_tracking_branch() {
+    use crate::git::{MemoryGitProvider, Repository, Upstream};
+
+    let root = temporary("git-remote-existing-tracker");
+    fs::create_dir_all(&root).unwrap();
+    let root = root.canonicalize().unwrap();
+    let mut ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    let provider = Rc::new(
+        MemoryGitProvider::new(Repository::new(&root))
+            .with_branches(&["feature", "main"], "main")
+            .with_branch_detail(
+                "feature",
+                Some(Upstream::origin("topic", Some(Default::default()))),
+                false,
+            )
+            .with_remote_branches(&["origin/topic"]),
+    );
+    ports.replace_git(Box::new(Rc::clone(&provider)));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    app.execute_command("git-branches").unwrap();
+    select_remote_branch(&mut app, "origin/topic");
+
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+
+    assert_eq!(provider.checkouts(), vec!["feature"]);
+    assert_eq!(app.status, "checked out feature");
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn a_remote_row_with_several_trackers_asks_which_local_branch_to_use() {
+    use crate::git::{MemoryGitProvider, Repository, Upstream};
+
+    let root = temporary("git-remote-several-trackers");
+    fs::create_dir_all(&root).unwrap();
+    let root = root.canonicalize().unwrap();
+    let mut ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    let upstream = Some(Upstream::origin("topic", Some(Default::default())));
+    let provider = Rc::new(
+        MemoryGitProvider::new(Repository::new(&root))
+            .with_branches(&["feature", "main", "release"], "main")
+            .with_branch_detail("feature", upstream.clone(), false)
+            .with_branch_detail("release", upstream, false)
+            .with_remote_branches(&["origin/topic"]),
+    );
+    ports.replace_git(Box::new(Rc::clone(&provider)));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    app.execute_command("git-branches").unwrap();
+    select_remote_branch(&mut app, "origin/topic");
+
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+
+    assert_eq!(
+        app.list.as_ref().map(|list| list.title.as_str()),
+        Some("Local branches tracking origin/topic")
+    );
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert_eq!(provider.checkouts(), vec!["feature"]);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn a_conflicting_default_remote_branch_name_opens_an_editable_name_prompt() {
+    use crate::git::{MemoryGitProvider, Repository};
+
+    let root = temporary("git-remote-name-conflict");
+    fs::create_dir_all(&root).unwrap();
+    let root = root.canonicalize().unwrap();
+    let mut ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    ports.replace_git(Box::new(
+        MemoryGitProvider::new(Repository::new(&root))
+            .with_branches(&["main", "topic"], "main")
+            .with_remote_branches(&["origin/topic"]),
+    ));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    app.execute_command("git-branches").unwrap();
+    select_remote_branch(&mut app, "origin/topic");
+
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+
+    assert_eq!(app.prompt_kind, PromptKind::NewBranch);
+    assert_eq!(app.command, "topic");
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn a_slash_remote_uses_its_actual_branch_name_for_checkout_and_worktrees() {
+    use crate::git::{MemoryGitProvider, Repository};
+
+    let root = temporary("git-slash-remote-name");
+    fs::create_dir_all(&root).unwrap();
+    let root = root.canonicalize().unwrap();
+    let mut ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    ports.replace_git(Box::new(
+        MemoryGitProvider::new(Repository::new(&root))
+            .with_branches(&["main"], "main")
+            .with_remote_branch("fork/team", "main"),
+    ));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    app.execute_command("git-branches").unwrap();
+    select_remote_branch(&mut app, "fork/team/main");
+
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+
+    assert_eq!(app.prompt_kind, PromptKind::NewBranch);
+    assert_eq!(app.command, "main");
+    key(&mut app, KeyCode::Escape, Modifiers::NONE);
+
+    context_action(&mut app, 'w');
+
+    assert_eq!(app.prompt_kind, PromptKind::NewWorktreeBranch);
+    assert_eq!(app.command, "main");
+    assert_eq!(
+        app.git_worktree_start.as_deref(),
+        Some("refs/remotes/fork/team/main")
+    );
+    assert_eq!(
+        app.git_worktree_upstream.as_deref(),
+        Some("refs/remotes/fork/team/main")
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn tab_w_starts_a_worktree_from_the_selected_local_branch() {
+    use crate::git::{MemoryGitProvider, Repository};
+
+    let root = temporary("git-branch-worktree");
+    fs::create_dir_all(&root).unwrap();
+    let root = root.canonicalize().unwrap();
+    let mut ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    ports.replace_git(Box::new(
+        MemoryGitProvider::new(Repository::new(&root)).with_branches(&["feature", "main"], "main"),
+    ));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    app.execute_command("git-branches").unwrap();
+    press(&mut app, 'k');
+
+    context_action(&mut app, 'w');
+
+    assert_eq!(app.prompt_kind, PromptKind::WorktreeDestination);
+    assert_eq!(app.git_worktree_start.as_deref(), Some("feature"));
+    assert!(app.git_worktree_new_branch.is_none());
+    assert!(app.git_worktree_upstream.is_none());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn tab_w_on_an_untracked_remote_prepares_a_tracking_branch_in_the_worktree() {
+    use crate::git::{MemoryGitProvider, Repository};
+
+    let root = temporary("git-remote-worktree");
+    fs::create_dir_all(&root).unwrap();
+    let root = root.canonicalize().unwrap();
+    let mut ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    ports.replace_git(Box::new(
+        MemoryGitProvider::new(Repository::new(&root))
+            .with_branches(&["main"], "main")
+            .with_remote_branches(&["origin/topic"]),
+    ));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    app.execute_command("git-branches").unwrap();
+    select_remote_branch(&mut app, "origin/topic");
+
+    context_action(&mut app, 'w');
+
+    assert_eq!(app.prompt_kind, PromptKind::WorktreeDestination);
+    assert_eq!(
+        app.git_worktree_start.as_deref(),
+        Some("refs/remotes/origin/topic")
+    );
+    assert_eq!(app.git_worktree_new_branch.as_deref(), Some("topic"));
+    assert_eq!(
+        app.git_worktree_upstream.as_deref(),
+        Some("refs/remotes/origin/topic")
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn tab_w_refuses_a_branch_that_already_has_a_checkout() {
+    use crate::git::{MemoryGitProvider, Repository};
+
+    let root = temporary("git-branch-existing-worktree");
+    fs::create_dir_all(&root).unwrap();
+    let root = root.canonicalize().unwrap();
+    let checkout = root.parent().unwrap().join("feature-checkout");
+    let mut ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    ports.replace_git(Box::new(
+        MemoryGitProvider::new(Repository::new(&root))
+            .with_branches(&["feature", "main"], "main")
+            .with_branch_checkout("feature", checkout.clone()),
+    ));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    app.execute_command("git-branches").unwrap();
+    press(&mut app, 'k');
+
+    context_action(&mut app, 'w');
+
+    assert!(app.status_error);
+    assert!(app.status.contains("already checked out"), "{}", app.status);
+    assert!(
+        app.status.contains(&checkout.display().to_string()),
+        "{}",
+        app.status
+    );
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -2154,9 +2470,9 @@ fn n_creates_a_branch_at_the_selected_row_and_switches_to_it() {
     assert!(!app.status_error);
     assert_eq!(
         app.active_buffer().to_string(),
-        "  feature\n  main\n* spike"
+        "Local\n  feature\n  main\n* spike\n\nRemote\n  no remote branches known"
     );
-    assert_eq!(app.cursor_position(), Position::new(2, 0));
+    assert_eq!(app.cursor_position(), Position::new(3, 0));
 
     fs::remove_dir_all(root).unwrap();
 }
@@ -2313,10 +2629,13 @@ fn shift_d_deletes_a_branch_only_after_a_confirmation() {
 
     assert_eq!(provider.deletions(), vec![("feature".to_owned(), true)]);
     assert_eq!(app.status, "deleted feature");
-    assert_eq!(app.active_buffer().to_string(), "* main\n  spike");
+    assert_eq!(
+        app.active_buffer().to_string(),
+        "Local\n* main\n  spike\n\nRemote\n  no remote branches known"
+    );
     // The row the deleted branch occupied is now `main`, and the caret
     // stayed on it rather than jumping.
-    assert_eq!(app.cursor_position(), Position::new(0, 0));
+    assert_eq!(app.cursor_position(), Position::new(1, 0));
 
     fs::remove_dir_all(root).unwrap();
 }
@@ -2602,7 +2921,10 @@ fn p_pulls_the_current_branch_and_shift_p_pushes_the_selected_one() {
     ports.replace_git(Box::new(Rc::clone(&provider)));
     let mut app = App::new_in_isolated_project(&root, ports).unwrap();
     app.execute_command("git-branches").unwrap();
-    assert_eq!(app.active_buffer().to_string(), "  feature\n* main [↑2]");
+    assert_eq!(
+        app.active_buffer().to_string(),
+        "Local\n  feature\n* main [↑2]\n\nRemote\n  no remote branches known"
+    );
 
     // The caret opens on the current branch, so `p` acts on it.
     context_action(&mut app, 'p');
@@ -2610,13 +2932,19 @@ fn p_pulls_the_current_branch_and_shift_p_pushes_the_selected_one() {
     assert_eq!(provider.pulls(), 1);
     assert!(!app.status_error, "{}", app.status);
     // Fast-forwarded, so nothing is left to come down.
-    assert_eq!(app.active_buffer().to_string(), "  feature\n* main [↑2]");
+    assert_eq!(
+        app.active_buffer().to_string(),
+        "Local\n  feature\n* main [↑2]\n\nRemote\n  no remote branches known"
+    );
 
     context_action(&mut app, 'P');
 
     assert_eq!(provider.pushes(), vec!["main"]);
     assert_eq!(app.status, "pushed main");
-    assert_eq!(app.active_buffer().to_string(), "  feature\n* main [=]");
+    assert_eq!(
+        app.active_buffer().to_string(),
+        "Local\n  feature\n* main [=]\n\nRemote\n  no remote branches known"
+    );
 
     // `P` on another row publishes that row rather than the current branch:
     // pushing a branch touches no working tree, so it is not restricted.
@@ -2710,7 +3038,10 @@ fn pulling_a_diverged_branch_offers_to_replay_the_local_commits() {
     assert!(app.git_pull_rebase.is_none());
     assert_eq!(provider.rebases(), 0);
     assert!(app.status.contains("left as it is"), "{}", app.status);
-    assert_eq!(app.active_buffer().to_string(), "* main [↑2 ↓1]");
+    assert_eq!(
+        app.active_buffer().to_string(),
+        "Local\n* main [↑2 ↓1]\n\nRemote\n  no remote branches known"
+    );
 
     // Enter replays them, and the row afterwards is ahead of an upstream it
     // no longer trails.
@@ -2729,7 +3060,10 @@ fn pulling_a_diverged_branch_offers_to_replay_the_local_commits() {
     assert_eq!(provider.rebases(), 1);
     assert_eq!(provider.pulls(), 0, "a replay is not a second pull");
     assert!(!app.status_error, "{}", app.status);
-    assert_eq!(app.active_buffer().to_string(), "* main [↑2]");
+    assert_eq!(
+        app.active_buffer().to_string(),
+        "Local\n* main [↑2]\n\nRemote\n  no remote branches known"
+    );
 
     fs::remove_dir_all(root).unwrap();
 }
@@ -2823,13 +3157,16 @@ fn the_branch_list_sets_upstream_drift_apart_from_the_name() {
     let mut app = App::new_in_isolated_project(&root, ports).unwrap();
     app.execute_command("git-branches").unwrap();
 
-    assert_eq!(app.active_buffer().to_string(), "  feature\n* main [↑2 ↓1]");
+    assert_eq!(
+        app.active_buffer().to_string(),
+        "Local\n  feature\n* main [↑2 ↓1]\n\nRemote\n  no remote branches known"
+    );
 
-    // The second row's annotation is highlighted, and the name before it is
+    // The current branch's annotation is highlighted, and the name before it is
     // not: a reader must be able to tell the two apart at a glance.
     let buffer = app.active().buffer;
-    let row = app.active_buffer().line_to_offset(1);
-    let end = row + app.active_buffer().line_len(1);
+    let row = app.active_buffer().line_to_offset(2);
+    let end = row + app.active_buffer().line_len(2);
     let spans = app.highlights(buffer, row, end);
     assert_eq!(spans.len(), 1);
     let annotation = app
@@ -2840,7 +3177,8 @@ fn the_branch_list_sets_upstream_drift_apart_from_the_name() {
     assert_eq!(spans[0].scope.name(), "comment");
     // The first row tracks nothing, so it says nothing and is not
     // highlighted at all.
-    assert!(app.highlights(buffer, 0, 9).is_empty());
+    let untracked = app.active_buffer().line_to_offset(1);
+    assert!(app.highlights(buffer, untracked, untracked + 9).is_empty());
 
     fs::remove_dir_all(root).unwrap();
 }

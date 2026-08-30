@@ -2173,6 +2173,12 @@ fn build_keymap(bindings: Vec<Binding>) -> Keymap {
         ),
         ContextAction::row(
             BindingScope::GitBranches,
+            Key::char('w'),
+            "worktree",
+            EditorCommand::CreateWorktree,
+        ),
+        ContextAction::row(
+            BindingScope::GitBranches,
             Key::char('D'),
             "delete",
             EditorCommand::DeleteBranch,
@@ -2192,12 +2198,6 @@ fn build_keymap(bindings: Vec<Binding>) -> Keymap {
         ContextAction::row(
             BindingScope::GitWorktrees,
             Key::char('n'),
-            "create",
-            EditorCommand::CreateWorktree,
-        ),
-        ContextAction::row(
-            BindingScope::GitWorktrees,
-            Key::char('N'),
             "branch",
             EditorCommand::CreateNewWorktree,
         ),
@@ -2511,6 +2511,7 @@ mod tests {
             named(BindingScope::GitBranches),
             vec![
                 ("n".to_owned(), "create"),
+                ("w".to_owned(), "worktree"),
                 ("D".to_owned(), "delete"),
                 ("p".to_owned(), "pull"),
                 ("P".to_owned(), "push"),
@@ -2518,11 +2519,7 @@ mod tests {
         );
         assert_eq!(
             named(BindingScope::GitWorktrees),
-            vec![
-                ("n".to_owned(), "create"),
-                ("N".to_owned(), "branch"),
-                ("D".to_owned(), "remove"),
-            ]
+            vec![("n".to_owned(), "branch"), ("D".to_owned(), "remove"),]
         );
         assert_eq!(
             named(BindingScope::GitStash),

@@ -1568,6 +1568,7 @@ fn successful_worktree_creation_attaches_only_in_persistent_mode() {
             destination: destination.clone(),
             start: "main".to_owned(),
             new_branch: Some("linked".to_owned()),
+            upstream: None,
         })
     };
     let mut standalone = App::new(Config::default(), None).unwrap();
@@ -1616,6 +1617,7 @@ fn uncertain_worktree_creation_never_requests_attachment() {
             destination,
             start: "main".to_owned(),
             new_branch: None,
+            upstream: None,
         }),
         Vec::new(),
         None,

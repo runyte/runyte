@@ -657,7 +657,7 @@ editor_commands! {
     ToggleHiddenFiles => ("toggle-hidden-files", "Show or hide dotfiles in the explorer"),
     OpenChangedFile => ("open-changed-file", "Open the file on this line"),
     StageAllChangedFiles => ("stage-all-changed-files", "Stage every changed file"),
-    CheckoutBranch => ("checkout-branch", "Check out the branch on this line"),
+    CheckoutBranch => ("checkout-branch", "Check out this branch locally"),
     CreateBranch => ("create-branch", "Create a branch at the one on this line and switch to it"),
     DeleteBranch => ("delete-branch", "Delete the branch on this line, after a confirmation"),
     PullBranch => ("pull-branch", "Fast-forward the current branch onto what it tracks"),
@@ -665,11 +665,11 @@ editor_commands! {
     OpenWorktree => ("open-worktree", "Attach to the worktree on this line"),
     CreateWorktree => (
         "create-worktree",
-        "Create a worktree from this row; attach in persistent mode"
+        "Create a worktree for this branch; attach in persistent mode"
     ),
     CreateNewWorktree => (
         "create-new-worktree",
-        "Create a new branch and worktree; attach in persistent mode"
+        "Create a new branch and worktree from this checkout; attach in persistent mode"
     ),
     RemoveWorktree => ("remove-worktree", "Remove the worktree on this row, leaving its branch"),
     NextGitLogPage => ("next-git-log-page", "Show the next page of the Git log"),
@@ -1569,7 +1569,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "git-branches",
         [],
         "git-branches",
-        "Open the local branch list",
+        "Open the local and remote branch list",
         NoArguments
     ),
     spec!(

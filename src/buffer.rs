@@ -52,7 +52,7 @@ impl std::error::Error for BinaryFileError {}
 /// finds the buffer again rather than opening a second one.
 pub const GIT_STATUS_NAME: &str = "[git status]";
 
-/// The display name of the local branch list.
+/// The display name of the local and remote branch list.
 pub const GIT_BRANCHES_NAME: &str = "[git branches]";
 
 /// The display name of the repository worktree list.
@@ -1952,7 +1952,7 @@ impl Buffer {
         }
     }
 
-    /// The local branch list.
+    /// The local and remote branch list.
     pub fn git_branches(text: &str) -> Self {
         let text = Text::from_str(text);
         Self {

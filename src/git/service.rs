@@ -21,7 +21,7 @@ use std::{
 use tokio::sync::mpsc;
 
 use super::{
-    BaseContent, BlameLine, BlameRequest, Branch, BranchDeletionPlan, CommitDetail,
+    BaseContent, BlameLine, BlameRequest, BranchDeletionPlan, BranchList, CommitDetail,
     CommitSearchResult, DeletionAuthorization, DiffScope, FileComparison, GitCliProvider, GitError,
     GitProvider, LogPage, LogRequest, PartialStageRequest, PartialStageSelection, Repository,
     RepositoryStatus, Result, StashEntry, StashMutation, StatusStats, Worktree, WorktreeCreate,
@@ -147,6 +147,10 @@ pub enum GitMutation {
         branch: String,
         start: String,
     },
+    CreateTrackingBranch {
+        branch: String,
+        upstream: String,
+    },
     DeleteBranch {
         plan: Box<BranchDeletionPlan>,
         authorization: DeletionAuthorization,
@@ -178,6 +182,7 @@ enum MutationIdentity {
     Discard(Vec<PathBuf>),
     Checkout(String),
     CreateBranch(String, String),
+    CreateTrackingBranch(String, String),
     DeleteBranch(String),
     Commit(String),
     Pull,
@@ -197,6 +202,9 @@ impl GitMutation {
             Self::Checkout { branch } => MutationIdentity::Checkout(branch.clone()),
             Self::CreateBranch { branch, start } => {
                 MutationIdentity::CreateBranch(branch.clone(), start.clone())
+            }
+            Self::CreateTrackingBranch { branch, upstream } => {
+                MutationIdentity::CreateTrackingBranch(branch.clone(), upstream.clone())
             }
             Self::DeleteBranch { plan, .. } => MutationIdentity::DeleteBranch(plan.branch.clone()),
             Self::Commit { message } => MutationIdentity::Commit(message.clone()),
@@ -224,6 +232,7 @@ impl GitMutation {
             Self::Discard(_) => "discard",
             Self::Checkout { .. } => "checkout",
             Self::CreateBranch { .. } => "create branch",
+            Self::CreateTrackingBranch { .. } => "create tracking branch",
             Self::DeleteBranch { .. } => "delete branch",
             Self::Commit { .. } => "commit",
             Self::Pull => "pull",
@@ -490,7 +499,7 @@ pub struct RepositorySnapshot {
     pub stats: StatusStats,
     pub head_oid: Option<String>,
     pub staged: Vec<(PathBuf, BaseContent)>,
-    pub branches: Option<Vec<Branch>>,
+    pub branches: Option<BranchList>,
     pub staged_diff: Option<String>,
     pub file_diffs: Vec<(PathBuf, DiffScope, String)>,
     pub worktrees: Option<Vec<Worktree>>,
@@ -518,7 +527,7 @@ pub enum GitResponse {
         path: PathBuf,
         comparison: FileComparison,
     },
-    Branches(Vec<Branch>),
+    Branches(BranchList),
     Worktrees(Vec<Worktree>),
     PreparedBranchDeletion(BranchDeletionPlan),
     PreparedWorktreeRemoval(WorktreeRemovalPlan),
@@ -1195,7 +1204,7 @@ fn execute(
                 comparison,
             }),
         GitOperation::Branches { repository } => {
-            provider.branches(repository).map(GitResponse::Branches)
+            provider.branch_list(repository).map(GitResponse::Branches)
         }
         GitOperation::Worktrees { repository } => {
             provider.worktrees(repository).map(GitResponse::Worktrees)
@@ -1294,6 +1303,9 @@ fn execute(
                 }
                 GitMutation::CreateBranch { branch, start } => provider
                     .create_branch(repository, branch, start)
+                    .map(|()| None),
+                GitMutation::CreateTrackingBranch { branch, upstream } => provider
+                    .create_tracking_branch(repository, branch, upstream)
                     .map(|()| None),
                 GitMutation::DeleteBranch {
                     plan,
@@ -1421,7 +1433,7 @@ fn refresh(
         .collect::<Result<Vec<_>>>()?;
     let branches = spec
         .branches
-        .then(|| provider.branches(repository))
+        .then(|| provider.branch_list(repository))
         .transpose()?;
     let staged_diff = spec
         .staged_diff

@@ -330,6 +330,12 @@ pub enum Head {
 pub struct Upstream {
     /// The short ref name, as `origin/main`.
     pub name: String,
+    /// The local remote-tracking ref, as `refs/remotes/origin/main`.
+    ///
+    /// This is the stable join key between local and remote rows. The short
+    /// name is presentation and can become disambiguated when another ref has
+    /// the same spelling.
+    pub tracking_reference: String,
     /// The remote the upstream lives on, as `origin`.
     ///
     /// Taken from Git rather than split off the front of `name`: a remote is
@@ -348,11 +354,60 @@ impl Upstream {
     pub fn origin(branch: &str, divergence: Option<Divergence>) -> Self {
         Self {
             name: format!("origin/{branch}"),
+            tracking_reference: format!("refs/remotes/origin/{branch}"),
             remote: "origin".to_owned(),
             reference: format!("refs/heads/{branch}"),
             divergence,
         }
     }
+}
+
+/// One locally cached remote-tracking branch.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RemoteBranch {
+    /// Display name including its remote, as `origin/main`.
+    pub name: String,
+    /// Full local ref identity, as `refs/remotes/origin/main`.
+    pub reference: String,
+    /// Configured remote identity. Kept separately because remote names may
+    /// contain `/`, so it cannot be recovered by splitting `name`.
+    pub remote: String,
+    /// Branch identity on the remote, as `main` or `review/42`.
+    pub branch: String,
+    /// Local branches whose configured upstream is this exact ref.
+    pub tracked_by: Vec<String>,
+}
+
+impl RemoteBranch {
+    pub fn new(remote: impl Into<String>, branch: impl Into<String>) -> Self {
+        let remote = remote.into();
+        let branch = branch.into();
+        Self {
+            name: format!("{remote}/{branch}"),
+            reference: format!("refs/remotes/{remote}/{branch}"),
+            remote,
+            branch,
+            tracked_by: Vec::new(),
+        }
+    }
+
+    fn from_reference(
+        remote: impl Into<String>,
+        branch: impl Into<String>,
+        reference: impl Into<String>,
+    ) -> Self {
+        let mut remote_branch = Self::new(remote, branch);
+        remote_branch.reference = reference.into();
+        remote_branch
+    }
+}
+
+/// The complete branch view, read as one service result so its inverse
+/// tracking annotations describe the same repository observation.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct BranchList {
+    pub local: Vec<Branch>,
+    pub remote: Vec<RemoteBranch>,
 }
 
 /// One local branch that can be checked out directly.
@@ -670,6 +725,32 @@ pub trait GitProvider {
     /// Local branches, marking the one `HEAD` currently names when attached.
     fn branches(&self, repository: &Repository) -> Result<Vec<Branch>>;
 
+    /// Locally cached remote-tracking refs. Reading these never contacts a
+    /// remote; fetch and pull are what update them.
+    fn remote_branches(&self, _repository: &Repository) -> Result<Vec<RemoteBranch>> {
+        Ok(Vec::new())
+    }
+
+    /// Local and remote rows with the inverse upstream relationship attached
+    /// to each remote ref.
+    fn branch_list(&self, repository: &Repository) -> Result<BranchList> {
+        let local = self.branches(repository)?;
+        let mut remote = self.remote_branches(repository)?;
+        for remote_branch in &mut remote {
+            remote_branch.tracked_by = local
+                .iter()
+                .filter(|local_branch| {
+                    local_branch.upstream.as_ref().is_some_and(|upstream| {
+                        upstream.tracking_reference == remote_branch.reference
+                    })
+                })
+                .map(|local_branch| local_branch.name.clone())
+                .collect();
+            remote_branch.tracked_by.sort();
+        }
+        Ok(BranchList { local, remote })
+    }
+
     /// Every checkout registered with the repository's common Git directory.
     fn worktrees(&self, _repository: &Repository) -> Result<Vec<Worktree>> {
         Err(GitError::Unavailable {
@@ -845,6 +926,21 @@ pub trait GitProvider {
     /// creating anything, so a refusal leaves the repository untouched.
     fn create_branch(&self, repository: &Repository, branch: &str, start_point: &str)
     -> Result<()>;
+
+    /// Creates and checks out a local branch which tracks one cached remote
+    /// ref. `upstream` is its exact `refs/remotes/...` identity, never a short
+    /// name which could collide with a local branch. One operation keeps a
+    /// failed checkout from leaving a stray branch.
+    fn create_tracking_branch(
+        &self,
+        _repository: &Repository,
+        _branch: &str,
+        _upstream: &str,
+    ) -> Result<()> {
+        Err(GitError::Unavailable {
+            detail: "this Git provider cannot create tracking branches".to_owned(),
+        })
+    }
 
     /// Removes one local branch.
     ///
@@ -1055,6 +1151,7 @@ pub struct MemoryGitProvider {
     /// Every path whose changes were thrown away, in order.
     discarded: std::cell::RefCell<Vec<PathBuf>>,
     branches: std::cell::RefCell<Vec<Branch>>,
+    remote_branches: std::cell::RefCell<Vec<RemoteBranch>>,
     checked_out: std::cell::RefCell<Vec<String>>,
     /// Every branch created through this provider, with the start point asked
     /// for, in order.
@@ -1096,6 +1193,7 @@ impl MemoryGitProvider {
             committed: std::cell::RefCell::new(Vec::new()),
             discarded: std::cell::RefCell::new(Vec::new()),
             branches: std::cell::RefCell::new(vec![Branch::new("main", true)]),
+            remote_branches: std::cell::RefCell::new(Vec::new()),
             checked_out: std::cell::RefCell::new(Vec::new()),
             created: std::cell::RefCell::new(Vec::new()),
             deleted: std::cell::RefCell::new(Vec::new()),
@@ -1183,6 +1281,30 @@ impl MemoryGitProvider {
                 .collect(),
         );
         self.status.get_mut().head = Head::Branch(current.to_owned());
+        self
+    }
+
+    #[must_use]
+    pub fn with_remote_branches(mut self, names: &[&str]) -> Self {
+        self.remote_branches = std::cell::RefCell::new(
+            names
+                .iter()
+                .filter_map(|name| {
+                    name.split_once('/')
+                        .map(|(remote, branch)| RemoteBranch::new(remote, branch))
+                })
+                .collect(),
+        );
+        self
+    }
+
+    /// Adds one remote row without guessing where its configured remote name
+    /// ends. Useful for repositories whose remote itself contains `/`.
+    #[must_use]
+    pub fn with_remote_branch(self, remote: &str, branch: &str) -> Self {
+        self.remote_branches
+            .borrow_mut()
+            .push(RemoteBranch::new(remote, branch));
         self
     }
 
@@ -1385,6 +1507,13 @@ impl GitProvider for MemoryGitProvider {
         Ok(self.branches.borrow().clone())
     }
 
+    fn remote_branches(&self, _repository: &Repository) -> Result<Vec<RemoteBranch>> {
+        if self.failing {
+            return self.refuse();
+        }
+        Ok(self.remote_branches.borrow().clone())
+    }
+
     fn worktrees(&self, _repository: &Repository) -> Result<Vec<Worktree>> {
         if self.failing {
             return self.refuse();
@@ -1471,6 +1600,39 @@ impl GitProvider for MemoryGitProvider {
             .borrow_mut()
             .push((branch.to_owned(), start_point.to_owned()));
         self.checked_out.borrow_mut().push(branch.to_owned());
+        Ok(())
+    }
+
+    fn create_tracking_branch(
+        &self,
+        _repository: &Repository,
+        branch: &str,
+        upstream: &str,
+    ) -> Result<()> {
+        let Some(remote_branch) = self
+            .remote_branches
+            .borrow()
+            .iter()
+            .find(|candidate| candidate.reference == upstream)
+            .cloned()
+        else {
+            return self.refuse();
+        };
+        self.create_branch(_repository, branch, upstream)?;
+        if let Some(created) = self
+            .branches
+            .borrow_mut()
+            .iter_mut()
+            .find(|candidate| candidate.name == branch)
+        {
+            created.upstream = Some(Upstream {
+                name: remote_branch.name,
+                tracking_reference: remote_branch.reference,
+                remote: remote_branch.remote,
+                reference: format!("refs/heads/{}", remote_branch.branch),
+                divergence: Some(Divergence::default()),
+            });
+        }
         Ok(())
     }
 
@@ -1728,6 +1890,10 @@ impl GitProvider for std::rc::Rc<MemoryGitProvider> {
         self.as_ref().branches(repository)
     }
 
+    fn remote_branches(&self, repository: &Repository) -> Result<Vec<RemoteBranch>> {
+        self.as_ref().remote_branches(repository)
+    }
+
     fn worktrees(&self, repository: &Repository) -> Result<Vec<Worktree>> {
         self.as_ref().worktrees(repository)
     }
@@ -1757,6 +1923,16 @@ impl GitProvider for std::rc::Rc<MemoryGitProvider> {
         start_point: &str,
     ) -> Result<()> {
         self.as_ref().create_branch(repository, branch, start_point)
+    }
+
+    fn create_tracking_branch(
+        &self,
+        repository: &Repository,
+        branch: &str,
+        upstream: &str,
+    ) -> Result<()> {
+        self.as_ref()
+            .create_tracking_branch(repository, branch, upstream)
     }
 
     fn delete_branch(&self, repository: &Repository, branch: &str, force: bool) -> Result<()> {

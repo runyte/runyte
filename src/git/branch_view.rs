@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! The local branch list, as a projection of the branches Git reports.
+//! The local and cached remote branch list, as a projection of Git refs.
 //!
 //! The same shape as the changed-file list next door: deterministic, holding no
 //! state, and pairing each row's text with the thing a key pressed on that row
@@ -11,7 +11,7 @@
 
 use std::path::Path;
 
-use super::{Branch, Divergence};
+use super::{Branch, BranchList, Divergence, RemoteBranch};
 
 /// One row of the list.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -20,23 +20,41 @@ pub struct BranchRow {
     /// The branch a key pressed on this row acts on. `None` on the placeholder
     /// row an empty repository shows.
     pub branch: Option<Branch>,
+    /// The remote-tracking ref this row acts on. Local rows and headings have
+    /// none. Kept separate from `branch` because delete, pull, and push are
+    /// deliberately local-branch operations.
+    pub remote: Option<RemoteBranch>,
     /// Character columns `[start, end)` of the annotations, for a
     /// frontend to set apart from the name. `None` when the row carries none.
     pub annotation: Option<(usize, usize)>,
 }
 
-/// Projects local branches into the rows of the branch list.
+/// Projects local branches into their section of the branch list.
 ///
 /// Names are padded to a common width so the annotations line up in a column
 /// of their own; a reader comparing checkout locations or how far two branches
 /// have drifted is not hunting for notes at the end of ragged names.
-pub fn branch_rows(branches: &[Branch]) -> Vec<BranchRow> {
+pub fn branch_rows(branches: &BranchList) -> Vec<BranchRow> {
+    let mut rows = vec![heading("Local")];
+    rows.extend(local_rows(&branches.local));
+    rows.push(heading(""));
+    rows.push(heading("Remote"));
+    rows.extend(remote_rows(&branches.remote));
+    rows
+}
+
+fn heading(text: impl Into<String>) -> BranchRow {
+    BranchRow {
+        text: text.into(),
+        branch: None,
+        remote: None,
+        annotation: None,
+    }
+}
+
+fn local_rows(branches: &[Branch]) -> Vec<BranchRow> {
     if branches.is_empty() {
-        return vec![BranchRow {
-            text: "no local branches".to_owned(),
-            branch: None,
-            annotation: None,
-        }];
+        return vec![heading("  no local branches")];
     }
     let annotated = branches
         .iter()
@@ -68,7 +86,45 @@ pub fn branch_rows(branches: &[Branch]) -> Vec<BranchRow> {
             BranchRow {
                 text,
                 branch: Some(branch.clone()),
+                remote: None,
                 annotation: columns,
+            }
+        })
+        .collect()
+}
+
+fn remote_rows(branches: &[RemoteBranch]) -> Vec<BranchRow> {
+    if branches.is_empty() {
+        return vec![heading("  no remote branches known")];
+    }
+    let annotations = branches
+        .iter()
+        .map(|branch| {
+            if branch.tracked_by.is_empty() {
+                "[not tracked locally]".to_owned()
+            } else {
+                format!("[tracked by: {}]", branch.tracked_by.join(", "))
+            }
+        })
+        .collect::<Vec<_>>();
+    let width = branches
+        .iter()
+        .map(|branch| branch.name.chars().count())
+        .max()
+        .unwrap_or_default();
+    branches
+        .iter()
+        .zip(annotations)
+        .map(|(branch, annotation)| {
+            let mut text = format!("  {}", branch.name);
+            text.push_str(&" ".repeat(width.saturating_sub(branch.name.chars().count()) + 1));
+            let start = text.chars().count();
+            text.push_str(&annotation);
+            BranchRow {
+                text,
+                branch: None,
+                remote: Some(branch.clone()),
+                annotation: Some((start, start + annotation.chars().count())),
             }
         })
         .collect()
@@ -141,7 +197,7 @@ mod tests {
 
     #[test]
     fn each_direction_of_drift_reads_as_its_own_arrow() {
-        let rows = branch_rows(&[
+        let rows = local_rows(&[
             tracked("ahead", false, 2, 0),
             tracked("behind", false, 0, 3),
             tracked("both", false, 2, 3),
@@ -165,7 +221,7 @@ mod tests {
     fn a_branch_without_an_upstream_says_nothing_about_one() {
         let mut gone = tracked("stale", false, 0, 0);
         gone.upstream.as_mut().unwrap().divergence = None;
-        let rows = branch_rows(&[Branch::new("local", true), gone]);
+        let rows = local_rows(&[Branch::new("local", true), gone]);
 
         assert_eq!(text(&rows), vec!["* local", "  stale [gone]"]);
         assert_eq!(rows[0].annotation, None);
@@ -176,7 +232,7 @@ mod tests {
     /// name it follows.
     #[test]
     fn the_annotation_columns_cover_the_annotation_alone() {
-        let rows = branch_rows(&[tracked("feature", false, 1, 0)]);
+        let rows = local_rows(&[tracked("feature", false, 1, 0)]);
 
         let (start, end) = rows[0].annotation.unwrap();
         let columns = rows[0].text.chars().collect::<Vec<_>>();
@@ -187,7 +243,7 @@ mod tests {
     /// a neighbour's branch instead.
     #[test]
     fn rows_carry_the_branch_they_act_on() {
-        let rows = branch_rows(&[Branch::new("main", true), Branch::new("other", false)]);
+        let rows = local_rows(&[Branch::new("main", true), Branch::new("other", false)]);
 
         assert_eq!(
             rows.iter()
@@ -196,8 +252,8 @@ mod tests {
             vec![Some("main"), Some("other")]
         );
         // An empty repository offers a row to read and nothing to act on.
-        let empty = branch_rows(&[]);
-        assert_eq!(text(&empty), vec!["no local branches"]);
+        let empty = local_rows(&[]);
+        assert_eq!(text(&empty), vec!["  no local branches"]);
         assert!(empty[0].branch.is_none());
     }
 
@@ -206,7 +262,7 @@ mod tests {
         let mut branch = Branch::new("topic", false);
         branch.checkouts = vec!["/repo/topic".into(), "/tmp/topic copy".into()];
 
-        let rows = branch_rows(&[branch]);
+        let rows = local_rows(&[branch]);
 
         assert_eq!(
             text(&rows),
@@ -227,12 +283,41 @@ mod tests {
         let mut branch = Branch::new("topic", false);
         branch.checkouts = vec!["/tmp/line\nbreak\t❯\\folder".into()];
 
-        let rows = branch_rows(&[branch]);
+        let rows = local_rows(&[branch]);
 
         assert_eq!(rows.len(), 1);
         assert_eq!(
             rows[0].text,
             "  topic [worktree: /tmp/line\\nbreak\\t❯\\folder]"
         );
+    }
+
+    #[test]
+    fn local_and_remote_sections_name_every_tracking_relationship() {
+        let mut origin_main = RemoteBranch::new("origin", "main");
+        origin_main.tracked_by = vec!["main".to_owned(), "release".to_owned()];
+        let branches = BranchList {
+            local: vec![Branch::new("main", true), Branch::new("release", false)],
+            remote: vec![origin_main, RemoteBranch::new("origin", "review/42")],
+        };
+
+        let rows = branch_rows(&branches);
+
+        assert_eq!(
+            text(&rows),
+            vec![
+                "Local",
+                "* main",
+                "  release",
+                "",
+                "Remote",
+                "  origin/main      [tracked by: main, release]",
+                "  origin/review/42 [not tracked locally]",
+            ]
+        );
+        assert!(rows[0].branch.is_none() && rows[0].remote.is_none());
+        assert_eq!(rows[1].branch.as_ref().unwrap().name, "main");
+        assert_eq!(rows[5].remote.as_ref().unwrap().name, "origin/main");
+        assert_eq!(rows[6].annotation.map(|(start, _)| start), Some(19));
     }
 }

@@ -8,12 +8,12 @@ use super::{PendingWorktreeRemovalCheck, WorkspaceRow, WorktreeTeardown, Worktre
 // Application-module dependencies:
 use super::{
     App, AttachedSession, Axis, BindingTarget, BlameLine, BlameRequest, BlameSource, Branch,
-    BranchCascade, BranchDeletionConfirmation, BranchDeletionPlan, BranchSwitch,
-    BranchSwitchConfirmation, Buffer, BufferKind, BufferRevisionGuard, COMMIT_INSTRUCTIONS,
-    ColonCommand, CommitDetail, CommitSearchResult, CommitSummary, DeletionAuthorization,
-    DiffScope, DiffSession, DiffSide, Duration, FileComparison, GeneralWorktreeRow,
-    GeneratedViewIdentity, GitDiscardConfirmation, GitMutation, GitOperation, GitProvider,
-    GitRequestId, GitResponse, GitServiceEvent, GitServiceHandle, GitServiceProgress,
+    BranchCascade, BranchDeletionConfirmation, BranchDeletionPlan, BranchList, BranchStart,
+    BranchSwitch, BranchSwitchConfirmation, Buffer, BufferKind, BufferRevisionGuard,
+    COMMIT_INSTRUCTIONS, ColonCommand, CommitDetail, CommitSearchResult, CommitSummary,
+    DeletionAuthorization, DiffScope, DiffSession, DiffSide, Duration, FileComparison,
+    GeneralWorktreeRow, GeneratedViewIdentity, GitDiscardConfirmation, GitMutation, GitOperation,
+    GitProvider, GitRequestId, GitResponse, GitServiceEvent, GitServiceHandle, GitServiceProgress,
     GitServiceState, GitStashConfirmation, GitTracker, HashMap, HashSet, Instant, KeyCode,
     KeyStroke, LineChange, ListAction, ListPicker, LogCursor, LogPage, LogRequest, LogViewRequest,
     MAX_BLAME_INPUT_BYTES, MAX_BLAME_LINES, MAX_DIFF_BYTES, Mode, PartialStageSelection, PatchHunk,
@@ -1140,6 +1140,7 @@ impl App {
             mutation,
             GitMutation::Checkout { .. }
                 | GitMutation::CreateBranch { .. }
+                | GitMutation::CreateTrackingBranch { .. }
                 | GitMutation::Pull
                 | GitMutation::RebaseOntoUpstream
         ) {
@@ -1281,6 +1282,10 @@ impl App {
                 GitMutation::Checkout { branch } => format!("checked out {branch}"),
                 GitMutation::CreateBranch { branch, start } => {
                     format!("created {branch} from {start}")
+                }
+                GitMutation::CreateTrackingBranch { branch, upstream } => {
+                    let upstream = upstream.strip_prefix("refs/remotes/").unwrap_or(&upstream);
+                    format!("created {branch} tracking {upstream}")
                 }
                 GitMutation::DeleteBranch { plan, .. } => {
                     format!("deleted branch {}", plan.branch)
@@ -2344,7 +2349,7 @@ impl App {
         self.mode = Mode::Normal;
     }
 
-    /// Opens the local branch list, reusing its one read-only buffer.
+    /// Opens the local and cached remote branch list, reusing its one buffer.
     pub(super) fn open_git_branches(&mut self) {
         if !self.has_git() {
             self.action_failed("no `git` executable was found");
@@ -2363,7 +2368,7 @@ impl App {
             .git
             .as_deref()
             .expect("checked above")
-            .branches(&repository)
+            .branch_list(&repository)
         {
             Ok(branches) => branches,
             Err(error) => {
@@ -2377,6 +2382,12 @@ impl App {
             .branch_rows
             .iter()
             .position(|row| row.branch.as_ref().is_some_and(|branch| branch.current))
+            .or_else(|| {
+                self.git_state
+                    .branch_rows
+                    .iter()
+                    .position(|row| row.branch.is_some() || row.remote.is_some())
+            })
             .unwrap_or_default();
         let existing = self.buffers.iter().enumerate().find_map(|(index, buffer)| {
             (!self.closed_buffers.contains(&index) && buffer.is_git_branches()).then_some(index)
@@ -2403,13 +2414,19 @@ impl App {
         self.mode = Mode::Normal;
     }
 
-    fn open_git_branches_result(&mut self, branches: Vec<Branch>) {
+    fn open_git_branches_result(&mut self, branches: BranchList) {
         let text = self.rebuild_git_branch_rows(branches);
         let selected = self
             .git_state
             .branch_rows
             .iter()
             .position(|row| row.branch.as_ref().is_some_and(|branch| branch.current))
+            .or_else(|| {
+                self.git_state
+                    .branch_rows
+                    .iter()
+                    .position(|row| row.branch.is_some() || row.remote.is_some())
+            })
             .unwrap_or_default();
         let existing = self.buffers.iter().enumerate().find_map(|(index, buffer)| {
             (!self.closed_buffers.contains(&index) && buffer.is_git_branches()).then_some(index)
@@ -2721,7 +2738,7 @@ impl App {
             self.error_from("Git", "Git operation failed", error.to_string());
             return None;
         }
-        let branches = provider.branches(&repository);
+        let branches = provider.branch_list(&repository);
         let worktrees = provider.worktrees(&repository);
         if let Ok(branches) = branches {
             self.refresh_git_branches_from(branches, "");
@@ -3118,6 +3135,7 @@ impl App {
         };
         self.git_worktree_start = Some(start);
         self.git_worktree_new_branch = None;
+        self.git_worktree_upstream = None;
         self.open_prompt(if new_branch {
             PromptKind::NewWorktreeBranch
         } else {
@@ -3125,11 +3143,92 @@ impl App {
         });
     }
 
+    /// Starts a worktree from the branch-list row. Branch identity belongs in
+    /// this view; the worktree list is for checkout instances that already
+    /// exist and therefore cannot ordinarily be checked out a second time.
+    pub(super) fn create_branch_worktree_prompt(&mut self) {
+        let Some(row) = self.selected_branch_row() else {
+            return;
+        };
+        if let Some(branch) = row.branch {
+            self.create_branch_worktree(branch);
+        } else if let Some(remote) = row.remote {
+            match remote.tracked_by.as_slice() {
+                [branch] => self.create_branch_worktree_for_local(branch),
+                [] => self.create_untracked_remote_worktree(remote),
+                branches => {
+                    self.list_actions = branches
+                        .iter()
+                        .cloned()
+                        .map(ListAction::WorktreeGitBranch)
+                        .collect();
+                    let items = branches
+                        .iter()
+                        .enumerate()
+                        .map(|(index, branch)| PickerItem::new(branch, "local branch", index))
+                        .collect();
+                    self.list = Some(
+                        ListPicker::new(format!("Local branches tracking {}", remote.name), items)
+                            .with_primary_action("create worktree"),
+                    );
+                }
+            }
+        }
+    }
+
+    pub(super) fn create_branch_worktree_for_local(&mut self, name: &str) {
+        let branch = self.git_state.branch_rows.iter().find_map(|row| {
+            row.branch
+                .as_ref()
+                .filter(|branch| branch.name == name)
+                .cloned()
+        });
+        match branch {
+            Some(branch) => self.create_branch_worktree(branch),
+            None => self.action_failed(format!("local branch {name} is no longer available")),
+        }
+    }
+
+    fn create_branch_worktree(&mut self, branch: Branch) {
+        if let Some(path) = branch.checkouts.first() {
+            self.action_failed(format!(
+                "{} is already checked out at {}; use Space g w to attach there",
+                branch.name,
+                crate::git::display_path(path)
+            ));
+            return;
+        }
+        self.git_worktree_start = Some(branch.name);
+        self.git_worktree_new_branch = None;
+        self.git_worktree_upstream = None;
+        self.open_prompt(PromptKind::WorktreeDestination);
+    }
+
+    fn create_untracked_remote_worktree(&mut self, remote: crate::git::RemoteBranch) {
+        let Some(branch) = Self::suggested_tracking_branch(&remote) else {
+            self.action_failed(format!(
+                "{} has no local branch name after its remote",
+                remote.name
+            ));
+            return;
+        };
+        self.git_worktree_start = Some(remote.reference.clone());
+        self.git_worktree_upstream = Some(remote.reference);
+        if self.local_branch_exists(&branch) {
+            self.git_worktree_new_branch = None;
+            self.open_prompt_with_value(PromptKind::NewWorktreeBranch, branch);
+        } else {
+            self.git_worktree_new_branch = Some(branch);
+            self.open_prompt(PromptKind::WorktreeDestination);
+        }
+    }
+
     pub(super) fn create_worktree(
         &mut self,
         destination: String,
         start: String,
         new_branch: Option<String>,
+        upstream: Option<String>,
     ) {
         let destination = destination.trim();
         if destination.is_empty() {
@@ -3150,6 +3249,7 @@ impl App {
             destination,
             start,
             new_branch,
+            upstream,
         };
         if self.ports.git_service.is_some() {
             let mut refresh = self.git_refresh_spec(&repository);
@@ -3919,9 +4019,17 @@ impl App {
 
     /// Checks out the branch named by the active branch-list row.
     pub(super) fn checkout_selected_branch(&mut self) {
-        let Some(branch) = self.selected_branch() else {
+        let Some(row) = self.selected_branch_row() else {
             return;
         };
+        if let Some(branch) = row.branch {
+            self.checkout_local_branch(branch);
+        } else if let Some(remote) = row.remote {
+            self.checkout_remote_branch(remote);
+        }
+    }
+
+    fn checkout_local_branch(&mut self, branch: Branch) {
         if branch.current {
             self.status(format!("already on {}", branch.name));
             return;
@@ -3938,6 +4046,92 @@ impl App {
         );
     }
 
+    pub(super) fn checkout_local_branch_named(&mut self, branch: &str) {
+        let name = branch.to_owned();
+        let branch = self.git_state.branch_rows.iter().find_map(|row| {
+            row.branch
+                .as_ref()
+                .filter(|candidate| candidate.name == name)
+                .cloned()
+        });
+        match branch {
+            Some(branch) => self.checkout_local_branch(branch),
+            None => self.action_failed(format!("local branch {name} is no longer available")),
+        }
+    }
+
+    fn checkout_remote_branch(&mut self, remote: crate::git::RemoteBranch) {
+        match remote.tracked_by.as_slice() {
+            [branch] => self.checkout_local_branch_named(branch),
+            [] => {
+                let Some(branch) = Self::suggested_tracking_branch(&remote) else {
+                    self.action_failed(format!(
+                        "{} has no local branch name after its remote",
+                        remote.name
+                    ));
+                    return;
+                };
+                if self.local_branch_exists(&branch) {
+                    self.git_branch_start = Some(BranchStart::Remote(remote));
+                    self.open_prompt_with_value(PromptKind::NewBranch, branch);
+                    return;
+                }
+                let Some(repository) = self.git.repository().cloned() else {
+                    self.action_failed("this project is not in a Git repository");
+                    return;
+                };
+                self.request_branch_switch(
+                    repository,
+                    BranchSwitch::Track {
+                        branch,
+                        upstream: remote,
+                    },
+                );
+            }
+            branches => {
+                self.list_actions = branches
+                    .iter()
+                    .cloned()
+                    .map(ListAction::CheckoutGitBranch)
+                    .collect();
+                let items = branches
+                    .iter()
+                    .enumerate()
+                    .map(|(index, branch)| PickerItem::new(branch, "local branch", index))
+                    .collect();
+                self.list = Some(
+                    ListPicker::new(format!("Local branches tracking {}", remote.name), items)
+                        .with_primary_action("check out"),
+                );
+            }
+        }
+    }
+
+    fn suggested_tracking_branch(remote: &crate::git::RemoteBranch) -> Option<String> {
+        (!remote.branch.is_empty()).then(|| remote.branch.clone())
+    }
+
+    fn local_branch_exists(&self, name: &str) -> bool {
+        self.git_state.branch_rows.iter().any(|row| {
+            row.branch
+                .as_ref()
+                .is_some_and(|branch| branch.name == name)
+        })
+    }
+
+    fn selected_branch_row(&mut self) -> Option<crate::git::BranchRow> {
+        let row = self.active_buffer().offset_to_row(self.active().head());
+        let branch = self.git_state.branch_rows.get(row).cloned();
+        if branch
+            .as_ref()
+            .is_none_or(|row| row.branch.is_none() && row.remote.is_none())
+        {
+            self.action_failed("this row is not a branch");
+            return None;
+        }
+        branch
+    }
+
     /// The branch the active branch-list row acts on.
     pub(super) fn selected_branch(&mut self) -> Option<Branch> {
         let row = self.active_buffer().offset_to_row(self.active().head());
@@ -3947,7 +4141,7 @@ impl App {
             .get(row)
             .and_then(|row| row.branch.clone());
         if branch.is_none() {
-            self.action_failed("this row is not a branch");
+            self.action_failed("this row is not a local branch");
         }
         branch
     }
@@ -4007,6 +4201,17 @@ impl App {
                     outcome,
                 )
             }
+            BranchSwitch::Track { branch, upstream } => {
+                let outcome = format!("created {branch} tracking {}", upstream.name);
+                (
+                    GitMutation::CreateTrackingBranch {
+                        branch: branch.clone(),
+                        upstream: upstream.reference,
+                    },
+                    branch,
+                    outcome,
+                )
+            }
         };
         if self.ports.git_service.is_some() {
             let refresh = self.git_refresh_spec(&repository);
@@ -4025,6 +4230,9 @@ impl App {
             GitMutation::Checkout { .. } => provider.checkout_branch(&repository, &branch),
             GitMutation::CreateBranch { start, .. } => {
                 provider.create_branch(&repository, &branch, &start)
+            }
+            GitMutation::CreateTrackingBranch { upstream, .. } => {
+                provider.create_tracking_branch(&repository, &branch, &upstream)
             }
             _ => unreachable!("branch switches use only checkout or create mutations"),
         };
@@ -4105,7 +4313,7 @@ impl App {
     /// being told the tree is dirty is worth more before a name has been typed
     /// than after.
     pub(super) fn create_branch_prompt(&mut self) {
-        let Some(branch) = self.selected_branch() else {
+        let Some(row) = self.selected_branch_row() else {
             return;
         };
         let Some(repository) = self.git.repository().cloned() else {
@@ -4119,12 +4327,23 @@ impl App {
         if !self.branch_switch_allowed(&repository) {
             return;
         }
-        self.git_branch_start = Some(branch.name);
-        self.open_prompt(PromptKind::NewBranch);
+        let (start, suggested) = match (row.branch, row.remote) {
+            (Some(branch), _) => (BranchStart::Local(branch.name), None),
+            (_, Some(remote)) => (
+                BranchStart::Remote(remote.clone()),
+                Self::suggested_tracking_branch(&remote),
+            ),
+            _ => unreachable!("selected branch rows carry one target"),
+        };
+        self.git_branch_start = Some(start);
+        match suggested {
+            Some(suggested) => self.open_prompt_with_value(PromptKind::NewBranch, suggested),
+            None => self.open_prompt(PromptKind::NewBranch),
+        }
     }
 
     /// Creates the named branch at the row it was started from, and switches.
-    pub(super) fn create_branch(&mut self, name: String, start_point: String) {
+    pub(super) fn create_branch(&mut self, name: String, start_point: BranchStart) {
         let name = name.trim().to_owned();
         if name.is_empty() {
             self.action_failed("a new branch needs a name");
@@ -4134,13 +4353,17 @@ impl App {
             self.action_failed("this project is not in a Git repository");
             return;
         };
-        self.request_branch_switch(
-            repository,
-            BranchSwitch::Create {
+        let action = match start_point {
+            BranchStart::Local(start) => BranchSwitch::Create {
                 branch: name,
-                start: start_point,
+                start,
             },
-        );
+            BranchStart::Remote(upstream) => BranchSwitch::Track {
+                branch: name,
+                upstream,
+            },
+        };
+        self.request_branch_switch(repository, action);
     }
 
     /// Fast-forwards the current branch onto what it tracks.
@@ -4641,7 +4864,7 @@ impl App {
     /// describes, for the same reason the changed-file list replaces its own:
     /// a mapping that outlived its rows would delete a branch the reader was
     /// not pointing at.
-    fn rebuild_git_branch_rows(&mut self, branches: Vec<Branch>) -> String {
+    fn rebuild_git_branch_rows(&mut self, branches: BranchList) -> String {
         let rows = crate::git::branch_rows(&branches);
         let text = rows
             .iter()
@@ -4669,13 +4892,13 @@ impl App {
         let Some(provider) = self.ports.git.as_deref() else {
             return;
         };
-        let Ok(branches) = provider.branches(&repository) else {
+        let Ok(branches) = provider.branch_list(&repository) else {
             return;
         };
         self.refresh_git_branches_from(branches, selected);
     }
 
-    fn refresh_git_branches_from(&mut self, branches: Vec<Branch>, selected: &str) {
+    fn refresh_git_branches_from(&mut self, branches: BranchList, selected: &str) {
         let Some(buffer) = self.buffers.iter().enumerate().find_map(|(index, buffer)| {
             (!self.closed_buffers.contains(&index) && buffer.is_git_branches()).then_some(index)
         }) else {
@@ -4687,29 +4910,39 @@ impl App {
             .filter(|(_, pane)| pane.buffer == buffer)
             .map(|(pane_id, pane)| {
                 let row = self.buffers[buffer].offset_to_row(pane.head());
-                let branch = self
-                    .git_state
-                    .branch_rows
-                    .get(row)
-                    .and_then(|row| row.branch.as_ref())
-                    .map(|branch| branch.name.clone());
-                (*pane_id, row, branch)
+                let target = self.git_state.branch_rows.get(row).and_then(|row| {
+                    row.branch
+                        .as_ref()
+                        .map(|branch| (true, branch.name.clone()))
+                        .or_else(|| {
+                            row.remote
+                                .as_ref()
+                                .map(|branch| (false, branch.reference.clone()))
+                        })
+                });
+                (*pane_id, row, target)
             })
             .collect::<Vec<_>>();
         let text = self.rebuild_git_branch_rows(branches);
         self.buffers[buffer].replace_virtual_text(&text);
-        for (pane_id, previous, branch) in followed {
+        for (pane_id, previous, target) in followed {
             let wanted = if selected.is_empty() {
-                branch.as_deref()
+                target
             } else {
-                Some(selected)
+                Some((true, selected.to_owned()))
             };
             let row = wanted
-                .and_then(|wanted| {
+                .and_then(|(local, wanted)| {
                     self.git_state.branch_rows.iter().position(|row| {
-                        row.branch
-                            .as_ref()
-                            .is_some_and(|branch| branch.name == wanted)
+                        if local {
+                            row.branch
+                                .as_ref()
+                                .is_some_and(|branch| branch.name == wanted)
+                        } else {
+                            row.remote
+                                .as_ref()
+                                .is_some_and(|branch| branch.reference == wanted)
+                        }
                     })
                 })
                 .unwrap_or_else(|| {

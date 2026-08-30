@@ -28,8 +28,8 @@ use super::{
     CommitSearchResult, DeletionAuthorization, DiffScope, Divergence, FileComparison, GitError,
     GitProvider, Head, LogCursor, LogPage, LogRequest, MAX_BLAME_INPUT_BYTES, MAX_BLAME_LINES,
     MAX_COMMIT_SEARCH_RESULTS, MAX_LOG_PAGE_SIZE, MAX_PATCH_BYTES, PartialStageRequest,
-    PartialStageSelection, Repository, RepositoryFingerprint, RepositoryStatus, Result, StashEntry,
-    StashMutation, StashScope, StatusStats, Upstream, Worktree, WorktreeCreate,
+    PartialStageSelection, RemoteBranch, Repository, RepositoryFingerprint, RepositoryStatus,
+    Result, StashEntry, StashMutation, StashScope, StatusStats, Upstream, Worktree, WorktreeCreate,
     WorktreeRemovalPlan, count_new_lines, history::valid_object_id, parse_blame,
     parse_commit_search, parse_log, parse_numstat, parse_stashes, parse_worktree_porcelain,
     patch::valid_fingerprint, stats::LineStats, status,
@@ -2099,6 +2099,68 @@ fn is_shared_scratch_directory(path: &Path) -> bool {
 }
 
 impl GitCliProvider {
+    /// Creates one local ref at an exact remote-tracking ref and writes the
+    /// configured remote/merge pair explicitly. Git's `--track` heuristics
+    /// treat a full ref as belonging to remote `.`, while the short spelling
+    /// can be ambiguous with a local branch.
+    fn create_tracking_ref(
+        &self,
+        repository: &Repository,
+        branch: &str,
+        upstream: &RemoteBranch,
+    ) -> Result<()> {
+        self.run(
+            repository.workdir(),
+            &[
+                OsStr::new("branch"),
+                OsStr::new("--"),
+                OsStr::new(branch),
+                OsStr::new(&upstream.reference),
+            ],
+        )?;
+        let remote_key = format!("branch.{branch}.remote");
+        let merge_key = format!("branch.{branch}.merge");
+        let merge = format!("refs/heads/{}", upstream.branch);
+        let configured = self
+            .run(
+                repository.workdir(),
+                &[
+                    OsStr::new("config"),
+                    OsStr::new("--local"),
+                    OsStr::new(&remote_key),
+                    OsStr::new(&upstream.remote),
+                ],
+            )
+            .and_then(|_| {
+                self.run(
+                    repository.workdir(),
+                    &[
+                        OsStr::new("config"),
+                        OsStr::new("--local"),
+                        OsStr::new(&merge_key),
+                        OsStr::new(&merge),
+                    ],
+                )
+            });
+        if let Err(error) = configured {
+            self.rollback_unchecked_branch(repository, branch);
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    fn rollback_unchecked_branch(&self, repository: &Repository, branch: &str) {
+        let _ = self.uncancellable().run(
+            repository.workdir(),
+            &[
+                OsStr::new("branch"),
+                OsStr::new("-D"),
+                OsStr::new("--"),
+                OsStr::new(branch),
+            ],
+        );
+    }
+
     fn discover_with_marker_probe(
         &self,
         start: &Path,
@@ -2294,8 +2356,8 @@ impl GitProvider for GitCliProvider {
         // branch is called can be mistaken for the boundary between fields.
         let arguments = [
             "for-each-ref",
-            "--format=%(refname:short)%1f%(upstream:short)%1f%(upstream:remotename)%1f\
-             %(upstream:remoteref)%1f%(upstream:track)",
+            "--format=%(refname:short)%1f%(upstream:short)%1f%(upstream)%1f\
+             %(upstream:remotename)%1f%(upstream:remoteref)%1f%(upstream:track)",
             "refs/heads",
         ];
         let output = self.run_text(repository.workdir(), &arguments)?;
@@ -2335,6 +2397,7 @@ impl GitProvider for GitCliProvider {
                 let mut fields = line.split('\u{1f}');
                 let name = fields.next().unwrap_or_default();
                 let upstream = fields.next().unwrap_or_default();
+                let tracking_reference = fields.next().unwrap_or_default();
                 let remote = fields.next().unwrap_or_default();
                 let reference = fields.next().unwrap_or_default();
                 let track = fields.next().unwrap_or_default();
@@ -2342,7 +2405,13 @@ impl GitProvider for GitCliProvider {
                     name: name.to_owned(),
                     current: current == Some(name),
                     checkouts: checkouts_for(name),
-                    upstream: parse_upstream(upstream, remote, reference, track),
+                    upstream: parse_upstream(
+                        upstream,
+                        tracking_reference,
+                        remote,
+                        reference,
+                        track,
+                    ),
                     merged: merged.contains(&name),
                 }
             })
@@ -2358,6 +2427,46 @@ impl GitProvider for GitCliProvider {
         Ok(branches)
     }
 
+    fn remote_branches(&self, repository: &Repository) -> Result<Vec<RemoteBranch>> {
+        let mut remotes = self
+            .run_text(repository.workdir(), &["remote"])?
+            .lines()
+            .filter(|remote| !remote.is_empty())
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        // A configured `fork/team` must claim `fork/team/main` before a
+        // configured `fork` can mistake it for its own `team/main` branch.
+        remotes.sort_by(|left, right| right.len().cmp(&left.len()).then_with(|| left.cmp(right)));
+        let output = self.run_text(
+            repository.workdir(),
+            &[
+                "for-each-ref",
+                "--format=%(refname)%1f%(symref)",
+                "refs/remotes",
+            ],
+        )?;
+        let mut branches = output
+            .lines()
+            .filter_map(|line| {
+                let (reference, symbolic_target) = line.split_once('\u{1f}')?;
+                if reference.is_empty() || !symbolic_target.is_empty() {
+                    return None;
+                }
+                let name = reference.strip_prefix("refs/remotes/")?;
+                let configured = remotes.iter().find_map(|remote| {
+                    name.strip_prefix(remote)
+                        .and_then(|branch| branch.strip_prefix('/'))
+                        .filter(|branch| !branch.is_empty())
+                        .map(|branch| (remote.as_str(), branch))
+                });
+                let (remote, branch) = configured.or_else(|| name.split_once('/'))?;
+                Some(RemoteBranch::from_reference(remote, branch, reference))
+            })
+            .collect::<Vec<_>>();
+        branches.sort_by(|left, right| left.name.cmp(&right.name));
+        Ok(branches)
+    }
+
     fn worktrees(&self, repository: &Repository) -> Result<Vec<Worktree>> {
         let arguments = ["worktree", "list", "--porcelain", "-z"];
         let output = self.run(repository.workdir(), &arguments)?;
@@ -2366,6 +2475,10 @@ impl GitProvider for GitCliProvider {
 
     fn create_worktree(&self, repository: &Repository, request: &WorktreeCreate) -> Result<()> {
         if request.start.starts_with('-')
+            || request
+                .upstream
+                .as_deref()
+                .is_some_and(|upstream| upstream.starts_with('-'))
             || request
                 .new_branch
                 .as_deref()
@@ -2377,6 +2490,42 @@ impl GitProvider for GitCliProvider {
                 signal: None,
                 stderr: "branch names beginning with `-` are refused".to_owned(),
             });
+        }
+        let upstream = if let Some(upstream) = request.upstream.as_deref() {
+            let Some(remote) = self
+                .remote_branches(repository)?
+                .into_iter()
+                .find(|branch| branch.reference == upstream)
+                .filter(|_| request.new_branch.is_some())
+            else {
+                return Err(GitError::Failed {
+                    command: "git worktree add".to_owned(),
+                    code: None,
+                    signal: None,
+                    stderr: format!("`{upstream}` is not a remote-tracking branch"),
+                });
+            };
+            Some(remote)
+        } else {
+            None
+        };
+        if let (Some(branch), Some(upstream)) = (request.new_branch.as_deref(), upstream.as_ref()) {
+            self.create_tracking_ref(repository, branch, upstream)?;
+            let added = self.run(
+                repository.workdir(),
+                &[
+                    OsStr::new("worktree"),
+                    OsStr::new("add"),
+                    OsStr::new("--"),
+                    request.destination.as_os_str(),
+                    OsStr::new(branch),
+                ],
+            );
+            if let Err(error) = added {
+                self.rollback_unchecked_branch(repository, branch);
+                return Err(error);
+            }
+            return Ok(());
         }
         let mut arguments = vec![OsString::from("worktree"), OsString::from("add")];
         if let Some(branch) = &request.new_branch {
@@ -3104,6 +3253,46 @@ impl GitProvider for GitCliProvider {
         self.checkout_branch(repository, branch)
     }
 
+    fn create_tracking_branch(
+        &self,
+        repository: &Repository,
+        branch: &str,
+        upstream: &str,
+    ) -> Result<()> {
+        let status = self.status(repository)?;
+        if !status.files.is_empty() {
+            return Err(GitError::DirtyWorktree {
+                files: status.files.len(),
+            });
+        }
+        if branch.starts_with('-') || upstream.starts_with('-') {
+            return Err(GitError::Failed {
+                command: "git checkout".to_owned(),
+                code: None,
+                signal: None,
+                stderr: "branch names beginning with `-` are refused".to_owned(),
+            });
+        }
+        let Some(remote) = self
+            .remote_branches(repository)?
+            .into_iter()
+            .find(|candidate| candidate.reference == upstream)
+        else {
+            return Err(GitError::Failed {
+                command: "git checkout".to_owned(),
+                code: None,
+                signal: None,
+                stderr: format!("`{upstream}` is not a remote-tracking branch"),
+            });
+        };
+        self.create_tracking_ref(repository, branch, &remote)?;
+        if let Err(error) = self.checkout_branch(repository, branch) {
+            self.rollback_unchecked_branch(repository, branch);
+            return Err(error);
+        }
+        Ok(())
+    }
+
     fn delete_branch(&self, repository: &Repository, branch: &str, force: bool) -> Result<()> {
         let branches = self.branches(repository)?;
         let Some(target) = branches.iter().find(|candidate| candidate.name == branch) else {
@@ -3678,20 +3867,38 @@ fn without_noise(stderr: &str) -> String {
     }
 }
 
-/// What `%(upstream:short)` and `%(upstream:track)` say about one branch.
+/// What Git's upstream fields say about one branch.
 ///
 /// Git writes the tracking field as `[ahead 2, behind 1]`, as `[gone]` when the
 /// upstream ref has been removed, and as nothing at all when the two are in
 /// step. An empty upstream name means none is configured, which is not the same
 /// as one that is configured and missing.
-fn parse_upstream(name: &str, remote: &str, reference: &str, track: &str) -> Option<Upstream> {
+fn parse_upstream(
+    name: &str,
+    tracking_reference: &str,
+    remote: &str,
+    reference: &str,
+    track: &str,
+) -> Option<Upstream> {
     if name.is_empty() {
         return None;
     }
+    // `%(upstream:short)` adds a `remotes/` disambiguator when a local branch
+    // shadows the ordinary short spelling. The configured remote and its
+    // remote-side ref remain unambiguous and produce the stable display name.
+    let name = if remote != "." {
+        reference
+            .strip_prefix("refs/heads/")
+            .filter(|branch| !remote.is_empty() && !branch.is_empty())
+            .map_or_else(|| name.to_owned(), |branch| format!("{remote}/{branch}"))
+    } else {
+        name.to_owned()
+    };
     let track = track.trim();
     if track == "[gone]" {
         return Some(Upstream {
-            name: name.to_owned(),
+            name,
+            tracking_reference: tracking_reference.to_owned(),
             remote: remote.to_owned(),
             reference: reference.to_owned(),
             divergence: None,
@@ -3717,7 +3924,8 @@ fn parse_upstream(name: &str, remote: &str, reference: &str, track: &str) -> Opt
         }
     }
     Some(Upstream {
-        name: name.to_owned(),
+        name,
+        tracking_reference: tracking_reference.to_owned(),
         remote: remote.to_owned(),
         reference: reference.to_owned(),
         divergence: Some(divergence),
@@ -4247,10 +4455,18 @@ mod tests {
     /// empty upstream name means whatever the field holds.
     #[test]
     fn tracking_is_read_from_the_field_git_writes() {
-        let parsed = |track| parse_upstream("origin/main", "origin", "refs/heads/main", track);
-        assert_eq!(parse_upstream("", "", "", ""), None);
+        let parsed = |track| {
+            parse_upstream(
+                "origin/main",
+                "refs/remotes/origin/main",
+                "origin",
+                "refs/heads/main",
+                track,
+            )
+        };
+        assert_eq!(parse_upstream("", "", "", "", ""), None);
         assert_eq!(
-            parse_upstream("", "origin", "refs/heads/x", "[ahead 1]"),
+            parse_upstream("", "", "origin", "refs/heads/x", "[ahead 1]"),
             None
         );
         assert_eq!(
@@ -4263,6 +4479,7 @@ mod tests {
             parsed("[gone]"),
             Some(Upstream {
                 name: "origin/main".to_owned(),
+                tracking_reference: "refs/remotes/origin/main".to_owned(),
                 remote: "origin".to_owned(),
                 reference: "refs/heads/main".to_owned(),
                 divergence: None,
@@ -4285,9 +4502,25 @@ mod tests {
         // A remote whose name contains the separator the short form is built
         // with is still read correctly, because neither field is derived from
         // the other.
-        let odd = parse_upstream("fork/team/main", "fork/team", "refs/heads/main", "").unwrap();
+        let odd = parse_upstream(
+            "fork/team/main",
+            "refs/remotes/fork/team/main",
+            "fork/team",
+            "refs/heads/main",
+            "",
+        )
+        .unwrap();
         assert_eq!(odd.remote, "fork/team");
         assert_eq!(odd.reference, "refs/heads/main");
+        let shadowed = parse_upstream(
+            "remotes/origin/main",
+            "refs/remotes/origin/main",
+            "origin",
+            "refs/heads/main",
+            "",
+        )
+        .unwrap();
+        assert_eq!(shadowed.name, "origin/main");
     }
 
     #[test]

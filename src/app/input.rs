@@ -3614,7 +3614,7 @@ impl App {
             Command::PullBranch => self.pull_current_branch(),
             Command::PushBranch => self.push_selected_branch(),
             Command::OpenWorktree => self.open_selected_worktree(),
-            Command::CreateWorktree => self.create_worktree_prompt(false),
+            Command::CreateWorktree => self.create_branch_worktree_prompt(),
             Command::CreateNewWorktree => self.create_worktree_prompt(true),
             Command::RemoveWorktree => self.remove_selected_worktree(),
             Command::NextGitLogPage => self.next_git_log_page(),
@@ -3815,6 +3815,7 @@ impl App {
                 let start_point = self.git_branch_start.take();
                 let worktree_start = self.git_worktree_start.take();
                 let worktree_new_branch = self.git_worktree_new_branch.take();
+                let worktree_upstream = self.git_worktree_upstream.take();
                 self.close_prompt();
                 if kind == PromptKind::ExternalProgram {
                     if let Some(target) = target {
@@ -3854,11 +3855,12 @@ impl App {
                     } else if let Some(start) = worktree_start {
                         self.git_worktree_start = Some(start);
                         self.git_worktree_new_branch = Some(name);
+                        self.git_worktree_upstream = worktree_upstream;
                         self.open_prompt(PromptKind::WorktreeDestination);
                     }
                 } else if kind == PromptKind::WorktreeDestination {
                     if let Some(start) = worktree_start {
-                        self.create_worktree(value, start, worktree_new_branch);
+                        self.create_worktree(value, start, worktree_new_branch, worktree_upstream);
                     }
                 } else if kind == PromptKind::JoinDelimiter {
                     // Deliberately before the shared empty-value refusal below:
@@ -4146,6 +4148,13 @@ impl App {
         self.prompt_revision = self.prompt_revision.wrapping_add(1);
     }
 
+    pub(super) fn open_prompt_with_value(&mut self, kind: PromptKind, value: String) {
+        self.open_prompt(kind);
+        self.command_cursor = value.chars().count();
+        self.command = value;
+        self.prompt_revision = self.prompt_revision.wrapping_add(1);
+    }
+
     pub(super) fn close_prompt(&mut self) {
         #[cfg(unix)]
         let session_manager_return_target = self.session_manager_return_target.take();
@@ -4166,6 +4175,7 @@ impl App {
         self.git_branch_start = None;
         self.git_worktree_start = None;
         self.git_worktree_new_branch = None;
+        self.git_worktree_upstream = None;
         self.mode = self.grammar.preferred_mode().unwrap_or(Mode::Normal);
         #[cfg(unix)]
         if let Some(target) = session_manager_return_target {

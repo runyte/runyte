@@ -624,9 +624,11 @@ matched by identity — the commit, path, branch, or hunk it was on — and fall
 back to the nearest surviving position, with the column clamped to the end of
 whatever row it lands on.
 
-`Space g b` opens the local branch list. Enter checks out the selected branch,
-and `Tab n` creates a branch at the selected row and switches to it. Both are
-refused while the working tree, index, or an open file buffer has uncommitted
+`Space g b` opens the local and cached remote branch list. Enter checks out the
+selected branch locally, and `Tab n` creates a branch at the selected row and
+switches to it. `Tab w` creates a worktree from the selected branch. The
+in-place checkout and branch switch are refused while the working tree, index,
+or an open file buffer has uncommitted
 changes. If this workspace owns any live terminal session — visible, hidden, or
 shown in another pane — Runyte instead asks for the exact target branch name.
 Accepting acknowledges that the terminal job keeps its working directory while
@@ -1904,7 +1906,7 @@ emulator supports and what it does not.
 
 | Key | Action |
 | --- | --- |
-| `Space g b` | List local branches and check one out |
+| `Space g b` | List local and cached remote branches and check one out locally |
 | `Space g g` | Open the changed-file list |
 | `Space g w` | Open the repository worktree list |
 | `Space g d` | Open the active file's unstaged diff |
@@ -1915,8 +1917,9 @@ emulator supports and what it does not.
 | `Space g t` | Open the bounded stash list |
 | `Space g r` | Re-read branch, changed files, and changed lines from Git |
 
-`Space g b` opens a read-only local branch list. The current branch is marked
-with `*`. Every branch currently checked out in a registered worktree carries
+`Space g b` opens one read-only branch list with Local first and Remote second.
+The current local branch is marked with `*`. Every local branch currently
+checked out in a registered worktree carries
 each checkout's local path in a `[worktree: ...]` annotation; move through the
 list as through any buffer and press `Enter` to check out the branch under the
 cursor. Runyte refuses the checkout while the index or working tree has
@@ -1926,9 +1929,15 @@ successful checkout, open files that still exist are reloaded from the new
 branch and the Git status and gutter bases are refreshed.
 
 ```text
+Local
   feature [↑1] [worktree: /home/me/project-feature]
 * main    [↑2 ↓1] [worktree: /home/me/project]
   spike
+
+Remote
+  origin/feature   [tracked by: feature]
+  origin/main      [tracked by: main]
+  origin/review/42 [not tracked locally]
 ```
 
 A branch that tracks a remote-tracking branch carries its drift in brackets,
@@ -1937,13 +1946,30 @@ commits the local branch has that its upstream does not, `↓` counts the
 reverse, `[=]` means the two are in step, and `[gone]` means the upstream ref
 no longer exists. A branch tracking nothing says nothing.
 
+Remote rows are the remote-tracking refs already cached by Git; opening the
+list and `Space g r` do not fetch. A symbolic default such as `origin/HEAD` is
+not a branch row. Configured remote identity remains exact even when the remote
+name itself contains `/`. Each remote row names every local branch whose
+configured upstream is that exact ref. Equal names or equal commit tips do not
+imply tracking, and a remote row with no such upstream says
+`[not tracked locally]`.
+
+Enter on a remote row checks out its one local tracking branch. If several
+local branches track it, a choose-one picker opens. If none does, Runyte creates
+and checks out a local tracking branch named after the part following the
+remote, so `origin/feature/auth` suggests `feature/auth`. When that local name
+already exists, it opens an editable name prompt instead of reusing the
+unrelated branch. The ordinary checkout safeguards and live-terminal exact-name
+confirmation apply to the resolved local branch.
+
 | Key | Action in the list |
 | --- | --- |
-| `Enter` | Check out the branch on this line |
+| `Enter` | Check out this local or remote branch locally |
 | `Tab n` | Start a new branch here and switch to it |
-| `Tab D` | Delete this branch, with its worktree and session, after a confirmation |
-| `Tab p` | Fast-forward the current branch onto what it tracks |
-| `Tab P` | Publish this branch to what it tracks |
+| `Tab w` | Create a worktree for this branch; attach in persistent mode |
+| `Tab D` | Delete this local branch, with its worktree and session, after a confirmation |
+| `Tab p` | Fast-forward the current local branch onto what it tracks |
+| `Tab P` | Publish this local branch to what it tracks |
 
 `Tab n` asks for a name, creates that branch at the one under the cursor, and
 switches to it — the same two refusals as a checkout apply, and they are
@@ -1978,6 +2004,15 @@ more than one worktree, or at the current Runyte root, is still refused before
 review. The final mutation rechecks the tip and its
 retaining refs, so a branch changed after review is not deleted.
 
+`Tab w` asks for an explicit destination and creates a checkout of the selected
+local branch. A branch already checked out here or in another registered
+worktree is refused without forcing a duplicate; the message names the existing
+path and points to `Space g w` for attachment. On an untracked remote row it
+creates the suggested local tracking branch directly in the new worktree. A
+remote with several local trackers first asks which one to use. Successful
+creation attaches immediately in persistent mode and remains in the current
+workspace in standalone mode.
+
 `Space g w` (equivalently `:git-worktrees`) opens every checkout registered with the repository, including
 linked, detached, locked, prunable, and bare worktrees. The current root is
 marked with `*`; unavailable states are written on their rows. Paths are the
@@ -1987,15 +2022,14 @@ display uses replacement characters.
 | Key | Action in the worktree list |
 | --- | --- |
 | `Enter` | Attach to this root's persistent session, starting it if necessary |
-| `Tab n` | Create another checkout of this row's branch; attach to it in persistent mode |
-| `Tab N` | Name a new branch and create its checkout; attach to it in persistent mode |
+| `Tab n` | Name a new branch at this checkout's tip and create its worktree; attach in persistent mode |
 | `Tab D` | Remove this worktree and its session after confirmation; keep its branch |
 | `Space g r` | Re-read the registered worktrees |
 
 Opening another root never retargets this workspace's buffers or language
 servers. In persistent mode, Enter detaches the TUI and reuses or starts the
 destination root's host, leaving the old host and its buffers and terminal
-sessions alive. Successful `Tab n` and `Tab N` creation immediately performs
+sessions alive. Successful `Tab n` creation immediately performs
 the same attachment, so a newly created worktree needs no separate Enter.
 Standalone Runyte keeps the worktree list and its create/remove Git actions,
 but Enter explains that attachment needs `workspace.mode: persistent` and
@@ -2460,7 +2494,7 @@ are enabled.
 :format                 format the active buffer (alias: fmt)
 :git-blame              show live-buffer attribution for the primary line
 :git-blame-file         open full-file live-buffer attribution
-:git-branches           open the local branch list
+:git-branches           open the local and cached remote branch list
 :git-cancel             stop the active Git operation and reconcile mutations
 :git-commit             write a message and commit what is staged
 :git-diff               show the active file's unstaged diff

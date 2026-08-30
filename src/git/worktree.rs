@@ -31,6 +31,10 @@ pub struct WorktreeCreate {
     pub destination: PathBuf,
     pub start: String,
     pub new_branch: Option<String>,
+    /// Exact `refs/remotes/...` identity the new branch must follow. Present
+    /// only when the start row is remote; ordinary new worktree branches
+    /// remain untracked.
+    pub upstream: Option<String>,
 }
 
 /// Parses `git worktree list --porcelain -z` without interpreting a path as
