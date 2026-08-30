@@ -1438,11 +1438,15 @@ fn all_hosts_registry_root_for_home(home: &Path, namespace: &str) -> PathBuf {
 
 fn boot_namespace() -> Result<String> {
     let identifier = boot_identifier()?;
+    boot_namespace_from_identifier(&identifier)
+}
+
+fn boot_namespace_from_identifier(identifier: &[u8]) -> Result<String> {
     ensure!(
         !identifier.is_empty() && identifier.len() <= 1024,
         "operating system returned an invalid boot identifier"
     );
-    Ok(crate::hash::sha256_hex(&identifier)[..HOST_ID_LENGTH].to_owned())
+    Ok(crate::hash::sha256_hex(identifier)[..HOST_ID_LENGTH].to_owned())
 }
 
 #[cfg(target_os = "linux")]
@@ -2738,7 +2742,27 @@ mod tests {
 
         let error = match LocalServer::bind(&endpoint).await {
             Ok(_) => panic!("symlinked owner-wide inventory was accepted"),
-            Err(error) => error.to_string(),
+            Err(error)
+                if error.chain().any(|cause| {
+                    cause
+                        .downcast_ref::<io::Error>()
+                        .is_some_and(|error| error.kind() == io::ErrorKind::PermissionDenied)
+                }) =>
+            {
+                let metadata = EndpointMetadata {
+                    protocol: PROTOCOL_VERSION,
+                    pid: std::process::id(),
+                    id: endpoint.id.clone(),
+                    name: None,
+                    project_root_bytes: encode_path(&root),
+                    socket_bytes: encode_path(endpoint.socket()),
+                };
+                endpoint
+                    .publish_metadata(&metadata)
+                    .unwrap_err()
+                    .to_string()
+            }
+            Err(error) => format!("{error:#}"),
         };
         assert!(error.contains("symlinked host endpoint"), "{error}");
         assert_eq!(fs::metadata(&target).unwrap().mode() & 0o777, 0o755);
@@ -2798,11 +2822,29 @@ mod tests {
 
     #[test]
     fn boot_namespace_is_stable_and_path_safe() {
-        let first = boot_namespace().unwrap();
-        let second = boot_namespace().unwrap();
+        // Some sandboxed macOS test processes cannot read
+        // `kern.bootsessionuuid`. Namespace derivation is independent of that
+        // platform capability and remains fully deterministic here.
+        let first = boot_namespace_from_identifier(b"test boot identity").unwrap();
+        let second = boot_namespace_from_identifier(b"test boot identity").unwrap();
         assert_eq!(first, second);
         assert_eq!(first.len(), HOST_ID_LENGTH);
         assert!(first.bytes().all(|byte| byte.is_ascii_hexdigit()));
+        assert!(boot_namespace_from_identifier(b"").is_err());
+        assert!(boot_namespace_from_identifier(&vec![0; 1025]).is_err());
+
+        match boot_namespace() {
+            Ok(namespace) => {
+                assert_eq!(namespace.len(), HOST_ID_LENGTH);
+                assert!(namespace.bytes().all(|byte| byte.is_ascii_hexdigit()));
+            }
+            Err(error) => assert!(
+                error.chain().any(|cause| cause
+                    .downcast_ref::<io::Error>()
+                    .is_some_and(|error| { error.kind() == io::ErrorKind::PermissionDenied })),
+                "boot identifier failed for an unexpected reason: {error:#}"
+            ),
+        }
     }
 
     #[test]

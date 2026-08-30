@@ -44,7 +44,7 @@ fn test_process_dir(root: &Path, kind: &str) -> PathBuf {
     use std::os::unix::fs::PermissionsExt;
 
     let identity = workspace_id(root);
-    let path = std::env::temp_dir().join(format!(
+    let path = Path::new("/tmp").join(format!(
         "rylog-{kind}-{}-{}",
         std::process::id(),
         &identity[..8]
@@ -788,7 +788,17 @@ async fn attaching_with_logging_flags_reports_the_retained_configuration() {
         !output.status.success(),
         "a pipe unexpectedly supported a TUI"
     );
-    assert!(stderr.contains("raw mode"), "{stderr}");
+    // Which frontend initialization step rejects piped stdio is
+    // platform-dependent. Crossterm can either fail raw-mode setup or report
+    // that its event reader has no source; neither is part of this logging
+    // contract.
+    assert!(
+        stderr.contains("raw mode")
+            || stderr.contains("reader source not set")
+            || stderr.contains("terminal event")
+            || stderr.contains("terminal input"),
+        "attachment did not report a recognized frontend initialization failure: {stderr}"
+    );
     assert!(
         stderr.contains("kept its own log level and destination"),
         "{stderr}"

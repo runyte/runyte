@@ -33,7 +33,7 @@ fn sandbox() -> PathBuf {
     static NEXT: AtomicU64 = AtomicU64::new(0);
     loop {
         let sequence = NEXT.fetch_add(1, Ordering::Relaxed);
-        let root = std::env::temp_dir().join(format!("rwb-{}-{sequence}", std::process::id()));
+        let root = Path::new("/tmp").join(format!("rwb-{}-{sequence}", std::process::id()));
         match fs::create_dir(&root) {
             Ok(()) => return root,
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
@@ -203,10 +203,13 @@ fn detached_host_supervision_helper() {
         !started.status.success(),
         "the non-terminal attachment unexpectedly reached a TUI"
     );
+    let stderr = String::from_utf8_lossy(&started.stderr);
     assert!(
-        String::from_utf8_lossy(&started.stderr).contains("raw mode"),
-        "detached host launch failed before attachment: {}",
-        String::from_utf8_lossy(&started.stderr)
+        stderr.contains("raw mode")
+            || stderr.contains("reader source not set")
+            || stderr.contains("terminal event")
+            || stderr.contains("terminal input"),
+        "detached host launch failed before attachment: {stderr}"
     );
     // Host readiness is observed independently by the parent through the
     // endpoint. This marker says only that the launcher exited and the helper

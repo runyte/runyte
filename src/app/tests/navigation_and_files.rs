@@ -223,7 +223,7 @@ fn opening_a_file_records_a_jump_that_leads_back_and_forward_again() {
     seed(&mut app, "scratch line\nsecond\n");
     set_cursor(&mut app, 1, 3);
 
-    let path = std::env::temp_dir().join(format!("runyte-jump-{}.txt", std::process::id()));
+    let path = temporary_directory().join(format!("runyte-jump-{}.txt", std::process::id()));
     app.open_file(path).unwrap();
     let opened = app.active().buffer;
     assert_ne!(opened, 0, "a second buffer should be open");
@@ -271,7 +271,7 @@ fn tab_does_not_bypass_a_command_waiting_for_a_character() {
 #[test]
 fn closing_a_buffer_wraps_to_the_first_live_buffer() {
     let mut app = App::new(Config::default(), None).unwrap();
-    let path = std::env::temp_dir().join(format!("runyte-close-{}.txt", std::process::id()));
+    let path = temporary_directory().join(format!("runyte-close-{}.txt", std::process::id()));
     std::fs::write(&path, "the file being read\n").unwrap();
 
     app.open_file(path.clone()).unwrap();
@@ -299,7 +299,7 @@ fn alt_o_and_alt_i_step_between_buffers_skipping_positions_within_one() {
     seed(&mut app, "scratch line\nsecond\n");
     set_cursor(&mut app, 1, 3);
 
-    let path = std::env::temp_dir().join(format!("runyte-jump-file-{}.txt", std::process::id()));
+    let path = temporary_directory().join(format!("runyte-jump-file-{}.txt", std::process::id()));
     std::fs::write(&path, "alpha\nbeta\ngamma\ndelta\nepsilon\n").unwrap();
     app.open_file(path.clone()).unwrap();
     let opened = app.active().buffer;

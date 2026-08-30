@@ -41,6 +41,7 @@ use crate::notification::{NotificationCounts, NotificationSeverity};
 /// adapter uses terminal colors, while `App` and `Config` retain only
 /// frontend-independent values.
 struct TuiTheme {
+    color_depth: TerminalColorDepth,
     background: ratatui::style::Color,
     /// The ground behind panes that do not own input, halfway toward the
     /// overlay ground so the three layers remain visually ordered.
@@ -81,43 +82,46 @@ struct TuiTheme {
 }
 
 impl TuiTheme {
+    #[cfg(test)]
     fn new(theme: &Theme) -> Self {
+        Self::with_color_depth(theme, TerminalColorDepth::TrueColor)
+    }
+
+    fn with_color_depth(theme: &Theme, color_depth: TerminalColorDepth) -> Self {
+        let color = |value| to_tui_color_for(value, color_depth);
         Self {
-            background: to_tui_color(theme.background),
-            inactive_background: to_tui_color(theme.inactive_background()),
-            overlay_background: to_tui_color(theme.overlay_background()),
-            foreground: to_tui_color(theme.foreground),
-            muted: to_tui_color(theme.muted),
-            whitespace: to_tui_color(theme.whitespace),
-            jump_text_muted: to_tui_color(theme.jump_text_muted),
-            accent: to_tui_color(theme.accent),
-            cursor_normal: to_tui_color(theme.cursor_normal),
-            cursor_insert: to_tui_color(theme.cursor_insert),
-            cursor_replace: to_tui_color(theme.cursor_replace),
-            cursor_select: to_tui_color(theme.cursor_select),
-            cursor_command: to_tui_color(theme.cursor_command),
-            directory: to_tui_color(theme.directory),
-            selection: to_tui_color(theme.selection),
-            selection_primary: to_tui_color(theme.selection_primary),
-            fuzzy_match_secondary: to_tui_color(theme.fuzzy_match_secondary),
-            fuzzy_match_primary: to_tui_color(theme.fuzzy_match_primary),
-            error: to_tui_color(theme.error),
-            warning: to_tui_color(theme.warning),
-            info: to_tui_color(theme.info),
-            jump_label_immediate: to_tui_color(theme.jump_label_immediate),
-            jump_label_primary: to_tui_color(theme.jump_label_primary),
-            jump_label_secondary: to_tui_color(theme.jump_label_secondary),
-            change_added: to_tui_color(theme.change_added),
-            change_modified: to_tui_color(theme.change_modified),
-            change_removed: to_tui_color(theme.change_removed),
-            diff_added: theme.diff_added.map(to_tui_color),
-            diff_removed: theme.diff_removed.map(to_tui_color),
-            diff_changed: theme.diff_changed.map(to_tui_color),
-            syntax: theme
-                .syntax
-                .iter()
-                .map(|color| color.map(to_tui_color))
-                .collect(),
+            color_depth,
+            background: color(theme.background),
+            inactive_background: color(theme.inactive_background()),
+            overlay_background: color(theme.overlay_background()),
+            foreground: color(theme.foreground),
+            muted: color(theme.muted),
+            whitespace: color(theme.whitespace),
+            jump_text_muted: color(theme.jump_text_muted),
+            accent: color(theme.accent),
+            cursor_normal: color(theme.cursor_normal),
+            cursor_insert: color(theme.cursor_insert),
+            cursor_replace: color(theme.cursor_replace),
+            cursor_select: color(theme.cursor_select),
+            cursor_command: color(theme.cursor_command),
+            directory: color(theme.directory),
+            selection: color(theme.selection),
+            selection_primary: color(theme.selection_primary),
+            fuzzy_match_secondary: color(theme.fuzzy_match_secondary),
+            fuzzy_match_primary: color(theme.fuzzy_match_primary),
+            error: color(theme.error),
+            warning: color(theme.warning),
+            info: color(theme.info),
+            jump_label_immediate: color(theme.jump_label_immediate),
+            jump_label_primary: color(theme.jump_label_primary),
+            jump_label_secondary: color(theme.jump_label_secondary),
+            change_added: color(theme.change_added),
+            change_modified: color(theme.change_modified),
+            change_removed: color(theme.change_removed),
+            diff_added: theme.diff_added.map(color),
+            diff_removed: theme.diff_removed.map(color),
+            diff_changed: theme.diff_changed.map(color),
+            syntax: theme.syntax.iter().map(|value| value.map(color)).collect(),
         }
     }
 
@@ -152,7 +156,107 @@ impl TuiTheme {
     }
 }
 
+/// Colour range the outer terminal says it can display.
+///
+/// This belongs to the bundled frontend rather than to `Theme`: persistent
+/// hosts retain exact RGB values, while each attached client adapts the same
+/// semantic frame to the terminal it is currently using.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TerminalColorDepth {
+    Basic,
+    Indexed,
+    TrueColor,
+}
+
+impl TerminalColorDepth {
+    /// Classifies a color count detected by the bundled terminal frontend.
+    pub fn from_color_count(colors: u16) -> Self {
+        match colors {
+            u16::MAX => Self::TrueColor,
+            256.. => Self::Indexed,
+            _ => Self::Basic,
+        }
+    }
+
+    fn rgb(self, red: u8, green: u8, blue: u8) -> ratatui::style::Color {
+        match self {
+            Self::TrueColor => ratatui::style::Color::Rgb(red, green, blue),
+            Self::Indexed => ratatui::style::Color::Indexed(nearest_xterm_color(red, green, blue)),
+            Self::Basic => nearest_basic_color(red, green, blue),
+        }
+    }
+}
+
+fn color_distance(left: [u8; 3], right: [u8; 3]) -> u32 {
+    left.into_iter()
+        .zip(right)
+        .map(|(left, right)| {
+            let difference = i32::from(left) - i32::from(right);
+            difference.unsigned_abs().pow(2)
+        })
+        .sum()
+}
+
+/// Maps exact RGB onto xterm's stable 6×6×6 cube or grayscale ramp.
+///
+/// The first sixteen palette entries are deliberately excluded because a
+/// terminal profile may redefine them. The cube and grayscale entries are the
+/// portable part of an advertised 256-colour terminal.
+fn nearest_xterm_color(red: u8, green: u8, blue: u8) -> u8 {
+    const CUBE_LEVELS: [u8; 6] = [0, 95, 135, 175, 215, 255];
+    let component = |value: u8| -> usize {
+        CUBE_LEVELS
+            .iter()
+            .enumerate()
+            .min_by_key(|(_, level)| u8::abs_diff(value, **level))
+            .map(|(index, _)| index)
+            .unwrap_or_default()
+    };
+    let cube = [component(red), component(green), component(blue)];
+    let cube_rgb = [
+        CUBE_LEVELS[cube[0]],
+        CUBE_LEVELS[cube[1]],
+        CUBE_LEVELS[cube[2]],
+    ];
+    let cube_index = 16 + 36 * cube[0] + 6 * cube[1] + cube[2];
+
+    let average = (u16::from(red) + u16::from(green) + u16::from(blue)) / 3;
+    let gray = usize::from(average.saturating_sub(8).saturating_add(5) / 10).min(23);
+    let gray_level = 8 + gray as u8 * 10;
+    let gray_rgb = [gray_level; 3];
+    if color_distance([red, green, blue], gray_rgb) < color_distance([red, green, blue], cube_rgb) {
+        232 + gray as u8
+    } else {
+        cube_index as u8
+    }
+}
+
+fn nearest_basic_color(red: u8, green: u8, blue: u8) -> ratatui::style::Color {
+    use ratatui::style::Color as TuiColor;
+
+    const COLORS: [(TuiColor, [u8; 3]); 8] = [
+        (TuiColor::Black, [0, 0, 0]),
+        (TuiColor::Red, [128, 0, 0]),
+        (TuiColor::Green, [0, 128, 0]),
+        (TuiColor::Yellow, [128, 128, 0]),
+        (TuiColor::Blue, [0, 0, 128]),
+        (TuiColor::Magenta, [128, 0, 128]),
+        (TuiColor::Cyan, [0, 128, 128]),
+        (TuiColor::Gray, [192, 192, 192]),
+    ];
+    COLORS
+        .into_iter()
+        .min_by_key(|(_, candidate)| color_distance([red, green, blue], *candidate))
+        .map(|(color, _)| color)
+        .unwrap_or(TuiColor::Reset)
+}
+
+#[cfg(test)]
 fn to_tui_color(color: RunyteColor) -> ratatui::style::Color {
+    to_tui_color_for(color, TerminalColorDepth::TrueColor)
+}
+
+fn to_tui_color_for(color: RunyteColor, color_depth: TerminalColorDepth) -> ratatui::style::Color {
     use ratatui::style::Color as TuiColor;
 
     match color {
@@ -164,10 +268,12 @@ fn to_tui_color(color: RunyteColor) -> ratatui::style::Color {
         RunyteColor::Blue => TuiColor::Blue,
         RunyteColor::Magenta => TuiColor::Magenta,
         RunyteColor::Cyan => TuiColor::Cyan,
+        RunyteColor::White if color_depth == TerminalColorDepth::Basic => TuiColor::Gray,
         RunyteColor::White => TuiColor::White,
         RunyteColor::Gray => TuiColor::Gray,
+        RunyteColor::DarkGray if color_depth == TerminalColorDepth::Basic => TuiColor::Black,
         RunyteColor::DarkGray => TuiColor::DarkGray,
-        RunyteColor::Rgb(red, green, blue) => TuiColor::Rgb(red, green, blue),
+        RunyteColor::Rgb(red, green, blue) => color_depth.rgb(red, green, blue),
     }
 }
 
@@ -179,8 +285,8 @@ struct TuiApp<'a> {
 }
 
 impl<'a> TuiApp<'a> {
-    fn new(app: &'a App, theme: &Theme) -> Self {
-        let theme = TuiTheme::new(theme);
+    fn with_color_depth(app: &'a App, theme: &Theme, color_depth: TerminalColorDepth) -> Self {
+        let theme = TuiTheme::with_color_depth(theme, color_depth);
         Self { app, theme }
     }
 }
@@ -382,6 +488,25 @@ pub fn render(
     snapshot: &EditorSnapshot,
     key_hints: &KeyHintState,
 ) {
+    render_with_color_depth(
+        frame,
+        app,
+        snapshot,
+        key_hints,
+        TerminalColorDepth::TrueColor,
+    );
+}
+
+/// Draws one editor snapshot after adapting its exact colours to the outer
+/// terminal. Production frontends use this entry point; [`render`] preserves
+/// exact RGB for presentation-neutral test backends.
+pub fn render_with_color_depth(
+    frame: &mut Frame<'_>,
+    app: &App,
+    snapshot: &EditorSnapshot,
+    key_hints: &KeyHintState,
+    color_depth: TerminalColorDepth,
+) {
     let overlays = app.overlay_snapshots();
     let confirmation_overlay = overlays
         .iter()
@@ -405,7 +530,7 @@ pub fn render(
     } else {
         None
     };
-    let app = TuiApp::new(app, &snapshot.theme);
+    let app = TuiApp::with_color_depth(app, &snapshot.theme, color_depth);
     let editor_area = snapshot.geometry.editor;
     let global_status_line_area = to_tui_rect(snapshot.geometry.status);
     let interaction_line_area = to_tui_rect(snapshot.geometry.message);
@@ -530,7 +655,17 @@ fn draw_setting_prompt(frame: &mut Frame<'_>, app: &TuiApp<'_>, editor_area: Rec
 /// state. Attached clients use this path; standalone keeps its specialized
 /// overlay widgets while both consume the same semantic snapshot values.
 pub fn render_host_frame(frame: &mut Frame<'_>, snapshot: &HostFrame) {
-    let theme = TuiTheme::new(&snapshot.editor.theme);
+    render_host_frame_with_color_depth(frame, snapshot, TerminalColorDepth::TrueColor);
+}
+
+/// Draws a transport-owned frame using the attached client's terminal colour
+/// range rather than changing the host's semantic theme.
+pub fn render_host_frame_with_color_depth(
+    frame: &mut Frame<'_>,
+    snapshot: &HostFrame,
+    color_depth: TerminalColorDepth,
+) {
+    let theme = TuiTheme::with_color_depth(&snapshot.editor.theme, color_depth);
     for pane in &snapshot.editor.panes {
         draw_pane(frame, &theme, snapshot.editor.mode, pane);
     }
@@ -1169,16 +1304,56 @@ fn terminal_style(theme: &TuiTheme, active: bool, cell: &TerminalCell) -> Style 
 }
 
 fn terminal_color(
-    _theme: &TuiTheme,
+    theme: &TuiTheme,
     color: crate::terminal::Color,
     fallback: ratatui::style::Color,
 ) -> ratatui::style::Color {
     match color {
         crate::terminal::Color::Default => fallback,
-        crate::terminal::Color::Indexed(index) => ratatui::style::Color::Indexed(index),
-        crate::terminal::Color::Rgb(red, green, blue) => {
-            ratatui::style::Color::Rgb(red, green, blue)
+        crate::terminal::Color::Indexed(index)
+            if theme.color_depth != TerminalColorDepth::Basic =>
+        {
+            ratatui::style::Color::Indexed(index)
         }
+        crate::terminal::Color::Indexed(index) => {
+            let [red, green, blue] = xterm_color(index);
+            theme.color_depth.rgb(red, green, blue)
+        }
+        crate::terminal::Color::Rgb(red, green, blue) => theme.color_depth.rgb(red, green, blue),
+    }
+}
+
+fn xterm_color(index: u8) -> [u8; 3] {
+    const ANSI: [[u8; 3]; 16] = [
+        [0, 0, 0],
+        [128, 0, 0],
+        [0, 128, 0],
+        [128, 128, 0],
+        [0, 0, 128],
+        [128, 0, 128],
+        [0, 128, 128],
+        [192, 192, 192],
+        [128, 128, 128],
+        [255, 0, 0],
+        [0, 255, 0],
+        [255, 255, 0],
+        [0, 0, 255],
+        [255, 0, 255],
+        [0, 255, 255],
+        [255, 255, 255],
+    ];
+    match index {
+        0..=15 => ANSI[usize::from(index)],
+        16..=231 => {
+            const LEVELS: [u8; 6] = [0, 95, 135, 175, 215, 255];
+            let cube = index - 16;
+            [
+                LEVELS[usize::from(cube / 36)],
+                LEVELS[usize::from(cube % 36 / 6)],
+                LEVELS[usize::from(cube % 6)],
+            ]
+        }
+        232..=255 => [8 + (index - 232) * 10; 3],
     }
 }
 
@@ -4100,6 +4275,9 @@ mod tests {
         let after = root.join("café");
         std::fs::create_dir_all(&before).unwrap();
         std::fs::create_dir_all(&after).unwrap();
+        let root = root.canonicalize().unwrap();
+        let before = root.join("before");
+        let after = root.join("café");
         let mut app = App::new(Config::default(), None).unwrap();
         app.working_directory = before;
 
@@ -4306,6 +4484,109 @@ mod tests {
         for (runyte, tui) in cases {
             assert_eq!(to_tui_color(runyte), tui);
         }
+    }
+
+    #[test]
+    fn terminal_color_depth_follows_the_advertised_color_count() {
+        assert_eq!(
+            TerminalColorDepth::from_color_count(8),
+            TerminalColorDepth::Basic
+        );
+        assert_eq!(
+            TerminalColorDepth::from_color_count(16),
+            TerminalColorDepth::Basic
+        );
+        assert_eq!(
+            TerminalColorDepth::from_color_count(256),
+            TerminalColorDepth::Indexed
+        );
+        assert_eq!(
+            TerminalColorDepth::from_color_count(u16::MAX),
+            TerminalColorDepth::TrueColor
+        );
+    }
+
+    #[test]
+    fn exact_rgb_is_preserved_only_for_truecolor_terminals() {
+        use ratatui::style::Color as TuiColor;
+
+        let color = RunyteColor::Rgb(95, 135, 175);
+        assert_eq!(
+            to_tui_color_for(color, TerminalColorDepth::TrueColor),
+            TuiColor::Rgb(95, 135, 175)
+        );
+        assert_eq!(
+            to_tui_color_for(color, TerminalColorDepth::Indexed),
+            TuiColor::Indexed(67)
+        );
+        assert_eq!(
+            to_tui_color_for(color, TerminalColorDepth::Basic),
+            TuiColor::Cyan
+        );
+    }
+
+    #[test]
+    fn indexed_theme_conversion_keeps_the_default_dark_surfaces_distinct() {
+        use ratatui::style::Color as TuiColor;
+
+        let source = Config::default().resolve_theme("default-dark").unwrap();
+        let theme = TuiTheme::with_color_depth(&source, TerminalColorDepth::Indexed);
+        assert_eq!(theme.background, TuiColor::Indexed(234));
+        assert_eq!(theme.inactive_background, TuiColor::Indexed(235));
+        assert_eq!(theme.overlay_background, TuiColor::Indexed(236));
+        assert_eq!(theme.foreground, TuiColor::Indexed(250));
+    }
+
+    #[test]
+    fn indexed_frontend_frames_emit_no_rgb_cells() {
+        use ratatui::style::Color as TuiColor;
+
+        let mut app = App::new(Config::default(), None).unwrap();
+        let hints = KeyHintState::default();
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        terminal
+            .draw(|frame| {
+                let prepared = app.prepare_view(frame_geometry(frame.area()));
+                let snapshot = app.snapshot(&prepared);
+                render_with_color_depth(
+                    frame,
+                    &app,
+                    &snapshot,
+                    &hints,
+                    TerminalColorDepth::Indexed,
+                );
+            })
+            .unwrap();
+
+        for (index, cell) in terminal.backend().buffer().content.iter().enumerate() {
+            for color in [cell.fg, cell.bg] {
+                assert!(
+                    !matches!(color, TuiColor::Rgb(..)),
+                    "indexed frame emitted RGB at cell {index}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn integrated_terminal_colors_follow_the_outer_terminal_depth() {
+        use ratatui::style::Color as TuiColor;
+
+        let source = Config::default().resolve_theme("default-dark").unwrap();
+        let cell = TerminalCell {
+            foreground: crate::terminal::Color::Rgb(95, 135, 175),
+            background: crate::terminal::Color::Indexed(67),
+            ..TerminalCell::default()
+        };
+        let indexed = TuiTheme::with_color_depth(&source, TerminalColorDepth::Indexed);
+        let indexed_style = terminal_style(&indexed, true, &cell);
+        assert_eq!(indexed_style.fg, Some(TuiColor::Indexed(67)));
+        assert_eq!(indexed_style.bg, Some(TuiColor::Indexed(67)));
+
+        let basic = TuiTheme::with_color_depth(&source, TerminalColorDepth::Basic);
+        let basic_style = terminal_style(&basic, true, &cell);
+        assert_eq!(basic_style.fg, Some(TuiColor::Cyan));
+        assert_eq!(basic_style.bg, Some(TuiColor::Cyan));
     }
 
     #[test]

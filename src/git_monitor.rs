@@ -43,6 +43,8 @@ enum WorkerMessage {
         observed_at: Instant,
         event: notify::Result<Event>,
     },
+    #[cfg(test)]
+    Barrier(SyncSender<()>),
     Stop,
 }
 
@@ -64,6 +66,30 @@ impl GitMonitorHandle {
         {
             self.overflowed.store(true, Ordering::Release);
         }
+    }
+
+    #[cfg(test)]
+    fn sync_and_wait(&self, repository: Option<Repository>) {
+        let (registered, receiver) = sync_channel(1);
+        self.commands
+            .send(WorkerMessage::Sync(repository))
+            .expect("the Git monitor accepts test registration");
+        self.commands
+            .send(WorkerMessage::Barrier(registered))
+            .expect("the Git monitor accepts a test barrier");
+        receiver
+            .recv_timeout(Duration::from_secs(2))
+            .expect("the Git monitor completed test registration");
+    }
+
+    #[cfg(test)]
+    fn inject_native(&self, event: Event) {
+        self.commands
+            .send(WorkerMessage::Native {
+                observed_at: Instant::now(),
+                event: Ok(event),
+            })
+            .expect("the Git monitor accepts a native test event");
     }
 }
 
@@ -167,6 +193,10 @@ fn run_worker(
                     note_observation(&mut last_observed, &mut deadline, observed_at);
                     full = true;
                 }
+            }
+            #[cfg(test)]
+            Ok(WorkerMessage::Barrier(registered)) => {
+                let _ = registered.send(());
             }
             Ok(WorkerMessage::Stop) => break,
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
@@ -374,15 +404,20 @@ mod tests {
         fs::create_dir_all(&git_dir).unwrap();
         fs::create_dir_all(&common_dir).unwrap();
         fs::create_dir_all(&workdir).unwrap();
+        let root = root.canonicalize().unwrap();
+        let git_dir = root.join("metadata/worktree");
+        let common_dir = root.join("metadata/common");
+        let workdir = root.join("work");
         let repository = Repository::with_git_dirs(&workdir, &git_dir, &common_dir);
         let (monitor, mut events) = spawn();
-        monitor.sync(Some(repository));
-        tokio::time::sleep(Duration::from_millis(75)).await;
+        monitor.sync_and_wait(Some(repository));
 
-        for _ in 0..3 {
-            fs::write(workdir.join("source.rs"), "changed\n").unwrap();
-            fs::write(git_dir.join("index"), "index\n").unwrap();
-            fs::write(common_dir.join("packed-refs"), "refs\n").unwrap();
+        for path in [
+            workdir.join("source.rs"),
+            git_dir.join("index"),
+            common_dir.join("packed-refs"),
+        ] {
+            monitor.inject_native(Event::new(notify::EventKind::Any).add_path(path));
         }
 
         let event = tokio::time::timeout(Duration::from_secs(2), events.recv())

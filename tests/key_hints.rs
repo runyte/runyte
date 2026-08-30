@@ -599,6 +599,7 @@ fn pane_titles_show_structural_file_and_explorer_types() {
     let directory =
         std::env::temp_dir().join(format!("runyte-pane-buffer-types-{}", std::process::id()));
     std::fs::create_dir_all(&directory).unwrap();
+    let directory = directory.canonicalize().unwrap();
     let path = directory.join("notes.txt");
     std::fs::write(&path, "notes").unwrap();
     let hints = KeyHintState::default();

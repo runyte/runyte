@@ -14,7 +14,7 @@ pub(super) fn temporary(name: &str) -> PathBuf {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    std::env::temp_dir().join(format!("runyte-lsp-{}-{nanos}-{name}", std::process::id()))
+    temporary_directory().join(format!("runyte-lsp-{}-{nanos}-{name}", std::process::id()))
 }
 
 /// An app whose active buffer looks like a saved Rust file, with a handle
@@ -24,7 +24,7 @@ pub(super) fn rust_app(text: &str) -> (App, PathBuf, tokio::sync::mpsc::Receiver
     let path = temporary("a.rs");
     // `temporary` writes beside the system temp directory, so that is the
     // project as far as server-driven edits are concerned.
-    app.project_root = std::env::temp_dir();
+    app.project_root = temporary_directory();
     app.buffers[0].path = Some(path.clone());
     app.buffers[0].kind = crate::buffer::BufferKind::File;
     app.buffers[0].apply(&Transaction::insert(0, text));
