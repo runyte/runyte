@@ -1,4 +1,42 @@
-# CI tests rely on timing and transport output instead of semantic readiness
+---
+title: "CI tests rely on timing and transport output instead of semantic readiness"
+status: resolved
+reported: 2026-08-29
+resolved: 2026-08-30
+commit: d870473
+---
+
+## Resolution
+
+Commit d870473 (`Harden cross-platform integration test boundaries`) closed
+the remaining semantic-readiness gaps in the retained asynchronous test
+infrastructure. `start_host_opening` in `tests/local_protocol.rs` had treated
+metadata publication and a connected socket as host readiness even though the
+control protocol had not completed. It now requires a `Welcome` response and
+uses one absolute thirty-second deadline, with short cancellable handshake
+attempts and child-exit checks between them.
+
+The Git commit PTY test had also sent Escape and then relied on elapsed time
+before typing `:wq`. It now resynchronizes complete host frames until the
+editor reports Normal mode, with the last mode included in timeout diagnostics.
+PTY bytes continue to be drained and retained for diagnostics, while current
+frames and emulated terminal cells remain the behavior boundaries. This
+completes the issue on top of the existing bounded child ownership, Darwin
+exit observation, process-group audit, checked-in executable fixture, and
+request-attribution work described in the report.
+
+Coverage is provided by
+`git_commit_wait_tui_completes_through_write_quit`,
+`incompatible_worktree_host_returns_the_tui_to_its_source`, and
+`relative_workspace_attach_uses_editor_cwd_and_keeps_one_client_process` in
+`tests/local_protocol.rs`; and
+`tests::host_supervisor_process_queue_reports_child_exit` in `src/main.rs`.
+
+Known limitation: a host starved for more than 250 ms can lose one control
+handshake attempt, but the shared thirty-second deadline permits repeated
+attempts and remains the authoritative failure bound.
+
+## Report
 
 CI run 33257024146 failed on commit `1750d93` even though that commit changed
 only `context/reference/startup-performance.md`. The Ubuntu and macOS failures
@@ -336,7 +374,7 @@ Reproduction:
    time because the Ubuntu failure depends on redraw and scheduling order; a
    local pass does not invalidate the transport-level race.
 
-## Recommended execution order
+### Recommended execution order
 
 1. Register the macOS process kqueue with `AsyncFd::with_interest` and
    `Interest::READABLE`, then add a focused macOS child-exit regression test.

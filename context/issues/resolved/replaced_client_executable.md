@@ -1,6 +1,37 @@
-# A long-running client cannot start another workspace after its executable is replaced
+---
+title: "A long-running client cannot start another workspace after its executable is replaced"
+status: resolved
+reported: 2026-08-30
+resolved: 2026-08-30
+commit: d870473
+---
 
-## Observed behavior
+## Resolution
+
+Commit d870473 (`Harden cross-platform integration test boundaries`) added
+`UnavailableStartupExecutable` at the shared detached-host boundary in
+`src/workspace/lifecycle.rs`. `start_detached_host` now classifies a spawn
+`NotFound` only when the configured path-like executable independently probes
+as missing. Existing executables, bare names resolved through `PATH`, missing
+interpreters, and other metadata failures keep the ordinary spawn diagnosis.
+No fallback binary is searched for or launched.
+
+`start_workspace_switch_host` in `src/main.rs` adds the switch-specific advice
+to detach with `:detach`, launch Runyte again, and retry. The typed failure is
+then handled through the ordinary prepared-switch transition, which publishes
+the notice without replacing the current source endpoint or manufacturing a
+previous endpoint.
+
+Coverage is provided by
+`missing_startup_executable_is_diagnosed_as_a_replaced_client` and
+`an_existing_startup_target_keeps_the_generic_spawn_diagnosis` in
+`tests/persistent_host.rs`; and
+`tests::replaced_executable_switch_failure_explains_how_to_recover` in
+`src/main.rs`.
+
+## Report
+
+### Observed behavior
 
 A persistent Runyte client can remain attached while the executable from which
 it was launched is rebuilt, upgraded, moved, or removed. The running process
@@ -35,7 +66,7 @@ The same underlying condition can affect other lifecycle operations that use
 the current executable to start a detached host, including attach, restart,
 and `--wait` paths.
 
-## Expected behavior
+### Expected behavior
 
 When detached-host startup returns `NotFound` and the configured startup
 executable itself is no longer available, Runyte should explain that the
@@ -60,7 +91,7 @@ Runyte should not silently search `PATH` or launch a different on-disk binary.
 Doing so could cross a protocol or configuration version boundary without the
 person explicitly restarting the client.
 
-## Reproduction
+### Reproduction
 
 1. Build Runyte and launch it in persistent mode from that build.
 2. While the interactive client remains running, rebuild or replace the
@@ -73,7 +104,7 @@ person explicitly restarting the client.
 5. Detach and launch the new Runyte executable for the destination; attachment
    succeeds without recreating the worktree.
 
-## Regression coverage
+### Regression coverage
 
 Lifecycle coverage should pass a deliberately missing executable path to
 detached-host startup and assert the actionable replacement/restart diagnosis.
