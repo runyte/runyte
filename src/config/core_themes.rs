@@ -69,7 +69,10 @@ pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
             background: "#1f2126".into(),
             foreground: "#b9b9be".into(),
             muted: "#8b8b90".into(),
-            whitespace: Some("#272a31".into()),
+            // A background this much lighter left the marker only 8-11
+            // levels off it, well short of the 17-20 the original background
+            // gave it; nudged out a little further than that original gap.
+            whitespace: Some("#35373c".into()),
             jump_text_muted: None,
             accent: "#c96870".into(),
             // Left unset so Normal mode's caret always matches the accent
@@ -129,7 +132,11 @@ pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
             background: "#e3e3e5".into(),
             foreground: "#292a30".into(),
             muted: "#656872".into(),
-            whitespace: Some("#cdced3".into()),
+            // A background this much darker left the marker only 18-22
+            // levels off it, well short of the 28-31 the original background
+            // gave it; nudged out a little further than that original gap,
+            // just inside the 31-level "near background" ceiling.
+            whitespace: Some("#c5c5c7".into()),
             jump_text_muted: Some("#878a92".into()),
             accent: "#a33d49".into(),
             // Left unset so Normal mode's caret always matches the accent
