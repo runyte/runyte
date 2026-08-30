@@ -2721,8 +2721,8 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
-    #[test]
-    fn symlinked_owner_wide_inventory_is_refused_without_following_it() {
+    #[tokio::test]
+    async fn symlinked_owner_wide_inventory_is_refused_without_following_it() {
         use std::os::unix::fs::symlink;
 
         let (root, fallback) = endpoint("symlink-inventory");
@@ -2740,18 +2740,30 @@ mod tests {
         fs::set_permissions(&target, fs::Permissions::from_mode(0o755)).unwrap();
         symlink(&target, runtime.join("runyte/all-hosts")).unwrap();
 
-        let metadata = EndpointMetadata {
-            protocol: PROTOCOL_VERSION,
-            pid: std::process::id(),
-            id: endpoint.id.clone(),
-            name: None,
-            project_root_bytes: encode_path(&root),
-            socket_bytes: encode_path(endpoint.socket()),
+        let error = match LocalServer::bind(&endpoint).await {
+            Ok(_) => panic!("symlinked owner-wide inventory was accepted"),
+            Err(error)
+                if error.chain().any(|cause| {
+                    cause
+                        .downcast_ref::<io::Error>()
+                        .is_some_and(|error| error.kind() == io::ErrorKind::PermissionDenied)
+                }) =>
+            {
+                let metadata = EndpointMetadata {
+                    protocol: PROTOCOL_VERSION,
+                    pid: std::process::id(),
+                    id: endpoint.id.clone(),
+                    name: None,
+                    project_root_bytes: encode_path(&root),
+                    socket_bytes: encode_path(endpoint.socket()),
+                };
+                endpoint
+                    .publish_metadata(&metadata)
+                    .unwrap_err()
+                    .to_string()
+            }
+            Err(error) => format!("{error:#}"),
         };
-        let error = endpoint
-            .publish_metadata(&metadata)
-            .unwrap_err()
-            .to_string();
         assert!(error.contains("symlinked host endpoint"), "{error}");
         assert_eq!(fs::metadata(&target).unwrap().mode() & 0o777, 0o755);
 
@@ -2820,6 +2832,19 @@ mod tests {
         assert!(first.bytes().all(|byte| byte.is_ascii_hexdigit()));
         assert!(boot_namespace_from_identifier(b"").is_err());
         assert!(boot_namespace_from_identifier(&vec![0; 1025]).is_err());
+
+        match boot_namespace() {
+            Ok(namespace) => {
+                assert_eq!(namespace.len(), HOST_ID_LENGTH);
+                assert!(namespace.bytes().all(|byte| byte.is_ascii_hexdigit()));
+            }
+            Err(error) => assert!(
+                error.chain().any(|cause| cause
+                    .downcast_ref::<io::Error>()
+                    .is_some_and(|error| { error.kind() == io::ErrorKind::PermissionDenied })),
+                "boot identifier failed for an unexpected reason: {error:#}"
+            ),
+        }
     }
 
     #[test]

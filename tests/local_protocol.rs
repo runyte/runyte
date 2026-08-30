@@ -1439,6 +1439,10 @@ async fn git_commit_wait_closes_its_buffer_without_detaching_an_existing_tui() {
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
     let _message = message.expect("Git editor wait request did not open COMMIT_EDITMSG");
+    assert!(
+        commit.try_wait().unwrap().is_none(),
+        "git commit exited while its editor-owned buffer was still open"
+    );
     send_input_expect_frame(&mut interactive, InputEvent::Key(KeyStroke::char('i'))).await;
     send_input_expect_frame(
         &mut interactive,

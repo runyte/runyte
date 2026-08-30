@@ -344,6 +344,9 @@ async fn wait_for_endpoint(child: &mut ChildGuard, endpoint: &LocalEndpoint) -> 
         if child.0.as_mut().unwrap().try_wait().unwrap().is_some() {
             let output = child.0.take().unwrap().wait_with_output().unwrap();
             let stderr = String::from_utf8_lossy(&output.stderr);
+            // The macOS test sandbox can specifically deny Unix-socket bind.
+            // False never represents a readiness timeout: those still fail
+            // below, and every other child exit panics with its diagnostics.
             if stderr.contains("Operation not permitted") {
                 return false;
             }

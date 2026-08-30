@@ -60,7 +60,8 @@ integrated-terminal cells are mapped to the stable xterm 256-colour cube and
 grayscale ramp when 256 colours are advertised, and to the nearest basic ANSI
 colour otherwise. The first sixteen indexed entries are not RGB quantization
 targets because a terminal profile may redefine them; explicitly named ANSI
-theme colours retain their semantic terminal names.
+theme colours retain their semantic terminal names, except that an eight-colour
+terminal maps the bright `White` and `DarkGray` roles to `Gray` and `Black`.
 
 The adaptation is client-owned. A persistent session host keeps exact RGB in
 its semantic snapshots and local protocol frames, so clients attached through

@@ -793,6 +793,12 @@ async fn attaching_with_logging_flags_reports_the_retained_configuration() {
     // that its event reader has no source; neither is part of this logging
     // contract.
     assert!(
+        stderr.contains("raw mode")
+            || stderr.contains("terminal event")
+            || stderr.contains("terminal input"),
+        "attachment did not report a recognized frontend initialization failure: {stderr}"
+    );
+    assert!(
         stderr.contains("kept its own log level and destination"),
         "{stderr}"
     );

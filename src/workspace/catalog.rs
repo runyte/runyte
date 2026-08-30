@@ -3338,7 +3338,7 @@ mod tests {
             .and_then(|entry| entry.number)
     }
 
-    fn unique_test_root(_label: &str) -> PathBuf {
+    fn unique_test_root(label: &str) -> PathBuf {
         use std::sync::atomic::{AtomicU64, Ordering};
 
         static NEXT_ROOT: AtomicU64 = AtomicU64::new(1);
@@ -3349,7 +3349,7 @@ mod tests {
             .canonicalize()
             .unwrap_or_else(|_| std::env::temp_dir());
         base.join(format!(
-            "ryt-c-{}-{}",
+            "ryt-c-{label:.12}-{}-{}",
             std::process::id(),
             NEXT_ROOT.fetch_add(1, Ordering::Relaxed)
         ))
