@@ -127,16 +127,25 @@ pub fn looks_binary(path: &Path) -> bool {
 /// The platform cache directory for Runyte's regenerable per-user state.
 ///
 /// An explicit `XDG_CACHE_HOME` wins on every platform. Otherwise Linux and
-/// other Unix systems use `~/.cache/runyte`, macOS uses
-/// `~/Library/Caches/runyte`, and Windows uses `%LOCALAPPDATA%/runyte/cache`.
+/// other Unix systems use `<account-home>/.cache/runyte`, macOS uses
+/// `<account-home>/Library/Caches/runyte`, and Windows uses
+/// `%LOCALAPPDATA%/runyte/cache`. Unix account home comes from the effective
+/// user's account record rather than inherited `$HOME`, so a privileged
+/// invocation cannot leave its files in another user's default cache.
 pub fn cache_root() -> Option<PathBuf> {
     if cfg!(test) {
         return None;
     }
+    let environment_home = std::env::var_os("HOME").map(PathBuf::from);
+    #[cfg(unix)]
+    let account_home = crate::user_paths::system_home_directory();
+    #[cfg(not(unix))]
+    let account_home = None;
     cache_root_for(
         CachePlatform::CURRENT,
         std::env::var_os("XDG_CACHE_HOME").map(PathBuf::from),
-        std::env::var_os("HOME").map(PathBuf::from),
+        environment_home,
+        account_home,
         std::env::var_os("LOCALAPPDATA").map(PathBuf::from),
     )
 }
@@ -162,16 +171,17 @@ impl CachePlatform {
 fn cache_root_for(
     platform: CachePlatform,
     xdg_cache_home: Option<PathBuf>,
-    home: Option<PathBuf>,
+    _environment_home: Option<PathBuf>,
+    account_home: Option<PathBuf>,
     local_app_data: Option<PathBuf>,
 ) -> Option<PathBuf> {
     if let Some(root) = xdg_cache_home.filter(|path| path.is_absolute()) {
         return Some(root.join("runyte"));
     }
     match platform {
-        CachePlatform::MacOs => Some(home?.join("Library/Caches/runyte")),
+        CachePlatform::MacOs => Some(account_home?.join("Library/Caches/runyte")),
         CachePlatform::Windows => Some(local_app_data?.join("runyte/cache")),
-        CachePlatform::Unix => Some(home?.join(".cache/runyte")),
+        CachePlatform::Unix => Some(account_home?.join(".cache/runyte")),
     }
 }
 
@@ -392,27 +402,47 @@ mod tests {
     }
 
     #[test]
-    fn cache_paths_follow_platform_conventions_and_honor_xdg() {
-        let home = PathBuf::from("/home/example");
+    fn cache_paths_follow_effective_account_conventions_and_honor_xdg() {
+        let environment_home = PathBuf::from("/home/invoking");
+        let account_home = PathBuf::from("/home/effective");
         let local = PathBuf::from("C:/Users/example/AppData/Local");
 
         assert_eq!(
-            cache_root_for(CachePlatform::Unix, None, Some(home.clone()), None),
-            Some(home.join(".cache/runyte"))
+            cache_root_for(
+                CachePlatform::Unix,
+                None,
+                Some(environment_home.clone()),
+                Some(account_home.clone()),
+                None,
+            ),
+            Some(account_home.join(".cache/runyte"))
         );
         assert_eq!(
-            cache_root_for(CachePlatform::MacOs, None, Some(home.clone()), None),
-            Some(home.join("Library/Caches/runyte"))
+            cache_root_for(
+                CachePlatform::MacOs,
+                None,
+                Some(environment_home.clone()),
+                Some(account_home.clone()),
+                None,
+            ),
+            Some(account_home.join("Library/Caches/runyte"))
         );
         assert_eq!(
-            cache_root_for(CachePlatform::Windows, None, None, Some(local.clone())),
+            cache_root_for(
+                CachePlatform::Windows,
+                None,
+                Some(environment_home.clone()),
+                None,
+                Some(local.clone()),
+            ),
             Some(local.join("runyte/cache"))
         );
         assert_eq!(
             cache_root_for(
                 CachePlatform::MacOs,
                 Some(PathBuf::from("/custom/cache")),
-                Some(home),
+                Some(environment_home),
+                Some(account_home),
                 None,
             ),
             Some(PathBuf::from("/custom/cache/runyte"))
@@ -425,6 +455,7 @@ mod tests {
             cache_root_for(
                 CachePlatform::Unix,
                 Some(PathBuf::from("relative")),
+                Some(PathBuf::from("/home/invoking")),
                 Some(PathBuf::from("/home/example")),
                 None,
             ),

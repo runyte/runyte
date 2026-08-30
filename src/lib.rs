@@ -60,6 +60,8 @@ pub mod text;
 pub mod tui;
 pub mod tutorial;
 pub mod ui;
+#[cfg(unix)]
+pub(crate) mod user_paths;
 pub mod word_index;
 pub mod workspace;
 pub mod wrap;

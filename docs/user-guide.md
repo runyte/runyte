@@ -287,11 +287,17 @@ in the manager's order: numbered sessions first in digit order, then the rest
 least recently visited first. The listing has no number column of its own, so
 that reads as the running sessions ahead of the stopped ones. By default it
 reads the Runyte environment selected by the current runtime and cache
-settings. Add `--include-hidden` to include validated live sessions started in
-other isolated Runyte environments. Stopped recent-history rows remain local
-because there is no live host to publish them elsewhere. If two isolated
-environments host the same workspace, the broad list shows both live endpoints
-even though their workspace IDs and directories are the same.
+settings. Names, numbers, and stopped-session history live in `workspaces.json`
+under Runyte's platform cache directory: `$XDG_CACHE_HOME/runyte` when set,
+`~/.cache/runyte` on Linux otherwise, or `~/Library/Caches/runyte` on macOS.
+Without the explicit XDG override, Unix resolves that home from the effective
+operating-system account rather than inherited `$HOME`, so a privileged launch
+cannot create its cache as root inside another account's home. Add
+`--include-hidden` to include validated live sessions started in other isolated
+Runyte environments. Stopped recent-history rows remain local because there is
+no live host to publish them elsewhere. If two isolated environments host the
+same workspace, the broad list shows both live endpoints even though their
+workspace IDs and directories are the same.
 `STATE` is `running`, `stopped`, or `running (protocol N)` for a host left over
 from another version of Runyte. Such a host still holds the workspace, so
 nothing can attach to it or open a file through it, and its unsaved-buffer
@@ -1845,7 +1851,10 @@ recent first, with `↑`/`↓` to select and Tab to complete, and the most recen
 one seeds the prompt. The list is cached under Runyte's platform cache
 directory (`$XDG_CACHE_HOME/runyte`, `~/.cache/runyte` on Linux when unset,
 or `~/Library/Caches/runyte` on macOS), so it remains separate from project
-state. The program is started detached with no terminal of
+state. Without an explicit XDG cache directory on Unix, `~` is resolved from
+the effective operating-system account rather than inherited `$HOME`; running
+Runyte through a privileged launcher therefore cannot put its cache files in
+another account's home. The program is started detached with no terminal of
 its own: viewers and GUI applications work, a terminal program cannot take
 over the screen.
 System clipboard commands use `pbcopy`/`pbpaste` on macOS, PowerShell on
