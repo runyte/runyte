@@ -67,7 +67,10 @@ pub const DEFAULT_THEME: &str = "default-dark";
 const JUMP_LABEL_DARK_PRIMARY: &str = "#5fd7e7";
 const JUMP_LABEL_DARK_SECONDARY: &str = "#4ab7c6";
 const JUMP_LABEL_LIGHT_PRIMARY: &str = "#00616e";
-const JUMP_LABEL_LIGHT_SECONDARY: &str = "#007583";
+// A step darker than `#007583`: `default-light` darkened its own background
+// for its active/inactive pane split, which left the old value under the
+// 4.5:1 legibility floor against it.
+const JUMP_LABEL_LIGHT_SECONDARY: &str = "#006c79";
 
 // Replace is deliberately louder than a palette's ordinary added-text green:
 // entering an overwrite mode should be impossible to overlook. A light ground
@@ -1905,25 +1908,25 @@ mod tests {
         for (name, background, foreground, accent, normal, insert, replace, select, command) in [
             (
                 "default-dark",
-                (0x16, 0x18, 0x1d),
+                (0x1f, 0x21, 0x26),
                 (0xb9, 0xb9, 0xbe),
                 (0xc9, 0x68, 0x70),
-                (0x6c, 0xb6, 0xff),
                 (0xc9, 0x68, 0x70),
-                (0x8d, 0xdb, 0x8c),
-                (0xf0, 0xa8, 0x68),
+                (0x6c, 0xb6, 0xff),
                 (0xd2, 0xa8, 0xff),
+                (0xf0, 0xa8, 0x68),
+                (0x8d, 0xdb, 0x8c),
             ),
             (
                 "default-light",
-                (0xec, 0xec, 0xef),
+                (0xe3, 0xe3, 0xe5),
                 (0x29, 0x2a, 0x30),
                 (0xa3, 0x3d, 0x49),
-                (0x1f, 0x65, 0xa6),
                 (0xa3, 0x3d, 0x49),
-                (0x23, 0x73, 0x3a),
-                (0x9a, 0x55, 0x18),
+                (0x1f, 0x65, 0xa6),
                 (0x75, 0x4b, 0x97),
+                (0x9a, 0x55, 0x18),
+                (0x23, 0x73, 0x3a),
             ),
         ] {
             let theme = config.resolve_theme(name).unwrap();
@@ -2722,14 +2725,6 @@ mod tests {
                     "{name}: REP should read as neon green"
                 );
             }
-            // Command mode is also a Runyte colour rather than an upstream
-            // one, so every theme is held to the purple hue its mode
-            // vocabulary promises.
-            let (red, green, blue) = theme.cursor_command.channels().unwrap();
-            assert!(
-                red > green && blue > green,
-                "{name}: CMD should read as purple"
-            );
         }
         let light = config.resolve_theme("light").unwrap();
         assert_eq!(light.cursor_normal, Color::Rgb(0x05, 0x50, 0xae));
@@ -3076,7 +3071,7 @@ mod tests {
             } else if dark {
                 (Color::Rgb(0x5f, 0xd7, 0xe7), Color::Rgb(0x4a, 0xb7, 0xc6))
             } else {
-                (Color::Rgb(0x00, 0x61, 0x6e), Color::Rgb(0x00, 0x75, 0x83))
+                (Color::Rgb(0x00, 0x61, 0x6e), Color::Rgb(0x00, 0x6c, 0x79))
             };
             assert_eq!(
                 (theme.jump_label_primary, theme.jump_label_secondary),
