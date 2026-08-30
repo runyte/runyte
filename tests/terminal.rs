@@ -204,7 +204,7 @@ fn a_child_runs_in_the_pane_and_its_output_is_drawn() {
 
 #[test]
 fn a_child_can_discover_the_effective_default_background() {
-    let command = r#"/bin/sh -c 'stty raw -echo; printf "\033]11;?\033\\"; answer=$(dd bs=1 count=25 2>/dev/null); expected=$(printf "\033]11;rgb:1f1f/2121/2626\033\\"); if [ "$answer" = "$expected" ]; then printf default-background-ok; else printf default-background-wrong; fi; cat'"#;
+    let command = r#"/bin/sh -c 'stty raw -echo; printf "\033]11;?\033\\"; answer=$(dd bs=1 count=25 2>/dev/null); expected=$(printf "\033]11;rgb:2828/2a2a/2f2f\033\\"); if [ "$answer" = "$expected" ]; then printf default-background-ok; else printf default-background-wrong; fi; cat'"#;
     let mut session = Session::start(command);
 
     assert!(

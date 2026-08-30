@@ -379,6 +379,9 @@ impl Palette {
             whitespace: None,
             jump_text_muted,
             accent: self.info.into(),
+            // Unset: this palette keeps one accent for its borders and its
+            // command names alike.
+            command: None,
             cursor_normal: Some(self.info.into()),
             cursor_insert: Some(self.error.into()),
             cursor_replace: None,

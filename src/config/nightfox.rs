@@ -15,6 +15,9 @@ fn nordfox_theme() -> ThemeDefinition {
         whitespace: None,
         jump_text_muted: None,
         accent: "#8cafd2".into(),
+        // Unset: this palette keeps one accent for its borders and its
+        // command names alike.
+        command: None,
         cursor_normal: None,
         cursor_insert: Some("#bf616a".into()),
         cursor_replace: None,
@@ -94,6 +97,9 @@ fn terafox_theme() -> ThemeDefinition {
         // against either ground, ordinary text at 4.5:1.
         jump_text_muted: Some("#8998a2".into()),
         accent: "#73a3b7".into(),
+        // Unset: this palette keeps one accent for its borders and its
+        // command names alike.
+        command: None,
         cursor_normal: None,
         cursor_insert: Some("#e85c51".into()),
         cursor_replace: None,

@@ -47,6 +47,9 @@ fn catppuccin_theme(palette: CatppuccinPalette) -> ThemeDefinition {
         whitespace: None,
         jump_text_muted: None,
         accent: palette.blue.into(),
+        // Unset: this palette keeps one accent for its borders and its
+        // command names alike.
+        command: None,
         cursor_normal: Some(palette.blue.into()),
         cursor_insert: Some(palette.red.into()),
         cursor_replace: None,

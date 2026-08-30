@@ -135,6 +135,21 @@ impl HelpDocumentWriter {
         }
     }
 
+    /// Applies a role to one already-written character range.
+    ///
+    /// Used where the producer knows exactly which characters carry the role
+    /// and no search is needed — a generated table's key column, say, where a
+    /// bare letter is certainly a key rather than an English article. Out of
+    /// range positions are ignored, so a caller cannot corrupt the document by
+    /// naming a range past its end.
+    pub fn mark_range(&mut self, from: usize, to: usize, role: HelpRole) {
+        let to = to.min(self.roles.len());
+        if from >= to {
+            return;
+        }
+        self.roles[from..to].fill(Some(role));
+    }
+
     /// Like [`Self::mark_since`], but ignores occurrences embedded in an
     /// ASCII word. This is useful for explicitly declared single-key labels:
     /// `v` is a key in "press v", but not in "move". An apostrophe counts as

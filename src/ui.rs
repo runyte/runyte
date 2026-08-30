@@ -56,6 +56,9 @@ struct TuiTheme {
     whitespace: ratatui::style::Color,
     jump_text_muted: ratatui::style::Color,
     accent: ratatui::style::Color,
+    /// Command names in the command palette, which the theme names apart from
+    /// `accent` so a palette need not answer the pane border's colour.
+    command: ratatui::style::Color,
     cursor_normal: ratatui::style::Color,
     cursor_insert: ratatui::style::Color,
     cursor_replace: ratatui::style::Color,
@@ -112,6 +115,7 @@ impl TuiTheme {
             whitespace: color(theme.whitespace),
             jump_text_muted: color(theme.jump_text_muted),
             accent: color(theme.accent),
+            command: color(theme.command),
             cursor_normal: color(theme.cursor_normal),
             cursor_insert: color(theme.cursor_insert),
             cursor_replace: color(theme.cursor_replace),
@@ -895,6 +899,14 @@ fn draw_snapshot_overlay(
     // just the selected one, so a label never shifts sideways as the
     // selection moves.
     let marker = uses_selection_marker(overlay.kind);
+    // The command palette emphasizes the command name itself, which the theme
+    // colours apart from the accent its borders use. Every other overlay
+    // emphasizes a mnemonic or a fuzzy match, which stay on the accent.
+    let emphasis_color = if overlay.kind == OverlayKind::CommandPalette {
+        theme.command
+    } else {
+        theme.accent
+    };
     let row_width = usize::from(columns[0].width);
     let rows_area = if let Some(header) = &overlay.column_header {
         frame.render_widget(
@@ -980,7 +992,7 @@ fn draw_snapshot_overlay(
                 character_style = character_style.fg(theme.muted);
             }
             if emphasized.contains(&position) {
-                character_style = character_style.fg(theme.accent).bold();
+                character_style = character_style.fg(emphasis_color).bold();
             }
             Span::styled(character.to_string(), character_style)
         }));
@@ -3167,7 +3179,7 @@ fn draw_command_palette(frame: &mut Frame<'_>, app: &TuiApp<'_>, editor_area: Re
                 };
                 let available = matched.availability.is_available();
                 let primary = if available {
-                    app.theme.accent
+                    app.theme.command
                 } else {
                     app.theme.muted
                 };
@@ -3176,15 +3188,14 @@ fn draw_command_palette(frame: &mut Frame<'_>, app: &TuiApp<'_>, editor_area: Re
                 } else {
                     app.theme.muted
                 };
+                // A row that cannot run says why, once. It used to say so
+                // twice — a `[unavailable]` badge as well as the reason — and
+                // the badge repeated what the muted row and the clause after
+                // the description already carried.
                 let unavailable = matched
                     .availability
                     .reason()
                     .map_or_else(String::new, |reason| format!("  unavailable: {reason}"));
-                let availability_label = if available {
-                    String::new()
-                } else {
-                    "[unavailable] ".to_owned()
-                };
                 ListItem::new(Line::from(vec![
                     Span::styled(
                         format!("[{:<13}] ", matched.category.label()),
@@ -3194,7 +3205,6 @@ fn draw_command_palette(frame: &mut Frame<'_>, app: &TuiApp<'_>, editor_area: Re
                         format!(":{:<24}", matched.usage()),
                         Style::default().fg(primary),
                     ),
-                    Span::styled(availability_label, Style::default().fg(app.theme.muted)),
                     Span::styled(matched.spec.description, Style::default().fg(foreground)),
                     Span::styled(aliases, Style::default().fg(app.theme.muted)),
                     Span::styled(unavailable, Style::default().fg(app.theme.muted)),
@@ -3842,6 +3852,7 @@ mod tests {
         assert_role!(whitespace);
         assert_role!(jump_text_muted);
         assert_role!(accent);
+        assert_role!(command);
         assert_role!(cursor_normal);
         assert_role!(cursor_insert);
         assert_role!(cursor_replace);
@@ -4581,9 +4592,9 @@ mod tests {
 
         let source = config.resolve_theme("default-dark").unwrap();
         let theme = TuiTheme::with_color_depth(&source, TerminalColorDepth::Indexed);
-        assert_eq!(theme.background, TuiColor::Indexed(235));
-        assert_eq!(theme.inactive_background, TuiColor::Indexed(236));
-        assert_eq!(theme.overlay_background, TuiColor::Indexed(237));
+        assert_eq!(theme.background, TuiColor::Indexed(236));
+        assert_eq!(theme.inactive_background, TuiColor::Indexed(237));
+        assert_eq!(theme.overlay_background, TuiColor::Indexed(238));
         assert_eq!(theme.foreground, TuiColor::Indexed(250));
     }
 
@@ -5983,8 +5994,8 @@ mod tests {
         );
         assert_eq!(
             buffer[(name, row)].fg,
-            theme.accent,
-            "the command name keeps the accent that marks it available"
+            theme.command,
+            "the command name keeps the palette's own command colour"
         );
 
         let (category, _) =
@@ -6031,7 +6042,7 @@ mod tests {
         let (command, rendered_row) = find_text(&buffer, ":about").expect("the command name");
         let (category, _) =
             find_text_in_row(&buffer, "[", rendered_row).expect("the category prefix");
-        assert_eq!(buffer[(command, rendered_row)].fg, theme.accent);
+        assert_eq!(buffer[(command, rendered_row)].fg, theme.command);
         assert_eq!(buffer[(category, rendered_row)].fg, theme.muted);
         assert_eq!(buffer[(command, rendered_row)].bg, theme.selection);
         assert_eq!(buffer[(category, rendered_row)].bg, theme.selection);
@@ -6704,7 +6715,18 @@ mod tests {
             .map(|cell| cell.symbol().chars().next().unwrap_or(' '))
             .collect();
         assert!(rendered.contains("[Syntax"));
-        assert!(rendered.contains("[unavailable]"));
+        // The row no longer carries an `[unavailable]` badge: it recedes into
+        // the muted role instead, and the reason still follows the row. The
+        // badge said the same thing a third time.
+        assert!(!rendered.contains("[unavailable]"));
+        let buffer = terminal.backend().buffer().clone();
+        let (name, row) = find_text(&buffer, ":outline").expect("the palette lists the command");
+        let theme = TuiTheme::new(&app.theme);
+        assert_eq!(
+            buffer[(name, row)].fg,
+            theme.muted,
+            "a command that cannot run gives up the palette's command colour"
+        );
     }
 
     #[test]

@@ -2294,7 +2294,7 @@ fn theme_names_activate_the_matching_theme() {
     assert_eq!(app.theme_name, "default-dark");
     assert_eq!(
         app.terminals.default_colors(),
-        DefaultColors::new(Some((0xb9, 0xb9, 0xbe)), Some((0x1f, 0x21, 0x26)))
+        DefaultColors::new(Some((0xb9, 0xb9, 0xbe)), Some((0x28, 0x2a, 0x2f)))
     );
     let default_accent = app.theme.accent;
 

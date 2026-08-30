@@ -135,8 +135,8 @@ signals, and each one answers a different question.
   session manager's last-active age is the reference use.
 - **Row emphasis** — the colours a row assigns to its own parts: the matched
   characters of a fuzzy query, the active parameter of a signature, an
-  available command's accented name against its muted category, an action's
-  mnemonic label against its muted description. It answers *what about this
+  available command's name in the theme's `command` colour against its muted
+  category, an action's mnemonic label against its muted description. It answers *what about this
   row*, and the other two signals never repaint it. The selection therefore
   contributes a background and no foreground, so a row's columns still read
   as columns while it is selected.
