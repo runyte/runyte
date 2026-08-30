@@ -137,7 +137,9 @@ impl HelpDocumentWriter {
 
     /// Like [`Self::mark_since`], but ignores occurrences embedded in an
     /// ASCII word. This is useful for explicitly declared single-key labels:
-    /// `v` is a key in "press v", but not in "move".
+    /// `v` is a key in "press v", but not in "move". An apostrophe counts as
+    /// part of the surrounding word too, so a contraction's letter — the `s`
+    /// in "file's" or the `t` in "don't" — is never mistaken for a bare key.
     pub fn mark_token_since(&mut self, from: usize, needle: &str, role: HelpRole) {
         if needle.is_empty() || from >= self.roles.len() {
             return;
@@ -146,16 +148,19 @@ impl HelpDocumentWriter {
         let needle_characters = needle.chars().count();
         let byte_from = char_to_byte(&self.text, from);
         let tail = &self.text[byte_from..];
+        let is_word_character = |character: char| {
+            character.is_ascii_alphanumeric() || character == '_' || character == '\''
+        };
         for (relative_byte, _) in tail.match_indices(needle) {
             let start = from + tail[..relative_byte].chars().count();
             let end = start + needle_characters;
             let embedded_left = start
                 .checked_sub(1)
                 .and_then(|index| characters.get(index))
-                .is_some_and(|character| character.is_ascii_alphanumeric() || *character == '_');
+                .is_some_and(|character| is_word_character(*character));
             let embedded_right = characters
                 .get(end)
-                .is_some_and(|character| character.is_ascii_alphanumeric() || *character == '_');
+                .is_some_and(|character| is_word_character(*character));
             if !embedded_left && !embedded_right {
                 self.roles[start..end].fill(Some(role));
             }
