@@ -665,7 +665,11 @@ mod tests {
         assert_eq!(child_group, child_pid);
         // SAFETY: `getpgrp` has no preconditions.
         assert_ne!(child_group, unsafe { libc::getpgrp() });
-        fs::write(output.with_extension("release"), []).unwrap();
+        fs::write(
+            crate::test_support::marker_path(&output, std::ffi::OsStr::new(".release")),
+            [],
+        )
+        .unwrap();
         loop {
             // SAFETY: signal zero only probes whether the private process
             // group still exists and cannot change child state.

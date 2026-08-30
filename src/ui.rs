@@ -523,14 +523,30 @@ fn uses_selection_marker(kind: OverlayKind) -> bool {
     )
 }
 
-/// Draws one immutable normal-editor snapshot and any current overlays.
+/// Draws one immutable normal-editor snapshot and any current overlays after
+/// adapting its exact colours to the outer terminal.
 pub fn render(
     frame: &mut Frame<'_>,
     app: &App,
     snapshot: &EditorSnapshot,
     key_hints: &KeyHintState,
+    color_depth: TerminalColorDepth,
 ) {
-    render_with_color_depth(
+    render_editor_frame(frame, app, snapshot, key_hints, color_depth);
+}
+
+/// Preserves exact RGB for presentation-oriented test backends.
+///
+/// Production frontends must use [`render`] and supply the attached terminal's
+/// detected colour depth.
+#[doc(hidden)]
+pub fn render_exact_colors_for_test(
+    frame: &mut Frame<'_>,
+    app: &App,
+    snapshot: &EditorSnapshot,
+    key_hints: &KeyHintState,
+) {
+    render_editor_frame(
         frame,
         app,
         snapshot,
@@ -539,10 +555,7 @@ pub fn render(
     );
 }
 
-/// Draws one editor snapshot after adapting its exact colours to the outer
-/// terminal. Production frontends use this entry point; [`render`] preserves
-/// exact RGB for presentation-neutral test backends.
-pub fn render_with_color_depth(
+fn render_editor_frame(
     frame: &mut Frame<'_>,
     app: &App,
     snapshot: &EditorSnapshot,
@@ -693,16 +706,25 @@ fn draw_setting_prompt(frame: &mut Frame<'_>, app: &TuiApp<'_>, editor_area: Rec
     frame.set_cursor_position(ScreenPosition::new(x, inner.y));
 }
 
-/// Draws a transport-owned frame without reaching back into live application
-/// state. Attached clients use this path; standalone keeps its specialized
-/// overlay widgets while both consume the same semantic snapshot values.
-pub fn render_host_frame(frame: &mut Frame<'_>, snapshot: &HostFrame) {
-    render_host_frame_with_color_depth(frame, snapshot, TerminalColorDepth::TrueColor);
+/// Draws a transport-owned frame using the attached client's terminal colour
+/// range rather than changing the host's semantic theme. It does not reach
+/// back into live application state.
+pub fn render_host_frame(
+    frame: &mut Frame<'_>,
+    snapshot: &HostFrame,
+    color_depth: TerminalColorDepth,
+) {
+    render_attached_frame(frame, snapshot, color_depth);
 }
 
-/// Draws a transport-owned frame using the attached client's terminal colour
-/// range rather than changing the host's semantic theme.
-pub fn render_host_frame_with_color_depth(
+/// Preserves a transport-owned frame's exact RGB for presentation-oriented
+/// test backends.
+#[doc(hidden)]
+pub fn render_host_frame_exact_colors_for_test(frame: &mut Frame<'_>, snapshot: &HostFrame) {
+    render_attached_frame(frame, snapshot, TerminalColorDepth::TrueColor);
+}
+
+fn render_attached_frame(
     frame: &mut Frame<'_>,
     snapshot: &HostFrame,
     color_depth: TerminalColorDepth,
@@ -4423,7 +4445,7 @@ mod tests {
     fn render_test_frame(frame: &mut Frame<'_>, app: &mut App, hints: &KeyHintState) {
         let prepared = app.prepare_view(frame_geometry(frame.area()));
         let snapshot = app.snapshot(&prepared);
-        render(frame, app, &snapshot, hints);
+        render_exact_colors_for_test(frame, app, &snapshot, hints);
     }
 
     /// Every percentage the popups actually use, across widths that straddle
@@ -4574,6 +4596,84 @@ mod tests {
         );
     }
 
+    fn frontend_buffer(
+        attached: bool,
+        color_depth: TerminalColorDepth,
+        foreground: RunyteColor,
+    ) -> ratatui::buffer::Buffer {
+        let mut app = App::new(Config::default(), None).unwrap();
+        app.theme.background = RunyteColor::White;
+        app.theme.foreground = foreground;
+        let hints = KeyHintState::default();
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        if attached {
+            let mut host = crate::workspace::WorkspaceHost::new(app);
+            let host_frame = host.prepare_frame(frame_geometry(TuiRect::new(0, 0, 80, 24)));
+            assert_eq!(host_frame.editor.theme.background, RunyteColor::White);
+            assert_eq!(host_frame.editor.theme.foreground, foreground);
+            terminal
+                .draw(|frame| render_host_frame(frame, &host_frame, color_depth))
+                .unwrap();
+        } else {
+            terminal
+                .draw(|frame| {
+                    let prepared = app.prepare_view(frame_geometry(frame.area()));
+                    let snapshot = app.snapshot(&prepared);
+                    assert_eq!(snapshot.theme.background, RunyteColor::White);
+                    assert_eq!(snapshot.theme.foreground, foreground);
+                    render(frame, &app, &snapshot, &hints, color_depth);
+                })
+                .unwrap();
+        }
+        terminal.backend().buffer().clone()
+    }
+
+    #[test]
+    fn public_frontend_boundaries_adapt_exact_and_ansi_colours() {
+        use ratatui::style::Color as TuiColor;
+
+        let cases = [
+            (
+                TerminalColorDepth::TrueColor,
+                TuiColor::White,
+                TuiColor::Rgb(95, 135, 175),
+                TuiColor::DarkGray,
+            ),
+            (
+                TerminalColorDepth::Indexed,
+                TuiColor::White,
+                TuiColor::Indexed(67),
+                TuiColor::DarkGray,
+            ),
+            (
+                TerminalColorDepth::Basic,
+                TuiColor::Gray,
+                TuiColor::Cyan,
+                TuiColor::Black,
+            ),
+        ];
+
+        for attached in [false, true] {
+            for (depth, background, rgb, dark_gray) in cases {
+                let rgb_frame = frontend_buffer(attached, depth, RunyteColor::Rgb(95, 135, 175));
+                assert!(
+                    rgb_frame.content.iter().any(|cell| cell.bg == background),
+                    "{depth:?} boundary did not adapt ANSI white"
+                );
+                assert!(
+                    rgb_frame.content.iter().any(|cell| cell.fg == rgb),
+                    "{depth:?} boundary did not adapt RGB foreground"
+                );
+
+                let ansi_frame = frontend_buffer(attached, depth, RunyteColor::DarkGray);
+                assert!(
+                    ansi_frame.content.iter().any(|cell| cell.fg == dark_gray),
+                    "{depth:?} boundary did not adapt ANSI dark gray"
+                );
+            }
+        }
+    }
+
     #[test]
     fn indexed_theme_conversion_keeps_bundled_surfaces_distinct() {
         use ratatui::style::Color as TuiColor;
@@ -4609,13 +4709,7 @@ mod tests {
             .draw(|frame| {
                 let prepared = app.prepare_view(frame_geometry(frame.area()));
                 let snapshot = app.snapshot(&prepared);
-                render_with_color_depth(
-                    frame,
-                    &app,
-                    &snapshot,
-                    &hints,
-                    TerminalColorDepth::Indexed,
-                );
+                render(frame, &app, &snapshot, &hints, TerminalColorDepth::Indexed);
             })
             .unwrap();
 
@@ -5334,7 +5428,7 @@ mod tests {
         let hints = KeyHintState::default();
         for pass in 1..=2 {
             terminal
-                .draw(|frame| render(frame, app, &snapshot, &hints))
+                .draw(|frame| render_exact_colors_for_test(frame, app, &snapshot, &hints))
                 .unwrap();
             assert_eq!(
                 SemanticFingerprint::capture(app),
@@ -5411,7 +5505,7 @@ mod tests {
         );
         let mut terminal = Terminal::new(TestBackend::new(160, 30)).unwrap();
         terminal
-            .draw(|terminal_frame| render_host_frame(terminal_frame, &frame))
+            .draw(|terminal_frame| render_host_frame_exact_colors_for_test(terminal_frame, &frame))
             .unwrap();
 
         let screen = terminal.backend().buffer();
@@ -5461,7 +5555,7 @@ mod tests {
 
         let mut terminal = Terminal::new(TestBackend::new(100, 24)).unwrap();
         terminal
-            .draw(|terminal_frame| render_host_frame(terminal_frame, &frame))
+            .draw(|terminal_frame| render_host_frame_exact_colors_for_test(terminal_frame, &frame))
             .unwrap();
         let screen = terminal.backend().buffer();
         assert!(find_text(screen, "> al").is_some(), "the typed filter");

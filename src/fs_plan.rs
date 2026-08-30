@@ -482,6 +482,23 @@ pub enum DeletionMode {
     Permanent,
 }
 
+/// Boundary that moves a confirmed deletion into a recoverable trash.
+///
+/// The live editor uses [`SystemTrash`]. Tests and embedders may provide an
+/// isolated implementation without touching the person's platform trash.
+pub trait TrashBackend: Send + Sync {
+    fn delete(&self, path: &Path) -> Result<()>;
+}
+
+/// Platform-native trash used by the live editor.
+pub struct SystemTrash;
+
+impl TrashBackend for SystemTrash {
+    fn delete(&self, path: &Path) -> Result<()> {
+        trash::delete(path).map_err(anyhow::Error::from)
+    }
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ApplyReport {
     pub applied: Vec<FsOperation>,
@@ -796,6 +813,14 @@ impl FsPlan {
     }
 
     pub fn apply(&self, deletion: DeletionMode) -> Result<ApplyReport, ApplyError> {
+        self.apply_with_trash(deletion, &SystemTrash)
+    }
+
+    pub fn apply_with_trash(
+        &self,
+        deletion: DeletionMode,
+        trash: &dyn TrashBackend,
+    ) -> Result<ApplyReport, ApplyError> {
         for (source, expected) in &self.transfer_sources {
             let absolute = self.root.join(source);
             let current = SourceFingerprint::capture(&absolute)
@@ -860,7 +885,7 @@ impl FsPlan {
             let FsOperation::Delete { path, kind } = operation else {
                 unreachable!();
             };
-            if let Err(error) = delete_path(&self.root.join(path), *kind, deletion) {
+            if let Err(error) = delete_path(&self.root.join(path), *kind, deletion, trash) {
                 let cleanup = rollback_staged(&self.root, &staged);
                 let message = combine_error(error, cleanup);
                 return Err(ApplyError::new(report, Some(operation.clone()), message));
@@ -1179,9 +1204,15 @@ fn operation_order(operation: &FsOperation) -> (usize, PathBuf) {
     (path.components().count(), path.clone())
 }
 
-fn delete_path(path: &Path, kind: EntryKind, deletion: DeletionMode) -> Result<()> {
+fn delete_path(
+    path: &Path,
+    kind: EntryKind,
+    deletion: DeletionMode,
+    trash: &dyn TrashBackend,
+) -> Result<()> {
     match deletion {
-        DeletionMode::Trash => trash::delete(path)
+        DeletionMode::Trash => trash
+            .delete(path)
             .map_err(|error| anyhow!("failed to trash {}: {error}", path.display())),
         DeletionMode::Permanent if kind == EntryKind::Directory => fs::remove_dir_all(path)
             .with_context(|| format!("failed to permanently delete {}", path.display())),

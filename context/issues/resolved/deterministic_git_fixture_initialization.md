@@ -1,4 +1,37 @@
-# Git fixtures use an unexplained `master` branch and an undeclared Git floor
+---
+title: "Git fixtures use an unexplained `master` branch and an undeclared Git floor"
+status: resolved
+reported: 2026-08-30
+resolved: 2026-08-30
+commit: d870473
+---
+
+## Resolution
+
+Commit d870473 (`Harden cross-platform integration test boundaries`) changed
+`initialize_repository` in `tests/git_provider.rs` to create both ordinary and
+bare repositories without Git 2.28's `--initial-branch` option. Initialization
+runs with a fixture-local arbitrary `init.defaultBranch`, then explicitly
+points `HEAD` at `refs/heads/main` with `git symbolic-ref`. The result is
+independent of the person's Git configuration and gives the common fixture the
+same `main` branch used by the rest of the provider suite.
+
+Tests that need an unborn branch, detached HEAD, divergence, linked worktrees,
+or another topology continue to construct that state locally rather than
+inheriting an unexplained `master` default. Bare remote fixtures use the same
+initialization rule, so their symbolic HEAD is deterministic as well.
+
+Coverage is provided throughout `tests/git_provider.rs`, including
+`an_unborn_branch_still_reports_its_name`,
+`branches_report_upstream_drift_and_whether_they_are_merged`, and
+`linked_worktrees_share_a_common_repository_identity`. The complete provider
+suite passes with 88 tests passed and two platform-specific tests ignored.
+
+Known limitation: the compatibility path uses long-established `git -c` and
+`git symbolic-ref` commands, but validation used the installed Git rather than
+running an actual pre-2.28 binary.
+
+## Report
 
 `TempRepository::new` in `tests/git_provider.rs` initializes repositories with
 `git init -q --initial-branch=master`. Supplying the branch removes dependence

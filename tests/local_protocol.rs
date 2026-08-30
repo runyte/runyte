@@ -16,10 +16,12 @@ use std::{
 
 use runyte::{
     app::FrameGeometry,
+    command::Mode,
     input::{InputEvent, KeyCode, KeyStroke, Modifiers},
     layout::Rect,
     protocol::{CommandRequest, SnapshotRow, decode_path},
     terminal::emulator::Emulator,
+    test_support::TestRuntimeRoot,
     workspace::transport::{
         ClientRequest, HostResponse, LocalClient, LocalEndpoint, PROTOCOL_VERSION, TransportChange,
         encode_path,
@@ -31,36 +33,39 @@ use runyte::{
 /// `XDG_RUNTIME_DIR`, which `LocalEndpoint::discover` prefers by default.
 /// One directory per test binary is enough: each test uses a distinct
 /// project root, and the endpoint key is derived from that root.
+static TEST_RUNTIME: std::sync::OnceLock<TestRuntimeRoot> = std::sync::OnceLock::new();
+
+extern "C" fn cleanup_test_runtime() {
+    if let Some(runtime) = TEST_RUNTIME.get() {
+        runtime.cleanup_if_owned();
+    }
+}
+
 fn test_runtime_dir() -> &'static Path {
-    static RUNTIME: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
-    RUNTIME
+    TEST_RUNTIME
         .get_or_init(|| {
-            use std::os::unix::fs::PermissionsExt;
-            // Unix socket paths are capped near 100 bytes and the endpoint
-            // adds "/runyte/<32 hex>/workspace.sock" below this, so the base
-            // name has to stay short.
-            let unique = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-                % 1_000_000_007;
-            let path = Path::new("/tmp").join(format!("ryt-{}-{unique}", std::process::id()));
-            fs::create_dir_all(&path).unwrap();
-            fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
-            path
+            let runtime = TestRuntimeRoot::new("protocol").unwrap();
+            // Static values are not dropped. Register the same marker-guarded
+            // cleanup for an ordinary test-process exit; abrupt termination
+            // has the same unavoidable residual as any RAII fixture.
+            // SAFETY: the callback has C ABI, takes no arguments, and only
+            // reads a process-lifetime `OnceLock`.
+            assert_eq!(unsafe { libc::atexit(cleanup_test_runtime) }, 0);
+            runtime
         })
-        .as_path()
+        .path()
 }
 
 fn test_cache_dir() -> &'static Path {
     static CACHE: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
     CACHE
         .get_or_init(|| {
-            use std::os::unix::fs::PermissionsExt;
-            let path = test_runtime_dir().join("cache");
-            fs::create_dir_all(&path).unwrap();
-            fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
-            path
+            test_runtime_dir();
+            TEST_RUNTIME
+                .get()
+                .unwrap()
+                .create_private_dir("cache")
+                .unwrap()
         })
         .as_path()
 }
@@ -549,8 +554,9 @@ async fn wait_for_frame(
         assert!(
             Instant::now() < deadline,
             "asynchronous state timed out after {ASYNC_STATE_TIMEOUT:?} while {waiting_for}; \
-             last frame id: {:?}, active buffer: {:?}, revision: {:?}",
+             last frame id: {:?}, mode: {:?}, active buffer: {:?}, revision: {:?}",
             frame.id,
+            frame.editor.mode,
             frame.active_buffer,
             frame.active_revision,
         );
@@ -1123,13 +1129,23 @@ async fn start_host_opening(
         .spawn()
         .unwrap();
     let mut child = ChildGuard(Some(child));
-    for _ in 0..100 {
-        if endpoint.metadata().exists()
-            && LocalClient::connect(endpoint, FrameGeometry::default(), false)
+    let deadline = Instant::now() + ASYNC_STATE_TIMEOUT;
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            panic!(
+                "host endpoint did not complete its Welcome handshake after \
+                 {ASYNC_STATE_TIMEOUT:?}"
+            );
+        }
+        if endpoint.metadata().exists() {
+            let attempt = remaining.min(Duration::from_millis(250));
+            if tokio::time::timeout(attempt, try_connect_control(endpoint))
                 .await
-                .is_ok()
-        {
-            return Some(child);
+                .is_ok_and(|connection| connection.is_ok())
+            {
+                return Some(child);
+            }
         }
         if let Some(status) = child.0.as_mut().unwrap().try_wait().unwrap() {
             use std::io::Read;
@@ -1142,9 +1158,8 @@ async fn start_host_opening(
             }
             panic!("workspace host exited during startup with {status}: {stderr}");
         }
-        tokio::time::sleep(Duration::from_millis(25)).await;
+        tokio::time::sleep(ASYNC_STATE_POLL_INTERVAL.min(remaining)).await;
     }
-    panic!("host endpoint did not become ready");
 }
 
 /// Every process-group signal a host sends names a group it still owns.
@@ -1728,7 +1743,12 @@ async fn git_commit_wait_tui_completes_through_write_quit() {
     // mode, exactly as it does when word completion is switched off.
     terminal.write_all(b"\x1b").unwrap();
     terminal.flush().unwrap();
-    wait_for_terminal_screen(&drained, " NOR ").await;
+    let _ = wait_for_frame(
+        &mut control,
+        "waiting for Escape to return the Git editor to Normal mode",
+        |frame| frame.editor.mode == Mode::Normal.into(),
+    )
+    .await;
     control
         .send(&ClientRequest::ReadBuffer {
             buffer: commit_buffer,
@@ -3232,7 +3252,7 @@ async fn durable_completion_wins_a_race_with_launcher_loss() {
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
     let requested = requested.expect("wait request did not queue behind the existing TUI");
-    let ready = barrier.with_extension("ready");
+    let (ready, release) = runyte::test_support::wait_status_barrier_paths(&barrier);
     let mut status_in_flight = false;
     for _ in 0..200 {
         status_in_flight = ready.exists();
@@ -3258,7 +3278,7 @@ async fn durable_completion_wins_a_race_with_launcher_loss() {
     ));
     launcher.kill().unwrap();
     let _ = launcher.wait().unwrap();
-    fs::write(barrier.with_extension("release"), []).unwrap();
+    fs::write(release, []).unwrap();
     assert!(wait_child(&mut waiter).await.success());
 
     interactive.send(&ClientRequest::Detach).await.unwrap();

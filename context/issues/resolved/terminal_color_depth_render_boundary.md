@@ -1,4 +1,38 @@
-# The rendering API can bypass outer-terminal colour adaptation
+---
+title: "The rendering API can bypass outer-terminal colour adaptation"
+status: resolved
+reported: 2026-08-30
+resolved: 2026-08-30
+commit: d870473
+---
+
+## Resolution
+
+Commit d870473 (`Harden cross-platform integration test boundaries`) changed
+the public standalone `ui::render` and attached `ui::render_host_frame`
+boundaries to require an explicit `TerminalColorDepth`. Every production call
+site in `src/main.rs` therefore carries the detected outer-terminal capability
+into rendering, and a future caller cannot compile while silently accepting a
+TrueColor default.
+
+Exact semantic colours remain unchanged in editor and host snapshots.
+Presentation-oriented tests use explicitly named, doc-hidden
+`render_exact_colors_for_test` and `render_host_frame_exact_colors_for_test`
+helpers, keeping capability adaptation at the frontend rather than in durable
+editor state.
+
+Coverage is provided by
+`ui::tests::public_frontend_boundaries_adapt_exact_and_ansi_colours` in
+`src/ui.rs`, which exercises both public boundaries at TrueColor, indexed, and
+basic depths and pins the basic `White` to `Gray` and `DarkGray` to `Black`
+mappings. Existing integration render tests in `tests/content_alignment.rs`,
+`tests/key_hints.rs`, and `tests/terminal.rs` use the exact-colour test route.
+
+Known limitation: the regression asserts Ratatui cells; Crossterm escape
+emission and terminal-capability detection remain outside this rendering
+boundary.
+
+## Report
 
 The public `ui::render` entry point renders with
 `TerminalColorDepth::TrueColor` unconditionally. Production frontends are

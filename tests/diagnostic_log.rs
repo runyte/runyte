@@ -17,8 +17,7 @@ use std::{
     fs,
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
-    sync::atomic::{AtomicU64, Ordering},
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::Duration,
 };
 
 use runyte::{
@@ -26,11 +25,11 @@ use runyte::{
     input::InputEvent,
     layout::Rect,
     log::{HOST_LOG_NAME, Level, MAX_LOG_BYTES, Role, Settings, Sink, default_path, previous_path},
+    test_support::TestRuntimeRoot,
     workspace::transport::{
         CLIENT_VERSION, ClientKind, ClientRequest, ClientRole, FeatureGroup, HostResponse,
         LocalClient, LocalEndpoint, PROTOCOL_VERSION, encode_path,
     },
-    workspace::workspace_id,
 };
 use tokio::{io::AsyncWriteExt, net::UnixStream};
 
@@ -43,12 +42,10 @@ use tokio::{io::AsyncWriteExt, net::UnixStream};
 fn test_process_dir(root: &Path, kind: &str) -> PathBuf {
     use std::os::unix::fs::PermissionsExt;
 
-    let identity = workspace_id(root);
-    let path = Path::new("/tmp").join(format!(
-        "rylog-{kind}-{}-{}",
-        std::process::id(),
-        &identity[..8]
-    ));
+    let path = root
+        .parent()
+        .expect("a diagnostic project has an owning test root")
+        .join(kind);
     fs::create_dir_all(&path).unwrap();
     fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
     path
@@ -76,46 +73,34 @@ impl Drop for ChildGuard {
 /// A project directory that is removed even when an assertion unwinds past
 /// it. Explicit removal at the end of each test left one tree per failure
 /// behind in the temporary directory.
-struct Project(PathBuf);
+struct Project {
+    root: PathBuf,
+    _owner: TestRuntimeRoot,
+}
 
 impl std::ops::Deref for Project {
     type Target = Path;
 
     fn deref(&self) -> &Path {
-        &self.0
+        &self.root
     }
 }
 
 impl AsRef<Path> for Project {
     fn as_ref(&self) -> &Path {
-        &self.0
-    }
-}
-
-impl Drop for Project {
-    fn drop(&mut self) {
-        let runtime = test_runtime_dir(&self.0);
-        let cache = test_cache_dir(&self.0);
-        let _ = fs::remove_dir_all(&self.0);
-        let _ = fs::remove_dir_all(runtime);
-        let _ = fs::remove_dir_all(cache);
+        &self.root
     }
 }
 
 fn project(name: &str) -> Project {
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-    let unique = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let sequence = NEXT.fetch_add(1, Ordering::Relaxed);
-    let root = std::env::temp_dir().join(format!(
-        "runyte-log-{name}-{}-{unique}-{sequence}",
-        std::process::id()
-    ));
+    let owner = TestRuntimeRoot::new(name).unwrap();
+    let root = owner.join("project");
     fs::create_dir_all(root.join(".runyte")).unwrap();
     fs::write(root.join("note.txt"), "base\n").unwrap();
-    Project(root.canonicalize().unwrap())
+    Project {
+        root: root.canonicalize().unwrap(),
+        _owner: owner,
+    }
 }
 
 fn bundled_runyte(root: &Path) -> Command {
@@ -417,7 +402,7 @@ fn repeated_verbosity_raises_the_level_and_stops_at_trace() {
         for level in &absent {
             assert!(!levels.contains(level), "{flags:?} kept {level}:\n{text}");
         }
-        fs::remove_dir_all(root).unwrap();
+        drop(root);
     }
 }
 

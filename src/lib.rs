@@ -56,6 +56,8 @@ mod structural_selection;
 pub mod syntax;
 pub mod table;
 pub mod terminal;
+#[doc(hidden)]
+pub mod test_support;
 pub mod text;
 pub mod tui;
 pub mod tutorial;

@@ -11,7 +11,7 @@ use runyte::{
     buffer::Buffer,
     command::Mode,
     config::Config,
-    fs_plan::{FsOperation, TransferMode},
+    fs_plan::{FsOperation, TransferMode, TrashBackend},
     input::{KeyCode, KeyStroke, Modifiers},
     selection::{Range, Selection},
     text::{Change, Transaction},
@@ -40,6 +40,22 @@ impl TempDir {
 impl Drop for TempDir {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+struct TemporaryTrash {
+    destination: PathBuf,
+    fail: bool,
+}
+
+impl TrashBackend for TemporaryTrash {
+    fn delete(&self, path: &Path) -> anyhow::Result<()> {
+        if self.fail {
+            anyhow::bail!("injected trash failure");
+        }
+        let name = path.file_name().expect("a trashed fixture has a name");
+        fs::rename(path, self.destination.join(name))?;
+        Ok(())
     }
 }
 
@@ -507,6 +523,83 @@ fn writing_only_opens_confirmation_and_enter_applies_the_plan() {
     assert!(app.fs_confirmation.is_none());
     assert!(directory.path().join("created").is_file());
     assert!(!app.buffers[0].dirty);
+}
+
+#[test]
+fn enter_uses_the_injected_trash_backend_only_after_confirmation() {
+    let directory = TempDir::new("trash-confirm");
+    let trash = TempDir::new("trash-destination");
+    let source = directory.path().join("gone");
+    fs::write(&source, "recoverable contents").unwrap();
+    let mut app = App::new(Config::default(), Some(directory.path().to_path_buf())).unwrap();
+    app.set_trash_backend(Box::new(TemporaryTrash {
+        destination: trash.path().to_path_buf(),
+        fail: false,
+    }));
+    assert!(app.buffers[0].apply(&Transaction::delete(0, "gone\n".len())));
+
+    app.handle_key(KeyStroke::new(KeyCode::Char('s'), Modifiers::CONTROL))
+        .unwrap();
+    assert!(app.fs_confirmation.is_some());
+    assert!(
+        source.exists(),
+        "preparing the plan must not delete its source"
+    );
+
+    app.handle_key(KeyStroke::new(KeyCode::Escape, Modifiers::NONE))
+        .unwrap();
+    assert!(app.fs_confirmation.is_none());
+    assert!(
+        source.exists(),
+        "cancelling must leave the source untouched"
+    );
+
+    app.handle_key(KeyStroke::new(KeyCode::Char('s'), Modifiers::CONTROL))
+        .unwrap();
+    app.handle_key(KeyStroke::new(KeyCode::Enter, Modifiers::NONE))
+        .unwrap();
+
+    assert!(!source.exists());
+    assert_eq!(
+        fs::read_to_string(trash.path().join("gone")).unwrap(),
+        "recoverable contents"
+    );
+    assert!(!app.buffers[0].dirty);
+}
+
+#[test]
+fn trash_backend_failure_preserves_the_source_and_explorer_edits() {
+    let directory = TempDir::new("trash-failure");
+    let trash = TempDir::new("trash-failure-destination");
+    let source = directory.path().join("gone");
+    fs::write(&source, "still here").unwrap();
+    let mut app = App::new(Config::default(), Some(directory.path().to_path_buf())).unwrap();
+    app.set_trash_backend(Box::new(TemporaryTrash {
+        destination: trash.path().to_path_buf(),
+        fail: true,
+    }));
+    assert!(app.buffers[0].apply(&Transaction::delete(0, "gone\n".len())));
+
+    app.handle_key(KeyStroke::new(KeyCode::Char('s'), Modifiers::CONTROL))
+        .unwrap();
+    app.handle_key(KeyStroke::new(KeyCode::Enter, Modifiers::NONE))
+        .unwrap();
+
+    assert!(source.exists());
+    assert_eq!(fs::read_to_string(source).unwrap(), "still here");
+    assert!(app.status_error);
+    assert!(
+        app.status.contains("injected trash failure"),
+        "{}",
+        app.status
+    );
+    assert!(
+        app.status.contains("directory edits retained"),
+        "{}",
+        app.status
+    );
+    assert_eq!(app.buffers[0].to_string(), "");
+    assert!(app.buffers[0].dirty);
 }
 
 #[test]

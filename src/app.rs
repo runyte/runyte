@@ -44,7 +44,10 @@ use crate::{
         PickerTarget, line_hits, scan_content, scan_files,
     },
     finder::{FinderMode, ResourceFinder, ResourceItem, ResourceKind, ResourceTarget},
-    fs_plan::{ApplyReport, DeletionMode, EntryKind, FsOperation, FsPlan, TransferMode},
+    fs_plan::{
+        ApplyReport, DeletionMode, EntryKind, FsOperation, FsPlan, SystemTrash, TransferMode,
+        TrashBackend,
+    },
     git::{
         BlameLine, BlameRequest, BlameSource, Branch, BranchDeletionPlan, BufferRevisionGuard,
         CommitDetail, CommitSearchResult, CommitSummary, DeletionAuthorization, DiffScope,
@@ -2052,6 +2055,7 @@ impl CommandMatch {
 /// choose isolated ports; its fields and operations remain narrow.
 pub(crate) struct HostPorts {
     clipboard: Box<dyn SystemClipboard>,
+    trash: Box<dyn TrashBackend>,
     lsp: Option<LspHandle>,
     /// The Git boundary, absent when no `git` executable was found. Every Git
     /// surface is off in that case rather than reporting failures.
@@ -2070,6 +2074,7 @@ impl HostPorts {
     pub(crate) fn isolated(clipboard: Box<dyn SystemClipboard>) -> Self {
         Self {
             clipboard,
+            trash: Box::new(SystemTrash),
             lsp: None,
             git: None,
             git_service: None,
@@ -2081,6 +2086,14 @@ impl HostPorts {
 
     fn replace_clipboard(&mut self, clipboard: Box<dyn SystemClipboard>) {
         self.clipboard = clipboard;
+    }
+
+    fn replace_trash(&mut self, trash: Box<dyn TrashBackend>) {
+        self.trash = trash;
+    }
+
+    fn trash(&self) -> &dyn TrashBackend {
+        self.trash.as_ref()
     }
 
     /// Substitutes the Git boundary.

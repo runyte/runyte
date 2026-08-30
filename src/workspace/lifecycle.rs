@@ -13,7 +13,8 @@
 
 use std::{
     ffi::OsString,
-    io::Read,
+    fmt, fs,
+    io::{self, Read},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     time::Duration,
@@ -29,6 +30,30 @@ use super::transport::{
     IncompatibleHost, LocalClient, LocalEndpoint, PublishedHost, RegisteredHost, process_is_alive,
     registered_hosts, request_process_exit,
 };
+
+/// A detached host could not start because the executable selected by its
+/// caller disappeared before spawn.
+#[derive(Debug)]
+pub struct UnavailableStartupExecutable {
+    executable: PathBuf,
+    source: io::Error,
+}
+
+impl fmt::Display for UnavailableStartupExecutable {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "startup executable {} is no longer available; it may have been rebuilt, moved, or upgraded while this client was running",
+            self.executable.display()
+        )
+    }
+}
+
+impl std::error::Error for UnavailableStartupExecutable {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.source)
+    }
+}
 
 /// How long to wait for a freshly started host to accept a connection, and how
 /// often to retry while waiting.
@@ -491,13 +516,32 @@ pub async fn start_detached_host(endpoint: &LocalEndpoint, startup: HostStartup)
         });
     }
 
-    let child = command.spawn().with_context(|| {
+    let spawn_context = || {
         format!(
             "cannot start {} workspace host for {}",
             startup.description,
             project_root.display()
         )
-    })?;
+    };
+    let child = match command.spawn() {
+        Ok(child) => child,
+        Err(error) => {
+            let executable = startup_executable_path(&startup.executable, &working_directory);
+            if error.kind() == io::ErrorKind::NotFound
+                && executable.as_deref().is_some_and(|executable| {
+                    fs::metadata(executable)
+                        .is_err_and(|probe| probe.kind() == io::ErrorKind::NotFound)
+                })
+            {
+                return Err(UnavailableStartupExecutable {
+                    executable: executable.expect("the unavailable executable was resolved"),
+                    source: error,
+                })
+                .with_context(spawn_context);
+            }
+            return Err(error).with_context(spawn_context);
+        }
+    };
     let mut child = ReapedChild::new(child);
 
     for _ in 0..READINESS_ATTEMPTS {
@@ -528,6 +572,19 @@ pub async fn start_detached_host(endpoint: &LocalEndpoint, startup: HostStartup)
         "{} workspace host did not publish its endpoint",
         startup.description
     )
+}
+
+/// Resolves only executable arguments that name a path. Bare names are looked
+/// up through `PATH` by `Command` and cannot be diagnosed with one metadata
+/// probe.
+fn startup_executable_path(executable: &Path, working_directory: &Path) -> Option<PathBuf> {
+    if executable.is_absolute() {
+        Some(executable.to_path_buf())
+    } else if executable.components().count() > 1 {
+        Some(working_directory.join(executable))
+    } else {
+        None
+    }
 }
 
 /// A spawned host that is waited for on a thread rather than left as a zombie.
@@ -581,25 +638,17 @@ impl Drop for ReapedChild {
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        fs, io,
-        sync::atomic::{AtomicU64, Ordering},
-    };
+    use std::io;
 
     use super::*;
     use crate::{
         protocol::FeatureGroup,
+        test_support::TestRuntimeRoot,
         workspace::transport::{LocalServer, PROTOCOL_VERSION, ServerEvent},
     };
 
-    fn endpoint(label: &str) -> (PathBuf, LocalEndpoint) {
-        static NEXT: AtomicU64 = AtomicU64::new(1);
-        let root = Path::new("/tmp").join(format!(
-            "ryt-lifecycle-{label}-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
-        fs::create_dir_all(&root).unwrap();
+    fn endpoint(label: &str) -> (TestRuntimeRoot, LocalEndpoint) {
+        let root = TestRuntimeRoot::new(label).unwrap();
         let endpoint = LocalEndpoint::new(&root.join(".runyte"), &root).unwrap();
         (root, endpoint)
     }
@@ -640,7 +689,7 @@ mod tests {
     async fn control_handshake_has_a_deadline() {
         let (root, endpoint) = endpoint("handshake-timeout");
         let Some(mut server) = bind_or_skip(&endpoint).await else {
-            fs::remove_dir_all(root).unwrap();
+            drop(root);
             return;
         };
         let target = endpoint.clone();
@@ -658,14 +707,14 @@ mod tests {
         drop(responses);
         drop(server);
         endpoint.cleanup().unwrap();
-        fs::remove_dir_all(root).unwrap();
+        drop(root);
     }
 
     #[tokio::test]
     async fn lifecycle_request_response_has_a_deadline() {
         let (root, endpoint) = endpoint("response-timeout");
         let Some(mut server) = bind_or_skip(&endpoint).await else {
-            fs::remove_dir_all(root).unwrap();
+            drop(root);
             return;
         };
         let target = endpoint.clone();
@@ -687,6 +736,6 @@ mod tests {
 
         drop(server);
         endpoint.cleanup().unwrap();
-        fs::remove_dir_all(root).unwrap();
+        drop(root);
     }
 }

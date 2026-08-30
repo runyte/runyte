@@ -2509,38 +2509,20 @@ mod tests {
     use std::{
         fs,
         os::unix::fs::{MetadataExt, PermissionsExt},
-        sync::atomic::{AtomicU64, Ordering},
-        time::{SystemTime, UNIX_EPOCH},
     };
 
     use super::*;
-    use crate::{app::App, config::Config, workspace::WorkspaceHost};
+    use crate::{
+        app::App, config::Config, test_support::TestRuntimeRoot, workspace::WorkspaceHost,
+    };
     use tokio::io::AsyncReadExt;
 
-    fn temporary_root() -> PathBuf {
-        static NEXT_ROOT: AtomicU64 = AtomicU64::new(0);
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-            % 1_000_000_007;
-        let sequence = NEXT_ROOT.fetch_add(1, Ordering::Relaxed);
-        // macOS's ordinary per-user temp directory is already close to the
-        // Unix-socket path limit. `/tmp` is available on supported Unix
-        // platforms; canonicalizing it also avoids `/tmp` versus
-        // `/private/tmp` identity differences on macOS.
-        let base = Path::new("/tmp")
-            .canonicalize()
-            .unwrap_or_else(|_| std::env::temp_dir());
-        base.join(format!(
-            "ryt-{}-{unique:x}-{sequence:x}",
-            std::process::id()
-        ))
+    fn temporary_root() -> TestRuntimeRoot {
+        TestRuntimeRoot::new("transport").unwrap()
     }
 
-    fn endpoint(_name: &str) -> (PathBuf, LocalEndpoint) {
+    fn endpoint(_name: &str) -> (TestRuntimeRoot, LocalEndpoint) {
         let root = temporary_root();
-        fs::create_dir_all(&root).unwrap();
         let endpoint = LocalEndpoint::new(&root.join(".runyte"), &root).unwrap();
         (root, endpoint)
     }
@@ -2566,7 +2548,7 @@ mod tests {
         let error = registered_hosts_in(std::slice::from_ref(&registry)).unwrap_err();
         assert!(error.to_string().contains("more than"), "{error:#}");
 
-        fs::remove_dir_all(root).unwrap();
+        drop(root);
     }
 
     #[test]
@@ -2635,7 +2617,7 @@ mod tests {
                 .unwrap();
         });
 
-        fs::remove_dir_all(root).unwrap();
+        drop(root);
     }
 
     #[test]
@@ -2653,7 +2635,7 @@ mod tests {
         let error = endpoint.prepare_directory().unwrap_err().to_string();
         assert!(error.contains("symlinked host endpoint"), "{error}");
         assert_eq!(fs::metadata(&target).unwrap().mode() & 0o777, 0o755);
-        fs::remove_dir_all(root).unwrap();
+        drop(root);
     }
 
     #[tokio::test]
@@ -2662,8 +2644,6 @@ mod tests {
 
         let (root, fallback) = endpoint("symlink-inventory");
         let runtime = temporary_root();
-        fs::create_dir(&runtime).unwrap();
-        fs::set_permissions(&runtime, fs::Permissions::from_mode(0o700)).unwrap();
         let endpoint = LocalEndpoint::discover_with_runtime(
             fallback.directory.parent().unwrap(),
             &root,
@@ -2702,16 +2682,14 @@ mod tests {
         assert!(error.contains("symlinked host endpoint"), "{error}");
         assert_eq!(fs::metadata(&target).unwrap().mode() & 0o777, 0o755);
 
-        fs::remove_dir_all(runtime).unwrap();
-        fs::remove_dir_all(root).unwrap();
+        drop(runtime);
+        drop(root);
     }
 
     #[test]
     fn discovery_prefers_only_a_private_user_runtime_directory() {
         let (root, fallback) = endpoint("runtime-discovery");
         let runtime = temporary_root();
-        fs::create_dir(&runtime).unwrap();
-        fs::set_permissions(&runtime, fs::Permissions::from_mode(0o700)).unwrap();
         let preferred = LocalEndpoint::discover_with_runtime(
             fallback.directory.parent().unwrap(),
             &root,
@@ -2728,8 +2706,8 @@ mod tests {
         )
         .unwrap();
         assert_eq!(rejected.socket(), fallback.socket());
-        fs::remove_dir_all(runtime).unwrap();
-        fs::remove_dir_all(root).unwrap();
+        drop(runtime);
+        drop(root);
     }
 
     #[test]
@@ -2784,7 +2762,8 @@ mod tests {
 
     #[test]
     fn publication_inventory_resolution_is_retained_for_cleanup() {
-        let inventory = temporary_root().join("owner-wide");
+        let runtime = temporary_root();
+        let inventory = runtime.join("owner-wide");
         let publication = InventoryRegistry::resolve_for_publication();
         assert_eq!(
             publication
@@ -2848,7 +2827,7 @@ mod tests {
     async fn an_incompatible_endpoint_is_stale_once_its_host_has_exited() {
         let (root, endpoint) = endpoint("incompatible-liveness");
         let Some(_server) = bind_or_skip(&endpoint).await else {
-            fs::remove_dir_all(root).unwrap();
+            drop(root);
             return;
         };
         let older = PROTOCOL_VERSION.checked_sub(1).unwrap();
@@ -2879,14 +2858,14 @@ mod tests {
         assert!(is_stale_endpoint_error(&error), "{error:#}");
 
         endpoint.cleanup().unwrap();
-        fs::remove_dir_all(root).unwrap();
+        drop(root);
     }
 
     #[tokio::test]
     async fn endpoint_metadata_is_atomic_private_and_stale_socket_recovers() {
         let (root, endpoint) = endpoint("metadata");
         let Some(server) = bind_or_skip(&endpoint).await else {
-            fs::remove_dir_all(root).unwrap();
+            drop(root);
             return;
         };
         let metadata = endpoint.verify_for_connect().unwrap();
@@ -2911,7 +2890,7 @@ mod tests {
         let replacement = LocalServer::bind(&endpoint).await.unwrap();
         drop(replacement);
         endpoint.cleanup().unwrap();
-        fs::remove_dir_all(root).unwrap();
+        drop(root);
     }
 
     #[tokio::test]
@@ -2919,8 +2898,6 @@ mod tests {
         let (first_root, first_fallback) = endpoint("registry-first");
         let (second_root, second_fallback) = endpoint("registry-second");
         let runtime = temporary_root();
-        fs::create_dir(&runtime).unwrap();
-        fs::set_permissions(&runtime, fs::Permissions::from_mode(0o700)).unwrap();
         let first = LocalEndpoint::discover_with_runtime(
             first_fallback.directory.parent().unwrap(),
             &first_root,
@@ -2934,17 +2911,17 @@ mod tests {
         )
         .unwrap();
         let Some(first_server) = bind_or_skip(&first).await else {
-            fs::remove_dir_all(runtime).unwrap();
-            fs::remove_dir_all(first_root).unwrap();
-            fs::remove_dir_all(second_root).unwrap();
+            drop(runtime);
+            drop(first_root);
+            drop(second_root);
             return;
         };
         let Some(second_server) = bind_or_skip(&second).await else {
             drop(first_server);
             first.cleanup().unwrap();
-            fs::remove_dir_all(runtime).unwrap();
-            fs::remove_dir_all(first_root).unwrap();
-            fs::remove_dir_all(second_root).unwrap();
+            drop(runtime);
+            drop(first_root);
+            drop(second_root);
             return;
         };
 
@@ -3004,17 +2981,15 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
-        fs::remove_dir_all(runtime).unwrap();
-        fs::remove_dir_all(first_root).unwrap();
-        fs::remove_dir_all(second_root).unwrap();
+        drop(runtime);
+        drop(first_root);
+        drop(second_root);
     }
 
     #[test]
     fn registry_scan_keeps_a_live_row_before_endpoint_readiness() {
         let (root, fallback) = endpoint("registry-publication-window");
         let runtime = temporary_root();
-        fs::create_dir(&runtime).unwrap();
-        fs::set_permissions(&runtime, fs::Permissions::from_mode(0o700)).unwrap();
         let endpoint = LocalEndpoint::discover_with_runtime(
             fallback.directory.parent().unwrap(),
             &root,
@@ -3047,16 +3022,14 @@ mod tests {
             "a concurrent scan deleted the live host's early registry row"
         );
 
-        fs::remove_dir_all(runtime).unwrap();
-        fs::remove_dir_all(root).unwrap();
+        drop(runtime);
+        drop(root);
     }
 
     #[tokio::test]
     async fn malformed_registry_rows_do_not_hide_valid_hosts() {
         let (root, fallback) = endpoint("malformed-registry");
         let runtime = temporary_root();
-        fs::create_dir(&runtime).unwrap();
-        fs::set_permissions(&runtime, fs::Permissions::from_mode(0o700)).unwrap();
         let endpoint = LocalEndpoint::discover_with_runtime(
             fallback.directory.parent().unwrap(),
             &root,
@@ -3064,8 +3037,8 @@ mod tests {
         )
         .unwrap();
         let Some(server) = bind_or_skip(&endpoint).await else {
-            fs::remove_dir_all(runtime).unwrap();
-            fs::remove_dir_all(root).unwrap();
+            drop(runtime);
+            drop(root);
             return;
         };
         let registry = runtime.join("runyte/hosts");
@@ -3082,8 +3055,8 @@ mod tests {
 
         drop(server);
         endpoint.cleanup().unwrap();
-        fs::remove_dir_all(runtime).unwrap();
-        fs::remove_dir_all(root).unwrap();
+        drop(runtime);
+        drop(root);
     }
 
     #[tokio::test]
@@ -3091,8 +3064,6 @@ mod tests {
         let (first_root, first_fallback) = endpoint("name-race-first");
         let (second_root, second_fallback) = endpoint("name-race-second");
         let runtime = temporary_root();
-        fs::create_dir(&runtime).unwrap();
-        fs::set_permissions(&runtime, fs::Permissions::from_mode(0o700)).unwrap();
         let first = LocalEndpoint::discover_with_runtime(
             first_fallback.directory.parent().unwrap(),
             &first_root,
@@ -3106,17 +3077,17 @@ mod tests {
         )
         .unwrap();
         let Some(first_server) = bind_or_skip(&first).await else {
-            fs::remove_dir_all(runtime).unwrap();
-            fs::remove_dir_all(first_root).unwrap();
-            fs::remove_dir_all(second_root).unwrap();
+            drop(runtime);
+            drop(first_root);
+            drop(second_root);
             return;
         };
         let Some(second_server) = bind_or_skip(&second).await else {
             drop(first_server);
             first.cleanup().unwrap();
-            fs::remove_dir_all(runtime).unwrap();
-            fs::remove_dir_all(first_root).unwrap();
-            fs::remove_dir_all(second_root).unwrap();
+            drop(runtime);
+            drop(first_root);
+            drop(second_root);
             return;
         };
 
@@ -3158,17 +3129,15 @@ mod tests {
         drop(second_server);
         first.cleanup().unwrap();
         second.cleanup().unwrap();
-        fs::remove_dir_all(runtime).unwrap();
-        fs::remove_dir_all(first_root).unwrap();
-        fs::remove_dir_all(second_root).unwrap();
+        drop(runtime);
+        drop(first_root);
+        drop(second_root);
     }
 
     #[tokio::test]
     async fn old_cleanup_cannot_remove_a_replacement_hosts_registration() {
         let (root, fallback) = endpoint("cleanup-race");
         let runtime = temporary_root();
-        fs::create_dir(&runtime).unwrap();
-        fs::set_permissions(&runtime, fs::Permissions::from_mode(0o700)).unwrap();
         let registry = runtime.join("registry");
         let workspace = fallback.directory.parent().unwrap();
         let first = LocalEndpoint::at_directory(
@@ -3199,15 +3168,15 @@ mod tests {
         .unwrap();
 
         let Some(first_server) = bind_or_skip(&first).await else {
-            fs::remove_dir_all(runtime).unwrap();
-            fs::remove_dir_all(root).unwrap();
+            drop(runtime);
+            drop(root);
             return;
         };
         drop(first_server);
         let Some(second_server) = bind_or_skip(&second).await else {
             first.cleanup().unwrap();
-            fs::remove_dir_all(runtime).unwrap();
-            fs::remove_dir_all(root).unwrap();
+            drop(runtime);
+            drop(root);
             return;
         };
         first.cleanup().unwrap();
@@ -3220,16 +3189,14 @@ mod tests {
 
         drop(second_server);
         second.cleanup().unwrap();
-        fs::remove_dir_all(runtime).unwrap();
-        fs::remove_dir_all(root).unwrap();
+        drop(runtime);
+        drop(root);
     }
 
     #[tokio::test]
     async fn dead_registry_entries_are_removed_while_listing() {
         let (root, fallback) = endpoint("dead-registry");
         let runtime = temporary_root();
-        fs::create_dir(&runtime).unwrap();
-        fs::set_permissions(&runtime, fs::Permissions::from_mode(0o700)).unwrap();
         let endpoint = LocalEndpoint::discover_with_runtime(
             fallback.directory.parent().unwrap(),
             &root,
@@ -3237,8 +3204,8 @@ mod tests {
         )
         .unwrap();
         let Some(server) = bind_or_skip(&endpoint).await else {
-            fs::remove_dir_all(runtime).unwrap();
-            fs::remove_dir_all(root).unwrap();
+            drop(runtime);
+            drop(root);
             return;
         };
         let record = runtime
@@ -3260,16 +3227,14 @@ mod tests {
         assert!(!record.exists());
 
         endpoint.cleanup().unwrap();
-        fs::remove_dir_all(runtime).unwrap();
-        fs::remove_dir_all(root).unwrap();
+        drop(runtime);
+        drop(root);
     }
 
     #[tokio::test]
     async fn an_unobservable_pid_does_not_remove_a_responsive_endpoint() {
         let (root, fallback) = endpoint("hidden-pid-registry");
         let runtime = temporary_root();
-        fs::create_dir(&runtime).unwrap();
-        fs::set_permissions(&runtime, fs::Permissions::from_mode(0o700)).unwrap();
         let endpoint = LocalEndpoint::discover_with_runtime(
             fallback.directory.parent().unwrap(),
             &root,
@@ -3277,8 +3242,8 @@ mod tests {
         )
         .unwrap();
         let Some(server) = bind_or_skip(&endpoint).await else {
-            fs::remove_dir_all(runtime).unwrap();
-            fs::remove_dir_all(root).unwrap();
+            drop(runtime);
+            drop(root);
             return;
         };
         let record = runtime
@@ -3299,15 +3264,15 @@ mod tests {
         write_json_atomic(&record, &metadata).unwrap();
         drop(server);
         endpoint.cleanup().unwrap();
-        fs::remove_dir_all(runtime).unwrap();
-        fs::remove_dir_all(root).unwrap();
+        drop(runtime);
+        drop(root);
     }
 
     #[tokio::test]
     async fn hostile_endpoint_permissions_are_refused() {
         let (root, endpoint) = endpoint("permissions");
         let Some(server) = bind_or_skip(&endpoint).await else {
-            fs::remove_dir_all(root).unwrap();
+            drop(root);
             return;
         };
         let directory = endpoint.metadata().parent().unwrap();
@@ -3320,14 +3285,14 @@ mod tests {
         });
         drop(server);
         endpoint.cleanup().unwrap();
-        fs::remove_dir_all(root).unwrap();
+        drop(root);
     }
 
     #[tokio::test]
     async fn endpoint_metadata_is_bounded_and_validated_before_acceptance() {
         let (root, endpoint) = endpoint("bounded-metadata");
         let Some(server) = bind_or_skip(&endpoint).await else {
-            fs::remove_dir_all(root).unwrap();
+            drop(root);
             return;
         };
         let original = fs::read(endpoint.metadata()).unwrap();
@@ -3351,7 +3316,7 @@ mod tests {
         fs::write(endpoint.metadata(), original).unwrap();
         drop(server);
         endpoint.cleanup().unwrap();
-        fs::remove_dir_all(root).unwrap();
+        drop(root);
     }
 
     #[test]
@@ -3365,14 +3330,14 @@ mod tests {
         let error = endpoint.load_stored_name().unwrap_err().to_string();
         assert!(error.contains("exceeds"), "{error}");
 
-        fs::remove_dir_all(root).unwrap();
+        drop(root);
     }
 
     #[tokio::test]
     async fn handshake_is_versioned_and_response_backpressure_is_bounded() {
         let (root, endpoint) = endpoint("handshake");
         let Some(mut server) = bind_or_skip(&endpoint).await else {
-            fs::remove_dir_all(root).unwrap();
+            drop(root);
             return;
         };
         let geometry = FrameGeometry::default();
@@ -3418,7 +3383,7 @@ mod tests {
         );
         drop(server);
         endpoint.cleanup().unwrap();
-        fs::remove_dir_all(root).unwrap();
+        drop(root);
     }
 
     #[tokio::test]
@@ -3489,7 +3454,7 @@ mod tests {
     async fn mismatched_handshake_is_actionably_refused() {
         let (root, endpoint) = endpoint("mismatch");
         let Some(_server) = bind_or_skip(&endpoint).await else {
-            fs::remove_dir_all(root).unwrap();
+            drop(root);
             return;
         };
         let stream = UnixStream::connect(endpoint.socket()).await.unwrap();
@@ -3517,14 +3482,14 @@ mod tests {
                 if message.contains("incompatible") && message.contains("protocol")
         ));
         endpoint.cleanup().unwrap();
-        fs::remove_dir_all(root).unwrap();
+        drop(root);
     }
 
     #[tokio::test]
     async fn invalid_handshake_fields_are_refused_before_connection() {
         let (root, endpoint) = endpoint("invalid-handshake");
         let Some(mut server) = bind_or_skip(&endpoint).await else {
-            fs::remove_dir_all(root).unwrap();
+            drop(root);
             return;
         };
         let stream = UnixStream::connect(endpoint.socket()).await.unwrap();
@@ -3560,7 +3525,7 @@ mod tests {
             "an invalid handshake reached the workspace host"
         );
         endpoint.cleanup().unwrap();
-        fs::remove_dir_all(root).unwrap();
+        drop(root);
     }
 
     #[tokio::test]
@@ -3676,7 +3641,7 @@ mod tests {
         ));
         let (root, endpoint) = endpoint("role-request");
         let Some(mut server) = bind_or_skip(&endpoint).await else {
-            fs::remove_dir_all(root).unwrap();
+            drop(root);
             return;
         };
         let mut client = LocalClient::connect(&endpoint, FrameGeometry::default(), false)
@@ -3752,14 +3717,14 @@ mod tests {
             Some(HostResponse::Error { message }) if message.contains("connection role")
         ));
         endpoint.cleanup().unwrap();
-        fs::remove_dir_all(root).unwrap();
+        drop(root);
     }
 
     #[tokio::test]
     async fn incomplete_handshakes_cannot_grow_connection_tasks_without_bound() {
         let (root, endpoint) = endpoint("connection-bound");
         let Some(mut server) = bind_or_skip(&endpoint).await else {
-            fs::remove_dir_all(root).unwrap();
+            drop(root);
             return;
         };
         let mut held = Vec::new();
@@ -3799,7 +3764,7 @@ mod tests {
         drop(client);
         drop(held);
         endpoint.cleanup().unwrap();
-        fs::remove_dir_all(root).unwrap();
+        drop(root);
     }
 
     #[tokio::test]
@@ -3867,7 +3832,7 @@ mod tests {
         // frame boundary, so the peer reads a clean end of stream.
         let (root, endpoint) = endpoint("shutdown-flush");
         let Some(mut server) = bind_or_skip(&endpoint).await else {
-            fs::remove_dir_all(root).unwrap();
+            drop(root);
             return;
         };
         let mut client = LocalClient::connect(&endpoint, FrameGeometry::default(), false)
@@ -3902,14 +3867,14 @@ mod tests {
             Some(ServerEvent::Disconnected { id: disconnected }) if disconnected == id
         ));
         endpoint.cleanup().unwrap();
-        fs::remove_dir_all(root).unwrap();
+        drop(root);
     }
 
     #[tokio::test]
     async fn an_established_stalled_peer_disconnects_and_releases_its_slot() {
         let (root, endpoint) = endpoint("write-timeout");
         let Some(mut server) = bind_or_skip(&endpoint).await else {
-            fs::remove_dir_all(root).unwrap();
+            drop(root);
             return;
         };
         let stream = UnixStream::connect(endpoint.socket()).await.unwrap();
@@ -3995,7 +3960,7 @@ mod tests {
             Some(ServerEvent::Connected { .. })
         ));
         endpoint.cleanup().unwrap();
-        fs::remove_dir_all(root).unwrap();
+        drop(root);
     }
 
     #[tokio::test]
@@ -4022,7 +3987,7 @@ mod tests {
     async fn live_recorded_process_prevents_socket_unlink_and_transient_errors_are_not_stale() {
         let (root, endpoint) = endpoint("live-process");
         let Some(server) = bind_or_skip(&endpoint).await else {
-            fs::remove_dir_all(root).unwrap();
+            drop(root);
             return;
         };
         server.stop_abruptly().await;
@@ -4040,14 +4005,14 @@ mod tests {
             io::ErrorKind::PermissionDenied
         )));
         endpoint.cleanup().unwrap();
-        fs::remove_dir_all(root).unwrap();
+        drop(root);
     }
 
     #[tokio::test]
     async fn missing_required_feature_groups_are_refused() {
         let (root, endpoint) = endpoint("features");
         let Some(_server) = bind_or_skip(&endpoint).await else {
-            fs::remove_dir_all(root).unwrap();
+            drop(root);
             return;
         };
         let stream = UnixStream::connect(endpoint.socket()).await.unwrap();
@@ -4074,7 +4039,7 @@ mod tests {
             HostResponse::Refused { message } if message.contains("feature set")
         ));
         endpoint.cleanup().unwrap();
-        fs::remove_dir_all(root).unwrap();
+        drop(root);
     }
 
     #[tokio::test]
@@ -4084,7 +4049,7 @@ mod tests {
         // matter either.
         let (root, endpoint) = endpoint("superset-features");
         let Some(mut server) = bind_or_skip(&endpoint).await else {
-            fs::remove_dir_all(root).unwrap();
+            drop(root);
             return;
         };
         let stream = UnixStream::connect(endpoint.socket()).await.unwrap();
@@ -4119,7 +4084,7 @@ mod tests {
         ));
         drop(server);
         endpoint.cleanup().unwrap();
-        fs::remove_dir_all(root).unwrap();
+        drop(root);
     }
 
     #[tokio::test]
