@@ -1094,7 +1094,9 @@ cargo test
 
 Run `runyte --help` for command-line options. Inside the editor, press
 <kbd>Space</kbd> then <kbd>?</kbd> for contextual help.
-With no file argument, `runyte` opens its read-only about page. `runyte .`
+With no file argument, `runyte` opens its read-only about page. A new
+persistent session begins the same way, so attaching with `runyte -a` before
+anything has been opened in that workspace shows the about page too. `runyte .`
 opens the current directory in the explorer, while `runyte file.txt` opens that
 file directly.
 Pressing a prefix such as <kbd>g</kbd>, <kbd>Space</kbd>, or
