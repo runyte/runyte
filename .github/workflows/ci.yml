@@ -45,6 +45,59 @@ jobs:
       - name: Test
         run: cargo test --locked
 
+  coverage:
+    name: Coverage (ubuntu-latest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: coverage
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@742a3317eac7bd62f91cd888b4eead5e784ba833 # v2.87.1
+        with:
+          tool: cargo-llvm-cov@0.9.0
+          fallback: none
+
+      # Run the ordinary test suite under instrumentation first so the same
+      # collected profile can produce both the compact summary and HTML report.
+      - name: Measure coverage
+        run: cargo llvm-cov --locked --workspace --no-report
+
+      - name: Generate coverage reports
+        run: |
+          cargo llvm-cov report --html
+          cargo llvm-cov report | tee coverage-summary.txt
+          {
+            echo '### Rust coverage'
+            echo
+            echo '```text'
+            cat coverage-summary.txt
+            echo '```'
+            echo
+            echo 'The enforced line-coverage floor is **83%**.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload HTML coverage report
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: rust-coverage-html
+          path: |
+            target/llvm-cov/html
+            coverage-summary.txt
+          if-no-files-found: error
+          retention-days: 14
+
+      # The 83% floor leaves supported-platform headroom below the 84.54%
+      # baseline while still turning a material coverage regression red.
+      - name: Enforce line coverage baseline
+        run: cargo llvm-cov report --fail-under-lines 83
+
   macos:
     name: Tests (macos-latest)
     runs-on: macos-latest
