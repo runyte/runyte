@@ -181,25 +181,28 @@ fn detached_host_supervision_helper() {
     let runtime = root.join("runtime");
     let cache = root.join("cache");
     let project = root.join("project");
-    let launcher = cli_command(&project, &runtime, &cache, &["--persistent"])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
+    fs::write(project.join("supervision-probe.bin"), [0_u8, 1, 2, 3]).unwrap();
+    let launcher = cli_command(
+        &project,
+        &runtime,
+        &cache,
+        &["--wait", "supervision-probe.bin"],
+    )
+    .stdin(Stdio::null())
+    .stdout(Stdio::null())
+    .stderr(Stdio::piped())
+    .spawn()
+    .unwrap();
     fs::write(root.join("launcher.pid"), launcher.id().to_string()).unwrap();
     let started = launcher.wait_with_output().unwrap();
     assert!(
         !started.status.success(),
-        "the non-terminal attachment unexpectedly reached a TUI"
+        "the binary wait target was unexpectedly accepted"
     );
     let stderr = String::from_utf8_lossy(&started.stderr);
     assert!(
-        stderr.contains("raw mode")
-            || stderr.contains("reader source not set")
-            || stderr.contains("terminal event")
-            || stderr.contains("terminal input"),
-        "detached host launch failed before attachment: {stderr}"
+        stderr.contains("binary files cannot be opened through the workspace protocol"),
+        "detached host launch did not reach its bounded wait refusal: {stderr}"
     );
     // Host readiness is observed independently by the parent through the
     // endpoint. This marker says only that the launcher exited and the helper

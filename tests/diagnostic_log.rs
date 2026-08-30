@@ -127,6 +127,35 @@ fn runyte(root: &Path, arguments: &[&str]) -> std::process::Output {
         .unwrap()
 }
 
+async fn runyte_bounded(root: &Path, arguments: &[&str]) -> std::process::Output {
+    let mut command = bundled_runyte(root);
+    command
+        .args(arguments)
+        .current_dir(root)
+        .env("XDG_RUNTIME_DIR", test_runtime_dir(root))
+        .env("XDG_CACHE_HOME", test_cache_dir(root))
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = ChildGuard(Some(command.spawn().unwrap()));
+
+    for _ in 0..200 {
+        if child.0.as_mut().unwrap().try_wait().unwrap().is_some() {
+            return child.0.take().unwrap().wait_with_output().unwrap();
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+
+    let mut process = child.0.take().unwrap();
+    let _ = process.kill();
+    let output = process.wait_with_output().unwrap();
+    panic!(
+        "Runyte subprocess did not exit within five seconds\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 /// Runs a standalone editor that fails before it can enter the terminal.
 ///
 /// Two binary startup targets are refused by name, so the process reaches
@@ -745,9 +774,9 @@ async fn a_malformed_frame_is_recorded_in_host_log_at_the_default_level() {
 #[tokio::test]
 async fn attaching_with_logging_flags_reports_the_retained_configuration() {
     let root = project("retained");
-    // The host runs at the default level; the attaching command asks for
-    // debug. A host that had adopted the attachment's flags would start
-    // emitting DEBUG records into this same file.
+    // The host runs at the default level; the wait client asks for debug. A
+    // host that had adopted the client's flags would start emitting DEBUG
+    // records into this same file.
     let mut child = serve(&root, &[]);
     let endpoint = endpoint_for(&root);
     if !wait_for_endpoint(&mut child, &endpoint).await {
@@ -758,31 +787,31 @@ async fn attaching_with_logging_flags_reports_the_retained_configuration() {
     wait_for_git_discovery(&endpoint).await;
     let before = read_log(&log);
 
-    let output = runyte(
+    // A rejected wait request reaches the existing host and reports its
+    // retained logger without entering the TUI. Piped stdio is not enough to
+    // prevent Crossterm from reopening /dev/tty when the test runner owns a
+    // controlling terminal.
+    fs::write(root.join("attachment.bin"), [0_u8, 1, 2, 3]).unwrap();
+    let output = runyte_bounded(
         &root,
         &[
-            "--persistent",
+            "--wait",
             "-v",
             "-v",
             "--log",
             root.join("elsewhere.log").to_str().unwrap(),
+            "attachment.bin",
         ],
-    );
+    )
+    .await;
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         !output.status.success(),
-        "a pipe unexpectedly supported a TUI"
+        "a binary wait target was unexpectedly accepted"
     );
-    // Which frontend initialization step rejects piped stdio is
-    // platform-dependent. Crossterm can either fail raw-mode setup or report
-    // that its event reader has no source; neither is part of this logging
-    // contract.
     assert!(
-        stderr.contains("raw mode")
-            || stderr.contains("reader source not set")
-            || stderr.contains("terminal event")
-            || stderr.contains("terminal input"),
-        "attachment did not report a recognized frontend initialization failure: {stderr}"
+        stderr.contains("binary files cannot be opened through the workspace protocol"),
+        "wait client did not report the intended bounded refusal: {stderr}"
     );
     assert!(
         stderr.contains("kept its own log level and destination"),

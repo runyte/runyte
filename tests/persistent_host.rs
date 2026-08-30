@@ -94,6 +94,25 @@ impl Drop for ChildGuard {
     }
 }
 
+fn bounded_output(mut child: Child, description: &str) -> std::process::Output {
+    let deadline = Instant::now() + HOST_RESPONSE_TIMEOUT;
+    loop {
+        if child.try_wait().unwrap().is_some() {
+            return child.wait_with_output().unwrap();
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let output = child.wait_with_output().unwrap();
+            panic!(
+                "{description} did not exit within five seconds\nstdout: {}\nstderr: {}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+}
+
 fn git(root: &Path, arguments: &[&str]) {
     let status = Command::new("git")
         .args(arguments)
@@ -1874,15 +1893,40 @@ async fn racing_starts_for_one_workspace_both_reach_the_winning_host() {
     fs::remove_dir_all(root).unwrap();
 }
 
+const PERSISTENT_LAUNCH_HELPER_ROOT: &str = "RUNYTE_PERSISTENT_LAUNCH_HELPER_ROOT";
+
+#[test]
+#[ignore = "subprocess helper for persistent_mode_starts_the_missing_workspace_before_it_reaches_a_terminal"]
+fn persistent_launch_without_controlling_terminal_helper() {
+    use std::os::unix::process::CommandExt as _;
+
+    let Some(root) = std::env::var_os(PERSISTENT_LAUNCH_HELPER_ROOT).map(PathBuf::from) else {
+        return;
+    };
+    // This helper is already a separate process, so changing its session does
+    // not use a post-fork callback in the multithreaded test runner. The exec'd
+    // client then has no /dev/tty for Crossterm to reopen.
+    assert_ne!(
+        unsafe { libc::setsid() },
+        -1,
+        "persistent launch helper could not detach its controlling terminal: {}",
+        std::io::Error::last_os_error()
+    );
+    let error = Command::new(env!("CARGO_BIN_EXE_runyte"))
+        .arg("--persistent")
+        .current_dir(root)
+        .exec();
+    panic!("persistent launch helper could not exec Runyte: {error}");
+}
+
 /// `--persistent` means "keep this workspace alive and show its TUI", which is
 /// answerable whether or not one is running, so it starts the missing host
 /// itself rather than failing at connect. This runs under the default
 /// standalone `workspace.mode`, where the start used to be skipped entirely.
 ///
-/// The persistent launch cannot reach its editor here: this test's stdio is a
-/// pipe, so entering raw mode fails. That failure comes after the host is
-/// started, which is what the assertion is about, and it is also what lets the
-/// test run without a pseudoterminal.
+/// The helper starts a fresh session before it execs the client, so Crossterm
+/// cannot reopen the test runner's `/dev/tty`. Entering raw mode therefore
+/// fails after the host starts without taking over an interactive test run.
 #[tokio::test]
 async fn persistent_mode_starts_the_missing_workspace_before_it_reaches_a_terminal() {
     let sandbox = TestSandbox::new();
@@ -1894,15 +1938,26 @@ async fn persistent_mode_starts_the_missing_workspace_before_it_reaches_a_termin
     )
     .unwrap();
 
-    let persistent = sandbox
-        .bundled_runyte()
-        .arg("--persistent")
-        .current_dir(&root)
-        .env("XDG_RUNTIME_DIR", sandbox.runtime_dir())
-        .env("XDG_CACHE_HOME", sandbox.cache_dir())
-        .stdin(Stdio::null())
-        .output()
-        .unwrap();
+    let persistent = bounded_output(
+        sandbox
+            .runyte(std::env::current_exe().unwrap())
+            .args([
+                "--ignored",
+                "--exact",
+                "persistent_launch_without_controlling_terminal_helper",
+                "--nocapture",
+            ])
+            .env(PERSISTENT_LAUNCH_HELPER_ROOT, &root)
+            .current_dir(&root)
+            .env("XDG_RUNTIME_DIR", sandbox.runtime_dir())
+            .env("XDG_CACHE_HOME", sandbox.cache_dir())
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap(),
+        "persistent launch helper",
+    );
     let listing = sandbox.run_cli(&root, &["--session-list"]);
 
     // Stop before asserting, so a failing assertion cannot leave a stray host

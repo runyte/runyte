@@ -205,6 +205,29 @@ waits for successful process exit before inspecting either file. Host exit
 follows the logger's bounded flush, so the assertions describe final rotation
 state without polling or sleeping for writer progress.
 
+A later interactive-runner follow-up removes a controlling-terminal assumption
+from `attaching_with_logging_flags_reports_the_retained_configuration` in
+`tests/diagnostic_log.rs`. The test launched `runyte --persistent` with piped
+standard streams and expected frontend initialization to fail, but Crossterm
+can reopen `/dev/tty` when `cargo test` itself owns one. The child then entered
+the TUI and waited indefinitely while writing terminal controls into the test
+output. The fixture now connects through `--wait` with a deliberately rejected
+binary target, which reaches the same retained-logging report through the
+noninteractive control protocol and exits on the host's bounded refusal. Its
+subprocess wait is itself capped at five seconds, so a later loss of that
+response fails instead of hanging the suite.
+
+The same correction covers the two other fixtures that treated redirected
+standard streams as proof that no controlling terminal existed.
+`detached_host_supervision_helper` in `tests/workspace_bulk.rs` now starts its
+host through a rejected binary `--wait` request, which is the noninteractive
+boundary that supervision test needs. The explicit `--persistent` regression
+in `tests/persistent_host.rs` retains that launch path, but runs it through an
+ignored helper that enters a fresh process session before `exec`, leaving the
+multithreaded test runner untouched and making `/dev/tty` deterministically
+unavailable. That helper is also bounded to the existing five-second host
+response deadline.
+
 Known limitations. An explicit `--log` is honoured only by processes that own
 editor state. Passing it to a session-management command that neither starts
 nor attaches to a session — `--session-list`, `--session-stop`,

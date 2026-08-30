@@ -16,7 +16,6 @@ use std::{
 
 use runyte::{
     app::FrameGeometry,
-    command::Mode,
     input::{InputEvent, KeyCode, KeyStroke, Modifiers},
     layout::Rect,
     protocol::{CommandRequest, SnapshotRow, decode_path},
@@ -1743,12 +1742,7 @@ async fn git_commit_wait_tui_completes_through_write_quit() {
     // mode, exactly as it does when word completion is switched off.
     terminal.write_all(b"\x1b").unwrap();
     terminal.flush().unwrap();
-    let _ = wait_for_frame(
-        &mut control,
-        "waiting for Escape to return the Git editor to Normal mode",
-        |frame| frame.editor.mode == Mode::Normal.into(),
-    )
-    .await;
+    wait_for_terminal_screen(&drained, " NOR ").await;
     control
         .send(&ClientRequest::ReadBuffer {
             buffer: commit_buffer,

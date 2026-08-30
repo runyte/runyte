@@ -25,6 +25,16 @@ completes the issue on top of the existing bounded child ownership, Darwin
 exit observation, process-group audit, checked-in executable fixture, and
 request-attribution work described in the report.
 
+A later follow-up corrects the client boundary used by that regression.
+`git_commit_wait_tui_completes_through_write_quit` had requested a complete
+frame through its separate control connection, but `Resynchronize` belongs to
+the interactive role and control clients deliberately advertise no snapshot
+feature. The host correctly rejected the request before the test could observe
+Normal mode. The test now waits on the continuously drained PTY emulator's
+current `NOR` status instead. That is the real interactive client's rendered
+semantic state, uses the same absolute thirty-second deadline, and does not
+widen the private protocol or return to raw-byte matching or elapsed sleeps.
+
 Coverage is provided by
 `git_commit_wait_tui_completes_through_write_quit`,
 `incompatible_worktree_host_returns_the_tui_to_its_source`, and
