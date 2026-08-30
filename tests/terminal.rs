@@ -12,6 +12,7 @@
 
 use std::{
     path::PathBuf,
+    process::Command,
     sync::{Arc, Mutex, mpsc},
     time::{Duration, Instant},
 };
@@ -26,6 +27,7 @@ use runyte::{
     key_hints::KeyHintState,
     snapshot::OverlayKind,
     terminal::{self, OUTPUT_QUEUE, TerminalEvents, TerminalOutput},
+    test_support::TestRuntimeRoot,
     ui,
 };
 
@@ -200,6 +202,78 @@ fn a_child_runs_in_the_pane_and_its_output_is_drawn() {
     let mut session = Session::start(r#"/bin/sh -c 'printf "terminal pane works\r\n"; cat'"#);
     assert!(session.settle(|app| terminal_text(app).contains("terminal pane works")));
     assert!(session.screen(60, 12).contains("terminal pane works"));
+}
+
+#[test]
+fn a_git_merge_wait_editor_exiting_inside_a_terminal_returns_to_its_shell() {
+    for close in ["q", "c"] {
+        let sandbox = TestRuntimeRoot::new("nested-editor").unwrap();
+        let project = sandbox.create_private_dir("project").unwrap();
+        let cache = sandbox.create_private_dir("cache").unwrap();
+        let git = |arguments: &[&str]| {
+            assert!(
+                Command::new("git")
+                    .args(arguments)
+                    .current_dir(&project)
+                    .status()
+                    .unwrap()
+                    .success(),
+                "git {arguments:?} failed"
+            );
+        };
+        git(&["init", "-q", "-b", "main"]);
+        git(&["config", "user.name", "Runyte Test"]);
+        git(&["config", "user.email", "runyte@example.invalid"]);
+        std::fs::write(project.join("base"), "base\n").unwrap();
+        git(&["add", "base"]);
+        git(&["commit", "-q", "-m", "base"]);
+        git(&["checkout", "-q", "-b", "side"]);
+        std::fs::write(project.join("side"), "side\n").unwrap();
+        git(&["add", "side"]);
+        git(&["commit", "-q", "-m", "side"]);
+        git(&["checkout", "-q", "main"]);
+        let runyte = env!("CARGO_BIN_EXE_runyte");
+        let command = format!(
+            "/bin/sh -c 'cd {project}; XDG_RUNTIME_DIR={runtime} XDG_CACHE_HOME={cache} GIT_EDITOR=\"{runyte} --wait\" git merge --no-ff side; status=$?; XDG_RUNTIME_DIR={runtime} XDG_CACHE_HOME={cache} {runyte} --session-stop --force >/dev/null 2>&1; printf \"git-merge-finished:%s\\r\\n\" \"$status\"; cat'",
+            runtime = sandbox.display(),
+            cache = cache.display(),
+            project = project.display(),
+        );
+        let mut session = Session::start(&command);
+
+        let drawn = session.settle(|app| {
+            app.active_terminal()
+                .and_then(|id| app.terminals.get(id))
+                .is_some_and(|terminal| terminal.plain_text().contains("Merge branch 'side'"))
+        });
+        assert!(
+            drawn,
+            "nested Runyte did not draw for :{close}; status: {:?}; terminal: {:?}",
+            session.app.status,
+            session
+                .app
+                .active_terminal()
+                .and_then(|id| session.app.terminals.get(id))
+                .map(|terminal| terminal.plain_text())
+        );
+        session.type_text(":");
+        session.type_text(close);
+        session.press(KeyCode::Enter);
+
+        assert!(
+            session.settle(|app| {
+                app.active_terminal()
+                    .and_then(|id| app.terminals.get(id))
+                    .is_some_and(|terminal| terminal.plain_text().contains("git-merge-finished:0"))
+            }),
+            "integrated terminal did not return to its shell after Git's editor closed with :{close}"
+        );
+        let id = session
+            .app
+            .active_terminal()
+            .expect("the integrated terminal remains in its pane");
+        assert!(session.app.terminals.get(id).unwrap().live());
+    }
 }
 
 #[test]
