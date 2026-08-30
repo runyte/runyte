@@ -1358,13 +1358,30 @@ async fn an_edited_scratchpad_leaves_a_workspace_clean_enough_to_stop() {
         fs::remove_dir_all(root).unwrap();
         return;
     };
+    // A targetless host starts on the read-only about page, exactly as a bare
+    // standalone launch does, and its empty scratch buffer retires when the
+    // pane leaves it. The scratchpad this test is about is therefore asked
+    // for, rather than assumed to be the buffer the host happened to open on.
+    let mut interactive = LocalClient::connect(&endpoint, FrameGeometry::default(), true)
+        .await
+        .unwrap();
+    let _ = response(&mut interactive).await;
+    let opening = resynchronized_frame(
+        &mut interactive,
+        "receiving a current frame before opening a scratchpad",
+    )
+    .await;
+    invoke_when_current(&mut interactive, "buffer-new", opening).await;
+    interactive.send(&ClientRequest::Detach).await.unwrap();
+    drop(interactive);
+
     let mut client = connect_control(&endpoint).await;
     client.send(&ClientRequest::ListBuffers).await.unwrap();
     let scratch = match response(&mut client).await {
         HostResponse::Buffers { buffers } => buffers
             .into_iter()
             .find(|buffer| buffer.path_bytes.is_none() && !buffer.read_only && !buffer.closed)
-            .expect("a host keeps a scratch buffer"),
+            .expect("a host keeps the scratch buffer it was asked for"),
         response => panic!("expected buffers, got {response:?}"),
     };
     client

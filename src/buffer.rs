@@ -2206,8 +2206,9 @@ impl Buffer {
 
     /// Whether Runyte assembled this buffer instead of reading ordinary file
     /// text. Clean special buffers have bounded recent-view lifetime and may
-    /// be retired once they are detached and fall outside the two most recent;
-    /// scratch remains ordinary pathless text.
+    /// be retired once they are detached and fall outside the most recent
+    /// `SPECIAL_BUFFER_RETENTION_LIMIT`; scratch remains ordinary pathless
+    /// text.
     pub fn is_special(&self) -> bool {
         !matches!(self.kind, BufferKind::File | BufferKind::Scratch)
     }

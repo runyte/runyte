@@ -29,7 +29,10 @@ use futures_util::StreamExt;
 use ratatui::{Terminal, backend::CrosstermBackend};
 use runyte::{
     app::{App, PersistentExitRequest},
-    command::{CommandCategory, CommandExecutionContext, CommandInvocation, EditorCommand},
+    command::{
+        CommandCategory, CommandExecutionContext, CommandInvocation, CommandInvocationError,
+        EditorCommand,
+    },
     config::{self, Config, WorkspaceMode},
     external_open, file_monitor, file_picker,
     git::{GitCliProvider, GitService, GitServiceEvent},
@@ -1195,6 +1198,9 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
     if arguments.mode == LaunchMode::Serve {
         #[cfg(unix)]
         {
+            if show_startup_about {
+                app.app_mut().execute(about_invocation()?)?;
+            }
             let endpoint = LocalEndpoint::discover(&state_root, &project_root)?;
             if let Some(recorded) = recorded_workspace.as_ref() {
                 endpoint.store_name_if_absent(&recorded.name)?;
@@ -1223,11 +1229,7 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
     startup.mark(StartupPhase::TerminalEntered);
     let mut key_hints = KeyHintState::default();
     if show_startup_about {
-        let invocation = CommandInvocation::editor(
-            EditorCommand::ShowAbout,
-            CommandExecutionContext::default(),
-        )?;
-        app.app_mut().execute(invocation)?;
+        app.app_mut().execute(about_invocation()?)?;
     }
     terminal.draw(|frame| {
         let geometry = ui::frame_geometry(frame.area());
@@ -1466,8 +1468,22 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
     Ok(())
 }
 
+/// Whether this process should open the front page before its first frame.
+///
+/// A targetless standalone launch is the original case. A workspace host is
+/// the same launch seen from the other side of the transport: it is started
+/// without targets, and the first client to attach finds whatever state the
+/// host began with. Opening the page there rather than on attachment keeps it
+/// a property of a new, empty session, so detaching and attaching again does
+/// not bring back a page the reader has already replaced.
 fn starts_on_about(arguments: &LaunchArguments) -> bool {
-    arguments.mode == LaunchMode::Standalone && arguments.targets.is_empty()
+    matches!(arguments.mode, LaunchMode::Standalone | LaunchMode::Serve)
+        && arguments.targets.is_empty()
+}
+
+/// The `:about` invocation a launch that starts on the front page runs.
+fn about_invocation() -> Result<CommandInvocation, CommandInvocationError> {
+    CommandInvocation::editor(EditorCommand::ShowAbout, CommandExecutionContext::default())
 }
 
 fn uses_automatic_persistent_mode(
@@ -5585,7 +5601,7 @@ mod tests {
     }
 
     #[test]
-    fn targetless_standalone_launches_open_about_but_paths_keep_their_meaning() {
+    fn targetless_launches_open_about_but_paths_keep_their_meaning() {
         let bare = LaunchArguments::parse_from([]).unwrap();
         let explicit_standalone = LaunchArguments::parse_from(["--standalone".into()]).unwrap();
         let directory = LaunchArguments::parse_from([".".into()]).unwrap();
@@ -5596,7 +5612,9 @@ mod tests {
         assert!(starts_on_about(&explicit_standalone));
         assert!(!starts_on_about(&directory));
         assert!(!starts_on_about(&file));
-        assert!(!starts_on_about(&server));
+        // A host is started without targets for an attaching client, so it
+        // begins on the same page a bare standalone launch does.
+        assert!(starts_on_about(&server));
     }
 
     #[test]

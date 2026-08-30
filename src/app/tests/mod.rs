@@ -36,6 +36,26 @@ fn finish_macro_replay(app: &mut App) {
     }
 }
 
+/// Opens `count` distinct clean generated pages so a retention test can reach
+/// [`SPECIAL_BUFFER_RETENTION_LIMIT`] without hard-coding what that limit is.
+///
+/// Each page carries its own generated identity, so none of them reuses
+/// another's buffer the way reopening one page would. Explorers cannot serve
+/// here: a pane retargets the explorer it already has rather than adopting a
+/// second one.
+fn open_filler_special_buffers(app: &mut App, count: usize) -> Vec<usize> {
+    (0..count)
+        .map(|index| {
+            app.open_virtual_page(
+                GeneratedViewIdentity::Named(format!("retention-filler-{index}")),
+                format!("[filler {index}]"),
+                "generated page\n",
+                ContentAlignment::default(),
+            )
+        })
+        .collect()
+}
+
 fn context_action(app: &mut App, mnemonic: char) {
     key(app, KeyCode::Tab, Modifiers::NONE);
     press(app, mnemonic);

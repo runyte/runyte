@@ -3274,8 +3274,9 @@ impl App {
         self.refresh_buffer_picker();
     }
 
-    /// Retains the two most recently active clean special buffers and retires
-    /// the least recent detached one when a third is opened.
+    /// Retains the most recently active clean special buffers up to
+    /// [`SPECIAL_BUFFER_RETENTION_LIMIT`] and retires the least recent
+    /// detached one when another is opened past it.
     ///
     /// Dirty special buffers are deliberately retained and discoverable, and
     /// a visible buffer is never evicted out from under another pane. Empty

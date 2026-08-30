@@ -684,6 +684,67 @@ fn selection_count(response: &HostResponse) -> usize {
     frame.editor.status.selection_count
 }
 
+/// A host started without targets is what `runyte -a` attaches to when no
+/// session is running yet, so the first client must find the same front page a
+/// bare standalone launch opens.
+#[tokio::test]
+async fn a_targetless_host_starts_on_the_about_page() {
+    let sandbox = TestSandbox::new();
+    let root = project();
+    let executable = env!("CARGO_BIN_EXE_runyte");
+    let child = sandbox
+        .runyte(executable)
+        .arg("--serve")
+        .current_dir(&root)
+        .env("XDG_RUNTIME_DIR", sandbox.runtime_dir())
+        .env("XDG_CACHE_HOME", sandbox.cache_dir())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut child = ChildGuard(Some(child));
+    let endpoint = LocalEndpoint::discover_with_runtime(
+        &root.join(".runyte"),
+        &root,
+        Some(sandbox.runtime_dir()),
+    )
+    .unwrap();
+    if !wait_for_endpoint(&mut child, &endpoint).await {
+        fs::remove_dir_all(root).unwrap();
+        return;
+    }
+
+    let mut client = LocalClient::connect(&endpoint, geometry(), true)
+        .await
+        .unwrap();
+    assert!(matches!(
+        response(&mut client).await,
+        HostResponse::Welcome { .. }
+    ));
+    let first = response(&mut client).await;
+    let frame = wait_for_editor_frame(
+        &mut client,
+        first,
+        "waiting for the about page on a targetless host",
+        |frame| editor_frame_text(frame).contains("Navigate. Select. Act."),
+    )
+    .await;
+    assert!(
+        editor_frame_text(&frame).contains("Getting around"),
+        "{}",
+        editor_frame_text(&frame)
+    );
+
+    shutdown(&mut client, ClientRequest::Shutdown).await;
+    let status = tokio::task::spawn_blocking(move || child.0.take().unwrap().wait())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(status.success());
+    fs::remove_dir_all(root).unwrap();
+}
+
 #[tokio::test]
 async fn detach_reattach_preserves_live_editor_and_refuses_a_second_tui() {
     let sandbox = TestSandbox::new();

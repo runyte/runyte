@@ -52,8 +52,8 @@ them, regardless of which extensibility direction is chosen.
   movement, selection, search, splits, copying, jump history, help, and buffer
   management all apply, and it may add actions for the object or rows it
   represents. Read-only state and the presence of a path do not define the
-  category. Runyte retains the two most recently active clean special buffers
-  across pane switches; activating a third retires the least recently used one
+  category. Runyte retains the eight most recently active clean special buffers
+  across pane switches; activating a ninth retires the least recently used one
   once it is detached. A visible special buffer is never evicted out from
   under its pane, and a dirty one remains open and discoverable until saved or
   discarded. The editable

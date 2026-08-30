@@ -934,8 +934,8 @@ normal movement, selection, search, splits, help, and buffer management. A
 **special buffer** is one whose contents Runyte assembles rather than reads as
 ordinary file text, such as the explorer, config, Git views, notifications,
 help, or the about page. It remains a full buffer while displayed, may be
-shared by panes, and may be editable or read-only. Runyte retains the two most
-recently active clean special buffers across pane switches; activating a third
+shared by panes, and may be editable or read-only. Runyte retains the eight most
+recently active clean special buffers across pane switches; activating a ninth
 retires the least recent one once it is detached. A dirty special buffer
 remains available until saved or discarded. A pathless scratch buffer is
 ordinary text rather than special. A transient choose-one request is a
@@ -1096,7 +1096,9 @@ cargo test
 
 Run `runyte --help` for command-line options. Inside the editor, press
 <kbd>Space</kbd> then <kbd>?</kbd> for contextual help.
-With no file argument, `runyte` opens its read-only about page. `runyte .`
+With no file argument, `runyte` opens its read-only about page. A new
+persistent session begins the same way, so attaching with `runyte -a` before
+anything has been opened in that workspace shows the about page too. `runyte .`
 opens the current directory in the explorer, while `runyte file.txt` opens that
 file directly.
 Pressing a prefix such as <kbd>g</kbd>, <kbd>Space</kbd>, or
@@ -1746,9 +1748,9 @@ absolute otherwise. Explorer buffers deliberately expose no management
 actions in this view: filesystem changes remain available only by editing the
 explorer and confirming its `:write` plan.
 
-Runyte retains the two most recently active clean generated and special
+Runyte retains the eight most recently active clean generated and special
 buffers, including explorers, after their last pane moves elsewhere. Activating
-a third retires the least recently used detached one, which keeps immediate
+a ninth retires the least recently used detached one, which keeps immediate
 `Ctrl-o`/`Ctrl-i` and `Alt-o`/`Alt-i` navigation useful without letting
 `Space b b` or the file picker's buffer mode accumulate stale views. A dirty
 special buffer remains open and discoverable until it is saved or explicitly

@@ -1959,8 +1959,8 @@ fn colon_help_opens_one_manual_and_space_question_mark_stays_contextual() {
     let manual = app.active().buffer;
 
     // Help is a buffer, so an ordinary motion moves inside it rather than
-    // dismissing it. A third special buffer later retires this least
-    // recent detached one.
+    // dismissing it. Opening the explorer and contextual help beside it stays
+    // well inside the retained set, so the manual is still there afterwards.
     press(&mut app, 'j');
     assert!(app.active_buffer().is_manual());
 
@@ -1968,7 +1968,7 @@ fn colon_help_opens_one_manual_and_space_question_mark_stays_contextual() {
     app.open_file(directory.clone()).unwrap();
     press(&mut app, ' ');
     press(&mut app, '?');
-    assert!(app.closed_buffers.contains(&manual));
+    assert!(!app.closed_buffers.contains(&manual));
     assert!(app.active_buffer().is_help());
     assert!(
         app.active_buffer()
@@ -1978,7 +1978,11 @@ fn colon_help_opens_one_manual_and_space_question_mark_stays_contextual() {
 
     press(&mut app, 'q');
     type_command(&mut app, "help regex");
-    assert_ne!(app.active().buffer, manual, "a retired manual is rebuilt");
+    assert_eq!(
+        app.active().buffer,
+        manual,
+        "a retained manual is reprojected in place"
+    );
     assert_eq!(app.cursor_position().row, app.active().scroll_row);
     assert_eq!(
         app.active_buffer().line_string(app.cursor_position().row),

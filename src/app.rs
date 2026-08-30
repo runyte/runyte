@@ -2271,10 +2271,12 @@ struct MacroReplay {
     last_action_error: bool,
 }
 
-/// Clean special buffers retained across pane switches. The current view and
-/// its immediate predecessor are enough for back/forward navigation without
-/// letting generated views accumulate in the buffer picker.
-const SPECIAL_BUFFER_RETENTION_LIMIT: usize = 2;
+/// Clean special buffers retained across pane switches. A working set this
+/// size covers the generated views a task moves between — help, the explorer,
+/// Git views, workspace results — so back/forward navigation reaches all of
+/// them, while still keeping the buffer picker from accumulating every
+/// generated view a session ever opened.
+const SPECIAL_BUFFER_RETENTION_LIMIT: usize = 8;
 
 /// A workspace selector together with the editor directory in which it was
 /// entered.
