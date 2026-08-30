@@ -15,9 +15,9 @@ and `incompatible_worktree_host_returns_the_tui_to_its_source`.
 A negative PID names a process group, and the kernel recycles that number once
 the group is empty and its leader reaped. Every subsystem that spawns a child
 into its own group can therefore reap the child and then signal a number that
-belongs to something else. Because a Git child calls `setsid`, its process
-group identifier is exactly its own PID, which is the shape a recycled number
-would take. Three real defects of that class were found and corrected:
+belongs to something else. At the time, every Git child called `setsid`, so its
+process group identifier was exactly its own PID, which is the shape a recycled
+number would take. Three real defects of that class were found and corrected:
 
 - `b09c444` — PTY teardown signalled `-pid` after `Pty::finished` had reaped
   the terminal leader through `Child::try_wait`.
@@ -68,33 +68,54 @@ any completed but unreaped child, where Linux answers with the child's own
 identifier. That is a difference in what the two kernels will say about an
 anchored child, not by itself a defect.
 
-## What remains
+## Local diagnosis
 
-The cause is outside Runyte. A freshly executed binary killed with signal 9 on
-a loaded macOS host points at the kernel rather than the program: memory
-pressure termination, or a code-signing validation failure at page-in. Neither
-is visible from the victim's side, and neither can be distinguished from the
-audit journal alone.
+A local macOS 26.6.2 burn-in reproduced the failure on its second ordinary,
+unsandboxed run of `cargo test --locked --test local_protocol`. The audit again
+showed no Runyte signal before completion. Unified kernel logging instead
+reported that the child hit an unrecoverable exception, and its diagnostic
+report identified the termination as `EXC_BREAKPOINT`/`SIGKILL` in the
+Foundation namespace with these details:
 
-The next evidence has to come from the kernel itself, which requires a macOS
-machine rather than a CI runner:
-
-```sh
-sudo log stream --predicate 'sender == "kernel"' --info \
-  | grep -Ei 'kill|jetsam|codesign|memorystatus'
+```text
+BUG IN CLIENT OF LIBPLATFORM: os_once_t is corrupt
+libsystem_c: crashed on child side of fork pre-exec
 ```
 
-with the failing suite burned in alongside it:
+The stack ran from `_os_once_gate_corruption_abort` through
+`_notify_fork_child`, `libSystem_atfork_child`, and `fork` to Rust's
+`Command::spawn` and `GitCliProvider::spawn`. Several children in both the
+passing and failing attempts produced reports with that same shape. The audit
+names the intended Git command while the diagnostic report names Runyte
+because the child died before replacing its process image with Git.
 
-```sh
-for i in $(seq 1 30); do
-  RUNYTE_PROCESS_AUDIT=/tmp/runyte-audit.log \
-    cargo test --locked --test local_protocol 2>&1 | tail -3
-done
-```
+The cause was therefore inside Runyte's launch strategy, not memory pressure
+or code-signing rejection. `GitCliProvider::spawn` installed a
+`Command::pre_exec` hook to call `setsid`. That forces a child-side fork path in
+the multithreaded editor. macOS can run libSystem and libnotify at-fork handlers
+in that child while another thread has left their one-time initialization state
+in progress; libplatform treats the inherited state as corrupt and deliberately
+aborts before `exec`.
 
-The audit journal from a local failure, paired with what the kernel reported
-at that moment, identifies which of the two mechanisms is at work.
+## Fix
+
+Git needs a private process group so cancellation can terminate Git, hooks,
+filters, and network helpers as one owned unit. It does not otherwise depend on
+a private session. The launch now uses Rust's safe `CommandExt::process_group(0)`
+configuration instead of a child-side `pre_exec(setsid)` hook. The child still
+leads a group whose identifier is its PID, preserving all ownership and cleanup
+invariants, while macOS can use the standard spawn path without running the
+unsafe at-fork sequence.
+
+The Darwin parallel-group test mirrors the production launch configuration and
+continues to verify that every leader owns its group and retains the correct
+wait status under concurrent completion.
+
+A sequential ordinary-host burn-in ran the complete `local_protocol` test
+binary 30 times after the change. All 30 attempts passed. Their 30 process
+audits contained 2,939 Git child completions and no completion by signal 9;
+every sampled spawn reported the child as its own process-group leader. macOS
+also produced no new Runyte diagnostic report during the burn-in.
 
 A separate question stays open regardless of the answer. Discovery currently
 latches a signal-terminated child as a Git failure for the workspace. A child

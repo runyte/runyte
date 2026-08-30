@@ -275,9 +275,21 @@ because the tail alone does not order the records that name it. The failure
 diagnostic must therefore correlate directly: for every child the journal
 classifies as signal-terminated, report its spawn, every group signal aimed
 at it, and its completion, in order. A signal record standing before that
-completion names a sender inside Runyte; none standing there places the cause
-outside the program, in macOS process-exit details or runner and kernel
-termination.
+completion names a sender inside Runyte; none standing there rules out Runyte's
+audited group-signal paths and requires macOS process-exit details to identify
+the cause.
+
+A local macOS 26.6.2 ordinary-host burn-in then reproduced the Git child death
+with unified kernel logging and diagnostic reports available. The report
+classified it as `EXC_BREAKPOINT`/`SIGKILL`, said that libsystem had crashed on
+the child side of fork before exec, and showed libnotify's at-fork path aborting
+because an inherited `os_once_t` was corrupt. Git's `pre_exec(setsid)` hook had
+forced `Command::spawn` to fork the multithreaded editor. Git requires an owned
+process group for bounded descendant cleanup, not a separate session, so its
+launch must use `CommandExt::process_group(0)` and retain the spawn path that
+does not run that child-side hook. A 30-run local-protocol burn-in after that
+change completed without a signal-9 Git child in 2,939 audited completions and
+without a new Runyte diagnostic report.
 
 A full-suite run also failed in
 `git::cli::tests::a_detached_helper_cannot_hold_completed_command_pipes_open`,
