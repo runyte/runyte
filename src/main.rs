@@ -3852,8 +3852,11 @@ async fn wait_for_completion(
     terminal_loss: &mut TerminalLoss,
     launching_parent: &HostSupervisor,
 ) -> Result<()> {
+    let mut test_status_barrier =
+        std::env::var_os("RUNYTE_TEST_WAIT_STATUS_BARRIER").map(PathBuf::from);
     loop {
         client.send(&ClientRequest::WaitStatus { token }).await?;
+        wait_at_test_status_barrier(&mut test_status_barrier).await?;
         let response = tokio::select! {
             biased;
             signal = termination.recv() => return Err(terminated(signal)),
@@ -3923,6 +3926,35 @@ async fn wait_for_completion(
             _ = tokio::time::sleep(Duration::from_millis(100)) => {}
         }
     }
+}
+
+/// Gives process-level tests a one-shot acknowledgement after the wait client
+/// has sent a status request but before it can consume the reply. This makes a
+/// completion-versus-launcher-loss race reproducible without elapsed-time
+/// guesses. Ordinary clients never set the test-only environment variable.
+#[cfg(unix)]
+async fn wait_at_test_status_barrier(barrier: &mut Option<PathBuf>) -> Result<()> {
+    let Some(path) = barrier.take() else {
+        return Ok(());
+    };
+    let ready = path.with_extension("ready");
+    let release = path.with_extension("release");
+    fs::write(&ready, []).with_context(|| {
+        format!(
+            "cannot publish wait-status test barrier {}",
+            ready.display()
+        )
+    })?;
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !release.exists() {
+        anyhow::ensure!(
+            Instant::now() < deadline,
+            "wait-status test barrier was not released at {}",
+            release.display()
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    Ok(())
 }
 
 /// Resolves client lifecycle loss against the host's durable wait state.
