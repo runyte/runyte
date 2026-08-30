@@ -27,14 +27,18 @@ policy. The same lifecycle pass also preserves the last explorer directory
 when a retained explorer becomes detached, so `:quit-here` does not depend on
 the explorer being retired.
 
-Coverage lives in `src/app.rs` tests
+Coverage lives in `src/app/tests/git.rs` tests
 `the_two_most_recent_clean_special_buffers_remain_jumpable`,
-`opening_a_third_clean_special_buffer_retires_the_least_recent_detached_one`,
+`opening_one_clean_special_buffer_past_the_limit_retires_the_least_recent_detached_one`,
 `an_async_special_view_precedes_the_buffer_reached_by_immediate_history_navigation`,
-`workspace_search_remains_jumpable_and_is_rebuilt_in_place`, and
-`an_empty_clean_scratch_buffer_retires_after_its_last_view_leaves`; and in
+and `an_empty_clean_scratch_buffer_retires_after_its_last_view_leaves`; in
+`src/app/tests/editing_and_buffers.rs` test
+`workspace_search_remains_jumpable_and_is_rebuilt_in_place`; and in
 `tests/terminal.rs` test
 `terminal_output_remains_jumpable_after_its_pane_returns_to_the_terminal`.
+The retirement test was named for opening a third special buffer while the
+retention limit was two; it was renamed and made limit-relative when the limit
+was raised.
 
 Known limitation: dirty special buffers are never discarded implicitly, and a
 clean special buffer visible in a pane is never evicted out from under that

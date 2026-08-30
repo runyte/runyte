@@ -2149,8 +2149,11 @@ where
     .await;
     // The reason the loop ended is discarded by the caller that spawned this
     // task, so it is reported here or nowhere. A host would otherwise see a
-    // truncated frame as an ordinary disconnection.
-    if let Err(error) = &result {
+    // truncated frame as an ordinary disconnection. A peer that simply went
+    // away is the opposite case: the write that observes it fails, but the
+    // connection ended the way connections are meant to, so only
+    // `Disconnected` follows.
+    if let Some(error) = result.as_ref().err().filter(|error| !peer_hung_up(error)) {
         let _ = events
             .send(ServerEvent::TransportFailure {
                 id,
@@ -2160,6 +2163,27 @@ where
     }
     let _ = events.send(ServerEvent::Disconnected { id }).await;
     result
+}
+
+/// Whether a connection ended because the peer closed it rather than because
+/// the transport itself broke.
+///
+/// A client that has what it came for exits, and the host's next write to it
+/// fails with a broken pipe or a reset. That is the ordinary end of a
+/// connection reported from the only side still holding it, so it must not be
+/// recorded as a transport failure; a truncated frame or a stalled write
+/// still is, because those name a peer that is present and wrong.
+fn peer_hung_up(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        cause.downcast_ref::<std::io::Error>().is_some_and(|error| {
+            matches!(
+                error.kind(),
+                std::io::ErrorKind::BrokenPipe
+                    | std::io::ErrorKind::ConnectionReset
+                    | std::io::ErrorKind::ConnectionAborted
+            )
+        })
+    })
 }
 
 fn request_allowed_for_role(request: &ClientRequest, role: ClientRole) -> bool {
@@ -3866,6 +3890,41 @@ mod tests {
                 .expect("connection did not report its end"),
             Some(ServerEvent::Disconnected { id: disconnected }) if disconnected == id
         ));
+        endpoint.cleanup().unwrap();
+        drop(root);
+    }
+
+    #[tokio::test]
+    async fn a_peer_that_closed_first_disconnects_without_a_transport_failure() {
+        // A client that has what it came for exits, and the host's next write
+        // to it fails. The connection ended the way connections are meant to,
+        // so the host must not be told the transport broke.
+        let (root, endpoint) = endpoint("peer-hangup");
+        let Some(mut server) = bind_or_skip(&endpoint).await else {
+            drop(root);
+            return;
+        };
+        let client = LocalClient::connect(&endpoint, FrameGeometry::default(), false)
+            .await
+            .unwrap();
+        let ServerEvent::Connected { id, responses, .. } = server.recv().await.unwrap() else {
+            panic!("expected connection");
+        };
+        drop(client);
+        // Large enough that the write cannot be absorbed by a send buffer
+        // belonging to a peer that is already gone.
+        responses
+            .try_send(HostResponse::Error {
+                message: "x".repeat(4 * 1024 * 1024),
+            })
+            .unwrap();
+        let event = tokio::time::timeout(Duration::from_secs(3), server.recv())
+            .await
+            .expect("connection did not report its end");
+        assert!(
+            matches!(event, Some(ServerEvent::Disconnected { id: disconnected }) if disconnected == id),
+            "a closed peer must be reported only as a disconnection, got {event:?}"
+        );
         endpoint.cleanup().unwrap();
         drop(root);
     }
