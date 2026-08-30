@@ -17,9 +17,9 @@ separate tools or plugins for text editing, terminal multiplexing, file
 management, and Git, Runyte may be for you.
 
 At its core is a fast terminal editor written in Rust. Common motion
-keybindings will feel familiar to users of both Vim and Helix. Its multiple-selection model
-and selection-first editing are closer to Helix than Vim, while some commands
-and workflows are distinctly Runyte's own.
+keybindings will feel familiar to users of both Vim and Helix. Its
+multiple-selection model and selection-first editing are closer to Helix than
+Vim, while some commands and workflows are distinctly Runyte's own.
 
 Website: [runyte.com](https://runyte.com) ·
 Documentation: [user guide](docs/user-guide.md)
@@ -95,6 +95,10 @@ layout.*
 ![Runyte displaying the persistent-session picker with session and Git worktree details.](https://runyte.com/images/screenshots/runyte_4.webp)
 
 *The persistent-session picker with session details and worktree metadata.*
+
+![Runyte displaying the command palette filtered to Git commands, above a terminal pane, an open Markdown file, and Rust source.](https://runyte.com/images/screenshots/runyte_5.webp)
+
+*The searchable command palette, narrowed to the Git namespace.*
 
 Full-size versions are on the
 [screenshots page](https://runyte.com/screenshots/).
