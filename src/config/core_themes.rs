@@ -32,24 +32,29 @@ pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
         .insert("property".into(), base16.foreground.clone());
     themes.insert("base16".into(), base16);
     // Runyte's branded pair starts from the runyte.com workspace palette.
-    // The dark surface, text, and red accent are the site's own values; the
-    // remaining hues keep its Cyberpunk-inspired mode vocabulary. The light
-    // variant lowers those same hues against a light-gray ground rather than
-    // inventing a second visual identity.
+    // The dark surface, text, and red accent are the site's own values, and
+    // Normal mode and directory entries stay unset so they always track that
+    // accent. Insert mode took the site's blue instead. Command mode swapped
+    // places with Replace in the mode vocabulary, and `keyword`/`attribute`
+    // (Command's syntax counterparts) swapped hues with `string` (Replace's)
+    // right along with it — a deliberate choice to give keywords the same
+    // mint green `string` used to carry, even though `syntax_theme` derives
+    // several Markdown roles from both: inline code and link URLs (from
+    // `string`) turn purple, and bold/list text (from `keyword`) turns green.
     let mut default_dark_syntax = syntax_theme(&[
-        ("attribute", "#d2a8ff"),
+        ("attribute", "#8ddb8c"),
         ("comment", "#8b8b90"),
         ("constant", "#f0a868"),
         ("constructor", "#6cb6ff"),
         ("function", "#6cb6ff"),
-        ("keyword", "#d2a8ff"),
+        ("keyword", "#8ddb8c"),
         ("label", "#f0a868"),
         ("namespace", "#62d6d7"),
         ("number", "#f0a868"),
         ("operator", "#b9b9be"),
         ("property", "#b9b9be"),
         ("punctuation", "#8b8b90"),
-        ("string", "#8ddb8c"),
+        ("string", "#d2a8ff"),
         ("tag", "#c96870"),
         ("type", "#62d6d7"),
         ("variable", "#b9b9be"),
@@ -58,18 +63,26 @@ pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
     themes.insert(
         "default-dark".into(),
         ThemeDefinition {
-            background: "#16181d".into(),
+            // One step lighter than the surface's original `#16181d`: the
+            // active pane now sits where the inactive pane used to, and the
+            // inactive pane is derived a further step lighter still.
+            background: "#1f2126".into(),
             foreground: "#b9b9be".into(),
             muted: "#8b8b90".into(),
-            whitespace: Some("#272a31".into()),
+            // A background this much lighter left the marker only 8-11
+            // levels off it, well short of the 17-20 the original background
+            // gave it; nudged out a little further than that original gap.
+            whitespace: Some("#35373c".into()),
             jump_text_muted: None,
             accent: "#c96870".into(),
-            cursor_normal: Some("#6cb6ff".into()),
-            cursor_insert: Some("#c96870".into()),
-            cursor_replace: Some("#8ddb8c".into()),
+            // Left unset so Normal mode's caret always matches the accent
+            // that also colours the active pane border.
+            cursor_normal: None,
+            cursor_insert: Some("#6cb6ff".into()),
+            cursor_replace: Some("#d2a8ff".into()),
             cursor_select: Some("#f0a868".into()),
-            cursor_command: Some("#d2a8ff".into()),
-            directory: Some("#6cb6ff".into()),
+            cursor_command: Some("#8ddb8c".into()),
+            directory: None,
             selection: "#30475f".into(),
             selection_primary: Some("#593d2d".into()),
             fuzzy_match_secondary: None,
@@ -92,19 +105,19 @@ pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
         },
     );
     let mut default_light_syntax = syntax_theme(&[
-        ("attribute", "#754b97"),
+        ("attribute", "#23733a"),
         ("comment", "#656872"),
         ("constant", "#9a5518"),
         ("constructor", "#1f65a6"),
         ("function", "#1f65a6"),
-        ("keyword", "#754b97"),
+        ("keyword", "#23733a"),
         ("label", "#9a5518"),
         ("namespace", "#176d70"),
         ("number", "#9a5518"),
         ("operator", "#292a30"),
         ("property", "#292a30"),
         ("punctuation", "#656872"),
-        ("string", "#23733a"),
+        ("string", "#754b97"),
         ("tag", "#a33d49"),
         ("type", "#176d70"),
         ("variable", "#292a30"),
@@ -113,18 +126,27 @@ pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
     themes.insert(
         "default-light".into(),
         ThemeDefinition {
-            background: "#ececef".into(),
+            // One step darker than the surface's original `#ececef`: the
+            // active pane now sits where the inactive pane used to, and the
+            // inactive pane is derived a further step darker still.
+            background: "#e3e3e5".into(),
             foreground: "#292a30".into(),
             muted: "#656872".into(),
-            whitespace: Some("#cdced3".into()),
+            // A background this much darker left the marker only 18-22
+            // levels off it, well short of the 28-31 the original background
+            // gave it; nudged out a little further than that original gap,
+            // just inside the 31-level "near background" ceiling.
+            whitespace: Some("#c5c5c7".into()),
             jump_text_muted: Some("#878a92".into()),
             accent: "#a33d49".into(),
-            cursor_normal: Some("#1f65a6".into()),
-            cursor_insert: Some("#a33d49".into()),
-            cursor_replace: Some("#23733a".into()),
+            // Left unset so Normal mode's caret always matches the accent
+            // that also colours the active pane border.
+            cursor_normal: None,
+            cursor_insert: Some("#1f65a6".into()),
+            cursor_replace: Some("#754b97".into()),
             cursor_select: Some("#9a5518".into()),
-            cursor_command: Some("#754b97".into()),
-            directory: Some("#1f65a6".into()),
+            cursor_command: Some("#23733a".into()),
+            directory: None,
             selection: "#bfd6ea".into(),
             selection_primary: Some("#e9cdb2".into()),
             fuzzy_match_secondary: None,

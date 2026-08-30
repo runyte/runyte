@@ -420,8 +420,17 @@ pub(crate) fn render_document(
     // Key execution and help styling obtain their spellings from the same
     // registry. The prose-specific additions are names that live above the
     // registry (mouse actions and modal terminology), not a second keymap.
-    for binding in keymap.bindings_for_scope(mode, scope) {
+    //
+    // Marking is limited to the bindings actually printed above: `scoped` and
+    // `direct` already dropped what a read-only view refuses (`a` for append,
+    // say), and a hidden key mentioned nowhere in this document has no
+    // business recolouring every unrelated occurrence of its letter in prose
+    // — the indefinite article "a" being the letter most often bound.
+    for binding in &scoped {
         document.mark_token_since(0, &binding.sequence.to_string(), HelpRole::KeyBinding);
+    }
+    for entry in &direct {
+        document.mark_token_since(0, &entry.key.label(), HelpRole::KeyBinding);
     }
     for action in keymap.context_actions(scope) {
         document.mark_token_since(
@@ -918,6 +927,42 @@ mod tests {
         // buffer-specific section appears at all.
         assert!(!rendered.contains("Buffer keys"));
         assert!(!rendered.contains("Different here"));
+    }
+
+    /// A read-only view's prose still contains "a" and possessive "'s" as
+    /// ordinary English, even though `a` (append) and `s` (search) are real
+    /// bound keys elsewhere in the keymap. Neither should pick up the
+    /// keyword colour: `a` never appears in this view's own tables because
+    /// it is refused here, and the `s` in a possessive is not a bare key
+    /// mention at all.
+    #[test]
+    fn prose_articles_and_possessives_are_not_mistaken_for_keys() {
+        let rendered = render_document(
+            HelpTopic::GitStatus,
+            GrammarKind::Runyte,
+            BindingScope::GitStatus,
+            default_keymap(),
+            true,
+        );
+        let text = rendered.text();
+        // Checks the scope of a match's own first character, so the needle
+        // must start exactly on the letter under test.
+        let scope_at = |needle: &str| {
+            let byte = text
+                .find(needle)
+                .unwrap_or_else(|| panic!("missing {needle:?}"));
+            let offset = text[..byte].chars().count();
+            rendered
+                .spans()
+                .iter()
+                .find(|span| span.from <= offset && span.to > offset)
+                .map(|span| span.scope.name())
+        };
+
+        assert_eq!(scope_at("a commit would take it"), None);
+        // The needle starts on the "s" itself — the letter right after the
+        // apostrophe in "file's" — not on "file".
+        assert_eq!(scope_at("s changes, after a confirmation"), None);
     }
 
     #[test]
