@@ -12,7 +12,7 @@
 //! scrollable, and splittable without this module knowing anything about
 //! drawing.
 
-use std::fmt::Write as _;
+use std::{fmt::Write as _, ops::Range};
 
 use crate::{
     command::{EditorCommand, GrammarKind, Mode},
@@ -316,13 +316,23 @@ pub(crate) fn render_document(
         );
     }
 
+    // Every key cell a generated table writes, in character offsets. Only
+    // these positions are coloured from the registry; prose is marked from
+    // the authored lists further down, because a key's raw text is an
+    // ordinary English word far more often than it is a key mention.
+    let mut key_cells: Vec<Range<usize>> = Vec::new();
+
     let scoped = keymap.scoped_bindings(mode, scope).collect::<Vec<_>>();
     let actions = keymap.context_actions(scope).collect::<Vec<_>>();
     if !scoped.is_empty() || !actions.is_empty() {
         let _ = writeln!(out, "Buffer keys");
         let _ = writeln!(out, "  Only this view answers to these.\n");
         for binding in &scoped {
-            row(&mut out, &binding.sequence.to_string(), binding.description);
+            key_cells.push(row(
+                &mut out,
+                &binding.sequence.to_string(),
+                binding.description,
+            ));
         }
         if !actions.is_empty() {
             if !scoped.is_empty() {
@@ -333,11 +343,11 @@ pub(crate) fn render_document(
                 "  Tab opens the action menu. Its mnemonic keys are active only while\n  that menu is open.\n"
             );
             for action in actions {
-                row(
+                key_cells.push(row(
                     &mut out,
                     &format!("Tab {}", action.mnemonic.label()),
                     action.description,
-                );
+                ));
             }
         }
         out.push('\n');
@@ -358,11 +368,11 @@ pub(crate) fn render_document(
             "  Press one and pause: the hint popup lists what follows.\n"
         );
         for entry in prefixes {
-            row(
-                &mut out,
-                &format!("{} …", entry.key.label()),
-                entry.description,
-            );
+            let label = entry.key.label();
+            let cell = row(&mut out, &format!("{label} …"), entry.description);
+            // The ellipsis says the key opens onto more; it is not part of
+            // what anyone presses, so it stays outside the marked range.
+            key_cells.push(cell.start..cell.start + label.chars().count());
         }
         out.push('\n');
     }
@@ -392,7 +402,7 @@ pub(crate) fn render_document(
             }
             let _ = writeln!(out, "  {label}");
             for entry in group {
-                row(&mut out, entry.key.label().as_str(), entry.description);
+                key_cells.push(row(&mut out, entry.key.label().as_str(), entry.description));
             }
             out.push('\n');
         }
@@ -418,20 +428,20 @@ pub(crate) fn render_document(
     }
 
     // Key execution and help styling obtain their spellings from the same
-    // registry. The prose-specific additions are names that live above the
-    // registry (mouse actions and modal terminology), not a second keymap.
+    // registry, but only where the registry's spelling is unambiguous.
     //
-    // Marking is limited to the bindings actually printed above: `scoped` and
-    // `direct` already dropped what a read-only view refuses (`a` for append,
-    // say), and a hidden key mentioned nowhere in this document has no
-    // business recolouring every unrelated occurrence of its letter in prose
-    // — the indefinite article "a" being the letter most often bound.
-    for binding in &scoped {
-        document.mark_token_since(0, &binding.sequence.to_string(), HelpRole::KeyBinding);
+    // The key tables are that place: a cell there holds a key and nothing
+    // else. Searching the whole document for a binding's raw text is not,
+    // because most single-character bindings spell ordinary English —
+    // limiting the search to keys the tables actually printed still left the
+    // indefinite article "a", the sentence-opening "A", and the "Left" and
+    // "Right" of "Left click" and "Right-clicking" wearing the key colour
+    // throughout the prose.
+    for cell in &key_cells {
+        document.mark_range(cell.start, cell.end, HelpRole::KeyBinding);
     }
-    for entry in &direct {
-        document.mark_token_since(0, &entry.key.label(), HelpRole::KeyBinding);
-    }
+    // A context action is spelled `Tab x`, which is never an English word, so
+    // it is safe to mark wherever the prose names one.
     for action in keymap.context_actions(scope) {
         document.mark_token_since(
             0,
@@ -439,6 +449,9 @@ pub(crate) fn render_document(
             HelpRole::KeyBinding,
         );
     }
+    // Prose key mentions are authored rather than derived, for the reason
+    // above. A key named in a paragraph belongs on this list; one that only
+    // appears in the tables does not need to be here.
     for key in [
         "Shift-click",
         "right-click",
@@ -446,13 +459,20 @@ pub(crate) fn render_document(
         "Ctrl-h/j/k/l",
         "Ctrl-u/Ctrl-d",
         "Ctrl-b/Ctrl-f",
+        "h/j/k/l",
         "C/Alt-C",
         "Ctrl-w",
         "Ctrl-\\",
         "Ctrl-c",
         "Ctrl-o",
+        "Ctrl-n",
+        "Ctrl-p",
+        "Space b d",
+        "Space g r",
         "Space c y",
         "Space ?",
+        "Space r",
+        "Space",
         "Escape",
         "Enter",
         "NORMAL",
@@ -465,6 +485,9 @@ pub(crate) fn render_document(
         "i",
         "v",
         "s",
+        "w",
+        "n",
+        "N",
         "/",
         "y",
         "p",
@@ -593,9 +616,17 @@ fn fast_pane_keys_are_active(keymap: &Keymap) -> bool {
     )
 }
 
-fn row(out: &mut String, keys: &str, description: &str) {
+/// Writes one key-table row and reports where its key cell landed.
+///
+/// The returned character range is what lets the key column be coloured on
+/// its own. In that column a bare letter is certainly a key; in the prose
+/// above it, the same letter is usually an article or the start of a
+/// sentence, so the two are marked by different means.
+fn row(out: &mut String, keys: &str, description: &str) -> Range<usize> {
     let padding = KEY_COLUMN.saturating_sub(keys.chars().count());
+    let from = out.chars().count() + 2;
     let _ = writeln!(out, "  {keys}{}{description}", " ".repeat(padding.max(1)));
+    from..from + keys.chars().count()
 }
 
 /// The same words in both grammars: nothing here is a motion or an operator,
@@ -963,6 +994,76 @@ mod tests {
         // The needle starts on the "s" itself — the letter right after the
         // apostrophe in "file's" — not on "file".
         assert_eq!(scope_at("s changes, after a confirmation"), None);
+    }
+
+    /// The registry's spelling of a key is only trustworthy in the key
+    /// column. Everywhere else, `a` is an article, `A` opens a sentence, and
+    /// `Left`/`Right` name mouse buttons — all of them bound keys, none of
+    /// them key mentions. A writable text view is the strongest case: it
+    /// prints every one of those keys in its own tables, so the earlier rule
+    /// of "mark what the tables printed" would still colour all of them.
+    #[test]
+    fn prose_never_wears_a_key_colour_the_tables_alone_earned() {
+        let rendered = render_document(
+            HelpTopic::Text,
+            GrammarKind::Runyte,
+            BindingScope::Global,
+            default_keymap(),
+            false,
+        );
+        let text = rendered.text();
+        let scope_at = |needle: &str| {
+            let byte = text
+                .find(needle)
+                .unwrap_or_else(|| panic!("missing {needle:?}"));
+            let offset = text[..byte].chars().count();
+            rendered
+                .spans()
+                .iter()
+                .find(|span| span.from <= offset && span.to > offset)
+                .map(|span| span.scope.name())
+        };
+
+        assert_eq!(scope_at("a selection-first modal editor"), None);
+        assert_eq!(scope_at("a cursor on every match"), None);
+        assert_eq!(scope_at("A reviewed terminal accepts"), None);
+        assert_eq!(scope_at("Left click focuses"), None);
+        assert_eq!(scope_at("Right-clicking any current selection"), None);
+
+        // The same letters keep the key colour where they are keys: in the
+        // generated key column, and in the paragraphs that name them.
+        assert_eq!(scope_at("a          "), Some("keyword"));
+        assert_eq!(scope_at("v enters SELECT mode"), Some("keyword"));
+        assert_eq!(scope_at("n and N then select"), Some("keyword"));
+        assert_eq!(scope_at("N then select"), Some("keyword"));
+        assert_eq!(scope_at("Space b d compares"), Some("keyword"));
+        assert_eq!(scope_at("Space r reloads"), Some("keyword"));
+    }
+
+    /// A prefix row's ellipsis says the key opens onto more keys; it is not
+    /// something anyone presses, so the key colour stops at the key.
+    #[test]
+    fn a_prefix_rows_ellipsis_stays_outside_its_key() {
+        let rendered = render_document(
+            HelpTopic::Text,
+            GrammarKind::Runyte,
+            BindingScope::Global,
+            default_keymap(),
+            true,
+        );
+        let text = rendered.text();
+        let byte = text.find("Z …").expect("the Z prefix row");
+        let offset = text[..byte].chars().count();
+        let scope_at = |offset: usize| {
+            rendered
+                .spans()
+                .iter()
+                .find(|span| span.from <= offset && span.to > offset)
+                .map(|span| span.scope.name())
+        };
+
+        assert_eq!(scope_at(offset), Some("keyword"));
+        assert_eq!(scope_at(offset + 2), None);
     }
 
     #[test]
