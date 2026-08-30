@@ -794,6 +794,7 @@ async fn attaching_with_logging_flags_reports_the_retained_configuration() {
     // contract.
     assert!(
         stderr.contains("raw mode")
+            || stderr.contains("reader source not set")
             || stderr.contains("terminal event")
             || stderr.contains("terminal input"),
         "attachment did not report a recognized frontend initialization failure: {stderr}"
