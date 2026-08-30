@@ -421,7 +421,7 @@ impl Color {
     /// extreme, so a nearly-black and a nearly-white background move by about
     /// the same number of levels instead of one of them barely moving at all.
     /// `Reset` has no channels to move and is returned unchanged.
-    fn stepped_off(self, appearance: ThemeAppearance, step: f64) -> Self {
+    pub(crate) fn stepped_off(self, appearance: ThemeAppearance, step: f64) -> Self {
         let Some((red, green, blue)) = self.channels() else {
             return self;
         };

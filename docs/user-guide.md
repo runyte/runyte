@@ -3043,10 +3043,12 @@ the outer terminal when drawing. A terminal advertising true colour through
 `COLORTERM` or `TERM` receives the exact palette; one advertising 256 colours
 receives the nearest stable xterm cube or grayscale entry; a more limited
 terminal receives the nearest basic ANSI colour. The same adaptation applies
-to colours drawn by programs inside integrated terminal panes. Persistent
-session hosts retain the exact theme and each attached client adapts it to its
-own terminal, so attaching from a lower-colour terminal does not alter the
-workspace theme.
+to colours drawn by programs inside integrated terminal panes. When nearby
+pane and overlay grounds would collapse onto the same 256-colour entry, Runyte
+nudges the derived surfaces in the theme's existing direction so those layers
+remain distinct. Persistent session hosts retain the exact theme and each
+attached client adapts it to its own terminal, so attaching from a lower-colour
+terminal does not alter the workspace theme.
 See [config.example.yaml](../config.example.yaml) for a complete starting point.
 
 ## Project layout

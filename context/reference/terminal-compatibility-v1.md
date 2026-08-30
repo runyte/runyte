@@ -62,6 +62,10 @@ colour otherwise. The first sixteen indexed entries are not RGB quantization
 targets because a terminal profile may redefine them; explicitly named ANSI
 theme colours retain their semantic terminal names, except that an eight-colour
 terminal maps the bright `White` and `DarkGray` roles to `Gray` and `Black`.
+If nearest-colour conversion would collapse the active-pane, inactive-pane,
+and overlay grounds onto one indexed entry, the later surface is advanced in
+the theme's existing light or dark direction until the three roles remain
+distinct.
 
 The adaptation is client-owned. A persistent session host keeps exact RGB in
 its semantic snapshots and local protocol frames, so clients attached through

@@ -4,7 +4,7 @@ use std::ops::Deref;
 
 use crate::{
     app::{App, CompletionSource, FrameGeometry, MaximizedView, Mode, PromptKind},
-    config::{Color as RunyteColor, Theme},
+    config::{Color as RunyteColor, Theme, ThemeAppearance},
     diff::Change,
     git::{CountKind, DiffLine, LineChange},
     input::KeyCode,
@@ -89,11 +89,24 @@ impl TuiTheme {
 
     fn with_color_depth(theme: &Theme, color_depth: TerminalColorDepth) -> Self {
         let color = |value| to_tui_color_for(value, color_depth);
+        let background = color(theme.background);
+        let inactive_background = distinct_surface_color(
+            theme.inactive_background(),
+            color_depth,
+            theme.appearance(),
+            &[background],
+        );
+        let overlay_background = distinct_surface_color(
+            theme.overlay_background(),
+            color_depth,
+            theme.appearance(),
+            &[background, inactive_background],
+        );
         Self {
             color_depth,
-            background: color(theme.background),
-            inactive_background: color(theme.inactive_background()),
-            overlay_background: color(theme.overlay_background()),
+            background,
+            inactive_background,
+            overlay_background,
             foreground: color(theme.foreground),
             muted: color(theme.muted),
             whitespace: color(theme.whitespace),
@@ -154,6 +167,31 @@ impl TuiTheme {
     fn mode_status_style(&self, mode: Mode) -> Style {
         Style::default().fg(self.background).bg(self.cursor(mode))
     }
+}
+
+/// Keeps Runyte's three semantic grounds distinct after indexed conversion.
+///
+/// Two nearby RGB surfaces can share their nearest xterm entry even though
+/// their exact colours are visibly ordered. Only a collision is moved, and it
+/// continues in the theme's existing direction away from the active pane.
+fn distinct_surface_color(
+    mut source: RunyteColor,
+    color_depth: TerminalColorDepth,
+    appearance: Option<ThemeAppearance>,
+    occupied: &[ratatui::style::Color],
+) -> ratatui::style::Color {
+    let mut converted = to_tui_color_for(source, color_depth);
+    let Some(appearance) = appearance.filter(|_| color_depth == TerminalColorDepth::Indexed) else {
+        return converted;
+    };
+    for _ in 0..8 {
+        if !occupied.contains(&converted) {
+            return converted;
+        }
+        source = source.stepped_off(appearance, 0.04);
+        converted = to_tui_color_for(source, color_depth);
+    }
+    converted
 }
 
 /// Colour range the outer terminal says it can display.
@@ -4526,14 +4564,26 @@ mod tests {
     }
 
     #[test]
-    fn indexed_theme_conversion_keeps_the_default_dark_surfaces_distinct() {
+    fn indexed_theme_conversion_keeps_bundled_surfaces_distinct() {
         use ratatui::style::Color as TuiColor;
 
-        let source = Config::default().resolve_theme("default-dark").unwrap();
+        let config = Config::default();
+        for name in config.theme_names() {
+            let source = config.resolve_theme(name).unwrap();
+            let theme = TuiTheme::with_color_depth(&source, TerminalColorDepth::Indexed);
+            assert_ne!(theme.background, theme.inactive_background, "{name}");
+            assert_ne!(theme.background, theme.overlay_background, "{name}");
+            assert_ne!(
+                theme.inactive_background, theme.overlay_background,
+                "{name}"
+            );
+        }
+
+        let source = config.resolve_theme("default-dark").unwrap();
         let theme = TuiTheme::with_color_depth(&source, TerminalColorDepth::Indexed);
-        assert_eq!(theme.background, TuiColor::Indexed(234));
-        assert_eq!(theme.inactive_background, TuiColor::Indexed(235));
-        assert_eq!(theme.overlay_background, TuiColor::Indexed(236));
+        assert_eq!(theme.background, TuiColor::Indexed(235));
+        assert_eq!(theme.inactive_background, TuiColor::Indexed(236));
+        assert_eq!(theme.overlay_background, TuiColor::Indexed(237));
         assert_eq!(theme.foreground, TuiColor::Indexed(250));
     }
 
