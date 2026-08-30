@@ -5759,6 +5759,33 @@ fn stash_refresh_preserves_object_selection_and_cannot_reopen_a_closed_view() {
 }
 
 #[test]
+fn background_stash_refresh_preserves_terminal_insert_mode() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    let entry = |byte: char, selector: &str| StashEntry {
+        oid: byte.to_string().repeat(40),
+        selector: selector.to_owned(),
+        subject: format!("stash {byte}"),
+    };
+    app.open_git_stashes_result(vec![entry('a', "stash@{0}")], true);
+    app.open_terminal(Some("/bin/cat".to_owned()));
+    assert!(app.active_terminal().is_some());
+    assert_eq!(app.mode, Mode::Insert);
+
+    // An automatic snapshot may have started while the stash projection was
+    // visible, then finish after a terminal has covered that same pane. The
+    // projection still refreshes behind the terminal, but it must not take
+    // terminal input away from the child.
+    app.handle_key(KeyStroke::char('x')).unwrap();
+    app.open_git_stashes_result(
+        vec![entry('b', "stash@{0}"), entry('a', "stash@{1}")],
+        false,
+    );
+
+    assert_eq!(app.mode, Mode::Insert);
+    assert!(app.active_terminal().is_some());
+}
+
+#[test]
 fn selected_line_staging_refuses_a_dirty_live_buffer_before_submission() {
     let root = temporary("dirty-selected-line-stage");
     fs::create_dir_all(&root).unwrap();
