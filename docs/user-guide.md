@@ -956,7 +956,8 @@ The leftmost mode label in the global status line uses the current mode's
 caret colour, which each theme names for itself. Most built-in themes use blue
 for Normal, red for Insert, neon green for Replace (neon magenta when another
 mode already uses green), orange for Select, and purple for Command;
-`default-dark` and `default-light` invert Command and Replace. The rest of the
+`default-dark` and `default-light` instead use green for Normal, red for
+Insert, purple for Replace, and blue for Command. The rest of the
 row keeps the theme's ordinary background. Its left side
 then names the workspace mode and current workspace directory, marking the
 active buffer `[+]` when it has unsaved changes, `[STALE]` when its file path
@@ -2885,10 +2886,12 @@ the background to 7:1, for reading at length without the glare. Everything
 else — the background, the accents, the selections, and the diff rows — is
 Nordbones unchanged.
 `default-dark` and `default-light` are Runyte's branded pair. They share red
-accents and a red Normal (matching the accent), blue Insert, orange Select,
-purple Replace, and green Command mode vocabulary — inverted from most other
-built-in themes' purple Command and green Replace. The dark theme takes its
-surface, text, and accent from runyte.com; the light theme carries darker
+accents and a green Normal, red Insert, orange Select, purple Replace, and
+blue Command mode vocabulary — inverted from most other built-in themes'
+purple Command and green Replace. They are also the only bundled themes that
+set `command`, so the command palette lists command names in Command mode's
+blue while the accent stays on pane borders and headings. The dark theme takes
+its surface, text, and accent from runyte.com; the light theme carries darker
 forms of the same hues on a light-gray background. `dark` and `light` remain the neutral pair: no palette
 identity of their own, just a legible option for each kind of terminal. Switch
 directly with a command such as `:theme atom-one-light`, `:theme mocha`, or
@@ -2910,6 +2913,7 @@ themes:
     muted: "#65737e"
     whitespace: "#292c33"
     accent: "#88c0d0"
+    command: "#8be9fd"
     cursor_normal: "#ff5555"
     cursor_insert: "#ff79c6"
     cursor_replace: "#39ff14"
@@ -3006,8 +3010,9 @@ light grounds; it switches to neon magenta when another resolved mode colour
 is green. Command and Replace are otherwise a Runyte colour rather than an
 upstream one: most built-in themes use blue for Normal, red for Insert, neon
 green for Replace, orange for Select, and purple for Command, but each theme
-is free to choose its own — `default-dark` and `default-light` invert Command
-and Replace.
+is free to choose its own. `default-dark` and `default-light` do: green for
+Normal, red for Insert, purple for Replace, and blue for Command, the same
+blue their `command` role lists palette commands in.
 
 `selection` colours secondary ranges in a multi-selection.
 `selection_primary` colours the primary range and ordinary Select-mode ranges;
@@ -3020,6 +3025,11 @@ Zenbones variants do.
 fuzzy-grep match, while `fuzzy_match_primary` colours a direct, contiguous
 substring. They fall back to `selection` and `selection_primary` respectively,
 so existing and built-in themes use the same blue/orange grammar as `Space s`.
+
+`command` colours the command names the command palette lists. It falls back
+to `accent`, which is also what pane and overlay borders use, so a theme
+written before the two roles were separated keeps one colour for both; naming
+`command` is what lets a palette and a pane border differ.
 
 `directory` colours directory entries in explorer buffers; ordinary files
 keep the theme foreground. It falls back to `accent` when omitted.

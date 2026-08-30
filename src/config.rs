@@ -67,10 +67,13 @@ pub const DEFAULT_THEME: &str = "default-dark";
 const JUMP_LABEL_DARK_PRIMARY: &str = "#5fd7e7";
 const JUMP_LABEL_DARK_SECONDARY: &str = "#4ab7c6";
 const JUMP_LABEL_LIGHT_PRIMARY: &str = "#00616e";
-// A step darker than `#007583`: `default-light` darkened its own background
-// for its active/inactive pane split, which left the old value under the
-// 4.5:1 legibility floor against it.
-const JUMP_LABEL_LIGHT_SECONDARY: &str = "#006c79";
+// Two steps darker than `#007583`, one for each step `default-light` has
+// taken toward its inactive pane: each darkening of that ground put the
+// previous value back under the 4.5:1 legibility floor against it. Every
+// other light theme keeps a lighter ground, so a darker secondary only reads
+// better there, and it stays lighter than the primary, which is what makes
+// the two characters read as one label pointing at one place.
+const JUMP_LABEL_LIGHT_SECONDARY: &str = "#006673";
 
 // Replace is deliberately louder than a palette's ordinary added-text green:
 // entering an overwrite mode should be impossible to overlook. A light ground
@@ -277,6 +280,12 @@ pub struct ThemeDefinition {
     /// its own role.
     pub jump_text_muted: Option<String>,
     pub accent: String,
+    /// Command names offered in the command palette. An omitted value uses
+    /// `accent`, so a theme written before the roles were split keeps one
+    /// colour for the palette and for the pane and overlay borders that also
+    /// read `accent`. Naming it separates the two: a palette listing what can
+    /// be run is not a frame around a pane, and a theme is entitled to say so.
+    pub command: Option<String>,
     /// Normal-mode caret colour. An omitted value uses `accent`.
     pub cursor_normal: Option<String>,
     /// Insert-mode caret colour. An omitted value uses `error`.
@@ -465,6 +474,7 @@ pub struct Theme {
     pub whitespace: Color,
     pub jump_text_muted: Color,
     pub accent: Color,
+    pub command: Color,
     pub cursor_normal: Color,
     pub cursor_insert: Color,
     pub cursor_replace: Color,
@@ -737,6 +747,7 @@ impl Default for ThemeDefinition {
             whitespace: None,
             jump_text_muted: None,
             accent: "#7cafc2".into(),
+            command: None,
             cursor_normal: None,
             cursor_insert: None,
             cursor_replace: None,
@@ -1011,6 +1022,12 @@ impl TryFrom<&ThemeDefinition> for Theme {
                 .transpose()?
                 .unwrap_or(muted),
             accent,
+            command: value
+                .command
+                .as_deref()
+                .map(parse_color)
+                .transpose()?
+                .unwrap_or(accent),
             cursor_normal,
             cursor_insert,
             cursor_replace,
@@ -1908,25 +1925,25 @@ mod tests {
         for (name, background, foreground, accent, normal, insert, replace, select, command) in [
             (
                 "default-dark",
-                (0x1f, 0x21, 0x26),
+                (0x28, 0x2a, 0x2f),
                 (0xb9, 0xb9, 0xbe),
                 (0xc9, 0x68, 0x70),
+                (0x8d, 0xdb, 0x8c),
                 (0xc9, 0x68, 0x70),
-                (0x6c, 0xb6, 0xff),
                 (0xd2, 0xa8, 0xff),
                 (0xf0, 0xa8, 0x68),
-                (0x8d, 0xdb, 0x8c),
+                (0x6c, 0xb6, 0xff),
             ),
             (
                 "default-light",
-                (0xe3, 0xe3, 0xe5),
+                (0xda, 0xda, 0xdc),
                 (0x29, 0x2a, 0x30),
                 (0xa3, 0x3d, 0x49),
+                (0x23, 0x73, 0x3a),
                 (0xa3, 0x3d, 0x49),
-                (0x1f, 0x65, 0xa6),
                 (0x75, 0x4b, 0x97),
                 (0x9a, 0x55, 0x18),
-                (0x23, 0x73, 0x3a),
+                (0x1f, 0x65, 0xa6),
             ),
         ] {
             let theme = config.resolve_theme(name).unwrap();
@@ -1938,8 +1955,22 @@ mod tests {
             assert_eq!(theme.cursor_replace, rgb(replace));
             assert_eq!(theme.cursor_select, rgb(select));
             assert_eq!(theme.cursor_command, rgb(command));
-            assert_eq!(theme.directory, theme.cursor_normal);
+            // Command mode and the palette's command names answer the same
+            // colour; the accent stays behind for borders and headings.
+            assert_eq!(theme.command, theme.cursor_command);
+            assert_ne!(theme.command, theme.accent);
+            assert_eq!(theme.directory, theme.accent);
             assert_eq!(theme.syntax_color(heading), Some(theme.accent));
+        }
+
+        // Every other bundled theme leaves the split unmade, so the palette
+        // and the borders keep answering one accent.
+        for name in config.theme_names() {
+            if name.starts_with("default-") {
+                continue;
+            }
+            let theme = config.resolve_theme(name).unwrap();
+            assert_eq!(theme.command, theme.accent, "{name}");
         }
 
         assert_eq!(DEFAULT_THEME, "default-dark");
@@ -3071,7 +3102,7 @@ mod tests {
             } else if dark {
                 (Color::Rgb(0x5f, 0xd7, 0xe7), Color::Rgb(0x4a, 0xb7, 0xc6))
             } else {
-                (Color::Rgb(0x00, 0x61, 0x6e), Color::Rgb(0x00, 0x6c, 0x79))
+                (Color::Rgb(0x00, 0x61, 0x6e), Color::Rgb(0x00, 0x66, 0x73))
             };
             assert_eq!(
                 (theme.jump_label_primary, theme.jump_label_secondary),

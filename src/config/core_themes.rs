@@ -32,15 +32,21 @@ pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
         .insert("property".into(), base16.foreground.clone());
     themes.insert("base16".into(), base16);
     // Runyte's branded pair starts from the runyte.com workspace palette.
-    // The dark surface, text, and red accent are the site's own values, and
-    // Normal mode and directory entries stay unset so they always track that
-    // accent. Insert mode took the site's blue instead. Command mode swapped
-    // places with Replace in the mode vocabulary, and `keyword`/`attribute`
-    // (Command's syntax counterparts) swapped hues with `string` (Replace's)
-    // right along with it — a deliberate choice to give keywords the same
-    // mint green `string` used to carry, even though `syntax_theme` derives
-    // several Markdown roles from both: inline code and link URLs (from
-    // `string`) turn purple, and bold/list text (from `keyword`) turns green.
+    // The dark surface, text, and red accent are the site's own values;
+    // directory entries stay unset so they keep tracking that accent.
+    //
+    // The mode vocabulary is the pair's own rather than the one most bundled
+    // themes use: Normal is green, Insert takes the brand red, Select is
+    // orange, Replace is purple, and Command is the site's blue. Command's
+    // blue is also what the command palette lists its command names in, so
+    // the mode label and the list it belongs to say the same thing.
+    //
+    // The syntax palette keeps `keyword`/`attribute` on the mint green that
+    // `string` used to carry, and `string` on purple, which is why
+    // `syntax_theme`'s derived Markdown roles read the way they do: inline
+    // code and link URLs (from `string`) turn purple, and bold and list text
+    // (from `keyword`) turn green. That swap predates the mode retune and is
+    // independent of it — syntax scopes are not mode colours.
     let mut default_dark_syntax = syntax_theme(&[
         ("attribute", "#8ddb8c"),
         ("comment", "#8b8b90"),
@@ -63,25 +69,32 @@ pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
     themes.insert(
         "default-dark".into(),
         ThemeDefinition {
-            // One step lighter than the surface's original `#16181d`: the
-            // active pane now sits where the inactive pane used to, and the
-            // inactive pane is derived a further step lighter still.
-            background: "#1f2126".into(),
+            // Two steps lighter than the surface's original `#16181d`: the
+            // active pane sits where the inactive pane used to under the
+            // first step, and inactive and overlay grounds are derived a
+            // further step lighter still, so the three stay in order.
+            background: "#282a2f".into(),
             foreground: "#b9b9be".into(),
             muted: "#8b8b90".into(),
-            // A background this much lighter left the marker only 8-11
-            // levels off it, well short of the 17-20 the original background
-            // gave it; nudged out a little further than that original gap.
-            whitespace: Some("#35373c".into()),
+            // The marker is an explicit hex rather than a value derived from
+            // `background`, so it moves with the ground by hand: 22 levels
+            // off it, the separation the surface's first step settled on.
+            whitespace: Some("#3e4045".into()),
             jump_text_muted: None,
             accent: "#c96870".into(),
-            // Left unset so Normal mode's caret always matches the accent
-            // that also colours the active pane border.
-            cursor_normal: None,
-            cursor_insert: Some("#6cb6ff".into()),
+            // The accent stays the brand red and keeps colouring the active
+            // pane border; `command` takes the palette's command names off it
+            // so the two can differ, and does, in blue.
+            command: Some("#6cb6ff".into()),
+            // Normal is green, Insert is the brand red, and Command is the
+            // blue the palette lists commands in, so the mode label answers
+            // the same colour question the reader just asked of the palette.
+            // Normal therefore names its colour instead of tracking `accent`.
+            cursor_normal: Some("#8ddb8c".into()),
+            cursor_insert: Some("#c96870".into()),
             cursor_replace: Some("#d2a8ff".into()),
             cursor_select: Some("#f0a868".into()),
-            cursor_command: Some("#8ddb8c".into()),
+            cursor_command: Some("#6cb6ff".into()),
             directory: None,
             selection: "#30475f".into(),
             selection_primary: Some("#593d2d".into()),
@@ -126,26 +139,29 @@ pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
     themes.insert(
         "default-light".into(),
         ThemeDefinition {
-            // One step darker than the surface's original `#ececef`: the
-            // active pane now sits where the inactive pane used to, and the
-            // inactive pane is derived a further step darker still.
-            background: "#e3e3e5".into(),
+            // Two steps darker than the surface's original `#ececef`, which
+            // is the light mirror of what `default-dark` does: the active
+            // pane moves toward the inactive one rather than away from it, so
+            // the pair separates its panes by the same amount either way.
+            background: "#dadadc".into(),
             foreground: "#292a30".into(),
             muted: "#656872".into(),
-            // A background this much darker left the marker only 18-22
-            // levels off it, well short of the 28-31 the original background
-            // gave it; nudged out a little further than that original gap,
-            // just inside the 31-level "near background" ceiling.
-            whitespace: Some("#c5c5c7".into()),
+            // The marker is an explicit hex rather than a value derived from
+            // `background`, so it moves with the ground by hand: 30 levels
+            // off it, just inside the 31-level "near background" ceiling
+            // `every_theme_has_a_near_background_whitespace_color` enforces.
+            whitespace: Some("#bcbcbe".into()),
             jump_text_muted: Some("#878a92".into()),
             accent: "#a33d49".into(),
-            // Left unset so Normal mode's caret always matches the accent
-            // that also colours the active pane border.
-            cursor_normal: None,
-            cursor_insert: Some("#1f65a6".into()),
+            // See `default-dark`: the accent keeps the pane border, and the
+            // palette's command names are named separately so they can be
+            // blue without taking the border with them.
+            command: Some("#1f65a6".into()),
+            cursor_normal: Some("#23733a".into()),
+            cursor_insert: Some("#a33d49".into()),
             cursor_replace: Some("#754b97".into()),
             cursor_select: Some("#9a5518".into()),
-            cursor_command: Some("#23733a".into()),
+            cursor_command: Some("#1f65a6".into()),
             directory: None,
             selection: "#bfd6ea".into(),
             selection_primary: Some("#e9cdb2".into()),
@@ -180,6 +196,9 @@ pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
             whitespace: None,
             jump_text_muted: None,
             accent: "#6cb6ff".into(),
+            // Unset: this palette keeps one accent for its borders and its
+            // command names alike.
+            command: None,
             cursor_normal: None,
             cursor_insert: Some("#f87171".into()),
             cursor_replace: None,
@@ -233,6 +252,9 @@ pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
             whitespace: None,
             jump_text_muted: Some("#a8adb2".into()),
             accent: "#0550ae".into(),
+            // Unset: this palette keeps one accent for its borders and its
+            // command names alike.
+            command: None,
             cursor_normal: Some("#0550ae".into()),
             cursor_insert: Some("#cf222e".into()),
             cursor_replace: None,
@@ -286,6 +308,9 @@ pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
             whitespace: None,
             jump_text_muted: Some("#aaaaaa".into()),
             accent: "#005faf".into(),
+            // Unset: this palette keeps one accent for its borders and its
+            // command names alike.
+            command: None,
             cursor_normal: Some("#005faf".into()),
             cursor_insert: Some("#af0000".into()),
             cursor_replace: None,
@@ -339,6 +364,9 @@ pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
             whitespace: None,
             jump_text_muted: None,
             accent: "#fabd2f".into(),
+            // Unset: this palette keeps one accent for its borders and its
+            // command names alike.
+            command: None,
             cursor_normal: None,
             cursor_insert: Some("#fb4934".into()),
             cursor_replace: None,

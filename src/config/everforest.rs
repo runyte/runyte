@@ -100,6 +100,9 @@ fn everforest_theme(
         whitespace: None,
         jump_text_muted: background.dimmed_text.map(Into::into),
         accent: foreground.green.into(),
+        // Unset: this palette keeps one accent for its borders and its
+        // command names alike.
+        command: None,
         cursor_normal: Some(foreground.blue.into()),
         cursor_insert: Some(foreground.red.into()),
         cursor_replace: None,

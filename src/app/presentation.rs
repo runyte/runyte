@@ -1358,15 +1358,22 @@ impl App {
                                 let command_start = category.chars().count() + 3;
                                 let available = matched.availability.is_available();
                                 let aliases = matched.other_names().join(", ");
-                                let availability = matched.availability.reason().map_or_else(
-                                    || "available".to_owned(),
-                                    |reason| format!("unavailable: {reason}"),
-                                );
+                                // Only a row that cannot run says anything
+                                // about availability. A row that can run is
+                                // the ordinary case, and labelling it
+                                // "available" said nothing the rest of the
+                                // row did not already say.
+                                let availability = matched
+                                    .availability
+                                    .reason()
+                                    .map_or_else(String::new, |reason| {
+                                        format!(" · unavailable: {reason}")
+                                    });
                                 let mut row = row(
                                     matched.spec.name,
                                     label,
                                     format!(
-                                        "{} · aliases: {} · {availability}",
+                                        "{} · aliases: {}{availability}",
                                         matched.spec.description,
                                         if aliases.is_empty() { "-" } else { &aliases }
                                     ),

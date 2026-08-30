@@ -16,6 +16,9 @@ fn github_light_theme() -> ThemeDefinition {
         whitespace: None,
         jump_text_muted: Some("#afb8c1".into()),
         accent: "#0969da".into(),
+        // Unset: this palette keeps one accent for its borders and its
+        // command names alike.
+        command: None,
         cursor_normal: Some("#0969da".into()),
         cursor_insert: Some("#d1242f".into()),
         cursor_replace: None,
@@ -107,6 +110,9 @@ fn atom_one_light_theme() -> ThemeDefinition {
         whitespace: None,
         jump_text_muted: Some("#b8b9bd".into()),
         accent: "#4078f2".into(),
+        // Unset: this palette keeps one accent for its borders and its
+        // command names alike.
+        command: None,
         cursor_normal: Some("#526fff".into()),
         cursor_insert: Some("#e45649".into()),
         cursor_replace: None,

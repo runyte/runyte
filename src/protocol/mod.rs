@@ -138,7 +138,10 @@ use crate::workspace::{
 /// cannot silently clip the session manager's last-active value.
 /// Version 42 carries non-selectable picker column labels so an older attached
 /// client cannot silently omit the session manager's headings.
-pub const VERSION: u32 = 42;
+/// Version 43 splits the palette's command colour out of `accent` and carries
+/// it as its own required theme value; an older peer has no field for it and
+/// cannot deserialize the resolved theme at all.
+pub const VERSION: u32 = 43;
 pub const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const MAX_PATHS: usize = 32;
 pub const MAX_PATH_BYTES: usize = 32 * 1024;
@@ -908,7 +911,7 @@ mod tests {
 
     #[test]
     fn protocol_version_and_request_bounds_are_explicit() {
-        assert_eq!(VERSION, 42);
+        assert_eq!(VERSION, 43);
         let oversized_command = ClientRequest::Invoke {
             command: CommandRequest {
                 name: "open".to_owned(),
