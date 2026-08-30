@@ -49,3 +49,20 @@ Deliberate limits:
 - Integrated sessions survive only their workspace-host process. They do not
   survive a force stop, host crash/replacement, logout, reboot, or machine
   failure.
+
+## Outer terminal colour depth
+
+The terminal displaying Runyte is a separate compatibility boundary from an
+integrated terminal session. The bundled frontend classifies its colour range
+once through Crossterm's conservative `COLORTERM`/`TERM` detection. Exact RGB
+is emitted only for an advertised true-colour terminal. RGB theme roles and
+integrated-terminal cells are mapped to the stable xterm 256-colour cube and
+grayscale ramp when 256 colours are advertised, and to the nearest basic ANSI
+colour otherwise. The first sixteen indexed entries are not RGB quantization
+targets because a terminal profile may redefine them; explicitly named ANSI
+theme colours retain their semantic terminal names.
+
+The adaptation is client-owned. A persistent session host keeps exact RGB in
+its semantic snapshots and local protocol frames, so clients attached through
+different terminals render the same workspace at their own supported depth.
+Detection performs no terminal query and adds no first-frame round trip.
