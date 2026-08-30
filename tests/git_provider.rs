@@ -39,7 +39,7 @@ impl TempRepository {
         ));
         fs::create_dir_all(&root).unwrap();
         let repository = Self(root.canonicalize().unwrap());
-        repository.git(&["init", "-q", "--initial-branch=master"]);
+        initialize_repository(repository.path(), false);
         repository.git(&["config", "user.name", "Runyte Test"]);
         repository.git(&["config", "user.email", "runyte@example.invalid"]);
         repository
@@ -130,12 +130,8 @@ impl TempClone {
         let peer = base.join("peer");
         let work = base.join("work");
 
-        run(
-            &base,
-            &["init", "-q", "--bare", "--initial-branch=main"],
-            &origin,
-        );
-        run(&base, &["init", "-q", "--initial-branch=main"], &peer);
+        initialize_repository(&origin, true);
+        initialize_repository(&peer, false);
         let clone = Self { origin, peer, work };
         clone.in_peer(&["config", "user.name", "Runyte Test"]);
         clone.in_peer(&["config", "user.email", "runyte@example.invalid"]);
@@ -296,6 +292,22 @@ fn run(directory: &Path, arguments: &[&str], target: &Path) {
         target.display(),
         String::from_utf8_lossy(&output.stderr)
     );
+}
+
+/// Initializes a fixture repository without requiring Git 2.28's
+/// `--initial-branch`, then selects the branch name independently of user
+/// configuration. The conflicting command-local default makes that boundary
+/// part of every fixture setup instead of relying on the machine's config.
+fn initialize_repository(target: &Path, bare: bool) {
+    let parent = target
+        .parent()
+        .expect("a fixture repository has a parent directory");
+    let mut arguments = vec!["-c", "init.defaultBranch=fixture-default", "init", "-q"];
+    if bare {
+        arguments.push("--bare");
+    }
+    run(parent, &arguments, target);
+    run_in(target, &["symbolic-ref", "HEAD", "refs/heads/main"]);
 }
 
 fn provider() -> GitCliProvider {
@@ -1966,7 +1978,6 @@ fn creating_a_branch_starts_it_where_asked_and_switches_to_it() {
     assert_eq!(base, "feature");
     provider
         .checkout_branch(&repository.repository(), "main")
-        .or_else(|_| provider.checkout_branch(&repository.repository(), "master"))
         .unwrap();
 
     provider
@@ -2950,7 +2961,7 @@ fn log_preserves_both_parents_of_a_merge_commit() {
     repository.git(&["checkout", "-q", "-b", "side"]);
     repository.write("side.txt", "side\n");
     repository.commit("side");
-    repository.git(&["checkout", "-q", "master"]);
+    repository.git(&["checkout", "-q", "main"]);
     repository.write("main.txt", "main\n");
     repository.commit("main");
     repository.git(&["merge", "--quiet", "--no-ff", "-m", "merge", "side"]);
@@ -3615,7 +3626,7 @@ fn no_newline_addition_is_exact_and_deletion_conflict_and_binary_are_refused() {
     repository.git(&["checkout", "-q", "-b", "side"]);
     repository.write("source.txt", "side\n");
     repository.commit("side");
-    repository.git(&["checkout", "-q", "master"]);
+    repository.git(&["checkout", "-q", "main"]);
     repository.write("source.txt", "main\n");
     repository.commit("main");
     let output = Command::new("git")

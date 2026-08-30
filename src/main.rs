@@ -65,9 +65,10 @@ const SHUTDOWN_FLUSH_BUDGET: Duration = Duration::from_secs(3);
 use runyte::protocol::{MAX_POINTER_REPETITIONS, WaitStatus, WaitToken, validate_welcome};
 #[cfg(unix)]
 use runyte::workspace::lifecycle::{
-    HostStartup, connect_control, force_restart_host, force_shutdown_host, resolve_registered_host,
-    resolve_registered_host_from_directory, resolve_workspace_endpoint, restart_host,
-    shutdown_host, start_detached_host, terminate_incompatible_host,
+    HostStartup, UnavailableStartupExecutable, connect_control, force_restart_host,
+    force_shutdown_host, resolve_registered_host, resolve_registered_host_from_directory,
+    resolve_workspace_endpoint, restart_host, shutdown_host, start_detached_host,
+    terminate_incompatible_host,
 };
 #[cfg(unix)]
 use runyte::workspace::transport::{
@@ -1231,7 +1232,7 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
     terminal.draw(|frame| {
         let geometry = ui::frame_geometry(frame.area());
         let snapshot = app.prepare_frame_with_hints(geometry, Some(&key_hints));
-        ui::render_with_color_depth(frame, app.app(), &snapshot.editor, &key_hints, color_depth);
+        ui::render(frame, app.app(), &snapshot.editor, &key_hints, color_depth);
     })?;
     startup.mark(StartupPhase::FirstFramePresented);
     if let Err(error) = startup.write_requested() {
@@ -1250,7 +1251,7 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
     terminal.draw(|frame| {
         let geometry = ui::frame_geometry(frame.area());
         let snapshot = app.prepare_frame_with_hints(geometry, Some(&key_hints));
-        ui::render_with_color_depth(frame, app.app(), &snapshot.editor, &key_hints, color_depth);
+        ui::render(frame, app.app(), &snapshot.editor, &key_hints, color_depth);
     })?;
     let mut terminal_events = EventStream::new();
     let mut git_refresh_tick = tokio::time::interval(Duration::from_millis(250));
@@ -1295,7 +1296,7 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
                                     geometry,
                                     Some(&key_hints),
                                 );
-                                ui::render_with_color_depth(
+                                ui::render(
                                     frame,
                                     app.app(),
                                     &snapshot.editor,
@@ -1450,13 +1451,7 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
         terminal.draw(|frame| {
             let geometry = ui::frame_geometry(frame.area());
             let snapshot = app.prepare_frame_with_hints(geometry, Some(&key_hints));
-            ui::render_with_color_depth(
-                frame,
-                app.app(),
-                &snapshot.editor,
-                &key_hints,
-                color_depth,
-            );
+            ui::render(frame, app.app(), &snapshot.editor, &key_hints, color_depth);
         })?;
     }
     let quit_directory = app.quit_directory().map(Path::to_path_buf);
@@ -2820,23 +2815,15 @@ async fn run_workspace_switcher(
                 selector,
                 working_directory,
             } => {
-                match prepare_switch_target(
+                let prepared = prepare_switch_target(
                     &selector,
                     &working_directory,
                     &current,
                     config,
                     config_path,
                 )
-                .await
-                {
-                    Ok(Some(next)) => {
-                        previous = Some(std::mem::replace(&mut current, next));
-                    }
-                    // Already attached here; the editor asked for the workspace
-                    // it is in, so there is nothing to move to.
-                    Ok(None) => {}
-                    Err(error) => notice = Some(format!("{error:#}")),
-                }
+                .await;
+                apply_prepared_switch(prepared, &mut current, &mut previous, &mut notice);
             }
             AttachOutcome::Refused(message) => match previous.take() {
                 // A destination we reached for is busy. Go back where we were
@@ -2850,6 +2837,24 @@ async fn run_workspace_switcher(
                 None => anyhow::bail!(message),
             },
         }
+    }
+}
+
+#[cfg(unix)]
+fn apply_prepared_switch(
+    prepared: Result<Option<LocalEndpoint>>,
+    current: &mut LocalEndpoint,
+    previous: &mut Option<LocalEndpoint>,
+    notice: &mut Option<String>,
+) {
+    match prepared {
+        Ok(Some(next)) => {
+            *previous = Some(std::mem::replace(current, next));
+        }
+        // Already attached here; the editor asked for the workspace it is in,
+        // so there is nothing to move to.
+        Ok(None) => {}
+        Err(error) => *notice = Some(format!("{error:#}")),
     }
 }
 
@@ -2930,9 +2935,25 @@ async fn prepare_switch_target(
         if error.downcast_ref::<IncompatibleHost>().is_some() {
             return Err(error);
         }
-        start_detached_host(&endpoint, startup).await?;
+        start_workspace_switch_host(&endpoint, startup).await?;
     }
     Ok(Some(endpoint))
+}
+
+#[cfg(unix)]
+async fn start_workspace_switch_host(endpoint: &LocalEndpoint, startup: HostStartup) -> Result<()> {
+    match start_detached_host(endpoint, startup).await {
+        Err(error)
+            if error
+                .downcast_ref::<UnavailableStartupExecutable>()
+                .is_some() =>
+        {
+            Err(error).context(
+                "detach with :detach and launch Runyte again, then retry the workspace switch",
+            )
+        }
+        outcome => outcome,
+    }
 }
 
 /// Attaches a terminal for the lifetime of one `--wait` request.
@@ -3219,18 +3240,13 @@ async fn run_attached(
                     current_frame = (*frame)
                         .try_into()
                         .map_err(|error: String| anyhow::anyhow!(error))?;
-                    terminal.draw(|frame| {
-                        ui::render_host_frame_with_color_depth(frame, &current_frame, color_depth)
-                    })?;
+                    terminal
+                        .draw(|frame| ui::render_host_frame(frame, &current_frame, color_depth))?;
                 }
                 Some(HostResponse::TerminalDamage { damage }) => {
                     if apply_terminal_damage(&mut current_frame, &damage)? {
                         terminal.draw(|frame| {
-                            ui::render_host_frame_with_color_depth(
-                                frame,
-                                &current_frame,
-                                color_depth,
-                            )
+                            ui::render_host_frame(frame, &current_frame, color_depth)
                         })?;
                     } else {
                         client.send(&ClientRequest::Resynchronize).await?;
@@ -3261,8 +3277,7 @@ async fn run_attached(
             }
         }
     }
-    terminal
-        .draw(|frame| ui::render_host_frame_with_color_depth(frame, &current_frame, color_depth))?;
+    terminal.draw(|frame| ui::render_host_frame(frame, &current_frame, color_depth))?;
     let mut key_repeat_detector = KeyRepeatDetector::default();
     let mut pointer_batcher = PointerBatcher::default();
     let mut pointer_tick = tokio::time::interval(Duration::from_millis(8));
@@ -3353,7 +3368,7 @@ async fn run_attached(
                             .try_into()
                             .map_err(|error: String| anyhow::anyhow!(error))?;
                         terminal.draw(|frame| {
-                            ui::render_host_frame_with_color_depth(
+                            ui::render_host_frame(
                                 frame,
                                 &current_frame,
                                 color_depth,
@@ -3363,7 +3378,7 @@ async fn run_attached(
                     Some(HostResponse::TerminalDamage { damage }) => {
                         if apply_terminal_damage(&mut current_frame, &damage)? {
                             terminal.draw(|frame| {
-                                ui::render_host_frame_with_color_depth(
+                                ui::render_host_frame(
                                     frame,
                                     &current_frame,
                                     color_depth,
@@ -3937,8 +3952,7 @@ async fn wait_at_test_status_barrier(barrier: &mut Option<PathBuf>) -> Result<()
     let Some(path) = barrier.take() else {
         return Ok(());
     };
-    let ready = path.with_extension("ready");
-    let release = path.with_extension("release");
+    let (ready, release) = runyte::test_support::wait_status_barrier_paths(path);
     fs::write(&ready, []).with_context(|| {
         format!(
             "cannot publish wait-status test barrier {}",
@@ -4747,8 +4761,9 @@ mod tests {
     #[cfg(unix)]
     use super::{
         AttachedClient, AttachedWorkspaceActivity, HostResponse, PointerBatcher, WaitStatus,
-        WaitToken, atomic_write_cwd_file_with, dispatch_host_key_or_text,
-        recover_switched_attachment, send_active_response, workspace_response_publishes_frame,
+        WaitToken, apply_prepared_switch, atomic_write_cwd_file_with, dispatch_host_key_or_text,
+        recover_switched_attachment, send_active_response, start_workspace_switch_host,
+        workspace_response_publishes_frame,
     };
     use super::{
         KeyRepeatDetector, initialize_attached_directory, is_passive_pointer, is_redraw_only_event,
@@ -4763,6 +4778,7 @@ mod tests {
         input::{InputEvent, KeyCode, KeyStroke, Modifiers, PointerEvent, PointerEventKind},
         key_hints::KeyHintState,
         selection::Selection,
+        test_support::TestRuntimeRoot,
         text::Transaction,
         tui::input::convert_event,
         workspace::WorkspaceHost,
@@ -4891,15 +4907,7 @@ mod tests {
     fn failed_switched_attachment_restores_its_source() {
         use runyte::workspace::transport::LocalEndpoint;
 
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        // Keep the fixture below Darwin's short Unix-domain socket path limit.
-        // The macOS temporary directory under /var/folders is too long once
-        // `.runyte/host/workspace.sock` is appended.
-        let root = Path::new("/tmp").join(format!("ryt-s-{}-{nanos}", std::process::id()));
-        let runtime = root.join("runtime");
+        let root = TestRuntimeRoot::new("switch").unwrap();
         let source_root = root.join("source");
         let destination_root = root.join("destination");
         fs::create_dir_all(&source_root).unwrap();
@@ -4907,13 +4915,13 @@ mod tests {
         let source = LocalEndpoint::discover_with_runtime(
             &source_root.join(".runyte"),
             &source_root,
-            Some(&runtime),
+            Some(root.path()),
         )
         .unwrap();
         let mut current = LocalEndpoint::discover_with_runtime(
             &destination_root.join(".runyte"),
             &destination_root,
-            Some(&runtime),
+            Some(root.path()),
         )
         .unwrap();
         let mut previous = Some(source);
@@ -4932,7 +4940,43 @@ mod tests {
         assert!(previous.is_none());
         assert_eq!(notice.as_deref(), Some("destination handshake failed"));
 
-        fs::remove_dir_all(root).unwrap();
+        drop(root);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn replaced_executable_switch_failure_explains_how_to_recover() {
+        use runyte::workspace::lifecycle::HostStartup;
+        use runyte::workspace::transport::LocalEndpoint;
+
+        let root = TestRuntimeRoot::new("switchxe").unwrap();
+        let source_root = root.join("source");
+        let destination_root = root.join("destination");
+        fs::create_dir_all(&source_root).unwrap();
+        fs::create_dir_all(&destination_root).unwrap();
+        let source = LocalEndpoint::new(&source_root.join(".runyte"), &source_root).unwrap();
+        let destination =
+            LocalEndpoint::new(&destination_root.join(".runyte"), &destination_root).unwrap();
+        let missing = root.join("replaced-runyte");
+
+        let error =
+            start_workspace_switch_host(&destination, HostStartup::new(&missing, "destination"))
+                .await
+                .unwrap_err();
+        let message = format!("{error:#}");
+        assert!(message.contains("detach with :detach"), "{message}");
+        assert!(message.contains("launch Runyte again"), "{message}");
+        assert!(message.contains("rebuilt, moved, or upgraded"), "{message}");
+
+        let mut current = source;
+        let mut previous = None;
+        let mut notice = None;
+        apply_prepared_switch(Err(error), &mut current, &mut previous, &mut notice);
+        assert_eq!(current.project_root(), source_root);
+        assert!(previous.is_none());
+        assert_eq!(notice.as_deref(), Some(message.as_str()));
+
+        drop(root);
     }
 
     #[cfg(unix)]

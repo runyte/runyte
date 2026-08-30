@@ -42,7 +42,7 @@ fn screen(app: &mut App, width: u16, height: u16) -> Vec<String> {
         .draw(|frame| {
             let prepared = app.prepare_view(ui::frame_geometry(frame.area()));
             let snapshot = app.snapshot(&prepared);
-            ui::render(frame, app, &snapshot, &KeyHintState::default());
+            ui::render_exact_colors_for_test(frame, app, &snapshot, &KeyHintState::default());
         })
         .unwrap();
     let buffer = terminal.backend().buffer();

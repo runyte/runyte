@@ -151,7 +151,7 @@ fn render(app: &mut App, width: u16, height: u16) -> String {
         .draw(|frame| {
             let prepared = app.prepare_view(ui::frame_geometry(frame.area()));
             let snapshot = app.snapshot(&prepared);
-            ui::render(frame, app, &snapshot, &hints);
+            ui::render_exact_colors_for_test(frame, app, &snapshot, &hints);
         })
         .unwrap();
     let buffer = terminal.backend().buffer().clone();

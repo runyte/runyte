@@ -25,7 +25,7 @@ fn render_buffer(width: u16, height: u16, app: &mut App, hints: &KeyHintState) -
         .draw(|frame| {
             let prepared = app.prepare_view(ui::frame_geometry(frame.area()));
             let snapshot = app.snapshot(&prepared);
-            ui::render(frame, app, &snapshot, hints);
+            ui::render_exact_colors_for_test(frame, app, &snapshot, hints);
         })
         .unwrap();
     terminal.backend().buffer().clone()

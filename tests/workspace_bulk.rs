@@ -8,12 +8,11 @@ use std::{
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
     process::{Child, Command, Output, Stdio},
-    sync::atomic::{AtomicU64, Ordering},
     thread,
     time::{Duration, Instant},
 };
 
-use runyte::workspace::transport::LocalEndpoint;
+use runyte::{test_support::TestRuntimeRoot, workspace::transport::LocalEndpoint};
 
 const EVENTUALLY_TIMEOUT: Duration = Duration::from_secs(10);
 const EVENTUALLY_INTERVAL: Duration = Duration::from_millis(25);
@@ -29,17 +28,8 @@ impl Drop for ChildGuard {
     }
 }
 
-fn sandbox() -> PathBuf {
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-    loop {
-        let sequence = NEXT.fetch_add(1, Ordering::Relaxed);
-        let root = Path::new("/tmp").join(format!("rwb-{}-{sequence}", std::process::id()));
-        match fs::create_dir(&root) {
-            Ok(()) => return root,
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
-            Err(error) => panic!("cannot create workspace test sandbox: {error}"),
-        }
-    }
+fn sandbox() -> TestRuntimeRoot {
+    TestRuntimeRoot::new("bulk").unwrap()
 }
 
 fn inventory_registrations(root: &Path) -> Vec<PathBuf> {
@@ -238,7 +228,7 @@ fn detached_host_exits_and_unpublishes_when_its_test_runner_is_killed() {
                 "detached_host_supervision_helper",
                 "--nocapture",
             ])
-            .env("RUNYTE_SUPERVISION_HELPER_ROOT", &root)
+            .env("RUNYTE_SUPERVISION_HELPER_ROOT", root.as_os_str())
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
@@ -267,7 +257,6 @@ fn detached_host_exits_and_unpublishes_when_its_test_runner_is_killed() {
                 .read_to_string(&mut stderr)
                 .unwrap();
             if stderr.contains("Operation not permitted") {
-                fs::remove_dir_all(root).unwrap();
                 return;
             }
             panic!("supervision helper exited before starting its host: {stderr}");
@@ -294,7 +283,6 @@ fn detached_host_exits_and_unpublishes_when_its_test_runner_is_killed() {
         }
         if stderr.contains("Operation not permitted") {
             let _ = helper.0.take().unwrap().wait();
-            fs::remove_dir_all(root).unwrap();
             return;
         }
         panic!("supervised host did not publish its endpoint: {status:?}: {stderr}");
@@ -362,7 +350,6 @@ fn detached_host_exits_and_unpublishes_when_its_test_runner_is_killed() {
                 !endpoint_directory.exists(),
                 "retired test host left its private endpoint directory"
             );
-            fs::remove_dir_all(root).unwrap();
             return;
         }
         let remaining = deadline.saturating_duration_since(Instant::now());
@@ -402,7 +389,6 @@ fn child_guard_reaps_a_test_host_during_panic_unwinding() {
     let display = project.canonicalize().unwrap().display().to_string();
     let Some(_) = wait_for_listing(&root, &runtime, &cache, &[&display, "running"]) else {
         if socket_creation_is_unavailable(&mut host) {
-            fs::remove_dir_all(root).unwrap();
             return;
         }
         panic!("workspace host did not become running");
@@ -427,7 +413,6 @@ fn child_guard_reaps_a_test_host_during_panic_unwinding() {
     );
     assert!(listing.status.success());
     assert!(!inventory_registration.exists());
-    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
@@ -448,7 +433,6 @@ fn stop_all_then_clean_manages_the_complete_workspace_inventory() {
     if socket_creation_is_unavailable(&mut first_host)
         || socket_creation_is_unavailable(&mut second_host)
     {
-        fs::remove_dir_all(root).unwrap();
         return;
     }
     let first_display = first.canonicalize().unwrap().display().to_string();
@@ -463,7 +447,6 @@ fn stop_all_then_clean_manages_the_complete_workspace_inventory() {
         if socket_creation_is_unavailable(&mut first_host)
             || socket_creation_is_unavailable(&mut second_host)
         {
-            fs::remove_dir_all(root).unwrap();
             return;
         }
         panic!("workspace hosts did not become running");
@@ -509,8 +492,6 @@ fn stop_all_then_clean_manages_the_complete_workspace_inventory() {
     let listing = String::from_utf8(listing.stdout).unwrap();
     assert!(!listing.contains(&first_display), "{listing}");
     assert!(!listing.contains(&second_display), "{listing}");
-
-    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
@@ -543,7 +524,6 @@ fn include_hidden_lists_and_stops_hosts_outside_the_current_environment() {
         if socket_creation_is_unavailable(&mut first_host)
             || socket_creation_is_unavailable(&mut second_host)
         {
-            fs::remove_dir_all(root).unwrap();
             return;
         }
         panic!("workspace hosts did not become running");
@@ -557,7 +537,6 @@ fn include_hidden_lists_and_stops_hosts_outside_the_current_environment() {
         if socket_creation_is_unavailable(&mut first_host)
             || socket_creation_is_unavailable(&mut second_host)
         {
-            fs::remove_dir_all(root).unwrap();
             return;
         }
         panic!("second workspace host did not become running");
@@ -613,8 +592,6 @@ fn include_hidden_lists_and_stops_hosts_outside_the_current_environment() {
         String::from_utf8_lossy(&stopped.stderr)
     );
     assert!(second_host.0.take().unwrap().wait().unwrap().success());
-
-    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
@@ -640,7 +617,6 @@ fn identical_workspace_hosts_remain_isolated_until_an_explicit_owner_wide_stop()
     ] {
         if wait_for_listing(&root, runtime, cache, &[&display, "running"]).is_none() {
             if socket_creation_is_unavailable(host) {
-                fs::remove_dir_all(root).unwrap();
                 return;
             }
             panic!("same-workspace host did not become running");
@@ -693,6 +669,4 @@ fn identical_workspace_hosts_remain_isolated_until_an_explicit_owner_wide_stop()
     );
     assert!(first_host.0.take().unwrap().wait().unwrap().success());
     assert!(second_host.0.take().unwrap().wait().unwrap().success());
-
-    fs::remove_dir_all(root).unwrap();
 }

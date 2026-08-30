@@ -14,6 +14,7 @@ use runyte::{
     input::{InputEvent, KeyCode, KeyStroke, Modifiers},
     layout::Rect,
     protocol::{HostFrame, SnapshotRow},
+    test_support::TestRuntimeRoot,
     workspace::ABBREVIATED_WORKSPACE_ID,
     workspace::lifecycle::{HostStartup, start_detached_host},
     workspace::transport::{ClientRequest, HostResponse, LocalClient, LocalEndpoint},
@@ -24,34 +25,19 @@ use runyte::{
 /// publication also take locks below these shared roots, so concurrently
 /// running tests must not share them.
 struct TestSandbox {
-    runtime: PathBuf,
+    runtime: TestRuntimeRoot,
     cache: PathBuf,
 }
 
 impl TestSandbox {
     fn new() -> Self {
-        use std::os::unix::fs::PermissionsExt;
-
-        static NEXT_SANDBOX: AtomicU64 = AtomicU64::new(0);
-        // Unix socket paths are capped near 100 bytes and the endpoint adds
-        // "/runyte/<32 hex>/workspace.sock" below this, so keep the base short.
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-            % 1_000_000_007;
-        let sequence = NEXT_SANDBOX.fetch_add(1, Ordering::Relaxed);
-        let runtime =
-            Path::new("/tmp").join(format!("ryt-{}-{unique}-{sequence}", std::process::id()));
-        let cache = runtime.join("cache");
-        fs::create_dir_all(&cache).unwrap();
-        fs::set_permissions(&runtime, fs::Permissions::from_mode(0o700)).unwrap();
-        fs::set_permissions(&cache, fs::Permissions::from_mode(0o700)).unwrap();
+        let runtime = TestRuntimeRoot::new("persist").unwrap();
+        let cache = runtime.create_private_dir("cache").unwrap();
         Self { runtime, cache }
     }
 
     fn runtime_dir(&self) -> &Path {
-        &self.runtime
+        self.runtime.path()
     }
 
     fn cache_dir(&self) -> &Path {
@@ -2024,6 +2010,53 @@ async fn detached_host_rejects_a_working_directory_outside_its_project_before_sp
     assert!(!endpoint.socket().exists());
 
     fs::remove_dir_all(outside).unwrap();
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn missing_startup_executable_is_diagnosed_as_a_replaced_client() {
+    let sandbox = TestSandbox::new();
+    let root = project();
+    let endpoint = LocalEndpoint::discover_with_runtime(
+        &root.join(".runyte"),
+        &root,
+        Some(sandbox.runtime_dir()),
+    )
+    .unwrap();
+    let missing = root.join("missing-runyte");
+
+    let error = start_detached_host(&endpoint, HostStartup::new(&missing, "destination"))
+        .await
+        .unwrap_err();
+    let message = format!("{error:#}");
+    assert!(message.contains("cannot start destination workspace host"));
+    assert!(message.contains(&missing.display().to_string()));
+    assert!(message.contains("rebuilt, moved, or upgraded"), "{message}");
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn an_existing_startup_target_keeps_the_generic_spawn_diagnosis() {
+    let sandbox = TestSandbox::new();
+    let root = project();
+    let endpoint = LocalEndpoint::discover_with_runtime(
+        &root.join(".runyte"),
+        &root,
+        Some(sandbox.runtime_dir()),
+    )
+    .unwrap();
+
+    let error = start_detached_host(&endpoint, HostStartup::new(&root, "destination"))
+        .await
+        .unwrap_err();
+    let message = format!("{error:#}");
+    assert!(message.contains("cannot start destination workspace host"));
+    assert!(
+        !message.contains("rebuilt, moved, or upgraded"),
+        "{message}"
+    );
+
     fs::remove_dir_all(root).unwrap();
 }
 

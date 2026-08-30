@@ -1316,6 +1316,7 @@ async fn number_workspace(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::TestRuntimeRoot;
 
     /// Path and name only, for the assertions written before numbering. A test
     /// about numbers reads [`RecentEntry::number`] directly instead.
@@ -1449,8 +1450,8 @@ mod tests {
                         .is_some_and(|error| error.raw_os_error() == Some(libc::EPERM))
                 }) =>
             {
-                fs::remove_dir_all(runtime).unwrap();
-                fs::remove_dir_all(root).unwrap();
+                drop(runtime);
+                drop(root);
                 return;
             }
             Err(error) => panic!("cannot bind test transport: {error:#}"),
@@ -1530,7 +1531,7 @@ mod tests {
             Some(recents.clone()),
             PathBuf::from(".runyte"),
             None,
-            Some(runtime.clone()),
+            Some(runtime.to_path_buf()),
         );
         service.try_inspect(9, project.clone()).unwrap();
         let Some(WorkspaceEvent::Inspected {
@@ -1554,7 +1555,7 @@ mod tests {
         );
         assert_eq!(row.number, Some(1));
         service
-            .try_stop(10, project.clone(), root.clone(), false)
+            .try_stop(10, project.clone(), root.to_path_buf(), false)
             .unwrap();
         let Some(WorkspaceEvent::Stopped {
             generation,
@@ -1568,8 +1569,8 @@ mod tests {
         assert_eq!(selector, project);
         result.expect("directory stop should reach the unregistered current host");
         host.await.unwrap();
-        fs::remove_dir_all(runtime).unwrap();
-        fs::remove_dir_all(root).unwrap();
+        drop(runtime);
+        drop(root);
     }
 
     #[tokio::test]
@@ -1602,8 +1603,8 @@ mod tests {
                         .is_some_and(|error| error.raw_os_error() == Some(libc::EPERM))
                 }) =>
             {
-                fs::remove_dir_all(runtime).unwrap();
-                fs::remove_dir_all(root).unwrap();
+                drop(runtime);
+                drop(root);
                 return;
             }
             Err(error) => panic!("cannot bind test transport: {error:#}"),
@@ -1693,8 +1694,8 @@ mod tests {
         assert!(!registration.exists());
 
         drop(server);
-        fs::remove_dir_all(runtime).unwrap();
-        fs::remove_dir_all(root).unwrap();
+        drop(runtime);
+        drop(root);
     }
 
     #[tokio::test]
@@ -1731,7 +1732,7 @@ mod tests {
             assert_eq!(fs::read(&path).unwrap(), invalid);
         }
 
-        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
@@ -1782,7 +1783,7 @@ mod tests {
         let error = read_recents(Some(&path)).unwrap_err().to_string();
         assert!(error.contains("session name cannot exceed"), "{error}");
 
-        fs::remove_dir_all(root).unwrap();
+        drop(root);
     }
 
     #[tokio::test]
@@ -1802,7 +1803,7 @@ mod tests {
                 .is_empty()
         );
 
-        fs::remove_dir_all(root).unwrap();
+        drop(root);
     }
 
     #[test]
@@ -1815,7 +1816,7 @@ mod tests {
             Some(cache_root.join("workspaces.json"))
         );
 
-        fs::remove_dir_all(root).unwrap();
+        drop(root);
     }
 
     #[tokio::test]
@@ -1843,7 +1844,7 @@ mod tests {
         assert_eq!(rows[0].id, endpoint.id());
         assert_eq!(rows[0].id.len(), 32);
         assert_eq!(rows[0].last_active_unix_seconds, None);
-        fs::remove_dir_all(root).unwrap();
+        drop(root);
     }
 
     #[tokio::test]
@@ -1906,7 +1907,7 @@ mod tests {
             ]
         );
 
-        fs::remove_dir_all(root).unwrap();
+        drop(root);
     }
 
     #[tokio::test]
@@ -1939,7 +1940,7 @@ mod tests {
         );
         assert!(!forget_recent_workspace_in(Some(&recents), &cleared).unwrap());
 
-        fs::remove_dir_all(root).unwrap();
+        drop(root);
     }
 
     #[test]
@@ -1977,7 +1978,7 @@ mod tests {
                 running.canonicalize().unwrap()
             ]
         );
-        fs::remove_dir_all(root).unwrap();
+        drop(root);
     }
 
     #[test]
@@ -2002,7 +2003,7 @@ mod tests {
         );
         assert!(rename_recent_workspace_in(&recents, &second, "archive").is_err());
         assert!(rename_recent_workspace_in(&recents, &second, " bad ").is_err());
-        fs::remove_dir_all(root).unwrap();
+        drop(root);
     }
 
     /// `--session-rename` goes through the same `rename` the editor's session
@@ -2051,7 +2052,7 @@ mod tests {
         .unwrap_err()
         .to_string();
         assert!(error.contains("no session matches"), "{error}");
-        fs::remove_dir_all(root).unwrap();
+        drop(root);
     }
 
     #[tokio::test]
@@ -2088,7 +2089,12 @@ mod tests {
             (3, PathBuf::from("project"), "by-directory", "by-directory"),
         ] {
             service
-                .try_rename(generation, selector.clone(), root.clone(), name.to_owned())
+                .try_rename(
+                    generation,
+                    selector.clone(),
+                    root.to_path_buf(),
+                    name.to_owned(),
+                )
                 .unwrap();
             let Some(WorkspaceEvent::Renamed {
                 generation: completed,
@@ -2108,7 +2114,7 @@ mod tests {
             read_recents(Some(&recents)).unwrap()[0].name.as_deref(),
             Some("by-directory")
         );
-        fs::remove_dir_all(root).unwrap();
+        drop(root);
     }
 
     #[test]
@@ -2135,7 +2141,7 @@ mod tests {
                 (second.canonicalize().unwrap(), Some("second".to_owned()))
             ]
         );
-        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
@@ -2164,7 +2170,7 @@ mod tests {
         record_workspace_activity_in(&path, &workspace).unwrap();
         let entries = read_recents(Some(&path)).unwrap();
         assert!(entries[0].last_active_unix_seconds.is_some());
-        fs::remove_dir_all(root).unwrap();
+        drop(root);
     }
 
     #[test]
@@ -2190,7 +2196,7 @@ mod tests {
         let entries = read_recents(Some(&path)).unwrap();
         assert_eq!(entries[0].project_root, first);
         assert!(entries[0].last_active_unix_seconds.is_some());
-        fs::remove_dir_all(root).unwrap();
+        drop(root);
     }
 
     #[test]
@@ -2244,7 +2250,7 @@ mod tests {
                 Some("runyte-2".to_owned()),
             )
         );
-        fs::remove_dir_all(root).unwrap();
+        drop(root);
     }
 
     #[test]
@@ -2433,7 +2439,7 @@ mod tests {
                 .unwrap(),
             Some(id_target)
         );
-        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
@@ -2481,7 +2487,7 @@ mod tests {
                 (first, Some("named-first".to_owned())),
             ]
         );
-        fs::remove_dir_all(root).unwrap();
+        drop(root);
     }
 
     #[test]
@@ -2521,7 +2527,7 @@ mod tests {
             named(read_recents(Some(&path)).unwrap()),
             vec![(workspace, Some("concurrent-name".to_owned()))]
         );
-        fs::remove_dir_all(root).unwrap();
+        drop(root);
     }
 
     #[tokio::test]
@@ -2554,8 +2560,8 @@ mod tests {
                         .is_some_and(|error| error.raw_os_error() == Some(libc::EPERM))
                 }) =>
             {
-                fs::remove_dir_all(runtime).unwrap();
-                fs::remove_dir_all(root).unwrap();
+                drop(runtime);
+                drop(root);
                 return;
             }
             Err(error) => panic!("cannot bind test transport: {error:#}"),
@@ -2585,8 +2591,8 @@ mod tests {
         );
 
         drop(server);
-        fs::remove_dir_all(runtime).unwrap();
-        fs::remove_dir_all(root).unwrap();
+        drop(runtime);
+        drop(root);
     }
 
     #[test]
@@ -2605,7 +2611,7 @@ mod tests {
         record_recent_workspace_in(&path, &workspace).unwrap();
 
         assert_eq!(fs::metadata(&lock_path).unwrap().mode() & 0o777, 0o600);
-        fs::remove_dir_all(root).unwrap();
+        drop(root);
     }
 
     const LOCK_HELPER_RECENTS: &str = "RUNYTE_TEST_RECENTS_LOCK_PATH";
@@ -2692,7 +2698,7 @@ mod tests {
                 (first.canonicalize().unwrap(), Some("first".to_owned())),
             ]
         );
-        fs::remove_dir_all(root).unwrap();
+        drop(root);
     }
 
     #[test]
@@ -2729,7 +2735,7 @@ mod tests {
         let entries = read_recents(Some(&path)).unwrap();
         assert_eq!(entries[0].project_root, workspaces[0]);
         assert_eq!(entries[0].number, Some(1));
-        fs::remove_dir_all(root).unwrap();
+        drop(root);
     }
 
     /// A worktree removed outside Runyte used to take its session's number with
@@ -2797,7 +2803,7 @@ mod tests {
                 .iter()
                 .any(|entry| entry.project_root == vanishing)
         );
-        fs::remove_dir_all(root).unwrap();
+        drop(root);
     }
 
     #[test]
@@ -2827,7 +2833,7 @@ mod tests {
             assert_eq!(entry.number, None);
             assert!(entry.name.is_some());
         }
-        fs::remove_dir_all(root).unwrap();
+        drop(root);
     }
 
     /// One listing row, in whatever running state the numbering is about.
@@ -2989,7 +2995,7 @@ mod tests {
         let mut rows = vec![numbering_row(&workspace, true)];
         assign_running_workspace_numbers(&mut rows, &entries);
         assert_eq!(rows[0].number, Some(4));
-        fs::remove_dir_all(root).unwrap();
+        drop(root);
     }
 
     /// The mirror of `refresh_merge_preserves_a_concurrently_changed_existing_name`
@@ -3037,7 +3043,7 @@ mod tests {
                 .number_declined,
             "an unpinned workspace is not given its digit back by a stale refresh"
         );
-        fs::remove_dir_all(root).unwrap();
+        drop(root);
     }
 
     #[test]
@@ -3072,7 +3078,7 @@ mod tests {
         assign_running_workspace_numbers(&mut rows, &entries);
         assert_eq!(rows[1].number, Some(1));
         assert_eq!(rows[0].number, Some(2));
-        fs::remove_dir_all(root).unwrap();
+        drop(root);
     }
 
     #[test]
@@ -3101,7 +3107,7 @@ mod tests {
         merge_refreshed_rows(&path, &snapshot, &rows).unwrap();
         assert_eq!(recorded_number(&path, &started), Some(1));
         assert_eq!(recorded_number(&path, &stopped), None);
-        fs::remove_dir_all(root).unwrap();
+        drop(root);
     }
 
     #[test]
@@ -3189,7 +3195,7 @@ mod tests {
             Some(2),
             "a workspace that kept its place keeps its number"
         );
-        fs::remove_dir_all(root).unwrap();
+        drop(root);
     }
 
     #[test]
@@ -3222,7 +3228,7 @@ mod tests {
             Some(2),
             "the displaced workspace takes the number the other gave up"
         );
-        fs::remove_dir_all(root).unwrap();
+        drop(root);
     }
 
     #[test]
@@ -3247,7 +3253,7 @@ mod tests {
         );
         assert!(set_recent_workspace_number_in(Some(&path), &workspace, Some(0)).is_err());
         assert_eq!(recorded_number(&path, &workspace), None);
-        fs::remove_dir_all(root).unwrap();
+        drop(root);
     }
 
     #[test]
@@ -3292,7 +3298,7 @@ mod tests {
             Some(3),
             "the newcomer claims the next free number rather than a taken one"
         );
-        fs::remove_dir_all(root).unwrap();
+        drop(root);
     }
 
     #[test]
@@ -3326,7 +3332,7 @@ mod tests {
             entries[1].number, None,
             "the duplicate is dropped rather than letting one key select two rows"
         );
-        fs::remove_dir_all(root).unwrap();
+        drop(root);
     }
 
     /// The number the catalog at `path` records for `project_root`.
@@ -3338,21 +3344,8 @@ mod tests {
             .and_then(|entry| entry.number)
     }
 
-    fn unique_test_root(label: &str) -> PathBuf {
-        use std::sync::atomic::{AtomicU64, Ordering};
-
-        static NEXT_ROOT: AtomicU64 = AtomicU64::new(1);
-        // Darwin's Unix-domain socket path is short. Keep every catalog
-        // fixture eligible to host an endpoint, and canonicalize `/tmp` so
-        // assertions never compare it with the `/private/tmp` identity.
-        let base = Path::new("/tmp")
-            .canonicalize()
-            .unwrap_or_else(|_| std::env::temp_dir());
-        base.join(format!(
-            "ryt-c-{label:.12}-{}-{}",
-            std::process::id(),
-            NEXT_ROOT.fetch_add(1, Ordering::Relaxed)
-        ))
+    fn unique_test_root(label: &str) -> TestRuntimeRoot {
+        TestRuntimeRoot::new(label).unwrap()
     }
 }
 

@@ -71,6 +71,12 @@ impl App {
         self.ports.replace_clipboard(clipboard);
     }
 
+    /// Replaces the recoverable-deletion boundary. Primarily useful to
+    /// deterministic embedders and tests that must not touch platform trash.
+    pub fn set_trash_backend(&mut self, trash: Box<dyn crate::fs_plan::TrashBackend>) {
+        self.ports.replace_trash(trash);
+    }
+
     pub(crate) fn replace_active_selection(&mut self, selection: Selection) {
         let buffer = self.active().buffer;
         self.active_mut().replace_selection(selection);
@@ -2597,7 +2603,10 @@ impl App {
             return;
         };
         let root = confirmation.plan.root().to_path_buf();
-        match confirmation.plan.apply(deletion) {
+        match confirmation
+            .plan
+            .apply_with_trash(deletion, self.ports.trash())
+        {
             Ok(report) => {
                 let count = report.applied.len();
                 let warning =
