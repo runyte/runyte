@@ -8,7 +8,7 @@ fn launch_targets_open_once_keep_first_active_and_apply_positions_on_first_revea
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let directory = std::env::temp_dir().join(format!(
+    let directory = temporary_directory().join(format!(
         "runyte-launch-targets-{}-{unique}",
         std::process::id()
     ));
@@ -611,7 +611,7 @@ fn app_with_broken_rust_registry() -> App {
     app.registry = Arc::new(Registry::new_with_broken_config_for_test("rust", false));
     app.reported_registry_errors.clear();
     // These tests drive server edits against files under `temporary`.
-    app.project_root = std::env::temp_dir();
+    app.project_root = temporary_directory();
     app
 }
 
@@ -3078,7 +3078,7 @@ fn applied_explorer_moves_retarget_files_and_refresh_other_explorers() {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let directory = std::env::temp_dir().join(format!(
+    let directory = temporary_directory().join(format!(
         "runyte-explorer-reconcile-{}-{unique}",
         std::process::id()
     ));

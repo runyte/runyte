@@ -1333,6 +1333,7 @@ fn buffer_picker_reveals_the_buffer_under_the_terminal_without_ending_the_child(
             .as_nanos()
     ));
     std::fs::create_dir_all(&directory).unwrap();
+    let directory = directory.canonicalize().unwrap();
     let path = directory.join("under-terminal.txt");
     std::fs::write(&path, "the selected buffer\n").unwrap();
 
@@ -1377,6 +1378,7 @@ fn buffer_picker_retargets_a_terminal_pane_to_a_different_open_buffer() {
             .as_nanos()
     ));
     std::fs::create_dir_all(&directory).unwrap();
+    let directory = directory.canonicalize().unwrap();
     let first = directory.join("first-buffer.txt");
     let second = directory.join("second-buffer.txt");
     std::fs::write(&first, "first\n").unwrap();

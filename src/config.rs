@@ -1215,7 +1215,7 @@ mod tests {
             let path =
                 std::env::temp_dir().join(format!("runyte-config-{}-{id}", std::process::id()));
             fs::create_dir(&path).unwrap();
-            Self(path)
+            Self(path.canonicalize().unwrap())
         }
 
         fn path(&self, name: &str) -> PathBuf {

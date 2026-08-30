@@ -1131,17 +1131,11 @@ impl GitCliProvider {
             use std::os::unix::process::CommandExt;
             // Hooks and filters can outlive Git just like network helpers.
             // Every service-owned command therefore gets a process group that
-            // cancellation can terminate as one unit.
-            // SAFETY: `setsid` is async-signal-safe and only changes the child
-            // process's session before exec.
-            unsafe {
-                command.pre_exec(|| {
-                    if libc::setsid() == -1 {
-                        return Err(std::io::Error::last_os_error());
-                    }
-                    Ok(())
-                });
-            }
+            // cancellation can terminate as one unit. `process_group` keeps
+            // this on Command's spawn path instead of requiring a child-side
+            // `pre_exec` hook; on macOS that avoids forking a multithreaded
+            // editor before exec, where libSystem's at-fork handlers can abort.
+            command.process_group(0);
         }
         let child = command.spawn().map_err(|error| GitError::Unavailable {
             detail: format!("cannot start `{}`: {error}", self.program.display()),
@@ -1938,9 +1932,9 @@ fn stop_anchored_child_group(child: &std::process::Child) {
 ///
 /// Ownership of the group number is proven before it is addressed. Several of
 /// the callers below run after `try_finish_child` has already reaped the
-/// leader, and a Git child creates its own session, so a stale `-pid` here
-/// would name whichever later `setsid` child inherited that number — including
-/// another Git command of Runyte's own.
+/// leader, and a Git child leads its own process group, so a stale `-pid` here
+/// would name whichever later group inherited that number — including another
+/// Git command of Runyte's own.
 fn stop_child_tree(child: &mut std::process::Child) {
     #[cfg(unix)]
     crate::process_group::signal_child_group(
@@ -4600,16 +4594,9 @@ mod tests {
             };
             let mut command = Command::new("sh");
             command.arg("-c").arg(script).stdin(Stdio::piped());
-            // Match GitCliProvider::spawn: every child leads a private session
-            // before Command::spawn reports success to the parent.
-            unsafe {
-                command.pre_exec(|| {
-                    if libc::setsid() == -1 {
-                        return Err(io::Error::last_os_error());
-                    }
-                    Ok(())
-                });
-            }
+            // Match GitCliProvider::spawn: every child leads a private process
+            // group before Command::spawn reports success to the parent.
+            command.process_group(0);
             let child = command.spawn().unwrap();
             let pid = child.id() as libc::pid_t;
             assert_eq!(unsafe { libc::getpgid(pid) }, pid);

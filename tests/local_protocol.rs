@@ -44,7 +44,7 @@ fn test_runtime_dir() -> &'static Path {
                 .unwrap()
                 .as_nanos()
                 % 1_000_000_007;
-            let path = std::env::temp_dir().join(format!("ryt-{}-{unique}", std::process::id()));
+            let path = Path::new("/tmp").join(format!("ryt-{}-{unique}", std::process::id()));
             fs::create_dir_all(&path).unwrap();
             fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
             path
@@ -1413,17 +1413,7 @@ async fn wait_cli_completes_without_stopping_host_or_unrelated_buffers() {
         .unwrap();
     let _ = response(&mut interactive).await;
     let _ = response(&mut interactive).await;
-    let mut waiter = bundled_runyte()
-        .arg("--wait")
-        .arg("note.txt")
-        .current_dir(&root)
-        .env("XDG_RUNTIME_DIR", test_runtime_dir())
-        .env("XDG_CACHE_HOME", test_cache_dir())
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .unwrap();
+    let (mut waiter, _wait_terminal) = spawn_wait_in_pty_without_hangup_signal(&root, "note.txt");
 
     let mut requested = None;
     for _ in 0..100 {
@@ -1553,18 +1543,13 @@ async fn git_commit_wait_closes_its_buffer_without_detaching_an_existing_tui() {
     send_input_expect_frame(&mut interactive, InputEvent::Key(KeyStroke::char('i'))).await;
     let editor = format!("{} --wait", env!("CARGO_BIN_EXE_runyte"));
     let mut commit = Command::new("git");
-    isolate_runyte_children(&mut commit);
-    let mut commit = commit
+    commit
         .arg("commit")
         .current_dir(&root)
         .env("GIT_EDITOR", editor)
         .env("XDG_RUNTIME_DIR", test_runtime_dir())
-        .env("XDG_CACHE_HOME", test_cache_dir())
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .unwrap();
+        .env("XDG_CACHE_HOME", test_cache_dir());
+    let (mut commit, _commit_terminal) = spawn_in_pty_without_hangup_signal(&mut commit);
 
     let mut message = None;
     for _ in 0..200 {
@@ -1584,7 +1569,10 @@ async fn git_commit_wait_closes_its_buffer_without_detaching_an_existing_tui() {
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
     let _message = message.expect("Git editor wait request did not open COMMIT_EDITMSG");
-    assert!(commit.try_wait().unwrap().is_none());
+    assert!(
+        commit.try_wait().unwrap().is_none(),
+        "git commit exited while its editor-owned buffer was still open"
+    );
     send_input_expect_frame(&mut interactive, InputEvent::Key(KeyStroke::char('i'))).await;
     send_input_expect_frame(
         &mut interactive,
@@ -1847,15 +1835,11 @@ async fn wait_paths_are_resolved_in_the_callers_directory_without_utf8_loss() {
     let _ = response(&mut interactive).await;
     let mut wait_command = bundled_runyte();
     wait_command.arg("--wait").args(&wait_names);
-    let mut waiter = wait_command
+    wait_command
         .current_dir(&nested)
         .env("XDG_RUNTIME_DIR", test_runtime_dir())
-        .env("XDG_CACHE_HOME", test_cache_dir())
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .unwrap();
+        .env("XDG_CACHE_HOME", test_cache_dir());
+    let (mut waiter, _wait_terminal) = spawn_in_pty_without_hangup_signal(&mut wait_command);
 
     let mut requested = Vec::new();
     for _ in 0..100 {
@@ -3221,18 +3205,17 @@ async fn durable_completion_wins_a_race_with_launcher_loss() {
     let _ = response(&mut interactive).await;
     let _ = response(&mut interactive).await;
     let mut launcher = Command::new("sleep").arg("120").spawn().unwrap();
-    let mut waiter = bundled_runyte()
+    let barrier = root.join("wait-status-barrier");
+    let mut wait_command = bundled_runyte();
+    wait_command
         .arg("--wait")
         .arg("note.txt")
         .current_dir(&root)
         .env("XDG_RUNTIME_DIR", test_runtime_dir())
         .env("XDG_CACHE_HOME", test_cache_dir())
         .env("RUNYTE_TEST_WAIT_PARENT_PID", launcher.id().to_string())
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .unwrap();
+        .env("RUNYTE_TEST_WAIT_STATUS_BARRIER", &barrier);
+    let (mut waiter, _wait_terminal) = spawn_in_pty_without_hangup_signal(&mut wait_command);
 
     let mut requested = None;
     for _ in 0..100 {
@@ -3249,6 +3232,19 @@ async fn durable_completion_wins_a_race_with_launcher_loss() {
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
     let requested = requested.expect("wait request did not queue behind the existing TUI");
+    let ready = barrier.with_extension("ready");
+    let mut status_in_flight = false;
+    for _ in 0..200 {
+        status_in_flight = ready.exists();
+        if status_in_flight {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    assert!(
+        status_in_flight,
+        "wait client did not publish its in-flight status barrier"
+    );
     interactive
         .send(&ClientRequest::CloseBuffer {
             buffer: requested.id,
@@ -3260,12 +3256,9 @@ async fn durable_completion_wins_a_race_with_launcher_loss() {
         semantic_response(&mut interactive).await,
         HostResponse::Closed { .. }
     ));
-    assert!(
-        waiter.try_wait().unwrap().is_none(),
-        "wait client consumed completion before launcher-loss ordering could be exercised"
-    );
     launcher.kill().unwrap();
     let _ = launcher.wait().unwrap();
+    fs::write(barrier.with_extension("release"), []).unwrap();
     assert!(wait_child(&mut waiter).await.success());
 
     interactive.send(&ClientRequest::Detach).await.unwrap();

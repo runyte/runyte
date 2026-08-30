@@ -3572,6 +3572,13 @@ mod tests {
         let path = directory.join("script");
         fs::write(&path, "#!/bin/sh\n").unwrap();
         fs::set_permissions(&path, fs::Permissions::from_mode(0o4755)).unwrap();
+        if fs::metadata(&path).unwrap().permissions().mode() & 0o7777 != 0o4755 {
+            // Sandboxed Darwin processes may report a successful chmod while
+            // the sandbox strips special mode bits. There is no preservation
+            // behavior to test when the fixture cannot acquire them.
+            fs::remove_dir_all(directory).unwrap();
+            return;
+        }
 
         assert_eq!(
             atomic_write(&path, b"#!/bin/sh\nexit 0\n", ReplacePolicy::Force)

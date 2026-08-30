@@ -39,7 +39,7 @@ impl TempRepository {
         ));
         fs::create_dir_all(&root).unwrap();
         let repository = Self(root.canonicalize().unwrap());
-        repository.git(&["init", "-q"]);
+        repository.git(&["init", "-q", "--initial-branch=master"]);
         repository.git(&["config", "user.name", "Runyte Test"]);
         repository.git(&["config", "user.email", "runyte@example.invalid"]);
         repository

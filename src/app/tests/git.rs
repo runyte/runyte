@@ -58,7 +58,7 @@ fn git_marks_reserve_a_gutter_column_and_follow_the_buffer() {
         .unwrap()
         .as_nanos();
     let directory =
-        std::env::temp_dir().join(format!("runyte-git-gutter-{}-{unique}", std::process::id()));
+        temporary_directory().join(format!("runyte-git-gutter-{}-{unique}", std::process::id()));
     fs::create_dir_all(&directory).unwrap();
     let root = directory.canonicalize().unwrap();
     let path = root.join("source.txt");
@@ -224,7 +224,7 @@ fn an_untracked_file_reserves_no_gutter_column() {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let directory = std::env::temp_dir().join(format!(
+    let directory = temporary_directory().join(format!(
         "runyte-git-untracked-{}-{unique}",
         std::process::id()
     ));
@@ -1543,7 +1543,7 @@ fn git_refresh_rereads_the_base_after_it_changes_outside_the_editor() {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let directory = std::env::temp_dir().join(format!(
+    let directory = temporary_directory().join(format!(
         "runyte-git-refresh-{}-{unique}",
         std::process::id()
     ));
@@ -1615,7 +1615,7 @@ fn staging_the_active_file_clears_its_marks_and_unstaging_brings_them_back() {
         .unwrap()
         .as_nanos();
     let directory =
-        std::env::temp_dir().join(format!("runyte-git-stage-{}-{unique}", std::process::id()));
+        temporary_directory().join(format!("runyte-git-stage-{}-{unique}", std::process::id()));
     fs::create_dir_all(&directory).unwrap();
     let root = directory.canonicalize().unwrap();
     let path = root.join("source.txt");
@@ -1673,7 +1673,7 @@ fn staging_an_unsaved_buffer_says_which_text_it_recorded() {
         .unwrap()
         .as_nanos();
     let directory =
-        std::env::temp_dir().join(format!("runyte-git-dirty-{}-{unique}", std::process::id()));
+        temporary_directory().join(format!("runyte-git-dirty-{}-{unique}", std::process::id()));
     fs::create_dir_all(&directory).unwrap();
     let root = directory.canonicalize().unwrap();
     let path = root.join("source.txt");
@@ -1712,7 +1712,7 @@ fn the_diff_and_index_views_are_read_only_buffers_that_name_what_they_show() {
         .unwrap()
         .as_nanos();
     let directory =
-        std::env::temp_dir().join(format!("runyte-git-views-{}-{unique}", std::process::id()));
+        temporary_directory().join(format!("runyte-git-views-{}-{unique}", std::process::id()));
     fs::create_dir_all(&directory).unwrap();
     let root = directory.canonicalize().unwrap();
     let path = root.join("source.txt");
@@ -3121,7 +3121,7 @@ fn the_changed_file_list_shows_line_counts_per_file_and_in_total() {
         .unwrap()
         .as_nanos();
     let directory =
-        std::env::temp_dir().join(format!("runyte-git-stats-{}-{unique}", std::process::id()));
+        temporary_directory().join(format!("runyte-git-stats-{}-{unique}", std::process::id()));
     fs::create_dir_all(&directory).unwrap();
     let root = directory.canonicalize().unwrap();
 
@@ -3249,7 +3249,7 @@ fn a_selection_over_the_changed_file_list_stages_every_file_it_covers() {
         .unwrap()
         .as_nanos();
     let directory =
-        std::env::temp_dir().join(format!("runyte-git-list-{}-{unique}", std::process::id()));
+        temporary_directory().join(format!("runyte-git-list-{}-{unique}", std::process::id()));
     fs::create_dir_all(&directory).unwrap();
     let root = directory.canonicalize().unwrap();
 
@@ -3365,7 +3365,7 @@ fn a_file_on_both_sides_is_acted_on_once() {
         .unwrap()
         .as_nanos();
     let directory =
-        std::env::temp_dir().join(format!("runyte-git-both-{}-{unique}", std::process::id()));
+        temporary_directory().join(format!("runyte-git-both-{}-{unique}", std::process::id()));
     fs::create_dir_all(&directory).unwrap();
     let root = directory.canonicalize().unwrap();
 
@@ -3418,7 +3418,7 @@ fn a_heading_row_is_not_a_file() {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let directory = std::env::temp_dir().join(format!(
+    let directory = temporary_directory().join(format!(
         "runyte-git-heading-{}-{unique}",
         std::process::id()
     ));
@@ -3463,7 +3463,7 @@ fn the_caret_follows_the_file_it_was_on_across_a_refresh() {
         .unwrap()
         .as_nanos();
     let directory =
-        std::env::temp_dir().join(format!("runyte-git-follow-{}-{unique}", std::process::id()));
+        temporary_directory().join(format!("runyte-git-follow-{}-{unique}", std::process::id()));
     fs::create_dir_all(&directory).unwrap();
     let root = directory.canonicalize().unwrap();
 
@@ -3529,7 +3529,7 @@ fn every_key_the_changed_file_list_advertises_does_what_it_says() {
         .unwrap()
         .as_nanos();
     let directory =
-        std::env::temp_dir().join(format!("runyte-git-keys-{}-{unique}", std::process::id()));
+        temporary_directory().join(format!("runyte-git-keys-{}-{unique}", std::process::id()));
     fs::create_dir_all(&directory).unwrap();
     let root = directory.canonicalize().unwrap();
     fs::write(root.join("edited.rs"), "worktree\n").unwrap();
@@ -3726,7 +3726,7 @@ fn staged_project_with(
         .unwrap()
         .as_nanos();
     let directory =
-        std::env::temp_dir().join(format!("runyte-git-{name}-{}-{unique}", std::process::id()));
+        temporary_directory().join(format!("runyte-git-{name}-{}-{unique}", std::process::id()));
     fs::create_dir_all(&directory).unwrap();
     let root = directory.canonicalize().unwrap();
 
@@ -4337,7 +4337,7 @@ fn nothing_staged_is_refused_before_a_message_is_written() {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let directory = std::env::temp_dir().join(format!(
+    let directory = temporary_directory().join(format!(
         "runyte-git-nothing-{}-{unique}",
         std::process::id()
     ));
@@ -4988,7 +4988,7 @@ fn untracked_files_are_refused_rather_than_deleted() {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let directory = std::env::temp_dir().join(format!(
+    let directory = temporary_directory().join(format!(
         "runyte-git-discard-untracked-{}-{unique}",
         std::process::id()
     ));

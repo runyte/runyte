@@ -1213,6 +1213,7 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
 
     // Register before entering raw mode so no startup interval can leave the
     // terminal modified while signals still have their default disposition.
+    let color_depth = terminal_color_depth();
     let mut termination = TerminationSignals::new()?;
     let mut received_signal = None;
     let _terminal = TerminalGuard::enter(mouse_enabled)?;
@@ -1230,7 +1231,7 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
     terminal.draw(|frame| {
         let geometry = ui::frame_geometry(frame.area());
         let snapshot = app.prepare_frame_with_hints(geometry, Some(&key_hints));
-        ui::render(frame, app.app(), &snapshot.editor, &key_hints);
+        ui::render_with_color_depth(frame, app.app(), &snapshot.editor, &key_hints, color_depth);
     })?;
     startup.mark(StartupPhase::FirstFramePresented);
     if let Err(error) = startup.write_requested() {
@@ -1249,7 +1250,7 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
     terminal.draw(|frame| {
         let geometry = ui::frame_geometry(frame.area());
         let snapshot = app.prepare_frame_with_hints(geometry, Some(&key_hints));
-        ui::render(frame, app.app(), &snapshot.editor, &key_hints);
+        ui::render_with_color_depth(frame, app.app(), &snapshot.editor, &key_hints, color_depth);
     })?;
     let mut terminal_events = EventStream::new();
     let mut git_refresh_tick = tokio::time::interval(Duration::from_millis(250));
@@ -1294,7 +1295,13 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
                                     geometry,
                                     Some(&key_hints),
                                 );
-                                ui::render(frame, app.app(), &snapshot.editor, &key_hints);
+                                ui::render_with_color_depth(
+                                    frame,
+                                    app.app(),
+                                    &snapshot.editor,
+                                    &key_hints,
+                                    color_depth,
+                                );
                             })?;
                             continue;
                         }
@@ -1443,7 +1450,13 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
         terminal.draw(|frame| {
             let geometry = ui::frame_geometry(frame.area());
             let snapshot = app.prepare_frame_with_hints(geometry, Some(&key_hints));
-            ui::render(frame, app.app(), &snapshot.editor, &key_hints);
+            ui::render_with_color_depth(
+                frame,
+                app.app(),
+                &snapshot.editor,
+                &key_hints,
+                color_depth,
+            );
         })?;
     }
     let quit_directory = app.quit_directory().map(Path::to_path_buf);
@@ -2749,6 +2762,10 @@ fn current_frame_geometry() -> Result<runyte::app::FrameGeometry> {
     )))
 }
 
+fn terminal_color_depth() -> ui::TerminalColorDepth {
+    ui::TerminalColorDepth::from_color_count(crossterm::style::available_color_count())
+}
+
 /// Attaches, and keeps attaching wherever the editor asks to go next.
 ///
 /// One process for the whole session. The previous arrangement replaced the
@@ -2763,6 +2780,7 @@ async fn run_workspace_switcher(
     config: &Config,
     config_path: Option<&Path>,
 ) -> Result<()> {
+    let color_depth = terminal_color_depth();
     let mut termination = TerminationSignals::new()?;
     let _terminal = TerminalGuard::enter(mouse_enabled)?;
     let mut terminal = Terminal::new(CrosstermBackend::new(stdout()))?;
@@ -2782,9 +2800,12 @@ async fn run_workspace_switcher(
                 &mut terminal,
                 &mut terminal_events,
                 &mut geometry,
-                None,
-                cwd_file,
-                notice.take(),
+                AttachOptions {
+                    wait_token: None,
+                    cwd_file,
+                    notice: notice.take(),
+                    color_depth,
+                },
             ) => attachment,
             signal = termination.recv() => return Err(terminated(signal)),
         };
@@ -2928,6 +2949,7 @@ async fn attach_for_wait(
     terminal_loss: &mut TerminalLoss,
     launching_parent: &HostSupervisor,
 ) -> Result<()> {
+    let color_depth = terminal_color_depth();
     let _terminal = TerminalGuard::enter(mouse_enabled)?;
     let mut terminal = Terminal::new(CrosstermBackend::new(stdout()))?;
     let mut geometry = current_frame_geometry()?;
@@ -2953,9 +2975,12 @@ async fn attach_for_wait(
             &mut terminal,
             &mut terminal_events,
             &mut geometry,
-            Some(token),
-            None,
-            None,
+            AttachOptions {
+                wait_token: Some(token),
+                cwd_file: None,
+                notice: None,
+                color_depth,
+            },
         ) => (attachment, true),
     };
     if reconcile_lifecycle && let Err(error) = attachment {
@@ -3120,6 +3145,15 @@ impl Drop for AttachedWorkspaceActivity {
     }
 }
 
+/// Client-local state that changes how one host attachment is presented.
+#[cfg(unix)]
+struct AttachOptions<'a> {
+    wait_token: Option<WaitToken>,
+    cwd_file: Option<&'a Path>,
+    notice: Option<String>,
+    color_depth: ui::TerminalColorDepth,
+}
+
 /// Runs one attachment to completion, drawing into a terminal it does not own.
 ///
 /// The caller keeps the terminal and the event stream across attachments:
@@ -3132,10 +3166,14 @@ async fn run_attached(
     terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
     terminal_events: &mut AttachedTerminalEvents,
     geometry: &mut runyte::app::FrameGeometry,
-    wait_token: Option<WaitToken>,
-    cwd_file: Option<&Path>,
-    notice: Option<String>,
+    options: AttachOptions<'_>,
 ) -> Result<AttachOutcome> {
+    let AttachOptions {
+        wait_token,
+        cwd_file,
+        notice,
+        color_depth,
+    } = options;
     let mut client =
         LocalClient::connect_with_handoff(endpoint, *geometry, true, cwd_file.is_some()).await?;
     match client.recv().await? {
@@ -3181,11 +3219,19 @@ async fn run_attached(
                     current_frame = (*frame)
                         .try_into()
                         .map_err(|error: String| anyhow::anyhow!(error))?;
-                    terminal.draw(|frame| ui::render_host_frame(frame, &current_frame))?;
+                    terminal.draw(|frame| {
+                        ui::render_host_frame_with_color_depth(frame, &current_frame, color_depth)
+                    })?;
                 }
                 Some(HostResponse::TerminalDamage { damage }) => {
                     if apply_terminal_damage(&mut current_frame, &damage)? {
-                        terminal.draw(|frame| ui::render_host_frame(frame, &current_frame))?;
+                        terminal.draw(|frame| {
+                            ui::render_host_frame_with_color_depth(
+                                frame,
+                                &current_frame,
+                                color_depth,
+                            )
+                        })?;
                     } else {
                         client.send(&ClientRequest::Resynchronize).await?;
                     }
@@ -3215,7 +3261,8 @@ async fn run_attached(
             }
         }
     }
-    terminal.draw(|frame| ui::render_host_frame(frame, &current_frame))?;
+    terminal
+        .draw(|frame| ui::render_host_frame_with_color_depth(frame, &current_frame, color_depth))?;
     let mut key_repeat_detector = KeyRepeatDetector::default();
     let mut pointer_batcher = PointerBatcher::default();
     let mut pointer_tick = tokio::time::interval(Duration::from_millis(8));
@@ -3305,11 +3352,23 @@ async fn run_attached(
                         current_frame = (*frame)
                             .try_into()
                             .map_err(|error: String| anyhow::anyhow!(error))?;
-                        terminal.draw(|frame| ui::render_host_frame(frame, &current_frame))?;
+                        terminal.draw(|frame| {
+                            ui::render_host_frame_with_color_depth(
+                                frame,
+                                &current_frame,
+                                color_depth,
+                            )
+                        })?;
                     }
                     Some(HostResponse::TerminalDamage { damage }) => {
                         if apply_terminal_damage(&mut current_frame, &damage)? {
-                            terminal.draw(|frame| ui::render_host_frame(frame, &current_frame))?;
+                            terminal.draw(|frame| {
+                                ui::render_host_frame_with_color_depth(
+                                    frame,
+                                    &current_frame,
+                                    color_depth,
+                                )
+                            })?;
                         } else {
                             client.send(&ClientRequest::Resynchronize).await?;
                         }
@@ -3793,8 +3852,11 @@ async fn wait_for_completion(
     terminal_loss: &mut TerminalLoss,
     launching_parent: &HostSupervisor,
 ) -> Result<()> {
+    let mut test_status_barrier =
+        std::env::var_os("RUNYTE_TEST_WAIT_STATUS_BARRIER").map(PathBuf::from);
     loop {
         client.send(&ClientRequest::WaitStatus { token }).await?;
+        wait_at_test_status_barrier(&mut test_status_barrier).await?;
         let response = tokio::select! {
             biased;
             signal = termination.recv() => return Err(terminated(signal)),
@@ -3864,6 +3926,35 @@ async fn wait_for_completion(
             _ = tokio::time::sleep(Duration::from_millis(100)) => {}
         }
     }
+}
+
+/// Gives process-level tests a one-shot acknowledgement after the wait client
+/// has sent a status request but before it can consume the reply. This makes a
+/// completion-versus-launcher-loss race reproducible without elapsed-time
+/// guesses. Ordinary clients never set the test-only environment variable.
+#[cfg(unix)]
+async fn wait_at_test_status_barrier(barrier: &mut Option<PathBuf>) -> Result<()> {
+    let Some(path) = barrier.take() else {
+        return Ok(());
+    };
+    let ready = path.with_extension("ready");
+    let release = path.with_extension("release");
+    fs::write(&ready, []).with_context(|| {
+        format!(
+            "cannot publish wait-status test barrier {}",
+            ready.display()
+        )
+    })?;
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !release.exists() {
+        anyhow::ensure!(
+            Instant::now() < deadline,
+            "wait-status test barrier was not released at {}",
+            release.display()
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    Ok(())
 }
 
 /// Resolves client lifecycle loss against the host's durable wait state.
@@ -4804,10 +4895,10 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "runyte-switch-recovery-{}-{nanos}",
-            std::process::id()
-        ));
+        // Keep the fixture below Darwin's short Unix-domain socket path limit.
+        // The macOS temporary directory under /var/folders is too long once
+        // `.runyte/host/workspace.sock` is appended.
+        let root = Path::new("/tmp").join(format!("ryt-s-{}-{nanos}", std::process::id()));
         let runtime = root.join("runtime");
         let source_root = root.join("source");
         let destination_root = root.join("destination");

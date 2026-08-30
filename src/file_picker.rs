@@ -2115,11 +2115,14 @@ mod tests {
     use super::*;
 
     fn temporary(name: &str) -> PathBuf {
-        std::env::temp_dir().join(format!(
-            "runyte-file-picker-{name}-{}-{}",
-            std::process::id(),
-            std::thread::current().name().unwrap_or("test")
-        ))
+        std::env::temp_dir()
+            .canonicalize()
+            .unwrap_or_else(|_| std::env::temp_dir())
+            .join(format!(
+                "runyte-file-picker-{name}-{}-{}",
+                std::process::id(),
+                std::thread::current().name().unwrap_or("test")
+            ))
     }
 
     #[test]

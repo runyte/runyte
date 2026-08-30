@@ -608,16 +608,16 @@ mod tests {
         let output = root.join("group");
         install_stand_in(
             &helper,
-            "#!/bin/sh\nps -o pgid= -p $$ > \"$1.tmp\"\nmv \"$1.tmp\" \"$1\"\n",
+            "#!/bin/sh\necho $$ > \"$1.tmp\"\nmv \"$1.tmp\" \"$1\"\nwhile [ ! -f \"$1.release\" ]; do sleep 0.01; done\n",
         );
 
         launch(helper.to_str().unwrap(), &output).unwrap();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        let child_group = loop {
-            if let Ok(group) = fs::read_to_string(&output)
-                && let Ok(group) = group.trim().parse::<libc::pid_t>()
+        let child_pid = loop {
+            if let Ok(pid) = fs::read_to_string(&output)
+                && let Ok(pid) = pid.trim().parse::<libc::pid_t>()
             {
-                break group;
+                break pid;
             }
             assert!(
                 std::time::Instant::now() < deadline,
@@ -625,8 +625,16 @@ mod tests {
             );
             std::thread::sleep(std::time::Duration::from_millis(10));
         };
+        // SAFETY: the helper remains alive until the release file is written.
+        let child_group = unsafe { libc::getpgid(child_pid) };
+        assert_ne!(
+            child_group, -1,
+            "the detached helper still has a process group"
+        );
+        assert_eq!(child_group, child_pid);
         // SAFETY: `getpgrp` has no preconditions.
         assert_ne!(child_group, unsafe { libc::getpgrp() });
+        fs::write(output.with_extension("release"), []).unwrap();
         loop {
             // SAFETY: signal zero only probes whether the private process
             // group still exists and cannot change child state.

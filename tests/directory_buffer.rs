@@ -29,7 +29,7 @@ impl TempDir {
             std::process::id()
         ));
         fs::create_dir(&path).unwrap();
-        Self(path)
+        Self(path.canonicalize().unwrap())
     }
 
     fn path(&self) -> &Path {
@@ -402,7 +402,9 @@ fn applying_a_plan_from_a_listing_without_dotfiles_leaves_them_on_disk() {
     assert!(app.buffers[0].apply(&Transaction::delete(0, "gone\n".len())));
     app.handle_key(KeyStroke::new(KeyCode::Char('s'), Modifiers::CONTROL))
         .unwrap();
-    app.handle_key(KeyStroke::new(KeyCode::Enter, Modifiers::NONE))
+    // Use permanent deletion in the fixture so the test does not depend on
+    // access to the person's platform trash directory.
+    app.handle_key(KeyStroke::new(KeyCode::Char('P'), Modifiers::NONE))
         .unwrap();
 
     assert!(!directory.path().join("gone").exists());
