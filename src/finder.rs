@@ -12,7 +12,7 @@ use std::{collections::HashSet, path::PathBuf};
 
 use crate::{
     file_picker::{CONTENT_ENTRY_LIMIT, FilePicker, FuzzyMatcher, PickerTarget},
-    terminal::TerminalId,
+    terminal::{TerminalId, TerminalLineId},
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -47,7 +47,7 @@ pub enum ResourceTarget {
     Terminal(TerminalId),
     TerminalLocation {
         terminal: TerminalId,
-        line_id: u64,
+        line_id: TerminalLineId,
         column: usize,
     },
 }

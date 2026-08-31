@@ -166,6 +166,27 @@ impl Cell {
 
 pub type Line = Vec<Cell>;
 
+/// Stable identity of one retained line within a terminal session.
+///
+/// `local` follows a line while bounded history shifts around it. `generation`
+/// keeps an active primary grid distinct from the alternate screen and from a
+/// grid whose complete contents were cleared or reset.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct TerminalLineId {
+    generation: u64,
+    local: u64,
+}
+
+impl TerminalLineId {
+    const fn new(generation: u64, local: u64) -> Self {
+        Self { generation, local }
+    }
+
+    pub(super) const fn local(self) -> u64 {
+        self.local
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct Cursor {
     pub row: usize,
@@ -180,6 +201,7 @@ pub struct Cursor {
 /// screen only — the lines that have scrolled off the top.
 #[derive(Clone, Debug)]
 pub struct Grid {
+    generation: u64,
     columns: usize,
     rows: usize,
     lines: Vec<Line>,
@@ -204,9 +226,19 @@ pub struct Grid {
 
 impl Grid {
     pub fn new(columns: usize, rows: usize, keeps_history: bool) -> Self {
+        Self::with_generation(columns, rows, keeps_history, 0)
+    }
+
+    pub(super) fn with_generation(
+        columns: usize,
+        rows: usize,
+        keeps_history: bool,
+        generation: u64,
+    ) -> Self {
         let columns = columns.max(1);
         let rows = rows.max(1);
         Self {
+            generation,
             columns,
             rows,
             lines: vec![vec![Cell::default(); columns]; rows],
@@ -218,6 +250,10 @@ impl Grid {
             scroll_top: 0,
             scroll_bottom: rows - 1,
         }
+    }
+
+    pub(super) fn replace_generation(&mut self, generation: u64) {
+        self.generation = generation;
     }
 
     pub fn columns(&self) -> usize {
@@ -247,18 +283,21 @@ impl Grid {
 
     /// Retained primary history followed by the current screen, with stable
     /// identities derived from the monotonic retirement counter.
-    pub fn retained_lines(&self) -> impl Iterator<Item = (u64, &Line)> {
+    pub fn retained_lines(&self) -> impl Iterator<Item = (TerminalLineId, &Line)> {
         let oldest = self.retired.saturating_sub(self.scrollback.len() as u64);
+        let generation = self.generation;
         self.scrollback
             .iter()
             .enumerate()
-            .map(move |(index, line)| (oldest + index as u64, line))
-            .chain(
-                self.lines
-                    .iter()
-                    .enumerate()
-                    .map(move |(index, line)| (self.retired + index as u64, line)),
-            )
+            .map(move |(index, line)| {
+                (TerminalLineId::new(generation, oldest + index as u64), line)
+            })
+            .chain(self.lines.iter().enumerate().map(move |(index, line)| {
+                (
+                    TerminalLineId::new(generation, self.retired + index as u64),
+                    line,
+                )
+            }))
     }
 
     pub fn scrollback_cells(&self) -> usize {
@@ -748,24 +787,28 @@ impl Grid {
     }
 
     /// Stable identity of one retained presentation row.
-    pub fn retained_line_id(&self, row: usize) -> Option<u64> {
+    pub fn retained_line_id(&self, row: usize) -> Option<TerminalLineId> {
         let oldest = self.retired.saturating_sub(self.scrollback.len() as u64);
-        if row < self.scrollback.len() {
-            Some(oldest + row as u64)
+        let local = if row < self.scrollback.len() {
+            oldest + row as u64
         } else {
             let screen_row = row - self.scrollback.len();
-            (screen_row < self.lines.len()).then_some(self.retired + screen_row as u64)
-        }
+            (screen_row < self.lines.len()).then_some(self.retired + screen_row as u64)?
+        };
+        Some(TerminalLineId::new(self.generation, local))
     }
 
     /// Current retained-row index for a stable identity, if it was not
     /// evicted from bounded scrollback.
-    pub fn retained_row(&self, line_id: u64) -> Option<usize> {
+    pub fn retained_row(&self, line_id: TerminalLineId) -> Option<usize> {
+        if line_id.generation != self.generation {
+            return None;
+        }
         let oldest = self.retired.saturating_sub(self.scrollback.len() as u64);
-        if (oldest..self.retired).contains(&line_id) {
-            Some((line_id - oldest) as usize)
-        } else if line_id >= self.retired {
-            let screen_row = usize::try_from(line_id - self.retired).ok()?;
+        if (oldest..self.retired).contains(&line_id.local) {
+            Some((line_id.local - oldest) as usize)
+        } else if line_id.local >= self.retired {
+            let screen_row = usize::try_from(line_id.local - self.retired).ok()?;
             (screen_row < self.lines.len()).then_some(self.scrollback.len() + screen_row)
         } else {
             None

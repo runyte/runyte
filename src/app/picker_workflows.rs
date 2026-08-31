@@ -727,24 +727,35 @@ impl App {
             }) => {
                 if self.terminals.get(terminal).is_none() {
                     self.action_failed("that terminal is gone");
-                } else if self
+                    return;
+                }
+                let captured = self
+                    .terminals
+                    .get_mut(terminal)
+                    .is_some_and(|session| session.begin_review_at_line(line_id));
+                if !captured {
+                    self.action_failed("that terminal line is no longer retained");
+                    return;
+                }
+                self.terminals.enforce_memory_budget();
+                if !self
                     .terminals
                     .get(terminal)
-                    .and_then(|session| session.retained_line_row(line_id))
-                    .is_none()
+                    .is_some_and(TerminalSession::reviewing)
                 {
-                    self.action_failed("that terminal line is no longer retained");
-                } else {
-                    self.show_terminal(terminal);
-                    let (_, rows) = self.pane_cells(self.active_pane);
-                    let scroll_offset = self.config.editor.scroll_offset;
-                    if let Some(session) = self.terminals.get_mut(terminal)
-                        && session.begin_review_at_line(line_id)
-                    {
-                        session.focus_review_selection(rows.max(1), scroll_offset);
-                    }
-                    self.mode = Mode::Normal;
+                    self.action_failed("that terminal line exceeds the retained review budget");
+                    return;
                 }
+                // Capture before moving the terminal: the destination pane may
+                // be shorter, and resizing its live grid can trim bottom rows.
+                // The immutable review keeps the selected identity intact.
+                self.show_terminal(terminal);
+                let (_, rows) = self.pane_cells(self.active_pane);
+                let scroll_offset = self.config.editor.scroll_offset;
+                if let Some(session) = self.terminals.get_mut(terminal) {
+                    session.focus_review_selection(rows.max(1), scroll_offset);
+                }
+                self.mode = Mode::Normal;
             }
         }
     }
@@ -880,7 +891,10 @@ fn buffer_content_preview(buffer: &Buffer, row: usize) -> String {
         .join("\n")
 }
 
-fn terminal_content_preview(terminal: &TerminalSession, line_id: u64) -> Option<String> {
+fn terminal_content_preview(
+    terminal: &TerminalSession,
+    line_id: crate::terminal::TerminalLineId,
+) -> Option<String> {
     const CONTEXT: usize = 6;
     let row = terminal.retained_line_row(line_id)?;
     let start = row.saturating_sub(CONTEXT);
