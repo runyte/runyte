@@ -524,12 +524,12 @@ impl App {
             .is_some()
     }
 
-    pub(crate) fn periodic_git_refresh_seconds(&self) -> usize {
+    pub(crate) fn automatic_git_refresh_interval_seconds(&self) -> usize {
         self.config.git.refresh_interval_seconds
     }
 
     pub fn git_monitor_repository(&self) -> Option<Repository> {
-        (self.periodic_git_refresh_seconds() != 0)
+        (self.automatic_git_refresh_interval_seconds() != 0)
             .then(|| self.git.repository().cloned())
             .flatten()
     }

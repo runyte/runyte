@@ -324,8 +324,8 @@ const DESCRIPTORS: &[SettingDescriptor] = &[
     SettingDescriptor {
         id: SettingId::GitRefreshIntervalSeconds,
         key: "git.refresh_interval_seconds",
-        title: "Git fallback interval",
-        description: "Maximum visible Git staleness; zero disables automatic refresh",
+        title: "Git automatic refresh interval",
+        description: "Minimum refresh spacing and maximum visible staleness; zero disables automatic refresh",
         value_type: SettingType::Integer {
             minimum: 0,
             maximum: MAX_GIT_REFRESH_INTERVAL_SECONDS,

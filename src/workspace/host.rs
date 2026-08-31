@@ -242,6 +242,7 @@ pub struct WorkspaceHost {
     next_frame: u64,
     prepared: Option<PreparedFrame>,
     last_git_refresh: Instant,
+    last_automatic_git_refresh_request: Option<Instant>,
     git_dirty: bool,
     git_reconciled: Option<RefreshSpec>,
     pending_git_refresh: Option<PendingAutomaticGitRefresh>,
@@ -311,6 +312,7 @@ impl WorkspaceHost {
             next_frame: 1,
             prepared: None,
             last_git_refresh: Instant::now(),
+            last_automatic_git_refresh_request: None,
             git_dirty: false,
             git_reconciled: None,
             pending_git_refresh: None,
@@ -1184,7 +1186,7 @@ impl WorkspaceHost {
             started_at: completed.started_at,
             spec: completed.spec.clone(),
         });
-        if self.app.periodic_git_refresh_seconds() == 0 {
+        if self.app.automatic_git_refresh_interval_seconds() == 0 {
             self.git_dirty = false;
             self.git_reconciled = None;
             return;
@@ -1225,15 +1227,15 @@ impl WorkspaceHost {
         }
     }
 
-    /// Reconciles observed invalidation promptly and otherwise uses the
-    /// configured interval as a maximum-staleness fallback. Dirty state is
-    /// retained while no Git consumer is visible or interaction defers a
-    /// projection rewrite.
+    /// Reconciles observed invalidation after the configured automatic-refresh
+    /// cooldown and uses the same interval as a maximum-staleness fallback.
+    /// Dirty state is retained while no Git consumer is visible, while the
+    /// cooldown is active, or while interaction defers a projection rewrite.
     pub fn refresh_git_if_due(&mut self, now: Instant) -> bool {
         // A confirmed filesystem plan is a stronger boundary than automatic
         // monitoring and remains required when that monitoring is disabled.
         let _ = self.app.retry_pending_git_reconciliation(now);
-        let seconds = self.app.periodic_git_refresh_seconds();
+        let seconds = self.app.automatic_git_refresh_interval_seconds();
         if seconds == 0 {
             self.git_dirty = false;
             self.git_reconciled = None;
@@ -1252,17 +1254,27 @@ impl WorkspaceHost {
         let Some(spec) = self.app.visible_git_refresh_spec() else {
             return false;
         };
-        let fallback_due = now.saturating_duration_since(self.last_git_refresh)
-            >= Duration::from_secs(seconds as u64);
+        let interval = Duration::from_secs(seconds as u64);
+        let last_automatic_boundary = self
+            .last_automatic_git_refresh_request
+            .map_or(self.last_git_refresh, |request| {
+                request.max(self.last_git_refresh)
+            });
+        let cooldown_elapsed = now.saturating_duration_since(last_automatic_boundary) >= interval;
+        let fallback_due = now.saturating_duration_since(self.last_git_refresh) >= interval;
         let dirty_due = self.git_dirty
             && self
                 .git_reconciled
                 .as_ref()
                 .is_none_or(|reconciled| !reconciled.covers(&spec));
+        if (dirty_due || fallback_due) && !cooldown_elapsed {
+            return false;
+        }
         if !dirty_due && !fallback_due {
             return false;
         }
         if let Some(id) = self.app.request_automatic_git_refresh(spec.clone()) {
+            self.last_automatic_git_refresh_request = Some(now);
             self.pending_git_refresh = Some(PendingAutomaticGitRefresh {
                 id,
                 spec,
@@ -1551,7 +1563,7 @@ mod tests {
     }
 
     #[test]
-    fn git_invalidation_is_retained_until_visible_and_fallback_is_not_polling() {
+    fn git_invalidation_is_retained_until_visible_and_rate_limited_between_fallbacks() {
         let root = std::env::temp_dir().join(format!(
             "runyte-host-git-invalidation-{}-{}-{}",
             std::process::id(),
@@ -1643,16 +1655,27 @@ mod tests {
         host.panes.get_mut(&active_pane).unwrap().buffer = tracked_buffer;
         thread::sleep(Duration::from_millis(275));
         assert!(
-            host.refresh_git_if_due(before_fallback),
-            "revealing the dirty tracked gutter did not refresh promptly"
+            !host.refresh_git_if_due(before_fallback),
+            "revealing the dirty tracked gutter bypassed the refresh cooldown"
+        );
+        assert!(
+            host.git_dirty,
+            "the rate-limited invalidation was forgotten"
+        );
+        let interval_due = host.last_git_refresh + Duration::from_secs(60);
+        assert!(
+            host.refresh_git_if_due(interval_due),
+            "the retained invalidation was not refreshed after the cooldown"
         );
         complete_git_refresh(&mut host, &mut events);
 
         host.panes.get_mut(&active_pane).unwrap().buffer = second_buffer;
         assert!(
-            host.refresh_git_if_due(before_fallback),
-            "revealing a different dirty gutter did not request its staged base"
+            !host.refresh_git_if_due(interval_due),
+            "revealing a different dirty gutter bypassed the refresh cooldown"
         );
+        let coverage_due = interval_due + Duration::from_secs(60);
+        assert!(host.refresh_git_if_due(coverage_due));
         complete_git_refresh(&mut host, &mut events);
         let reconciled = host.git_reconciled.as_ref().unwrap();
         assert!(reconciled.staged_paths.contains(&tracked));
@@ -1661,11 +1684,24 @@ mod tests {
         assert!(host.git_tracks(second_buffer));
         host.panes.get_mut(&active_pane).unwrap().buffer = tracked_buffer;
         assert!(
-            !host.refresh_git_if_due(before_fallback),
+            !host.refresh_git_if_due(coverage_due),
             "returning to a reconciled gutter scheduled a redundant refresh"
         );
 
-        let fallback = host.last_git_refresh + Duration::from_secs(60);
+        host.apply_event(HostEvent::GitInvalidation(GitInvalidation {
+            repository: root.clone(),
+            observed_at: Instant::now(),
+            overflowed: false,
+        }));
+        let automatic_boundary = host
+            .last_automatic_git_refresh_request
+            .unwrap()
+            .max(host.last_git_refresh);
+        assert!(
+            !host.refresh_git_if_due(automatic_boundary + Duration::from_secs(59)),
+            "a sustained invalidation bypassed the refresh cooldown"
+        );
+        let fallback = automatic_boundary + Duration::from_secs(60);
         assert!(host.refresh_git_if_due(fallback));
         complete_git_refresh(&mut host, &mut events);
 
