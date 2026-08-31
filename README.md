@@ -245,12 +245,44 @@ local paths and process metadata, so review a log before sharing it. The
 [diagnostics guide](docs/user-guide.md#diagnostics-and-logging) documents
 rotation, retention, and error behavior.
 
+## Roadmap
+
+Feature-wise, Runyte is close to what I originally envisioned. Over the next
+few months, development will focus on hardening the current implementation:
+fixing bugs, expanding test coverage, and improving performance. The goal is
+for Runyte to be fast and rock-solid on Linux and macOS. Windows support will
+follow once that foundation is in place.
+
+Want to help? Report bugs through [GitHub Issues](https://github.com/runyte/runyte/issues)
+and join broader discussions on [r/runyte](https://www.reddit.com/r/runyte/).
+
 ## The name
 
-**Runyte** is pronounced *“roon-ite.”* The name combines **rune**, a small mark
-that carries human meaning; **byte**, a small unit of machine-readable
-information; and **unite**, because Runyte brings several terminal tools into
-one interface.
+**Runyte** is pronounced *“roon-ite.”* The name draws on several words:
+
+- **rune**, a small mark that carries human meaning
+- **byte**, a small unit of machine-readable information
+- **Rust**, the language Runyte is written in
+- **unite**, because Runyte brings several terminal tools into one interface
+
+## Project philosophy
+
+Runyte is a one-person project, built around a clear personal vision. It will
+remain free and open source, and I hope it is genuinely useful to others. If it
+fits your work, please use it and enjoy it.
+
+Even with a clear vision, software becomes rock-solid only when it has been
+tested in real work by many people. Feedback on ergonomics, missing features,
+and design choices is always welcome.
+
+Runyte has no plugin system. Keeping its features integrated lets them work
+together and be optimized as one whole, favoring consistency and performance
+over the flexibility of a broadly configurable plugin platform.
+
+It will not be the right tool for every workflow. If you need something
+different, you are welcome to fork Runyte and make it your own. I believe the
+future of software lies in many focused projects shaped by the people who care
+about them.
 
 ## Acknowledgements
 
