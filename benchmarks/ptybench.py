@@ -50,7 +50,6 @@ ROWS, COLUMNS = 40, 120
 
 # ESC alone, then the command, so the escape is not folded into an Alt chord.
 QUIT_SEQUENCE = ((b"\x1b", 0.08), (b":", 0.05), (b"q!", 0.05), (b"\r", 0.0))
-QUIT_KEYSTROKE_COST = sum(gap for _, gap in QUIT_SEQUENCE)
 
 
 def terminal_replies(chunk: bytes) -> bytes:
@@ -112,8 +111,8 @@ def measure_startup(argv, env, cwd=None):
     """Open a document and quit. Returns first-paint, ready, quit and byte count.
 
     ``first_paint`` is the first byte of output; ``ready`` is when output goes
-    quiet. ``quit`` has the harness's own keystroke stagger subtracted, so a
-    value near zero means the editor exited as soon as it read the command.
+    quiet. ``quit`` begins after the final keystroke, so a value near zero means
+    the editor exited as soon as it read the command.
     """
     pid, fd = _spawn(argv, env, cwd)
     start = time.perf_counter()
@@ -152,18 +151,23 @@ def measure_startup(argv, env, cwd=None):
             ready = last_significant - start
             break
 
-    quit_start = time.perf_counter()
+    quit_command_at = None
     if not closed:
         for part, gap in QUIT_SEQUENCE:
             try:
                 os.write(fd, part)
             except OSError:
                 break
-            time.sleep(gap)
+            if gap:
+                time.sleep(gap)
+        else:
+            quit_command_at = time.perf_counter()
 
+    exit_wait_start = time.perf_counter()
     exited = None
+    exit_status = None
     saw_eof = False
-    while time.perf_counter() - quit_start < QUIT_TIMEOUT_SECONDS:
+    while time.perf_counter() - exit_wait_start < QUIT_TIMEOUT_SECONDS:
         readable, _, _ = select.select([fd], [], [], 0.01)
         if readable:
             try:
@@ -179,18 +183,19 @@ def measure_startup(argv, env, cwd=None):
             except OSError:
                 saw_eof = True
         try:
-            reaped, _ = os.waitpid(pid, os.WNOHANG)
+            reaped, status = os.waitpid(pid, os.WNOHANG)
         except ChildProcessError:
             break
         if reaped == pid:
-            exited = time.perf_counter() - quit_start
+            exited = time.perf_counter()
+            exit_status = status
             break
         if saw_eof:
             try:
-                os.waitpid(pid, 0)
+                _, exit_status = os.waitpid(pid, 0)
             except ChildProcessError:
                 pass
-            exited = time.perf_counter() - quit_start
+            exited = time.perf_counter()
             break
 
     if exited is None:
@@ -203,7 +208,18 @@ def measure_startup(argv, env, cwd=None):
     return {
         "first_paint": first_paint,
         "ready": ready,
-        "quit": None if exited is None else max(0.0, exited - QUIT_KEYSTROKE_COST),
+        "quit": (
+            None
+            if (
+                exited is None
+                or ready is None
+                or quit_command_at is None
+                or exit_status is None
+                or not os.WIFEXITED(exit_status)
+                or os.WEXITSTATUS(exit_status) != 0
+            )
+            else max(0.0, exited - quit_command_at)
+        ),
         "bytes": total_bytes,
     }
 
@@ -282,7 +298,7 @@ def measure_idle(argv, env, cwd=None, settle=2.5, window=10.0):
 
 
 def median_startup(argv, env, cwd=None, runs=5):
-    """Median of `runs` startup measurements, with the sample count kept."""
+    """Median of `runs` startup and quit measurements, with completeness kept."""
     samples = [measure_startup(argv, env, cwd) for _ in range(runs)]
 
     def median_ms(key):
@@ -296,4 +312,5 @@ def median_startup(argv, env, cwd=None, runs=5):
         "bytes": int(statistics.median(s["bytes"] for s in samples)),
         "runs": runs,
         "complete": sum(1 for s in samples if s["ready"] is not None),
+        "quit_complete": sum(1 for s in samples if s["quit"] is not None),
     }

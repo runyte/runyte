@@ -1,9 +1,9 @@
-# Startup and idle benchmark
+# Startup, quit and idle benchmark
 
 Measures how long a terminal editor takes to present a settled first frame, and
-what it costs while sitting idle. Runyte is measured alongside Neovim and Helix
-where those are installed, so a change in Runyte's numbers can be separated from
-a change in the machine.
+then to quit, plus what it costs while sitting idle. Runyte is measured alongside
+Neovim and Helix where those are installed, so a change in Runyte's numbers can
+be separated from a change in the machine.
 
 Results are recorded in
 [`context/reference/startup-performance.md`](../context/reference/startup-performance.md).
@@ -37,6 +37,18 @@ Missing editors are skipped with a note rather than failing the run, so
 and the harness records the first byte of output and the moment output goes
 quiet. Small repaints do not restart the settle clock, so an editor that
 repaints on a timer still reaches a settled state.
+
+**Quit time.** After the startup frame settles, the harness sends
+<kbd>Escape</kbd> <kbd>:</kbd> <kbd>q</kbd> <kbd>!</kbd> <kbd>Enter</kbd> and
+records the time from the final keystroke until the editor process exits. The
+artificial pauses used to make the sequence behave like real keyboard input are
+excluded. Each editor therefore receives the same request to abandon the same
+unchanged document; no editor-specific save, plugin, or persistence workflow is
+included. Quit medians come from the same samples as startup. A row is reported
+as `no measured exit` unless every sample accepts the full command, terminates
+before the deadline, exits successfully, and follows a settled startup frame,
+rather than taking a median of a successful subset or treating a crash as a
+fast quit.
 
 **Idle cost.** With a document open and no input, CPU is sampled from `/proc`
 over ten seconds, counting the editor and every process it spawned, alongside
@@ -148,7 +160,8 @@ teardown — an unanswered query at exit reads as a slow quit.
 **Keystrokes are staggered.** Writing `ESC : q ! CR` as one block is parsed by
 crossterm-based editors as Alt-`:`, because the escape and the byte after it
 arrive in the same read. The harness sends the escape alone and pauses, which is
-what a keyboard looks like. The quit figure has this stagger subtracted.
+what a keyboard looks like. Quit time begins at the final carriage return, after
+this stagger.
 
 Editors run with an empty `XDG_CONFIG_HOME`, so no personal configuration or
 plugin set is measured. Neovim additionally runs with `-i NONE` so that reading

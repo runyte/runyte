@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MPL-2.0
 
-"""Startup and idle benchmark for Runyte, Neovim and Helix.
+"""Startup, quit and idle benchmark for Runyte, Neovim and Helix.
 
 Run from anywhere:
 
@@ -159,6 +159,7 @@ def main() -> int:
     print()
     print("| Fixture | Size | " + " | ".join(f"{n} first / ready" for n, _ in editors) + " |")
     print("| --- | --- | " + " | ".join("---:" for _ in editors) + " |")
+    startup_results = {}
     for fixture in names:
         path = paths[fixture]
         cells = []
@@ -166,12 +167,37 @@ def main() -> int:
             result = median_startup(
                 argv + [fixture], env, cwd=str(FIXTURES), runs=args.runs
             )
+            startup_results.setdefault(fixture, []).append(result)
             first, ready = result["first_paint_ms"], result["ready_ms"]
             if ready is None or result["complete"] < result["runs"]:
                 cells.append("no settled frame")
             else:
                 cells.append(f"{first:.0f} / {ready:.0f} ms")
         print(f"| `{fixture}` | {fixtures.describe(path)} | " + " | ".join(cells) + " |")
+    print()
+
+    print("### Quit")
+    print()
+    print(
+        "Time from the final force-quit keystroke until the editor process exits; "
+        "the harness's staggered-key delay is excluded."
+    )
+    print()
+    print("| Fixture | Size | " + " | ".join(n for n, _ in editors) + " |")
+    print("| --- | --- | " + " | ".join("---:" for _ in editors) + " |")
+    for fixture in names:
+        cells = []
+        for result in startup_results[fixture]:
+            quit_ms = result["quit_ms"]
+            if quit_ms is None or result["quit_complete"] < result["runs"]:
+                cells.append("no measured exit")
+            else:
+                cells.append(f"{quit_ms:.0f} ms")
+        print(
+            f"| `{fixture}` | {fixtures.describe(paths[fixture])} | "
+            + " | ".join(cells)
+            + " |"
+        )
     print()
 
     if not args.no_idle:
