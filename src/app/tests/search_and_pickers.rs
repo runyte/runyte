@@ -1270,6 +1270,102 @@ fn terminal_output_after_a_complete_scan_refreshes_only_that_terminal() {
 
 #[cfg(unix)]
 #[test]
+fn a_terminal_refresh_reads_only_what_the_child_added() {
+    let root = temporary("project-finder-terminal-incremental-refresh");
+    fs::create_dir_all(&root).unwrap();
+    let ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    app.open_terminal_at(Some("/bin/cat".to_owned()), root.clone());
+    let terminal = app.active_terminal().unwrap();
+    let keeper = crate::terminal::grid::SCROLLBACK_LIMIT;
+    let initial = (0..crate::terminal::grid::SCROLLBACK_LIMIT + 64)
+        .map(|row| {
+            if row == keeper {
+                "keeper needle\r\n".to_owned()
+            } else {
+                format!("ordinary row {row}\r\n")
+            }
+        })
+        .collect::<String>();
+    app.apply_terminal_output(TerminalOutput::Bytes {
+        id: terminal,
+        bytes: initial.into_bytes(),
+    });
+
+    app.open_project_grep().unwrap();
+    type_text(&mut app, "keeper needle");
+    settle_finder(&mut app);
+    let (line_id, label, row) = app
+        .finder
+        .as_ref()
+        .unwrap()
+        .items
+        .iter()
+        .find_map(|item| match item.target {
+            ResourceTarget::TerminalLocation { line_id, .. } => Some((
+                line_id,
+                item.label.clone(),
+                app.terminals
+                    .get(terminal)
+                    .unwrap()
+                    .retained_line_row(line_id)
+                    .unwrap(),
+            )),
+            _ => None,
+        })
+        .expect("the keeper row is a content result");
+
+    app.apply_terminal_output(TerminalOutput::Bytes {
+        id: terminal,
+        bytes: b"one more row\r\n".to_vec(),
+    });
+    assert!(app.refresh_finder_terminals());
+    let mut passes = 0;
+    while app.resource_finder_scan_pending() {
+        app.advance_resource_finder_scan();
+        passes += 1;
+    }
+    // Re-reading the whole session would take a pass for every 128 of its
+    // 5000 retained rows. Only the row the child added, and the screen it
+    // may have rewritten, are worth revisiting.
+    assert!(
+        passes <= 2,
+        "a refresh read {passes} slices, so it re-read rows it already had"
+    );
+
+    let session = app.terminals.get(terminal).unwrap();
+    let shifted = session.retained_line_row(line_id).unwrap();
+    assert_ne!(shifted, row, "bounded history moved the kept row");
+    let number = session.output_line_number(shifted);
+    let item = app
+        .finder
+        .as_ref()
+        .unwrap()
+        .items
+        .iter()
+        .find(|item| {
+            matches!(
+                item.target,
+                ResourceTarget::TerminalLocation { line_id: found, .. } if found == line_id
+            )
+        })
+        .expect("the kept row survives the refresh");
+    assert_eq!(item.label, label, "a kept row keeps the name it was given");
+    assert!(
+        item.label.ends_with(&format!(":{number}")),
+        "and that name still numbers the line it points at: {}",
+        item.label
+    );
+
+    app.close_file_picker();
+    app.close_terminal_id(terminal);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
 fn terminal_content_selection_follows_stable_line_identity_through_eviction() {
     let root = temporary("project-finder-terminal-stable-lines");
     fs::create_dir_all(&root).unwrap();

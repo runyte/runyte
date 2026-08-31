@@ -152,7 +152,22 @@ enum FinderContentSource {
     Terminal {
         terminal: TerminalId,
         label: String,
+        /// The first retained row this pass has not read. A refresh reads
+        /// only what the child has added since, so the rows before it keep
+        /// the results they already produced instead of being dropped and
+        /// found again.
+        from: usize,
     },
+}
+
+impl FinderContentSource {
+    /// Where a pass enters this source.
+    const fn first_row(&self) -> usize {
+        match self {
+            Self::Buffer { .. } => 0,
+            Self::Terminal { from, .. } => *from,
+        }
+    }
 }
 
 // Application behavior is grouped by editor-level workflow below. These
@@ -2409,6 +2424,10 @@ pub struct App {
     /// is allowed to look, so a running child cannot rebuild the list on every
     /// chunk it writes.
     finder_dirty_terminals: HashSet<TerminalId>,
+    /// How much of each terminal the finder has already read, as the retired
+    /// count standing when it last looked. Absent means nothing has been read
+    /// and the next pass takes the whole session.
+    finder_terminal_marks: HashMap<TerminalId, u64>,
     file_scanner: Option<FileScanner>,
     next_file_scan_id: u64,
     /// A filesystem plan waiting for a separate, explicit confirmation.
@@ -2873,6 +2892,7 @@ impl App {
             finder: None,
             finder_content_scan: None,
             finder_dirty_terminals: HashSet::new(),
+            finder_terminal_marks: HashMap::new(),
             file_scanner: None,
             next_file_scan_id: 1,
             fs_confirmation: None,

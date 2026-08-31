@@ -1243,6 +1243,40 @@ impl TerminalSession {
         self.emulator.grid().retained_row(line_id)
     }
 
+    /// The identities of the retained rows, history first, in row order.
+    pub fn retained_line_ids(&self) -> impl Iterator<Item = TerminalLineId> + '_ {
+        self.emulator.grid().retained_lines().map(|(id, _)| id)
+    }
+
+    /// How many lines have left the top of the screen since it was created.
+    ///
+    /// A row index moves as bounded history fills and is evicted, so it
+    /// cannot say what is new. This only grows, so a reader that remembers it
+    /// knows exactly how much of the output it has not seen — and a count
+    /// that has gone backwards is a different screen rather than later
+    /// output, which is the one case nothing it read still describes.
+    pub fn retired_lines(&self) -> u64 {
+        self.emulator.grid().retired()
+    }
+
+    /// How many retained rows are history rather than the current screen.
+    pub fn scrollback_rows(&self) -> usize {
+        self.emulator.grid().scrollback_len()
+    }
+
+    /// A row's place in everything the child has written, counting from one.
+    ///
+    /// Unlike the retained row index this does not change when history
+    /// scrolls or is evicted, so a result labelled with it keeps its number
+    /// for as long as its line exists.
+    pub fn output_line_number(&self, row: usize) -> u64 {
+        let grid = self.emulator.grid();
+        grid.retired()
+            .saturating_sub(grid.scrollback_len() as u64)
+            .saturating_add(row as u64)
+            .saturating_add(1)
+    }
+
     /// Captures current retained output and places the review caret on one
     /// stable line. An identity evicted from bounded history is not silently
     /// retargeted to the row that reused its former index.

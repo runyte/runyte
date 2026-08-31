@@ -92,7 +92,11 @@ them, regardless of which extensibility direction is chosen.
   read on a slow interval rather than on each chunk its child writes: the
   finder is a list to be read, so it holds still while a build or a test run
   scrolls, and its rows are current as of the last interval rather than of the
-  last write.
+  last write. A refresh reads only what the child has added since, so results
+  already found stay put rather than being dropped and found again. A content
+  result from a terminal is numbered by its place in the child's whole output,
+  which does not change as bounded history scrolls or is evicted, rather than
+  by its retained row.
 - **Context overlay** — temporary information or assistance tied to the source
   under the caret, such as hover documentation, completion, or a signature.
   It leaves the source pane active and declares its own bounds and dismissal
