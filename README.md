@@ -22,7 +22,9 @@ multiple-selection model and selection-first editing are closer to Helix than
 Vim, while some commands and workflows are distinctly Runyte's own.
 
 Website: [runyte.com](https://runyte.com) ·
-Documentation: [user guide](docs/user-guide.md)
+Documentation: [user guide](docs/user-guide.md) ·
+Changelog: [GitHub Releases](https://github.com/runyte/runyte/releases) ·
+Community: [r/runyte](https://www.reddit.com/r/runyte/)
 
 ## Features
 
