@@ -32,6 +32,7 @@ use runyte::{
     command::{CommandExecutionContext, CommandInvocation, EditorCommand, parse_colon_command},
     config::Config,
     file_picker::{CONTENT_ENTRY_LIMIT, FileHits, FilePicker, scan_content},
+    finder::{FinderMode, ResourceFinder, ResourceItem, ResourceKind, ResourceTarget},
     headless::HeadlessEditor,
     input::{KeyCode, KeyStroke, Modifiers},
     selection::Selection,
@@ -808,6 +809,48 @@ fn ranking_a_full_content_budget_stays_within_a_frame() {
         "a keystroke in content search samples: {samples:?}; median: {median:?}; budget: {limit:?}"
     );
     within("a median keystroke in content search", median, limit);
+}
+
+/// Cooperative live-content batches must not re-sort every earlier batch.
+/// This fills the same candidate ceiling in the 128-row chunks used by the
+/// event loop; a whole-corpus sort after each chunk turns this deliberately
+/// broad query into a multi-second foreground stall.
+#[test]
+#[ignore = "run serially in the release performance job"]
+fn incrementally_ranking_a_full_live_content_budget_stays_bounded() {
+    const SLICE: usize = 128;
+    let mut picker = FilePicker::grep(1, PathBuf::from("/project"));
+    picker.insert_query_text("needle");
+    picker.finish(0, false);
+    let mut finder = ResourceFinder::new(FinderMode::Contents);
+    finder.begin_content_scan(&picker, "needle", std::iter::empty());
+
+    let start = Instant::now();
+    for first in (0..CONTENT_ENTRY_LIMIT).step_by(SLICE) {
+        let end = (first + SLICE).min(CONTENT_ENTRY_LIMIT);
+        finder.append_items(
+            (first..end).map(|row| {
+                ResourceItem::content(
+                    format!("scratch:{}", row + 1),
+                    format!("needle value {row}"),
+                    ResourceTarget::BufferLocation {
+                        buffer: 0,
+                        row,
+                        column: 0,
+                    },
+                    ResourceKind::Buffer,
+                )
+            }),
+            &picker,
+            "needle",
+        );
+    }
+    assert_eq!(finder.matches.len(), CONTENT_ENTRY_LIMIT);
+    within(
+        "incrementally ranking a full live-content budget",
+        start.elapsed(),
+        budget(FRAME * 30),
+    );
 }
 
 // -- Path completion --------------------------------------------------------

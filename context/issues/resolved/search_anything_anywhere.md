@@ -53,6 +53,16 @@ detail column through both the core and protocol snapshots, so matching text
 in buffer and terminal rows is visibly accented in standalone and attached
 frontends.
 
+A third review found that terminal invalidation still had two edge cases and
+that cooperative row scanning was followed by non-cooperative ranking. Output
+received after an idle scan now starts a terminal-only refresh, preserving
+buffer results and a target claimed by navigation. Dirty terminal rows are
+removed and their source is rescheduled even if another source reached the
+shared limit, so stale output cannot survive a capped scan. Each 128-row batch
+is now ranked once and linearly merged into the already-sorted results rather
+than re-sorting every accumulated hit; terminal removal remaps retained
+matches without rescoring them.
+
 Coverage includes:
 
 - `project_finder_switches_name_and_content_modes_without_losing_its_query`,
@@ -65,14 +75,19 @@ Coverage includes:
   `terminal_output_restarts_a_bounded_incremental_finder_scan`, and
   `repeated_terminal_output_does_not_starve_later_buffer_content` in
   `src/app/tests/search_and_pickers.rs`;
-- finder ranking, smart-case, literal content-term, and soft type-hint tests in
-  `src/finder.rs`;
+- `terminal_output_after_a_complete_scan_refreshes_only_that_terminal` and
+  `dirty_terminal_rows_are_invalidated_when_another_source_reaches_the_limit`
+  in `src/app/tests/search_and_pickers.rs`;
+- finder incremental-ordering, selection, smart-case, literal content-term,
+  and soft type-hint tests in `src/finder.rs`;
 - `disk_hits_use_only_the_unified_content_budget_left_by_resources` in
   `src/app/tests/search_and_pickers.rs`;
 - `resource_finder_highlights_matching_buffer_content`,
   `a_selected_row_keeps_match_emphasis_in_its_detail_column`, and
   `resource_finder_renders_buffer_preview_and_narrow_fallback` in `src/ui.rs`,
   together with the overlay-row wire round trip in `src/protocol/frame.rs`;
+- `incrementally_ranking_a_full_live_content_budget_stays_bounded` in
+  `tests/performance.rs`, run serially in the release performance job;
 - `finder_and_workspace_search_are_global_in_every_buffer_scope` in
   `tests/keymap.rs` and the registry-derived hint assertions in
   `tests/key_hints.rs`;

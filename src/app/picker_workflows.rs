@@ -440,8 +440,40 @@ impl App {
         } else if self.finder_content_scan.is_some() {
             self.finder_content_dirty_terminals.insert(terminal);
         } else {
-            self.start_resource_content_scan();
+            self.start_terminal_content_refresh(terminal);
         }
+    }
+
+    /// Refreshes one terminal after an otherwise complete content scan. Other
+    /// live results and a claimed selection remain in place while its bounded
+    /// rows are revisited.
+    fn start_terminal_content_refresh(&mut self, terminal: crate::terminal::TerminalId) {
+        let Some(session) = self.terminals.get(terminal) else {
+            return;
+        };
+        let source = FinderContentSource::Terminal {
+            terminal,
+            label: session.display_name(),
+        };
+        let Some(query) = self.picker.as_ref().map(|picker| picker.query.clone()) else {
+            return;
+        };
+        let mut changed = std::collections::HashSet::new();
+        changed.insert(terminal);
+        let limited = self.finder.as_ref().is_some_and(|finder| finder.limited);
+        let Some((finder, picker)) = self.finder.as_mut().zip(self.picker.as_ref()) else {
+            return;
+        };
+        finder.remove_terminal_content(&changed, picker);
+        self.finder_content_dirty_terminals.remove(&terminal);
+        self.finder_content_scan = Some(FinderContentScan {
+            query,
+            sources: vec![source],
+            source: 0,
+            row: 0,
+            limited,
+        });
+        self.refresh_finder_preview();
     }
 
     /// Advances live buffer and terminal matching without materializing the
@@ -537,13 +569,10 @@ impl App {
         if let (Some(finder), Some(picker)) = (self.finder.as_mut(), self.picker.as_ref()) {
             finder.append_items(found, picker, &query);
         }
-        if scan.source >= scan.sources.len()
-            && !scan.limited
-            && !self.finder_content_dirty_terminals.is_empty()
-        {
+        if scan.source >= scan.sources.len() && !self.finder_content_dirty_terminals.is_empty() {
             let dirty = std::mem::take(&mut self.finder_content_dirty_terminals);
             if let (Some(finder), Some(picker)) = (self.finder.as_mut(), self.picker.as_ref()) {
-                finder.remove_terminal_content(&dirty, picker, &query);
+                finder.remove_terminal_content(&dirty, picker);
             }
             scan.sources
                 .extend(dirty.into_iter().filter_map(|terminal| {
@@ -558,8 +587,8 @@ impl App {
         let finished = scan.source >= scan.sources.len();
         if finished {
             self.finder_content_dirty_terminals.clear();
-            if let (Some(finder), Some(picker)) = (self.finder.as_mut(), self.picker.as_ref()) {
-                finder.finish_content_scan(picker, &query, scan.limited);
+            if let Some(finder) = self.finder.as_mut() {
+                finder.finish_content_scan(scan.limited);
             }
         }
         if !finished {
