@@ -1,4 +1,81 @@
-# First-paint latency and the breadth of the performance benchmarks
+---
+title: "First-output latency scaled with document work and comparative benchmarks covered too little"
+status: resolved
+reported: 2026-08-31
+resolved: 2026-08-31
+commit: d7fdd63
+---
+
+## Resolution
+
+Commit `d7fdd63` (`Decouple first output and idle work`) resolved the startup
+and idle behavior. `main::run` acquired the terminal only after
+`App::new_in_project_with_targets_and_trace` had synchronously opened and parsed
+every startup target, so the first terminal byte inherited document-read and
+syntax cost. Standalone startup now enters the terminal first and immediately
+draws a stable, document-free `Opening workspace…` presentation. Document text
+still appears only in the first complete highlighted editor frame, so the
+earlier presentation does not introduce unhighlighted text, reflow, or a later
+settle. Startup tracing records terminal entry, the startup presentation,
+buffer open, syntax completion, and the editor frame as distinct milestones.
+
+That earlier terminal ownership required a signal-safe startup boundary.
+`StartupSignalExit` publishes the saved terminal state before signal handlers
+are installed; a signal received during synchronous startup restores termios
+and terminal modes through async-signal-safe operations and exits immediately.
+The normal event-loop path uses a self-pipe instead of a 25 ms termination poll,
+and its handler counter prevents the pipe descriptor from closing or being
+reused while a signal write is in flight.
+
+Idle work came from fixed-rate coordination rather than screen redraws.
+`file_monitor::run_worker` now sleeps until its next debounce or reconciliation
+deadline, `git_monitor::run_worker` blocks until a command or real deadline,
+and both handles suppress unchanged registrations. Git invalidations refresh
+immediately, while the general host maintenance cadence is one second. A
+backpressured Git invalidation blocks the dedicated worker on its bounded output
+slot, which guarantees delivery when the host drains it rather than stranding a
+retained event on the command wait.
+
+The comparative benchmark breadth landed in prerequisite commits `4a90b3a`
+(`Record comparative editor quit time`) and `e44e2cf` (`Repeat idle benchmarks
+in isolated environments`), with final correctness work in `d7fdd63`. Quit is
+defined from the final force-quit keystroke to successful process exit and is
+reported only for complete samples. Idle results use repeated fresh isolated
+processes and report median plus range. Linux CPU accounting includes live
+descendants and reaped-child ticks. The startup settle heuristic now requires
+substantive output, so the short startup presentation cannot masquerade as the
+settled editor frame on a slow machine.
+
+Regression coverage is in:
+
+- `tests/local_protocol.rs`:
+  `a_blocked_document_open_presents_an_intentional_startup_screen`,
+  `termination_during_a_blocked_startup_open_restores_the_terminal`, and
+  `termination_signal_restores_the_terminal_and_preserves_its_exit_status`;
+- `src/git_monitor.rs`:
+  `draining_a_full_output_delivers_the_retained_invalidation` and
+  `unchanged_repository_registration_does_not_wake_the_worker_again`;
+- `src/file_monitor.rs`:
+  `unchanged_registrations_do_not_wake_the_worker_again`;
+- `src/startup.rs`:
+  `terminal_entry_precedes_document_dependent_startup_work` and
+  `report_preserves_phase_order_and_elapsed_values`;
+- `benchmarks/test_ptybench.py`:
+  `test_loading_presentation_cannot_settle_before_the_editor_frame`,
+  `test_proc_stat_includes_reaped_child_ticks`, quit validity, and repeated-idle
+  aggregation coverage;
+- `benchmarks/test_run.py`: isolated-environment, discovery, completeness, and
+  result-format coverage.
+
+Known limitation: CPU percentage remains unavailable without `/proc`, including
+on macOS, although repeated screen-write measurement remains portable. The
+complete editor frame still waits for synchronous initial document and syntax
+work; the startup presentation is deliberately non-interactive. Comparative
+quit remains in the matrix even though Neovim leads five rows and Runyte only
+ties Helix on `long.lua`. The other candidate comparative categories in the
+report remain future benchmark work rather than silently claimed coverage.
+
+## Report
 
 The 2026-08-29 result set in `context/reference/startup-performance.md` shows
 Runyte reaching a settled first frame before Neovim and Helix in every row, and
@@ -25,7 +102,7 @@ against 0.00% for both other editors, with zero screen writes for all three. Tha
 is one window rather than a median, so it is a point estimate rather than a
 confirmed difference.
 
-## Expected direction
+### Expected direction
 
 First paint should become as close to independent of document size and language
 as the terminal allows, without moving the settled frame later. The settled time
@@ -43,7 +120,7 @@ consulted and updated when anything that runs on a timer changes.
 The objective is to lead in every measured category. A category where Runyte does
 not lead is recorded as such and kept in the matrix rather than dropped from it.
 
-## Broader benchmarks
+### Broader benchmarks
 
 `benchmarks/` measures two things: time to a settled first frame, and idle cost.
 `tests/performance.rs` holds in-process budgets for large-document open, redraw,
@@ -73,7 +150,7 @@ cross-editor row is claimed:
 - quit time, which the pty harness already produces but which no result set
   records.
 
-## Constraints
+### Constraints
 
 - Fixtures stay generated from a fixed seed rather than taken from the
   repository, so that a result does not change when Runyte's source does.
