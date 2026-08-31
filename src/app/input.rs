@@ -3832,6 +3832,7 @@ impl App {
                 let session_rename_target = self.session_rename_target.take();
                 #[cfg(unix)]
                 let session_number_target = self.session_number_target.take();
+                let terminal_rename_target = self.terminal_rename_target.take();
                 let start_point = self.git_branch_start.take();
                 let worktree_start = self.git_worktree_start.take();
                 let worktree_new_branch = self.git_worktree_new_branch.take();
@@ -3864,6 +3865,23 @@ impl App {
                     }
                     #[cfg(not(unix))]
                     self.action_failed("persistent mode is not yet supported on this platform");
+                } else if kind == PromptKind::TerminalRename {
+                    if let Some(id) = terminal_rename_target {
+                        if value.trim().is_empty() {
+                            self.action_failed("a terminal name cannot be empty");
+                        } else {
+                            self.rename_terminal_id(id, &value);
+                        }
+                        // Back to where the rename was asked for. The list is
+                        // rebuilt after the rename so it shows the new name,
+                        // and no pane has changed what it is showing. An empty
+                        // list has nothing to return to, and its own "no
+                        // terminals" message would bury the failure that got
+                        // here.
+                        if !self.terminals.is_empty() {
+                            self.open_terminal_list();
+                        }
+                    }
                 } else if kind == PromptKind::NewBranch {
                     if let Some(start_point) = start_point {
                         self.create_branch(value, start_point);
@@ -4178,6 +4196,9 @@ impl App {
     pub(super) fn close_prompt(&mut self) {
         #[cfg(unix)]
         let session_manager_return_target = self.session_manager_return_target.take();
+        // Still set only when the prompt is being abandoned: a submitted
+        // rename takes its own target before closing.
+        let abandoned_terminal_rename = self.terminal_rename_target.take().is_some();
         self.command.clear();
         self.command_cursor = 0;
         self.command_selection = 0;
@@ -4197,6 +4218,9 @@ impl App {
         self.git_worktree_new_branch = None;
         self.git_worktree_upstream = None;
         self.mode = self.grammar.preferred_mode().unwrap_or(Mode::Normal);
+        if abandoned_terminal_rename && !self.terminals.is_empty() {
+            self.open_terminal_list();
+        }
         #[cfg(unix)]
         if let Some(target) = session_manager_return_target {
             self.rebuild_workspace_picker();

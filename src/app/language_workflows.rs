@@ -2721,9 +2721,7 @@ impl App {
                         self.show_terminal(id);
                     }
                     TerminalAction::Rename => {
-                        self.list = None;
-                        self.show_terminal(id);
-                        self.open_terminal_rename_prompt();
+                        self.open_listed_terminal_rename_prompt(id);
                     }
                     TerminalAction::Close => {
                         self.close_terminal_id(id);

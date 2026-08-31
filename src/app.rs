@@ -962,6 +962,9 @@ pub enum PromptKind {
     /// Collects a new persistent-session name for the chosen workspace.
     SessionRename,
     SessionNumber,
+    /// Collects a new name for one terminal session, named by the list the
+    /// prompt was opened from rather than by whatever pane is active.
+    TerminalRename,
     /// Selects the program a binary file should be handed to. Reuses the same
     /// editing model, with the default and recently chosen programs above it.
     ExternalProgram,
@@ -2559,6 +2562,10 @@ pub struct App {
     workspace_previews: HashMap<PathBuf, Result<SessionPreview, String>>,
     #[cfg(unix)]
     session_rename_target: Option<PathBuf>,
+    /// The terminal a pending rename prompt names. Renaming is reached from
+    /// the terminal list, which does not attach the terminal it acts on, so
+    /// the prompt cannot read its subject from the active pane.
+    terminal_rename_target: Option<TerminalId>,
     #[cfg(unix)]
     session_number_target: Option<PathBuf>,
     /// The session-manager row restored after its Renumber prompt closes.
@@ -2941,6 +2948,7 @@ impl App {
             workspace_previews: HashMap::new(),
             #[cfg(unix)]
             session_rename_target: None,
+            terminal_rename_target: None,
             #[cfg(unix)]
             session_number_target: None,
             #[cfg(unix)]

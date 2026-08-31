@@ -1571,6 +1571,68 @@ fn closing_a_terminal_ends_its_child_and_forgets_it() {
 }
 
 #[test]
+fn renaming_a_listed_terminal_leaves_every_pane_showing_what_it_showed() {
+    let mut session = Session::start("/bin/cat");
+    let first = session.app.active_terminal().unwrap();
+    session.colon("terminal /bin/cat");
+    let second = session.app.active_terminal().unwrap();
+    assert_ne!(first, second);
+
+    session.leave_input();
+    session.type_text(" tt");
+    // The first terminal is the row the list opens on, and it is not the one
+    // the pane is showing.
+    session.press(KeyCode::Tab);
+    session.press(KeyCode::Down);
+    session.press(KeyCode::Enter);
+    session.type_text("alpha");
+    session.press(KeyCode::Enter);
+
+    assert_eq!(
+        session.app.terminals.get(first).unwrap().user_name(),
+        Some("alpha")
+    );
+    // Naming a terminal is not a way of reaching it: the pane still shows the
+    // terminal it showed, and the list is still what the person is looking at.
+    assert_eq!(session.app.active_terminal(), Some(second));
+    assert_eq!(
+        session
+            .app
+            .list
+            .as_ref()
+            .map(|picker| picker.title.as_str()),
+        Some("Terminals")
+    );
+}
+
+#[test]
+fn abandoning_a_listed_terminal_rename_changes_nothing_and_returns_to_the_list() {
+    let mut session = Session::start("/bin/cat");
+    let first = session.app.active_terminal().unwrap();
+    session.colon("terminal /bin/cat");
+    let second = session.app.active_terminal().unwrap();
+
+    session.leave_input();
+    session.type_text(" tt");
+    session.press(KeyCode::Tab);
+    session.press(KeyCode::Down);
+    session.press(KeyCode::Enter);
+    session.type_text("alpha");
+    session.press(KeyCode::Escape);
+
+    assert_eq!(session.app.terminals.get(first).unwrap().user_name(), None);
+    assert_eq!(session.app.active_terminal(), Some(second));
+    assert_eq!(
+        session
+            .app
+            .list
+            .as_ref()
+            .map(|picker| picker.title.as_str()),
+        Some("Terminals")
+    );
+}
+
+#[test]
 fn copying_a_terminals_output_opens_it_as_an_ordinary_buffer() {
     let mut session = Session::start(r#"/bin/sh -c 'printf "copied text\r\n"; cat'"#);
     assert!(session.settle(|app| terminal_text(app).contains("copied text")));

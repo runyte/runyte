@@ -257,16 +257,36 @@ impl App {
             self.action_failed("this pane is not showing a terminal");
             return;
         };
+        self.rename_terminal_id(id, name);
+    }
+
+    /// Names one terminal session, whether or not any pane is showing it.
+    pub(super) fn rename_terminal_id(&mut self, id: TerminalId, name: &str) {
         let name = name.trim();
-        match self
-            .terminals
-            .get_mut(id)
-            .expect("active terminal exists")
-            .rename(Some(name.to_owned()))
-        {
+        let Some(session) = self.terminals.get_mut(id) else {
+            self.action_failed("that terminal is gone");
+            return;
+        };
+        match session.rename(Some(name.to_owned())) {
             Ok(()) => self.status(format!("terminal {id} named {name}")),
             Err(error) => self.action_failed(error),
         }
+    }
+
+    /// Opens the rename prompt for one listed terminal.
+    ///
+    /// Naming a terminal is not a way of reaching it: the list stays the thing
+    /// in front of the person, and the panes keep showing whatever they showed
+    /// before the prompt opened.
+    pub(super) fn open_listed_terminal_rename_prompt(&mut self, id: TerminalId) {
+        let Some(session) = self.terminals.get(id) else {
+            self.action_failed("that terminal is gone");
+            return;
+        };
+        let current = session.user_name().unwrap_or_default().to_owned();
+        self.list = None;
+        self.terminal_rename_target = Some(id);
+        self.open_prompt_with_value(PromptKind::TerminalRename, current);
     }
 
     pub(super) fn open_terminal_rename_prompt(&mut self) {

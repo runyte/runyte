@@ -141,7 +141,13 @@ use crate::workspace::{
 /// Version 43 splits the palette's command colour out of `accent` and carries
 /// it as its own required theme value; an older peer has no field for it and
 /// cannot deserialize the resolved theme at all.
-pub const VERSION: u32 = 43;
+/// Version 44 adds the `terminal-rename` prompt, which the terminal manager's
+/// Rename action opens against a listed session rather than an attached one. A
+/// host still running the previous binary owns key dispatch, so it would
+/// answer that action by attaching the terminal to the active pane and opening
+/// the command prompt instead, and it has no case for the new prompt on the
+/// wire.
+pub const VERSION: u32 = 44;
 pub const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const MAX_PATHS: usize = 32;
 pub const MAX_PATH_BYTES: usize = 32 * 1024;
@@ -543,6 +549,7 @@ pub enum PromptKind {
     Rename,
     SessionRename,
     SessionNumber,
+    TerminalRename,
     ExternalProgram,
     NewBranch,
     NewWorktreeBranch,
@@ -564,6 +571,7 @@ impl From<CorePromptKind> for PromptKind {
             CorePromptKind::Rename => Self::Rename,
             CorePromptKind::SessionRename => Self::SessionRename,
             CorePromptKind::SessionNumber => Self::SessionNumber,
+            CorePromptKind::TerminalRename => Self::TerminalRename,
             CorePromptKind::ExternalProgram => Self::ExternalProgram,
             CorePromptKind::NewBranch => Self::NewBranch,
             CorePromptKind::NewWorktreeBranch => Self::NewWorktreeBranch,
@@ -911,7 +919,7 @@ mod tests {
 
     #[test]
     fn protocol_version_and_request_bounds_are_explicit() {
-        assert_eq!(VERSION, 43);
+        assert_eq!(VERSION, 44);
         let oversized_command = ClientRequest::Invoke {
             command: CommandRequest {
                 name: "open".to_owned(),

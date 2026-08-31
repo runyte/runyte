@@ -764,7 +764,9 @@ from the terminal manager's Tab menu. An exited session remains listed and
 searchable until Close removes it and its retained output. Duplicate names are
 refused as ambiguous and numeric IDs never depend on picker order. Tab in the
 manager offers Show, Rename, Close, and Create; closing a hidden live process
-requires a second Enter. Neither `:close[!]` nor any `:quit…` command terminates
+requires a second Enter. Only Show attaches a session to the active pane:
+Rename asks for the new name and returns to the list, leaving every pane
+showing what it showed before. Neither `:close[!]` nor any `:quit…` command terminates
 a terminal.
 
 Terminal sessions use the `[terminal] <name>` prefix in pane and manager
