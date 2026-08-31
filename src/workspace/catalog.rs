@@ -24,9 +24,9 @@ use crate::{external_open, project_root};
 use super::{
     SessionPreview,
     lifecycle::{
-        connect_control, force_shutdown_host, rename_host, resolve_registered_host_from,
-        resolve_workspace_endpoint, resolve_workspace_endpoint_with_runtime, shutdown_host,
-        terminate_incompatible_host,
+        await_host_stopped, connect_control, force_shutdown_host, rename_host,
+        resolve_registered_host_from, resolve_workspace_endpoint,
+        resolve_workspace_endpoint_with_runtime, shutdown_host, terminate_incompatible_host,
     },
     transport::{
         LocalEndpoint, MAX_HOST_NAME_BYTES, MAX_PERSISTED_PATH_BYTES, RegisteredHost,
@@ -1180,14 +1180,23 @@ async fn stop(
     })
     .await?;
     enum StopTarget {
-        Current(LocalEndpoint),
+        // The process is carried alongside the endpoint so the wait afterwards
+        // can tell the host that was stopped from a replacement started at the
+        // same workspace while it was going away.
+        Current {
+            endpoint: LocalEndpoint,
+            pid: u32,
+        },
         Incompatible {
             endpoint: LocalEndpoint,
             protocol: u32,
         },
     }
     let target = match host {
-        Ok(host) if host.speaks_current_protocol() => StopTarget::Current(host.endpoint().clone()),
+        Ok(host) if host.speaks_current_protocol() => StopTarget::Current {
+            endpoint: host.endpoint().clone(),
+            pid: host.pid,
+        },
         Ok(host) => StopTarget::Incompatible {
             endpoint: host.endpoint().clone(),
             protocol: host.protocol,
@@ -1212,7 +1221,10 @@ async fn stop(
                 .published_host()?
                 .with_context(|| format!("no running session matches {}", selector.display()))?;
             if published.speaks_current_protocol() {
-                StopTarget::Current(endpoint)
+                StopTarget::Current {
+                    endpoint,
+                    pid: published.pid,
+                }
             } else {
                 StopTarget::Incompatible {
                     endpoint,
@@ -1222,7 +1234,7 @@ async fn stop(
         }
     };
     match target {
-        StopTarget::Current(endpoint) => {
+        StopTarget::Current { endpoint, pid } => {
             tokio::time::timeout(CONTROL_TIMEOUT, async {
                 if force {
                     force_shutdown_host(&endpoint).await
@@ -1232,7 +1244,12 @@ async fn stop(
             })
             .await
             .map_err(|_| anyhow::anyhow!("workspace host did not answer the stop request"))??;
-            Ok(())
+            // The host acknowledges before it exits, and every client answers
+            // a stop by listing again. Returning on the acknowledgement alone
+            // hands that listing a session still holding its endpoint, so the
+            // manager shows the row it was just asked to close as running
+            // until something refreshes it later.
+            await_host_stopped(&endpoint, pid).await
         }
         StopTarget::Incompatible { endpoint, .. } if force => {
             terminate_incompatible_host(&endpoint).await.map(drop)
@@ -1568,6 +1585,152 @@ mod tests {
         assert_eq!(generation, 10);
         assert_eq!(selector, project);
         result.expect("directory stop should reach the unregistered current host");
+        host.await.unwrap();
+        drop(runtime);
+        drop(root);
+    }
+
+    /// A stop is only over once the host is gone.
+    ///
+    /// Every client answers a stop by listing again, so a stop that returns on
+    /// the host's acknowledgement hands that listing an endpoint the exiting
+    /// host still holds, and the session manager redraws the row it was just
+    /// asked to close as running.
+    #[tokio::test]
+    async fn a_refresh_taken_after_a_stop_reports_the_session_stopped() {
+        use std::collections::HashMap;
+
+        use crate::{
+            protocol::FeatureGroup,
+            workspace::transport::{LocalServer, PROTOCOL_VERSION, ServerEvent},
+        };
+
+        let root = unique_test_root("stop-then-refresh");
+        let project = root.join("project");
+        let runtime = unique_test_root("stop-then-refresh-runtime");
+        fs::create_dir_all(project.join(".runyte")).unwrap();
+        fs::create_dir_all(&runtime).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&runtime, fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let project = project.canonicalize().unwrap();
+        let endpoint = LocalEndpoint::discover_with_runtime(
+            &project.join(".runyte"),
+            &project,
+            Some(&runtime),
+        )
+        .unwrap();
+        let mut server = match LocalServer::bind(&endpoint).await {
+            Ok(server) => server,
+            Err(error)
+                if error.chain().any(|cause| {
+                    cause
+                        .downcast_ref::<io::Error>()
+                        .is_some_and(|error| error.raw_os_error() == Some(libc::EPERM))
+                }) =>
+            {
+                drop(runtime);
+                drop(root);
+                return;
+            }
+            Err(error) => panic!("cannot bind test transport: {error:#}"),
+        };
+        let host = tokio::spawn(async move {
+            let mut clients = HashMap::new();
+            while let Some(event) = server.recv().await {
+                match event {
+                    ServerEvent::Connected { id, responses, .. } => {
+                        let _ = responses
+                            .send(HostResponse::Welcome {
+                                protocol: PROTOCOL_VERSION,
+                                pid: std::process::id(),
+                                features: vec![
+                                    FeatureGroup::Control,
+                                    FeatureGroup::Buffers,
+                                    FeatureGroup::Wait,
+                                ],
+                                host_version: env!("CARGO_PKG_VERSION").to_owned(),
+                            })
+                            .await;
+                        clients.insert(id, responses);
+                    }
+                    ServerEvent::Request {
+                        id,
+                        request: ClientRequest::Health,
+                    } => {
+                        if let Some(responses) = clients.get(&id) {
+                            let _ = responses
+                                .send(HostResponse::Health {
+                                    protocol: PROTOCOL_VERSION,
+                                    pid: std::process::id(),
+                                    interactive_attached: false,
+                                    unsaved_buffers: 0,
+                                    open_buffers: 1,
+                                    pending_wait_requests: 0,
+                                    live_terminals: 0,
+                                    terminal_sessions: 0,
+                                })
+                                .await;
+                        }
+                    }
+                    ServerEvent::Request {
+                        id,
+                        request: ClientRequest::Shutdown,
+                    } => {
+                        if let Some(responses) = clients.get(&id) {
+                            let _ = responses.send(HostResponse::ShuttingDown).await;
+                        }
+                        break;
+                    }
+                    ServerEvent::Disconnected { id } => {
+                        clients.remove(&id);
+                    }
+                    ServerEvent::ProtocolError { id, message } => {
+                        if let Some(responses) = clients.get(&id) {
+                            let _ = responses.send(HostResponse::Error { message }).await;
+                        }
+                    }
+                    ServerEvent::Request { .. } | ServerEvent::TransportFailure { .. } => {}
+                }
+            }
+            // A real host answers first and unpublishes as it winds down. The
+            // gap is what a stop has to outlast.
+            tokio::time::sleep(Duration::from_millis(250)).await;
+            drop(server);
+        });
+
+        let recents = root.join("cache/workspaces.json");
+        record_recent_workspace_in(&recents, &project).unwrap();
+        let (service, mut events) = WorkspaceService::spawn_with(
+            vec![root.join("empty-registry")],
+            Some(recents.clone()),
+            PathBuf::from(".runyte"),
+            None,
+            Some(runtime.to_path_buf()),
+        );
+        service
+            .try_stop(1, project.clone(), root.to_path_buf(), false)
+            .unwrap();
+        let Some(WorkspaceEvent::Stopped { result, .. }) = events.recv().await else {
+            panic!("workspace service ended")
+        };
+        result.expect("the running host should accept the stop");
+
+        service.try_refresh(2).unwrap();
+        let Some(WorkspaceEvent::Refreshed { result, .. }) = events.recv().await else {
+            panic!("workspace service ended")
+        };
+        let rows = result.unwrap();
+        let row = rows
+            .iter()
+            .find(|row| row.project_root == project)
+            .expect("the stopped workspace is still listed from history");
+        assert!(
+            !row.running,
+            "a listing taken after a stop must not report the session running"
+        );
         host.await.unwrap();
         drop(runtime);
         drop(root);

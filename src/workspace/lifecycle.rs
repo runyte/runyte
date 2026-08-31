@@ -252,29 +252,64 @@ pub async fn terminate_incompatible_host(endpoint: &LocalEndpoint) -> Result<Pub
     )
 }
 
-/// Stops a running host and starts a detached replacement at the same endpoint.
-pub async fn restart_host(endpoint: &LocalEndpoint, startup: HostStartup) -> Result<()> {
-    shutdown_host(endpoint).await?;
+/// Waits for the host that accepted a stop to stop owning its endpoint.
+///
+/// A host answers the request and *then* exits, so the acknowledgement on its
+/// own says nothing about what the next inventory scan will find: a listing
+/// taken between the two still reads the endpoint and its registration and
+/// reports the session running. Teardown removes the socket, the endpoint
+/// metadata, and the registrations together, so an endpoint no longer
+/// published is one no listing can resolve to a live host.
+///
+/// A stop is about the host it names, so this waits for `pid` to let the
+/// endpoint go rather than for the endpoint to stay empty. Another process may
+/// open the same workspace the moment the old host unpublishes; the files come
+/// back, but they belong to a session this stop was never about, and the one
+/// it was about is over. [`await_free_endpoint`] is the stricter question, and
+/// the one a restart has to ask.
+pub async fn await_host_stopped(endpoint: &LocalEndpoint, pid: u32) -> Result<()> {
     for _ in 0..READINESS_ATTEMPTS {
-        if !endpoint.metadata().exists() && !endpoint.socket().exists() {
-            return start_detached_host(endpoint, startup).await;
+        match endpoint.published_host() {
+            // Nothing is published there, or what is has died: either way the
+            // stopped host is gone.
+            Ok(None) => return Ok(()),
+            Ok(Some(host)) if host.pid != pid => return Ok(()),
+            // A read that failed says nothing yet; the loop's own bound is
+            // what ends the wait.
+            Ok(Some(_)) | Err(_) => {}
         }
         tokio::time::sleep(READINESS_INTERVAL).await;
     }
     anyhow::bail!("workspace host did not finish shutting down")
 }
 
-/// Replaces a host after an explicit acknowledgement that protected state is
-/// discarded.
-pub async fn force_restart_host(endpoint: &LocalEndpoint, startup: HostStartup) -> Result<()> {
-    force_shutdown_host(endpoint).await?;
+/// Waits for an endpoint to be free for a host to be published at.
+///
+/// Unlike [`await_host_stopped`], a replacement arriving first is not an
+/// answer: the caller is about to publish there itself.
+pub async fn await_free_endpoint(endpoint: &LocalEndpoint) -> Result<()> {
     for _ in 0..READINESS_ATTEMPTS {
         if !endpoint.metadata().exists() && !endpoint.socket().exists() {
-            return start_detached_host(endpoint, startup).await;
+            return Ok(());
         }
         tokio::time::sleep(READINESS_INTERVAL).await;
     }
     anyhow::bail!("workspace host did not finish shutting down")
+}
+
+/// Stops a running host and starts a detached replacement at the same endpoint.
+pub async fn restart_host(endpoint: &LocalEndpoint, startup: HostStartup) -> Result<()> {
+    shutdown_host(endpoint).await?;
+    await_free_endpoint(endpoint).await?;
+    start_detached_host(endpoint, startup).await
+}
+
+/// Replaces a host after an explicit acknowledgement that protected state is
+/// discarded.
+pub async fn force_restart_host(endpoint: &LocalEndpoint, startup: HostStartup) -> Result<()> {
+    force_shutdown_host(endpoint).await?;
+    await_free_endpoint(endpoint).await?;
+    start_detached_host(endpoint, startup).await
 }
 
 /// Resolves a directory to the endpoint for the workspace discovered there.
@@ -638,7 +673,7 @@ impl Drop for ReapedChild {
 
 #[cfg(test)]
 mod tests {
-    use std::io;
+    use std::{io, time::Instant};
 
     use super::*;
     use crate::{
@@ -705,6 +740,37 @@ mod tests {
         assert!(error.contains("handshake timed out"), "{error}");
 
         drop(responses);
+        drop(server);
+        endpoint.cleanup().unwrap();
+        drop(root);
+    }
+
+    /// The endpoint being published again is not the stopped host coming back.
+    ///
+    /// Another process can open the same workspace between the old host
+    /// unpublishing and this wait's next look, which recreates both files. A
+    /// stop that read those as its own host still going would sit out its
+    /// whole budget and then report a failure for a session that had already
+    /// exited.
+    #[tokio::test]
+    async fn a_stop_is_over_once_the_endpoint_belongs_to_another_process() {
+        let (root, endpoint) = endpoint("stop-sees-replacement");
+        let Some(server) = bind_or_skip(&endpoint).await else {
+            drop(root);
+            return;
+        };
+        // The endpoint is published and its owner is alive, so nothing about
+        // the files says the stop is over. Only the identity does.
+        let stopped = std::process::id().wrapping_add(1);
+        let started = Instant::now();
+        await_host_stopped(&endpoint, stopped)
+            .await
+            .expect("a replacement owner ends the wait for the stopped host");
+        assert!(
+            started.elapsed() < READINESS_INTERVAL * READINESS_ATTEMPTS / 4,
+            "the wait ran on past the replacement rather than reading it"
+        );
+
         drop(server);
         endpoint.cleanup().unwrap();
         drop(root);
