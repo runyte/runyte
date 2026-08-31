@@ -2,6 +2,23 @@
 
 use super::*;
 
+/// Drives the finder the way the event loop does, until nothing is left to do.
+///
+/// Terminal output only marks a session dirty; reading it back is a separate,
+/// deliberately slow step, so a test that wants the finder settled has to take
+/// both — and a refresh may itself queue a pass.
+#[allow(dead_code)]
+fn settle_finder(app: &mut App) {
+    loop {
+        while app.resource_finder_scan_pending() {
+            app.advance_resource_finder_scan();
+        }
+        if !app.refresh_finder_terminals() {
+            break;
+        }
+    }
+}
+
 fn content_hits(path: &str, lines: usize) -> crate::file_picker::FileHits {
     crate::file_picker::FileHits {
         path: PathBuf::from(path),
@@ -789,10 +806,11 @@ fn pathless_buffer_content_is_scanned_in_bounded_slices() {
     key(&mut app, KeyCode::Tab, Modifiers::NONE);
     type_text(&mut app, "Zunique");
     assert!(app.resource_finder_scan_pending());
+    // A pass over a new query starts from nothing, so every row it finds is
+    // progress and the loop is free to show it arriving.
+    assert!(!app.finder_scan_refills());
     assert!(app.finder.as_ref().unwrap().matches.is_empty());
-    while app.resource_finder_scan_pending() {
-        app.advance_resource_finder_scan();
-    }
+    settle_finder(&mut app);
 
     assert!(matches!(
         app.finder
@@ -978,6 +996,11 @@ fn busy_terminal_updates_only_its_name_finder_item_and_selected_preview() {
         claimed
     );
 
+    // 257 chunks are worth one refresh, not 257: the whole burst leaves one
+    // dirty session behind for the tick to read.
+    assert!(app.refresh_finder_terminals());
+    assert!(!app.finder_terminals_dirty());
+    assert_eq!(app.finder.as_ref().unwrap().items.len(), item_count);
     type_text(&mut app, "hot-title");
     assert_eq!(
         app.finder
@@ -996,7 +1019,7 @@ fn busy_terminal_updates_only_its_name_finder_item_and_selected_preview() {
 
 #[cfg(unix)]
 #[test]
-fn terminal_output_restarts_a_bounded_incremental_finder_scan() {
+fn terminal_output_queues_a_bounded_incremental_finder_scan_for_the_refresh_tick() {
     let root = temporary("project-finder-live-terminal-output");
     fs::create_dir_all(&root).unwrap();
     let ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
@@ -1009,20 +1032,25 @@ fn terminal_output_restarts_a_bounded_incremental_finder_scan() {
     app.open_project_picker().unwrap();
     key(&mut app, KeyCode::Tab, Modifiers::NONE);
     type_text(&mut app, "arrived-later");
-    while app.resource_finder_scan_pending() {
-        app.advance_resource_finder_scan();
-    }
+    settle_finder(&mut app);
     assert!(app.finder.as_ref().unwrap().matches.is_empty());
 
     app.apply_terminal_output(TerminalOutput::Bytes {
         id,
         bytes: b"arrived-later\r\n".to_vec(),
     });
+    assert!(
+        app.finder_terminals_dirty(),
+        "output marks the terminal for the refresh tick"
+    );
+    assert!(
+        !app.resource_finder_scan_pending(),
+        "output alone must not start a pass"
+    );
+    assert!(app.refresh_finder_terminals());
     assert!(app.resource_finder_scan_pending());
     assert!(app.finder.as_ref().unwrap().matches.is_empty());
-    while app.resource_finder_scan_pending() {
-        app.advance_resource_finder_scan();
-    }
+    settle_finder(&mut app);
 
     assert!(matches!(
         app.finder
@@ -1034,6 +1062,77 @@ fn terminal_output_restarts_a_bounded_incremental_finder_scan() {
             ..
         })) if terminal == id
     ));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn a_busy_terminal_leaves_content_rows_standing_until_the_refresh_tick() {
+    let root = temporary("project-finder-terminal-refresh-debounce");
+    fs::create_dir_all(&root).unwrap();
+    let ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    app.open_terminal_at(Some("/bin/cat".to_owned()), root.clone());
+    let terminal = app.active_terminal().unwrap();
+    app.apply_terminal_output(TerminalOutput::Bytes {
+        id: terminal,
+        bytes: b"settled needle\r\n".to_vec(),
+    });
+
+    app.open_project_grep().unwrap();
+    type_text(&mut app, "settled needle");
+    settle_finder(&mut app);
+    let settled = app
+        .finder
+        .as_ref()
+        .unwrap()
+        .selected_target(app.picker.as_ref().unwrap());
+    assert!(matches!(
+        settled,
+        Some(FinderTarget::Resource(
+            ResourceTarget::TerminalLocation { .. }
+        ))
+    ));
+    let rows = app.finder.as_ref().unwrap().matches.len();
+
+    for chunk in 0..200 {
+        app.apply_terminal_output(TerminalOutput::Bytes {
+            id: terminal,
+            bytes: format!("unrelated chunk {chunk}\r\n").into_bytes(),
+        });
+        assert!(
+            !app.resource_finder_scan_pending(),
+            "a write must not start a pass of its own"
+        );
+        assert_eq!(
+            app.finder.as_ref().unwrap().matches.len(),
+            rows,
+            "the list must hold still while the child writes"
+        );
+        assert_eq!(
+            app.finder
+                .as_ref()
+                .unwrap()
+                .selected_target(app.picker.as_ref().unwrap()),
+            settled
+        );
+    }
+
+    assert!(app.finder_terminals_dirty());
+    settle_finder(&mut app);
+    assert_eq!(
+        app.finder
+            .as_ref()
+            .unwrap()
+            .selected_target(app.picker.as_ref().unwrap()),
+        settled,
+        "the refresh keeps the row the reader had settled on"
+    );
+
+    app.close_file_picker();
+    app.close_terminal_id(terminal);
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -1070,6 +1169,9 @@ fn repeated_terminal_output_does_not_starve_later_buffer_content() {
             id: terminal,
             bytes: format!("tick {tick}\r\n").into_bytes(),
         });
+        // The refresh tick may fire between chunks. It must not abandon the
+        // pass in flight, or the later buffer source is never reached.
+        app.refresh_finder_terminals();
         app.advance_resource_finder_scan();
         if app.finder.as_ref().unwrap().items.iter().any(|item| {
             matches!(
@@ -1110,9 +1212,7 @@ fn terminal_output_after_a_complete_scan_refreshes_only_that_terminal() {
     app.open_project_picker().unwrap();
     key(&mut app, KeyCode::Tab, Modifiers::NONE);
     type_text(&mut app, "preserved-needle");
-    while app.resource_finder_scan_pending() {
-        app.advance_resource_finder_scan();
-    }
+    settle_finder(&mut app);
     let buffer_match = app
         .finder
         .as_ref()
@@ -1144,6 +1244,7 @@ fn terminal_output_after_a_complete_scan_refreshes_only_that_terminal() {
         id: terminal,
         bytes: b"new terminal row\r\n".to_vec(),
     });
+    assert!(app.refresh_finder_terminals());
     assert!(app.resource_finder_scan_pending());
     assert!(app.finder.as_ref().unwrap().items.iter().any(|item| {
         matches!(
@@ -1158,9 +1259,7 @@ fn terminal_output_after_a_complete_scan_refreshes_only_that_terminal() {
             .selected_target(app.picker.as_ref().unwrap()),
         claimed
     );
-    while app.resource_finder_scan_pending() {
-        app.advance_resource_finder_scan();
-    }
+    settle_finder(&mut app);
     assert_eq!(
         app.finder
             .as_ref()
@@ -1168,6 +1267,219 @@ fn terminal_output_after_a_complete_scan_refreshes_only_that_terminal() {
             .selected_target(app.picker.as_ref().unwrap()),
         claimed
     );
+    app.close_terminal_id(terminal);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn a_refilling_pass_is_marked_as_a_state_not_worth_showing() {
+    let root = temporary("project-finder-terminal-refill-frames");
+    fs::create_dir_all(&root).unwrap();
+    let ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    app.open_terminal_at(Some("/bin/cat".to_owned()), root.clone());
+    let terminal = app.active_terminal().unwrap();
+    app.apply_terminal_output(TerminalOutput::Bytes {
+        id: terminal,
+        bytes: b"refill needle\r\n".to_vec(),
+    });
+
+    app.open_project_grep().unwrap();
+    type_text(&mut app, "refill needle");
+    settle_finder(&mut app);
+    let settled = app.finder.as_ref().unwrap().matches.len();
+    assert!(settled > 0);
+
+    app.apply_terminal_output(TerminalOutput::Bytes {
+        id: terminal,
+        bytes: b"unrelated row\r\n".to_vec(),
+    });
+    assert!(app.refresh_finder_terminals());
+    assert!(
+        app.finder_scan_refills(),
+        "a refresh must declare itself a refill"
+    );
+    assert!(
+        app.finder.as_ref().unwrap().matches.len() < settled,
+        "the refresh drops the rows it is about to read back, so what stands \
+         between it and the end of the pass is a list with a hole in it"
+    );
+
+    settle_finder(&mut app);
+    assert!(!app.finder_scan_refills());
+    assert_eq!(app.finder.as_ref().unwrap().matches.len(), settled);
+
+    app.close_file_picker();
+    app.close_terminal_id(terminal);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn narrowing_a_terminal_reads_back_the_rows_it_truncated() {
+    let root = temporary("project-finder-terminal-narrowed");
+    fs::create_dir_all(&root).unwrap();
+    let ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    app.open_terminal_at(Some("/bin/cat".to_owned()), root.clone());
+    let terminal = app.active_terminal().unwrap();
+    // Nothing but the needle itself can spell the needle, so a truncated line
+    // cannot go on matching by accident.
+    let padding = "x".repeat(50);
+    // Deep enough in history that the rows a narrowing retires cannot reach
+    // it: only the width it was read at says this row has changed.
+    let output = std::iter::once(format!("{padding}needle-past-the-fold\r\n"))
+        .chain((0..40).map(|row| format!("ordinary row {row}\r\n")))
+        .collect::<String>();
+    app.apply_terminal_output(TerminalOutput::Bytes {
+        id: terminal,
+        bytes: output.into_bytes(),
+    });
+
+    app.open_project_grep().unwrap();
+    type_text(&mut app, "needle-past-the-fold");
+    settle_finder(&mut app);
+    assert!(
+        app.finder.as_ref().unwrap().items.iter().any(|item| {
+            matches!(item.target, ResourceTarget::TerminalLocation { .. })
+                && item.detail.contains("needle-past-the-fold")
+        }),
+        "the row matches at its full width"
+    );
+
+    // Narrowing truncates every retained line in place and leaves its identity
+    // alone, so identity alone cannot tell the finder that the row changed.
+    app.prepare_view(FrameGeometry {
+        screen: Rect {
+            width: 40,
+            height: 22,
+            ..Rect::default()
+        },
+        editor: Rect {
+            width: 40,
+            height: 20,
+            ..Rect::default()
+        },
+        status: Rect::default(),
+        message: Rect::default(),
+    });
+    assert!(
+        app.finder_terminals_dirty(),
+        "a resize is a change the finder has to be told about"
+    );
+    settle_finder(&mut app);
+    assert!(
+        app.finder
+            .as_ref()
+            .unwrap()
+            .items
+            .iter()
+            .all(|item| { !matches!(item.target, ResourceTarget::TerminalLocation { .. }) }),
+        "the row no longer holds the text it was found by"
+    );
+
+    app.close_file_picker();
+    app.close_terminal_id(terminal);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn a_terminal_refresh_reads_only_what_the_child_added() {
+    let root = temporary("project-finder-terminal-incremental-refresh");
+    fs::create_dir_all(&root).unwrap();
+    let ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    app.open_terminal_at(Some("/bin/cat".to_owned()), root.clone());
+    let terminal = app.active_terminal().unwrap();
+    let keeper = crate::terminal::grid::SCROLLBACK_LIMIT;
+    let initial = (0..crate::terminal::grid::SCROLLBACK_LIMIT + 64)
+        .map(|row| {
+            if row == keeper {
+                "keeper needle\r\n".to_owned()
+            } else {
+                format!("ordinary row {row}\r\n")
+            }
+        })
+        .collect::<String>();
+    app.apply_terminal_output(TerminalOutput::Bytes {
+        id: terminal,
+        bytes: initial.into_bytes(),
+    });
+
+    app.open_project_grep().unwrap();
+    type_text(&mut app, "keeper needle");
+    settle_finder(&mut app);
+    let (line_id, label, row) = app
+        .finder
+        .as_ref()
+        .unwrap()
+        .items
+        .iter()
+        .find_map(|item| match item.target {
+            ResourceTarget::TerminalLocation { line_id, .. } => Some((
+                line_id,
+                item.label.clone(),
+                app.terminals
+                    .get(terminal)
+                    .unwrap()
+                    .retained_line_row(line_id)
+                    .unwrap(),
+            )),
+            _ => None,
+        })
+        .expect("the keeper row is a content result");
+
+    app.apply_terminal_output(TerminalOutput::Bytes {
+        id: terminal,
+        bytes: b"one more row\r\n".to_vec(),
+    });
+    assert!(app.refresh_finder_terminals());
+    let mut passes = 0;
+    while app.resource_finder_scan_pending() {
+        app.advance_resource_finder_scan();
+        passes += 1;
+    }
+    // Re-reading the whole session would take a pass for every 128 of its
+    // 5000 retained rows. Only the row the child added, and the screen it
+    // may have rewritten, are worth revisiting.
+    assert!(
+        passes <= 2,
+        "a refresh read {passes} slices, so it re-read rows it already had"
+    );
+
+    let session = app.terminals.get(terminal).unwrap();
+    let shifted = session.retained_line_row(line_id).unwrap();
+    assert_ne!(shifted, row, "bounded history moved the kept row");
+    let number = session.output_line_number(shifted);
+    let item = app
+        .finder
+        .as_ref()
+        .unwrap()
+        .items
+        .iter()
+        .find(|item| {
+            matches!(
+                item.target,
+                ResourceTarget::TerminalLocation { line_id: found, .. } if found == line_id
+            )
+        })
+        .expect("the kept row survives the refresh");
+    assert_eq!(item.label, label, "a kept row keeps the name it was given");
+    assert!(
+        item.label.ends_with(&format!(":{number}")),
+        "and that name still numbers the line it points at: {}",
+        item.label
+    );
+
+    app.close_file_picker();
     app.close_terminal_id(terminal);
     fs::remove_dir_all(root).unwrap();
 }
@@ -1200,9 +1512,7 @@ fn terminal_content_selection_follows_stable_line_identity_through_eviction() {
 
     app.open_project_grep().unwrap();
     type_text(&mut app, "stable-repeat");
-    while app.resource_finder_scan_pending() {
-        app.advance_resource_finder_scan();
-    }
+    settle_finder(&mut app);
     let target_match = app
         .finder
         .as_ref()
@@ -1239,9 +1549,7 @@ fn terminal_content_selection_follows_stable_line_identity_through_eviction() {
         id: terminal,
         bytes: shifted.into_bytes(),
     });
-    while app.resource_finder_scan_pending() {
-        app.advance_resource_finder_scan();
-    }
+    settle_finder(&mut app);
     assert_eq!(
         app.finder
             .as_ref()
@@ -1266,9 +1574,7 @@ fn terminal_content_selection_follows_stable_line_identity_through_eviction() {
 
     app.open_project_grep().unwrap();
     type_text(&mut app, "stable-repeat");
-    while app.resource_finder_scan_pending() {
-        app.advance_resource_finder_scan();
-    }
+    settle_finder(&mut app);
     assert!(app.finder.as_ref().unwrap().items.iter().any(|item| {
         matches!(
             item.target,
@@ -1283,9 +1589,7 @@ fn terminal_content_selection_follows_stable_line_identity_through_eviction() {
         id: terminal,
         bytes: evicting.into_bytes(),
     });
-    while app.resource_finder_scan_pending() {
-        app.advance_resource_finder_scan();
-    }
+    settle_finder(&mut app);
     assert!(app.finder.as_ref().unwrap().items.iter().all(|item| {
         !matches!(
             item.target,
@@ -1316,9 +1620,7 @@ fn terminal_content_selection_does_not_cross_primary_and_alternate_screens() {
 
     app.open_project_grep().unwrap();
     type_text(&mut app, "screen-identity");
-    while app.resource_finder_scan_pending() {
-        app.advance_resource_finder_scan();
-    }
+    settle_finder(&mut app);
     let primary = app
         .finder
         .as_ref()
@@ -1331,9 +1633,7 @@ fn terminal_content_selection_does_not_cross_primary_and_alternate_screens() {
         id: terminal,
         bytes: b"\x1b[?1049hscreen-identity alternate".to_vec(),
     });
-    while app.resource_finder_scan_pending() {
-        app.advance_resource_finder_scan();
-    }
+    settle_finder(&mut app);
     let alternate = app
         .finder
         .as_ref()
@@ -1362,9 +1662,7 @@ fn terminal_content_selection_does_not_cross_primary_and_alternate_screens() {
         id: terminal,
         bytes: b"\x1b[?1049l".to_vec(),
     });
-    while app.resource_finder_scan_pending() {
-        app.advance_resource_finder_scan();
-    }
+    settle_finder(&mut app);
     assert_eq!(
         app.finder
             .as_ref()
@@ -1400,9 +1698,7 @@ fn terminal_screen_clear_preserves_scrollback_match_identity() {
 
     app.open_project_grep().unwrap();
     type_text(&mut app, "history-clear-match");
-    while app.resource_finder_scan_pending() {
-        app.advance_resource_finder_scan();
-    }
+    settle_finder(&mut app);
     app.finder.as_mut().unwrap().first();
     let claimed = app
         .finder
@@ -1426,9 +1722,7 @@ fn terminal_screen_clear_preserves_scrollback_match_identity() {
         .unwrap()
         .0;
     assert_ne!(screen_id_after, screen_id_before);
-    while app.resource_finder_scan_pending() {
-        app.advance_resource_finder_scan();
-    }
+    settle_finder(&mut app);
 
     assert_eq!(
         app.finder
@@ -1480,9 +1774,7 @@ fn terminal_content_activation_captures_before_a_shorter_pane_resize() {
 
     app.open_project_grep().unwrap();
     type_text(&mut app, "resize-identity-match");
-    while app.resource_finder_scan_pending() {
-        app.advance_resource_finder_scan();
-    }
+    settle_finder(&mut app);
     key(&mut app, KeyCode::Enter, Modifiers::NONE);
 
     assert_eq!(app.active_terminal(), Some(terminal));
@@ -1515,9 +1807,7 @@ fn terminal_content_activation_enforces_the_review_memory_budget_immediately() {
 
     app.open_project_grep().unwrap();
     type_text(&mut app, "budget-identity-match");
-    while app.resource_finder_scan_pending() {
-        app.advance_resource_finder_scan();
-    }
+    settle_finder(&mut app);
     app.terminals.set_memory_budget_for_test(0);
     key(&mut app, KeyCode::Enter, Modifiers::NONE);
 
@@ -1591,11 +1881,26 @@ fn dirty_terminal_rows_are_invalidated_when_another_source_reaches_the_limit() {
         source: 0,
         row: 0,
         limited: false,
+        refilling: false,
     });
-    app.finder_content_dirty_terminals.insert(terminal);
+    app.finder_dirty_terminals.insert(terminal);
 
+    // A pass in flight owns its cursor, so the dirty terminal waits for it.
+    assert!(!app.refresh_finder_terminals());
     app.advance_resource_finder_scan();
-    assert!(app.resource_finder_scan_pending());
+    assert!(!app.resource_finder_scan_pending());
+    assert!(
+        app.finder
+            .as_ref()
+            .unwrap()
+            .items
+            .iter()
+            .any(|item| item.detail == "stale needle")
+    );
+
+    // The refresh drops what it is about to re-read before reading it, so a
+    // corpus already at its ceiling cannot leave the stale rows standing.
+    assert!(app.refresh_finder_terminals());
     assert!(
         app.finder
             .as_ref()
@@ -1604,9 +1909,7 @@ fn dirty_terminal_rows_are_invalidated_when_another_source_reaches_the_limit() {
             .iter()
             .all(|item| item.detail != "stale needle")
     );
-    while app.resource_finder_scan_pending() {
-        app.advance_resource_finder_scan();
-    }
+    settle_finder(&mut app);
     let finder = app.finder.as_ref().unwrap();
     assert!(finder.limited);
     assert!(

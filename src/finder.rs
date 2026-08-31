@@ -8,7 +8,10 @@
 //! truthful. This module ranks those resources and merges their scores with
 //! the file scanner without copying the scanner's candidate table.
 
-use std::{collections::HashSet, path::PathBuf};
+use std::{
+    collections::{HashMap, HashSet},
+    path::PathBuf,
+};
 
 use crate::{
     file_picker::{CONTENT_ENTRY_LIMIT, FilePicker, FuzzyMatcher, PickerTarget},
@@ -312,20 +315,30 @@ impl ResourceFinder {
         self.restore_selection(picker, selected.as_ref());
     }
 
-    pub fn remove_terminal_content(
+    /// Drops the content rows a refresh is about to read again.
+    ///
+    /// A refresh reads only what a child has added, so a terminal's earlier
+    /// rows keep the results they already produced: `kept` names, per
+    /// terminal, the line identities that survive. A terminal listed with an
+    /// empty set gives up everything it contributed, which is what a screen
+    /// the session no longer has — cleared, swapped, or evicted from bounded
+    /// history — amounts to. A terminal that is not listed is untouched.
+    pub fn retain_terminal_content(
         &mut self,
-        terminals: &HashSet<TerminalId>,
+        kept: &HashMap<TerminalId, HashSet<TerminalLineId>>,
         picker: &FilePicker,
     ) {
         let selected = self.preserved_selection(picker);
         let mut remap = vec![None; self.items.len()];
         let mut retained = Vec::with_capacity(self.items.len());
         for (old, item) in std::mem::take(&mut self.items).into_iter().enumerate() {
-            if matches!(
-                item.target,
-                ResourceTarget::TerminalLocation { terminal, .. }
-                    if terminals.contains(&terminal)
-            ) {
+            if let ResourceTarget::TerminalLocation {
+                terminal, line_id, ..
+            } = item.target
+                && kept
+                    .get(&terminal)
+                    .is_some_and(|kept| !kept.contains(&line_id))
+            {
                 continue;
             }
             remap[old] = Some(retained.len());

@@ -59,8 +59,22 @@ use runyte::{
 };
 
 const STATUS_ANIMATION_INTERVAL: Duration = Duration::from_millis(80);
-const TERMINAL_FRAME_INTERVAL: Duration = Duration::from_millis(16);
+/// How often work that arrives faster than anyone can read it is allowed to
+/// present a frame.
+///
+/// A child writing continuously, and a live-content scan advancing in small
+/// row slices, both produce far more states than a reader can follow. Drawing
+/// each one turns a busy terminal or a long scan into a flicker, so they mark
+/// a frame pending and this interval decides when it is drawn.
+const FRAME_INTERVAL: Duration = Duration::from_millis(16);
 const MAINTENANCE_INTERVAL: Duration = Duration::from_secs(1);
+/// How often the finder re-reads terminals that are still producing output.
+///
+/// A running child changes the corpus faster than the list can be read, and a
+/// finder whose rows move on every chunk a child writes is unusable however
+/// cheap the rebuild is. The finder trades freshness for a list that holds
+/// still: this bounds how often its terminal rows can change.
+const FINDER_TERMINAL_REFRESH_INTERVAL: Duration = Duration::from_secs(3);
 #[cfg(unix)]
 const WAIT_LIFECYCLE_RECOVERY_BUDGET: Duration = Duration::from_millis(500);
 /// How long a shutting-down host waits for its connections to finish writing.
@@ -68,6 +82,27 @@ const WAIT_LIFECYCLE_RECOVERY_BUDGET: Duration = Duration::from_millis(500);
 /// merely slow is flushed and only one that has stopped reading is cut off.
 #[cfg(unix)]
 const SHUTDOWN_FLUSH_BUDGET: Duration = Duration::from_secs(3);
+
+/// Decides at the publication boundary whether a requested frame is whole.
+///
+/// A terminal-content refill temporarily removes the rows it is about to read
+/// back. Any event can request a frame while that bounded scan is in flight,
+/// so filtering only the scan and frame-tick branches is not enough: the final
+/// draw or publish site must defer every request until the refill completes.
+fn frame_publication_ready(
+    requested: bool,
+    finder_refilling: bool,
+    frame_pending: &mut bool,
+) -> bool {
+    if !requested {
+        return false;
+    }
+    if finder_refilling {
+        *frame_pending = true;
+        return false;
+    }
+    true
+}
 
 #[cfg(unix)]
 use runyte::protocol::{MAX_POINTER_REPETITIONS, WaitStatus, WaitToken, validate_welcome};
@@ -1454,6 +1489,13 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
     git_refresh_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut status_animation_tick = tokio::time::interval(STATUS_ANIMATION_INTERVAL);
     status_animation_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut frame_tick = tokio::time::interval(FRAME_INTERVAL);
+    frame_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    // Set by the branches whose state changes faster than a reader can follow.
+    // Every other branch falls through to the draw below, which clears it.
+    let mut frame_pending = false;
+    let mut finder_refresh_tick = tokio::time::interval(FINDER_TERMINAL_REFRESH_INTERVAL);
+    finder_refresh_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut key_repeat_detector = KeyRepeatDetector::default();
     // Recorded once per service: a channel that closes stays closed, and the
     // editor keeps working without it, so nothing else reports the loss.
@@ -1486,20 +1528,27 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
                         );
                         if let Some(message) = rejected_text_input(&input) {
                             app.report_host_error(message);
-                            terminal.draw(|frame| {
-                                let geometry = ui::frame_geometry(frame.area());
-                                let snapshot = app.prepare_frame_with_hints(
-                                    geometry,
-                                    Some(&key_hints),
-                                );
-                                ui::render(
-                                    frame,
-                                    app.app(),
-                                    &snapshot.editor,
-                                    &key_hints,
-                                    color_depth,
-                                );
-                            })?;
+                            if frame_publication_ready(
+                                true,
+                                app.finder_scan_refills(),
+                                &mut frame_pending,
+                            ) {
+                                terminal.draw(|frame| {
+                                    let geometry = ui::frame_geometry(frame.area());
+                                    let snapshot = app.prepare_frame_with_hints(
+                                        geometry,
+                                        Some(&key_hints),
+                                    );
+                                    ui::render(
+                                        frame,
+                                        app.app(),
+                                        &snapshot.editor,
+                                        &key_hints,
+                                        color_depth,
+                                    );
+                                })?;
+                                frame_pending = false;
+                            }
                             continue;
                         }
                         #[cfg(debug_assertions)]
@@ -1604,6 +1653,8 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
                     terminal::drain(&mut services.terminal_events, |output| {
                         app.apply_event(HostEvent::Terminal(output));
                     });
+                    frame_pending = true;
+                    continue;
                 }
             }
             event = receive_workspace_event(&mut services.workspace_events) => {
@@ -1637,9 +1688,29 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
                     app.report_host_error(error.to_string());
                 }
             }
+            _ = finder_refresh_tick.tick(), if app.finder_terminals_dirty() => {
+                // A content refresh drops the rows it is about to read back,
+                // so this state is a hole rather than an answer. The pass that
+                // refills it decides when there is a frame worth drawing.
+                if !app.refresh_finder_terminals() || app.resource_finder_scan_pending() {
+                    continue;
+                }
+            }
             _ = tokio::task::yield_now(), if app.resource_finder_scan_pending() => {
                 app.advance_resource_finder_scan();
+                // A slice is one of many states a pass moves through; only the
+                // one that ends it is worth a frame of its own. The rest wait
+                // for the frame tick, which holds them back entirely while a
+                // refresh is refilling.
+                if app.resource_finder_scan_pending() {
+                    frame_pending = true;
+                    continue;
+                }
             }
+            // Nothing a refill passes through is worth drawing: between
+            // dropping a terminal's rows and finding them again the list has a
+            // hole where results the reader was looking at used to be.
+            _ = frame_tick.tick(), if frame_pending && !app.finder_scan_refills() => {}
             _ = tokio::time::sleep(hint_timeout.unwrap_or_default()), if hint_timeout.is_some() => {
                 key_hints.expire_at(Instant::now());
             }
@@ -1648,11 +1719,15 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
                 break;
             }
         }
+        if !frame_publication_ready(true, app.finder_scan_refills(), &mut frame_pending) {
+            continue;
+        }
         terminal.draw(|frame| {
             let geometry = ui::frame_geometry(frame.area());
             let snapshot = app.prepare_frame_with_hints(geometry, Some(&key_hints));
             ui::render(frame, app.app(), &snapshot.editor, &key_hints, color_depth);
         })?;
+        frame_pending = false;
     }
     let quit_directory = app.quit_directory().map(Path::to_path_buf);
     services.language_servers.send(LspCommand::Shutdown);
@@ -1834,9 +1909,11 @@ async fn run_host_server(
     refresh_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut status_animation_tick = tokio::time::interval(STATUS_ANIMATION_INTERVAL);
     status_animation_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    let mut terminal_frame_tick = tokio::time::interval(TERMINAL_FRAME_INTERVAL);
-    terminal_frame_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    let mut terminal_frame_pending = false;
+    let mut frame_tick = tokio::time::interval(FRAME_INTERVAL);
+    frame_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut frame_pending = false;
+    let mut finder_refresh_tick = tokio::time::interval(FINDER_TERMINAL_REFRESH_INTERVAL);
+    finder_refresh_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut key_hints = KeyHintState::default();
     let mut shutting_down = false;
     let mut received_signal = None;
@@ -1897,8 +1974,14 @@ async fn run_host_server(
                                     "interactive client attached";
                                     "connection" => id
                                 );
-                                publish_attached_frame(&mut host, &mut active, &key_hints);
-                                terminal_frame_pending = false;
+                                if frame_publication_ready(
+                                    true,
+                                    host.finder_scan_refills(),
+                                    &mut frame_pending,
+                                ) {
+                                    publish_attached_frame(&mut host, &mut active, &key_hints);
+                                    frame_pending = false;
+                                }
                             }
                         } else if responses.try_send(HostResponse::Welcome {
                             protocol: runyte::workspace::transport::PROTOCOL_VERSION,
@@ -2223,7 +2306,7 @@ async fn run_host_server(
                     terminal::drain(&mut services.terminal_events, |output| {
                         host.apply_terminal_output(output, observed);
                     });
-                    terminal_frame_pending = true;
+                    frame_pending = true;
                 }
             }
             event = receive_workspace_event(&mut services.workspace_events) => {
@@ -2291,11 +2374,33 @@ async fn run_host_server(
                 }
                 changed = true;
             }
+            _ = finder_refresh_tick.tick(), if host.finder_terminals_dirty() => {
+                // A content refresh drops the rows it is about to read back,
+                // so this state is a hole rather than an answer. The pass that
+                // refills it decides when there is a frame worth publishing.
+                if host.refresh_finder_terminals() && !host.resource_finder_scan_pending() {
+                    changed = true;
+                }
+            }
             _ = tokio::task::yield_now(), if host.resource_finder_scan_pending() => {
                 host.advance_resource_finder_scan();
-                changed = true;
+                // A slice is one of many states a pass moves through; only the
+                // one that ends it is worth publishing on its own. The rest
+                // wait for the frame tick, which holds them back entirely
+                // while a refresh is refilling.
+                if host.resource_finder_scan_pending() {
+                    frame_pending = true;
+                } else {
+                    changed = true;
+                }
             }
-            _ = terminal_frame_tick.tick(), if terminal_frame_pending && active.is_some() => {
+            // Nothing a refill passes through is worth publishing: between
+            // dropping a terminal's rows and finding them again the list has a
+            // hole where results the reader was looking at used to be.
+            _ = frame_tick.tick(), if frame_pending
+                && active.is_some()
+                && !host.finder_scan_refills() =>
+            {
                 changed = true;
             }
             _ = async {
@@ -2348,9 +2453,9 @@ async fn run_host_server(
                 }
             }
         }
-        if changed {
+        if frame_publication_ready(changed, host.finder_scan_refills(), &mut frame_pending) {
             publish_attached_frame(&mut host, &mut active, &key_hints);
-            terminal_frame_pending = false;
+            frame_pending = false;
         }
     }
     log_info!("host", "persistent session shutting down"; "workspace" => endpoint.id());
@@ -5006,10 +5111,11 @@ mod tests {
         workspace_response_publishes_frame,
     };
     use super::{
-        KeyRepeatDetector, initialize_attached_directory, is_passive_pointer, is_redraw_only_event,
-        motion_repeat_dispatches, observe_key_or_text_hint, rejected_text_input,
-        resolve_cwd_file_path, resolve_requested_project_root, starts_on_about,
-        uses_automatic_persistent_mode, write_cwd_file, write_startup_screen,
+        KeyRepeatDetector, frame_publication_ready, initialize_attached_directory,
+        is_passive_pointer, is_redraw_only_event, motion_repeat_dispatches,
+        observe_key_or_text_hint, rejected_text_input, resolve_cwd_file_path,
+        resolve_requested_project_root, starts_on_about, uses_automatic_persistent_mode,
+        write_cwd_file, write_startup_screen,
     };
     use runyte::launch::LaunchArguments;
     use runyte::{
@@ -5023,6 +5129,28 @@ mod tests {
         tui::input::convert_event,
         workspace::WorkspaceHost,
     };
+
+    #[test]
+    fn finder_refill_defers_unrelated_frame_requests_until_it_is_whole() {
+        let mut frame_pending = false;
+
+        assert!(
+            !frame_publication_ready(true, true, &mut frame_pending),
+            "an event arriving during a refill must not publish its partial list"
+        );
+        assert!(
+            frame_pending,
+            "the skipped request must survive until the refill completes"
+        );
+        assert!(frame_publication_ready(true, false, &mut frame_pending));
+
+        frame_pending = false;
+        assert!(!frame_publication_ready(false, true, &mut frame_pending));
+        assert!(
+            !frame_pending,
+            "a refill with no frame request must not invent one"
+        );
+    }
 
     #[cfg(unix)]
     #[test]
