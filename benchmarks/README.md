@@ -13,7 +13,8 @@ Results are recorded in
 ```sh
 benchmarks/run.py                  # every editor found, all fixtures
 benchmarks/run.py --only runyte    # Runyte alone; no external editors needed
-benchmarks/run.py --runs 20        # more samples per figure than the default 10
+benchmarks/run.py --runs 20        # startup/quit samples; default 10
+benchmarks/run.py --idle-runs 7    # independent idle windows; default 5
 benchmarks/run.py --no-idle        # skip the idle window
 benchmarks/run.py --fixtures long.txt,long.lua
 ```
@@ -52,8 +53,17 @@ fast quit.
 
 **Idle cost.** With a document open and no input, CPU is sampled from `/proc`
 over ten seconds, counting the editor and every process it spawned, alongside
-the number of times it wrote to the screen. A fully event-driven editor reports
-zero for both.
+the number of times it wrote to the screen. The report gives the median and
+range from five independent windows, each using a fresh editor process, so an
+intermittent nonzero sample remains visible even when the median is zero. A
+fully event-driven editor reports zero for both. `--idle-runs` changes the
+sample count and accepts three or more; the report is marked incomplete instead
+of taking a median from a subset if any editor exits before its whole window
+finishes.
+
+CPU sampling is unavailable where `/proc` is absent, including macOS, and is
+reported that way rather than as a fabricated zero. Screen writes remain
+portable and are still aggregated there.
 
 The idle document is opened inside a Git repository, because that is where an
 editor is normally opened and because repository polling is a plausible source
@@ -163,9 +173,14 @@ arrive in the same read. The harness sends the escape alone and pauses, which is
 what a keyboard looks like. Quit time begins at the final carriage return, after
 this stagger.
 
-Editors run with an empty `XDG_CONFIG_HOME`, so no personal configuration or
-plugin set is measured. Neovim additionally runs with `-i NONE` so that reading
-and writing a shada file is not counted as startup.
+Editors run with isolated `XDG_CONFIG_HOME`, `XDG_CACHE_HOME`, `XDG_STATE_HOME`,
+`XDG_DATA_HOME`, and `HOME` directories under `.work/`, so no personal
+configuration, plugins, cache, or state can enter the measurement. Version
+probes use the same environment and run from the fixture directory, keeping any
+diagnostic file out of the repository root. Neovim additionally runs with
+`-n -i NONE` so swap and shada are explicitly outside the startup and quit
+measurements. Packaged editor runtimes and grammars remain available; a result
+set must still confirm parser availability as described above.
 
 ## Related
 

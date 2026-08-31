@@ -228,13 +228,16 @@ def _cpu_ticks(pid: int) -> int:
     """User + system ticks for `pid` and every descendant it has spawned."""
     total = 0
     try:
-        fields = open(f"/proc/{pid}/stat").read().rsplit(")", 1)[-1].split()
+        with open(f"/proc/{pid}/stat") as stat_file:
+            fields = stat_file.read().rsplit(")", 1)[-1].split()
         total += int(fields[11]) + int(fields[12])
     except (OSError, IndexError, ValueError):
         return total
     try:
         for task in os.listdir(f"/proc/{pid}/task"):
-            for child in open(f"/proc/{pid}/task/{task}/children").read().split():
+            with open(f"/proc/{pid}/task/{task}/children") as children_file:
+                children = children_file.read().split()
+            for child in children:
                 total += _cpu_ticks(int(child))
     except (OSError, ValueError):
         pass
@@ -249,40 +252,60 @@ def measure_idle(argv, env, cwd=None, settle=2.5, window=10.0):
     both.
     """
     pid, fd = _spawn(argv, env, cwd)
-    start = time.time()
-    while time.time() - start < settle:
+    complete = True
+    start = time.perf_counter()
+    while time.perf_counter() - start < settle:
         readable, _, _ = select.select([fd], [], [], 0.05)
         if readable:
             try:
                 data = os.read(fd, 65536)
             except OSError:
+                complete = False
                 break
             if not data:
+                complete = False
                 break
             reply = terminal_replies(data)
             if reply:
-                os.write(fd, reply)
+                try:
+                    os.write(fd, reply)
+                except OSError:
+                    complete = False
+                    break
 
-    before = _cpu_ticks(pid)
-    window_start = time.time()
+    cpu_supported = os.path.exists(f"/proc/{pid}/stat")
+    before = _cpu_ticks(pid) if cpu_supported else 0
+    window_start = time.perf_counter()
     writes = 0
     idle_bytes = 0
-    while time.time() - window_start < window:
+    while complete and time.perf_counter() - window_start < window:
         readable, _, _ = select.select([fd], [], [], 0.05)
         if readable:
             try:
                 data = os.read(fd, 65536)
             except OSError:
+                complete = False
                 break
             if not data:
+                complete = False
                 break
             writes += 1
             idle_bytes += len(data)
             reply = terminal_replies(data)
             if reply:
-                os.write(fd, reply)
-    elapsed = time.time() - window_start
-    ticks = _cpu_ticks(pid) - before
+                try:
+                    os.write(fd, reply)
+                except OSError:
+                    complete = False
+                    break
+    elapsed = time.perf_counter() - window_start
+    ticks = _cpu_ticks(pid) - before if cpu_supported else 0
+    try:
+        reaped, _ = os.waitpid(pid, os.WNOHANG)
+        if reaped == pid:
+            complete = False
+    except ChildProcessError:
+        complete = False
     _reap(pid)
     try:
         os.close(fd)
@@ -291,9 +314,52 @@ def measure_idle(argv, env, cwd=None, settle=2.5, window=10.0):
 
     hertz = os.sysconf("SC_CLK_TCK")
     return {
-        "cpu_percent": ticks / hertz / elapsed * 100.0,
+        "cpu_percent": (
+            ticks / hertz / elapsed * 100.0 if complete and cpu_supported else None
+        ),
         "writes": writes,
         "bytes": idle_bytes,
+        "complete": complete,
+    }
+
+
+def median_idle(argv, env, cwd=None, runs=5, settle=2.5, window=10.0):
+    """Median of complete idle windows, refusing partial result sets."""
+    samples = [
+        measure_idle(argv, env, cwd, settle=settle, window=window)
+        for _ in range(runs)
+    ]
+    complete = sum(1 for sample in samples if sample["complete"])
+    if complete != runs:
+        return {
+            "cpu_percent": None,
+            "cpu_min": None,
+            "cpu_max": None,
+            "writes": None,
+            "writes_min": None,
+            "writes_max": None,
+            "bytes": None,
+            "runs": runs,
+            "complete": complete,
+        }
+
+    cpu_values = [
+        sample["cpu_percent"]
+        for sample in samples
+        if sample["cpu_percent"] is not None
+    ]
+    return {
+        "cpu_percent": (
+            statistics.median(cpu_values) if len(cpu_values) == runs else None
+        ),
+        "cpu_min": min(cpu_values) if len(cpu_values) == runs else None,
+        "cpu_max": max(cpu_values) if len(cpu_values) == runs else None,
+        "writes": statistics.median(sample["writes"] for sample in samples),
+        "writes_min": min(sample["writes"] for sample in samples),
+        "writes_max": max(sample["writes"] for sample in samples),
+        "bytes": statistics.median(sample["bytes"] for sample in samples),
+        "runs": runs,
+        "complete": complete,
     }
 
 
