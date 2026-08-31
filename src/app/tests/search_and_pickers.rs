@@ -1381,6 +1381,80 @@ fn terminal_content_selection_does_not_cross_primary_and_alternate_screens() {
 
 #[cfg(unix)]
 #[test]
+fn terminal_screen_clear_preserves_scrollback_match_identity() {
+    let root = temporary("project-finder-terminal-clear-history");
+    fs::create_dir_all(&root).unwrap();
+    let ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    app.open_terminal_at(Some("/bin/cat".to_owned()), root.clone());
+    let terminal = app.active_terminal().unwrap();
+    let output = std::iter::once("history-clear-match\r\n".to_owned())
+        .chain((0..30).map(|row| format!("ordinary history {row}\r\n")))
+        .collect::<String>();
+    app.apply_terminal_output(TerminalOutput::Bytes {
+        id: terminal,
+        bytes: output.into_bytes(),
+    });
+
+    app.open_project_grep().unwrap();
+    type_text(&mut app, "history-clear-match");
+    while app.resource_finder_scan_pending() {
+        app.advance_resource_finder_scan();
+    }
+    app.finder.as_mut().unwrap().first();
+    let claimed = app
+        .finder
+        .as_ref()
+        .unwrap()
+        .selected_target(app.picker.as_ref().unwrap())
+        .unwrap();
+    let session = app.terminals.get(terminal).unwrap();
+    let screen_row = session.plain_line_count() - 1;
+    let screen_id_before = session.plain_line_with_id(screen_row).unwrap().0;
+
+    app.apply_terminal_output(TerminalOutput::Bytes {
+        id: terminal,
+        bytes: b"\x1b[2Jscreen-cleared".to_vec(),
+    });
+    let screen_id_after = app
+        .terminals
+        .get(terminal)
+        .unwrap()
+        .plain_line_with_id(screen_row)
+        .unwrap()
+        .0;
+    assert_ne!(screen_id_after, screen_id_before);
+    while app.resource_finder_scan_pending() {
+        app.advance_resource_finder_scan();
+    }
+
+    assert_eq!(
+        app.finder
+            .as_ref()
+            .unwrap()
+            .selected_target(app.picker.as_ref().unwrap()),
+        Some(claimed)
+    );
+    assert!(
+        app.finder
+            .as_ref()
+            .unwrap()
+            .selected_preview()
+            .is_some_and(|preview| preview.contains("history-clear-match"))
+    );
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    let session = app.terminals.get_mut(terminal).unwrap();
+    session.select_review_line(true, false);
+    assert_eq!(session.review_selection_text(), "history-clear-match");
+
+    app.close_terminal_id(terminal);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
 fn terminal_content_activation_captures_before_a_shorter_pane_resize() {
     let root = temporary("project-finder-terminal-activation-resize");
     fs::create_dir_all(&root).unwrap();

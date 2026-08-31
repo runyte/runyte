@@ -147,7 +147,7 @@ impl Emulator {
     fn erase_display(&mut self, mode: u16, pen: Pen) {
         if mode == 2 {
             let generation = self.allocate_grid_generation();
-            self.grid_mut().replace_generation(generation);
+            self.grid_mut().replace_screen_generation(generation);
         }
         self.grid_mut().erase_display(mode, pen);
     }
@@ -468,7 +468,7 @@ impl Emulator {
             }
             if clear_on_enter {
                 let generation = self.allocate_grid_generation();
-                self.alternate.replace_generation(generation);
+                self.alternate.replace_screen_generation(generation);
                 self.alternate.move_to(0, 0);
                 self.alternate.erase_display(2, Pen::default());
             }
@@ -476,7 +476,7 @@ impl Emulator {
         } else {
             if clear_on_exit {
                 let generation = self.allocate_grid_generation();
-                self.alternate.replace_generation(generation);
+                self.alternate.replace_screen_generation(generation);
                 self.alternate.erase_display(2, Pen::default());
             }
             self.alternate_active = false;

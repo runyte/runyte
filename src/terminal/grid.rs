@@ -202,10 +202,13 @@ pub struct Cursor {
 #[derive(Clone, Debug)]
 pub struct Grid {
     generation: u64,
+    next_local_line_id: u64,
     columns: usize,
     rows: usize,
     lines: Vec<Line>,
+    line_ids: Vec<TerminalLineId>,
     scrollback: VecDeque<Line>,
+    scrollback_ids: VecDeque<TerminalLineId>,
     /// Whether lines leaving the top are kept. False for the alternate screen,
     /// which by definition has no history.
     keeps_history: bool,
@@ -239,10 +242,15 @@ impl Grid {
         let rows = rows.max(1);
         Self {
             generation,
+            next_local_line_id: rows as u64,
             columns,
             rows,
             lines: vec![vec![Cell::default(); columns]; rows],
+            line_ids: (0..rows)
+                .map(|local| TerminalLineId::new(generation, local as u64))
+                .collect(),
             scrollback: VecDeque::new(),
+            scrollback_ids: VecDeque::new(),
             keeps_history,
             retired: 0,
             cursor: Cursor::default(),
@@ -252,8 +260,12 @@ impl Grid {
         }
     }
 
-    pub(super) fn replace_generation(&mut self, generation: u64) {
+    pub(super) fn replace_screen_generation(&mut self, generation: u64) {
         self.generation = generation;
+        self.next_local_line_id = self.rows as u64;
+        self.line_ids = (0..self.rows)
+            .map(|local| TerminalLineId::new(generation, local as u64))
+            .collect();
     }
 
     pub fn columns(&self) -> usize {
@@ -282,22 +294,13 @@ impl Grid {
     }
 
     /// Retained primary history followed by the current screen, with stable
-    /// identities derived from the monotonic retirement counter.
+    /// identities that move with their rows.
     pub fn retained_lines(&self) -> impl Iterator<Item = (TerminalLineId, &Line)> {
-        let oldest = self.retired.saturating_sub(self.scrollback.len() as u64);
-        let generation = self.generation;
-        self.scrollback
+        self.scrollback_ids
             .iter()
-            .enumerate()
-            .map(move |(index, line)| {
-                (TerminalLineId::new(generation, oldest + index as u64), line)
-            })
-            .chain(self.lines.iter().enumerate().map(move |(index, line)| {
-                (
-                    TerminalLineId::new(generation, self.retired + index as u64),
-                    line,
-                )
-            }))
+            .copied()
+            .zip(self.scrollback.iter())
+            .chain(self.line_ids.iter().copied().zip(self.lines.iter()))
     }
 
     pub fn scrollback_cells(&self) -> usize {
@@ -306,7 +309,11 @@ impl Grid {
 
     /// Drops the oldest retained line for the workspace-wide memory budget.
     pub fn drop_oldest_scrollback(&mut self) -> bool {
-        self.scrollback.pop_front().is_some()
+        let dropped = self.scrollback.pop_front().is_some();
+        if dropped {
+            self.scrollback_ids.pop_front();
+        }
+        dropped
     }
 
     pub fn scroll_region(&self) -> (usize, usize) {
@@ -434,6 +441,7 @@ impl Grid {
         let count = count.min(self.scroll_bottom - self.scroll_top + 1);
         for _ in 0..count {
             let line = self.lines.remove(self.scroll_top);
+            let line_id = self.line_ids.remove(self.scroll_top);
             // A region anchored at the first row still pushes its top line
             // out of the terminal and into history. Inline TUIs use this to
             // commit completed output while keeping a composer below it in
@@ -441,9 +449,11 @@ impl Grid {
             // internal layout, so retaining that would interleave status-area
             // updates into the scrollback.
             if self.keeps_history && self.scroll_top == 0 {
-                self.retire(line);
+                self.retire(line, line_id);
             }
+            let new_line_id = self.allocate_line_id();
             self.lines.insert(self.scroll_bottom, self.blank_line(pen));
+            self.line_ids.insert(self.scroll_bottom, new_line_id);
         }
     }
 
@@ -452,16 +462,27 @@ impl Grid {
         let count = count.min(self.scroll_bottom - self.scroll_top + 1);
         for _ in 0..count {
             self.lines.remove(self.scroll_bottom);
+            self.line_ids.remove(self.scroll_bottom);
+            let new_line_id = self.allocate_line_id();
             self.lines.insert(self.scroll_top, self.blank_line(pen));
+            self.line_ids.insert(self.scroll_top, new_line_id);
         }
     }
 
-    fn retire(&mut self, line: Line) {
+    fn retire(&mut self, line: Line, line_id: TerminalLineId) {
         self.scrollback.push_back(line);
+        self.scrollback_ids.push_back(line_id);
         self.retired = self.retired.wrapping_add(1);
         while self.scrollback.len() > SCROLLBACK_LIMIT {
             self.scrollback.pop_front();
+            self.scrollback_ids.pop_front();
         }
+    }
+
+    fn allocate_line_id(&mut self) -> TerminalLineId {
+        let line_id = TerminalLineId::new(self.generation, self.next_local_line_id);
+        self.next_local_line_id = self.next_local_line_id.wrapping_add(1);
+        line_id
     }
 
     fn blank_line(&self, pen: Pen) -> Line {
@@ -636,6 +657,7 @@ impl Grid {
             }
             3 => {
                 self.scrollback.clear();
+                self.scrollback_ids.clear();
             }
             _ => {
                 self.erase_line(0, pen);
@@ -698,7 +720,10 @@ impl Grid {
         let count = count.min(self.scroll_bottom - self.cursor.row + 1);
         for _ in 0..count {
             self.lines.remove(self.scroll_bottom);
+            self.line_ids.remove(self.scroll_bottom);
+            let new_line_id = self.allocate_line_id();
             self.lines.insert(self.cursor.row, self.blank_line(pen));
+            self.line_ids.insert(self.cursor.row, new_line_id);
         }
         self.cursor.pending_wrap = false;
     }
@@ -711,7 +736,10 @@ impl Grid {
         let count = count.min(self.scroll_bottom - self.cursor.row + 1);
         for _ in 0..count {
             self.lines.remove(self.cursor.row);
+            self.line_ids.remove(self.cursor.row);
+            let new_line_id = self.allocate_line_id();
             self.lines.insert(self.scroll_bottom, self.blank_line(pen));
+            self.line_ids.insert(self.scroll_bottom, new_line_id);
         }
         self.cursor.pending_wrap = false;
     }
@@ -747,18 +775,22 @@ impl Grid {
             let above = self.cursor.row.min(removed);
             for _ in 0..above {
                 let line = self.lines.remove(0);
+                let line_id = self.line_ids.remove(0);
                 if self.keeps_history {
-                    self.retire(line);
+                    self.retire(line, line_id);
                 }
             }
             self.cursor.row -= above;
             removed -= above;
             for _ in 0..removed {
                 self.lines.pop();
+                self.line_ids.pop();
             }
         } else {
             for _ in self.rows..rows {
+                let new_line_id = self.allocate_line_id();
                 self.lines.push(vec![Cell::blank(pen); columns]);
+                self.line_ids.push(new_line_id);
             }
         }
         self.rows = rows;
@@ -788,31 +820,26 @@ impl Grid {
 
     /// Stable identity of one retained presentation row.
     pub fn retained_line_id(&self, row: usize) -> Option<TerminalLineId> {
-        let oldest = self.retired.saturating_sub(self.scrollback.len() as u64);
-        let local = if row < self.scrollback.len() {
-            oldest + row as u64
+        if row < self.scrollback.len() {
+            self.scrollback_ids.get(row).copied()
         } else {
             let screen_row = row - self.scrollback.len();
-            (screen_row < self.lines.len()).then_some(self.retired + screen_row as u64)?
-        };
-        Some(TerminalLineId::new(self.generation, local))
+            self.line_ids.get(screen_row).copied()
+        }
     }
 
     /// Current retained-row index for a stable identity, if it was not
     /// evicted from bounded scrollback.
     pub fn retained_row(&self, line_id: TerminalLineId) -> Option<usize> {
-        if line_id.generation != self.generation {
-            return None;
-        }
-        let oldest = self.retired.saturating_sub(self.scrollback.len() as u64);
-        if (oldest..self.retired).contains(&line_id.local) {
-            Some((line_id.local - oldest) as usize)
-        } else if line_id.local >= self.retired {
-            let screen_row = usize::try_from(line_id.local - self.retired).ok()?;
-            (screen_row < self.lines.len()).then_some(self.scrollback.len() + screen_row)
-        } else {
-            None
-        }
+        self.scrollback_ids
+            .iter()
+            .position(|candidate| *candidate == line_id)
+            .or_else(|| {
+                self.line_ids
+                    .iter()
+                    .position(|candidate| *candidate == line_id)
+                    .map(|row| self.scrollback.len() + row)
+            })
     }
 
     pub fn plain_line(&self, row: usize) -> Option<String> {

@@ -92,6 +92,13 @@ workspace terminal-cell budget; an identity lost before capture or a review
 evicted by that budget now produces an explicit failure instead of showing an
 unfocused terminal.
 
+An eighth review found that assigning one generation to a whole grid made
+`CSI 2 J` invalidate unchanged scrollback even though that control clears only
+screen rows. Stable identities now live alongside individual screen and
+scrollback rows and move with them. A complete screen clear replaces only the
+screen identities; retained history keeps its targets through preview and
+activation, while alternate-screen and reset replacement remain isolated.
+
 Coverage includes:
 
 - `project_finder_switches_name_and_content_modes_without_losing_its_query`,
@@ -110,6 +117,7 @@ Coverage includes:
 - `terminal_content_selection_follows_stable_line_identity_through_eviction`
   in `src/app/tests/search_and_pickers.rs`;
 - `terminal_content_selection_does_not_cross_primary_and_alternate_screens`,
+  `terminal_screen_clear_preserves_scrollback_match_identity`,
   `terminal_content_activation_captures_before_a_shorter_pane_resize`, and
   `terminal_content_activation_enforces_the_review_memory_budget_immediately`
   in `src/app/tests/search_and_pickers.rs`;
