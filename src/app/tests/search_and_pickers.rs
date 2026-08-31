@@ -921,6 +921,82 @@ fn project_finder_indexes_terminal_names_and_content_and_reveals_the_matching_ro
 
 #[cfg(unix)]
 #[test]
+fn busy_terminal_updates_only_its_name_finder_item_and_selected_preview() {
+    let root = temporary("project-finder-busy-terminal-name-mode");
+    fs::create_dir_all(&root).unwrap();
+    let ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    app.execute_command("buffer-new").unwrap();
+    let scratch = app.active().buffer;
+    app.buffers[scratch].apply(&Transaction::insert(0, "kept scratch"));
+    app.open_terminal_at(Some("/bin/cat".to_owned()), root.clone());
+    let terminal = app.active_terminal().unwrap();
+    app.open_project_picker().unwrap();
+    let item_count = app.finder.as_ref().unwrap().items.len();
+    let buffer_match = app
+        .finder
+        .as_ref()
+        .unwrap()
+        .matches
+        .iter()
+        .position(|found| {
+            matches!(
+                found.source,
+                FinderMatchSource::Resource(item)
+                    if app.finder.as_ref().unwrap().items[item].target
+                        == ResourceTarget::Buffer(scratch)
+            )
+        })
+        .unwrap();
+    app.finder.as_mut().unwrap().first();
+    for _ in 0..buffer_match {
+        app.finder.as_mut().unwrap().down();
+    }
+    let claimed = app
+        .finder
+        .as_ref()
+        .unwrap()
+        .selected_target(app.picker.as_ref().unwrap());
+
+    app.apply_terminal_output(TerminalOutput::Bytes {
+        id: terminal,
+        bytes: b"\x1b]2;hot-title\x07first visible row\r\n".to_vec(),
+    });
+    for row in 0..256 {
+        app.apply_terminal_output(TerminalOutput::Bytes {
+            id: terminal,
+            bytes: format!("busy row {row}\r\n").into_bytes(),
+        });
+    }
+    assert_eq!(app.finder.as_ref().unwrap().items.len(), item_count);
+    assert_eq!(
+        app.finder
+            .as_ref()
+            .unwrap()
+            .selected_target(app.picker.as_ref().unwrap()),
+        claimed
+    );
+
+    type_text(&mut app, "hot-title");
+    assert_eq!(
+        app.finder
+            .as_ref()
+            .unwrap()
+            .selected_target(app.picker.as_ref().unwrap()),
+        Some(FinderTarget::Resource(ResourceTarget::Terminal(terminal)))
+    );
+    let preview = app.finder.as_ref().unwrap().selected_preview().unwrap();
+    assert!(preview.contains("busy row 255"));
+    assert!(preview.lines().count() <= 200);
+    app.close_file_picker();
+    app.close_terminal_id(terminal);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
 fn terminal_output_restarts_a_bounded_incremental_finder_scan() {
     let root = temporary("project-finder-live-terminal-output");
     fs::create_dir_all(&root).unwrap();

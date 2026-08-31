@@ -316,63 +316,23 @@ impl App {
                 ResourceTarget::Buffer(index),
                 ResourceKind::Buffer,
                 fields,
-            )
-            .with_preview(buffer_preview(buffer));
+            );
             if let Some(path) = buffer.path.clone() {
                 item = item.with_path(path);
             }
             items.push(item);
         }
         for session in self.terminals.iter() {
-            let mut detail = format!("#{} · {}", session.id(), session.directory().display());
-            if self
+            let shown = self
                 .panes
                 .values()
-                .any(|pane| pane.terminal == Some(session.id()))
-            {
-                detail.push_str(" · shown");
-            }
-            if session.unread_activity() {
-                detail.push_str(" · unread");
-            }
-            if session.bell() {
-                detail.push_str(" · bell");
-            }
-            let mut fields = vec![
-                "terminal".to_owned(),
-                "terminals".to_owned(),
-                "term".to_owned(),
-                session.id().to_string(),
-                session.name(),
-                session.display_name(),
-                session.launch_label().to_owned(),
-            ];
-            if let Some(name) = session.user_name() {
-                fields.push(name.to_owned());
-            }
-            if let Some(title) = session.child_title() {
-                fields.push(title.to_owned());
-            }
-            fields.extend(resource_path_fields(
-                session.directory(),
+                .any(|pane| pane.terminal == Some(session.id()));
+            items.push(terminal_finder_item(
+                session,
+                shown,
                 &self.project_root,
                 self.home_directory.as_deref(),
             ));
-            fields.extend(resource_path_fields(
-                session.initial_directory(),
-                &self.project_root,
-                self.home_directory.as_deref(),
-            ));
-            items.push(
-                ResourceItem::new(
-                    session.display_name(),
-                    detail,
-                    ResourceTarget::Terminal(session.id()),
-                    ResourceKind::Terminal,
-                    fields,
-                )
-                .with_preview(terminal_preview(session)),
-            );
         }
         if let (Some(finder), Some(picker)) = (self.finder.as_mut(), self.picker.as_ref()) {
             finder.replace_items(items, picker, &query);
@@ -436,12 +396,36 @@ impl App {
             return;
         };
         if mode == FinderMode::Names {
-            self.rebuild_resource_finder();
+            self.refresh_terminal_finder_item(terminal);
         } else if self.finder_content_scan.is_some() {
             self.finder_content_dirty_terminals.insert(terminal);
         } else {
             self.start_terminal_content_refresh(terminal);
         }
+    }
+
+    fn refresh_terminal_finder_item(&mut self, terminal: crate::terminal::TerminalId) {
+        let Some(session) = self.terminals.get(terminal) else {
+            return;
+        };
+        let shown = self
+            .panes
+            .values()
+            .any(|pane| pane.terminal == Some(terminal));
+        let item = terminal_finder_item(
+            session,
+            shown,
+            &self.project_root,
+            self.home_directory.as_deref(),
+        );
+        let Some(query) = self.picker.as_ref().map(|picker| picker.query.clone()) else {
+            return;
+        };
+        let Some((finder, picker)) = self.finder.as_mut().zip(self.picker.as_ref()) else {
+            return;
+        };
+        finder.replace_terminal(terminal, item, picker, &query);
+        self.refresh_finder_preview();
     }
 
     /// Refreshes one terminal after an otherwise complete content scan. Other
@@ -765,10 +749,16 @@ impl App {
             .zip(self.picker.as_ref())
             .and_then(|(finder, picker)| finder.selected_target(picker))
             .and_then(|target| match target {
+                FinderTarget::Resource(ResourceTarget::Buffer(buffer)) => {
+                    self.buffers.get(buffer).map(buffer_preview)
+                }
                 FinderTarget::Resource(ResourceTarget::BufferLocation { buffer, row, .. }) => self
                     .buffers
                     .get(buffer)
                     .map(|buffer| buffer_content_preview(buffer, row)),
+                FinderTarget::Resource(ResourceTarget::Terminal(terminal)) => {
+                    self.terminals.get(terminal).map(terminal_preview)
+                }
                 FinderTarget::Resource(ResourceTarget::TerminalLocation {
                     terminal, row, ..
                 }) => self
@@ -878,4 +868,54 @@ fn terminal_content_preview(terminal: &TerminalSession, row: usize) -> String {
         .filter_map(|row| terminal.plain_line(row))
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+fn terminal_finder_item(
+    session: &TerminalSession,
+    shown: bool,
+    project_root: &std::path::Path,
+    home_directory: Option<&std::path::Path>,
+) -> ResourceItem {
+    let mut detail = format!("#{} · {}", session.id(), session.directory().display());
+    if shown {
+        detail.push_str(" · shown");
+    }
+    if session.unread_activity() {
+        detail.push_str(" · unread");
+    }
+    if session.bell() {
+        detail.push_str(" · bell");
+    }
+    let mut fields = vec![
+        "terminal".to_owned(),
+        "terminals".to_owned(),
+        "term".to_owned(),
+        session.id().to_string(),
+        session.name(),
+        session.display_name(),
+        session.launch_label().to_owned(),
+    ];
+    if let Some(name) = session.user_name() {
+        fields.push(name.to_owned());
+    }
+    if let Some(title) = session.child_title() {
+        fields.push(title.to_owned());
+    }
+    fields.extend(resource_path_fields(
+        session.directory(),
+        project_root,
+        home_directory,
+    ));
+    fields.extend(resource_path_fields(
+        session.initial_directory(),
+        project_root,
+        home_directory,
+    ));
+    ResourceItem::new(
+        session.display_name(),
+        detail,
+        ResourceTarget::Terminal(session.id()),
+        ResourceKind::Terminal,
+        fields,
+    )
 }

@@ -65,7 +65,6 @@ pub struct ResourceItem {
     pub target: ResourceTarget,
     pub kind: ResourceKind,
     pub path: Option<PathBuf>,
-    preview: Option<String>,
     fields: Vec<String>,
 }
 
@@ -89,7 +88,6 @@ impl ResourceItem {
             target,
             kind,
             path: None,
-            preview: None,
             fields: searchable,
         }
     }
@@ -109,18 +107,12 @@ impl ResourceItem {
             target,
             kind,
             path: None,
-            preview: None,
             fields: vec![text],
         }
     }
 
     pub fn with_path(mut self, path: PathBuf) -> Self {
         self.path = Some(path);
-        self
-    }
-
-    pub fn with_preview(mut self, preview: impl Into<String>) -> Self {
-        self.preview = Some(preview.into());
         self
     }
 }
@@ -270,6 +262,54 @@ impl ResourceFinder {
     pub fn merge_files(&mut self, picker: &FilePicker, query: &str) {
         let selected = self.preserved_selection(picker);
         self.merge(picker, query, selected.as_ref());
+    }
+
+    /// Re-ranks one name-mode terminal after its title or activity metadata
+    /// changes, without rebuilding unrelated buffers and terminal sessions.
+    pub fn replace_terminal(
+        &mut self,
+        terminal: TerminalId,
+        item: ResourceItem,
+        picker: &FilePicker,
+        query: &str,
+    ) {
+        let Some(index) = self
+            .items
+            .iter()
+            .position(|item| matches!(item.target, ResourceTarget::Terminal(id) if id == terminal))
+        else {
+            self.append_items([item], picker, query);
+            return;
+        };
+        let selected = self.preserved_selection(picker);
+        self.items[index] = item;
+        self.resource_matches.retain(|found| found.item != index);
+        self.matches.retain(
+            |found| !matches!(found.source, FinderMatchSource::Resource(item) if item == index),
+        );
+        let parsed = ParsedQuery::new(query, true);
+        if let Some((score, type_boost, emphasis, detail_emphasis)) =
+            parsed.score(&self.items[index])
+        {
+            let found = ResourceMatch {
+                item: index,
+                emphasis,
+                detail_emphasis,
+                score,
+                type_boost,
+            };
+            merge_sorted_by(
+                &mut self.matches,
+                vec![resource_to_finder_match(&found)],
+                finder_match_order,
+            );
+            merge_sorted_by(
+                &mut self.resource_matches,
+                vec![found],
+                resource_match_order,
+            );
+        }
+        self.restore_selection(picker, selected.as_ref());
     }
 
     pub fn remove_terminal_content(
@@ -441,9 +481,7 @@ impl ResourceFinder {
     }
 
     pub fn selected_preview(&self) -> Option<&str> {
-        self.selected_preview
-            .as_deref()
-            .or_else(|| self.selected_item()?.preview.as_deref())
+        self.selected_preview.as_deref()
     }
 
     pub fn set_selected_preview(&mut self, preview: Option<String>) {

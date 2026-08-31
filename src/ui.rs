@@ -7587,19 +7587,17 @@ mod tests {
         ));
         let mut finder = crate::finder::ResourceFinder::new(crate::finder::FinderMode::Names);
         finder.replace_items(
-            vec![
-                crate::finder::ResourceItem::new(
-                    "notes.txt",
-                    "src/notes.txt",
-                    crate::finder::ResourceTarget::Buffer(0),
-                    crate::finder::ResourceKind::Buffer,
-                    ["buffer".to_owned(), "notes.txt".to_owned()],
-                )
-                .with_preview("authoritative buffer preview"),
-            ],
+            vec![crate::finder::ResourceItem::new(
+                "notes.txt",
+                "src/notes.txt",
+                crate::finder::ResourceTarget::Buffer(0),
+                crate::finder::ResourceKind::Buffer,
+                ["buffer".to_owned(), "notes.txt".to_owned()],
+            )],
             app.picker.as_ref().unwrap(),
             "",
         );
+        finder.set_selected_preview(Some("authoritative buffer preview".to_owned()));
         app.finder = Some(finder);
 
         let wide = rendered(&mut app, 120, 30);
