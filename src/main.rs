@@ -17,13 +17,17 @@ use crossterm::event::{
     KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
 };
 use crossterm::{
-    ExecutableCommand,
-    cursor::Show,
+    ExecutableCommand, QueueableCommand,
+    cursor::{Hide, MoveTo, Show},
     event::{
         DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
         Event as CrosstermEvent, EventStream, KeyEventKind,
     },
-    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
+    style::{Attribute, Print, SetAttribute},
+    terminal::{
+        Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode,
+        enable_raw_mode,
+    },
 };
 use futures_util::StreamExt;
 use ratatui::{Terminal, backend::CrosstermBackend};
@@ -56,6 +60,7 @@ use runyte::{
 
 const STATUS_ANIMATION_INTERVAL: Duration = Duration::from_millis(80);
 const TERMINAL_FRAME_INTERVAL: Duration = Duration::from_millis(16);
+const MAINTENANCE_INTERVAL: Duration = Duration::from_secs(1);
 #[cfg(unix)]
 const WAIT_LIFECYCLE_RECOVERY_BUDGET: Duration = Duration::from_millis(500);
 /// How long a shutting-down host waits for its connections to finish writing.
@@ -152,16 +157,65 @@ impl std::error::Error for WaitTerminalLost {}
 
 #[cfg(unix)]
 struct TerminationSignals {
-    poll: tokio::time::Interval,
+    reader: tokio::io::unix::AsyncFd<std::os::unix::net::UnixStream>,
+    writer: std::os::unix::net::UnixStream,
+}
+
+/// Restores a terminal synchronously when startup is interrupted before the
+/// async event loop can receive the signal wake.
+#[cfg(unix)]
+struct StartupSignalExit;
+
+#[cfg(unix)]
+impl StartupSignalExit {
+    fn arm() -> Result<Self> {
+        let mut attributes = std::mem::MaybeUninit::<libc::termios>::uninit();
+        // SAFETY: `attributes` points to writable storage and stdout is the
+        // terminal this standalone process is about to place in raw mode.
+        if unsafe { libc::tcgetattr(libc::STDOUT_FILENO, attributes.as_mut_ptr()) } == -1 {
+            return Err(std::io::Error::last_os_error())
+                .context("failed to preserve terminal state for startup");
+        }
+        // SAFETY: successful `tcgetattr` initialized `attributes`. No signal
+        // reads this slot until the release-store below publishes it.
+        unsafe {
+            std::ptr::addr_of_mut!(STARTUP_TERMINAL_STATE)
+                .write(std::mem::MaybeUninit::new(attributes.assume_init()));
+        }
+        STARTUP_TERMINAL_ACTIVE.store(true, std::sync::atomic::Ordering::Release);
+        Ok(Self)
+    }
+}
+
+#[cfg(unix)]
+impl Drop for StartupSignalExit {
+    fn drop(&mut self) {
+        STARTUP_TERMINAL_ACTIVE.store(false, std::sync::atomic::Ordering::Release);
+    }
+}
+
+#[cfg(not(unix))]
+struct StartupSignalExit;
+
+#[cfg(not(unix))]
+impl StartupSignalExit {
+    fn arm() -> Result<Self> {
+        Ok(Self)
+    }
 }
 
 #[cfg(unix)]
 impl TerminationSignals {
     fn new() -> Result<Self> {
+        use std::os::fd::AsRawFd;
+
+        let (reader, writer) = std::os::unix::net::UnixStream::pair()?;
+        reader.set_nonblocking(true)?;
+        writer.set_nonblocking(true)?;
+        let reader = tokio::io::unix::AsyncFd::new(reader)?;
         install_termination_handlers()?;
-        let mut poll = tokio::time::interval(Duration::from_millis(25));
-        poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-        Ok(Self { poll })
+        TERMINATION_WRITE_FD.store(writer.as_raw_fd(), std::sync::atomic::Ordering::Release);
+        Ok(Self { reader, writer })
     }
 
     async fn recv(&mut self) -> i32 {
@@ -169,13 +223,48 @@ impl TerminationSignals {
             if let Some(signal) = self.received() {
                 return signal;
             }
-            self.poll.tick().await;
+            let mut ready = self
+                .reader
+                .readable()
+                .await
+                .expect("termination signal descriptor remains readable");
+            ready.clear_ready();
         }
     }
 
-    fn received(&self) -> Option<i32> {
-        let signal = RECEIVED_TERMINATION.swap(0, std::sync::atomic::Ordering::Relaxed);
+    fn received(&mut self) -> Option<i32> {
+        use std::io::Read;
+
+        let mut wake = [0_u8; 64];
+        match self.reader.get_mut().read(&mut wake) {
+            Ok(_) | Err(_) => {}
+        }
+        let signal = RECEIVED_TERMINATION.swap(0, std::sync::atomic::Ordering::AcqRel);
         (signal != 0).then_some(signal)
+    }
+}
+
+#[cfg(unix)]
+impl Drop for TerminationSignals {
+    fn drop(&mut self) {
+        use std::os::fd::AsRawFd;
+
+        if TERMINATION_WRITE_FD
+            .compare_exchange(
+                self.writer.as_raw_fd(),
+                -1,
+                std::sync::atomic::Ordering::AcqRel,
+                std::sync::atomic::Ordering::Relaxed,
+            )
+            .is_ok()
+        {
+            // A handler that entered before the descriptor was unpublished
+            // may still be writing it. Wait before `writer` closes so the fd
+            // cannot be reused underneath that async-signal-safe write.
+            while TERMINATION_HANDLERS_ACTIVE.load(std::sync::atomic::Ordering::Acquire) != 0 {
+                std::hint::spin_loop();
+            }
+        }
     }
 }
 
@@ -472,8 +561,58 @@ async fn terminal_loss_error(termination: &mut TerminationSignals) -> anyhow::Er
 static RECEIVED_TERMINATION: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 
 #[cfg(unix)]
+static TERMINATION_WRITE_FD: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
+
+#[cfg(unix)]
+static TERMINATION_HANDLERS_ACTIVE: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+#[cfg(unix)]
+static STARTUP_TERMINAL_ACTIVE: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+#[cfg(unix)]
+static mut STARTUP_TERMINAL_STATE: std::mem::MaybeUninit<libc::termios> =
+    std::mem::MaybeUninit::uninit();
+
+#[cfg(unix)]
+unsafe fn exit_from_interrupted_startup(signal: libc::c_int) -> ! {
+    const RESTORE_PRESENTATION: &[u8] = b"\x1b[?1000l\x1b[?1002l\x1b[?1003l\
+        \x1b[?1015l\x1b[?1006l\x1b[?2004l\x1b[<u\x1b[?25h\x1b[?1049l";
+    // SAFETY: the active flag publishes a fully initialized termios value.
+    // `tcsetattr`, `write`, and `_exit` are async-signal-safe on POSIX. This
+    // path never returns to the interrupted synchronous file or parser work.
+    unsafe {
+        let attributes = std::ptr::addr_of!(STARTUP_TERMINAL_STATE).cast::<libc::termios>();
+        let _ = libc::tcsetattr(libc::STDOUT_FILENO, libc::TCSANOW, attributes);
+        let _ = libc::write(
+            libc::STDOUT_FILENO,
+            RESTORE_PRESENTATION.as_ptr().cast(),
+            RESTORE_PRESENTATION.len(),
+        );
+        libc::_exit(128 + signal);
+    }
+}
+
+#[cfg(unix)]
 extern "C" fn record_termination(signal: libc::c_int) {
-    RECEIVED_TERMINATION.store(signal, std::sync::atomic::Ordering::Relaxed);
+    if STARTUP_TERMINAL_ACTIVE.swap(false, std::sync::atomic::Ordering::AcqRel) {
+        // SAFETY: `StartupSignalExit::arm` published the saved state before it
+        // set the active flag, and this branch does not return.
+        unsafe { exit_from_interrupted_startup(signal) };
+    }
+    RECEIVED_TERMINATION.store(signal, std::sync::atomic::Ordering::Release);
+    TERMINATION_HANDLERS_ACTIVE.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+    let fd = TERMINATION_WRITE_FD.load(std::sync::atomic::Ordering::Acquire);
+    if fd >= 0 {
+        let wake = signal as u8;
+        // SAFETY: `wake` is live for this one-byte write and `fd` names the
+        // non-blocking signal socket installed by `TerminationSignals::new`.
+        // `write` is async-signal-safe; a full socket can drop this byte
+        // because the atomic signal value remains pending.
+        let _ = unsafe { libc::write(fd, (&wake as *const u8).cast(), 1) };
+    }
+    TERMINATION_HANDLERS_ACTIVE.fetch_sub(1, std::sync::atomic::Ordering::Release);
 }
 
 #[cfg(unix)]
@@ -482,9 +621,7 @@ fn install_termination_handlers() -> Result<()> {
         std::sync::OnceLock::new();
     let result = INSTALLED.get_or_init(|| {
         // SAFETY: a zeroed sigaction is a valid starting point; the handler
-        // only performs an atomic store, which is async-signal-safe on the
-        // supported lock-free Unix targets. Each call supplies a live action
-        // and does not request the previous disposition.
+        // only performs lock-free atomics and an async-signal-safe write.
         let mut action: libc::sigaction = unsafe { std::mem::zeroed() };
         action.sa_sigaction = record_termination as *const () as usize;
         action.sa_flags = 0;
@@ -493,8 +630,8 @@ fn install_termination_handlers() -> Result<()> {
             return Err(std::io::Error::last_os_error().raw_os_error().unwrap_or(0));
         }
         for signal in [libc::SIGINT, libc::SIGHUP, libc::SIGTERM] {
-            // SAFETY: `action` remains initialized for the duration of each
-            // call, and a null final argument discards the old disposition.
+            // SAFETY: `action` remains initialized for each call, and a null
+            // final argument discards the old disposition.
             if unsafe { libc::sigaction(signal, &action, std::ptr::null_mut()) } == -1 {
                 return Err(std::io::Error::last_os_error().raw_os_error().unwrap_or(0));
             }
@@ -1165,6 +1302,60 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
             |path| path.display().to_string(),
         )
     );
+    // A standalone process owns the terminal, so acquire it as soon as every
+    // fallible launch decision that may need the ordinary terminal has been
+    // made. In particular, do this before opening and parsing startup targets:
+    // the deliberate startup presentation can be shown before its latency can
+    // grow with document size or language work. The content frame still waits
+    // for the complete highlighted editor state below, so no document text is
+    // ever shown unhighlighted or reflowed after first appearing.
+    //
+    // Signal registration remains ahead of raw mode, and the guard stays live
+    // across every later fallible step. An error therefore restores the
+    // ordinary terminal before it is reported by `main`. A failed acquisition
+    // is retained until editor and debug-trace construction finish, preserving
+    // a more specific startup error on invocations that have no usable TTY.
+    let standalone_color_depth =
+        (arguments.mode == LaunchMode::Standalone).then(terminal_color_depth);
+    // Preserve and publish the ordinary terminal state before installing the
+    // handler. A signal before installation keeps its safe default disposition;
+    // every signal after installation sees startup protection already armed.
+    let startup_restore = if arguments.mode == LaunchMode::Standalone {
+        Some(StartupSignalExit::arm())
+    } else {
+        None
+    };
+    let mut standalone_termination = if startup_restore
+        .as_ref()
+        .is_some_and(std::result::Result::is_ok)
+    {
+        Some(TerminationSignals::new()?)
+    } else {
+        None
+    };
+    let mut startup_signal_exit = None;
+    let standalone_terminal = if arguments.mode == LaunchMode::Standalone {
+        let terminal = match startup_restore.expect("standalone startup terminal state") {
+            Ok(restore) => match TerminalGuard::enter(mouse_enabled) {
+                Ok(guard) => {
+                    startup.mark(StartupPhase::TerminalEntered);
+                    match present_startup_screen() {
+                        Ok(()) => {
+                            startup.mark(StartupPhase::FirstFramePresented);
+                            startup_signal_exit = Some(restore);
+                            Ok(guard)
+                        }
+                        Err(error) => Err(error),
+                    }
+                }
+                Err(error) => Err(error),
+            },
+            Err(error) => Err(error),
+        };
+        Some(terminal)
+    } else {
+        None
+    };
     let mut app = App::new_in_project_with_targets_and_trace(
         config,
         arguments.targets,
@@ -1218,15 +1409,17 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
         anyhow::bail!("persistent mode is not yet supported on this platform");
     }
 
-    // Register before entering raw mode so no startup interval can leave the
-    // terminal modified while signals still have their default disposition.
-    let color_depth = terminal_color_depth();
-    let mut termination = TerminationSignals::new()?;
-    let mut received_signal = None;
-    let _terminal = TerminalGuard::enter(mouse_enabled)?;
+    // The standalone resources were acquired before editor construction. Move
+    // them into the interactive loop now that the persistent-host branch has
+    // returned.
+    let color_depth = standalone_color_depth.expect("standalone terminal colour depth");
+    let _terminal = standalone_terminal.expect("standalone terminal guard")?;
+    let mut termination = standalone_termination
+        .take()
+        .expect("standalone termination signals");
     let backend = CrosstermBackend::new(stdout());
     let mut terminal = Terminal::new(backend)?;
-    startup.mark(StartupPhase::TerminalEntered);
+    let mut received_signal = None;
     let mut key_hints = KeyHintState::default();
     if show_startup_about {
         app.app_mut().execute(about_invocation()?)?;
@@ -1236,7 +1429,7 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
         let snapshot = app.prepare_frame_with_hints(geometry, Some(&key_hints));
         ui::render(frame, app.app(), &snapshot.editor, &key_hints, color_depth);
     })?;
-    startup.mark(StartupPhase::FirstFramePresented);
+    startup.mark(StartupPhase::EditorFramePresented);
     if let Err(error) = startup.write_requested() {
         app.report_host_error(format!("failed to write startup timing report: {error}"));
     }
@@ -1255,8 +1448,9 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
         let snapshot = app.prepare_frame_with_hints(geometry, Some(&key_hints));
         ui::render(frame, app.app(), &snapshot.editor, &key_hints, color_depth);
     })?;
+    drop(startup_signal_exit.take());
     let mut terminal_events = EventStream::new();
-    let mut git_refresh_tick = tokio::time::interval(Duration::from_millis(250));
+    let mut git_refresh_tick = tokio::time::interval(MAINTENANCE_INTERVAL);
     git_refresh_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut status_animation_tick = tokio::time::interval(STATUS_ANIMATION_INTERVAL);
     status_animation_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -1399,6 +1593,7 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
             event = services.git_monitor_events.recv() => {
                 if let Some(event) = event {
                     app.apply_event(HostEvent::GitInvalidation(event));
+                    let _ = app.refresh_git_if_due(Instant::now());
                 } else {
                     note_ended_service(&mut ended_services, "Git monitor");
                 }
@@ -1635,7 +1830,7 @@ async fn run_host_server(
         std::collections::HashMap::new();
     let mut control_wait_tokens: std::collections::HashMap<u64, Vec<WaitToken>> =
         std::collections::HashMap::new();
-    let mut refresh_tick = tokio::time::interval(Duration::from_millis(250));
+    let mut refresh_tick = tokio::time::interval(MAINTENANCE_INTERVAL);
     refresh_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut status_animation_tick = tokio::time::interval(STATUS_ANIMATION_INTERVAL);
     status_animation_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -2016,6 +2211,7 @@ async fn run_host_server(
                 if let Some(event) = event {
                     host.apply_event(HostEvent::GitInvalidation(event));
                     changed = true;
+                    changed |= host.refresh_git_if_due(Instant::now());
                 } else {
                     note_ended_service(&mut ended_services, "Git monitor");
                 }
@@ -4118,9 +4314,9 @@ fn start_host_services(
     app.attach_syntax_worker(syntax_worker);
     let (file_scanner, file_picker_events) = file_picker::scanner();
     app.attach_file_scanner(file_scanner);
-    let (file_monitor, file_monitor_events) = file_monitor::spawn();
+    let (mut file_monitor, file_monitor_events) = file_monitor::spawn();
     file_monitor.sync(app.file_monitor_requests());
-    let (git_monitor, git_monitor_events) = git_monitor::spawn();
+    let (mut git_monitor, git_monitor_events) = git_monitor::spawn();
     git_monitor.sync(app.git_monitor_repository());
     app.attach_word_index(word_index::spawn());
     #[cfg(unix)]
@@ -4454,6 +4650,27 @@ fn motion_repeat_dispatches(app: &App, input: &InputEvent, repeated: bool) -> us
 struct TerminalGuard {
     mouse_enabled: bool,
     keyboard_enhancement: bool,
+}
+
+/// Draws the stable presentation used while the first editor state is built.
+///
+/// This screen deliberately contains no document text: replacing it with the
+/// first complete editor frame cannot flash incomplete syntax or reflow text.
+fn present_startup_screen() -> Result<()> {
+    let mut output = stdout();
+    write_startup_screen(&mut output).context("failed to present startup screen")
+}
+
+fn write_startup_screen(output: &mut impl Write) -> io::Result<()> {
+    output
+        .queue(SetAttribute(Attribute::Reset))?
+        .queue(Hide)?
+        .queue(Clear(ClearType::All))?
+        .queue(MoveTo(0, 0))?
+        .queue(Print("Runyte"))?
+        .queue(MoveTo(0, 2))?
+        .queue(Print("Opening workspace…"))?;
+    output.flush()
 }
 
 #[cfg(unix)]
@@ -4792,7 +5009,7 @@ mod tests {
         KeyRepeatDetector, initialize_attached_directory, is_passive_pointer, is_redraw_only_event,
         motion_repeat_dispatches, observe_key_or_text_hint, rejected_text_input,
         resolve_cwd_file_path, resolve_requested_project_root, starts_on_about,
-        uses_automatic_persistent_mode, write_cwd_file,
+        uses_automatic_persistent_mode, write_cwd_file, write_startup_screen,
     };
     use runyte::launch::LaunchArguments;
     use runyte::{
@@ -5079,6 +5296,21 @@ mod tests {
         assert!(!enable.is_empty());
         assert!(!disable.is_empty());
         assert_ne!(enable, disable);
+    }
+
+    #[test]
+    fn startup_screen_is_a_complete_document_free_presentation() {
+        let mut output = Vec::new();
+
+        write_startup_screen(&mut output).unwrap();
+
+        let output = String::from_utf8(output).unwrap();
+        assert!(output.contains("Runyte"));
+        assert!(output.contains("Opening workspace…"));
+        assert!(
+            output.contains("\u{1b}[2J"),
+            "startup screen was not cleared"
+        );
     }
 
     #[cfg(unix)]

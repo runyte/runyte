@@ -18,7 +18,9 @@ use std::{
 pub const STARTUP_TIMING_FILE_ENV: &str = "RUNYTE_STARTUP_TIMING_FILE";
 
 /// Stable milestones on the path to a usable editor frame.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+/// Variants are declared in lifecycle order. A launch may skip phases that do
+/// not apply to its mode, but it must never move backwards through this list.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum StartupPhase {
     MainEntry,
     CliParsed,
@@ -26,14 +28,15 @@ pub enum StartupPhase {
     ProjectResolutionStarted,
     ProjectResolvedAutomatically,
     ProjectResolvedAfterPrompt,
+    TerminalEntered,
+    FirstFramePresented,
     ThemeResolved,
     LanguageRegistryReady,
     InitialBufferOpened,
     InitialSyntaxReady,
     AppReady,
-    TerminalEntered,
+    EditorFramePresented,
     LspManagerSpawned,
-    FirstFramePresented,
 }
 
 impl StartupPhase {
@@ -45,14 +48,15 @@ impl StartupPhase {
             Self::ProjectResolutionStarted => "project_resolution_started",
             Self::ProjectResolvedAutomatically => "project_resolved_automatically",
             Self::ProjectResolvedAfterPrompt => "project_resolved_after_prompt",
+            Self::TerminalEntered => "terminal_entered",
+            Self::FirstFramePresented => "first_frame_presented",
             Self::ThemeResolved => "theme_resolved",
             Self::LanguageRegistryReady => "language_registry_ready",
             Self::InitialBufferOpened => "initial_buffer_opened",
             Self::InitialSyntaxReady => "initial_syntax_ready",
             Self::AppReady => "app_ready",
-            Self::TerminalEntered => "terminal_entered",
+            Self::EditorFramePresented => "editor_frame_presented",
             Self::LspManagerSpawned => "lsp_manager_spawned",
-            Self::FirstFramePresented => "first_frame_presented",
         }
     }
 }
@@ -130,6 +134,12 @@ impl StartupTrace {
                 .is_none_or(|(_, previous)| *previous <= elapsed),
             "startup milestones must be recorded in elapsed-time order"
         );
+        debug_assert!(
+            self.marks
+                .last()
+                .is_none_or(|(previous, _)| *previous <= phase),
+            "startup phases must follow lifecycle order"
+        );
         self.marks.push((phase, elapsed));
     }
 
@@ -170,6 +180,22 @@ mod tests {
              config_loaded 1.250 ms\n\
              first_frame_presented 8.000 ms\n"
         );
+    }
+}
+
+#[cfg(test)]
+mod phase_order_tests {
+    use super::*;
+
+    #[test]
+    fn terminal_entry_precedes_document_dependent_startup_work() {
+        assert!(StartupPhase::TerminalEntered < StartupPhase::ThemeResolved);
+        assert!(StartupPhase::TerminalEntered < StartupPhase::FirstFramePresented);
+        assert!(StartupPhase::FirstFramePresented < StartupPhase::ThemeResolved);
+        assert!(StartupPhase::TerminalEntered < StartupPhase::LanguageRegistryReady);
+        assert!(StartupPhase::TerminalEntered < StartupPhase::InitialBufferOpened);
+        assert!(StartupPhase::TerminalEntered < StartupPhase::InitialSyntaxReady);
+        assert!(StartupPhase::InitialSyntaxReady < StartupPhase::EditorFramePresented);
     }
 }
 

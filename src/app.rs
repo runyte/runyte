@@ -2814,9 +2814,8 @@ impl App {
             &working_directory,
             &registry,
             config.editor.show_hidden_files,
+            startup,
         )?;
-        startup.mark(StartupPhase::InitialBufferOpened);
-        startup.mark(StartupPhase::InitialSyntaxReady);
         let registry_errors = registry.errors();
         let configured_help = ":? or Space+? for help";
         let mut status = startup_status(&registry_errors, configured_help);
@@ -4002,7 +4001,7 @@ fn workspace_edit_path_identity(path: &Path) -> Result<PathBuf> {
     Ok(normalized)
 }
 
-/// Opens and parses every distinct text target before terminal entry.
+/// Opens and parses every distinct text target before the first editor frame.
 ///
 /// Existing paths are canonicalized for identity. Nonexistent absolute paths
 /// retain their exact component sequence so symlink-sensitive `..` traversal
@@ -4020,6 +4019,7 @@ fn open_launch_targets(
     working_directory: &Path,
     registry: &Registry,
     show_hidden: bool,
+    startup: &mut StartupTrace,
 ) -> Result<OpenedLaunchTargets> {
     let mut buffers = Vec::new();
     let mut syntax = Vec::new();
@@ -4065,14 +4065,23 @@ fn open_launch_targets(
         if let Some(position) = target.position {
             launch_positions.insert(buffer_id, position);
         }
-        syntax.push(parse_buffer(&buffer, registry));
+        if buffers.is_empty() {
+            startup.mark(StartupPhase::InitialBufferOpened);
+        }
+        let parsed = parse_buffer(&buffer, registry);
+        if buffers.is_empty() {
+            startup.mark(StartupPhase::InitialSyntaxReady);
+        }
+        syntax.push(parsed);
         buffers.push(buffer);
         buffer_by_path.insert(identity, buffer_id);
     }
 
     if buffers.is_empty() {
         let scratch = Buffer::scratch();
+        startup.mark(StartupPhase::InitialBufferOpened);
         syntax.push(parse_buffer(&scratch, registry));
+        startup.mark(StartupPhase::InitialSyntaxReady);
         buffers.push(scratch);
     }
     Ok(OpenedLaunchTargets {

@@ -35,11 +35,13 @@ import struct
 import termios
 import time
 
-# Silence long enough to call the initial draw finished. Chunks below
-# SIGNIFICANT_BYTES do not restart this clock, so an editor that repaints a
-# cursor on a timer still reaches a settled state.
+# Silence long enough to classify document output as settled. The caller also
+# supplies a token from the first visible document line; capability exchanges,
+# terminal setup, and loading presentations cannot settle without that evidence.
+# Every byte after the marker restarts this clock, independent of pty read chunk
+# boundaries. The quiet interval confirms settlement but is not added to the
+# reported timestamp.
 SETTLE_SECONDS = 0.25
-SIGNIFICANT_BYTES = 256
 
 # Upper bound on one startup measurement. Generous: the largest fixture takes
 # about a second and this only has to stop a genuinely stuck process.
@@ -50,7 +52,6 @@ ROWS, COLUMNS = 40, 120
 
 # ESC alone, then the command, so the escape is not folded into an Alt chord.
 QUIT_SEQUENCE = ((b"\x1b", 0.08), (b":", 0.05), (b"q!", 0.05), (b"\r", 0.0))
-QUIT_KEYSTROKE_COST = sum(gap for _, gap in QUIT_SEQUENCE)
 
 
 def terminal_replies(chunk: bytes) -> bytes:
@@ -108,19 +109,29 @@ def _reap(pid: int) -> None:
         pass
 
 
-def measure_startup(argv, env, cwd=None):
-    """Open a document and quit. Returns first-paint, ready, quit and byte count.
+def measure_startup(argv, env, document_marker, cwd=None):
+    """Open a document and quit. Return first-byte, settled-output and exit data.
 
-    ``first_paint`` is the first byte of output; ``ready`` is when output goes
-    quiet. ``quit`` has the harness's own keystroke stagger subtracted, so a
+    ``first_byte`` is any first byte written to the pty. It may be a capability
+    query, terminal setup, or a loading presentation, so it is diagnostic rather
+    than a cross-editor readiness measurement. ``first_document_output`` is when
+    a token from the shared first document line is observed. ``settled_output``
+    is the last output before the quiet window and is used only to avoid sending
+    quit during startup drawing. ``quit`` begins after the final keystroke, so a
     value near zero means the editor exited as soon as it read the command.
     """
-    pid, fd = _spawn(argv, env, cwd)
+    if not document_marker:
+        raise ValueError("document marker must not be empty")
+
     start = time.perf_counter()
-    first_paint = None
-    last_significant = start
+    pid, fd = _spawn(argv, env, cwd)
+    first_byte = None
+    last_document_output = None
     total_bytes = 0
-    ready = None
+    document_seen = False
+    first_document_output = None
+    marker_tail = b""
+    settled_output = None
     closed = False
 
     while time.perf_counter() - start < STARTUP_TIMEOUT_SECONDS:
@@ -134,36 +145,51 @@ def measure_startup(argv, env, cwd=None):
             if not data:
                 closed = True
                 break
-            if first_paint is None:
-                first_paint = time.perf_counter() - start
-                # Start the settle clock at the first byte, not at spawn, or an
-                # editor that queries the terminal before drawing settles at zero.
-                last_significant = time.perf_counter()
+            if first_byte is None:
+                first_byte = time.perf_counter() - start
             total_bytes += len(data)
-            if len(data) >= SIGNIFICANT_BYTES:
-                last_significant = time.perf_counter()
+            output_at = time.perf_counter()
+            if document_seen:
+                last_document_output = output_at
+            else:
+                marker_input = marker_tail + data
+                if document_marker in marker_input:
+                    document_seen = True
+                    first_document_output = output_at - start
+                    last_document_output = output_at
+                tail_length = len(document_marker) - 1
+                marker_tail = marker_input[-tail_length:] if tail_length else b""
             reply = terminal_replies(data)
             if reply:
                 try:
                     os.write(fd, reply)
                 except OSError:
                     pass
-        elif first_paint is not None and time.perf_counter() - last_significant > SETTLE_SECONDS:
-            ready = last_significant - start
+        elif (
+            document_seen
+            and last_document_output is not None
+            and time.perf_counter() - last_document_output > SETTLE_SECONDS
+        ):
+            settled_output = last_document_output - start
             break
 
-    quit_start = time.perf_counter()
+    quit_command_at = None
     if not closed:
         for part, gap in QUIT_SEQUENCE:
             try:
                 os.write(fd, part)
             except OSError:
                 break
-            time.sleep(gap)
+            if gap:
+                time.sleep(gap)
+        else:
+            quit_command_at = time.perf_counter()
 
+    exit_wait_start = time.perf_counter()
     exited = None
+    exit_status = None
     saw_eof = False
-    while time.perf_counter() - quit_start < QUIT_TIMEOUT_SECONDS:
+    while time.perf_counter() - exit_wait_start < QUIT_TIMEOUT_SECONDS:
         readable, _, _ = select.select([fd], [], [], 0.01)
         if readable:
             try:
@@ -179,18 +205,19 @@ def measure_startup(argv, env, cwd=None):
             except OSError:
                 saw_eof = True
         try:
-            reaped, _ = os.waitpid(pid, os.WNOHANG)
+            reaped, status = os.waitpid(pid, os.WNOHANG)
         except ChildProcessError:
             break
         if reaped == pid:
-            exited = time.perf_counter() - quit_start
+            exited = time.perf_counter()
+            exit_status = status
             break
         if saw_eof:
             try:
-                os.waitpid(pid, 0)
+                _, exit_status = os.waitpid(pid, 0)
             except ChildProcessError:
                 pass
-            exited = time.perf_counter() - quit_start
+            exited = time.perf_counter()
             break
 
     if exited is None:
@@ -201,24 +228,52 @@ def measure_startup(argv, env, cwd=None):
         pass
 
     return {
-        "first_paint": first_paint,
-        "ready": ready,
-        "quit": None if exited is None else max(0.0, exited - QUIT_KEYSTROKE_COST),
+        "first_byte": first_byte,
+        "first_document_output": first_document_output,
+        "settled_output": settled_output,
+        "quit": (
+            None
+            if (
+                exited is None
+                or settled_output is None
+                or quit_command_at is None
+                or exit_status is None
+                or not os.WIFEXITED(exit_status)
+                or os.WEXITSTATUS(exit_status) != 0
+            )
+            else max(0.0, exited - quit_command_at)
+        ),
         "bytes": total_bytes,
     }
 
 
+def _stat_cpu_ticks(stat: str) -> int:
+    """Own and reaped-child CPU ticks from one Linux `/proc/PID/stat`."""
+    fields = stat.rsplit(")", 1)[-1].split()
+    # Fields 14-17 are utime, stime, cutime and cstime. `fields` starts at
+    # process state (field 3), so their zero-based positions here are 11-14.
+    return sum(int(fields[index]) for index in range(11, 15))
+
+
 def _cpu_ticks(pid: int) -> int:
-    """User + system ticks for `pid` and every descendant it has spawned."""
+    """User + system ticks for `pid` and every descendant it has spawned.
+
+    A live child is traversed through `/proc`; a child reaped between samples
+    remains represented by its parent's cumulative child ticks. Combining the
+    two keeps short-lived helpers inside the measured window without counting
+    a live child twice.
+    """
     total = 0
     try:
-        fields = open(f"/proc/{pid}/stat").read().rsplit(")", 1)[-1].split()
-        total += int(fields[11]) + int(fields[12])
+        with open(f"/proc/{pid}/stat") as stat_file:
+            total += _stat_cpu_ticks(stat_file.read())
     except (OSError, IndexError, ValueError):
         return total
     try:
         for task in os.listdir(f"/proc/{pid}/task"):
-            for child in open(f"/proc/{pid}/task/{task}/children").read().split():
+            with open(f"/proc/{pid}/task/{task}/children") as children_file:
+                children = children_file.read().split()
+            for child in children:
                 total += _cpu_ticks(int(child))
     except (OSError, ValueError):
         pass
@@ -233,40 +288,60 @@ def measure_idle(argv, env, cwd=None, settle=2.5, window=10.0):
     both.
     """
     pid, fd = _spawn(argv, env, cwd)
-    start = time.time()
-    while time.time() - start < settle:
+    complete = True
+    start = time.perf_counter()
+    while time.perf_counter() - start < settle:
         readable, _, _ = select.select([fd], [], [], 0.05)
         if readable:
             try:
                 data = os.read(fd, 65536)
             except OSError:
+                complete = False
                 break
             if not data:
+                complete = False
                 break
             reply = terminal_replies(data)
             if reply:
-                os.write(fd, reply)
+                try:
+                    os.write(fd, reply)
+                except OSError:
+                    complete = False
+                    break
 
-    before = _cpu_ticks(pid)
-    window_start = time.time()
+    cpu_supported = os.path.exists(f"/proc/{pid}/stat")
+    before = _cpu_ticks(pid) if cpu_supported else 0
+    window_start = time.perf_counter()
     writes = 0
     idle_bytes = 0
-    while time.time() - window_start < window:
+    while complete and time.perf_counter() - window_start < window:
         readable, _, _ = select.select([fd], [], [], 0.05)
         if readable:
             try:
                 data = os.read(fd, 65536)
             except OSError:
+                complete = False
                 break
             if not data:
+                complete = False
                 break
             writes += 1
             idle_bytes += len(data)
             reply = terminal_replies(data)
             if reply:
-                os.write(fd, reply)
-    elapsed = time.time() - window_start
-    ticks = _cpu_ticks(pid) - before
+                try:
+                    os.write(fd, reply)
+                except OSError:
+                    complete = False
+                    break
+    elapsed = time.perf_counter() - window_start
+    ticks = _cpu_ticks(pid) - before if cpu_supported else 0
+    try:
+        reaped, _ = os.waitpid(pid, os.WNOHANG)
+        if reaped == pid:
+            complete = False
+    except ChildProcessError:
+        complete = False
     _reap(pid)
     try:
         os.close(fd)
@@ -275,25 +350,88 @@ def measure_idle(argv, env, cwd=None, settle=2.5, window=10.0):
 
     hertz = os.sysconf("SC_CLK_TCK")
     return {
-        "cpu_percent": ticks / hertz / elapsed * 100.0,
+        "cpu_percent": (
+            ticks / hertz / elapsed * 100.0 if complete and cpu_supported else None
+        ),
         "writes": writes,
         "bytes": idle_bytes,
+        "complete": complete,
     }
 
 
-def median_startup(argv, env, cwd=None, runs=5):
-    """Median of `runs` startup measurements, with the sample count kept."""
-    samples = [measure_startup(argv, env, cwd) for _ in range(runs)]
+def median_idle(argv, env, cwd=None, runs=5, settle=2.5, window=10.0):
+    """Median of complete idle windows, refusing partial result sets."""
+    samples = [
+        measure_idle(argv, env, cwd, settle=settle, window=window)
+        for _ in range(runs)
+    ]
+    complete = sum(1 for sample in samples if sample["complete"])
+    if complete != runs:
+        return {
+            "cpu_percent": None,
+            "cpu_min": None,
+            "cpu_max": None,
+            "writes": None,
+            "writes_min": None,
+            "writes_max": None,
+            "bytes": None,
+            "runs": runs,
+            "complete": complete,
+        }
 
-    def median_ms(key):
-        values = [s[key] for s in samples if s[key] is not None]
+    cpu_values = [
+        sample["cpu_percent"]
+        for sample in samples
+        if sample["cpu_percent"] is not None
+    ]
+    return {
+        "cpu_percent": (
+            statistics.median(cpu_values) if len(cpu_values) == runs else None
+        ),
+        "cpu_min": min(cpu_values) if len(cpu_values) == runs else None,
+        "cpu_max": max(cpu_values) if len(cpu_values) == runs else None,
+        "writes": statistics.median(sample["writes"] for sample in samples),
+        "writes_min": min(sample["writes"] for sample in samples),
+        "writes_max": max(sample["writes"] for sample in samples),
+        "bytes": statistics.median(sample["bytes"] for sample in samples),
+        "runs": runs,
+        "complete": complete,
+    }
+
+
+def median_startup(argv, env, document_marker, cwd=None, runs=5):
+    """Median of `runs` startup and quit measurements, with completeness kept."""
+    samples = [
+        measure_startup(argv, env, document_marker, cwd) for _ in range(runs)
+    ]
+
+    def median_ms(key, valid=lambda sample: True):
+        values = [s[key] for s in samples if s[key] is not None and valid(s)]
         return round(statistics.median(values) * 1000, 1) if values else None
 
+    def valid_document_startup(sample):
+        return (
+            sample["first_document_output"] is not None
+            and sample["settled_output"] is not None
+        )
+
     return {
-        "first_paint_ms": median_ms("first_paint"),
-        "ready_ms": median_ms("ready"),
+        "first_byte_ms": median_ms("first_byte", valid_document_startup),
+        "first_document_output_ms": median_ms(
+            "first_document_output", valid_document_startup
+        ),
+        "settled_output_ms": median_ms("settled_output"),
         "quit_ms": median_ms("quit"),
         "bytes": int(statistics.median(s["bytes"] for s in samples)),
         "runs": runs,
-        "complete": sum(1 for s in samples if s["ready"] is not None),
+        "first_byte_complete": sum(
+            1 for s in samples if s["first_byte"] is not None and valid_document_startup(s)
+        ),
+        "first_document_output_complete": sum(
+            1 for s in samples if valid_document_startup(s)
+        ),
+        "settled_output_complete": sum(
+            1 for s in samples if s["settled_output"] is not None
+        ),
+        "quit_complete": sum(1 for s in samples if s["quit"] is not None),
     }

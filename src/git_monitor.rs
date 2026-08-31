@@ -52,18 +52,24 @@ pub struct GitMonitorHandle {
     commands: SyncSender<WorkerMessage>,
     overflowed: Arc<AtomicBool>,
     stopped: Arc<AtomicBool>,
+    synced_repository: Option<Option<Repository>>,
 }
 
 impl GitMonitorHandle {
     /// Replaces the one repository observed by this workspace. `None`
     /// unregisters every path, which is also how a zero refresh interval
     /// disables watcher-triggered work.
-    pub fn sync(&self, repository: Option<Repository>) {
+    pub fn sync(&mut self, repository: Option<Repository>) {
+        if self.synced_repository.as_ref() == Some(&repository) {
+            return;
+        }
         if self
             .commands
-            .try_send(WorkerMessage::Sync(repository))
-            .is_err()
+            .try_send(WorkerMessage::Sync(repository.clone()))
+            .is_ok()
         {
+            self.synced_repository = Some(repository);
+        } else {
             self.overflowed.store(true, Ordering::Release);
         }
     }
@@ -138,6 +144,7 @@ pub fn spawn() -> (GitMonitorHandle, mpsc::Receiver<GitInvalidation>) {
             commands,
             overflowed,
             stopped,
+            synced_repository: None,
         },
         event_receiver,
     )
@@ -158,8 +165,21 @@ fn run_worker(
     let mut ready = None::<GitInvalidation>;
 
     while !stopped.load(Ordering::Acquire) {
-        match receiver.recv_timeout(Duration::from_millis(25)) {
-            Ok(WorkerMessage::Sync(next)) => {
+        let received = if let Some(deadline) = deadline {
+            match receiver.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+                Ok(message) => Some(Some(message)),
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Some(None),
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => None,
+            }
+        } else {
+            receiver.recv().ok().map(Some)
+        };
+        let Some(message) = received else {
+            break;
+        };
+        match message {
+            None => {}
+            Some(WorkerMessage::Sync(next)) => {
                 if repository != next {
                     let complete =
                         sync_registration(watcher.as_deref_mut(), &mut watched, next.as_ref());
@@ -174,7 +194,7 @@ fn run_worker(
                     }
                 }
             }
-            Ok(WorkerMessage::Native {
+            Some(WorkerMessage::Native {
                 observed_at,
                 event: Ok(event),
             }) => {
@@ -185,7 +205,7 @@ fn run_worker(
                     note_observation(&mut last_observed, &mut deadline, observed_at);
                 }
             }
-            Ok(WorkerMessage::Native {
+            Some(WorkerMessage::Native {
                 observed_at,
                 event: Err(_),
             }) => {
@@ -195,12 +215,10 @@ fn run_worker(
                 }
             }
             #[cfg(test)]
-            Ok(WorkerMessage::Barrier(registered)) => {
+            Some(WorkerMessage::Barrier(registered)) => {
                 let _ = registered.send(());
             }
-            Ok(WorkerMessage::Stop) => break,
-            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+            Some(WorkerMessage::Stop) => break,
         }
 
         if overflowed.swap(false, Ordering::AcqRel) && repository.is_some() {
@@ -225,12 +243,19 @@ fn run_worker(
             match events.try_send(event) {
                 Ok(()) => {}
                 Err(mpsc::error::TrySendError::Full(event)) => {
-                    // One retained full invalidation bounds the output while
-                    // guaranteeing that a slow host eventually reconciles.
-                    ready = Some(GitInvalidation {
+                    // This dedicated worker may wait for the bounded output
+                    // slot. Draining that slot does not wake the command
+                    // channel, so retaining the event and returning to
+                    // `recv` could otherwise strand it forever. Mark the
+                    // coalesced event full before waiting: observations that
+                    // arrive behind this wait are reconciled on the next loop.
+                    let event = GitInvalidation {
                         overflowed: true,
                         ..event
-                    });
+                    };
+                    if events.blocking_send(event).is_err() {
+                        break;
+                    }
                 }
                 Err(mpsc::error::TrySendError::Closed(_)) => break,
             }
@@ -363,6 +388,7 @@ mod tests {
             commands,
             overflowed: Arc::clone(&overflowed),
             stopped: Arc::clone(&stopped),
+            synced_repository: None,
         };
 
         drop(handle);
@@ -370,6 +396,25 @@ mod tests {
         assert!(stopped.load(Ordering::Acquire));
         let (events, _) = mpsc::channel(1);
         run_worker(None, receiver, events, overflowed, stopped);
+    }
+
+    #[test]
+    fn unchanged_repository_registration_does_not_wake_the_worker_again() {
+        let (commands, receiver) = sync_channel(2);
+        let mut handle = GitMonitorHandle {
+            commands,
+            overflowed: Arc::new(AtomicBool::new(false)),
+            stopped: Arc::new(AtomicBool::new(false)),
+            synced_repository: None,
+        };
+
+        handle.sync(None);
+        assert!(matches!(receiver.try_recv(), Ok(WorkerMessage::Sync(None))));
+        handle.sync(None);
+        assert!(matches!(
+            receiver.try_recv(),
+            Err(std::sync::mpsc::TryRecvError::Empty)
+        ));
     }
 
     #[test]
@@ -435,5 +480,46 @@ mod tests {
 
         drop(monitor);
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn draining_a_full_output_delivers_the_retained_invalidation() {
+        let repository = Repository::with_git_dirs("/work", "/metadata/worktree", "/metadata");
+        let workdir = repository.workdir().to_path_buf();
+        let (commands, receiver) = sync_channel(COMMAND_CAPACITY);
+        let (events, mut event_receiver) = mpsc::channel(1);
+        let overflowed = Arc::new(AtomicBool::new(false));
+        let stopped = Arc::new(AtomicBool::new(false));
+        events
+            .try_send(GitInvalidation {
+                repository: PathBuf::from("/already-queued"),
+                observed_at: Instant::now(),
+                overflowed: false,
+            })
+            .unwrap();
+        let worker_overflowed = Arc::clone(&overflowed);
+        let worker_stopped = Arc::clone(&stopped);
+        let worker = thread::spawn(move || {
+            run_worker(None, receiver, events, worker_overflowed, worker_stopped);
+        });
+        commands
+            .send(WorkerMessage::Sync(Some(repository)))
+            .unwrap();
+
+        tokio::time::sleep(DEBOUNCE + Duration::from_millis(50)).await;
+        assert_eq!(
+            event_receiver.recv().await.unwrap().repository,
+            PathBuf::from("/already-queued")
+        );
+        let retained = tokio::time::timeout(Duration::from_secs(2), event_receiver.recv())
+            .await
+            .expect("draining output woke retained delivery")
+            .expect("the Git monitor stayed live");
+        assert_eq!(retained.repository, workdir);
+        assert!(retained.overflowed);
+
+        stopped.store(true, Ordering::Release);
+        commands.send(WorkerMessage::Stop).unwrap();
+        worker.join().unwrap();
     }
 }
