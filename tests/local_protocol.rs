@@ -613,6 +613,34 @@ async fn send_input_expect_frame(client: &mut LocalClient, event: InputEvent) {
     assert!(matches!(response(client).await, HostResponse::Frame { .. }));
 }
 
+/// What the operating system says about a process that has not exited.
+///
+/// A test that ran out of patience with a child can only say whether that
+/// child was stuck or merely slow by asking from outside it: `ps` reports its
+/// scheduling state and the CPU time it has accumulated, and Linux
+/// additionally names the kernel function it is sleeping in.
+fn live_process_state(pid: u32) -> String {
+    let state = Command::new("ps")
+        .args([
+            "-o",
+            "pid=,ppid=,state=,time=,command=",
+            "-p",
+            &pid.to_string(),
+        ])
+        .output()
+        .map(|output| String::from_utf8_lossy(&output.stdout).into_owned())
+        .unwrap_or_else(|error| format!("ps failed: {error}"));
+    #[cfg(target_os = "linux")]
+    let state = format!(
+        "{state}\n/proc stat: {}\n/proc wchan: {}",
+        fs::read_to_string(format!("/proc/{pid}/stat"))
+            .unwrap_or_else(|error| format!("unavailable: {error}")),
+        fs::read_to_string(format!("/proc/{pid}/wchan"))
+            .unwrap_or_else(|error| format!("unavailable: {error}")),
+    );
+    state
+}
+
 async fn wait_child(child: &mut Child) -> ExitStatus {
     tokio::time::timeout(Duration::from_secs(10), async {
         loop {
@@ -639,24 +667,7 @@ async fn wait_child_after_terminal_loss(child: &mut Child) -> ExitStatus {
     match result {
         Ok(status) => status,
         Err(_) => {
-            let diagnostics = Command::new("ps")
-                .args([
-                    "-o",
-                    "pid=,ppid=,state=,time=,command=",
-                    "-p",
-                    &child.id().to_string(),
-                ])
-                .output()
-                .map(|output| String::from_utf8_lossy(&output.stdout).into_owned())
-                .unwrap_or_else(|error| format!("ps failed: {error}"));
-            #[cfg(target_os = "linux")]
-            let diagnostics = format!(
-                "{diagnostics}\n/proc stat: {}\n/proc wchan: {}",
-                fs::read_to_string(format!("/proc/{}/stat", child.id()))
-                    .unwrap_or_else(|error| format!("unavailable: {error}")),
-                fs::read_to_string(format!("/proc/{}/wchan", child.id()))
-                    .unwrap_or_else(|error| format!("unavailable: {error}")),
-            );
+            let diagnostics = live_process_state(child.id());
             let _ = child.kill();
             let _ = child.wait();
             panic!("wait client did not exit after terminal loss:\n{diagnostics}");
@@ -688,16 +699,7 @@ async fn wait_child_after_terminal_loss_while_draining(
     match result {
         Ok(status) => status,
         Err(_) => {
-            let diagnostics = Command::new("ps")
-                .args([
-                    "-o",
-                    "pid=,ppid=,state=,time=,command=",
-                    "-p",
-                    &child.id().to_string(),
-                ])
-                .output()
-                .map(|output| String::from_utf8_lossy(&output.stdout).into_owned())
-                .unwrap_or_else(|error| format!("ps failed: {error}"));
+            let diagnostics = live_process_state(child.id());
             let _ = child.kill();
             let _ = child.wait();
             panic!("wait client did not exit while the TUI drained frames:\n{diagnostics}");
@@ -913,6 +915,7 @@ async fn read_open_buffer_text(client: &mut LocalClient, name: &str) -> Option<S
 struct TerminalCapture {
     screen: std::sync::Arc<std::sync::Mutex<Emulator>>,
     raw: std::sync::Arc<std::sync::Mutex<Vec<u8>>>,
+    at_end: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl TerminalCapture {
@@ -920,7 +923,14 @@ impl TerminalCapture {
         Self {
             screen: std::sync::Arc::new(std::sync::Mutex::new(Emulator::new(80, 24))),
             raw: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+            at_end: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
+    }
+
+    /// Whether the reader has reached the end of the terminal, so that what
+    /// is captured is everything its writers produced.
+    fn at_end(&self) -> bool {
+        self.at_end.load(Ordering::SeqCst)
     }
 
     fn screen_text(&self) -> String {
@@ -929,6 +939,24 @@ impl TerminalCapture {
 
     fn raw_text(&self) -> String {
         String::from_utf8_lossy(&self.raw.lock().unwrap()).into_owned()
+    }
+
+    /// The end of the raw PTY stream, with the total it was taken from.
+    ///
+    /// A full-screen TUI redrawing for seconds writes far more than a failure
+    /// message can carry, and the bytes that explain where it stopped are the
+    /// last ones. The total stays in the message because a stream that never
+    /// started is a different diagnosis from one that stopped part way.
+    fn raw_tail(&self) -> String {
+        const TAIL_BYTES: usize = 4096;
+        let raw = self.raw.lock().unwrap();
+        let tail = &raw[raw.len().saturating_sub(TAIL_BYTES)..];
+        format!(
+            "{} byte(s), last {}: {:?}",
+            raw.len(),
+            tail.len(),
+            String::from_utf8_lossy(tail),
+        )
     }
 }
 
@@ -945,10 +973,17 @@ fn capture_terminal_output(terminal: &File) -> SharedTerminalCapture {
         }
     });
     let mut drain = terminal.try_clone().unwrap();
+    let at_end = std::sync::Arc::clone(&output.at_end);
     std::thread::spawn(move || {
         let mut chunk = [0_u8; 4096];
         loop {
             match std::io::Read::read(&mut drain, &mut chunk) {
+                // A PTY master whose last slave closed can report `EIO`
+                // rather than an end of file, so an error is one of the two
+                // ordinary ends of this stream. An interrupted read is the
+                // exception: it has read nothing and the stream is still
+                // there.
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
                 Ok(0) | Err(_) => break,
                 Ok(count) => {
                     raw.lock().unwrap().extend_from_slice(&chunk[..count]);
@@ -956,8 +991,159 @@ fn capture_terminal_output(terminal: &File) -> SharedTerminalCapture {
                 }
             }
         }
+        at_end.store(true, Ordering::SeqCst);
     });
     output
+}
+
+/// What a client's terminal shows, for a failure that has to say how far the
+/// client got before it stopped.
+///
+/// The rendered screen answers whether the TUI drew anything at all; the raw
+/// tail keeps the bytes that produced it. Tests that own their terminal
+/// directly capture nothing, and say so rather than appearing to have found
+/// an empty screen.
+fn captured_terminal_state(output: Option<&SharedTerminalCapture>) -> String {
+    output.map_or_else(
+        || "the terminal was not captured".to_owned(),
+        |output| {
+            format!(
+                "terminal screen: {:?}; raw output: {}",
+                output.screen_text(),
+                output.raw_tail(),
+            )
+        },
+    )
+}
+
+/// The complete terminal output of a client that has exited.
+///
+/// The exit is what ends the stream, because the client is the last process
+/// holding the terminal open: the test handed its own copies of the slave to
+/// the child at spawn, and any host the client went on to start was given
+/// stdio of its own rather than this terminal. Until the draining thread
+/// reaches that end, bytes the client wrote on its way out can still be in
+/// the PTY buffer, so a test reading the capture the instant it observes the
+/// exit reads a truncated one and can miss the very message the exit was
+/// about.
+async fn terminal_output_at_exit(output: &SharedTerminalCapture) -> String {
+    let started = Instant::now();
+    while !output.at_end() {
+        assert!(
+            started.elapsed() < ASYNC_STATE_TIMEOUT,
+            "the terminal did not reach end of file within {ASYNC_STATE_TIMEOUT:?} after its \
+             client exited; {}",
+            captured_terminal_state(Some(output)),
+        );
+        tokio::time::sleep(ASYNC_STATE_POLL_INTERVAL).await;
+    }
+    output.raw_text()
+}
+
+/// Waits for a freshly started `--wait` client's target to reach the host.
+///
+/// The request comes from a process that has only just been spawned, so this
+/// waits through that client's whole startup rather than through a single
+/// host round trip. A client that exits first ends the wait, because the
+/// request it was going to make can no longer arrive.
+async fn wait_for_requested_buffer(
+    client: &mut LocalClient,
+    waiter: &mut Child,
+    path: &Path,
+) -> runyte::protocol::BufferMetadata {
+    let started = Instant::now();
+    loop {
+        client.send(&ClientRequest::ListBuffers).await.unwrap();
+        if let HostResponse::Buffers { buffers } = semantic_response(client).await
+            && let Some(buffer) = buffers
+                .into_iter()
+                .find(|buffer| buffer.path_bytes.clone().map(decode_path).as_deref() == Some(path))
+        {
+            return buffer;
+        }
+        if let Some(status) = waiter.try_wait().unwrap() {
+            panic!("the wait client exited before its request reached the host: {status}");
+        }
+        if started.elapsed() >= ASYNC_STATE_TIMEOUT {
+            let running = live_process_state(waiter.id());
+            let _ = waiter.kill();
+            let _ = waiter.wait();
+            panic!(
+                "the wait request for {path:?} did not reach the host within \
+                 {ASYNC_STATE_TIMEOUT:?}; the client was still running: {running}"
+            );
+        }
+        tokio::time::sleep(ASYNC_STATE_POLL_INTERVAL).await;
+    }
+}
+
+/// Waits for the host to report a client's terminal as its interactive
+/// attachment, holding `pending_wait_requests` durable requests at the same
+/// time. `None` leaves the count out of the claim rather than expecting
+/// none of them.
+///
+/// Attachment is asynchronous state produced by a separate process. Once the
+/// host publishes its endpoint, a `--wait` client still has to finish its own
+/// control handshake, create its request, and connect a second interactive
+/// client before `interactive_attached` can turn true. Sharing the suite's
+/// asynchronous-state deadline rests on the assumption that a loaded machine
+/// lengthens that sequence rather than changing its outcome, so a failure
+/// here is a stalled attachment rather than a slow machine. The message
+/// carries what it takes to falsify that assumption if it is ever wrong:
+/// `preceded_by` says what the caller already waited through, the host's own
+/// last health report says what it believes it is holding, and the client is
+/// described alive or dead.
+///
+/// A client that exits during the poll ends it immediately, because the
+/// attachment it was going to make can no longer arrive and its exit status
+/// is the diagnosis that waiting out the deadline would bury. Either failure
+/// ends the client first: an editor still holding a PTY outlives the test
+/// that started it and perturbs whatever runs next in the same binary.
+///
+/// The health it reads is the semantic one, so an interactive connection
+/// carrying frames and terminal damage can ask the same question a control
+/// connection asks.
+async fn wait_for_interactive_attachment(
+    control: &mut LocalClient,
+    client: &mut Child,
+    pending_wait_requests: Option<usize>,
+    preceded_by: &str,
+    output: Option<&SharedTerminalCapture>,
+) {
+    let started = Instant::now();
+    loop {
+        control.send(&ClientRequest::Health).await.unwrap();
+        let health = semantic_response(control).await;
+        if let HostResponse::Health {
+            interactive_attached: true,
+            pending_wait_requests: pending,
+            ..
+        } = health
+            && pending_wait_requests.is_none_or(|expected| pending == expected)
+        {
+            return;
+        }
+        if let Some(status) = client.try_wait().unwrap() {
+            panic!(
+                "the client exited after {:?} without attaching its terminal: {status}; \
+                 {preceded_by}; last host health: {health:?}; {}",
+                started.elapsed(),
+                captured_terminal_state(output),
+            );
+        }
+        if started.elapsed() >= ASYNC_STATE_TIMEOUT {
+            let running = live_process_state(client.id());
+            let terminal = captured_terminal_state(output);
+            let _ = client.kill();
+            let _ = client.wait();
+            panic!(
+                "no terminal became the interactive attachment within \
+                 {ASYNC_STATE_TIMEOUT:?}; {preceded_by}; last host health: {health:?}; \
+                 the client was still running: {running}; {terminal}"
+            );
+        }
+        tokio::time::sleep(ASYNC_STATE_POLL_INTERVAL).await;
+    }
 }
 
 async fn wait_for_terminal_screen(output: &SharedTerminalCapture, needle: &str) {
@@ -1446,21 +1632,8 @@ async fn wait_cli_completes_without_stopping_host_or_unrelated_buffers() {
     let _ = response(&mut interactive).await;
     let (mut waiter, _wait_terminal) = spawn_wait_in_pty_without_hangup_signal(&root, "note.txt");
 
-    let mut requested = None;
-    for _ in 0..100 {
-        interactive.send(&ClientRequest::ListBuffers).await.unwrap();
-        if let HostResponse::Buffers { buffers } = semantic_response(&mut interactive).await {
-            requested = buffers.into_iter().find(|buffer| {
-                buffer.path_bytes.clone().map(decode_path).as_deref()
-                    == Some(root.join("note.txt").as_path())
-            });
-        }
-        if requested.is_some() {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(25)).await;
-    }
-    let requested = requested.expect("wait request did not open its target");
+    let requested =
+        wait_for_requested_buffer(&mut interactive, &mut waiter, &root.join("note.txt")).await;
     interactive
         .send(&ClientRequest::CloseBuffer {
             buffer: requested.id,
@@ -1690,22 +1863,14 @@ async fn git_commit_wait_tui_completes_through_write_quit() {
     // drained so a real failure can still be diagnosed from it below.
     let drained = capture_terminal_output(&terminal);
     let mut control = connect_control(&endpoint).await;
-    let mut attached = false;
-    for _ in 0..200 {
-        control.send(&ClientRequest::Health).await.unwrap();
-        attached = matches!(
-            response(&mut control).await,
-            HostResponse::Health {
-                interactive_attached: true,
-                ..
-            }
-        );
-        if attached {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(25)).await;
-    }
-    assert!(attached, "Git's wait editor did not attach its TUI");
+    wait_for_interactive_attachment(
+        &mut control,
+        commit.0.as_mut().unwrap(),
+        None,
+        "git had been asked to commit through this editor",
+        Some(&drained),
+    )
+    .await;
 
     // Attachment being observed does not mean the commit buffer exists yet;
     // wait for it explicitly rather than trusting `interactive_attached`
@@ -2175,25 +2340,14 @@ async fn worktree_switch_reuses_the_destination_host_through_the_real_tui_launch
     terminal.write_all(b"j\r").unwrap();
     terminal.flush().unwrap();
 
-    let mut attached_to_destination = false;
-    for _ in 0..200 {
-        destination.send(&ClientRequest::Health).await.unwrap();
-        attached_to_destination = matches!(
-            response(&mut destination).await,
-            HostResponse::Health {
-                interactive_attached: true,
-                ..
-            }
-        );
-        if attached_to_destination {
-            break;
-        }
-        if let Some(status) = switcher.0.as_mut().unwrap().try_wait().unwrap() {
-            panic!("worktree-switching TUI exited before reattaching: {status}");
-        }
-        tokio::time::sleep(Duration::from_millis(25)).await;
-    }
-    assert!(attached_to_destination, "destination host was not reused");
+    wait_for_interactive_attachment(
+        &mut destination,
+        switcher.0.as_mut().unwrap(),
+        None,
+        "the worktree picker had been asked for the destination",
+        Some(&output),
+    )
+    .await;
     source.send(&ClientRequest::Health).await.unwrap();
     assert!(matches!(
         response(&mut source).await,
@@ -2282,30 +2436,14 @@ async fn incompatible_worktree_host_returns_the_tui_to_its_source() {
     terminal.write_all(b"j\r").unwrap();
     terminal.flush().unwrap();
 
-    let mut recovered = false;
-    for _ in 0..200 {
-        source.send(&ClientRequest::Health).await.unwrap();
-        let attached = matches!(
-            response(&mut source).await,
-            HostResponse::Health {
-                interactive_attached: true,
-                ..
-            }
-        );
-        if attached {
-            recovered = true;
-            break;
-        }
-        if let Some(status) = switcher.0.as_mut().unwrap().try_wait().unwrap() {
-            panic!("workspace switch error terminated the TUI: {status}");
-        }
-        tokio::time::sleep(Duration::from_millis(25)).await;
-    }
-    assert!(
-        recovered,
-        "incompatible destination did not return to source; terminal output: {}",
-        output.raw_text()
-    );
+    wait_for_interactive_attachment(
+        &mut source,
+        switcher.0.as_mut().unwrap(),
+        None,
+        "the switch to an incompatible destination had been refused",
+        Some(&output),
+    )
+    .await;
     wait_for_terminal_screen(&output, "E1").await;
 
     terminal.write_all(b":detach\r").unwrap();
@@ -2371,8 +2509,12 @@ async fn creating_a_worktree_starts_and_attaches_its_persistent_session() {
         .unwrap();
     terminal.flush().unwrap();
 
-    let mut destination = None;
-    for _ in 0..400 {
+    // The destination host does not exist yet, so reaching it is two waits,
+    // not one: the worktree has to appear and publish an endpoint before
+    // there is anything to ask about an attachment. The guard around the
+    // client ends it if either wait fails.
+    let started = Instant::now();
+    let mut destination = loop {
         if created.is_dir() {
             let canonical = created.canonicalize().unwrap();
             let endpoint = LocalEndpoint::discover_with_runtime(
@@ -2381,34 +2523,33 @@ async fn creating_a_worktree_starts_and_attaches_its_persistent_session() {
                 Some(test_runtime_dir()),
             )
             .unwrap();
-            if let Ok(mut client) = try_connect_control(&endpoint).await {
-                let health = if client.send(&ClientRequest::Health).await.is_ok() {
-                    tokio::time::timeout(Duration::from_secs(1), client.recv())
-                        .await
-                        .ok()
-                        .and_then(Result::ok)
-                        .flatten()
-                } else {
-                    None
-                };
-                if matches!(
-                    health,
-                    Some(HostResponse::Health {
-                        interactive_attached: true,
-                        ..
-                    })
-                ) {
-                    destination = Some(client);
-                    break;
-                }
+            if let Ok(client) = try_connect_control(&endpoint).await {
+                break client;
             }
         }
         if let Some(status) = switcher.0.as_mut().unwrap().try_wait().unwrap() {
-            panic!("create-and-attach TUI exited before reaching the new worktree: {status}");
+            panic!(
+                "create-and-attach TUI exited before reaching the new worktree: {status}; {}",
+                captured_terminal_state(Some(&output)),
+            );
         }
-        tokio::time::sleep(Duration::from_millis(25)).await;
-    }
-    let mut destination = destination.expect("new worktree session was not started and attached");
+        assert!(
+            started.elapsed() < ASYNC_STATE_TIMEOUT,
+            "the created worktree did not publish a reachable host within \
+             {ASYNC_STATE_TIMEOUT:?}; the client was still running: {}; {}",
+            live_process_state(switcher.0.as_ref().unwrap().id()),
+            captured_terminal_state(Some(&output)),
+        );
+        tokio::time::sleep(ASYNC_STATE_POLL_INTERVAL).await;
+    };
+    wait_for_interactive_attachment(
+        &mut destination,
+        switcher.0.as_mut().unwrap(),
+        None,
+        "the created worktree had published a reachable host",
+        Some(&output),
+    )
+    .await;
     source.send(&ClientRequest::Health).await.unwrap();
     assert!(matches!(
         response(&mut source).await,
@@ -2514,57 +2655,48 @@ async fn wait_without_a_host_starts_one_and_attaches_the_invoking_terminal() {
     let (mut waiter, terminal) = spawn_wait_in_pty(&root, "note.txt");
     // The attached TUI renders full frames while the wait is pending. Keep
     // draining its PTY so a platform's smaller PTY buffer cannot block the
-    // client before it observes completion from the host.
-    let terminal_output = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-    let captured = std::sync::Arc::clone(&terminal_output);
-    std::thread::spawn(move || {
-        use std::io::Read;
-
-        let mut terminal = terminal;
-        let mut chunk = [0_u8; 4096];
-        while let Ok(count) = terminal.read(&mut chunk) {
-            if count == 0 {
-                break;
-            }
-            captured.lock().unwrap().extend_from_slice(&chunk[..count]);
-        }
-    });
-    let mut control = None;
-    for _ in 0..200 {
+    // client before it observes completion from the host, and keep what it
+    // drew so a failure can say how far the attachment got.
+    let output = capture_terminal_output(&terminal);
+    let publishing = Instant::now();
+    let mut control = loop {
         if let Ok(client) = try_connect_control(&endpoint).await {
-            control = Some(client);
-            break;
+            break client;
         }
+        // A restricted environment that refuses the detached host says so on
+        // the client's terminal before exiting, and no host is published for
+        // this test to talk to.
         if let Some(status) = waiter.try_wait().unwrap() {
-            let output = String::from_utf8_lossy(&terminal_output.lock().unwrap()).into_owned();
-            if output.contains("Operation not permitted") {
+            let raw = terminal_output_at_exit(&output).await;
+            if raw.contains("Operation not permitted") {
                 fs::remove_dir_all(root).unwrap();
                 return;
             }
-            panic!("--wait exited before publishing a reachable host: {status}: {output:?}");
+            panic!("--wait exited before publishing a reachable host: {status}: {raw:?}");
         }
-        tokio::time::sleep(Duration::from_millis(25)).await;
-    }
-    let mut control = control.expect("--wait did not publish a workspace host");
-    let mut attached = false;
-    for _ in 0..100 {
-        control.send(&ClientRequest::Health).await.unwrap();
-        attached = matches!(
-            response(&mut control).await,
-            HostResponse::Health {
-                interactive_attached: true,
-                ..
-            }
-        );
-        if attached {
-            break;
+        if publishing.elapsed() >= ASYNC_STATE_TIMEOUT {
+            let running = live_process_state(waiter.id());
+            let terminal = captured_terminal_state(Some(&output));
+            let _ = waiter.kill();
+            let _ = waiter.wait();
+            panic!(
+                "--wait did not publish a workspace host within {ASYNC_STATE_TIMEOUT:?}; \
+                 the client was still running: {running}; {terminal}"
+            );
         }
-        tokio::time::sleep(Duration::from_millis(25)).await;
-    }
-    assert!(
-        attached,
-        "the no-host wait request never attached its terminal"
-    );
+        tokio::time::sleep(ASYNC_STATE_POLL_INTERVAL).await;
+    };
+    wait_for_interactive_attachment(
+        &mut control,
+        &mut waiter,
+        None,
+        &format!(
+            "the host published its endpoint after {:?}",
+            publishing.elapsed()
+        ),
+        Some(&output),
+    )
+    .await;
     control.send(&ClientRequest::ListBuffers).await.unwrap();
     let note = match response(&mut control).await {
         HostResponse::Buffers { buffers } => buffers
@@ -2590,13 +2722,19 @@ async fn wait_without_a_host_starts_one_and_attaches_the_invoking_terminal() {
     assert!(wait_child(&mut waiter).await.success());
 
     shutdown(&mut control).await;
-    for _ in 0..100 {
-        if !endpoint.metadata().exists() {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(25)).await;
+    // The host, not the exited wait client, is what has to retire here, so
+    // the record it failed to remove is what names the process at fault.
+    let retiring = Instant::now();
+    while endpoint.metadata().exists() {
+        assert!(
+            retiring.elapsed() < ASYNC_STATE_TIMEOUT,
+            "the host left its published metadata behind {ASYNC_STATE_TIMEOUT:?} after \
+             acknowledging shutdown: {:?}",
+            fs::read_to_string(endpoint.metadata())
+                .unwrap_or_else(|error| format!("unreadable: {error}")),
+        );
+        tokio::time::sleep(ASYNC_STATE_POLL_INTERVAL).await;
     }
-    assert!(!endpoint.metadata().exists());
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -2618,23 +2756,14 @@ async fn attached_wait_client_exits_and_cancels_when_its_terminal_is_lost() {
     // satisfy the deadline through the separate signal path.
     let (mut waiter, terminal) = spawn_wait_in_pty_without_hangup_signal(&root, "note.txt");
     let mut control = connect_control(&endpoint).await;
-    let mut attached = false;
-    for _ in 0..100 {
-        control.send(&ClientRequest::Health).await.unwrap();
-        attached = matches!(
-            response(&mut control).await,
-            HostResponse::Health {
-                interactive_attached: true,
-                pending_wait_requests: 1,
-                ..
-            }
-        );
-        if attached {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(25)).await;
-    }
-    assert!(attached, "wait request did not attach its terminal");
+    wait_for_interactive_attachment(
+        &mut control,
+        &mut waiter,
+        Some(1),
+        "the host was running before the wait client started",
+        None,
+    )
+    .await;
 
     drop(terminal);
     assert!(!wait_child_after_terminal_loss(&mut waiter).await.success());
@@ -2681,26 +2810,14 @@ async fn queued_wait_client_exits_and_cancels_when_its_terminal_is_lost() {
     let _ = response(&mut interactive).await;
     let _ = response(&mut interactive).await;
     let (mut waiter, terminal) = spawn_wait_in_pty_without_hangup_signal(&root, "note.txt");
-    let mut pending = false;
-    for _ in 0..100 {
-        interactive.send(&ClientRequest::Health).await.unwrap();
-        pending = matches!(
-            semantic_response(&mut interactive).await,
-            HostResponse::Health {
-                interactive_attached: true,
-                pending_wait_requests: 1,
-                ..
-            }
-        );
-        if pending {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(25)).await;
-    }
-    assert!(
-        pending,
-        "wait request did not queue behind the existing TUI"
-    );
+    wait_for_interactive_attachment(
+        &mut interactive,
+        &mut waiter,
+        Some(1),
+        "a TUI was already attached when the wait client started",
+        None,
+    )
+    .await;
 
     drop(terminal);
     let waiter_status =
@@ -2755,47 +2872,26 @@ async fn handed_off_wait_client_exits_and_cancels_when_its_terminal_is_lost() {
     let _ = response(&mut interactive).await;
     let _ = response(&mut interactive).await;
     let (mut waiter, terminal) = spawn_wait_in_pty_without_hangup_signal(&root, "note.txt");
-    let mut pending = false;
-    for _ in 0..100 {
-        interactive.send(&ClientRequest::Health).await.unwrap();
-        pending = matches!(
-            semantic_response(&mut interactive).await,
-            HostResponse::Health {
-                interactive_attached: true,
-                pending_wait_requests: 1,
-                ..
-            }
-        );
-        if pending {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(25)).await;
-    }
-    assert!(
-        pending,
-        "wait request did not queue behind the existing TUI"
-    );
+    wait_for_interactive_attachment(
+        &mut interactive,
+        &mut waiter,
+        Some(1),
+        "a TUI was already attached when the wait client started",
+        None,
+    )
+    .await;
 
     interactive.send(&ClientRequest::Detach).await.unwrap();
     let _ = semantic_response(&mut interactive).await;
     let mut control = connect_control(&endpoint).await;
-    let mut handed_off = false;
-    for _ in 0..100 {
-        control.send(&ClientRequest::Health).await.unwrap();
-        handed_off = matches!(
-            response(&mut control).await,
-            HostResponse::Health {
-                interactive_attached: true,
-                pending_wait_requests: 1,
-                ..
-            }
-        );
-        if handed_off {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(25)).await;
-    }
-    assert!(handed_off, "wait client did not take over after TUI detach");
+    wait_for_interactive_attachment(
+        &mut control,
+        &mut waiter,
+        Some(1),
+        "the attached TUI had detached and left the wait client to take over",
+        None,
+    )
+    .await;
 
     drop(terminal);
     assert!(!wait_child_after_terminal_loss(&mut waiter).await.success());
@@ -2851,21 +2947,8 @@ async fn redirected_stdin_uses_dev_tty_for_terminal_loss() {
     // that absence deterministically.
     drop(waiter.stdin.take());
 
-    let mut requested = None;
-    for _ in 0..100 {
-        interactive.send(&ClientRequest::ListBuffers).await.unwrap();
-        if let HostResponse::Buffers { buffers } = semantic_response(&mut interactive).await {
-            requested = buffers.into_iter().find(|buffer| {
-                buffer.path_bytes.clone().map(decode_path).as_deref()
-                    == Some(root.join("note.txt").as_path())
-            });
-        }
-        if requested.is_some() {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(25)).await;
-    }
-    let _requested = requested.expect("wait request did not queue behind the existing TUI");
+    let _requested =
+        wait_for_requested_buffer(&mut interactive, &mut waiter, &root.join("note.txt")).await;
     assert!(
         waiter.try_wait().unwrap().is_none(),
         "closing redirected stdin was mistaken for loss of /dev/tty"
@@ -2918,23 +3001,14 @@ async fn controlling_terminal_loss_preserves_the_hangup_exit_status() {
     };
     let (mut waiter, terminal) = spawn_wait_in_pty(&root, "note.txt");
     let mut control = connect_control(&endpoint).await;
-    let mut attached = false;
-    for _ in 0..100 {
-        control.send(&ClientRequest::Health).await.unwrap();
-        attached = matches!(
-            response(&mut control).await,
-            HostResponse::Health {
-                interactive_attached: true,
-                pending_wait_requests: 1,
-                ..
-            }
-        );
-        if attached {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(25)).await;
-    }
-    assert!(attached, "wait request did not attach its terminal");
+    wait_for_interactive_attachment(
+        &mut control,
+        &mut waiter,
+        Some(1),
+        "the host was running before the wait client started",
+        None,
+    )
+    .await;
 
     drop(terminal);
     assert_eq!(
@@ -2985,21 +3059,8 @@ async fn durable_completion_wins_a_race_with_terminal_loss() {
     let _ = response(&mut interactive).await;
     let (mut waiter, terminal) = spawn_wait_in_pty_without_hangup_signal(&root, "note.txt");
 
-    let mut requested = None;
-    for _ in 0..100 {
-        interactive.send(&ClientRequest::ListBuffers).await.unwrap();
-        if let HostResponse::Buffers { buffers } = semantic_response(&mut interactive).await {
-            requested = buffers.into_iter().find(|buffer| {
-                buffer.path_bytes.clone().map(decode_path).as_deref()
-                    == Some(root.join("note.txt").as_path())
-            });
-        }
-        if requested.is_some() {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(25)).await;
-    }
-    let requested = requested.expect("wait request did not queue behind the existing TUI");
+    let requested =
+        wait_for_requested_buffer(&mut interactive, &mut waiter, &root.join("note.txt")).await;
     interactive
         .send(&ClientRequest::CloseBuffer {
             buffer: requested.id,
@@ -3037,23 +3098,14 @@ async fn terminal_loss_recovery_is_bounded_when_the_host_stops_responding() {
     };
     let (mut waiter, terminal) = spawn_wait_in_pty_without_hangup_signal(&root, "note.txt");
     let mut control = connect_control(&endpoint).await;
-    let mut attached = false;
-    for _ in 0..100 {
-        control.send(&ClientRequest::Health).await.unwrap();
-        attached = matches!(
-            response(&mut control).await,
-            HostResponse::Health {
-                interactive_attached: true,
-                pending_wait_requests: 1,
-                ..
-            }
-        );
-        if attached {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(25)).await;
-    }
-    assert!(attached, "wait request did not attach its terminal");
+    wait_for_interactive_attachment(
+        &mut control,
+        &mut waiter,
+        Some(1),
+        "the host was running before the wait client started",
+        None,
+    )
+    .await;
 
     let host_pid = host.0.as_ref().unwrap().id() as libc::pid_t;
     // SAFETY: `host_pid` names this test's live child host.
@@ -3134,31 +3186,49 @@ async fn wait_client_exits_when_its_launching_process_dies() {
         -1
     );
     let marker = root.join("wait-parent.pid");
-    let mut waiter_pid = None;
     let mut control = connect_control(&endpoint).await;
-    for _ in 0..200 {
-        if let Ok(value) = fs::read_to_string(&marker) {
-            waiter_pid = value.parse::<u32>().ok();
-        }
+    // The launcher has to have published its child, and the host has to be
+    // holding that child's attached request, before the launcher can be
+    // killed. Both, not either: a parent-loss claim made about a client that
+    // never attached would report this defect for the wrong reason.
+    let started = Instant::now();
+    let waiter_pid = loop {
+        let published = fs::read_to_string(&marker)
+            .ok()
+            .and_then(|value| value.parse::<u32>().ok());
         control.send(&ClientRequest::Health).await.unwrap();
+        let health = response(&mut control).await;
         let pending = matches!(
-            response(&mut control).await,
+            health,
             HostResponse::Health {
                 interactive_attached: true,
                 pending_wait_requests: 1,
                 ..
             }
         );
-        if waiter_pid.is_some() && pending {
-            break;
+        if let Some(pid) = published
+            && pending
+        {
+            break pid;
         }
         assert!(
             helper.try_wait().unwrap().is_none(),
             "wait launcher exited before publishing its child"
         );
-        tokio::time::sleep(Duration::from_millis(25)).await;
-    }
-    let waiter_pid = waiter_pid.expect("wait launcher did not publish its child PID");
+        if started.elapsed() >= ASYNC_STATE_TIMEOUT {
+            let running = live_process_state(helper.id());
+            // The launcher owns the wait client it started, so ending it
+            // here is what stops both from outliving this test.
+            let _ = helper.kill();
+            let _ = helper.wait();
+            panic!(
+                "the launched wait client was not durable and attached within \
+                 {ASYNC_STATE_TIMEOUT:?}; published child: {published:?}; last host \
+                 health: {health:?}; the launcher was still running: {running}"
+            );
+        }
+        tokio::time::sleep(ASYNC_STATE_POLL_INTERVAL).await;
+    };
 
     helper.kill().unwrap();
     let _ = helper.wait().unwrap();
@@ -3248,34 +3318,25 @@ async fn durable_completion_wins_a_race_with_launcher_loss() {
         .env("RUNYTE_TEST_WAIT_STATUS_BARRIER", &barrier);
     let (mut waiter, _wait_terminal) = spawn_in_pty_without_hangup_signal(&mut wait_command);
 
-    let mut requested = None;
-    for _ in 0..100 {
-        interactive.send(&ClientRequest::ListBuffers).await.unwrap();
-        if let HostResponse::Buffers { buffers } = semantic_response(&mut interactive).await {
-            requested = buffers.into_iter().find(|buffer| {
-                buffer.path_bytes.clone().map(decode_path).as_deref()
-                    == Some(root.join("note.txt").as_path())
-            });
-        }
-        if requested.is_some() {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(25)).await;
-    }
-    let requested = requested.expect("wait request did not queue behind the existing TUI");
+    let requested =
+        wait_for_requested_buffer(&mut interactive, &mut waiter, &root.join("note.txt")).await;
     let (ready, release) = runyte::test_support::wait_status_barrier_paths(&barrier);
-    let mut status_in_flight = false;
-    for _ in 0..200 {
-        status_in_flight = ready.exists();
-        if status_in_flight {
-            break;
+    let started = Instant::now();
+    while !ready.exists() {
+        if let Some(status) = waiter.try_wait().unwrap() {
+            panic!("the wait client exited before publishing its status barrier: {status}");
         }
-        tokio::time::sleep(Duration::from_millis(25)).await;
+        if started.elapsed() >= ASYNC_STATE_TIMEOUT {
+            let running = live_process_state(waiter.id());
+            let _ = waiter.kill();
+            let _ = waiter.wait();
+            panic!(
+                "the wait client did not publish its in-flight status barrier within \
+                 {ASYNC_STATE_TIMEOUT:?}; it was still running: {running}"
+            );
+        }
+        tokio::time::sleep(ASYNC_STATE_POLL_INTERVAL).await;
     }
-    assert!(
-        status_in_flight,
-        "wait client did not publish its in-flight status barrier"
-    );
     interactive
         .send(&ClientRequest::CloseBuffer {
             buffer: requested.id,
@@ -3313,29 +3374,20 @@ async fn signalling_a_wait_client_cancels_its_durable_request() {
         fs::remove_dir_all(root).unwrap();
         return;
     };
-    let (mut waiter, mut terminal) = spawn_wait_in_pty(&root, "note.txt");
-    let _output_drain = std::thread::spawn(move || {
-        let mut chunk = [0_u8; 4096];
-        while terminal.read(&mut chunk).is_ok_and(|read| read != 0) {}
-    });
+    let (mut waiter, terminal) = spawn_wait_in_pty(&root, "note.txt");
+    // This request ends at a signal rather than at the loss of its terminal,
+    // so the shared capture can hold the terminal open for the whole test and
+    // keep what the client drew for a failure to report.
+    let output = capture_terminal_output(&terminal);
     let mut control = connect_control(&endpoint).await;
-    let mut pending = false;
-    for _ in 0..100 {
-        control.send(&ClientRequest::Health).await.unwrap();
-        pending = matches!(
-            response(&mut control).await,
-            HostResponse::Health {
-                interactive_attached: true,
-                pending_wait_requests: 1,
-                ..
-            }
-        );
-        if pending {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(25)).await;
-    }
-    assert!(pending, "wait request did not become durable and attached");
+    wait_for_interactive_attachment(
+        &mut control,
+        &mut waiter,
+        Some(1),
+        "the host was running before the wait client started",
+        Some(&output),
+    )
+    .await;
 
     // SAFETY: `waiter.id()` names this test's live child process.
     assert_eq!(
@@ -3669,34 +3721,24 @@ async fn wait_terminal_hangup_is_not_reported_as_success() {
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
     let mut control = control.unwrap_or_else(|| {
-        let diagnostics = Command::new("ps")
-            .args([
-                "-o",
-                "pid=,ppid=,state=,time=,command=",
-                "-p",
-                &waiter.id().to_string(),
-            ])
-            .output()
-            .map(|output| String::from_utf8_lossy(&output.stdout).into_owned())
-            .unwrap_or_else(|error| format!("ps failed: {error}"));
+        let diagnostics = live_process_state(waiter.id());
         panic!(
             "wait host did not become reachable; PTY output: {:?}; process: {diagnostics}",
             String::from_utf8_lossy(&terminal_output)
         )
     });
-    for _ in 0..100 {
-        control.send(&ClientRequest::Health).await.unwrap();
-        if matches!(
-            response(&mut control).await,
-            HostResponse::Health {
-                interactive_attached: true,
-                ..
-            }
-        ) {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(25)).await;
-    }
+    // The hangup this test is about only means anything to an attachment
+    // that exists, so the attachment is asserted rather than merely awaited:
+    // a wait client that never attached would fail below for a reason this
+    // test is not making a claim about.
+    wait_for_interactive_attachment(
+        &mut control,
+        &mut waiter,
+        None,
+        "the wait client published its own host",
+        None,
+    )
+    .await;
     drop(terminal);
     assert!(!wait_child(&mut waiter).await.success());
     if control.send(&ClientRequest::Shutdown).await.is_ok() {
@@ -3886,22 +3928,14 @@ async fn relative_workspace_attach_uses_editor_cwd_and_keeps_one_client_process(
     // writing a frame and stops reading input, so later keys are never seen.
     let output = capture_terminal_output(&terminal);
 
-    let mut attached_to_source = false;
-    for _ in 0..200 {
-        source.send(&ClientRequest::Health).await.unwrap();
-        attached_to_source = matches!(
-            response(&mut source).await,
-            HostResponse::Health {
-                interactive_attached: true,
-                ..
-            }
-        );
-        if attached_to_source {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(25)).await;
-    }
-    assert!(attached_to_source, "the source host never received the TUI");
+    wait_for_interactive_attachment(
+        &mut source,
+        switcher.0.as_mut().unwrap(),
+        None,
+        "the TUI client had just started",
+        Some(&output),
+    )
+    .await;
     wait_for_terminal_screen(&output, "source-ready.txt").await;
 
     // The client process stays at `root`, while `:cd` changes only the
@@ -3913,56 +3947,28 @@ async fn relative_workspace_attach_uses_editor_cwd_and_keeps_one_client_process(
         .write_all(b":cd nested\r:session-attach ../linked\r")
         .unwrap();
     terminal.flush().unwrap();
-    let mut attached_to_destination = false;
-    for _ in 0..200 {
-        destination.send(&ClientRequest::Health).await.unwrap();
-        attached_to_destination = matches!(
-            response(&mut destination).await,
-            HostResponse::Health {
-                interactive_attached: true,
-                ..
-            }
-        );
-        if attached_to_destination {
-            break;
-        }
-        if let Some(status) = switcher.0.as_mut().unwrap().try_wait().unwrap() {
-            panic!("the relative-switching client exited before reattaching: {status}");
-        }
-        tokio::time::sleep(Duration::from_millis(25)).await;
-    }
-    assert!(
-        attached_to_destination,
-        "the relative selector did not reach the destination host"
-    );
+    wait_for_interactive_attachment(
+        &mut destination,
+        switcher.0.as_mut().unwrap(),
+        None,
+        "the client was sent to the destination through a relative selector",
+        Some(&output),
+    )
+    .await;
     // Return through the same relative selector path. Worktree-picker switching
     // has its own real-TUI coverage; coupling this process-loop regression to
     // asynchronous Git discovery let Enter arrive while that command was still
     // unavailable.
     wait_for_terminal_screen(&output, "linked-ready.txt").await;
     type_colon_command(&mut terminal, "session-attach ..");
-    let mut returned_to_source = false;
-    for _ in 0..200 {
-        source.send(&ClientRequest::Health).await.unwrap();
-        returned_to_source = matches!(
-            response(&mut source).await,
-            HostResponse::Health {
-                interactive_attached: true,
-                ..
-            }
-        );
-        if returned_to_source {
-            break;
-        }
-        if let Some(status) = switcher.0.as_mut().unwrap().try_wait().unwrap() {
-            panic!("the switching client exited instead of returning: {status}");
-        }
-        tokio::time::sleep(Duration::from_millis(25)).await;
-    }
-    assert!(
-        returned_to_source,
-        "the client did not return to the source"
-    );
+    wait_for_interactive_attachment(
+        &mut source,
+        switcher.0.as_mut().unwrap(),
+        None,
+        "the client was sent back to the source through the same relative selector",
+        Some(&output),
+    )
+    .await;
 
     // The client that came back is the one that started.
     assert_eq!(switcher.0.as_ref().unwrap().id(), client_pid);
