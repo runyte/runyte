@@ -140,6 +140,11 @@ struct FinderContentScan {
     source: usize,
     row: usize,
     limited: bool,
+    /// Whether this pass is re-reading rows it has just dropped. A pass over
+    /// a new query starts from nothing, so every row it finds is progress; a
+    /// refresh starts by dropping what it is about to find again, so what it
+    /// passes through are holes and none of them is worth showing.
+    refilling: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -152,7 +157,36 @@ enum FinderContentSource {
     Terminal {
         terminal: TerminalId,
         label: String,
+        /// The first retained row this pass has not read. A refresh reads
+        /// only what the child has added since, so the rows before it keep
+        /// the results they already produced instead of being dropped and
+        /// found again.
+        from: usize,
     },
+}
+
+/// How much of one terminal the finder has read, and what it read.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct TerminalContentMark {
+    /// Lines that had left the top of the screen when the finder last looked.
+    /// The count only grows while a screen lives, so the difference names
+    /// exactly the rows that have arrived since.
+    retired: u64,
+    /// The width those rows were read at. Narrowing a grid truncates every
+    /// retained line in place and leaves its identity alone, so rows read at
+    /// another width no longer say what the finder recorded them as saying
+    /// and cannot be told apart by identity.
+    columns: usize,
+}
+
+impl FinderContentSource {
+    /// Where a pass enters this source.
+    const fn first_row(&self) -> usize {
+        match self {
+            Self::Buffer { .. } => 0,
+            Self::Terminal { from, .. } => *from,
+        }
+    }
 }
 
 // Application behavior is grouped by editor-level workflow below. These
@@ -2404,7 +2438,14 @@ pub struct App {
     /// pickers leave this absent and remain files-only.
     pub finder: Option<ResourceFinder>,
     finder_content_scan: Option<FinderContentScan>,
-    finder_content_dirty_terminals: HashSet<TerminalId>,
+    /// Terminals whose output the finder has not read yet. Output marks a
+    /// terminal here and nothing more; the event loop decides when the finder
+    /// is allowed to look, so a running child cannot rebuild the list on every
+    /// chunk it writes.
+    finder_dirty_terminals: HashSet<TerminalId>,
+    /// How much of each terminal the finder has already read. Absent means
+    /// nothing has been read and the next pass takes the whole session.
+    finder_terminal_marks: HashMap<TerminalId, TerminalContentMark>,
     file_scanner: Option<FileScanner>,
     next_file_scan_id: u64,
     /// A filesystem plan waiting for a separate, explicit confirmation.
@@ -2868,7 +2909,8 @@ impl App {
             picker: None,
             finder: None,
             finder_content_scan: None,
-            finder_content_dirty_terminals: HashSet::new(),
+            finder_dirty_terminals: HashSet::new(),
+            finder_terminal_marks: HashMap::new(),
             file_scanner: None,
             next_file_scan_id: 1,
             fs_confirmation: None,

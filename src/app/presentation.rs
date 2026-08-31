@@ -242,10 +242,19 @@ impl App {
                 // no line numbers, no content indent. This is also the one
                 // place that knows the pane's new shape, so it is where the
                 // child is told about it.
-                if let Some(session) = self.terminals.get_mut(id)
-                    && session.resize(body_width, body_height)
-                {
-                    session.focus_review_selection(body_height, self.config.editor.scroll_offset);
+                let resized = self
+                    .terminals
+                    .get_mut(id)
+                    .is_some_and(|session| session.resize(body_width, body_height));
+                if resized {
+                    if let Some(session) = self.terminals.get_mut(id) {
+                        session
+                            .focus_review_selection(body_height, self.config.editor.scroll_offset);
+                    }
+                    // Narrowing truncates every retained line in place, so
+                    // what the finder read from this session may no longer be
+                    // what the session holds.
+                    self.note_terminal_finder_change(id);
                 }
                 prepared.push(PreparedPane {
                     pane_id,
