@@ -971,6 +971,21 @@ impl App {
         }
         if let Some(picker) = &self.picker {
             if let Some(finder) = &self.finder {
+                let finder_status = if let Some(error) = picker.error.as_ref() {
+                    Some(format!("Scan failed: {error}"))
+                } else {
+                    let mut parts = Vec::new();
+                    if picker.loading || finder.loading {
+                        parts.push("Scanning…".to_owned());
+                    }
+                    if picker.skipped > 0 {
+                        parts.push(format!("{} skipped", picker.skipped));
+                    }
+                    if picker.limited || finder.limited {
+                        parts.push("result limit reached".to_owned());
+                    }
+                    (!parts.is_empty()).then(|| parts.join(" · "))
+                };
                 let mut snapshot = bounded(
                     OverlayKind::FilePicker,
                     format!("Find · {}", finder.mode.title()),
@@ -1001,12 +1016,14 @@ impl App {
                         })
                         .collect(),
                     (!finder.matches.is_empty()).then_some(finder.selected),
-                    None,
+                    finder_status,
                 );
                 snapshot.query_cursor = Some(picker.query_cursor);
                 snapshot.layout = OverlayLayout::Preview;
                 snapshot.actions = vec![
                     OverlayAction::new("Enter", "open"),
+                    OverlayAction::new("Ctrl-s", "open horizontally"),
+                    OverlayAction::new("Ctrl-v", "open vertically"),
                     OverlayAction::new(
                         "Tab",
                         if finder.mode == crate::finder::FinderMode::Names {

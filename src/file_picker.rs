@@ -1813,27 +1813,34 @@ fn content_entries(path: &Path, query: &str) -> Option<FileHits> {
 pub fn line_hits(text: &str, query: &str) -> Vec<LineHit> {
     text.lines()
         .enumerate()
-        .filter_map(|(row, line)| {
-            let without_trailing = line.trim_end();
-            let trimmed = without_trailing.trim_start();
-            // The ranked candidate is the truncated line, so the filter has to
-            // read the same text: a query matched against the tail of a very
-            // long line would produce an entry nothing later can highlight.
-            let text = match trimmed.char_indices().nth(GREP_LINE_CHARACTERS) {
-                Some((byte, _)) => &trimmed[..byte],
-                None => trimmed,
-            };
-            (!text.is_empty() && matches_fuzzy(query, text)).then(|| LineHit {
-                row,
-                column: without_trailing
-                    .chars()
-                    .take_while(|character| character.is_whitespace())
-                    .count(),
-                text: text.to_owned(),
-            })
-        })
+        .filter_map(|(row, line)| line_hit(line, query).map(|hit| LineHit { row, ..hit }))
         .take(CONTENT_ENTRY_LIMIT)
         .collect()
+}
+
+/// Matches one decoded row for the incremental live-resource scanner.
+///
+/// `row` is left at zero for the caller to replace with the source coordinate.
+/// Keeping this transform shared prevents file, buffer, and terminal content
+/// from disagreeing about trimming, truncation, or fuzzy matching.
+pub fn line_hit(line: &str, query: &str) -> Option<LineHit> {
+    let without_trailing = line.trim_end();
+    let trimmed = without_trailing.trim_start();
+    // The ranked candidate is the truncated line, so the filter has to read
+    // the same text: a query matched against the tail of a very long line
+    // would produce an entry nothing later can highlight.
+    let text = match trimmed.char_indices().nth(GREP_LINE_CHARACTERS) {
+        Some((byte, _)) => &trimmed[..byte],
+        None => trimmed,
+    };
+    (!text.is_empty() && matches_fuzzy(query, text)).then(|| LineHit {
+        row: 0,
+        column: without_trailing
+            .chars()
+            .take_while(|character| character.is_whitespace())
+            .count(),
+        text: text.to_owned(),
+    })
 }
 
 fn scan_with(

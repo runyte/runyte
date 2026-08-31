@@ -742,6 +742,21 @@ impl Grid {
         }
         text
     }
+
+    pub fn plain_line_count(&self) -> usize {
+        self.scrollback.len() + self.lines.len()
+    }
+
+    pub fn plain_line(&self, row: usize) -> Option<String> {
+        let line = if row < self.scrollback.len() {
+            self.scrollback.get(row)
+        } else {
+            self.lines.get(row - self.scrollback.len())
+        }?;
+        let mut text = String::new();
+        push_line_text(&mut text, line);
+        Some(text)
+    }
 }
 
 fn push_line_text(text: &mut String, line: &Line) {

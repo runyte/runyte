@@ -1221,6 +1221,16 @@ impl TerminalSession {
         self.emulator.plain_text()
     }
 
+    /// Number of decoded presentation rows available to incremental search.
+    pub fn plain_line_count(&self) -> usize {
+        self.emulator.grid().plain_line_count()
+    }
+
+    /// One decoded presentation row without materializing the whole terminal.
+    pub fn plain_line(&self, row: usize) -> Option<String> {
+        self.emulator.grid().plain_line(row)
+    }
+
     /// Applies bytes the child wrote, answering any query they contained.
     fn feed(&mut self, bytes: &[u8]) {
         let retired = self.emulator.grid().retired();

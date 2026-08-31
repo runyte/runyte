@@ -2390,14 +2390,31 @@ fn draw_resource_finder(
     if area.width < 4 || area.height < 4 {
         return;
     }
+    let progress = if picker.loading || finder.loading {
+        "scanning"
+    } else {
+        "ready"
+    };
+    let skipped = if picker.skipped > 0 {
+        format!(" · {} skipped", picker.skipped)
+    } else {
+        String::new()
+    };
+    let limited = if picker.limited || finder.limited {
+        " · result limit reached"
+    } else {
+        ""
+    };
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(app.theme.accent))
         .title(format!(
-            " Find · {} · {}/{} · Tab {} · Ctrl-t preview ",
+            " Find · {} · {progress} · {}/{}{}{} · Tab {} · Ctrl-t preview ",
             finder.mode.title(),
             finder.matches.len(),
             picker.entries.len() + finder.items.len(),
+            skipped,
+            limited,
             if finder.mode == crate::finder::FinderMode::Names {
                 "contents"
             } else {
@@ -2461,10 +2478,19 @@ fn draw_resource_finder(
         .selected
         .saturating_add(1)
         .saturating_sub(visible_rows);
-    let items = if finder.matches.is_empty() {
+    let items = if let Some(error) = &picker.error {
         vec![
-            ListItem::new("No matching files, buffers, or terminals")
-                .style(Style::default().fg(app.theme.muted)),
+            ListItem::new(format!("Scan failed: {error}"))
+                .style(Style::default().fg(app.theme.error)),
+        ]
+    } else if finder.matches.is_empty() {
+        vec![
+            ListItem::new(if picker.loading || finder.loading {
+                "Scanning…"
+            } else {
+                "No matching files, buffers, or terminals"
+            })
+            .style(Style::default().fg(app.theme.muted)),
         ]
     } else {
         finder
@@ -7536,6 +7562,16 @@ mod tests {
         let narrow = rendered(&mut app, 60, 20);
         assert!(narrow.contains("notes.txt"), "{narrow}");
         assert!(!narrow.contains("authoritative buffer preview"), "{narrow}");
+
+        app.picker
+            .as_mut()
+            .unwrap()
+            .fail("discovery refused".to_owned());
+        let failed = rendered(&mut app, 120, 30);
+        assert!(
+            failed.contains("Scan failed: discovery refused"),
+            "{failed}"
+        );
     }
 
     #[test]

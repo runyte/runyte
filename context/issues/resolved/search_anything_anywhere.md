@@ -30,13 +30,29 @@ bindings were removed without removing their command-palette commands. Help,
 key hints, the manual, user documentation, and both keymap and UI reference
 records were updated from that registry-backed behavior.
 
+Review tightened the completed boundary in five places. Name terms retain
+their original case so the shared fuzzy matcher keeps smart-case behavior;
+`Ctrl-s` and `Ctrl-v` still split-open selected file results; live buffer and
+terminal content is visited in cancellable 128-row event-loop slices instead
+of being materialized and scanned in one input pass; filesystem loading,
+failure, skipped-file, and result-limit state reaches both semantic snapshots
+and the terminal UI; and the retained keymap record describes `S` consistently.
+Terminal output replaces the pending live-content scan cursor, so a busy child
+cannot force a synchronous whole-corpus rescan for each output event.
+
 Coverage includes:
 
 - `project_finder_switches_name_and_content_modes_without_losing_its_query`,
+  `project_finder_keeps_file_split_activation`,
+  `project_finder_snapshot_reports_filesystem_scan_failure`,
   `project_finder_content_reaches_and_activates_a_pathless_buffer`, and
   `project_finder_indexes_terminal_names_and_content_and_reveals_the_matching_row`
   in `src/app/tests/search_and_pickers.rs`;
-- finder ranking and soft type-hint tests in `src/finder.rs`;
+- `pathless_buffer_content_is_scanned_in_bounded_slices` and
+  `terminal_output_restarts_a_bounded_incremental_finder_scan` in
+  `src/app/tests/search_and_pickers.rs`;
+- finder ranking, smart-case, literal content-term, and soft type-hint tests in
+  `src/finder.rs`;
 - `finder_and_workspace_search_are_global_in_every_buffer_scope` in
   `tests/keymap.rs` and the registry-derived hint assertions in
   `tests/key_hints.rs`;

@@ -2560,7 +2560,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn live_terminals_are_protected_host_state_and_exited_sessions_are_retired() {
+    fn live_terminals_are_reported_and_exited_sessions_still_prevent_idle_retirement() {
         use crate::terminal::TerminalRequest;
         use std::ffi::OsString;
 

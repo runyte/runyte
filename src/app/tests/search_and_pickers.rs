@@ -536,10 +536,10 @@ fn project_finder_switches_name_and_content_modes_without_losing_its_query() {
         .unwrap();
     assert_eq!(overlay.title, "Find · Contents");
     assert_eq!(overlay.layout, crate::snapshot::OverlayLayout::Preview);
-    assert_eq!(overlay.preview_title.as_deref(), Some("Preview"));
+    assert_eq!(overlay.preview_title.as_deref(), Some("Contents"));
     assert!(matches!(
         overlay.preview,
-        Some(crate::snapshot::OverlayPreview::Snippet { .. })
+        Some(crate::snapshot::OverlayPreview::Text(_))
     ));
     assert!(
         overlay
@@ -572,6 +572,61 @@ fn project_finder_switches_name_and_content_modes_without_losing_its_query() {
     assert!(app.picker.is_none());
     assert!(app.finder.is_none());
     assert_eq!(app.active_buffer().path.as_deref(), Some(alpha.as_path()));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn project_finder_keeps_file_split_activation() {
+    let root = temporary("project-finder-file-split");
+    fs::create_dir_all(&root).unwrap();
+    let target = root.join("split-target.txt");
+    fs::write(&target, "split target\n").unwrap();
+    let ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+
+    app.open_project_picker().unwrap();
+    type_text(&mut app, "split-target");
+    assert!(matches!(
+        app.finder
+            .as_ref()
+            .unwrap()
+            .selected_target(app.picker.as_ref().unwrap()),
+        Some(FinderTarget::File(_))
+    ));
+    key(&mut app, KeyCode::Char('s'), Modifiers::CONTROL);
+
+    assert!(app.picker.is_none());
+    assert_eq!(app.panes.len(), 2);
+    assert_eq!(app.active_buffer().path.as_deref(), Some(target.as_path()));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn project_finder_snapshot_reports_filesystem_scan_failure() {
+    let root = temporary("project-finder-scan-failure");
+    fs::create_dir_all(&root).unwrap();
+    let ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    app.open_project_picker().unwrap();
+    let scan_id = app.picker.as_ref().unwrap().scan_id;
+    app.apply_file_picker_event(FilePickerEvent::Failed {
+        scan_id,
+        message: "discovery refused".to_owned(),
+    });
+
+    let overlay = app
+        .overlay_snapshots()
+        .into_iter()
+        .find(|overlay| overlay.kind == crate::snapshot::OverlayKind::FilePicker)
+        .unwrap();
+    assert_eq!(
+        overlay.message.as_deref(),
+        Some("Scan failed: discovery refused")
+    );
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -632,6 +687,51 @@ fn project_finder_content_reaches_and_activates_a_pathless_buffer() {
     key(&mut app, KeyCode::Enter, Modifiers::NONE);
     assert_eq!(app.active().buffer, scratch);
     assert_eq!(cursor(&app).row, 1);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn pathless_buffer_content_is_scanned_in_bounded_slices() {
+    let root = temporary("project-finder-bounded-buffer-scan");
+    fs::create_dir_all(&root).unwrap();
+    let ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    app.execute_command("buffer-new").unwrap();
+    let scratch = app.active().buffer;
+    let text = (0..400)
+        .map(|row| {
+            if row == 350 {
+                "Zunique live-buffer match".to_owned()
+            } else {
+                format!("ordinary row {row}")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    app.buffers[scratch].apply(&Transaction::insert(0, text));
+
+    app.open_project_picker().unwrap();
+    key(&mut app, KeyCode::Tab, Modifiers::NONE);
+    type_text(&mut app, "Zunique");
+    assert!(app.resource_finder_scan_pending());
+    assert!(app.finder.as_ref().unwrap().matches.is_empty());
+    while app.resource_finder_scan_pending() {
+        app.advance_resource_finder_scan();
+    }
+
+    assert!(matches!(
+        app.finder
+            .as_ref()
+            .unwrap()
+            .selected_target(app.picker.as_ref().unwrap()),
+        Some(FinderTarget::Resource(ResourceTarget::BufferLocation {
+            buffer,
+            row: 350,
+            ..
+        })) if buffer == scratch
+    ));
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -743,6 +843,49 @@ fn project_finder_indexes_terminal_names_and_content_and_reveals_the_matching_ro
     assert!(app.terminals.get(id).unwrap().reviewing());
     assert_eq!(app.mode, Mode::Normal);
     app.close_terminal_id(id);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn terminal_output_restarts_a_bounded_incremental_finder_scan() {
+    let root = temporary("project-finder-live-terminal-output");
+    fs::create_dir_all(&root).unwrap();
+    let ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    app.open_terminal_at(Some("/bin/cat".to_owned()), root.clone());
+    let id = app.active_terminal().unwrap();
+
+    app.open_project_picker().unwrap();
+    key(&mut app, KeyCode::Tab, Modifiers::NONE);
+    type_text(&mut app, "arrived-later");
+    while app.resource_finder_scan_pending() {
+        app.advance_resource_finder_scan();
+    }
+    assert!(app.finder.as_ref().unwrap().matches.is_empty());
+
+    app.apply_terminal_output(TerminalOutput::Bytes {
+        id,
+        bytes: b"arrived-later\r\n".to_vec(),
+    });
+    assert!(app.resource_finder_scan_pending());
+    assert!(app.finder.as_ref().unwrap().matches.is_empty());
+    while app.resource_finder_scan_pending() {
+        app.advance_resource_finder_scan();
+    }
+
+    assert!(matches!(
+        app.finder
+            .as_ref()
+            .unwrap()
+            .selected_target(app.picker.as_ref().unwrap()),
+        Some(FinderTarget::Resource(ResourceTarget::TerminalLocation {
+            terminal,
+            ..
+        })) if terminal == id
+    ));
     fs::remove_dir_all(root).unwrap();
 }
 

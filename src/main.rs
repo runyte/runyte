@@ -1442,6 +1442,9 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
                     app.report_host_error(error.to_string());
                 }
             }
+            _ = tokio::task::yield_now(), if app.resource_finder_scan_pending() => {
+                app.advance_resource_finder_scan();
+            }
             _ = tokio::time::sleep(hint_timeout.unwrap_or_default()), if hint_timeout.is_some() => {
                 key_hints.expire_at(Instant::now());
             }
@@ -2090,6 +2093,10 @@ async fn run_host_server(
                 if let Err(error) = host.advance_macro_replay() {
                     host.report_host_error(error.to_string());
                 }
+                changed = true;
+            }
+            _ = tokio::task::yield_now(), if host.resource_finder_scan_pending() => {
+                host.advance_resource_finder_scan();
                 changed = true;
             }
             _ = terminal_frame_tick.tick(), if terminal_frame_pending && active.is_some() => {

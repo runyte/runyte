@@ -12,23 +12,23 @@ use super::{
     CommandMatch, CommandOutcome, CommandOutcomeHint, CommandState, CommandUnavailable,
     CompletionSource, ContentAlignment, DEFAULT_MACRO_REGISTER, DeletionAuthorization,
     DeletionMode, DelimiterPair, DiffScope, EditorCommand, EditorIntent, EntryKind,
-    FileObservation, FilePicker, FsOperation, GeneratedViewIdentity, GrammarContext, GrammarNotice,
-    GrammarOutput, HOVER_PEEK_ROWS, HashSet, HelpInvocation, InputEvent, InputGrammar, Instant,
-    InvocationParameters, KeyCode, KeySequence, KeyStroke, Keymap, LineDirection, ListPicker,
-    LspCommand, MaximizedView, Mode, Modifiers, Motion, Offset, Path, PathBuf, PathHint,
-    PickerTarget, PointerButton, PointerDrag, PointerEvent, PointerEventKind, PointerOutcome,
-    PreparedView, ProgramAction, ProgramActionMenu, ProgramChoice, PromptKind, Range, RangeIntent,
-    RequestKind, Result, SearchMode, SearchQuery, Selection, SelectionSemantics, SettingId,
-    SettingType, SettingValue, SignatureContext, StashScope, SyntaxObject, SyntaxObjectPart,
-    SyntaxSelectionTransform, SystemClipboard, Transaction, ViewAlignment, VimMotion, VimOperator,
-    VimRangeTarget, VimTextObject, buffer_language, char_to_byte, display_path, enclosing_area,
-    expand_home_path, external_open, hint_is_not_before, hover_content_rows, is_path_separator,
-    is_path_token_boundary, is_terminal_normal_key, is_word, is_word_completion_character,
-    keymap_for, mapped_applied_path, operative_span, parse_colon_command,
-    persistent_session_availability, pointer_pane, pointer_resize_pair, prompt_backspace,
-    prompt_delete, prompt_delete_range, prompt_insert, prompt_word_backward, prompt_word_forward,
-    quote_path_hint, rect_contains, resolve_command, resolved_operation_path, row_characters,
-    unclosed_or_complete_quoted_path,
+    FileObservation, FilePicker, FinderTarget, FsOperation, GeneratedViewIdentity, GrammarContext,
+    GrammarNotice, GrammarOutput, HOVER_PEEK_ROWS, HashSet, HelpInvocation, InputEvent,
+    InputGrammar, Instant, InvocationParameters, KeyCode, KeySequence, KeyStroke, Keymap,
+    LineDirection, ListPicker, LspCommand, MaximizedView, Mode, Modifiers, Motion, Offset, Path,
+    PathBuf, PathHint, PickerTarget, PointerButton, PointerDrag, PointerEvent, PointerEventKind,
+    PointerOutcome, PreparedView, ProgramAction, ProgramActionMenu, ProgramChoice, PromptKind,
+    Range, RangeIntent, RequestKind, Result, SearchMode, SearchQuery, Selection,
+    SelectionSemantics, SettingId, SettingType, SettingValue, SignatureContext, StashScope,
+    SyntaxObject, SyntaxObjectPart, SyntaxSelectionTransform, SystemClipboard, Transaction,
+    ViewAlignment, VimMotion, VimOperator, VimRangeTarget, VimTextObject, buffer_language,
+    char_to_byte, display_path, enclosing_area, expand_home_path, external_open,
+    hint_is_not_before, hover_content_rows, is_path_separator, is_path_token_boundary,
+    is_terminal_normal_key, is_word, is_word_completion_character, keymap_for, mapped_applied_path,
+    operative_span, parse_colon_command, persistent_session_availability, pointer_pane,
+    pointer_resize_pair, prompt_backspace, prompt_delete, prompt_delete_range, prompt_insert,
+    prompt_word_backward, prompt_word_forward, quote_path_hint, rect_contains, resolve_command,
+    resolved_operation_path, row_characters, unclosed_or_complete_quoted_path,
 };
 
 impl App {
@@ -3244,6 +3244,32 @@ impl App {
             (KeyCode::Char('e'), _) if control => {
                 let picker = self.picker.as_mut().unwrap();
                 picker.query_cursor = picker.query.chars().count();
+            }
+            (KeyCode::Char('s'), _) if control => {
+                let target = self
+                    .finder
+                    .as_ref()
+                    .zip(self.picker.as_ref())
+                    .and_then(|(finder, picker)| finder.selected_target(picker));
+                if let Some(FinderTarget::File(target)) = target {
+                    self.close_file_picker();
+                    self.split(Axis::Vertical, Some(target.path.clone()))?;
+                    self.select_picker_target(&target);
+                }
+                return Ok(());
+            }
+            (KeyCode::Char('v'), _) if control => {
+                let target = self
+                    .finder
+                    .as_ref()
+                    .zip(self.picker.as_ref())
+                    .and_then(|(finder, picker)| finder.selected_target(picker));
+                if let Some(FinderTarget::File(target)) = target {
+                    self.close_file_picker();
+                    self.split(Axis::Horizontal, Some(target.path.clone()))?;
+                    self.select_picker_target(&target);
+                }
+                return Ok(());
             }
             (KeyCode::Char('t'), _) if control => {
                 let picker = self.picker.as_mut().unwrap();
