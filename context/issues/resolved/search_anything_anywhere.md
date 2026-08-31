@@ -70,6 +70,12 @@ own eager previews in either mode; the selected buffer or terminal produces a
 preview on demand, and terminal preview generation reads at most its final 200
 decoded rows without first materializing the complete retained output.
 
+A fifth review found that the user guide and keymap reference still described
+the former terminal-exit lifecycle. They now state that exited sessions and
+their bounded output remain listed, searchable, and reviewable until explicit
+Close removes them, and that showing an exited session enters Normal/review
+mode.
+
 Coverage includes:
 
 - `project_finder_switches_name_and_content_modes_without_losing_its_query`,

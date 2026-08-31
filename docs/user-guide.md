@@ -750,19 +750,22 @@ long prompts for a coding agent worth writing in the editor.
 
 A session outlives the pane showing it. `Space t q` shows the pane's buffer
 again and leaves the program running; so does opening a file in that pane or
-closing the split. `Space t t` (`:terminals`) lists stable sessions with their
-user name, child-title detail, safe directory, unread output,
-and bell activity; picking one shows it here. If that session is already
-visible in another pane, it moves here and the old pane reveals its underlying
-buffer—one PTY is never resized by two visible panes. `Space t r`
+closing the split. `Space t t` (`:terminals`) lists stable running and exited
+sessions with their state, user name, child-title detail, safe directory,
+unread output, and bell activity; picking a running session shows it here,
+while picking an exited one opens its retained output in Normal/review mode. If
+that session is already visible in another pane, it moves here and the old pane
+reveals its underlying buffer—one PTY is never resized by two visible panes.
+`Space t r`
 (`:terminal-rename <name>`) names the active session,
 `:terminal-show <id|name>` targets one deterministically,
-and terminal termination stays explicit: type `exit` in the child, or choose
-Close from the terminal manager's Tab menu. Duplicate names are refused as
-ambiguous and numeric IDs never depend on picker order. Tab in the manager
-offers Show, Rename, Close, and Create; closing a hidden live process requires
-a second Enter. Neither `:close[!]` nor any `:quit…` command terminates a
-terminal.
+and child termination stays explicit: type `exit` in the child, or choose Close
+from the terminal manager's Tab menu. An exited session remains listed and
+searchable until Close removes it and its retained output. Duplicate names are
+refused as ambiguous and numeric IDs never depend on picker order. Tab in the
+manager offers Show, Rename, Close, and Create; closing a hidden live process
+requires a second Enter. Neither `:close[!]` nor any `:quit…` command terminates
+a terminal.
 
 Terminal sessions use the `[terminal] <name>` prefix in pane and manager
 titles. The active pane adds `[insert]` while keys go to the child; NORMAL is
@@ -770,9 +773,10 @@ unmarked, because the mode line already says it and the title's job here is to
 answer whether typing reaches the child. The name itself is user-assigned when
 present, otherwise whatever the program calls itself — the title a shell sets
 from its prompt, or the program's own name until it sets one. Scrolled back
-into history it also carries `↑` and how far. When the child exits, its session
-disappears from `:terminals`, and a pane showing it reveals its most recently
-used buffer (or a scratch buffer) without closing the pane. Every quit spelling,
+into history it also carries `↑` and how far. When the child exits, a pane
+showing it reveals its most recently used buffer (or a scratch buffer) without
+closing the pane, while the exited session and its bounded output remain in
+`:terminals` for later review, search, or explicit Close. Every quit spelling,
 including its `!` form, refuses while any terminal is running and points to
 `:terminals` in both standalone and persistent modes. `:detach` leaves
 persistent terminal children running without signalling them. Sessions survive
