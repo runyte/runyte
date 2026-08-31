@@ -81,6 +81,20 @@ def idle_cells(result) -> tuple[str, str]:
     return cpu, writes
 
 
+def first_document_output_cell(result) -> str:
+    complete = result["first_document_output_complete"]
+    if complete < result["runs"]:
+        return f"incomplete ({complete}/{result['runs']})"
+    return f"{result['first_document_output_ms']:.0f} ms"
+
+
+def first_byte_cell(result) -> str:
+    complete = result["first_byte_complete"]
+    if complete < result["runs"]:
+        return f"incomplete ({complete}/{result['runs']})"
+    return f"{result['first_byte_ms']:.0f} ms"
+
+
 def runyte_binary() -> str | None:
     local = REPO / "target" / "release" / "runyte"
     if local.exists():
@@ -223,14 +237,17 @@ def main() -> int:
         print(f"- {name}: `{version_of(argv, env, str(FIXTURES))}`")
     print()
 
-    print("### Startup")
+    print("### Startup: first document content emitted")
     print()
     print(
-        "First output is the first byte written; ready is when substantive drawing "
-        "goes quiet."
+        "Elapsed time is measured from immediately before process launch until a "
+        "shared token from the first document line is emitted in the raw terminal "
+        "stream. This does not prove that the terminal has presented the whole "
+        "screen, input is accepted, or background work is complete. A sample "
+        "counts only if the process subsequently reaches terminal-output quiet."
     )
     print()
-    print("| Fixture | Size | " + " | ".join(f"{n} first / ready" for n, _ in editors) + " |")
+    print("| Fixture | Size | " + " | ".join(n for n, _ in editors) + " |")
     print("| --- | --- | " + " | ".join("---:" for _ in editors) + " |")
     startup_results = {}
     for fixture in names:
@@ -238,15 +255,34 @@ def main() -> int:
         cells = []
         for _, argv in editors:
             result = median_startup(
-                argv + [fixture], env, cwd=str(FIXTURES), runs=args.runs
+                argv + [fixture],
+                env,
+                fixtures.DOCUMENT_MARKER,
+                cwd=str(FIXTURES),
+                runs=args.runs,
             )
             startup_results.setdefault(fixture, []).append(result)
-            first, ready = result["first_output_ms"], result["ready_ms"]
-            if ready is None or result["complete"] < result["runs"]:
-                cells.append("no settled frame")
-            else:
-                cells.append(f"{first:.0f} / {ready:.0f} ms")
+            cells.append(first_document_output_cell(result))
         print(f"| `{fixture}` | {fixtures.describe(path)} | " + " | ".join(cells) + " |")
+    print()
+
+    print("#### First terminal byte (diagnostic only)")
+    print()
+    print(
+        "This may be an invisible capability query, terminal setup, a loading "
+        "presentation, or document drawing. It is not an editor-readiness metric "
+        "and must not be used to rank the editors."
+    )
+    print()
+    print("| Fixture | Size | " + " | ".join(n for n, _ in editors) + " |")
+    print("| --- | --- | " + " | ".join("---:" for _ in editors) + " |")
+    for fixture in names:
+        cells = [first_byte_cell(result) for result in startup_results[fixture]]
+        print(
+            f"| `{fixture}` | {fixtures.describe(paths[fixture])} | "
+            + " | ".join(cells)
+            + " |"
+        )
     print()
 
     print("### Quit")

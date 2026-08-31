@@ -43,6 +43,11 @@ SUFFIXES = ("txt", "lua")
 
 SEED = 20260829
 
+# A token in the first visible document line. The pty harness requires this
+# evidence before it can classify later quiet as settled document output.
+# Keep it stable: recorded result sets depend on byte-identical fixtures.
+DOCUMENT_MARKER = b"scan_0"
+
 FIXTURES = tuple(f"{size}.{suffix}" for suffix in SUFFIXES for size in SIZES)
 
 
@@ -116,6 +121,10 @@ def ensure(directory: Path, names=FIXTURES) -> dict[str, Path]:
         if size not in sources:
             sources[size] = _lua_source(SIZES[size])
         path.write_text(sources[size])
+    for name, path in paths.items():
+        lines = path.read_bytes().splitlines()
+        if not lines or DOCUMENT_MARKER not in lines[0]:
+            raise ValueError(f"fixture {name} does not contain the document marker")
     return paths
 
 

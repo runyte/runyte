@@ -1,9 +1,9 @@
 # Startup, quit and idle benchmark
 
-Measures how long a terminal editor takes to begin presenting and reach a
-settled frame, and then to quit, plus what it costs while sitting idle. Runyte
-is measured alongside Neovim and Helix where those are installed, so a change
-in Runyte's numbers can be separated from a change in the machine.
+Measures when a terminal editor first emits shared document content, and
+then how long it takes to quit, plus what it costs while sitting idle. Runyte is
+measured alongside Neovim and Helix where those are installed, so a change in
+Runyte's numbers can be separated from a change in the machine.
 
 Results are recorded in
 [`context/reference/startup-performance.md`](../context/reference/startup-performance.md).
@@ -34,17 +34,39 @@ Missing editors are skipped with a note rather than failing the run, so
 
 ## What is measured
 
-**Time to first output and a settled frame.** The editor is spawned on a
-pseudo-terminal, and the harness records the first byte of output and the
-moment output goes quiet. Runyte's first output begins a stable, document-free
-startup presentation; its document text appears only in the complete
-highlighted editor frame. The quiet-period test is not armed until output has
-reached a substantive-frame byte threshold, so a short capability exchange or
-loading presentation cannot settle by itself. Small later repaints do not
-restart the settle clock, so an editor that repaints on a timer still reaches a
-settled state.
+**First document content emitted.** Time starts immediately before the
+pseudo-terminal fork. The harness records when a stable token from the first
+fixture line is emitted in the raw terminal stream. It detects that token across
+operating-system read boundaries, so terminal capability exchanges, terminal
+setup, and loading presentations cannot be mistaken for document content.
+A sample counts only if the process subsequently reaches the quiet guard; an
+editor that emits the marker and then exits or crashes is reported as incomplete
+rather than as a fast startup.
 
-**Quit time.** After the startup frame settles, the harness sends
+This metric is deliberately named for exactly what the harness observes. It
+does not decode the terminal stream or prove that the rest of the screen has
+been presented, test whether the editor accepts input, inspect editor internals,
+or wait for work that produces no terminal output. For Runyte, the product's
+startup ordering means document text first appears in its complete highlighted
+editor frame; that implementation property is not assumed for the other
+editors.
+
+**First terminal byte, diagnostic only.** The harness retains the time of the
+first byte for diagnosing changes within one editor, but prints it outside the
+comparative startup table. Depending on the editor that byte may be an invisible
+capability query, terminal setup, a loading presentation, or document drawing.
+Those events are not equivalent, so first-byte figures must not be used to rank
+editors or described as time to a usable frame. Separately, Runyte's startup
+ordering draws a stable, document-free `Opening workspace…` presentation before
+it emits document content; the first-byte diagnostic does not identify which
+write begins that presentation.
+
+After document content appears, the harness waits until every subsequent output
+byte has been followed by 250 ms of quiet before sending the quit command. This
+settlement guard is not reported as startup performance: delayed cursor and
+capability redraws make it an unreliable proxy for the first document frame.
+
+**Quit time.** After terminal output settles, the harness sends
 <kbd>Escape</kbd> <kbd>:</kbd> <kbd>q</kbd> <kbd>!</kbd> <kbd>Enter</kbd> and
 records the time from the final keystroke until the editor process exits. The
 artificial pauses used to make the sequence behave like real keyboard input are
@@ -52,7 +74,7 @@ excluded. Each editor therefore receives the same request to abandon the same
 unchanged document; no editor-specific save, plugin, or persistence workflow is
 included. Quit medians come from the same samples as startup. A row is reported
 as `no measured exit` unless every sample accepts the full command, terminates
-before the deadline, exits successfully, and follows a settled startup frame,
+before the deadline, exits successfully, and follows settled terminal output,
 rather than taking a median of a successful subset or treating a crash as a
 fast quit.
 

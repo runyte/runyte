@@ -153,5 +153,34 @@ class IdleCellTests(unittest.TestCase):
         )
 
 
+class StartupCellTests(unittest.TestCase):
+    def test_first_document_output_is_the_only_comparative_cell_value(self) -> None:
+        result = {
+            "first_byte_ms": 4.0,
+            "first_document_output_ms": 149.0,
+            "first_byte_complete": 10,
+            "first_document_output_complete": 10,
+            "runs": 10,
+        }
+
+        self.assertEqual(
+            benchmark_run.first_document_output_cell(result), "149 ms"
+        )
+        self.assertEqual(benchmark_run.first_byte_cell(result), "4 ms")
+
+    def test_incomplete_startup_metric_discloses_its_sample_count(self) -> None:
+        result = {
+            "first_byte_ms": 4.0,
+            "first_document_output_ms": 149.0,
+            "first_byte_complete": 10,
+            "first_document_output_complete": 9,
+            "runs": 10,
+        }
+
+        self.assertEqual(
+            benchmark_run.first_document_output_cell(result), "incomplete (9/10)"
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

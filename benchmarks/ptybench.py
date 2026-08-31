@@ -35,12 +35,13 @@ import struct
 import termios
 import time
 
-# Silence long enough to call the initial draw finished. Output must first
-# reach SIGNIFICANT_BYTES in total, so a short capability exchange or loading
-# presentation cannot settle in place of the editor frame. Later chunks below
-# that size do not restart the clock, which lets cursor repaints settle.
+# Silence long enough to classify document output as settled. The caller also
+# supplies a token from the first visible document line; capability exchanges,
+# terminal setup, and loading presentations cannot settle without that evidence.
+# Every byte after the marker restarts this clock, independent of pty read chunk
+# boundaries. The quiet interval confirms settlement but is not added to the
+# reported timestamp.
 SETTLE_SECONDS = 0.25
-SIGNIFICANT_BYTES = 256
 
 # Upper bound on one startup measurement. Generous: the largest fixture takes
 # about a second and this only has to stop a genuinely stuck process.
@@ -108,20 +109,29 @@ def _reap(pid: int) -> None:
         pass
 
 
-def measure_startup(argv, env, cwd=None):
-    """Open a document and quit. Returns first-output, ready, quit and bytes.
+def measure_startup(argv, env, document_marker, cwd=None):
+    """Open a document and quit. Return first-byte, settled-output and exit data.
 
-    ``first_output`` is the first byte written; ``ready`` is when output goes
-    quiet. ``quit`` begins after the final keystroke, so a value near zero means
-    the editor exited as soon as it read the command.
+    ``first_byte`` is any first byte written to the pty. It may be a capability
+    query, terminal setup, or a loading presentation, so it is diagnostic rather
+    than a cross-editor readiness measurement. ``first_document_output`` is when
+    a token from the shared first document line is observed. ``settled_output``
+    is the last output before the quiet window and is used only to avoid sending
+    quit during startup drawing. ``quit`` begins after the final keystroke, so a
+    value near zero means the editor exited as soon as it read the command.
     """
-    pid, fd = _spawn(argv, env, cwd)
+    if not document_marker:
+        raise ValueError("document marker must not be empty")
+
     start = time.perf_counter()
-    first_output = None
-    last_significant = start
+    pid, fd = _spawn(argv, env, cwd)
+    first_byte = None
+    last_document_output = None
     total_bytes = 0
-    substantive_output = False
-    ready = None
+    document_seen = False
+    first_document_output = None
+    marker_tail = b""
+    settled_output = None
     closed = False
 
     while time.perf_counter() - start < STARTUP_TIMEOUT_SECONDS:
@@ -135,25 +145,32 @@ def measure_startup(argv, env, cwd=None):
             if not data:
                 closed = True
                 break
-            if first_output is None:
-                first_output = time.perf_counter() - start
-                # Start the settle clock at the first byte, not at spawn, or an
-                # editor that queries the terminal before drawing settles at zero.
-                last_significant = time.perf_counter()
+            if first_byte is None:
+                first_byte = time.perf_counter() - start
             total_bytes += len(data)
-            if not substantive_output and total_bytes >= SIGNIFICANT_BYTES:
-                substantive_output = True
-                last_significant = time.perf_counter()
-            elif len(data) >= SIGNIFICANT_BYTES:
-                last_significant = time.perf_counter()
+            output_at = time.perf_counter()
+            if document_seen:
+                last_document_output = output_at
+            else:
+                marker_input = marker_tail + data
+                if document_marker in marker_input:
+                    document_seen = True
+                    first_document_output = output_at - start
+                    last_document_output = output_at
+                tail_length = len(document_marker) - 1
+                marker_tail = marker_input[-tail_length:] if tail_length else b""
             reply = terminal_replies(data)
             if reply:
                 try:
                     os.write(fd, reply)
                 except OSError:
                     pass
-        elif substantive_output and time.perf_counter() - last_significant > SETTLE_SECONDS:
-            ready = last_significant - start
+        elif (
+            document_seen
+            and last_document_output is not None
+            and time.perf_counter() - last_document_output > SETTLE_SECONDS
+        ):
+            settled_output = last_document_output - start
             break
 
     quit_command_at = None
@@ -211,13 +228,14 @@ def measure_startup(argv, env, cwd=None):
         pass
 
     return {
-        "first_output": first_output,
-        "ready": ready,
+        "first_byte": first_byte,
+        "first_document_output": first_document_output,
+        "settled_output": settled_output,
         "quit": (
             None
             if (
                 exited is None
-                or ready is None
+                or settled_output is None
                 or quit_command_at is None
                 or exit_status is None
                 or not os.WIFEXITED(exit_status)
@@ -381,20 +399,39 @@ def median_idle(argv, env, cwd=None, runs=5, settle=2.5, window=10.0):
     }
 
 
-def median_startup(argv, env, cwd=None, runs=5):
+def median_startup(argv, env, document_marker, cwd=None, runs=5):
     """Median of `runs` startup and quit measurements, with completeness kept."""
-    samples = [measure_startup(argv, env, cwd) for _ in range(runs)]
+    samples = [
+        measure_startup(argv, env, document_marker, cwd) for _ in range(runs)
+    ]
 
-    def median_ms(key):
-        values = [s[key] for s in samples if s[key] is not None]
+    def median_ms(key, valid=lambda sample: True):
+        values = [s[key] for s in samples if s[key] is not None and valid(s)]
         return round(statistics.median(values) * 1000, 1) if values else None
 
+    def valid_document_startup(sample):
+        return (
+            sample["first_document_output"] is not None
+            and sample["settled_output"] is not None
+        )
+
     return {
-        "first_output_ms": median_ms("first_output"),
-        "ready_ms": median_ms("ready"),
+        "first_byte_ms": median_ms("first_byte", valid_document_startup),
+        "first_document_output_ms": median_ms(
+            "first_document_output", valid_document_startup
+        ),
+        "settled_output_ms": median_ms("settled_output"),
         "quit_ms": median_ms("quit"),
         "bytes": int(statistics.median(s["bytes"] for s in samples)),
         "runs": runs,
-        "complete": sum(1 for s in samples if s["ready"] is not None),
+        "first_byte_complete": sum(
+            1 for s in samples if s["first_byte"] is not None and valid_document_startup(s)
+        ),
+        "first_document_output_complete": sum(
+            1 for s in samples if valid_document_startup(s)
+        ),
+        "settled_output_complete": sum(
+            1 for s in samples if s["settled_output"] is not None
+        ),
         "quit_complete": sum(1 for s in samples if s["quit"] is not None),
     }

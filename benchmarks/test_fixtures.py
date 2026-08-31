@@ -48,6 +48,11 @@ class LuaFixtureTests(unittest.TestCase):
                     source.count("local function "), source.count("\nend\n")
                 )
 
+    def test_document_marker_is_in_the_first_visible_line(self) -> None:
+        first_line = fixtures._lua_source(fixtures.SIZES["short"]).splitlines()[0]
+
+        self.assertIn(fixtures.DOCUMENT_MARKER, first_line.encode())
+
     def test_sizes_avoid_every_editors_injection_triggers(self) -> None:
         for size, lines in fixtures.SIZES.items():
             source = fixtures._lua_source(lines)
@@ -66,6 +71,10 @@ class EnsureTests(unittest.TestCase):
                 size, _ = fixtures.split(name)
                 self.assertEqual(
                     path.read_text(), fixtures._lua_source(fixtures.SIZES[size])
+                )
+                self.assertIn(
+                    fixtures.DOCUMENT_MARKER,
+                    path.read_bytes().splitlines()[0],
                 )
 
     def test_each_pair_of_a_size_is_byte_identical(self) -> None:
@@ -93,6 +102,16 @@ class EnsureTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaises(ValueError):
                 fixtures.ensure(Path(directory), ("large.rs",))
+
+    def test_ensure_rejects_a_stale_file_without_the_document_marker(self) -> None:
+        for contents in (b"", b"local stale = true\n"):
+            with self.subTest(contents=contents):
+                with tempfile.TemporaryDirectory() as directory:
+                    path = Path(directory) / "short.lua"
+                    path.write_bytes(contents)
+
+                    with self.assertRaisesRegex(ValueError, "does not contain"):
+                        fixtures.ensure(Path(directory), ("short.lua",))
 
 
 class DescribeTests(unittest.TestCase):

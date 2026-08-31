@@ -42,9 +42,14 @@ in isolated environments`), with final correctness work in `d7fdd63`. Quit is
 defined from the final force-quit keystroke to successful process exit and is
 reported only for complete samples. Idle results use repeated fresh isolated
 processes and report median plus range. Linux CPU accounting includes live
-descendants and reaped-child ticks. The startup settle heuristic now requires
-substantive output, so the short startup presentation cannot masquerade as the
-settled editor frame on a slow machine.
+descendants and reaped-child ticks. A later fairness correction replaced the
+output-volume comparison with the time a shared token from the first fixture
+line is emitted. Loading output cannot masquerade as document content, and the
+marker detector works across PTY read boundaries. The comparative report shows
+only that common event; raw first-byte latency is retained separately as a
+diagnostic because its meaning differs across editors. All output after the
+marker still has to become quiet before the quit measurement starts, but that
+heuristic is not reported as startup performance.
 
 Regression coverage is in:
 
@@ -61,7 +66,12 @@ Regression coverage is in:
   `terminal_entry_precedes_document_dependent_startup_work` and
   `report_preserves_phase_order_and_elapsed_values`;
 - `benchmarks/test_ptybench.py`:
-  `test_loading_presentation_cannot_settle_before_the_editor_frame`,
+  `test_loading_presentation_is_not_first_document_content`,
+  `test_loading_output_larger_than_the_old_threshold_cannot_settle`,
+  `test_document_marker_can_span_pty_reads`,
+  `test_small_output_after_document_moves_settlement`,
+  `test_marker_followed_by_process_exit_is_not_complete_startup`,
+  `test_startup_clock_includes_spawn_time`,
   `test_proc_stat_includes_reaped_child_ticks`, quit validity, and repeated-idle
   aggregation coverage;
 - `benchmarks/test_run.py`: isolated-environment, discovery, completeness, and
@@ -74,6 +84,9 @@ work; the startup presentation is deliberately non-interactive. Comparative
 quit remains in the matrix even though Neovim leads five rows and Runyte only
 ties Helix on `long.lua`. The other candidate comparative categories in the
 report remain future benchmark work rather than silently claimed coverage.
+First document content emitted is a raw-terminal-stream event: it neither proves
+that a terminal has presented a complete frame nor probes input acceptance or
+work that produces no output.
 
 ## Report
 
