@@ -14,7 +14,7 @@ const FIRST_STEPS: &[(&str, &str)] = &[
     (":tutorial", "learn Runyte interactively"),
     ("Space ?", "help for the current view"),
     (":help", "open the general manual"),
-    ("/", "find files, buffers, or terminals"),
+    ("/ (try Tab inside)", "find anything by name or content"),
     ("Space e", "explore the active directory"),
     ("Space b b", "list open buffers"),
     ("Alt-o | Alt-i", "move back and forth between buffers"),
@@ -137,14 +137,14 @@ mod tests {
         assert!(rendered.contains(&format!("Runyte {}", env!("CARGO_PKG_VERSION"))));
         assert!(rendered.contains("Getting around"));
         for row in [
-            "Space ?       · help for the current view",
-            ":help         · open the general manual",
-            "/             · find files, buffers, or terminals",
-            "Space e       · explore the active directory",
-            "Space b b     · list open buffers",
-            "Alt-o | Alt-i · move back and forth between buffers",
-            ":             · open the command palette",
-            ":q            · quit",
+            "Space ?            · help for the current view",
+            ":help              · open the general manual",
+            "/ (try Tab inside) · find anything by name or content",
+            "Space e            · explore the active directory",
+            "Space b b          · list open buffers",
+            "Alt-o | Alt-i      · move back and forth between buffers",
+            ":                  · open the command palette",
+            ":q                 · quit",
         ] {
             assert!(rendered.lines().any(|line| line.trim_start() == row));
         }
@@ -194,5 +194,6 @@ mod tests {
         assert_eq!(scopes("Getting around"), Some("markup.heading"));
         assert_eq!(scopes(":tutorial"), Some("function"));
         assert_eq!(scopes("Space ?"), Some("keyword"));
+        assert_eq!(scopes("Tab inside"), Some("keyword"));
     }
 }
