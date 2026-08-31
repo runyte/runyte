@@ -63,6 +63,13 @@ is now ranked once and linearly merged into the already-sorted results rather
 than re-sorting every accumulated hit; terminal removal remaps retained
 matches without rescoring them.
 
+A fourth review found that name mode still rebuilt every resource, including
+its preview text, for every terminal output event. Name-mode terminal changes
+now replace and re-rank only that session's metadata. Resource items no longer
+own eager previews in either mode; the selected buffer or terminal produces a
+preview on demand, and terminal preview generation reads at most its final 200
+decoded rows without first materializing the complete retained output.
+
 Coverage includes:
 
 - `project_finder_switches_name_and_content_modes_without_losing_its_query`,
@@ -78,6 +85,8 @@ Coverage includes:
 - `terminal_output_after_a_complete_scan_refreshes_only_that_terminal` and
   `dirty_terminal_rows_are_invalidated_when_another_source_reaches_the_limit`
   in `src/app/tests/search_and_pickers.rs`;
+- `busy_terminal_updates_only_its_name_finder_item_and_selected_preview` in
+  `src/app/tests/search_and_pickers.rs`;
 - finder incremental-ordering, selection, smart-case, literal content-term,
   and soft type-hint tests in `src/finder.rs`;
 - `disk_hits_use_only_the_unified_content_budget_left_by_resources` in

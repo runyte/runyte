@@ -3136,10 +3136,11 @@ fn terminal_refuses(command: EditorCommand) -> bool {
 fn terminal_preview(session: &TerminalSession) -> String {
     const PREVIEW_LINES: usize = 200;
 
-    let text = session.plain_text();
-    let lines = text.lines().collect::<Vec<_>>();
-    let start = lines.len().saturating_sub(PREVIEW_LINES);
-    lines[start..].join("\n")
+    let rows = session.plain_line_count();
+    (rows.saturating_sub(PREVIEW_LINES)..rows)
+        .filter_map(|row| session.plain_line(row))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 #[cfg(unix)]
