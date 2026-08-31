@@ -86,13 +86,24 @@ Successful buffer saves and save-as writes use that same post-change barrier,
 so their staged base and status cannot coalesce with a read that began before
 the write or disappear when the queue is full.
 
+A later cooldown refinement retained the event-driven design while making the
+configured interval a lower bound on automatic refresh attempts as well as the
+maximum-staleness fallback. The monitor's 150 ms quiet-period debounce could
+coalesce one finite burst, but a sustained stream of relevant writes could
+still produce one invalidation after another and the host's 250 ms eligibility
+check could submit each in turn. `WorkspaceHost::refresh_git_if_due` now keeps
+that invalidation dirty until the interval has elapsed since both the last
+successful reconciliation and the last automatic attempt. Filling data for a
+newly revealed consumer observes the same automatic cooldown; explicit
+refreshes and editor-owned mutations remain immediate.
+
 Tests: `git_monitor::tests::a_native_burst_produces_one_debounced_invalidation`,
 `git_monitor::tests::linked_worktree_watches_checkout_private_and_shared_metadata`,
 and `git_monitor::tests::worktree_index_head_refs_and_packed_refs_are_relevant`
 in `src/git_monitor.rs` cover native coalescing and metadata scope;
-`workspace::host::tests::git_invalidation_is_retained_until_visible_and_fallback_is_not_polling`
+`workspace::host::tests::git_invalidation_is_retained_until_visible_and_rate_limited_between_fallbacks`
 in `src/workspace/host.rs` covers the visibility gate, retained dirty state,
-narrow requirements, fallback, and zero setting;
+automatic-refresh cooldown, narrow requirements, fallback, and zero setting;
 `workspace::host::tests::a_snapshot_covers_only_observations_before_its_first_read`
 and
 `workspace::host::tests::a_failed_automatic_refresh_does_not_claim_reconciliation`

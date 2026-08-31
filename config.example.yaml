@@ -19,7 +19,8 @@ editor:
 # Refresh visible Git views and tracked-file gutters automatically;
 # :git-refresh remains available.
 git:
-  # Filesystem events refresh visible Git state promptly; this is the fallback.
+  # Filesystem events refresh visible Git state no more often than this; the
+  # same interval is the fallback when an event is lost.
   # Zero disables both watcher-triggered and fallback refreshes.
   refresh_interval_seconds: 60
 

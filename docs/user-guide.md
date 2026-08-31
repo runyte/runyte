@@ -2860,9 +2860,13 @@ delay followed by the regular held-key cadence and applies the same multiplier.
 Git-derived views and tracked-file gutters refresh from debounced filesystem
 observations while relevant state is visible. An observation received while no
 Git consumer is visible stays pending until a projection or tracked-file gutter
-is revealed. `git.refresh_interval_seconds` is a periodic reconciliation
-fallback for lost or unsupported filesystem events and defaults to 60 seconds;
-it is a maximum-staleness cadence for visible Git state, not routine polling.
+is revealed. `git.refresh_interval_seconds` defaults to 60 seconds and bounds
+automatic work in both directions: event-driven refresh attempts cannot start
+more frequently than that, and a periodic reconciliation after that interval
+limits the staleness caused by lost or unsupported filesystem events. Revealing
+a different Git consumer retains any additional data requirements until the
+interval permits another automatic snapshot. Explicit refreshes and Runyte's
+own mutations are not rate-limited.
 Set it to `0` to disable both watcher-triggered and fallback refreshes.
 `:git-refresh` and reconciliation bundled with Runyte's own Git mutations remain
 available.

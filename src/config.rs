@@ -45,8 +45,8 @@ pub struct NotificationsConfig {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(default)]
 pub struct GitConfig {
-    /// Maximum staleness for visible Git state. Zero disables filesystem
-    /// invalidation and periodic fallback work.
+    /// Minimum spacing and maximum staleness for automatic visible Git
+    /// refreshes. Zero disables filesystem invalidation and fallback work.
     pub refresh_interval_seconds: usize,
 }
 
