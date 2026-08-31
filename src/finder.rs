@@ -2,25 +2,30 @@
 
 //! The in-memory half of the project finder.
 //!
-//! Project files keep their asynchronous, ignore-aware scanner in
+//! Files keep their asynchronous, ignore-aware scanner in
 //! [`crate::file_picker`]. Open buffers and terminals are already editor
 //! state, so walking the filesystem for them would be both slower and less
-//! truthful. This module ranks a bounded snapshot of those resources without
-//! knowing how selecting one changes a pane.
+//! truthful. This module ranks those resources and merges their scores with
+//! the file scanner without copying the scanner's candidate table.
 
-use crate::{file_picker::FuzzyMatcher, terminal::TerminalId};
+use std::{collections::HashSet, path::PathBuf};
+
+use crate::{
+    file_picker::{CONTENT_ENTRY_LIMIT, FilePicker, FuzzyMatcher, PickerTarget},
+    terminal::TerminalId,
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FinderMode {
-    Files,
-    Resources,
+    Names,
+    Contents,
 }
 
 impl FinderMode {
     pub const fn title(self) -> &'static str {
         match self {
-            Self::Files => "Files",
-            Self::Resources => "Buffers + terminals",
+            Self::Names => "Names",
+            Self::Contents => "Contents",
         }
     }
 }
@@ -34,7 +39,23 @@ pub enum ResourceKind {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ResourceTarget {
     Buffer(usize),
+    BufferLocation {
+        buffer: usize,
+        row: usize,
+        column: usize,
+    },
     Terminal(TerminalId),
+    TerminalLocation {
+        terminal: TerminalId,
+        row: usize,
+        column: usize,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum FinderTarget {
+    File(PickerTarget),
+    Resource(ResourceTarget),
 }
 
 #[derive(Clone, Debug)]
@@ -43,6 +64,7 @@ pub struct ResourceItem {
     pub detail: String,
     pub target: ResourceTarget,
     pub kind: ResourceKind,
+    pub path: Option<PathBuf>,
     preview: Option<String>,
     fields: Vec<String>,
 }
@@ -66,9 +88,35 @@ impl ResourceItem {
             detail,
             target,
             kind,
+            path: None,
             preview: None,
             fields: searchable,
         }
+    }
+
+    /// A content row ranks only its decoded text. Its source label is identity,
+    /// not an accidental second content candidate.
+    pub fn content(
+        label: impl Into<String>,
+        text: impl Into<String>,
+        target: ResourceTarget,
+        kind: ResourceKind,
+    ) -> Self {
+        let text = text.into();
+        Self {
+            label: label.into(),
+            detail: text.clone(),
+            target,
+            kind,
+            path: None,
+            preview: None,
+            fields: vec![text],
+        }
+    }
+
+    pub fn with_path(mut self, path: PathBuf) -> Self {
+        self.path = Some(path);
+        self
     }
 
     pub fn with_preview(mut self, preview: impl Into<String>) -> Self {
@@ -85,41 +133,64 @@ pub struct ResourceMatch {
     type_boost: bool,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FinderMatchSource {
+    File(usize),
+    Resource(usize),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FinderMatch {
+    pub source: FinderMatchSource,
+    pub emphasis: Vec<usize>,
+    score: i64,
+    type_boost: bool,
+}
+
 #[derive(Clone, Debug)]
 pub struct ResourceFinder {
     pub mode: FinderMode,
     pub items: Vec<ResourceItem>,
-    pub matches: Vec<ResourceMatch>,
+    pub resource_matches: Vec<ResourceMatch>,
+    pub matches: Vec<FinderMatch>,
     pub selected: usize,
 }
 
 impl Default for ResourceFinder {
     fn default() -> Self {
-        Self {
-            mode: FinderMode::Files,
-            items: Vec::new(),
-            matches: Vec::new(),
-            selected: 0,
-        }
+        Self::new(FinderMode::Names)
     }
 }
 
 impl ResourceFinder {
-    pub fn replace_items(&mut self, items: Vec<ResourceItem>, query: &str) {
-        let selected = self.selected_target();
-        self.items = items;
-        self.rank(query);
-        if let Some(selected) = selected
-            && let Some(index) = self
-                .matches
-                .iter()
-                .position(|found| self.items[found.item].target == selected)
-        {
-            self.selected = index;
+    pub fn new(mode: FinderMode) -> Self {
+        Self {
+            mode,
+            items: Vec::new(),
+            resource_matches: Vec::new(),
+            matches: Vec::new(),
+            selected: 0,
         }
     }
 
-    pub fn rank(&mut self, query: &str) {
+    pub fn replace_items(&mut self, items: Vec<ResourceItem>, picker: &FilePicker, query: &str) {
+        let selected = self.selected_target(picker);
+        self.items = items;
+        self.rank_resources(query);
+        self.merge(picker, query, selected.as_ref());
+    }
+
+    pub fn rank(&mut self, picker: &FilePicker, query: &str) {
+        self.rank_resources(query);
+        self.merge(picker, query, None);
+    }
+
+    pub fn merge_files(&mut self, picker: &FilePicker, query: &str) {
+        let selected = self.selected_target(picker);
+        self.merge(picker, query, selected.as_ref());
+    }
+
+    fn rank_resources(&mut self, query: &str) {
         let parsed = ParsedQuery::new(query);
         let mut matches = self
             .items
@@ -130,10 +201,10 @@ impl ResourceFinder {
                 item,
                 emphasis,
                 score,
-                type_boost,
+                type_boost: self.mode == FinderMode::Names && type_boost,
             })
             .collect::<Vec<_>>();
-        if !query.trim().is_empty() {
+        if !parsed.terms.is_empty() || parsed.has_type_hint() {
             matches.sort_by(|left, right| {
                 right
                     .type_boost
@@ -142,23 +213,96 @@ impl ResourceFinder {
                     .then_with(|| left.item.cmp(&right.item))
             });
         }
+        self.resource_matches = matches;
+    }
+
+    fn merge(&mut self, picker: &FilePicker, query: &str, selected: Option<&FinderTarget>) {
+        let parsed = ParsedQuery::new(query);
+        let live_paths = self
+            .items
+            .iter()
+            .filter_map(|item| item.path.as_deref())
+            .collect::<HashSet<_>>();
+        let mut matches = picker
+            .matches
+            .iter()
+            .filter(|found| {
+                picker
+                    .view(found.entry)
+                    .is_some_and(|entry| !live_paths.contains(entry.path))
+            })
+            .map(|found| FinderMatch {
+                source: FinderMatchSource::File(found.entry),
+                emphasis: found.positions.clone(),
+                score: found.score,
+                type_boost: self.mode == FinderMode::Names && parsed.file_boost,
+            })
+            .chain(self.resource_matches.iter().map(|found| FinderMatch {
+                source: FinderMatchSource::Resource(found.item),
+                emphasis: found.emphasis.clone(),
+                score: found.score,
+                type_boost: found.type_boost,
+            }))
+            .collect::<Vec<_>>();
+        if !parsed.terms.is_empty() || parsed.has_type_hint() {
+            matches.sort_by(|left, right| {
+                right
+                    .type_boost
+                    .cmp(&left.type_boost)
+                    .then_with(|| right.score.cmp(&left.score))
+                    .then_with(|| source_order(left.source).cmp(&source_order(right.source)))
+            });
+        }
+        if self.mode == FinderMode::Contents && matches.len() > CONTENT_ENTRY_LIMIT {
+            matches.truncate(CONTENT_ENTRY_LIMIT);
+        }
         self.matches = matches;
-        self.selected = 0;
+        self.selected = selected
+            .and_then(|target| {
+                self.matches
+                    .iter()
+                    .position(|found| self.target_for_match(picker, found).as_ref() == Some(target))
+            })
+            .unwrap_or(0);
+    }
+
+    pub fn selected_match(&self) -> Option<&FinderMatch> {
+        self.matches
+            .get(self.selected.min(self.matches.len().saturating_sub(1)))
     }
 
     pub fn selected_item(&self) -> Option<&ResourceItem> {
-        self.matches
-            .get(self.selected.min(self.matches.len().saturating_sub(1)))
-            .and_then(|found| self.items.get(found.item))
+        let FinderMatchSource::Resource(item) = self.selected_match()?.source else {
+            return None;
+        };
+        self.items.get(item)
     }
 
-    pub fn selected_match(&self) -> Option<&ResourceMatch> {
-        self.matches
-            .get(self.selected.min(self.matches.len().saturating_sub(1)))
+    pub fn selected_target(&self, picker: &FilePicker) -> Option<FinderTarget> {
+        self.selected_match()
+            .and_then(|found| self.target_for_match(picker, found))
     }
 
-    pub fn selected_target(&self) -> Option<ResourceTarget> {
-        self.selected_item().map(|item| item.target)
+    fn target_for_match(&self, picker: &FilePicker, found: &FinderMatch) -> Option<FinderTarget> {
+        match found.source {
+            FinderMatchSource::File(entry) => {
+                let view = picker.view(entry)?;
+                let column = view.column
+                    + view
+                        .row
+                        .and_then(|_| found.emphasis.first().copied())
+                        .unwrap_or(0);
+                Some(FinderTarget::File(PickerTarget {
+                    path: view.path.to_path_buf(),
+                    row: view.row,
+                    column,
+                }))
+            }
+            FinderMatchSource::Resource(item) => self
+                .items
+                .get(item)
+                .map(|item| FinderTarget::Resource(item.target)),
+        }
     }
 
     pub fn selected_preview(&self) -> Option<&str> {
@@ -197,8 +341,16 @@ impl ResourceFinder {
     }
 }
 
+fn source_order(source: FinderMatchSource) -> (u8, usize) {
+    match source {
+        FinderMatchSource::File(entry) => (0, entry),
+        FinderMatchSource::Resource(item) => (1, item),
+    }
+}
+
 struct ParsedQuery {
     terms: Vec<String>,
+    file_boost: bool,
     buffer_boost: bool,
     terminal_boost: bool,
 }
@@ -206,10 +358,12 @@ struct ParsedQuery {
 impl ParsedQuery {
     fn new(query: &str) -> Self {
         let mut terms = Vec::new();
+        let mut file_boost = false;
         let mut buffer_boost = false;
         let mut terminal_boost = false;
         for term in query.split_whitespace().map(str::to_lowercase) {
             match term.as_str() {
+                "file" | "files" => file_boost = true,
                 "buffer" | "buffers" => buffer_boost = true,
                 "term" | "terminal" | "terminals" => terminal_boost = true,
                 _ => terms.push(term),
@@ -217,9 +371,18 @@ impl ParsedQuery {
         }
         Self {
             terms,
+            file_boost,
             buffer_boost,
             terminal_boost,
         }
+    }
+
+    fn matching_query(&self) -> String {
+        self.terms.join(" ")
+    }
+
+    fn has_type_hint(&self) -> bool {
+        self.file_boost || self.buffer_boost || self.terminal_boost
     }
 
     fn score(&self, item: &ResourceItem) -> Option<(i64, bool, Vec<usize>)> {
@@ -248,6 +411,12 @@ impl ParsedQuery {
     }
 }
 
+/// Removes the name finder's soft type hints from the text ranked by the file
+/// engine. The hints affect merged ordering; they are not literal filters.
+pub fn finder_matching_query(query: &str) -> String {
+    ParsedQuery::new(query).matching_query()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -266,8 +435,15 @@ mod tests {
         )
     }
 
+    fn empty_picker() -> FilePicker {
+        let mut picker = FilePicker::new(1, PathBuf::from("/project"));
+        picker.finish(0, false);
+        picker
+    }
+
     #[test]
     fn every_non_type_term_can_match_a_different_field() {
+        let picker = empty_picker();
         let mut finder = ResourceFinder::default();
         finder.replace_items(
             vec![item(
@@ -276,6 +452,7 @@ mod tests {
                 &["cargo", "~/code/runyte-dev"],
                 1,
             )],
+            &picker,
             "cargo runyte-dev",
         );
         assert_eq!(finder.matches.len(), 1);
@@ -283,48 +460,71 @@ mod tests {
 
     #[test]
     fn type_words_rank_without_filtering() {
+        let picker = empty_picker();
         let mut finder = ResourceFinder::default();
         finder.replace_items(
             vec![
                 item(ResourceKind::Buffer, "notes", &["runyte-dev"], 1),
                 item(ResourceKind::Terminal, "shell", &["runyte-dev"], 2),
             ],
+            &picker,
             "terminal runyte-dev",
         );
         assert_eq!(finder.matches.len(), 2);
         assert_eq!(
-            finder.selected_target(),
-            Some(ResourceTarget::Terminal(TerminalId::from_raw(2)))
+            finder.selected_target(&picker),
+            Some(FinderTarget::Resource(ResourceTarget::Terminal(
+                TerminalId::from_raw(2)
+            )))
         );
 
-        finder.rank("buffer terminal runyte-dev");
-        assert_eq!(finder.selected_target(), Some(ResourceTarget::Buffer(1)));
+        finder.rank(&picker, "buffer terminal runyte-dev");
+        assert_eq!(
+            finder.selected_target(&picker),
+            Some(FinderTarget::Resource(ResourceTarget::Buffer(1)))
+        );
+    }
+
+    #[test]
+    fn finder_type_words_are_not_file_filters() {
+        assert_eq!(finder_matching_query("file src picker"), "src picker");
+        assert_eq!(finder_matching_query("buffer terminal"), "");
     }
 
     #[test]
     fn empty_query_keeps_source_order() {
+        let picker = empty_picker();
         let mut finder = ResourceFinder::default();
         finder.replace_items(
             vec![
                 item(ResourceKind::Buffer, "second", &[], 2),
                 item(ResourceKind::Terminal, "first terminal", &[], 1),
             ],
+            &picker,
             "",
         );
         assert_eq!(
             finder
                 .matches
                 .iter()
-                .map(|found| found.item)
+                .map(|found| found.source)
                 .collect::<Vec<_>>(),
-            vec![0, 1]
+            vec![
+                FinderMatchSource::Resource(0),
+                FinderMatchSource::Resource(1)
+            ]
         );
     }
 
     #[test]
     fn emphasis_positions_are_indices_into_the_original_unicode_label() {
+        let picker = empty_picker();
         let mut finder = ResourceFinder::default();
-        finder.replace_items(vec![item(ResourceKind::Buffer, "İalpha", &[], 1)], "alpha");
+        finder.replace_items(
+            vec![item(ResourceKind::Buffer, "İalpha", &[], 1)],
+            &picker,
+            "alpha",
+        );
         assert_eq!(finder.matches[0].emphasis, vec![1, 2, 3, 4, 5]);
     }
 }

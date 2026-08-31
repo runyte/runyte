@@ -2358,7 +2358,8 @@ fn a_hidden_live_terminal_requires_exact_branch_name_before_checkout() {
         id: terminal,
         code: Some(0),
     });
-    assert!(app.terminals.get(terminal).is_none());
+    assert!(app.terminals.get(terminal).is_some());
+    assert!(app.active_terminal().is_none());
     press(&mut app, 'j');
     key(&mut app, KeyCode::Enter, Modifiers::NONE);
 

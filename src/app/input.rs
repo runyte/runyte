@@ -12,23 +12,23 @@ use super::{
     CommandMatch, CommandOutcome, CommandOutcomeHint, CommandState, CommandUnavailable,
     CompletionSource, ContentAlignment, DEFAULT_MACRO_REGISTER, DeletionAuthorization,
     DeletionMode, DelimiterPair, DiffScope, EditorCommand, EditorIntent, EntryKind,
-    FileObservation, FilePicker, FinderMode, FsOperation, GeneratedViewIdentity, GrammarContext,
-    GrammarNotice, GrammarOutput, HOVER_PEEK_ROWS, HashSet, HelpInvocation, InputEvent,
-    InputGrammar, Instant, InvocationParameters, KeyCode, KeySequence, KeyStroke, Keymap,
-    LineDirection, ListPicker, LspCommand, MaximizedView, Mode, Modifiers, Motion, Offset, Path,
-    PathBuf, PathHint, PickerTarget, PointerButton, PointerDrag, PointerEvent, PointerEventKind,
-    PointerOutcome, PreparedView, ProgramAction, ProgramActionMenu, ProgramChoice, PromptKind,
-    Range, RangeIntent, RequestKind, ResourceFinder, Result, SearchMode, SearchQuery, Selection,
-    SelectionSemantics, SettingId, SettingType, SettingValue, SignatureContext, StashScope,
-    SyntaxObject, SyntaxObjectPart, SyntaxSelectionTransform, SystemClipboard, Transaction,
-    ViewAlignment, VimMotion, VimOperator, VimRangeTarget, VimTextObject, buffer_language,
-    char_to_byte, display_path, enclosing_area, expand_home_path, external_open,
-    hint_is_not_before, hover_content_rows, is_path_separator, is_path_token_boundary,
-    is_terminal_normal_key, is_word, is_word_completion_character, keymap_for, mapped_applied_path,
-    operative_span, parse_colon_command, persistent_session_availability, pointer_pane,
-    pointer_resize_pair, prompt_backspace, prompt_delete, prompt_delete_range, prompt_insert,
-    prompt_word_backward, prompt_word_forward, quote_path_hint, rect_contains, resolve_command,
-    resolved_operation_path, row_characters, unclosed_or_complete_quoted_path,
+    FileObservation, FilePicker, FsOperation, GeneratedViewIdentity, GrammarContext, GrammarNotice,
+    GrammarOutput, HOVER_PEEK_ROWS, HashSet, HelpInvocation, InputEvent, InputGrammar, Instant,
+    InvocationParameters, KeyCode, KeySequence, KeyStroke, Keymap, LineDirection, ListPicker,
+    LspCommand, MaximizedView, Mode, Modifiers, Motion, Offset, Path, PathBuf, PathHint,
+    PickerTarget, PointerButton, PointerDrag, PointerEvent, PointerEventKind, PointerOutcome,
+    PreparedView, ProgramAction, ProgramActionMenu, ProgramChoice, PromptKind, Range, RangeIntent,
+    RequestKind, Result, SearchMode, SearchQuery, Selection, SelectionSemantics, SettingId,
+    SettingType, SettingValue, SignatureContext, StashScope, SyntaxObject, SyntaxObjectPart,
+    SyntaxSelectionTransform, SystemClipboard, Transaction, ViewAlignment, VimMotion, VimOperator,
+    VimRangeTarget, VimTextObject, buffer_language, char_to_byte, display_path, enclosing_area,
+    expand_home_path, external_open, hint_is_not_before, hover_content_rows, is_path_separator,
+    is_path_token_boundary, is_terminal_normal_key, is_word, is_word_completion_character,
+    keymap_for, mapped_applied_path, operative_span, parse_colon_command,
+    persistent_session_availability, pointer_pane, pointer_resize_pair, prompt_backspace,
+    prompt_delete, prompt_delete_range, prompt_insert, prompt_word_backward, prompt_word_forward,
+    quote_path_hint, rect_contains, resolve_command, resolved_operation_path, row_characters,
+    unclosed_or_complete_quoted_path,
 };
 
 impl App {
@@ -1310,11 +1310,9 @@ impl App {
             picker.insert_query_text(text);
             self.restart_content_scan_if_needed();
             self.rank_resource_finder();
-            if self
-                .finder
-                .as_ref()
-                .is_none_or(|finder| finder.mode == FinderMode::Files)
-            {
+            if self.finder.is_some() {
+                self.refresh_finder_preview();
+            } else {
                 self.refresh_file_picker_preview();
             }
             return Ok(());
@@ -3010,11 +3008,7 @@ impl App {
             self.toggle_finder_mode();
             return Ok(());
         }
-        if self
-            .finder
-            .as_ref()
-            .is_some_and(|finder| finder.mode == FinderMode::Resources)
-        {
+        if self.finder.is_some() {
             return self.handle_resource_picker(key);
         }
 
@@ -3256,12 +3250,10 @@ impl App {
                 picker.show_preview = !picker.show_preview;
             }
             (KeyCode::Enter, _) => {
-                if let Some(target) = self
-                    .finder
-                    .as_ref()
-                    .and_then(ResourceFinder::selected_target)
+                if let (Some(finder), Some(picker)) = (self.finder.as_ref(), self.picker.as_ref())
+                    && let Some(target) = finder.selected_target(picker)
                 {
-                    self.activate_resource_target(target);
+                    self.activate_finder_target(target);
                 }
                 return Ok(());
             }
@@ -3275,13 +3267,15 @@ impl App {
             }
             _ => {}
         }
+        self.restart_content_scan_if_needed();
         if query_changed {
             self.rank_resource_finder();
         }
+        self.refresh_finder_preview();
         Ok(())
     }
 
-    fn select_picker_target(&mut self, target: &PickerTarget) {
+    pub(super) fn select_picker_target(&mut self, target: &PickerTarget) {
         let Some(row) = target.row else {
             return;
         };

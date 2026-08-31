@@ -14,7 +14,7 @@ const FIRST_STEPS: &[(&str, &str)] = &[
     (":tutorial", "learn Runyte interactively"),
     ("Space ?", "help for the current view"),
     (":help", "open the general manual"),
-    ("Space f", "find files, buffers, or terminals"),
+    ("/", "find files, buffers, or terminals"),
     ("Space e", "explore the active directory"),
     ("Space b b", "list open buffers"),
     ("Alt-o | Alt-i", "move back and forth between buffers"),
@@ -139,7 +139,7 @@ mod tests {
         for row in [
             "Space ?       · help for the current view",
             ":help         · open the general manual",
-            "Space f       · find files, buffers, or terminals",
+            "/             · find files, buffers, or terminals",
             "Space e       · explore the active directory",
             "Space b b     · list open buffers",
             "Alt-o | Alt-i · move back and forth between buffers",

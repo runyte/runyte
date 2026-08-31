@@ -7,7 +7,7 @@ fn search_prompt_repeats_and_wraps_unicode_matches() {
     let mut app = App::new(Config::default(), None).unwrap();
     seed(&mut app, "α one\ntwo α");
 
-    press(&mut app, '/');
+    press(&mut app, 'S');
     assert_eq!(app.prompt_kind, PromptKind::Search(SearchMode::Regex));
     press(&mut app, 'α');
     key(&mut app, KeyCode::Enter, Modifiers::NONE);
@@ -66,9 +66,9 @@ fn search_flavours_fold_case_and_take_literals_literally() {
     );
     assert_eq!(app.active().selection.len(), 1);
 
-    // The same text through `/` is a regular expression, and an invalid one.
+    // The same text through `S` is a regular expression, and an invalid one.
     app.active_mut().selection = Selection::point(0);
-    search_for(&mut app, '/', "a(b");
+    search_for(&mut app, 'S', "a(b");
     assert!(app.status_error);
 }
 
@@ -143,7 +143,7 @@ fn successive_searches_narrow_into_the_previous_matches() {
 
     // The matches are themselves a selection, so the next search narrows
     // again: four `a`s inside two `alpha`s, not every `a` in the buffer.
-    search_for(&mut app, '/', "a");
+    search_for(&mut app, 'S', "a");
     assert_eq!(app.active().selection.len(), 4);
     assert!(
         app.active().selection.ranges().iter().all(|range| app
@@ -174,7 +174,7 @@ fn filtering_selections_prompts_for_its_own_pattern() {
 
     // No search has run, so the old shared-pattern coupling would have
     // refused this outright.
-    search_for(&mut app, '/', "(?m)^.+$");
+    search_for(&mut app, 'S', "(?m)^.+$");
     assert_eq!(app.active().selection.len(), 3);
 
     type_text(&mut app, " sk");
@@ -224,7 +224,7 @@ fn an_invalid_regex_from_the_search_prompt_echoes_as_an_error() {
     let mut app = App::new(Config::default(), None).unwrap();
     seed(&mut app, "a(b) and axb");
 
-    search_for(&mut app, '/', "a(b");
+    search_for(&mut app, 'S', "a(b");
     assert!(app.status_error);
     assert!(app.displayed_status_message_is_error());
     assert!(
@@ -403,7 +403,7 @@ fn yank_paste_and_prompt_editing_use_unicode_character_positions() {
     assert_eq!(text(&app), "αβαβc");
     assert_eq!(app.mode, Mode::Normal, "buffer paste stays in Normal mode");
 
-    press(&mut app, '/');
+    press(&mut app, 'S');
     type_text(&mut app, "α beta");
     key(&mut app, KeyCode::Char('w'), Modifiers::CONTROL);
     assert_eq!(app.command, "α ");
@@ -497,7 +497,7 @@ fn space_closes_a_new_picker_but_remains_a_query_separator_after_text() {
 }
 
 #[test]
-fn project_finder_switches_modes_without_losing_its_query_or_file_scan() {
+fn project_finder_switches_name_and_content_modes_without_losing_its_query() {
     let root = temporary("project-finder-modes");
     fs::create_dir_all(&root).unwrap();
     let alpha = root.join("alpha.txt");
@@ -512,39 +512,40 @@ fn project_finder_switches_modes_without_losing_its_query_or_file_scan() {
     app.open_file(beta).unwrap();
 
     app.open_project_picker().unwrap();
-    assert_eq!(app.finder.as_ref().unwrap().mode, FinderMode::Files);
+    assert_eq!(app.finder.as_ref().unwrap().mode, FinderMode::Names);
     type_text(&mut app, "alpha");
-    let file_matches = app.picker.as_ref().unwrap().matches.len();
-    assert_eq!(file_matches, 1);
+    assert_eq!(app.finder.as_ref().unwrap().matches.len(), 1);
+    assert!(matches!(
+        app.finder
+            .as_ref()
+            .unwrap()
+            .selected_target(app.picker.as_ref().unwrap()),
+        Some(FinderTarget::Resource(ResourceTarget::Buffer(_)))
+    ));
 
     key(&mut app, KeyCode::Tab, Modifiers::NONE);
     let finder = app.finder.as_ref().unwrap();
-    assert_eq!(finder.mode, FinderMode::Resources);
+    assert_eq!(finder.mode, FinderMode::Contents);
     assert_eq!(app.picker.as_ref().unwrap().query, "alpha");
-    assert!(
-        finder
-            .matches
-            .iter()
-            .any(|found| { finder.items[found.item].target == ResourceTarget::Buffer(1) })
-    );
+    assert_eq!(app.picker.as_ref().unwrap().kind, FilePickerKind::Contents);
+    assert!(!finder.matches.is_empty());
     let overlay = app
         .overlay_snapshots()
         .into_iter()
         .find(|overlay| overlay.kind == crate::snapshot::OverlayKind::FilePicker)
         .unwrap();
-    assert_eq!(overlay.title, "Find · Buffers + terminals");
+    assert_eq!(overlay.title, "Find · Contents");
     assert_eq!(overlay.layout, crate::snapshot::OverlayLayout::Preview);
-    assert_eq!(overlay.preview_title.as_deref(), Some("Contents"));
+    assert_eq!(overlay.preview_title.as_deref(), Some("Preview"));
     assert!(matches!(
         overlay.preview,
-        Some(crate::snapshot::OverlayPreview::Text(ref lines))
-            if lines.first().is_some_and(|line| line == "alpha")
+        Some(crate::snapshot::OverlayPreview::Snippet { .. })
     ));
     assert!(
         overlay
             .actions
             .iter()
-            .any(|action| { action.key_hint == "Tab" && action.label == "files" })
+            .any(|action| { action.key_hint == "Tab" && action.label == "names" })
     );
     assert!(
         overlay
@@ -557,18 +558,16 @@ fn project_finder_switches_modes_without_losing_its_query_or_file_scan() {
     assert!(!app.picker.as_ref().unwrap().show_preview);
 
     key(&mut app, KeyCode::BackTab, Modifiers::SHIFT);
-    assert_eq!(app.finder.as_ref().unwrap().mode, FinderMode::Resources);
+    assert_eq!(app.finder.as_ref().unwrap().mode, FinderMode::Contents);
     assert_eq!(app.picker.as_ref().unwrap().query, "alpha");
     assert!(!app.picker.as_ref().unwrap().show_preview);
 
     key(&mut app, KeyCode::Tab, Modifiers::NONE);
-    assert_eq!(app.finder.as_ref().unwrap().mode, FinderMode::Files);
-    assert_eq!(app.picker.as_ref().unwrap().matches.len(), file_matches);
+    assert_eq!(app.finder.as_ref().unwrap().mode, FinderMode::Names);
+    assert_eq!(app.picker.as_ref().unwrap().kind, FilePickerKind::Files);
     assert_eq!(app.picker.as_ref().unwrap().query, "alpha");
     assert!(!app.picker.as_ref().unwrap().show_preview);
 
-    key(&mut app, KeyCode::Tab, Modifiers::NONE);
-    assert!(!app.picker.as_ref().unwrap().show_preview);
     key(&mut app, KeyCode::Enter, Modifiers::NONE);
     assert!(app.picker.is_none());
     assert!(app.finder.is_none());
@@ -594,49 +593,45 @@ fn directory_picker_keeps_tab_navigation_and_has_no_resource_mode() {
 }
 
 #[test]
-fn project_finder_remembers_each_modes_selection() {
-    let root = temporary("project-finder-selections");
+fn project_finder_content_reaches_and_activates_a_pathless_buffer() {
+    let root = temporary("project-finder-pathless-buffer");
     fs::create_dir_all(&root).unwrap();
-    fs::write(root.join("a.txt"), "a").unwrap();
-    fs::write(root.join("b.txt"), "b").unwrap();
     let ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
         String::new(),
     )))));
     let mut app = App::new_in_isolated_project(&root, ports).unwrap();
-    app.open_file(root.join("a.txt")).unwrap();
-    app.open_file(root.join("b.txt")).unwrap();
+    app.execute_command("buffer-new").unwrap();
+    let scratch = app.active().buffer;
+    app.buffers[scratch].apply(&Transaction::insert(0, "first\npathless needle\nlast"));
     app.open_project_picker().unwrap();
-
     key(&mut app, KeyCode::Tab, Modifiers::NONE);
-    let first_resource = app.finder.as_ref().unwrap().selected_target();
-    key(&mut app, KeyCode::Down, Modifiers::NONE);
-    let resource = app.finder.as_ref().unwrap().selected_target();
-    assert_ne!(resource, first_resource);
-    key(&mut app, KeyCode::BackTab, Modifiers::SHIFT);
-    assert_eq!(app.finder.as_ref().unwrap().mode, FinderMode::Resources);
-    assert_eq!(
-        app.finder.as_ref().unwrap().selected_target(),
-        first_resource
+    type_text(&mut app, "needle");
+    let selected = app
+        .finder
+        .as_ref()
+        .unwrap()
+        .selected_target(app.picker.as_ref().unwrap());
+    assert!(
+        matches!(
+            selected,
+            Some(FinderTarget::Resource(ResourceTarget::BufferLocation {
+                buffer,
+                row: 1,
+                ..
+            })) if buffer == scratch
+        ),
+        "selected {selected:?}; items: {:?}",
+        app.finder
+            .as_ref()
+            .unwrap()
+            .items
+            .iter()
+            .map(|item| (&item.label, &item.detail))
+            .collect::<Vec<_>>()
     );
-    key(&mut app, KeyCode::Down, Modifiers::NONE);
-    assert_eq!(app.finder.as_ref().unwrap().selected_target(), resource);
-    key(&mut app, KeyCode::Tab, Modifiers::NONE);
-    key(&mut app, KeyCode::Down, Modifiers::NONE);
-    assert_eq!(app.picker.as_ref().unwrap().selected, 1);
-    for (code, modifiers) in [
-        (KeyCode::Backspace, Modifiers::NONE),
-        (KeyCode::Delete, Modifiers::NONE),
-        (KeyCode::Char('w'), Modifiers::CONTROL),
-        (KeyCode::Char('k'), Modifiers::CONTROL),
-    ] {
-        key(&mut app, code, modifiers);
-    }
-    key(&mut app, KeyCode::Tab, Modifiers::NONE);
-
-    assert_eq!(app.finder.as_ref().unwrap().selected_target(), resource);
-    key(&mut app, KeyCode::Tab, Modifiers::NONE);
-    assert_eq!(app.picker.as_ref().unwrap().selected, 1);
-    app.close_file_picker();
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert_eq!(app.active().buffer, scratch);
+    assert_eq!(cursor(&app).row, 1);
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -654,7 +649,7 @@ fn finder_path_fields_include_project_home_and_basename_spellings() {
 
 #[cfg(unix)]
 #[test]
-fn project_finder_indexes_and_activates_terminal_metadata() {
+fn project_finder_indexes_terminal_names_and_content_and_reveals_the_matching_row() {
     let root = temporary("project-finder-terminal-directory");
     fs::create_dir_all(&root).unwrap();
     let ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
@@ -675,16 +670,23 @@ fn project_finder_indexes_and_activates_terminal_metadata() {
         .unwrap()
         .rename(Some("my_terminal_name".to_owned()))
         .unwrap();
+    app.apply_terminal_output(TerminalOutput::Exited { id, code: Some(0) });
+    assert!(
+        app.terminals.get(id).is_some(),
+        "exited output stays searchable"
+    );
 
     app.open_project_picker().unwrap();
-    key(&mut app, KeyCode::Tab, Modifiers::NONE);
     type_text(
         &mut app,
         "terminal my_terminal_name project-finder-terminal cat",
     );
     assert_eq!(
-        app.finder.as_ref().unwrap().selected_target(),
-        Some(ResourceTarget::Terminal(id))
+        app.finder
+            .as_ref()
+            .unwrap()
+            .selected_target(app.picker.as_ref().unwrap()),
+        Some(FinderTarget::Resource(ResourceTarget::Terminal(id)))
     );
     assert!(
         app.finder
@@ -707,21 +709,38 @@ fn project_finder_indexes_and_activates_terminal_metadata() {
 
     key(&mut app, KeyCode::Enter, Modifiers::NONE);
     assert_eq!(app.active_terminal(), Some(id));
-    assert_eq!(app.mode, Mode::Insert);
+    assert_eq!(app.mode, Mode::Normal);
+    assert!(app.terminals.get(id).unwrap().reviewing());
 
     app.mode = Mode::Normal;
-    app.open_project_picker().unwrap();
-    key(&mut app, KeyCode::Tab, Modifiers::NONE);
-    type_text(&mut app, "buffer note.txt");
-    assert!(matches!(
-        app.finder.as_ref().unwrap().selected_target(),
-        Some(ResourceTarget::Buffer(_))
-    ));
-    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    app.open_project_grep().unwrap();
+    type_text(&mut app, "preview");
+    let selected = app
+        .finder
+        .as_ref()
+        .unwrap()
+        .selected_target(app.picker.as_ref().unwrap());
     assert!(
-        app.active_terminal().is_none(),
-        "selecting the terminal pane's underlying buffer must reveal it"
+        matches!(
+            selected,
+            Some(FinderTarget::Resource(ResourceTarget::TerminalLocation {
+                terminal,
+                row: 0,
+                ..
+            })) if terminal == id
+        ),
+        "selected {selected:?}; items: {:?}",
+        app.finder
+            .as_ref()
+            .unwrap()
+            .items
+            .iter()
+            .map(|item| (&item.label, &item.detail))
+            .collect::<Vec<_>>()
     );
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert_eq!(app.active_terminal(), Some(id));
+    assert!(app.terminals.get(id).unwrap().reviewing());
     assert_eq!(app.mode, Mode::Normal);
     app.close_terminal_id(id);
     fs::remove_dir_all(root).unwrap();

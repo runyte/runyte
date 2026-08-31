@@ -411,6 +411,10 @@ pub struct FilePicker {
     /// files) must be recovered from the full entry list, not from the
     /// already-narrowed set that no longer contains them.
     directory_only: bool,
+    /// Project finders treat `file`, `buffer`, and `terminal` as soft name
+    /// preferences. Directory-scoped pickers still match those words
+    /// literally.
+    unified_finder: bool,
 }
 
 impl FilePicker {
@@ -442,7 +446,36 @@ impl FilePicker {
             preview: None,
             selection_user_owned: false,
             directory_only: false,
+            unified_finder: false,
         }
+    }
+
+    pub fn enable_unified_finder(&mut self) {
+        self.unified_finder = true;
+        self.rank(true, false);
+    }
+
+    /// Changes the project finder's filesystem engine while retaining the
+    /// query, cursor, and preview preference held by the overlay.
+    pub fn switch_kind(&mut self, scan_id: u64, kind: FilePickerKind) {
+        self.scan_id = scan_id;
+        self.kind = kind;
+        self.files.clear();
+        self.entries.clear();
+        self.matches.clear();
+        self.scan_query = if kind == FilePickerKind::Contents {
+            self.query.clone()
+        } else {
+            String::new()
+        };
+        self.selected = 0;
+        self.loading = true;
+        self.skipped = 0;
+        self.limited = false;
+        self.error = None;
+        self.preview = None;
+        self.selection_user_owned = false;
+        self.directory_only = false;
     }
 
     pub fn add_paths(&mut self, paths: Vec<ScanEntry>) {
@@ -551,10 +584,15 @@ impl FilePicker {
     /// plain file picker honors a trailing `/`, and the slash itself is not
     /// part of the text handed to the matcher.
     fn directory_only_query(&self) -> (bool, String) {
-        if self.kind == FilePickerKind::Files && self.query.ends_with('/') {
-            (true, self.query.trim_end_matches('/').to_owned())
+        let query = if self.unified_finder && self.kind == FilePickerKind::Files {
+            crate::finder::finder_matching_query(&self.query)
         } else {
-            (false, self.query.clone())
+            self.query.clone()
+        };
+        if self.kind == FilePickerKind::Files && query.ends_with('/') {
+            (true, query.trim_end_matches('/').to_owned())
+        } else {
+            (false, query)
         }
     }
 
@@ -823,7 +861,8 @@ impl FilePicker {
     fn sort_matches(&mut self) {
         let (files, entries) = (&self.files, &self.entries);
         let view = |found: &FuzzyMatch| resolve_in(files, &entries[found.entry]);
-        if self.query.is_empty() {
+        let query_is_empty = self.directory_only_query().1.is_empty();
+        if query_is_empty {
             self.matches.sort_by(|left, right| {
                 let (left, right) = (view(left), view(right));
                 (left.relative, left.row).cmp(&(right.relative, right.row))

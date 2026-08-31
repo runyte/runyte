@@ -5,15 +5,16 @@
 // Application-module dependencies:
 use super::{
     App, CONTENT_ENTRY_LIMIT, FilePicker, FilePickerEvent, FilePickerKind, FilePreview,
-    FileScanner, FinderMode, PathBuf, ResourceFinder, ResourceItem, ResourceKind, ResourceTarget,
-    Result, buffer_picker_columns, buffer_preview, line_hits, resource_path_fields, scan_content,
-    scan_files, terminal_preview,
+    FileScanner, FinderMatchSource, FinderMode, FinderTarget, Mode, PathBuf, Range, ResourceFinder,
+    ResourceItem, ResourceKind, ResourceTarget, Result, Selection, buffer_picker_columns,
+    buffer_preview, line_hits, resource_path_fields, scan_content, scan_files, terminal_preview,
 };
 
 impl App {
     pub(super) fn open_project_picker(&mut self) -> Result<()> {
         self.open_picker_at(self.project_root.clone(), FilePickerKind::Files)?;
-        self.finder = Some(ResourceFinder::default());
+        self.picker.as_mut().unwrap().enable_unified_finder();
+        self.finder = Some(ResourceFinder::new(FinderMode::Names));
         self.rebuild_resource_finder();
         Ok(())
     }
@@ -23,7 +24,11 @@ impl App {
     }
 
     pub(super) fn open_project_grep(&mut self) -> Result<()> {
-        self.open_picker_at(self.project_root.clone(), FilePickerKind::Contents)
+        self.open_picker_at(self.project_root.clone(), FilePickerKind::Contents)?;
+        self.picker.as_mut().unwrap().enable_unified_finder();
+        self.finder = Some(ResourceFinder::new(FinderMode::Contents));
+        self.rebuild_resource_finder();
+        Ok(())
     }
 
     pub(super) fn open_directory_grep(&mut self) -> Result<()> {
@@ -135,6 +140,9 @@ impl App {
             })
             .collect();
         self.picker.as_mut().unwrap().add_content(live);
+        if self.finder.is_some() {
+            self.rebuild_resource_finder();
+        }
         if let Some(scanner) = &self.file_scanner {
             scanner.scan_content(
                 scan_id,
@@ -168,6 +176,7 @@ impl App {
             }
             self.refresh_file_picker_preview();
         }
+        self.merge_finder_matches();
     }
 
     /// Re-scans when the query has moved past what the entries on hand can
@@ -241,7 +250,14 @@ impl App {
     }
 
     pub(super) fn rebuild_resource_finder(&mut self) {
-        let Some(query) = self.picker.as_ref().map(|picker| picker.query.clone()) else {
+        let Some((query, root)) = self
+            .picker
+            .as_ref()
+            .map(|picker| (picker.query.clone(), picker.root.clone()))
+        else {
+            return;
+        };
+        let Some(mode) = self.finder.as_ref().map(|finder| finder.mode) else {
             return;
         };
         let mut items = Vec::new();
@@ -251,6 +267,35 @@ impl App {
             .then(|| self.active().buffer);
         for (index, buffer) in self.buffers.iter().enumerate() {
             if !self.buffer_is_discoverable(index) {
+                continue;
+            }
+            if mode == FinderMode::Contents {
+                if buffer.is_directory()
+                    || buffer
+                        .path
+                        .as_deref()
+                        .is_some_and(|path| path.starts_with(&root))
+                {
+                    continue;
+                }
+                for hit in line_hits(&buffer.to_string(), &query) {
+                    if items.len() >= CONTENT_ENTRY_LIMIT {
+                        break;
+                    }
+                    items.push(
+                        ResourceItem::content(
+                            format!("{}:{}", buffer.display_name(), hit.row + 1),
+                            hit.text,
+                            ResourceTarget::BufferLocation {
+                                buffer: index,
+                                row: hit.row,
+                                column: hit.column,
+                            },
+                            ResourceKind::Buffer,
+                        )
+                        .with_preview(buffer_preview(buffer)),
+                    );
+                }
                 continue;
             }
             let (label, detail) =
@@ -268,18 +313,41 @@ impl App {
                     self.home_directory.as_deref(),
                 ));
             }
-            items.push(
-                ResourceItem::new(
-                    label,
-                    detail,
-                    ResourceTarget::Buffer(index),
-                    ResourceKind::Buffer,
-                    fields,
-                )
-                .with_preview(buffer_preview(buffer)),
-            );
+            let mut item = ResourceItem::new(
+                label,
+                detail,
+                ResourceTarget::Buffer(index),
+                ResourceKind::Buffer,
+                fields,
+            )
+            .with_preview(buffer_preview(buffer));
+            if let Some(path) = buffer.path.clone() {
+                item = item.with_path(path);
+            }
+            items.push(item);
         }
         for session in self.terminals.iter() {
+            if mode == FinderMode::Contents {
+                for hit in line_hits(&session.plain_text(), &query) {
+                    if items.len() >= CONTENT_ENTRY_LIMIT {
+                        break;
+                    }
+                    items.push(
+                        ResourceItem::content(
+                            format!("{}:{}", session.display_name(), hit.row + 1),
+                            hit.text,
+                            ResourceTarget::TerminalLocation {
+                                terminal: session.id(),
+                                row: hit.row,
+                                column: hit.column,
+                            },
+                            ResourceKind::Terminal,
+                        )
+                        .with_preview(terminal_preview(session)),
+                    );
+                }
+                continue;
+            }
             let mut detail = format!("#{} · {}", session.id(), session.directory().display());
             if self
                 .panes
@@ -330,55 +398,183 @@ impl App {
                 .with_preview(terminal_preview(session)),
             );
         }
-        if let Some(finder) = self.finder.as_mut() {
-            finder.replace_items(items, &query);
+        if let (Some(finder), Some(picker)) = (self.finder.as_mut(), self.picker.as_ref()) {
+            finder.replace_items(items, picker, &query);
         }
+        self.refresh_finder_preview();
     }
 
     pub(super) fn rank_resource_finder(&mut self) {
-        let Some(query) = self.picker.as_ref().map(|picker| picker.query.as_str()) else {
+        if self
+            .finder
+            .as_ref()
+            .is_some_and(|finder| finder.mode == FinderMode::Contents)
+        {
+            self.rebuild_resource_finder();
+            return;
+        }
+        let Some(picker) = self.picker.as_ref() else {
             return;
         };
+        let query = picker.query.clone();
         if let Some(finder) = self.finder.as_mut() {
-            finder.rank(query);
+            finder.rank(picker, &query);
         }
+        self.refresh_finder_preview();
     }
 
     pub(super) fn toggle_finder_mode(&mut self) {
         let Some(mode) = self.finder.as_ref().map(|finder| finder.mode) else {
             return;
         };
-        if mode == FinderMode::Files {
-            self.rebuild_resource_finder();
+        if let Some(picker) = self.picker.as_ref()
+            && let Some(scanner) = &self.file_scanner
+        {
+            scanner.cancel(picker.scan_id);
         }
+        let next = match mode {
+            FinderMode::Names => FinderMode::Contents,
+            FinderMode::Contents => FinderMode::Names,
+        };
         if let Some(finder) = self.finder.as_mut() {
-            finder.mode = match mode {
-                FinderMode::Files => FinderMode::Resources,
-                FinderMode::Resources => FinderMode::Files,
-            };
+            finder.mode = next;
         }
-        if mode == FinderMode::Resources {
-            self.refresh_file_picker_preview();
+        let scan_id = self.next_file_scan_id;
+        self.next_file_scan_id = self.next_file_scan_id.wrapping_add(1).max(1);
+        let kind = match next {
+            FinderMode::Names => FilePickerKind::Files,
+            FinderMode::Contents => FilePickerKind::Contents,
+        };
+        self.picker.as_mut().unwrap().switch_kind(scan_id, kind);
+        self.rebuild_resource_finder();
+        match next {
+            FinderMode::Contents => self.start_content_scan(),
+            FinderMode::Names => self.start_file_scan(),
         }
     }
 
-    pub(super) fn activate_resource_target(&mut self, target: ResourceTarget) {
+    fn start_file_scan(&mut self) {
+        let Some(picker) = self.picker.as_ref() else {
+            return;
+        };
+        let scan_id = picker.scan_id;
+        let root = picker.root.clone();
+        if let Some(scanner) = &self.file_scanner {
+            scanner.scan(
+                scan_id,
+                root,
+                self.project_root.clone(),
+                self.state_root.clone(),
+                self.config.editor.show_hidden_files,
+            );
+        } else {
+            match scan_files(
+                &root,
+                &self.project_root,
+                &self.state_root,
+                self.config.editor.show_hidden_files,
+            ) {
+                Ok((paths, skipped)) => {
+                    let picker = self.picker.as_mut().unwrap();
+                    picker.add_paths(paths);
+                    picker.finish(skipped, false);
+                }
+                Err(error) => self.picker.as_mut().unwrap().fail(error.to_string()),
+            }
+            self.merge_finder_matches();
+            self.refresh_finder_preview();
+        }
+    }
+
+    pub(super) fn activate_finder_target(&mut self, target: FinderTarget) {
         self.close_file_picker();
         match target {
-            ResourceTarget::Buffer(buffer) => {
+            FinderTarget::File(target) => {
+                if let Err(error) = self.open_file(target.path.clone()) {
+                    self.action_failed(error.to_string());
+                } else {
+                    self.select_picker_target(&target);
+                }
+            }
+            FinderTarget::Resource(ResourceTarget::Buffer(buffer)) => {
                 if buffer >= self.buffers.len() || self.closed_buffers.contains(&buffer) {
                     self.action_failed("that buffer is no longer open");
                 } else {
                     self.switch_buffer(buffer);
                 }
             }
-            ResourceTarget::Terminal(id) => {
+            FinderTarget::Resource(ResourceTarget::BufferLocation {
+                buffer,
+                row,
+                column,
+            }) => {
+                if buffer >= self.buffers.len() || self.closed_buffers.contains(&buffer) {
+                    self.action_failed("that buffer is no longer open");
+                } else {
+                    self.switch_buffer(buffer);
+                    let row = row.min(self.active_buffer().len_lines().saturating_sub(1));
+                    let column = column.min(self.active_buffer().line_len(row));
+                    let offset = self.active_buffer().line_to_offset(row) + column;
+                    self.active_mut()
+                        .replace_selection(Selection::single(Range::point(offset)));
+                }
+            }
+            FinderTarget::Resource(ResourceTarget::Terminal(id)) => {
                 if self.terminals.get(id).is_none() {
                     self.action_failed("that terminal is gone");
                 } else {
                     self.show_terminal(id);
                 }
             }
+            FinderTarget::Resource(ResourceTarget::TerminalLocation {
+                terminal,
+                row,
+                column: _,
+            }) => {
+                if self.terminals.get(terminal).is_none() {
+                    self.action_failed("that terminal is gone");
+                } else {
+                    self.show_terminal(terminal);
+                    let (_, rows) = self.pane_cells(self.active_pane);
+                    let scroll_offset = self.config.editor.scroll_offset;
+                    if let Some(session) = self.terminals.get_mut(terminal) {
+                        session.begin_review();
+                        session.goto_review_line(row + 1, false);
+                        session.focus_review_selection(rows.max(1), scroll_offset);
+                    }
+                    self.mode = Mode::Normal;
+                }
+            }
+        }
+    }
+
+    fn merge_finder_matches(&mut self) {
+        let Some(picker) = self.picker.as_ref() else {
+            return;
+        };
+        let query = picker.query.clone();
+        if let Some(finder) = self.finder.as_mut() {
+            finder.merge_files(picker, &query);
+        }
+    }
+
+    pub(super) fn refresh_finder_preview(&mut self) {
+        let selected_file = self
+            .finder
+            .as_ref()
+            .and_then(ResourceFinder::selected_match)
+            .and_then(|found| match found.source {
+                FinderMatchSource::File(entry) => Some(entry),
+                FinderMatchSource::Resource(_) => None,
+            });
+        if let Some(entry) = selected_file
+            && let Some(selected) = self
+                .picker
+                .as_ref()
+                .and_then(|picker| picker.matches.iter().position(|found| found.entry == entry))
+        {
+            self.picker.as_mut().unwrap().selected = selected;
+            self.refresh_file_picker_preview();
         }
     }
 
@@ -428,11 +624,10 @@ impl App {
             | FilePickerEvent::Finished { .. }
             | FilePickerEvent::Failed { .. } => return,
         }
-        if self
-            .finder
-            .as_ref()
-            .is_none_or(|finder| finder.mode == FinderMode::Files)
-        {
+        self.merge_finder_matches();
+        if self.finder.is_some() {
+            self.refresh_finder_preview();
+        } else {
             self.refresh_file_picker_preview();
         }
     }

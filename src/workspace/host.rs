@@ -528,7 +528,7 @@ impl WorkspaceHost {
     /// Whether an unattached persistent host may retire without losing work
     /// or abandoning a caller waiting for a buffer.
     pub fn may_retire_idle(&self) -> bool {
-        self.protected_state().is_empty()
+        self.protected_state().is_empty() && self.app.terminals.is_empty()
     }
 
     pub fn read_buffer(&self, id: BufferId) -> Result<BufferContents, BufferRequestError> {
@@ -2586,8 +2586,8 @@ mod tests {
         host.app_mut()
             .apply_terminal_output(crate::terminal::TerminalOutput::Exited { id, code: Some(0) });
         assert_eq!(host.protected_state().live_terminals, 0);
-        assert!(host.app().terminals.is_empty());
-        assert!(host.may_retire_idle());
+        assert!(host.app().terminals.get(id).is_some());
+        assert!(!host.may_retire_idle());
     }
 
     #[test]

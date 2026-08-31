@@ -1009,7 +1009,8 @@ fn built_in_bindings() -> Vec<Binding> {
         // spellings someone who searches all day wants, and `Space /` widens
         // the same two letters to the whole project.
         modal(Key::char('s'), Command::Search),
-        modal(Key::char('/'), Command::SearchRegex),
+        modal(Key::char('S'), Command::SearchRegex),
+        modal(Key::char('/'), Command::OpenFilePicker),
         modal(Key::char('n'), Command::SearchNext),
         modal(Key::char('N'), Command::SearchPrevious),
         modal(Key::char('*'), Command::SearchSelection),
@@ -1121,7 +1122,6 @@ fn built_in_bindings() -> Vec<Binding> {
             [Key::char(' '), Key::char('E')],
             Command::OpenWorkingDirectoryExplorer,
         ),
-        modal([Key::char(' '), Key::char('f')], Command::OpenFilePicker),
         primary_modal([Key::char(' '), Key::char(' ')], ColonCommand::SessionList),
         modal([Key::char(' '), Key::char('?')], Command::ShowHelp),
         // Buffers. `Space b b` repeats the namespace letter the way `Space m m`
@@ -1176,27 +1176,22 @@ fn built_in_bindings() -> Vec<Binding> {
         // Looking past this buffer lives under `Space /`. The sigil says search,
         // the prefix says the whole project rather than the file in front of
         // you, and the letter after it is the one the bare key already spells.
-        // `Space / /` repeats the namespace letter for the flavour reached for
-        // most, the way `Space b b` and `Space m m` do.
+        // `Space / /` repeats the namespace letter for the finder reached for
+        // most, the way `Space b b` and `Space m m` do. Bare `/` is its alias;
+        // the in-buffer regular-expression search moved to the free `S` key.
         primary_modal(
             [Key::char(' '), Key::char('/'), Key::char('/')],
-            Command::GlobalSearchRegex,
-        ),
+            Command::OpenFilePicker,
+        )
+        .with_alias(Key::char('/')),
         primary_modal(
             [Key::char(' '), Key::char('/'), Key::char('s')],
             Command::GlobalSearch,
         ),
         primary_modal(
-            [Key::char(' '), Key::char('/'), Key::char('g')],
-            Command::OpenFuzzyGrep,
+            [Key::char(' '), Key::char('/'), Key::char('S')],
+            Command::GlobalSearchRegex,
         ),
-        // The file picker is reached far too often to spell in three keys, so
-        // the namespace row names the short one rather than replacing it.
-        primary_modal(
-            [Key::char(' '), Key::char('/'), Key::char('f')],
-            Command::OpenFilePicker,
-        )
-        .with_alias([Key::char(' '), Key::char('f')]),
         primary_modal(
             [Key::char(' '), Key::char('s'), Key::char('e')],
             Command::SplitSelectionAtLineEnds,

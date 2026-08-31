@@ -458,11 +458,11 @@ mod tests {
             rows.iter()
                 .any(|row| row.target == Some(BindingTarget::Editor(EditorCommand::OpenExplorer)))
         );
-        assert!(
-            rows.iter()
-                .any(|row| row.target
-                    == Some(BindingTarget::Editor(EditorCommand::OpenFilePicker)))
-        );
+        assert!(rows.iter().any(|row| {
+            row.namespace
+                && row.sequence == KeySequence::from([Key::char(' '), Key::char('/')])
+                && row.description == "Search the whole project"
+        }));
     }
 
     #[test]
@@ -656,7 +656,7 @@ mod tests {
         let project = rows_under('/');
         assert_eq!(
             alias_of(&project, EditorCommand::OpenFilePicker),
-            Some(KeySequence::new([Key::char(' '), Key::char('f')]))
+            Some(KeySequence::from(Key::char('/')))
         );
         assert_eq!(alias_of(&project, EditorCommand::GlobalSearchRegex), None);
         assert_eq!(
@@ -686,7 +686,7 @@ mod tests {
         hints.observe(event(' '), Mode::Normal, default_keymap());
         assert!(hints.is_visible());
 
-        hints.observe(event('f'), Mode::Normal, default_keymap());
+        hints.observe(event('e'), Mode::Normal, default_keymap());
         assert!(!hints.is_visible());
         assert!(hints.time_until_expiry(Instant::now()).is_none());
     }

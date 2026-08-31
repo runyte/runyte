@@ -43,7 +43,10 @@ use crate::{
         CONTENT_ENTRY_LIMIT, FilePicker, FilePickerEvent, FilePickerKind, FilePreview, FileScanner,
         PickerTarget, line_hits, scan_content, scan_files,
     },
-    finder::{FinderMode, ResourceFinder, ResourceItem, ResourceKind, ResourceTarget},
+    finder::{
+        FinderMatchSource, FinderMode, FinderTarget, ResourceFinder, ResourceItem, ResourceKind,
+        ResourceTarget,
+    },
     fs_plan::{
         ApplyReport, DeletionMode, EntryKind, FsOperation, FsPlan, SystemTrash, TransferMode,
         TrashBackend,
@@ -2367,8 +2370,8 @@ pub struct App {
     prompt_origin_mode: Mode,
     prompt_revision: u64,
     pub picker: Option<FilePicker>,
-    /// The project-root picker's in-memory buffer/terminal mode. Directory
-    /// pickers and fuzzy grep leave this absent and retain their old keys.
+    /// The project finder's merged name/content coordinator. Directory-scoped
+    /// pickers leave this absent and remain files-only.
     pub finder: Option<ResourceFinder>,
     file_scanner: Option<FileScanner>,
     next_file_scan_id: u64,

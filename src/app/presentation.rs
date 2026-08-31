@@ -7,11 +7,11 @@
 use super::WorkspaceRow;
 use super::{
     App, BindingScope, Buffer, CompletionSource, ConfirmationOverlay, ContentAlignment,
-    ContentLayout, DiffProjection, DiffSession, FinderMode, FrameGeometry, GeneratedViewIdentity,
-    HelpTopic, ListPurpose, MaximizedView, Mode, Pane, Path, Position, PreparedPane, PreparedRow,
-    PreparedView, PromptKind, Rect, ResourceKind, ResourceTarget, Selection, SettingType, Side,
-    StashMutation, adjust_scroll, adjust_scroll_wrapped, diff_projection, fold_hiding_row,
-    move_projected_start_backward, project_aligned_rows, project_visible_rows,
+    ContentLayout, DiffProjection, DiffSession, FinderMatchSource, FrameGeometry,
+    GeneratedViewIdentity, HelpTopic, ListPurpose, MaximizedView, Mode, Pane, Path, Position,
+    PreparedPane, PreparedRow, PreparedView, PromptKind, Rect, ResourceKind, Selection,
+    SettingType, Side, StashMutation, adjust_scroll, adjust_scroll_wrapped, diff_projection,
+    fold_hiding_row, move_projected_start_backward, project_aligned_rows, project_visible_rows,
     selection_for_launch_position,
 };
 use crate::keymap::{ActionContext, ContextAction};
@@ -970,9 +970,7 @@ impl App {
             ));
         }
         if let Some(picker) = &self.picker {
-            if let Some(finder) = &self.finder
-                && finder.mode == FinderMode::Resources
-            {
+            if let Some(finder) = &self.finder {
                 let mut snapshot = bounded(
                     OverlayKind::FilePicker,
                     format!("Find · {}", finder.mode.title()),
@@ -980,15 +978,26 @@ impl App {
                     finder
                         .matches
                         .iter()
-                        .filter_map(|found| finder.items.get(found.item).map(|item| (found, item)))
-                        .map(|(found, item)| {
-                            let identity = match item.target {
-                                ResourceTarget::Buffer(buffer) => format!("buffer:{buffer}"),
-                                ResourceTarget::Terminal(id) => format!("terminal:{id}"),
-                            };
-                            let mut row = row(identity, item.label.clone(), item.detail.clone());
-                            row.emphasis = found.emphasis.clone();
-                            row
+                        .filter_map(|found| match found.source {
+                            FinderMatchSource::File(entry) => {
+                                let entry = picker.view(entry)?;
+                                let identity = format!(
+                                    "{}:{}",
+                                    entry.path.display(),
+                                    entry.row.map_or(0, |row| row + 1)
+                                );
+                                let mut row = row(identity, entry.label(), "");
+                                row.emphasis = entry.match_positions_in_label(&found.emphasis);
+                                Some(row)
+                            }
+                            FinderMatchSource::Resource(item) => {
+                                let item = finder.items.get(item)?;
+                                let identity = format!("resource:{:?}", item.target);
+                                let mut row =
+                                    row(identity, item.label.clone(), item.detail.clone());
+                                row.emphasis = found.emphasis.clone();
+                                Some(row)
+                            }
                         })
                         .collect(),
                     (!finder.matches.is_empty()).then_some(finder.selected),
@@ -998,21 +1007,53 @@ impl App {
                 snapshot.layout = OverlayLayout::Preview;
                 snapshot.actions = vec![
                     OverlayAction::new("Enter", "open"),
-                    OverlayAction::new("Tab", "files"),
+                    OverlayAction::new(
+                        "Tab",
+                        if finder.mode == crate::finder::FinderMode::Names {
+                            "contents"
+                        } else {
+                            "names"
+                        },
+                    ),
                     OverlayAction::new("Ctrl-t", "toggle preview"),
                     OverlayAction::new("Esc", "cancel"),
                 ];
                 snapshot.show_preview = picker.show_preview;
-                snapshot.preview_title = finder.selected_item().map(|item| match item.kind {
-                    ResourceKind::Buffer => "Contents".to_owned(),
-                    ResourceKind::Terminal => "Output".to_owned(),
-                });
-                snapshot.preview = Some(finder.selected_preview().map_or(
-                    OverlayPreview::Empty,
-                    |preview| {
-                        OverlayPreview::Text(preview.split('\n').map(str::to_owned).collect())
-                    },
-                ));
+                if let Some(item) = finder.selected_item() {
+                    snapshot.preview_title = Some(match item.kind {
+                        ResourceKind::Buffer => "Contents".to_owned(),
+                        ResourceKind::Terminal => "Output".to_owned(),
+                    });
+                    snapshot.preview = Some(finder.selected_preview().map_or(
+                        OverlayPreview::Empty,
+                        |preview| {
+                            OverlayPreview::Text(preview.split('\n').map(str::to_owned).collect())
+                        },
+                    ));
+                } else {
+                    snapshot.preview_title = Some("Preview".to_owned());
+                    snapshot.preview = Some(match picker.preview.as_ref() {
+                        Some(crate::file_picker::FilePreview::Text(lines)) => {
+                            OverlayPreview::Text(lines.clone())
+                        }
+                        Some(crate::file_picker::FilePreview::Snippet(snippet)) => {
+                            OverlayPreview::Snippet {
+                                lines: snippet.lines.clone(),
+                                start_row: snippet.start_row,
+                                focus_row: snippet.focus_row,
+                                emphasis: snippet.emphasis.clone(),
+                            }
+                        }
+                        Some(crate::file_picker::FilePreview::Binary) => OverlayPreview::Binary,
+                        Some(crate::file_picker::FilePreview::Directory(lines)) => {
+                            OverlayPreview::Text(lines.clone())
+                        }
+                        Some(crate::file_picker::FilePreview::Unreadable(error)) => {
+                            OverlayPreview::Unavailable(error.clone())
+                        }
+                        None => OverlayPreview::Empty,
+                    });
+                }
                 overlays.push(snapshot);
             } else {
                 let mut snapshot = bounded(

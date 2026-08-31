@@ -2185,9 +2185,7 @@ fn draw_picker(frame: &mut Frame<'_>, app: &TuiApp<'_>, editor_area: Rect) {
     let Some(picker) = &app.picker else {
         return;
     };
-    if let Some(finder) = &app.finder
-        && finder.mode == crate::finder::FinderMode::Resources
-    {
+    if let Some(finder) = &app.finder {
         draw_resource_finder(frame, app, editor_area, picker, finder);
         return;
     }
@@ -2396,10 +2394,15 @@ fn draw_resource_finder(
         .borders(Borders::ALL)
         .border_style(Style::default().fg(app.theme.accent))
         .title(format!(
-            " Find · {} · {}/{} · Tab files · Ctrl-t preview ",
+            " Find · {} · {}/{} · Tab {} · Ctrl-t preview ",
             finder.mode.title(),
             finder.matches.len(),
-            finder.items.len()
+            picker.entries.len() + finder.items.len(),
+            if finder.mode == crate::finder::FinderMode::Names {
+                "contents"
+            } else {
+                "names"
+            }
         ))
         .style(Style::default().bg(app.theme.overlay_background));
     let inner = block.inner(area);
@@ -2411,7 +2414,11 @@ fn draw_resource_finder(
         .split(inner);
     let query = if picker.query.is_empty() {
         Line::from(Span::styled(
-            "> type to find buffers and terminals",
+            if finder.mode == crate::finder::FinderMode::Names {
+                "> type to find anything by name"
+            } else {
+                "> type to find anything by content"
+            },
             Style::default().fg(app.theme.muted),
         ))
     } else {
@@ -2456,7 +2463,7 @@ fn draw_resource_finder(
         .saturating_sub(visible_rows);
     let items = if finder.matches.is_empty() {
         vec![
-            ListItem::new("No matching buffers or terminals")
+            ListItem::new("No matching files, buffers, or terminals")
                 .style(Style::default().fg(app.theme.muted)),
         ]
     } else {
@@ -2465,22 +2472,34 @@ fn draw_resource_finder(
             .iter()
             .skip(window_start)
             .take(visible_rows)
-            .filter_map(|found| finder.items.get(found.item).map(|item| (found, item)))
-            .map(|(found, item)| {
-                let mut line = matched_path_line(
-                    &item.label,
-                    &found.emphasis,
-                    columns[0].width.saturating_sub(3) as usize,
-                    app.theme.foreground,
-                    app.theme.accent,
-                );
-                if !item.detail.is_empty() {
-                    line.spans.push(Span::styled(
-                        format!("  {}", item.detail),
-                        Style::default().fg(app.theme.muted),
-                    ));
+            .filter_map(|found| match found.source {
+                crate::finder::FinderMatchSource::File(entry) => {
+                    let entry = picker.view(entry)?;
+                    Some(ListItem::new(matched_path_line(
+                        &entry.label(),
+                        &entry.match_positions_in_label(&found.emphasis),
+                        columns[0].width.saturating_sub(3) as usize,
+                        app.theme.foreground,
+                        app.theme.accent,
+                    )))
                 }
-                ListItem::new(line)
+                crate::finder::FinderMatchSource::Resource(item) => {
+                    let item = finder.items.get(item)?;
+                    let mut line = matched_path_line(
+                        &item.label,
+                        &found.emphasis,
+                        columns[0].width.saturating_sub(3) as usize,
+                        app.theme.foreground,
+                        app.theme.accent,
+                    );
+                    if !item.detail.is_empty() {
+                        line.spans.push(Span::styled(
+                            format!("  {}", item.detail),
+                            Style::default().fg(app.theme.muted),
+                        ));
+                    }
+                    Some(ListItem::new(line))
+                }
             })
             .collect()
     };
@@ -2493,21 +2512,45 @@ fn draw_resource_finder(
     StatefulWidget::render(list, columns[0], frame.buffer_mut(), &mut state);
 
     if show_preview {
-        let preview = finder.selected_preview().map_or_else(
-            || vec![Line::from("No preview")],
-            |preview| {
-                preview
-                    .split('\n')
-                    .map(|line| Line::from(line.to_owned()))
-                    .collect()
-            },
-        );
-        let title = finder
-            .selected_item()
-            .map_or("Preview", |item| match item.kind {
+        let (title, preview) = if let Some(item) = finder.selected_item() {
+            let title = match item.kind {
                 crate::finder::ResourceKind::Buffer => "Contents",
                 crate::finder::ResourceKind::Terminal => "Output",
-            });
+            };
+            let preview = finder.selected_preview().map_or_else(
+                || vec![Line::from("No preview")],
+                |preview| {
+                    preview
+                        .split('\n')
+                        .map(|line| Line::from(line.to_owned()))
+                        .collect()
+                },
+            );
+            (title, preview)
+        } else {
+            let preview = match picker.preview.as_ref() {
+                Some(crate::file_picker::FilePreview::Text(lines)) => {
+                    lines.iter().cloned().map(Line::from).collect()
+                }
+                Some(crate::file_picker::FilePreview::Snippet(snippet)) => fuzzy_preview_lines(
+                    &picker.query,
+                    &snippet.lines,
+                    snippet.start_row,
+                    snippet.focus_row,
+                    &snippet.emphasis,
+                    &app.theme,
+                ),
+                Some(crate::file_picker::FilePreview::Binary) => vec![Line::from("<Binary file>")],
+                Some(crate::file_picker::FilePreview::Directory(lines)) => {
+                    lines.iter().cloned().map(Line::from).collect()
+                }
+                Some(crate::file_picker::FilePreview::Unreadable(error)) => {
+                    vec![Line::from(format!("<Preview unavailable: {error}>"))]
+                }
+                None => vec![Line::from("No preview")],
+            };
+            ("Preview", preview)
+        };
         frame.render_widget(
             Paragraph::new(preview)
                 .block(
@@ -6980,7 +7023,7 @@ mod tests {
         let mut terminal = Terminal::new(backend).unwrap();
         let mut app = App::new(Config::default(), None).unwrap();
         app.handle_key(crate::input::KeyStroke::new(
-            crate::input::KeyCode::Char('/'),
+            crate::input::KeyCode::Char('S'),
             crate::input::Modifiers::NONE,
         ))
         .unwrap();
@@ -7469,8 +7512,7 @@ mod tests {
             1,
             std::path::PathBuf::from("/project"),
         ));
-        let mut finder = crate::finder::ResourceFinder::default();
-        finder.mode = crate::finder::FinderMode::Resources;
+        let mut finder = crate::finder::ResourceFinder::new(crate::finder::FinderMode::Names);
         finder.replace_items(
             vec![
                 crate::finder::ResourceItem::new(
@@ -7482,6 +7524,7 @@ mod tests {
                 )
                 .with_preview("authoritative buffer preview"),
             ],
+            app.picker.as_ref().unwrap(),
             "",
         );
         app.finder = Some(finder);
