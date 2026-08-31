@@ -1377,12 +1377,12 @@ chosen in Normal or Select mode.
 ### Search
 
 Search has two flavours and one behaviour. `s` matches text ignoring case, and
-`/` interprets the pattern as a regular expression. The literal flavour escapes
+`S` interprets the pattern as a regular expression. The literal flavour escapes
 the pattern, so `foo(` and `a.b` find themselves rather than being read as
-syntax; there are no wildcards. Reach for `/` when you want them — including
+syntax; there are no wildcards. Reach for `S` when you want them — including
 when a search has to match case, which `(?-i)` asks for.
 
-Runyte passes `/` queries directly to Rust's `regex` engine. The opening `/` is
+Runyte passes `S` queries directly to Rust's `regex` engine. The opening `S` is
 the key that opens the prompt, not a delimiter around a JavaScript-style
 `/pattern/flags` expression: use `(?i)hello`, not `/hello/i`, for a
 case-insensitive regex. Inline flags include `i` (case-insensitive), `m`
@@ -1397,7 +1397,7 @@ the complete match. Use `:help regex` for examples and a compact syntax table.
 
 Buffer regex search runs over the complete buffer text, so `(?s)foo.*bar` or
 an explicit `\n` can span lines. Workspace regex search remains line-scoped
-because each result names one source row, so `Space / /` cannot return a
+because each result names one source row, so `Space / S` cannot return a
 multiline match.
 
 Every flavour selects *all* of its matches at once, so the edit that follows
@@ -1418,31 +1418,28 @@ two characters are selected — from `v` and a motion, from `x`, from `%`, or fr
 a previous search — the search looks only inside that text, and `n` and `N` wrap
 within it rather than escaping into the rest of the file. Successive searches
 therefore narrow: select a few lines with `x`, find the calls in them with `s`,
-then pick out one argument with `/`. Press `;` to collapse back to a caret when
+then pick out one argument with `S`. Press `;` to collapse back to a caret when
 you want the whole buffer again.
 
-Searching this buffer is two bare keys and no namespace, because two keys are
-already the short spelling. `Space /` widens exactly those letters to the whole
-project: the sigil says search, the prefix says the project rather than the file
-in front of you, and the letter after it is the one the bare key already uses.
-`Space / /` repeats the namespace letter for the flavour reached for most, the
-way `Space b b` and `Space m m` do. Neither flavour has a case-sensitive
-counterpart; write `(?-i)` in a regular expression when a search has to match
-case.
+Searching this buffer uses the two bare letters `s` and `S`. `Space /` widens
+them to the whole project as `Space / s` and `Space / S`. Bare `/` instead
+opens the project finder, whose canonical namespace spelling is `Space / /`;
+neither in-buffer flavour takes another namespace row. Neither flavour has a
+case-sensitive counterpart; write `(?-i)` in a regular expression when a
+search has to match case.
 
 `Space s` is selections only, and holds nothing that looks past them.
 
 | Key | Action |
 | --- | --- |
 | `s` | Search the buffer, ignoring case |
-| `/` | Search the buffer with a regular expression |
+| `S` | Search the buffer with a regular expression |
 | `n` / `N` | Select only the next / previous match |
 | `*` | Select every occurrence of the word or selection under the caret |
 | `f` | Find the next typed character in the buffer |
 | `Space / s` | Search the workspace, ignoring case |
-| `Space / /` | Search the workspace with a regular expression |
-| `Space / g` | Fuzzy-search file contents below the project root |
-| `Space / f` / `Space f` | Find project files, open buffers, or terminals; `Tab` switches modes and `Ctrl-t` toggles preview |
+| `Space / S` | Search the workspace with a regular expression |
+| `Space / /` or `/` | Find files, buffers, and terminals by name or content; `Tab` switches modes and `Ctrl-t` toggles preview |
 | `Space s c` | Keep only the primary selection in any multi-selection |
 | `Space s e` / `Space s b` | Put a cursor at the end / start of every selected line |
 | `Space s a` or `&` | Pad with spaces until every cursor shares the rightmost display column |
@@ -1454,11 +1451,11 @@ The directory-scoped pickers have no key. `:file-picker-directory` and
 The two fixed workspace searches replace and open one read-only
 `[workspace search]` buffer. Its `path:line:column` rows are a query-time
 snapshot with typed destinations: Enter opens the result under the cursor,
-and normal movement, selection, copying, `/`, `s`, splits, help, buffer
+and normal movement, selection, copying, `S`, `s`, splits, help, buffer
 switching, and jump history keep their ordinary meanings. Visit as many
 results as needed without rerunning the query; rerun a workspace search to
 refresh and replace the singleton result view. This is deliberately different
-from `Space / g`, whose fuzzy query remains live and therefore stays a
+from the finder's content mode, whose fuzzy query remains live and therefore stays a
 choose-one picker.
 
 ### Layout and whitespace display
@@ -1610,15 +1607,14 @@ cancellation keys.
 | `Space e` | Open the active buffer's directory as an editable explorer; from a file, select that file |
 | `Space E` | Open the working directory (controlled by `:cd`) as an editable explorer |
 | `Space Space` | Open the persistent-session manager (`:session-list`, `:sl`); another `Space` closes it, `1`-`9` attach to a numbered session while the filter is empty, and `Tab` shows the selected row's actions |
-| `Space / f` / `Space f` | Find project files, open buffers, or terminals; `Tab` switches modes and `Ctrl-t` toggles preview |
-| `Space / g` | Fuzzy-search contents below the stable project root |
+| `Space / /` or `/` | Find files, buffers, and terminals by name or content; `Tab` switches modes and `Ctrl-t` toggles preview |
 | `:file-picker-directory` | Fuzzy-find a file or directory below the active file/explorer directory |
 | `:fuzzy-grep-directory` | Fuzzy-search contents below the active file/explorer directory |
 | `Space b b` | Open the filterable buffer picker; `Ctrl-t` toggles preview and `Tab` shows valid actions |
 | `Space b c` | Close the active buffer safely (`:close`, `:c`) without changing the pane layout |
 | `Space b d` | Compare a fresh immutable disk revision with the active file buffer (`:diff-disk`) |
 | `Space b n` | Open a new scratch buffer in the current pane (`:buffer-new`, `:new`) |
-| `Space / /` | Search the workspace with a regular expression; see [Search](#search) |
+| `Space / S` | Search the workspace with a regular expression; see [Search](#search) |
 | `Space r` | Reload the active text file or refresh the active explorer or supported Git list |
 | `Enter` in a directory | Open the selected file or directory |
 | `-` or Backspace in a directory | Open the parent directory and select the child just left |
@@ -1769,22 +1765,28 @@ Preparing a plan records the complete trees of directories it will move, copy,
 or delete. A change anywhere below one of those directories before confirmation
 is applied rejects the whole plan before any operation begins.
 
-The project finder opens in file mode. `Tab` switches between project files
-and a combined view of open buffers plus terminals without clearing the query.
-Both modes preview the selected item, with authoritative in-memory text for
-buffers and bounded recent output for terminals; `Ctrl-t` toggles the preview
-without changing the mode or query. The existing
+The project finder opens in name mode. Files below the project root, open
+buffers, and terminal sessions share one ranked list. `Tab` switches to content
+mode without clearing the query; file lines, authoritative in-memory buffer
+lines including pathless buffers, and decoded terminal scrollback plus the
+current screen share that list. Both modes preview the selected item, with
+authoritative in-memory text for buffers and bounded retained output for
+terminals; `Ctrl-t` toggles the preview without changing the mode or query. A
+content result reveals its line, including by entering terminal review at the
+matched retained row. The existing
 `Space b b` and `Space t t` managers remain available for Save, Discard,
 Close, Rename, and other contextual actions; the combined finder is an
 Enter-to-open surface.
 
-The buffer-and-terminal mode matches each space-separated query term against
-any indexed field. Buffers contribute their structural type and their file or
-directory path. Terminals contribute their assigned name, child title, launch
-program, stable ID, current reported directory, and initial directory. Paths
-are searchable as absolute, project-relative, `~/`-relative, or basename-only
-spellings. `terminal`, `term`, and `buffer` are soft type hints: they move that
-kind first without hiding other candidates that match the remaining terms.
+Name mode matches each space-separated query term against any indexed field.
+Files contribute their path spellings, buffers their structural name and path,
+and terminals their assigned name, child title, launch program, stable ID,
+current reported directory, and initial directory. Paths are searchable as
+absolute, project-relative, `~/`-relative, or basename-only spellings. `file`,
+`terminal`, `term`, and `buffer` are soft type hints: they move that kind first
+without hiding other candidates that match the remaining terms. A file-backed
+open buffer appears once, under its live buffer identity, so unsaved text and
+structural naming win over stale disk state.
 
 The native fuzzy file picker recursively discovers regular files and
 directories without invoking `git`, `find`, `fd`, or an external fuzzy finder.
@@ -1802,11 +1804,13 @@ toggles that preview. Enter opens a file for editing and a directory in the
 editable explorer.
 
 Use Up/Down, `Ctrl-p`/`Ctrl-n`, paging, and Home/End to move. In the project
-finder `Tab` switches modes; `Shift-Tab` selects the previous row, as it does
+finder `Tab` switches name/content modes; `Shift-Tab` selects the previous row, as it does
 in directory-scoped and fuzzy-content pickers. In those other pickers, `Tab`
 retains its previous next-row navigation.
-Enter opens, `Ctrl-s` opens horizontally, `Ctrl-v` opens vertically, and
-Escape or `Ctrl-c` closes. A bare `Space` also closes a newly opened overlay;
+Enter opens any selected result. For a selected file result, `Ctrl-s` opens it
+horizontally and `Ctrl-v` opens it vertically; those split actions do not apply
+to buffer or terminal results. Escape or `Ctrl-c` closes. A bare `Space` also
+closes a newly opened overlay;
 after a project or content finder query has begun, it retains its term-separator
 role. Backspace/Delete and the ordinary prompt control keys edit the query.
 Printable letters such as `q`, `j`, and `k` are query text rather than
@@ -1822,18 +1826,20 @@ letters in order. Because the terms are wanted in order, `picker src` does not
 find `src/picker.rs`. Smart case reads the whole query: one capital anywhere
 makes every term case-sensitive. Both pickers and fuzzy grep share this rule.
 
-The fuzzy grep picker uses the same interaction to search file contents rather
-than paths. `Space / g` scans from the project root and `:fuzzy-grep-directory`
-scans from the active file's or explorer's directory. It streams non-empty UTF-8 lines
-from ignore-aware files, ranks the typed query against the line text, and
-displays `path:line` in the result list while the selected file's content
-remains in the preview. The preview starts with nearby context, marks the
+The project finder's content mode uses the same interaction to search contents
+rather than names. `:fuzzy-grep` opens that mode directly;
+`:fuzzy-grep-directory` remains a files-only search rooted at the active file's
+or explorer's directory. File scanning streams non-empty UTF-8 lines from
+ignore-aware files, ranks the typed query against the line text, and displays
+`path:line` in the result list while the selected source remains in the
+preview. The preview starts with nearby context, marks the
 matching line with its real line number, and fills a direct match with the
 primary match colour — one that landed whole, meaning a single word on a
 contiguous span or every term of a several-word query on a span of its own. A
 match with a gap inside a term fills its individually matched characters with
 the secondary match colour.
-Unsaved open buffers replace their stale disk contents, and Enter opens the
+Unsaved open buffers replace their stale disk contents; pathless buffers and
+terminal output join the project content corpus directly. Enter opens the
 selected location. Files larger than 4 MiB are skipped.
 
 The search runs in the scan rather than after it: editing the query restarts
@@ -2489,9 +2495,9 @@ are enabled.
 :diff-this              mark this buffer, or compare it with the one marked before it (aliases: difft, dt)
 :diff-off               close the comparison this buffer is part of (alias: do)
 :explorer [path]        open an editable directory explorer (alias: files)
-:file-picker            fuzzy-find a file below the project root
+:file-picker            find files, buffers, and terminals by name or content
 :file-picker-directory  fuzzy-find below the active file/explorer directory
-:fuzzy-grep             fuzzy-search contents below the project root
+:fuzzy-grep             open the project finder in content mode
 :fuzzy-grep-directory   fuzzy-search contents below the active file/explorer directory
 :format                 format the active buffer (alias: fmt)
 :git-blame              show live-buffer attribution for the primary line
@@ -2576,9 +2582,9 @@ directory. When an explorer is active, `:cd` also retargets that explorer.
 From a normal file buffer it leaves the file open. `Space e` opens the active
 buffer's directory and selects that file, so Enter returns to its buffer;
 `Space E` opens the working directory. A pathless buffer falls back to the
-working directory. `Space / f` (`Space f`) always
-opens the stable-project finder, while `Space / g` searches that root's
-contents. `:file-picker-directory` and
+working directory. `Space / /` (or `/`) always opens the stable-project finder
+in name mode, while `:fuzzy-grep` opens its content mode.
+`:file-picker-directory` and
 `:fuzzy-grep-directory` search the active file's parent, the active explorer's
 current root, or the working directory for a pathless/generated buffer.
 

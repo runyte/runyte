@@ -115,10 +115,11 @@ fn equalizing_is_reached_from_the_window_namespace_alone() {
 }
 
 #[test]
-fn file_and_content_pickers_are_global_in_every_buffer_scope() {
+fn finder_and_workspace_search_are_global_in_every_buffer_scope() {
     let cases = [
-        (" /f", EditorCommand::OpenFilePicker),
-        (" /g", EditorCommand::OpenFuzzyGrep),
+        (" //", EditorCommand::OpenFilePicker),
+        (" /s", EditorCommand::GlobalSearch),
+        (" /S", EditorCommand::GlobalSearchRegex),
     ];
     for scope in [
         BindingScope::Global,
@@ -140,7 +141,7 @@ fn file_and_content_pickers_are_global_in_every_buffer_scope() {
     }
 
     {
-        let (canonical, alias, command) = (" /f", " f", EditorCommand::OpenFilePicker);
+        let (canonical, alias, command) = (" //", "/", EditorCommand::OpenFilePicker);
         let Lookup::Exact(binding) = default_keymap().lookup(Mode::Normal, &sequence(canonical))
         else {
             panic!("missing canonical picker binding {canonical:?}");
@@ -444,10 +445,9 @@ fn nested_space_tree_is_exact_primary_and_keeps_fast_compatibility_paths() {
         (" lgy", Editor(EditorCommand::GotoTypeDefinition)),
         (" lgr", Editor(EditorCommand::GotoReferences)),
         (" lgi", Editor(EditorCommand::GotoImplementation)),
-        (" /f", Editor(EditorCommand::OpenFilePicker)),
-        (" /g", Editor(EditorCommand::OpenFuzzyGrep)),
-        (" //", Editor(EditorCommand::GlobalSearchRegex)),
+        (" //", Editor(EditorCommand::OpenFilePicker)),
         (" /s", Editor(EditorCommand::GlobalSearch)),
+        (" /S", Editor(EditorCommand::GlobalSearchRegex)),
         (" p.", Editor(EditorCommand::ToggleWhitespace)),
         (" g/", Colon(ColonCommand::GitSearchCommits)),
         (" gw", Colon(ColonCommand::GitWorktrees)),
@@ -502,7 +502,7 @@ fn nested_space_tree_is_exact_primary_and_keeps_fast_compatibility_paths() {
 
     // `Space b` became the Buffers namespace, so the picker it used to reach
     // directly now lives at `Space b b` as a Primary binding.
-    for keys in [" e", " E", " f"] {
+    for keys in [" e", " E"] {
         assert!(
             matches!(
                 default_keymap().lookup(Mode::Normal, &sequence(keys)),
@@ -519,7 +519,7 @@ fn nested_space_tree_is_exact_primary_and_keeps_fast_compatibility_paths() {
         .collect::<HashSet<_>>();
     assert_eq!(
         fast,
-        ["Space e", "Space E", "Space f"]
+        ["Space e", "Space E"]
             .into_iter()
             .map(str::to_owned)
             .collect()
@@ -553,7 +553,7 @@ fn nested_space_tree_is_exact_primary_and_keeps_fast_compatibility_paths() {
 }
 
 #[test]
-fn find_next_character_keeps_only_its_direct_binding() {
+fn character_find_and_project_find_keep_distinct_direct_bindings() {
     let direct = sequence("f");
     for mode in [Mode::Normal, Mode::Select] {
         assert!(matches!(
@@ -563,6 +563,10 @@ fn find_next_character_keeps_only_its_direct_binding() {
         ));
         assert!(matches!(
             default_keymap().lookup(mode, &sequence(" /f")),
+            Lookup::NoMatch
+        ));
+        assert!(matches!(
+            default_keymap().lookup(mode, &sequence("/")),
             Lookup::Exact(binding)
                 if binding.target == BindingTarget::Editor(EditorCommand::OpenFilePicker)
         ));

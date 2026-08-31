@@ -309,8 +309,9 @@ impl App {
         let mut actions = Vec::new();
         for session in self.terminals.iter() {
             let mut detail = format!(
-                "#{} · running · {}",
+                "#{} · {} · {}",
                 session.id(),
+                if session.live() { "running" } else { "exited" },
                 session.directory().display()
             );
             if session.user_name().is_some()
@@ -480,13 +481,13 @@ impl App {
         {
             session.mark_viewed();
         }
+        self.note_terminal_finder_change(id);
     }
 
-    /// Retires a child that ended on its own.
+    /// Retains a child's last decoded screen after it ends.
     ///
-    /// Terminal sessions are live processes, not post-mortem buffers. Ending
-    /// one reveals each displaying pane's backing buffer and never changes
-    /// the pane layout.
+    /// An exited terminal remains a terminal session until explicitly closed:
+    /// its last screen and scrollback are still reviewable and searchable.
     fn finish_terminal(&mut self, id: TerminalId) {
         let Some(session) = self.terminals.get(id) else {
             return;
@@ -514,44 +515,21 @@ impl App {
             .list
             .as_ref()
             .is_some_and(|list| list.title == "Terminals");
-        let terminal_panes = self
-            .panes
-            .iter()
-            .filter_map(|(pane_id, pane)| (pane.terminal == Some(id)).then_some(*pane_id))
-            .collect::<Vec<_>>();
-
-        self.terminals.close(id);
-        if self.last_terminal == Some(id) {
-            self.last_terminal = None;
-        }
-        if self
-            .terminal_action_menu
-            .as_ref()
-            .is_some_and(|menu| menu.id == id)
-        {
-            self.terminal_action_menu = None;
-        }
-        for pane_id in terminal_panes {
-            if let Some(pane) = self.panes.get_mut(&pane_id) {
+        for pane in self.panes.values_mut() {
+            if pane.terminal == Some(id) {
                 pane.terminal = None;
             }
         }
-
         if was_active {
             if self.mode == Mode::Command {
                 self.close_prompt();
-            } else {
-                self.mode = Mode::Normal;
             }
+            self.mode = Mode::Normal;
         }
         if manager_open {
-            if self.terminals.is_empty() {
-                self.list = None;
-                self.list_actions.clear();
-            } else {
-                self.open_terminal_list();
-            }
+            self.open_terminal_list();
         }
+        self.note_terminal_finder_change(id);
         self.status(message);
     }
 

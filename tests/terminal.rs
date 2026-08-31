@@ -1313,29 +1313,35 @@ fn the_pane_is_named_by_the_title_the_child_sets() {
 fn exiting_the_last_terminal_reveals_its_buffer_without_quitting_runyte() {
     let mut session = Session::start("/bin/sh");
     let underlying = session.app.active().buffer;
+    let terminal = session.app.active_terminal().unwrap();
     session.type_text("exit");
     session.press(KeyCode::Enter);
 
-    assert!(session.settle(|app| app.terminals.is_empty()));
+    assert!(session.settle(|app| {
+        app.terminals
+            .get(terminal)
+            .is_some_and(|terminal| terminal.exit_code().is_some())
+    }));
+    assert_eq!(session.app.terminals.len(), 1);
     assert_eq!(session.app.panes.len(), 1);
     assert_eq!(session.app.active_terminal(), None);
     assert_eq!(session.app.active().buffer, underlying);
     assert!(!session.app.should_quit);
 
     session.type_text(" tt");
-    assert!(session.app.status.contains("no terminals"));
     assert!(
         session
             .app
             .overlay_snapshots()
             .iter()
-            .all(|overlay| overlay.kind != OverlayKind::ResultList)
+            .any(|overlay| overlay.kind == OverlayKind::ResultList)
     );
 }
 
 #[test]
 fn exiting_a_terminal_preserves_its_pane_when_another_pane_exists() {
     let mut session = Session::start("/bin/sh");
+    let terminal = session.app.active_terminal().unwrap();
     session.app.handle_key(KeyStroke::ctrl('w')).unwrap();
     session.type_text("v");
     assert_eq!(session.app.panes.len(), 2);
@@ -1349,7 +1355,12 @@ fn exiting_a_terminal_preserves_its_pane_when_another_pane_exists() {
     session.type_text("exit");
     session.press(KeyCode::Enter);
 
-    assert!(session.settle(|app| app.terminals.is_empty()));
+    assert!(session.settle(|app| {
+        app.terminals
+            .get(terminal)
+            .is_some_and(|terminal| terminal.exit_code().is_some())
+    }));
+    assert_eq!(session.app.terminals.len(), 1);
     assert_eq!(session.app.panes.len(), 2);
     assert_eq!(session.app.active_terminal(), None);
     assert!(!session.app.should_quit);
@@ -1581,7 +1592,7 @@ fn terminal_review_repeats_regex_matches_with_n_uppercase_n_and_parentheses() {
     let mut session = Session::start(r#"/bin/sh -c 'printf "one two one"; cat'"#);
     assert!(session.settle(|app| terminal_text(app).contains("one two one")));
     session.leave_input();
-    session.press(KeyCode::Char('/'));
+    session.press(KeyCode::Char('S'));
     session.type_text("one|two");
     session.press(KeyCode::Enter);
     let id = session.app.active_terminal().unwrap();

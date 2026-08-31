@@ -1960,7 +1960,10 @@ impl App {
         let Some(session) = self.terminals.get_mut(id) else {
             return;
         };
-        if session.reviewing() {
+        if !session.live() {
+            session.begin_review();
+            self.mode = Mode::Normal;
+        } else if session.reviewing() {
             self.mode = Mode::Normal;
         } else {
             session.scroll_to_live();

@@ -640,13 +640,16 @@ editor_commands! {
     ),
     OpenFilePicker => (
         "open-file-picker",
-        "Find project files, open buffers, and terminals"
+        "Find files, buffers, and terminals by name or content"
     ),
     OpenDirectoryFilePicker => (
         "open-directory-file-picker",
         "Fuzzy-find a file or directory below the active directory"
     ),
-    OpenFuzzyGrep => ("open-fuzzy-grep", "Fuzzy-search project file contents"),
+    OpenFuzzyGrep => (
+        "open-fuzzy-grep",
+        "Find file, buffer, and terminal contents"
+    ),
     OpenDirectoryFuzzyGrep => (
         "open-directory-fuzzy-grep",
         "Fuzzy-search file contents below the active directory"

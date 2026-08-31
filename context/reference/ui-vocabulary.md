@@ -75,7 +75,15 @@ them, regardless of which extensibility direction is chosen.
 - **Picker overlay** — a transient choose-one overlay. Printable input filters
   candidates, Enter accepts the selected candidate, and Escape, `Ctrl-c`, or
   an initial bare Space cancels the request. Once a project/content finder
-  query contains text, Space remains its term separator.
+  query contains text, Space remains its term separator. The **project
+  finder** is one picker with two Tab-switched modes over the same three source
+  kinds. **Name mode** merges files, open buffers, and terminal sessions by
+  resource identity. **Content mode** merges file lines, authoritative
+  in-memory buffer lines including pathless buffers, and decoded retained
+  terminal rows. Matching characters are emphasized in the content detail
+  column, including on the selected row and in attached-client snapshots. The
+  query and `Ctrl-t` preview preference survive the switch; modes are not
+  separate overlays or separate stops in a picker cycle.
 - **Context overlay** — temporary information or assistance tied to the source
   under the caret, such as hover documentation, completion, or a signature.
   It leaves the source pane active and declares its own bounds and dismissal

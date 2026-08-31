@@ -530,7 +530,7 @@ impl WorkspaceHost {
     /// Whether an unattached persistent host may retire without losing work
     /// or abandoning a caller waiting for a buffer.
     pub fn may_retire_idle(&self) -> bool {
-        self.protected_state().is_empty()
+        self.protected_state().is_empty() && self.app.terminals.is_empty()
     }
 
     pub fn read_buffer(&self, id: BufferId) -> Result<BufferContents, BufferRequestError> {
@@ -930,6 +930,7 @@ impl WorkspaceHost {
                         dimmed: false,
                         muted: Vec::new(),
                         emphasis: Vec::new(),
+                        detail_emphasis: Vec::new(),
                     }
                 })
                 .collect::<Vec<_>>();
@@ -2596,7 +2597,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn live_terminals_are_protected_host_state_and_exited_sessions_are_retired() {
+    fn live_terminals_are_reported_and_exited_sessions_still_prevent_idle_retirement() {
         use crate::terminal::TerminalRequest;
         use std::ffi::OsString;
 
@@ -2622,8 +2623,8 @@ mod tests {
         host.app_mut()
             .apply_terminal_output(crate::terminal::TerminalOutput::Exited { id, code: Some(0) });
         assert_eq!(host.protected_state().live_terminals, 0);
-        assert!(host.app().terminals.is_empty());
-        assert!(host.may_retire_idle());
+        assert!(host.app().terminals.get(id).is_some());
+        assert!(!host.may_retire_idle());
     }
 
     #[test]

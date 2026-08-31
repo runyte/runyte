@@ -26,11 +26,11 @@ being unbound.
 A single letter in an **editable** buffer must be a Vim or Helix binding, or
 carry a row below justifying itself as `Added`. Everything else takes a
 namespace path, optionally advertising a short alias on its namespace row the
-way `Space / f` advertises `Space f`.
+way `Space / /` advertises `/`.
 
 Audited 2026-08-26, the editable-buffer surface holds to this: every active
 single letter is standard in one or both editors, except the deviations `0`,
-`$`, `X`, and `s` — which take standard letters and change their meaning
+`$`, `X`, `s`, and `S` — which take standard letters and change their meaning
 rather than claiming new ones — and the genuine addition `V`. `Y`, `H`, `M`,
 `L`, and `R` are not Helix bindings but are Vim's, each with Vim's meaning.
 
@@ -53,7 +53,7 @@ is open. Help's scoped `q` is also globally unbound.
 | `l`, `Right` | `move_char_right` | `move-right` | Implemented | Extends the anchor in Select mode. |
 | `w`, `b`, `e` | word start/back/end | matching word motions | Implemented | Unicode-safe; words, punctuation, and whitespace are distinct classes, and a line break ends a word. Unlike Helix, the cursor never rests on a line terminator or an empty row. |
 | `W`, `B`, `E` | long-WORD motions | matching long-word motions | Implemented | A WORD is a run of non-whitespace characters. |
-| `f`; `F`, `t`, `T` + character | character-find motions | matching find/till motions | Implemented | Searches across lines, like Helix. `Space f` belongs to the project finder, so character find keeps only its direct `f` binding. |
+| `f`; `F`, `t`, `T` + character | character-find motions | matching find/till motions | Implemented | Searches across lines, like Helix. |
 | `Home`, `End` | line start/end | matching line motions | Implemented | Empty-line boundaries are clamped safely. |
 | `0`, `^`, `$` | not default Helix bindings | line start/first non-whitespace/line end | Deviation | Vim-style aliases retained alongside Home/End and goto mode. |
 | `Ctrl-b`, `PageUp` | `page_up` | `page-up` | Implemented | Page size comes from the active pane. |
@@ -92,13 +92,13 @@ is open. Help's scoped `q` is also globally unbound.
 | `q`, `Q` | macro replay/record | macro commands under `Space m` | Deviation | Both letters are unbound. `Q` and `q` say nothing about what they do, so macros moved to one namespace: `Space m m` starts the default recording and the same keys stop it, `Space m M` and `Space m R` name a register, `Space m r` replays the default, and `Space m l` lists what has been recorded. The default macro is the `@` register. The keys spelling the stop are staged rather than recorded, so they never end up inside the macro they finished. |
 | shell keys such as `\|` | shell operations | `shell-pipe` | Unsupported | Process-backed editing is outside V1. |
 | `s` | `select_regex` | `search` | Deviation | Runyte spends `s` on its case-insensitive search. Searching with two or more characters selected matches only inside them, which is what `select_regex` was for, so the command was retired rather than rebound. |
-| `S` | `split_selection` (regex) | — | Deviation | Unbound. Splitting moved to `Space s e` / `Space s b`, which leave a bare cursor at each line's end or start rather than a range per line, and Runyte no longer has a case-sensitive search flavour for `S` to carry: `(?-i)` in a regular expression asks for one. |
+| `S` | `split_selection` (regex) | `search-regex` | Deviation | Opens regular-expression search in the current buffer. Splitting moved to `Space s e` / `Space s b`, which leave a bare cursor at each line's end or start rather than a range per line. `/` now opens the project finder, so its former buffer-regex command moved to the available search variant key. `(?-i)` inside the expression makes an individual pattern case-sensitive. |
 | `,`, `Space s c` | `keep_primary_selection` | `keep-primary-selection` | Implemented | Keeps the primary range of any multi-selection. Search cycling already reduces its result to one match. |
 | `Alt-,` | `remove_primary_selection` | `remove-primary-selection` | Implemented | Refuses to empty the selection. |
 | `C`, `Alt-C` | `copy_selection_on_next_line` / previous | `copy-selection-down` / `-up` | Implemented | Adds the caret on the nearest row that holds a character at the caret's column, skipping the rows too short for it. A row ending exactly at the column does not hold it and is skipped too: landing there would slide the caret onto the row's last character, and that shifted column would then seed the next `C`. The column is therefore never approximated — `V` is the command that widens short rows instead. |
 | `V`, `Alt-V` | not Helix default bindings | `copy-selection-down-padded` / `-up-padded` | Added | Adds a cursor on the immediately following or preceding row, padding short or empty rows with spaces so it reaches the same display column. `Alt-V` mirrors `V` upward exactly as `Alt-C` mirrors `C`; padding for several cursors landing on one short row is collected before any edit, so the row widens once and the whole gesture is a single undo step. |
 | `)`, `(` | `rotate_selections_forward` / backward | `rotate-selection-forward` / `-backward` | Implemented | Moves the primary designation only. |
-| `Alt-k`, `Alt-j` | `keep_selections` / `remove_selections` | `keep-matching-selections` / `remove-matching-selections` | Deviation | On `Space s k` and `Space s r`; the Alt keys are unbound. Each opens its own `keep (regex):` or `remove (regex):` prompt, as Helix does. They no longer borrow the search pattern: since `s` and `S` accept literals, a pattern typed there is not a regular expression and could not be reused as one. `Alt-j`/`Alt-k` were also the key-hint popup's scroll keys, so leaving them bound kept the popup and the keymap fighting over them. |
+| `Alt-k`, `Alt-j` | `keep_selections` / `remove_selections` | `keep-matching-selections` / `remove-matching-selections` | Deviation | On `Space s k` and `Space s r`; the Alt keys are unbound. Each opens its own `keep (regex):` or `remove (regex):` prompt, as Helix does. They do not borrow the search pattern: `s` escapes its input as a literal, while `S` accepts a regular expression but owns a separate search history rather than an implicit selection-filter pattern. `Alt-j`/`Alt-k` were also the key-hint popup's scroll keys, so leaving them bound kept the popup and the keymap fighting over them. |
 | `&` | `align_selections` | `align-selections` | Implemented | Pads to the rightmost selection display column, so a column of multicursors lines up across tabs and wide characters. Also on `Space s a`. Padding only inserts spaces, so the rightmost caret is necessarily the target; aligning to the leftmost would mean deleting text. |
 | `Alt-_` | `trim_selections` | `trim-selections` | Deviation | On `Alt-_`; Helix binds it to `_`, which Runyte gives to `trim-trailing-whitespace` instead. The pairing follows `;`/`Alt-;` and `,`/`Alt-,`, where the plain key is the common gesture and the Alt key the neighbouring one. A range holding nothing but whitespace collapses to a caret at its start rather than staying as it was, so splitting on lines and trimming leaves a usable cursor on blank rows instead of a range Helix would have left untouched. |
 | `_` | no Helix equivalent | `trim-trailing-whitespace` | Added | Deletes trailing spaces and tabs from every line the selection touches, so `%` then `_` strips the whole buffer. Selection-scoped by line rather than by range: what the ranges pick out is which lines to trim, not which characters to remove. Leading whitespace is left alone so indentation survives, which means a line holding only whitespace is emptied outright. Shares its trimmer with the `editor.trim_trailing_whitespace` save hook, so an on-demand trim and a save cannot disagree. |
@@ -118,7 +118,7 @@ Runyte's search deviates from Helix deliberately and as a whole, so the table
 below is a summary of one design rather than a list of independent choices.
 
 Two flavours share one behavior. `s` compiles the pattern as an escaped,
-case-insensitive literal and `/` as a regular expression; both select **all**
+case-insensitive literal and `S` as a regular expression; both select **all**
 matches at once, each as a forward range so the whole match is selected with the
 caret on its last character, where an append or a motion continues from. Helix
 instead moves to one match and keeps the
@@ -127,17 +127,16 @@ literal flavour is what makes `foo(` findable without knowing regular
 expressions exist, and is why the pattern can no longer be shared with commands
 that require one.
 
-Case sensitivity is not a third flavour. It was `S` and `Space s w S` until the
-`Space /` rewiring, and both were retired rather than respelled: `(?-i)` in a
-regular expression is the whole of what they offered, and keeping them cost a
-bare letter and a namespace row each.
+Case sensitivity is not a third flavour. The former case-sensitive literal
+bindings were retired rather than respelled: `(?-i)` in an `S` regular
+expression is the whole of what they offered.
 
 Neither flavour takes a namespace spelling. Two keys are already the short
 spelling, so `Space s s`, `Space s S`, and `Space s /` were retired with the
-duplicates they were: `Space s` is selections only now. `Space /` widens exactly
-these letters to the whole project — the sigil says search, the prefix says the
-project rather than the file in front of you, and the letter after it is the one
-the bare key already uses.
+duplicates they were: `Space s` is selections only now. `Space /` widens the
+two in-buffer flavours to the whole project as `Space / s` and `Space / S`.
+The finder occupies `Space / /` because bare `/` is its short alias; putting a
+buffer-scoped flavour under that namespace would contradict the prefix.
 
 Pristine results render the primary range light orange with one orange cursor;
 secondary ranges retain the theme's secondary selection colour and hide their
@@ -158,14 +157,14 @@ are the region of the next.
 | Sequence | Helix command | Runyte command | Status | Notes |
 | --- | --- | --- | --- | --- |
 | `s` | — | `search` | Added | Escaped literal, case-insensitive. No namespace spelling: two keys are already the short one. |
-| `/` | `search` | `search-regex` | Deviation | Regular expression over the whole buffer text, so a pattern may span lines. Also the way to match case, with `(?-i)`. |
+| `S` | `search` | `search-regex` | Deviation | Regular expression over the whole buffer text, so a pattern may span lines. Also the way to match case, with `(?-i)`. Bare `/` belongs to the project finder. |
 | `?` | `rsearch` | — | Deviation | Unbound. Search has no direction to choose once it selects every match; `n`/`N` supply the direction afterwards. |
 | `n`, `N` | next/previous match | `search-next` / `search-previous` | Deviation | Select only the next or previous match, wrapping inside the remembered search region rather than at buffer boundaries. The initial search still selects every match for a direct batch edit; cycling changes the intent to a single-match edit. |
 | `*` | search current selection/word | `search-selection` | Deviation | Selects every occurrence of the word or selection under the caret, matched as a case-sensitive literal. This absorbs what `Alt-*` did. |
 | `Alt-*` | unbounded selection search | — | Deviation | Unbound; `*` covers it. |
-| `Space / f` | file picker | `open-file-picker` | Added | Opens the project finder in file mode; Tab switches to open buffers and terminals without clearing the query. A file query ending in `/` matches directories only. `Space f` is the short alias the namespace row advertises; `f` alone remains character find. |
-| `Space / g` | — | `open-fuzzy-grep` | Added | Fuzzy-rank file-content lines from the project root and jump to the selected line. |
-| `Space / s`, `Space / /` | — | `global-search`, `global-search-regex` | Added | The same two flavours across the workspace. Each opens a retained `[workspace search]` special buffer; Enter on a result is registry-backed and jumps to its typed source range, and the clean result remains available while it is among the eight most recently active special buffers. `Space / /` repeats the namespace letter for the flavour reached for most, the way `Space b b` and `Space m m` do. |
+| `Space / /`, alias `/` | file picker | `open-file-picker` | Added | Opens the project finder in name mode over files, open buffers, and terminals. Tab switches to content mode over the same three source kinds without clearing the query. |
+| `Space / s`, `Space / S` | — | `global-search`, `global-search-regex` | Added | The same two flavours across the workspace. Each opens a retained `[workspace search]` special buffer; Enter on a result is registry-backed and jumps to its typed source range, and the clean result remains available while it is among the eight most recently active special buffers. |
+| — | — | `open-fuzzy-grep` | Added | Unbound; `:fuzzy-grep` opens the project finder directly in content mode. |
 | — | file picker at working directory | `open-directory-file-picker`, `open-directory-fuzzy-grep` | Deviation | Unbound. The directory-scoped picker and grep keep only their colon spellings, `:file-picker-directory` and `:fuzzy-grep-directory`, having earned no key in practice. |
 
 The prompt model supports Escape/Ctrl-c, character and word movement, Home/End,
@@ -276,8 +275,8 @@ projection; keyboard overlays retain input ownership while open.
 | `:path` | not a Helix binding | `path` | Added | Opens a read-only popup with the active buffer's absolute path, wrapped, for both file and directory buffers. `Tab` opens a nested mnemonic menu offering `s` (copy to the system clipboard) or `r` (copy to the unnamed Runyte register); `j`/`k`/arrows/Shift-Tab move the highlight and Enter runs it. Escape backs out one level at a time: out of the action menu first, then out of the popup. |
 | `Space e` | explorer | `open-explorer` | Implemented · Fast | Opens the active buffer's directory as an editable directory buffer. From a file buffer it selects that file, so Enter returns to the same buffer. A directory buffer uses its own directory; a pathless buffer falls back to the working directory. |
 | `Space E` | explorer | `open-working-directory-explorer` | Added · Fast | Opens the editor working directory as an editable directory buffer. `:cd <path>` changes that directory and retargets an active explorer without changing the stable project root. |
-| `Space / f`, `Space f` | project finder | `open-file-picker` | Changed · Primary | Opens in native recursive file mode at Runyte's stable project root, retaining ignore-aware walking, path scoring, highlighting, preview, directory-only trailing `/`, and file/directory activation. Tab switches to a combined open-buffer and terminal mode while preserving the query and allowing the file scan to continue; another Tab returns to files. That mode previews authoritative in-memory buffer text or bounded recent terminal output, and shares the file mode's `Ctrl-t` preview toggle. Resource search covers buffer structural names and paths plus terminal names, program/title, stable ID, and current/initial directories; absolute, project-relative, `~/`, and basename path spellings work. `terminal`/`term` and `buffer` softly rank that type first rather than filtering the other type. Enter switches to the chosen buffer or terminal. The existing buffer and terminal managers remain separate action surfaces. |
-| `Space / g`, `:fuzzy-grep-directory` | — | `open-fuzzy-grep`, `open-directory-fuzzy-grep` | Added · Primary | Native asynchronous, ignore-aware content pickers rooted at the project or active directory. They fuzzy-rank non-empty UTF-8 lines, prefer authoritative unsaved buffer text over disk, display path and line identities, and open the selected match without invoking an external grep or finder. Candidates are bounded at 10,000 lines and files over 4 MiB are skipped. |
+| `Space / /`, alias `/` | project finder | `open-file-picker` | Changed · Primary | Opens in name mode at Runyte's stable project root. Files from the ignore-aware scanner, open buffers, and terminals share one score-merged list; a file-backed open buffer appears once and contributes its richer live-buffer identity. Tab switches to content mode without clearing the query, where file lines, authoritative open-buffer text including pathless buffers, and decoded retained terminal rows share the list. Both modes retain highlighting, preview, `Ctrl-t`, and typed activation; terminal content activation enters review at the retained row. Name fields cover structural names and paths, terminal program/title, stable ID, and current/initial directories, with absolute, project-relative, `~/`, and basename path spellings. `file`, `terminal`/`term`, and `buffer` softly rank that type first rather than filtering the rest. The existing buffer and terminal managers remain separate action surfaces. |
+| `:fuzzy-grep`, `:fuzzy-grep-directory` | — | `open-fuzzy-grep`, `open-directory-fuzzy-grep` | Added · Primary | `:fuzzy-grep` opens the unified project finder directly in content mode. The directory command stays files-only below the active directory. Both use native asynchronous, ignore-aware file scanning, fuzzy-rank non-empty UTF-8 lines, prefer authoritative unsaved buffer text over disk, display source and line identities, and open the selected match without invoking an external grep or finder. Ranked candidates are bounded at 50,000 lines and files over 4 MiB are skipped. |
 | Directory Enter | open entry | `open-directory-entry` | Implemented | Enter is the only opening key; `e` was withdrawn so a directory buffer keeps the word-end motion every other buffer has. |
 | Help `q` | no Helix equivalent | `close` | Added | Scoped to the read-only general `[help]` manual and contextual `[view help]` buffer. `q` and `Q` stay unbound everywhere else, as the macro row below records; help is read-only and row-oriented, so the letter costs nothing here and matches what Vim and Helix bind in their own help. |
 | `Space ?`; `:help [topic]`, `:? [topic]` | no Helix equivalent | `help` | Deviation | `Space ?` opens contextual read-only help for the active buffer type, with scoped bindings, prefixes, and direct keys generated from the keymap registry plus prose for application-level mouse actions that have no binding row. `:help` / `:?` opens the separate general `[help]` manual, and an optional topic such as `regex` or `mouse` positions that retained special buffer at its section; `:help lsp` includes the complete language-server setup shape and lifecycle commands. Both scroll, search, split, close, and remain jumpable while they are among the eight most recently active clean special buffers. Contextual help remains one document per buffer type rather than per mode; `normal_and_select_bind_the_same_sequences` in `keymap.rs` fails if that assumption stops holding. |
@@ -296,7 +295,7 @@ projection; keyboard overlays retain input ownership while open.
 | `Space b c` | not a Helix binding | `close` (alias `c`) | Added · Primary | Safely closes the active buffer without changing the pane layout. Each affected pane uses its own most-recent-buffer history, then any other live buffer, or receives a scratch buffer when none remains. Unsaved text is refused; typed `:close!` / `:c!` is the explicit discard path. `:buffer-close`, `:bc`, `:close-buffer`, and `:cb` remain compatibility aliases. A terminal is not a buffer and is explicitly refused. |
 | `Space b d` | not a Helix binding | `diff-disk` | Added · Primary | Reads one complete current disk revision and compares its read-only `[disk] path` snapshot on the left with the authoritative editable Runyte buffer on the right. Binary, deleted, unreadable, and oversized disk revisions are refused without changing the pane layout or source. |
 | `Space b n` | no Helix binding | `new-buffer` (`:buffer-new`, alias `new`) | Added · Primary | Opens a fresh pathless scratch buffer in the current pane and records the previous buffer in that pane's history and jumplist. Helix's `:new` is kept as the alias, but its `:n` short form is not, because a single letter is too cheap for a command that discards nothing. |
-| `Space / /` | global search | `global-search-regex` | Implemented · Primary | Searches UTF-8 workspace files and authoritative unsaved open buffers. The literal flavour is `Space / s`; see [Search](#search). |
+| `Space / S` | global search | `global-search-regex` | Implemented · Primary | Searches UTF-8 workspace files and authoritative unsaved open buffers. The literal flavour is `Space / s`; see [Search](#search). |
 | `Space /`, `Space s` | — | namespaces | Added | "Search the whole project" and "Selections". `Space /` replaced the `Space s w` namespace and the bare `Space /` alias it carried. |
 | `Space m` | — | namespace | Added | "Macros". |
 | `Space t` | — | namespace | Added | "Terminals". Helix has no terminal, so nothing is displaced. Every command under it is Runyte's own. |
@@ -338,8 +337,8 @@ projection; keyboard overlays retain input ownership while open.
 | Insert `Ctrl-s` | undo checkpoint | `save` | Deviation | Retains Runyte’s global save shortcut. |
 | `Space o o`, `Space o t`, `Space o s` | configuration menu | `open-settings`, `open-theme-settings`, `service-health` | Added · Primary | Settings open as the searchable read-only `[config]` buffer; Enter opens a typed or finite-choice popup and persists only on Enter. The read-only health picker reports syntax, LSP, and diagnostic-log state without requiring those services. |
 | `:log-open` | `:log-open` | `log-open` | Implemented · Deviation | Named after Helix's command and, like it, opens the editor's own log as a read-only buffer. It differs in what it opens: Helix shows one per-user log file, while Runyte opens the log of the process that owns the workspace — a standalone editor's `standalone-<pid>.log` or a persistent host's `host.log`, both under the workspace state directory. It never opens or aggregates a client-side trace, and Runyte has no `:log-truncate`. Unbound, as in Helix. |
-| Picker `Ctrl-p`, `Shift-Tab` | previous entry | direct picker action | Implemented | Up remains an alias; printable `k` filters. Shift-Tab retains previous-entry navigation in the project finder while Tab switches its modes. |
-| Picker `Ctrl-n`; directory/content picker `Tab` | next entry | direct picker action | Implemented | Down remains an alias; printable `j` filters like other text. Tab instead switches project-finder modes. |
+| Picker `Ctrl-p`, `Shift-Tab` | previous entry | direct picker action | Implemented | Up remains an alias; printable `k` filters. Shift-Tab retains previous-entry navigation in the project finder while Tab switches between name and content modes. |
+| Picker `Ctrl-n`; directory/content picker `Tab` | next entry | direct picker action | Implemented | Down remains an alias; printable `j` filters like other text. Tab instead switches unified project-finder modes. |
 | Picker page/Home/End | navigation | direct picker action | Implemented | Paging is clamped. |
 | Picker `Ctrl-s`, `Ctrl-v` | horizontal/vertical open | split and open | Implemented | The fuzzy file picker applies these actions directly to its selected file. |
 | Preview picker `Ctrl-t` | toggle preview | direct picker action | Added | File previews read at most the first 64 KiB (including for large files). Buffer-manager and combined-finder previews use bounded authoritative in-memory buffer text; terminal previews use bounded recent output. Every preview is hidden automatically on narrow terminals. |

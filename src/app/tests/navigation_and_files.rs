@@ -381,7 +381,7 @@ fn starting_a_search_records_a_jump_but_repeating_it_does_not() {
     let mut app = App::new(Config::default(), None).unwrap();
     seed(&mut app, "alpha\nbeta\nbeta\nbeta\n");
 
-    press(&mut app, '/');
+    press(&mut app, 'S');
     type_text(&mut app, "beta");
     key(&mut app, KeyCode::Enter, Modifiers::NONE);
     assert_eq!(cursor(&app).row, 1);
@@ -472,8 +472,7 @@ fn explorer_entry_points_open_editable_directories_and_keep_picker_distinct() {
     );
     assert!(app.picker.is_none());
 
-    press(&mut app, ' ');
-    press(&mut app, 'f');
+    press(&mut app, '/');
     assert!(app.picker.is_some());
 
     app.picker = None;
@@ -538,12 +537,11 @@ fn file_and_explorer_entry_points_use_their_documented_roots() {
     assert_eq!(app.working_directory, destination);
     assert_eq!(app.active_buffer().path.as_deref(), Some(file.as_path()));
 
-    press(&mut app, ' ');
-    press(&mut app, 'f');
+    press(&mut app, '/');
     assert_eq!(
         app.picker.as_ref().map(|picker| picker.root.as_path()),
         Some(root.as_path()),
-        "lowercase f searches the stable project root"
+        "slash searches the stable project root"
     );
 
     app.picker = None;
@@ -1637,7 +1635,7 @@ fn explorer_navigation_returns_to_normal_mode_after_selected_entries() {
 
     // Searching in an explorer creates a Select-mode match. Entering its
     // directory must not carry that selection into the new listing.
-    press(&mut app, '/');
+    press(&mut app, 'S');
     for character in "child".chars() {
         press(&mut app, character);
     }

@@ -7,11 +7,11 @@
 use super::WorkspaceRow;
 use super::{
     App, BindingScope, Buffer, CompletionSource, ConfirmationOverlay, ContentAlignment,
-    ContentLayout, DiffProjection, DiffSession, FinderMode, FrameGeometry, GeneratedViewIdentity,
-    HelpTopic, ListPurpose, MaximizedView, Mode, Pane, Path, Position, PreparedPane, PreparedRow,
-    PreparedView, PromptKind, Rect, ResourceKind, ResourceTarget, Selection, SettingType, Side,
-    StashMutation, adjust_scroll, adjust_scroll_wrapped, diff_projection, fold_hiding_row,
-    move_projected_start_backward, project_aligned_rows, project_visible_rows,
+    ContentLayout, DiffProjection, DiffSession, FinderMatchSource, FinderTarget, FrameGeometry,
+    GeneratedViewIdentity, HelpTopic, ListPurpose, MaximizedView, Mode, Pane, Path, Position,
+    PreparedPane, PreparedRow, PreparedView, PromptKind, Rect, ResourceKind, Selection,
+    SettingType, Side, StashMutation, adjust_scroll, adjust_scroll_wrapped, diff_projection,
+    fold_hiding_row, move_projected_start_backward, project_aligned_rows, project_visible_rows,
     selection_for_launch_position,
 };
 use crate::keymap::{ActionContext, ContextAction};
@@ -949,6 +949,7 @@ impl App {
                 dimmed: false,
                 muted: Vec::new(),
                 emphasis: Vec::new(),
+                detail_emphasis: Vec::new(),
             }
         }
 
@@ -970,9 +971,22 @@ impl App {
             ));
         }
         if let Some(picker) = &self.picker {
-            if let Some(finder) = &self.finder
-                && finder.mode == FinderMode::Resources
-            {
+            if let Some(finder) = &self.finder {
+                let finder_status = if let Some(error) = picker.error.as_ref() {
+                    Some(format!("Scan failed: {error}"))
+                } else {
+                    let mut parts = Vec::new();
+                    if picker.loading || finder.loading {
+                        parts.push("Scanning…".to_owned());
+                    }
+                    if picker.skipped > 0 {
+                        parts.push(format!("{} skipped", picker.skipped));
+                    }
+                    if picker.limited || finder.limited {
+                        parts.push("result limit reached".to_owned());
+                    }
+                    (!parts.is_empty()).then(|| parts.join(" · "))
+                };
                 let mut snapshot = bounded(
                     OverlayKind::FilePicker,
                     format!("Find · {}", finder.mode.title()),
@@ -980,39 +994,91 @@ impl App {
                     finder
                         .matches
                         .iter()
-                        .filter_map(|found| finder.items.get(found.item).map(|item| (found, item)))
-                        .map(|(found, item)| {
-                            let identity = match item.target {
-                                ResourceTarget::Buffer(buffer) => format!("buffer:{buffer}"),
-                                ResourceTarget::Terminal(id) => format!("terminal:{id}"),
-                            };
-                            let mut row = row(identity, item.label.clone(), item.detail.clone());
-                            row.emphasis = found.emphasis.clone();
-                            row
+                        .filter_map(|found| match found.source {
+                            FinderMatchSource::File(entry) => {
+                                let entry = picker.view(entry)?;
+                                let identity = format!(
+                                    "{}:{}",
+                                    entry.path.display(),
+                                    entry.row.map_or(0, |row| row + 1)
+                                );
+                                let mut row = row(identity, entry.label(), "");
+                                row.emphasis = entry.match_positions_in_label(&found.emphasis);
+                                Some(row)
+                            }
+                            FinderMatchSource::Resource(item) => {
+                                let item = finder.items.get(item)?;
+                                let identity = format!("resource:{:?}", item.target);
+                                let mut row =
+                                    row(identity, item.label.clone(), item.detail.clone());
+                                row.emphasis = found.emphasis.clone();
+                                row.detail_emphasis = found.detail_emphasis.clone();
+                                Some(row)
+                            }
                         })
                         .collect(),
                     (!finder.matches.is_empty()).then_some(finder.selected),
-                    None,
+                    finder_status,
                 );
                 snapshot.query_cursor = Some(picker.query_cursor);
                 snapshot.layout = OverlayLayout::Preview;
-                snapshot.actions = vec![
-                    OverlayAction::new("Enter", "open"),
-                    OverlayAction::new("Tab", "files"),
-                    OverlayAction::new("Ctrl-t", "toggle preview"),
-                    OverlayAction::new("Esc", "cancel"),
-                ];
-                snapshot.show_preview = picker.show_preview;
-                snapshot.preview_title = finder.selected_item().map(|item| match item.kind {
-                    ResourceKind::Buffer => "Contents".to_owned(),
-                    ResourceKind::Terminal => "Output".to_owned(),
-                });
-                snapshot.preview = Some(finder.selected_preview().map_or(
-                    OverlayPreview::Empty,
-                    |preview| {
-                        OverlayPreview::Text(preview.split('\n').map(str::to_owned).collect())
+                snapshot.actions = vec![OverlayAction::new("Enter", "open")];
+                if matches!(finder.selected_target(picker), Some(FinderTarget::File(_))) {
+                    snapshot
+                        .actions
+                        .push(OverlayAction::new("Ctrl-s", "open file horizontally"));
+                    snapshot
+                        .actions
+                        .push(OverlayAction::new("Ctrl-v", "open file vertically"));
+                }
+                snapshot.actions.push(OverlayAction::new(
+                    "Tab",
+                    if finder.mode == crate::finder::FinderMode::Names {
+                        "contents"
+                    } else {
+                        "names"
                     },
                 ));
+                snapshot
+                    .actions
+                    .push(OverlayAction::new("Ctrl-t", "toggle preview"));
+                snapshot.actions.push(OverlayAction::new("Esc", "cancel"));
+                snapshot.show_preview = picker.show_preview;
+                if let Some(item) = finder.selected_item() {
+                    snapshot.preview_title = Some(match item.kind {
+                        ResourceKind::Buffer => "Contents".to_owned(),
+                        ResourceKind::Terminal => "Output".to_owned(),
+                    });
+                    snapshot.preview = Some(finder.selected_preview().map_or(
+                        OverlayPreview::Empty,
+                        |preview| {
+                            OverlayPreview::Text(preview.split('\n').map(str::to_owned).collect())
+                        },
+                    ));
+                } else {
+                    snapshot.preview_title = Some("Preview".to_owned());
+                    snapshot.preview = Some(match picker.preview.as_ref() {
+                        Some(crate::file_picker::FilePreview::Text(lines)) => {
+                            OverlayPreview::Text(lines.clone())
+                        }
+                        Some(crate::file_picker::FilePreview::Snippet(snippet)) => {
+                            OverlayPreview::Snippet {
+                                lines: snippet.lines.clone(),
+                                start_row: snippet.start_row,
+                                focus_row: snippet.focus_row,
+                                emphasis: snippet.emphasis.clone(),
+                            }
+                        }
+                        Some(crate::file_picker::FilePreview::Binary) => OverlayPreview::Binary,
+                        Some(crate::file_picker::FilePreview::Directory(lines)) => {
+                            OverlayPreview::Text(lines.clone())
+                        }
+                        Some(crate::file_picker::FilePreview::Unreadable(error)) => {
+                            OverlayPreview::Unavailable(error.clone())
+                        }
+                        None => OverlayPreview::Empty,
+                    });
+                }
                 overlays.push(snapshot);
             } else {
                 let mut snapshot = bounded(
@@ -1604,6 +1670,7 @@ fn context_action_rows(actions: &[ContextAction]) -> Vec<crate::snapshot::Overla
                 dimmed: false,
                 muted: Vec::new(),
                 emphasis: Vec::new(),
+                detail_emphasis: Vec::new(),
             }
         })
         .collect()

@@ -520,6 +520,8 @@ pub struct OverlayRow {
     #[serde(default)]
     pub muted: Vec<usize>,
     pub emphasis: Vec<usize>,
+    #[serde(default)]
+    pub detail_emphasis: Vec<usize>,
 }
 
 impl From<core::OverlayRow> for OverlayRow {
@@ -533,6 +535,7 @@ impl From<core::OverlayRow> for OverlayRow {
             dimmed: value.dimmed,
             muted: value.muted,
             emphasis: value.emphasis,
+            detail_emphasis: value.detail_emphasis,
         }
     }
 }
@@ -547,6 +550,7 @@ impl From<OverlayRow> for core::OverlayRow {
             dimmed: value.dimmed,
             muted: value.muted,
             emphasis: value.emphasis,
+            detail_emphasis: value.detail_emphasis,
         }
     }
 }
@@ -664,6 +668,7 @@ mod tests {
             dimmed: true,
             muted: vec![0, 1],
             emphasis: Vec::new(),
+            detail_emphasis: vec![3, 4],
         };
 
         let wire = OverlayRow::from(row.clone());

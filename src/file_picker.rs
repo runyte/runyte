@@ -411,6 +411,10 @@ pub struct FilePicker {
     /// files) must be recovered from the full entry list, not from the
     /// already-narrowed set that no longer contains them.
     directory_only: bool,
+    /// Project finders treat `file`, `buffer`, and `terminal` as soft name
+    /// preferences. Directory-scoped pickers still match those words
+    /// literally.
+    unified_finder: bool,
 }
 
 impl FilePicker {
@@ -442,7 +446,36 @@ impl FilePicker {
             preview: None,
             selection_user_owned: false,
             directory_only: false,
+            unified_finder: false,
         }
+    }
+
+    pub fn enable_unified_finder(&mut self) {
+        self.unified_finder = true;
+        self.rank(true, false);
+    }
+
+    /// Changes the project finder's filesystem engine while retaining the
+    /// query, cursor, and preview preference held by the overlay.
+    pub fn switch_kind(&mut self, scan_id: u64, kind: FilePickerKind) {
+        self.scan_id = scan_id;
+        self.kind = kind;
+        self.files.clear();
+        self.entries.clear();
+        self.matches.clear();
+        self.scan_query = if kind == FilePickerKind::Contents {
+            self.query.clone()
+        } else {
+            String::new()
+        };
+        self.selected = 0;
+        self.loading = true;
+        self.skipped = 0;
+        self.limited = false;
+        self.error = None;
+        self.preview = None;
+        self.selection_user_owned = false;
+        self.directory_only = false;
     }
 
     pub fn add_paths(&mut self, paths: Vec<ScanEntry>) {
@@ -551,10 +584,15 @@ impl FilePicker {
     /// plain file picker honors a trailing `/`, and the slash itself is not
     /// part of the text handed to the matcher.
     fn directory_only_query(&self) -> (bool, String) {
-        if self.kind == FilePickerKind::Files && self.query.ends_with('/') {
-            (true, self.query.trim_end_matches('/').to_owned())
+        let query = if self.unified_finder && self.kind == FilePickerKind::Files {
+            crate::finder::finder_matching_query(&self.query)
         } else {
-            (false, self.query.clone())
+            self.query.clone()
+        };
+        if self.kind == FilePickerKind::Files && query.ends_with('/') {
+            (true, query.trim_end_matches('/').to_owned())
+        } else {
+            (false, query)
         }
     }
 
@@ -823,7 +861,8 @@ impl FilePicker {
     fn sort_matches(&mut self) {
         let (files, entries) = (&self.files, &self.entries);
         let view = |found: &FuzzyMatch| resolve_in(files, &entries[found.entry]);
-        if self.query.is_empty() {
+        let query_is_empty = self.directory_only_query().1.is_empty();
+        if query_is_empty {
             self.matches.sort_by(|left, right| {
                 let (left, right) = (view(left), view(right));
                 (left.relative, left.row).cmp(&(right.relative, right.row))
@@ -1503,7 +1542,7 @@ impl FileHits {
     }
 
     /// Keeps at most `limit` of the lines, reporting whether any were dropped.
-    fn truncate(&mut self, limit: usize) -> bool {
+    pub(crate) fn truncate(&mut self, limit: usize) -> bool {
         let dropped = self.lines.len() > limit;
         self.lines.truncate(limit);
         dropped
@@ -1774,27 +1813,34 @@ fn content_entries(path: &Path, query: &str) -> Option<FileHits> {
 pub fn line_hits(text: &str, query: &str) -> Vec<LineHit> {
     text.lines()
         .enumerate()
-        .filter_map(|(row, line)| {
-            let without_trailing = line.trim_end();
-            let trimmed = without_trailing.trim_start();
-            // The ranked candidate is the truncated line, so the filter has to
-            // read the same text: a query matched against the tail of a very
-            // long line would produce an entry nothing later can highlight.
-            let text = match trimmed.char_indices().nth(GREP_LINE_CHARACTERS) {
-                Some((byte, _)) => &trimmed[..byte],
-                None => trimmed,
-            };
-            (!text.is_empty() && matches_fuzzy(query, text)).then(|| LineHit {
-                row,
-                column: without_trailing
-                    .chars()
-                    .take_while(|character| character.is_whitespace())
-                    .count(),
-                text: text.to_owned(),
-            })
-        })
+        .filter_map(|(row, line)| line_hit(line, query).map(|hit| LineHit { row, ..hit }))
         .take(CONTENT_ENTRY_LIMIT)
         .collect()
+}
+
+/// Matches one decoded row for the incremental live-resource scanner.
+///
+/// `row` is left at zero for the caller to replace with the source coordinate.
+/// Keeping this transform shared prevents file, buffer, and terminal content
+/// from disagreeing about trimming, truncation, or fuzzy matching.
+pub fn line_hit(line: &str, query: &str) -> Option<LineHit> {
+    let without_trailing = line.trim_end();
+    let trimmed = without_trailing.trim_start();
+    // The ranked candidate is the truncated line, so the filter has to read
+    // the same text: a query matched against the tail of a very long line
+    // would produce an entry nothing later can highlight.
+    let text = match trimmed.char_indices().nth(GREP_LINE_CHARACTERS) {
+        Some((byte, _)) => &trimmed[..byte],
+        None => trimmed,
+    };
+    (!text.is_empty() && matches_fuzzy(query, text)).then(|| LineHit {
+        row: 0,
+        column: without_trailing
+            .chars()
+            .take_while(|character| character.is_whitespace())
+            .count(),
+        text: text.to_owned(),
+    })
 }
 
 fn scan_with(

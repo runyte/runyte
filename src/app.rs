@@ -41,9 +41,12 @@ use crate::{
     external_open::{self, ProgramCache},
     file_picker::{
         CONTENT_ENTRY_LIMIT, FilePicker, FilePickerEvent, FilePickerKind, FilePreview, FileScanner,
-        PickerTarget, line_hits, scan_content, scan_files,
+        PickerTarget, scan_content, scan_files,
     },
-    finder::{FinderMode, ResourceFinder, ResourceItem, ResourceKind, ResourceTarget},
+    finder::{
+        FinderMatchSource, FinderMode, FinderTarget, ResourceFinder, ResourceItem, ResourceKind,
+        ResourceTarget,
+    },
     fs_plan::{
         ApplyReport, DeletionMode, EntryKind, FsOperation, FsPlan, SystemTrash, TransferMode,
         TrashBackend,
@@ -123,6 +126,33 @@ struct ReplaceStep {
 struct ReplaceSession {
     buffer: usize,
     steps: Vec<ReplaceStep>,
+}
+
+/// One bounded, cancellable pass over live editor-owned content.
+///
+/// Files keep using the background filesystem scanner. Buffers and terminals
+/// cannot be handed to that scanner without copying their complete live text,
+/// so the event loop advances this cursor in small row slices instead.
+#[derive(Clone, Debug)]
+struct FinderContentScan {
+    query: String,
+    sources: Vec<FinderContentSource>,
+    source: usize,
+    row: usize,
+    limited: bool,
+}
+
+#[derive(Clone, Debug)]
+enum FinderContentSource {
+    Buffer {
+        buffer: usize,
+        label: String,
+        path: Option<PathBuf>,
+    },
+    Terminal {
+        terminal: TerminalId,
+        label: String,
+    },
 }
 
 // Application behavior is grouped by editor-level workflow below. These
@@ -2367,9 +2397,11 @@ pub struct App {
     prompt_origin_mode: Mode,
     prompt_revision: u64,
     pub picker: Option<FilePicker>,
-    /// The project-root picker's in-memory buffer/terminal mode. Directory
-    /// pickers and fuzzy grep leave this absent and retain their old keys.
+    /// The project finder's merged name/content coordinator. Directory-scoped
+    /// pickers leave this absent and remain files-only.
     pub finder: Option<ResourceFinder>,
+    finder_content_scan: Option<FinderContentScan>,
+    finder_content_dirty_terminals: HashSet<TerminalId>,
     file_scanner: Option<FileScanner>,
     next_file_scan_id: u64,
     /// A filesystem plan waiting for a separate, explicit confirmation.
@@ -2829,6 +2861,8 @@ impl App {
             prompt_kind: PromptKind::Command,
             picker: None,
             finder: None,
+            finder_content_scan: None,
+            finder_content_dirty_terminals: HashSet::new(),
             file_scanner: None,
             next_file_scan_id: 1,
             fs_confirmation: None,

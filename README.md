@@ -204,6 +204,12 @@ Key execution, help, hints, and command descriptions all come from the same
 registry, so the documentation shown inside the editor cannot silently drift
 from what the keys do.
 
+Bare `/` (or `Space / /`) opens the project finder in name mode across files,
+open buffers, and terminals; Tab switches to content mode over file lines,
+authoritative buffer text, and decoded terminal output. Buffer search remains
+on `s` for escaped literals and `S` for regular expressions, with `Space / s`
+and `Space / S` providing the retained workspace-wide forms.
+
 - `:tutorial` opens a guided two-pane introduction to modes, selection-first
   editing, search, multiple carets, command namespaces, panes, buffer types,
   the explorer, terminal sessions, jump history, and persistent sessions.
