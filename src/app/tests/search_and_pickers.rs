@@ -898,7 +898,6 @@ fn project_finder_indexes_terminal_names_and_content_and_reveals_the_matching_ro
             selected,
             Some(FinderTarget::Resource(ResourceTarget::TerminalLocation {
                 terminal,
-                line_id: 0,
                 ..
             })) if terminal == id
         ),
@@ -1301,6 +1300,240 @@ fn terminal_content_selection_follows_stable_line_identity_through_eviction() {
 
 #[cfg(unix)]
 #[test]
+fn terminal_content_selection_does_not_cross_primary_and_alternate_screens() {
+    let root = temporary("project-finder-terminal-screen-identities");
+    fs::create_dir_all(&root).unwrap();
+    let ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    app.open_terminal_at(Some("/bin/cat".to_owned()), root.clone());
+    let terminal = app.active_terminal().unwrap();
+    app.apply_terminal_output(TerminalOutput::Bytes {
+        id: terminal,
+        bytes: b"screen-identity primary".to_vec(),
+    });
+
+    app.open_project_grep().unwrap();
+    type_text(&mut app, "screen-identity");
+    while app.resource_finder_scan_pending() {
+        app.advance_resource_finder_scan();
+    }
+    let primary = app
+        .finder
+        .as_ref()
+        .unwrap()
+        .selected_target(app.picker.as_ref().unwrap())
+        .unwrap();
+    app.finder.as_mut().unwrap().first();
+
+    app.apply_terminal_output(TerminalOutput::Bytes {
+        id: terminal,
+        bytes: b"\x1b[?1049hscreen-identity alternate".to_vec(),
+    });
+    while app.resource_finder_scan_pending() {
+        app.advance_resource_finder_scan();
+    }
+    let alternate = app
+        .finder
+        .as_ref()
+        .unwrap()
+        .selected_target(app.picker.as_ref().unwrap())
+        .unwrap();
+    assert_ne!(alternate, primary);
+    assert!(
+        app.finder
+            .as_ref()
+            .unwrap()
+            .selected_preview()
+            .is_some_and(|preview| preview.contains("screen-identity alternate")
+                && !preview.contains("screen-identity primary"))
+    );
+    assert!(
+        app.finder
+            .as_ref()
+            .unwrap()
+            .items
+            .iter()
+            .all(|item| { FinderTarget::Resource(item.target) != primary })
+    );
+
+    app.apply_terminal_output(TerminalOutput::Bytes {
+        id: terminal,
+        bytes: b"\x1b[?1049l".to_vec(),
+    });
+    while app.resource_finder_scan_pending() {
+        app.advance_resource_finder_scan();
+    }
+    assert_eq!(
+        app.finder
+            .as_ref()
+            .unwrap()
+            .selected_target(app.picker.as_ref().unwrap()),
+        Some(primary),
+        "the claimed primary-screen identity returns only with its own grid"
+    );
+
+    app.close_file_picker();
+    app.close_terminal_id(terminal);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn terminal_screen_clear_preserves_scrollback_match_identity() {
+    let root = temporary("project-finder-terminal-clear-history");
+    fs::create_dir_all(&root).unwrap();
+    let ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    app.open_terminal_at(Some("/bin/cat".to_owned()), root.clone());
+    let terminal = app.active_terminal().unwrap();
+    let output = std::iter::once("history-clear-match\r\n".to_owned())
+        .chain((0..30).map(|row| format!("ordinary history {row}\r\n")))
+        .collect::<String>();
+    app.apply_terminal_output(TerminalOutput::Bytes {
+        id: terminal,
+        bytes: output.into_bytes(),
+    });
+
+    app.open_project_grep().unwrap();
+    type_text(&mut app, "history-clear-match");
+    while app.resource_finder_scan_pending() {
+        app.advance_resource_finder_scan();
+    }
+    app.finder.as_mut().unwrap().first();
+    let claimed = app
+        .finder
+        .as_ref()
+        .unwrap()
+        .selected_target(app.picker.as_ref().unwrap())
+        .unwrap();
+    let session = app.terminals.get(terminal).unwrap();
+    let screen_row = session.plain_line_count() - 1;
+    let screen_id_before = session.plain_line_with_id(screen_row).unwrap().0;
+
+    app.apply_terminal_output(TerminalOutput::Bytes {
+        id: terminal,
+        bytes: b"\x1b[2Jscreen-cleared".to_vec(),
+    });
+    let screen_id_after = app
+        .terminals
+        .get(terminal)
+        .unwrap()
+        .plain_line_with_id(screen_row)
+        .unwrap()
+        .0;
+    assert_ne!(screen_id_after, screen_id_before);
+    while app.resource_finder_scan_pending() {
+        app.advance_resource_finder_scan();
+    }
+
+    assert_eq!(
+        app.finder
+            .as_ref()
+            .unwrap()
+            .selected_target(app.picker.as_ref().unwrap()),
+        Some(claimed)
+    );
+    assert!(
+        app.finder
+            .as_ref()
+            .unwrap()
+            .selected_preview()
+            .is_some_and(|preview| preview.contains("history-clear-match"))
+    );
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    let session = app.terminals.get_mut(terminal).unwrap();
+    session.select_review_line(true, false);
+    assert_eq!(session.review_selection_text(), "history-clear-match");
+
+    app.close_terminal_id(terminal);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn terminal_content_activation_captures_before_a_shorter_pane_resize() {
+    let root = temporary("project-finder-terminal-activation-resize");
+    fs::create_dir_all(&root).unwrap();
+    let ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    app.open_terminal_at(Some("/bin/cat".to_owned()), root.clone());
+    let terminal = app.active_terminal().unwrap();
+    app.apply_terminal_output(TerminalOutput::Bytes {
+        id: terminal,
+        bytes: b"\x1b[24;1Hresize-identity-match\x1b[1;1H".to_vec(),
+    });
+    app.leave_terminal();
+    app.areas.insert(
+        app.active_pane,
+        Rect {
+            width: 82,
+            height: 10,
+            ..Rect::default()
+        },
+    );
+
+    app.open_project_grep().unwrap();
+    type_text(&mut app, "resize-identity-match");
+    while app.resource_finder_scan_pending() {
+        app.advance_resource_finder_scan();
+    }
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+
+    assert_eq!(app.active_terminal(), Some(terminal));
+    assert_eq!(app.mode, Mode::Normal);
+    let session = app.terminals.get_mut(terminal).unwrap();
+    assert!(session.reviewing());
+    session.select_review_line(true, false);
+    assert_eq!(session.review_selection_text(), "resize-identity-match");
+
+    app.close_terminal_id(terminal);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn terminal_content_activation_enforces_the_review_memory_budget_immediately() {
+    let root = temporary("project-finder-terminal-activation-budget");
+    fs::create_dir_all(&root).unwrap();
+    let ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    app.open_terminal_at(Some("/bin/cat".to_owned()), root.clone());
+    let terminal = app.active_terminal().unwrap();
+    app.apply_terminal_output(TerminalOutput::Bytes {
+        id: terminal,
+        bytes: b"budget-identity-match".to_vec(),
+    });
+    app.leave_terminal();
+
+    app.open_project_grep().unwrap();
+    type_text(&mut app, "budget-identity-match");
+    while app.resource_finder_scan_pending() {
+        app.advance_resource_finder_scan();
+    }
+    app.terminals.set_memory_budget_for_test(0);
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+
+    assert_eq!(app.active_terminal(), None);
+    assert!(!app.terminals.get(terminal).unwrap().reviewing());
+    assert_eq!(
+        app.status,
+        "that terminal line exceeds the retained review budget"
+    );
+
+    app.close_terminal_id(terminal);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
 fn dirty_terminal_rows_are_invalidated_when_another_source_reaches_the_limit() {
     let root = temporary("project-finder-dirty-terminal-at-limit");
     fs::create_dir_all(&root).unwrap();
@@ -1314,6 +1547,16 @@ fn dirty_terminal_rows_are_invalidated_when_another_source_reaches_the_limit() {
         id: terminal,
         bytes: b"fresh needle\r\n".to_vec(),
     });
+    let terminal_line_id = (0..app.terminals.get(terminal).unwrap().plain_line_count())
+        .find_map(|row| {
+            app.terminals
+                .get(terminal)
+                .unwrap()
+                .plain_line_with_id(row)
+                .filter(|(_, line)| line.contains("fresh needle"))
+                .map(|(line_id, _)| line_id)
+        })
+        .unwrap();
 
     let mut picker = FilePicker::grep(91, root.clone());
     picker.insert_query_text("needle");
@@ -1327,7 +1570,7 @@ fn dirty_terminal_rows_are_invalidated_when_another_source_reaches_the_limit() {
             "stale needle",
             ResourceTarget::TerminalLocation {
                 terminal,
-                line_id: 0,
+                line_id: terminal_line_id,
                 column: 6,
             },
             ResourceKind::Terminal,

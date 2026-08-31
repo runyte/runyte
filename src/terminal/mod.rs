@@ -41,7 +41,7 @@ use crate::jump_labels::{JumpLabels, LabelPart};
 use crate::selection::{Range, Selection};
 
 use emulator::Emulator;
-pub use grid::{Attributes, Cell, Color};
+pub use grid::{Attributes, Cell, Color, TerminalLineId};
 
 /// The effective default colours a child may ask its terminal to report.
 ///
@@ -372,7 +372,7 @@ pub struct TerminalHighlight {
 
 #[derive(Clone, Debug)]
 struct ReviewLine {
-    id: u64,
+    id: TerminalLineId,
     cells: TerminalRow,
     text_start: usize,
     text_end: usize,
@@ -1233,20 +1233,20 @@ impl TerminalSession {
 
     /// One decoded row together with its monotonic identity. Unlike the row
     /// index, the identity does not change when older scrollback is evicted.
-    pub fn plain_line_with_id(&self, row: usize) -> Option<(u64, String)> {
+    pub fn plain_line_with_id(&self, row: usize) -> Option<(TerminalLineId, String)> {
         let grid = self.emulator.grid();
         Some((grid.retained_line_id(row)?, grid.plain_line(row)?))
     }
 
     /// Resolves a stable retained-line identity to its current row.
-    pub fn retained_line_row(&self, line_id: u64) -> Option<usize> {
+    pub fn retained_line_row(&self, line_id: TerminalLineId) -> Option<usize> {
         self.emulator.grid().retained_row(line_id)
     }
 
     /// Captures current retained output and places the review caret on one
     /// stable line. An identity evicted from bounded history is not silently
     /// retargeted to the row that reused its former index.
-    pub fn begin_review_at_line(&mut self, line_id: u64) -> bool {
+    pub fn begin_review_at_line(&mut self, line_id: TerminalLineId) -> bool {
         if self.retained_line_row(line_id).is_none() {
             return false;
         }
@@ -1973,7 +1973,7 @@ fn review_view(
         .collect::<Vec<_>>();
     let mut line_ids = review.lines[start..end]
         .iter()
-        .map(|line| Some(line.id))
+        .map(|line| Some(line.id.local()))
         .collect::<Vec<_>>();
     for _ in 0..padding {
         visible.insert(0, vec![Cell::default(); columns]);
@@ -2109,6 +2109,7 @@ pub fn drain(events: &mut TerminalEvents, mut apply: impl FnMut(TerminalOutput))
 pub struct TerminalSessions {
     sessions: BTreeMap<TerminalId, TerminalSession>,
     next: u64,
+    cell_budget: usize,
     events: TerminalEventSender,
     receiver: Option<TerminalEvents>,
     default_colors: DefaultColors,
@@ -2140,6 +2141,7 @@ impl TerminalSessions {
         Self {
             sessions: BTreeMap::new(),
             next: 1,
+            cell_budget: WORKSPACE_SCROLLBACK_CELLS,
             events: TerminalEventSender(Arc::clone(&shared)),
             receiver: Some(TerminalEvents(shared)),
             default_colors: DefaultColors::default(),
@@ -2159,6 +2161,11 @@ impl TerminalSessions {
     #[cfg(test)]
     pub(crate) fn default_colors(&self) -> DefaultColors {
         self.default_colors
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_memory_budget_for_test(&mut self, cells: usize) {
+        self.cell_budget = cells;
     }
 
     /// Hands the output stream to the loop that will drive it. Once.
@@ -2345,7 +2352,7 @@ impl TerminalSessions {
             .values()
             .map(|session| session.emulator.grid().scrollback_cells() + session.review_cells())
             .sum::<usize>();
-        while cells > WORKSPACE_SCROLLBACK_CELLS {
+        while cells > self.cell_budget {
             // Review snapshots are reproducible convenience state and retain
             // a second copy of cells. Evict the least-recently-active one as a
             // unit before discarding the sole retained scrollback copy.

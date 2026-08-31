@@ -59,6 +59,7 @@ pub struct Emulator {
     parser: Parser,
     primary: Grid,
     alternate: Grid,
+    next_grid_generation: u64,
     alternate_active: bool,
     alternate_saved_cursor: bool,
     pen: Pen,
@@ -80,8 +81,9 @@ impl Emulator {
         let rows = rows.max(1);
         Self {
             parser: Parser::new(),
-            primary: Grid::new(columns, rows, true),
-            alternate: Grid::new(columns, rows, false),
+            primary: Grid::with_generation(columns, rows, true, 0),
+            alternate: Grid::with_generation(columns, rows, false, 1),
+            next_grid_generation: 2,
             alternate_active: false,
             alternate_saved_cursor: false,
             pen: Pen::default(),
@@ -134,6 +136,20 @@ impl Emulator {
     /// Takes the bytes owed to the child, if any.
     pub fn take_replies(&mut self) -> Vec<u8> {
         std::mem::take(&mut self.replies)
+    }
+
+    fn allocate_grid_generation(&mut self) -> u64 {
+        let generation = self.next_grid_generation;
+        self.next_grid_generation = self.next_grid_generation.wrapping_add(1);
+        generation
+    }
+
+    fn erase_display(&mut self, mode: u16, pen: Pen) {
+        if mode == 2 {
+            let generation = self.allocate_grid_generation();
+            self.grid_mut().replace_screen_generation(generation);
+        }
+        self.grid_mut().erase_display(mode, pen);
     }
 
     pub fn columns(&self) -> usize {
@@ -273,8 +289,10 @@ impl Emulator {
     fn reset(&mut self) {
         let columns = self.grid().columns();
         let rows = self.grid().rows();
-        self.primary = Grid::new(columns, rows, true);
-        self.alternate = Grid::new(columns, rows, false);
+        let primary_generation = self.allocate_grid_generation();
+        let alternate_generation = self.allocate_grid_generation();
+        self.primary = Grid::with_generation(columns, rows, true, primary_generation);
+        self.alternate = Grid::with_generation(columns, rows, false, alternate_generation);
         self.alternate_active = false;
         self.alternate_saved_cursor = false;
         self.pen = Pen::default();
@@ -314,9 +332,7 @@ impl Emulator {
                 self.grid_mut().move_to(row, column);
             }
             (None, b'I') => self.tab_forward(first),
-            (None, b'J') => self
-                .grid_mut()
-                .erase_display(raw_parameter(parameters, 0), pen),
+            (None, b'J') => self.erase_display(raw_parameter(parameters, 0), pen),
             (None, b'K') => self
                 .grid_mut()
                 .erase_line(raw_parameter(parameters, 0), pen),
@@ -451,12 +467,16 @@ impl Emulator {
                 self.alternate_saved_cursor = true;
             }
             if clear_on_enter {
+                let generation = self.allocate_grid_generation();
+                self.alternate.replace_screen_generation(generation);
                 self.alternate.move_to(0, 0);
                 self.alternate.erase_display(2, Pen::default());
             }
             self.alternate_active = true;
         } else {
             if clear_on_exit {
+                let generation = self.allocate_grid_generation();
+                self.alternate.replace_screen_generation(generation);
                 self.alternate.erase_display(2, Pen::default());
             }
             self.alternate_active = false;
@@ -719,6 +739,22 @@ mod tests {
         emulator.feed(b"\x1b[?1049l");
         assert!(!emulator.alternate_screen());
         assert_eq!(row(&emulator, 0), "kept");
+    }
+
+    #[test]
+    fn complete_clear_and_reset_replace_retained_line_generations() {
+        let mut emulator = Emulator::new(10, 2);
+        emulator.feed(b"same");
+        let original = emulator.grid().retained_line_id(0).unwrap();
+
+        emulator.feed(b"\x1b[2Jsame");
+        let cleared = emulator.grid().retained_line_id(0).unwrap();
+        assert_ne!(cleared, original);
+
+        emulator.feed(b"\x1bcsame");
+        let reset = emulator.grid().retained_line_id(0).unwrap();
+        assert_ne!(reset, cleared);
+        assert_ne!(reset, original);
     }
 
     #[test]

@@ -83,6 +83,22 @@ preview and activation resolve it against current retained output and treat an
 evicted identity as gone. Activation also captures a current review before
 placing its caret on the identified line.
 
+A seventh review found three remaining lifecycle boundaries around that
+identity. A retained-line identity now includes a generation allocated across
+primary, alternate, cleared, and reset grids, so equal local row counters do
+not collide. Finder activation captures the identified review before moving or
+resizing a terminal into its destination pane, and it immediately enforces the
+workspace terminal-cell budget; an identity lost before capture or a review
+evicted by that budget now produces an explicit failure instead of showing an
+unfocused terminal.
+
+An eighth review found that assigning one generation to a whole grid made
+`CSI 2 J` invalidate unchanged scrollback even though that control clears only
+screen rows. Stable identities now live alongside individual screen and
+scrollback rows and move with them. A complete screen clear replaces only the
+screen identities; retained history keeps its targets through preview and
+activation, while alternate-screen and reset replacement remain isolated.
+
 Coverage includes:
 
 - `project_finder_switches_name_and_content_modes_without_losing_its_query`,
@@ -100,6 +116,13 @@ Coverage includes:
   in `src/app/tests/search_and_pickers.rs`;
 - `terminal_content_selection_follows_stable_line_identity_through_eviction`
   in `src/app/tests/search_and_pickers.rs`;
+- `terminal_content_selection_does_not_cross_primary_and_alternate_screens`,
+  `terminal_screen_clear_preserves_scrollback_match_identity`,
+  `terminal_content_activation_captures_before_a_shorter_pane_resize`, and
+  `terminal_content_activation_enforces_the_review_memory_budget_immediately`
+  in `src/app/tests/search_and_pickers.rs`;
+- `complete_clear_and_reset_replace_retained_line_generations` in
+  `src/terminal/emulator.rs`;
 - `busy_terminal_updates_only_its_name_finder_item_and_selected_preview` in
   `src/app/tests/search_and_pickers.rs`;
 - finder incremental-ordering, selection, smart-case, literal content-term,
