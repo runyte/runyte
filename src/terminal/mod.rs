@@ -1231,6 +1231,38 @@ impl TerminalSession {
         self.emulator.grid().plain_line(row)
     }
 
+    /// One decoded row together with its monotonic identity. Unlike the row
+    /// index, the identity does not change when older scrollback is evicted.
+    pub fn plain_line_with_id(&self, row: usize) -> Option<(u64, String)> {
+        let grid = self.emulator.grid();
+        Some((grid.retained_line_id(row)?, grid.plain_line(row)?))
+    }
+
+    /// Resolves a stable retained-line identity to its current row.
+    pub fn retained_line_row(&self, line_id: u64) -> Option<usize> {
+        self.emulator.grid().retained_row(line_id)
+    }
+
+    /// Captures current retained output and places the review caret on one
+    /// stable line. An identity evicted from bounded history is not silently
+    /// retargeted to the row that reused its former index.
+    pub fn begin_review_at_line(&mut self, line_id: u64) -> bool {
+        if self.retained_line_row(line_id).is_none() {
+            return false;
+        }
+        self.discard_review();
+        self.begin_review();
+        let Some(row) = self
+            .review
+            .as_ref()
+            .and_then(|review| review.lines.iter().position(|line| line.id == line_id))
+        else {
+            return false;
+        };
+        self.goto_review_line(row + 1, false);
+        true
+    }
+
     /// Applies bytes the child wrote, answering any query they contained.
     fn feed(&mut self, bytes: &[u8]) {
         let retired = self.emulator.grid().retired();

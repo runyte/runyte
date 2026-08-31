@@ -501,17 +501,22 @@ impl App {
             let row = scan.row;
             scan.row += 1;
             visited += 1;
-            let line = match &source {
+            let decoded = match &source {
                 FinderContentSource::Buffer { buffer, .. } => self
                     .buffers
                     .get(*buffer)
-                    .map(|buffer| buffer.line_string(row)),
+                    .map(|buffer| buffer.line_string(row))
+                    .map(|line| (line, None)),
                 FinderContentSource::Terminal { terminal, .. } => self
                     .terminals
                     .get(*terminal)
-                    .and_then(|terminal| terminal.plain_line(row)),
+                    .and_then(|terminal| terminal.plain_line_with_id(row))
+                    .map(|(line_id, line)| (line, Some(line_id))),
             };
-            let Some(hit) = line.as_deref().and_then(|line| line_hit(line, &scan.query)) else {
+            let Some((line, terminal_line_id)) = decoded else {
+                continue;
+            };
+            let Some(hit) = line_hit(&line, &scan.query) else {
                 continue;
             };
             let item = match source {
@@ -535,16 +540,21 @@ impl App {
                     }
                     item
                 }
-                FinderContentSource::Terminal { terminal, label } => ResourceItem::content(
-                    format!("{label}:{}", row + 1),
-                    hit.text,
-                    ResourceTarget::TerminalLocation {
-                        terminal,
-                        row,
-                        column: hit.column,
-                    },
-                    ResourceKind::Terminal,
-                ),
+                FinderContentSource::Terminal { terminal, label } => {
+                    let Some(line_id) = terminal_line_id else {
+                        continue;
+                    };
+                    ResourceItem::content(
+                        format!("{label}:{}", row + 1),
+                        hit.text,
+                        ResourceTarget::TerminalLocation {
+                            terminal,
+                            line_id,
+                            column: hit.column,
+                        },
+                        ResourceKind::Terminal,
+                    )
+                }
             };
             found.push(item);
         }
@@ -712,18 +722,25 @@ impl App {
             }
             FinderTarget::Resource(ResourceTarget::TerminalLocation {
                 terminal,
-                row,
+                line_id,
                 column: _,
             }) => {
                 if self.terminals.get(terminal).is_none() {
                     self.action_failed("that terminal is gone");
+                } else if self
+                    .terminals
+                    .get(terminal)
+                    .and_then(|session| session.retained_line_row(line_id))
+                    .is_none()
+                {
+                    self.action_failed("that terminal line is no longer retained");
                 } else {
                     self.show_terminal(terminal);
                     let (_, rows) = self.pane_cells(self.active_pane);
                     let scroll_offset = self.config.editor.scroll_offset;
-                    if let Some(session) = self.terminals.get_mut(terminal) {
-                        session.begin_review();
-                        session.goto_review_line(row + 1, false);
+                    if let Some(session) = self.terminals.get_mut(terminal)
+                        && session.begin_review_at_line(line_id)
+                    {
                         session.focus_review_selection(rows.max(1), scroll_offset);
                     }
                     self.mode = Mode::Normal;
@@ -760,11 +777,13 @@ impl App {
                     self.terminals.get(terminal).map(terminal_preview)
                 }
                 FinderTarget::Resource(ResourceTarget::TerminalLocation {
-                    terminal, row, ..
+                    terminal,
+                    line_id,
+                    ..
                 }) => self
                     .terminals
                     .get(terminal)
-                    .map(|terminal| terminal_content_preview(terminal, row)),
+                    .and_then(|terminal| terminal_content_preview(terminal, line_id)),
                 _ => None,
             });
         if let Some(finder) = self.finder.as_mut() {
@@ -861,13 +880,16 @@ fn buffer_content_preview(buffer: &Buffer, row: usize) -> String {
         .join("\n")
 }
 
-fn terminal_content_preview(terminal: &TerminalSession, row: usize) -> String {
+fn terminal_content_preview(terminal: &TerminalSession, line_id: u64) -> Option<String> {
     const CONTEXT: usize = 6;
+    let row = terminal.retained_line_row(line_id)?;
     let start = row.saturating_sub(CONTEXT);
-    (start..terminal.plain_line_count().min(start + CONTEXT * 2 + 1))
-        .filter_map(|row| terminal.plain_line(row))
-        .collect::<Vec<_>>()
-        .join("\n")
+    Some(
+        (start..terminal.plain_line_count().min(start + CONTEXT * 2 + 1))
+            .filter_map(|row| terminal.plain_line(row))
+            .collect::<Vec<_>>()
+            .join("\n"),
+    )
 }
 
 fn terminal_finder_item(

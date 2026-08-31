@@ -70,6 +70,19 @@ own eager previews in either mode; the selected buffer or terminal produces a
 preview on demand, and terminal preview generation reads at most its final 200
 decoded rows without first materializing the complete retained output.
 
+A fifth review found that the user guide and keymap reference still described
+the former terminal-exit lifecycle. They now state that exited sessions and
+their bounded output remain listed, searchable, and reviewable until explicit
+Close removes them, and that showing an exited session enters Normal/review
+mode.
+
+A sixth review found that terminal content targets used their current retained
+row index, which bounded scrollback eviction can reuse for a different line.
+Terminal content targets now carry the grid's monotonic retained-line identity;
+preview and activation resolve it against current retained output and treat an
+evicted identity as gone. Activation also captures a current review before
+placing its caret on the identified line.
+
 Coverage includes:
 
 - `project_finder_switches_name_and_content_modes_without_losing_its_query`,
@@ -84,6 +97,8 @@ Coverage includes:
   `src/app/tests/search_and_pickers.rs`;
 - `terminal_output_after_a_complete_scan_refreshes_only_that_terminal` and
   `dirty_terminal_rows_are_invalidated_when_another_source_reaches_the_limit`
+  in `src/app/tests/search_and_pickers.rs`;
+- `terminal_content_selection_follows_stable_line_identity_through_eviction`
   in `src/app/tests/search_and_pickers.rs`;
 - `busy_terminal_updates_only_its_name_finder_item_and_selected_preview` in
   `src/app/tests/search_and_pickers.rs`;

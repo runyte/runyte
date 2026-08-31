@@ -47,7 +47,7 @@ pub enum ResourceTarget {
     Terminal(TerminalId),
     TerminalLocation {
         terminal: TerminalId,
-        row: usize,
+        line_id: u64,
         column: usize,
     },
 }
