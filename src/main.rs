@@ -83,6 +83,27 @@ const WAIT_LIFECYCLE_RECOVERY_BUDGET: Duration = Duration::from_millis(500);
 #[cfg(unix)]
 const SHUTDOWN_FLUSH_BUDGET: Duration = Duration::from_secs(3);
 
+/// Decides at the publication boundary whether a requested frame is whole.
+///
+/// A terminal-content refill temporarily removes the rows it is about to read
+/// back. Any event can request a frame while that bounded scan is in flight,
+/// so filtering only the scan and frame-tick branches is not enough: the final
+/// draw or publish site must defer every request until the refill completes.
+fn frame_publication_ready(
+    requested: bool,
+    finder_refilling: bool,
+    frame_pending: &mut bool,
+) -> bool {
+    if !requested {
+        return false;
+    }
+    if finder_refilling {
+        *frame_pending = true;
+        return false;
+    }
+    true
+}
+
 #[cfg(unix)]
 use runyte::protocol::{MAX_POINTER_REPETITIONS, WaitStatus, WaitToken, validate_welcome};
 #[cfg(unix)]
@@ -1507,20 +1528,27 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
                         );
                         if let Some(message) = rejected_text_input(&input) {
                             app.report_host_error(message);
-                            terminal.draw(|frame| {
-                                let geometry = ui::frame_geometry(frame.area());
-                                let snapshot = app.prepare_frame_with_hints(
-                                    geometry,
-                                    Some(&key_hints),
-                                );
-                                ui::render(
-                                    frame,
-                                    app.app(),
-                                    &snapshot.editor,
-                                    &key_hints,
-                                    color_depth,
-                                );
-                            })?;
+                            if frame_publication_ready(
+                                true,
+                                app.finder_scan_refills(),
+                                &mut frame_pending,
+                            ) {
+                                terminal.draw(|frame| {
+                                    let geometry = ui::frame_geometry(frame.area());
+                                    let snapshot = app.prepare_frame_with_hints(
+                                        geometry,
+                                        Some(&key_hints),
+                                    );
+                                    ui::render(
+                                        frame,
+                                        app.app(),
+                                        &snapshot.editor,
+                                        &key_hints,
+                                        color_depth,
+                                    );
+                                })?;
+                                frame_pending = false;
+                            }
                             continue;
                         }
                         #[cfg(debug_assertions)]
@@ -1690,6 +1718,9 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
                 received_signal = Some(signal);
                 break;
             }
+        }
+        if !frame_publication_ready(true, app.finder_scan_refills(), &mut frame_pending) {
+            continue;
         }
         terminal.draw(|frame| {
             let geometry = ui::frame_geometry(frame.area());
@@ -1943,8 +1974,14 @@ async fn run_host_server(
                                     "interactive client attached";
                                     "connection" => id
                                 );
-                                publish_attached_frame(&mut host, &mut active, &key_hints);
-                                frame_pending = false;
+                                if frame_publication_ready(
+                                    true,
+                                    host.finder_scan_refills(),
+                                    &mut frame_pending,
+                                ) {
+                                    publish_attached_frame(&mut host, &mut active, &key_hints);
+                                    frame_pending = false;
+                                }
                             }
                         } else if responses.try_send(HostResponse::Welcome {
                             protocol: runyte::workspace::transport::PROTOCOL_VERSION,
@@ -2416,7 +2453,7 @@ async fn run_host_server(
                 }
             }
         }
-        if changed {
+        if frame_publication_ready(changed, host.finder_scan_refills(), &mut frame_pending) {
             publish_attached_frame(&mut host, &mut active, &key_hints);
             frame_pending = false;
         }
@@ -5074,10 +5111,11 @@ mod tests {
         workspace_response_publishes_frame,
     };
     use super::{
-        KeyRepeatDetector, initialize_attached_directory, is_passive_pointer, is_redraw_only_event,
-        motion_repeat_dispatches, observe_key_or_text_hint, rejected_text_input,
-        resolve_cwd_file_path, resolve_requested_project_root, starts_on_about,
-        uses_automatic_persistent_mode, write_cwd_file, write_startup_screen,
+        KeyRepeatDetector, frame_publication_ready, initialize_attached_directory,
+        is_passive_pointer, is_redraw_only_event, motion_repeat_dispatches,
+        observe_key_or_text_hint, rejected_text_input, resolve_cwd_file_path,
+        resolve_requested_project_root, starts_on_about, uses_automatic_persistent_mode,
+        write_cwd_file, write_startup_screen,
     };
     use runyte::launch::LaunchArguments;
     use runyte::{
@@ -5091,6 +5129,28 @@ mod tests {
         tui::input::convert_event,
         workspace::WorkspaceHost,
     };
+
+    #[test]
+    fn finder_refill_defers_unrelated_frame_requests_until_it_is_whole() {
+        let mut frame_pending = false;
+
+        assert!(
+            !frame_publication_ready(true, true, &mut frame_pending),
+            "an event arriving during a refill must not publish its partial list"
+        );
+        assert!(
+            frame_pending,
+            "the skipped request must survive until the refill completes"
+        );
+        assert!(frame_publication_ready(true, false, &mut frame_pending));
+
+        frame_pending = false;
+        assert!(!frame_publication_ready(false, true, &mut frame_pending));
+        assert!(
+            !frame_pending,
+            "a refill with no frame request must not invent one"
+        );
+    }
 
     #[cfg(unix)]
     #[test]
