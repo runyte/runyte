@@ -11,8 +11,11 @@ use super::{
     resource_path_fields, scan_content, scan_files, terminal_preview,
 };
 
+use std::collections::HashSet;
+
 use crate::file_picker::FileHits;
 use crate::file_picker::line_hit;
+use crate::terminal::TerminalId;
 
 const RESOURCE_CONTENT_SLICE_ROWS: usize = 128;
 
@@ -69,7 +72,7 @@ impl App {
         }
         self.finder = None;
         self.finder_content_scan = None;
-        self.finder_content_dirty_terminals.clear();
+        self.finder_dirty_terminals.clear();
         let scan_id = self.next_file_scan_id;
         self.next_file_scan_id = self.next_file_scan_id.wrapping_add(1).max(1);
         self.picker = Some(match kind {
@@ -216,7 +219,7 @@ impl App {
     pub(super) fn close_file_picker(&mut self) {
         self.finder = None;
         self.finder_content_scan = None;
-        self.finder_content_dirty_terminals.clear();
+        self.finder_dirty_terminals.clear();
         if let Some(picker) = self.picker.take()
             && let Some(scanner) = &self.file_scanner
         {
@@ -285,7 +288,7 @@ impl App {
             return;
         }
         self.finder_content_scan = None;
-        self.finder_content_dirty_terminals.clear();
+        self.finder_dirty_terminals.clear();
         let mut items = Vec::new();
         let active = self
             .active_terminal()
@@ -373,7 +376,7 @@ impl App {
             return;
         };
         finder.begin_content_scan(picker, &query, suppressed_paths);
-        self.finder_content_dirty_terminals.clear();
+        self.finder_dirty_terminals.clear();
         self.finder_content_scan = Some(FinderContentScan {
             query,
             sources,
@@ -391,17 +394,51 @@ impl App {
         self.finder_content_scan.is_some()
     }
 
+    /// Records that a terminal's output no longer matches what the finder
+    /// read from it. This is all a write does: reading the terminal back is
+    /// the event loop's decision, taken on a slow tick.
     pub(super) fn note_terminal_finder_change(&mut self, terminal: crate::terminal::TerminalId) {
-        let Some(mode) = self.finder.as_ref().map(|finder| finder.mode) else {
+        if self.finder.is_none() {
             return;
-        };
-        if mode == FinderMode::Names {
-            self.refresh_terminal_finder_item(terminal);
-        } else if self.finder_content_scan.is_some() {
-            self.finder_content_dirty_terminals.insert(terminal);
-        } else {
-            self.start_terminal_content_refresh(terminal);
         }
+        self.finder_dirty_terminals.insert(terminal);
+    }
+
+    /// Whether any terminal has written something the finder has not read.
+    pub fn finder_terminals_dirty(&self) -> bool {
+        !self.finder_dirty_terminals.is_empty()
+    }
+
+    /// Re-reads the terminals that wrote something since the finder last
+    /// looked, and reports whether anything came of it.
+    ///
+    /// A child writing continuously produces far more states than a reader
+    /// can follow, and a list whose rows are replaced faster than they can be
+    /// read is unusable however cheap each rebuild is. Doing this on a tick
+    /// rather than on the write costs one refresh per interval instead of one
+    /// per chunk.
+    ///
+    /// A pass already in flight keeps its cursor: replacing it here would
+    /// abandon the sources it has not reached. The terminals stay dirty and
+    /// the next tick picks them up.
+    pub fn refresh_finder_terminals(&mut self) -> bool {
+        if self.finder_dirty_terminals.is_empty() || self.finder_content_scan.is_some() {
+            return false;
+        }
+        let Some(mode) = self.finder.as_ref().map(|finder| finder.mode) else {
+            self.finder_dirty_terminals.clear();
+            return false;
+        };
+        let dirty = std::mem::take(&mut self.finder_dirty_terminals);
+        match mode {
+            FinderMode::Names => {
+                for terminal in dirty {
+                    self.refresh_terminal_finder_item(terminal);
+                }
+            }
+            FinderMode::Contents => self.start_terminal_content_refresh(dirty),
+        }
+        true
     }
 
     fn refresh_terminal_finder_item(&mut self, terminal: crate::terminal::TerminalId) {
@@ -428,31 +465,34 @@ impl App {
         self.refresh_finder_preview();
     }
 
-    /// Refreshes one terminal after an otherwise complete content scan. Other
-    /// live results and a claimed selection remain in place while its bounded
-    /// rows are revisited.
-    fn start_terminal_content_refresh(&mut self, terminal: crate::terminal::TerminalId) {
-        let Some(session) = self.terminals.get(terminal) else {
-            return;
-        };
-        let source = FinderContentSource::Terminal {
-            terminal,
-            label: session.display_name(),
-        };
+    /// Revisits the terminals that changed after an otherwise complete content
+    /// scan. Every other live result, and a claimed selection, stay in place
+    /// while their bounded rows are read again.
+    fn start_terminal_content_refresh(&mut self, terminals: HashSet<TerminalId>) {
         let Some(query) = self.picker.as_ref().map(|picker| picker.query.clone()) else {
             return;
         };
-        let mut changed = std::collections::HashSet::new();
-        changed.insert(terminal);
+        // A terminal that is gone still has rows to drop, so removal covers
+        // every dirty session and only the surviving ones are read again.
+        let sources = terminals
+            .iter()
+            .filter_map(|terminal| {
+                self.terminals
+                    .get(*terminal)
+                    .map(|session| FinderContentSource::Terminal {
+                        terminal: *terminal,
+                        label: session.display_name(),
+                    })
+            })
+            .collect::<Vec<_>>();
         let limited = self.finder.as_ref().is_some_and(|finder| finder.limited);
         let Some((finder, picker)) = self.finder.as_mut().zip(self.picker.as_ref()) else {
             return;
         };
-        finder.remove_terminal_content(&changed, picker);
-        self.finder_content_dirty_terminals.remove(&terminal);
+        finder.remove_terminal_content(&terminals, picker);
         self.finder_content_scan = Some(FinderContentScan {
             query,
-            sources: vec![source],
+            sources,
             source: 0,
             row: 0,
             limited,
@@ -563,27 +603,12 @@ impl App {
         if let (Some(finder), Some(picker)) = (self.finder.as_mut(), self.picker.as_ref()) {
             finder.append_items(found, picker, &query);
         }
-        if scan.source >= scan.sources.len() && !self.finder_content_dirty_terminals.is_empty() {
-            let dirty = std::mem::take(&mut self.finder_content_dirty_terminals);
-            if let (Some(finder), Some(picker)) = (self.finder.as_mut(), self.picker.as_ref()) {
-                finder.remove_terminal_content(&dirty, picker);
-            }
-            scan.sources
-                .extend(dirty.into_iter().filter_map(|terminal| {
-                    self.terminals
-                        .get(terminal)
-                        .map(|session| FinderContentSource::Terminal {
-                            terminal,
-                            label: session.display_name(),
-                        })
-                }));
-        }
+        // Terminals that wrote while this pass ran stay dirty. Folding them
+        // in here would let a running child keep one pass alive indefinitely,
+        // which is the churn the refresh tick exists to bound.
         let finished = scan.source >= scan.sources.len();
-        if finished {
-            self.finder_content_dirty_terminals.clear();
-            if let Some(finder) = self.finder.as_mut() {
-                finder.finish_content_scan(scan.limited);
-            }
+        if finished && let Some(finder) = self.finder.as_mut() {
+            finder.finish_content_scan(scan.limited);
         }
         if !finished {
             self.finder_content_scan = Some(scan);

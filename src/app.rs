@@ -2404,7 +2404,11 @@ pub struct App {
     /// pickers leave this absent and remain files-only.
     pub finder: Option<ResourceFinder>,
     finder_content_scan: Option<FinderContentScan>,
-    finder_content_dirty_terminals: HashSet<TerminalId>,
+    /// Terminals whose output the finder has not read yet. Output marks a
+    /// terminal here and nothing more; the event loop decides when the finder
+    /// is allowed to look, so a running child cannot rebuild the list on every
+    /// chunk it writes.
+    finder_dirty_terminals: HashSet<TerminalId>,
     file_scanner: Option<FileScanner>,
     next_file_scan_id: u64,
     /// A filesystem plan waiting for a separate, explicit confirmation.
@@ -2868,7 +2872,7 @@ impl App {
             picker: None,
             finder: None,
             finder_content_scan: None,
-            finder_content_dirty_terminals: HashSet::new(),
+            finder_dirty_terminals: HashSet::new(),
             file_scanner: None,
             next_file_scan_id: 1,
             fs_confirmation: None,
