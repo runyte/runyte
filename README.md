@@ -47,6 +47,10 @@ over anything, jump anywhere, and switching between Git worktrees.
 See the [full user guide](docs/user-guide.md) for behavior, limits, and the
 complete command reference.
 
+Runyte can be configured through YAML, but its built-in features are designed
+to work together without requiring a personal configuration or plugin stack.
+It does not currently support plugins.
+
 ### Standalone and persistent modes
 
 A **workspace** is one project directory and its editor scope. In standalone
@@ -69,15 +73,6 @@ survival across a host crash, force-stop, logout, reboot, or machine failure.
 
 The [workspace and persistent-session guide](docs/user-guide.md#workspaces-and-modes)
 documents attachment, switching, lifecycle commands, and `--wait`.
-
-### Opinionated by default
-
-Runyte has a YAML configuration file, but its built-in features are intended to
-work together without requiring a personal configuration or a plugin stack.
-The tradeoff is deliberate: the feature set is opinionated, while the
-keybindings, themes, buffer types, and safety rules can be designed as one
-whole. There is no plugin system today and no implementation roadmap has been
-approved.
 
 ## Screenshots
 
@@ -275,22 +270,20 @@ and join broader discussions on [r/runyte](https://www.reddit.com/r/runyte/).
 
 ## Project philosophy
 
-Runyte is a one-person project, built around a clear personal vision. It will
-remain free and open source, and I hope it is genuinely useful to others. If it
-fits your work, please use it and enjoy it.
+Runyte is free and open source, built around a clear vision: a fast, coherent,
+dependable environment for working with code in the terminal.
 
-Even with a clear vision, software becomes rock-solid only when it has been
-tested in real work by many people. Feedback on ergonomics, missing features,
-and design choices is always welcome.
+Feedback from people using Runyte is always welcome—whether about reliability,
+ergonomics, missing capabilities, or workflows the current design does not
+serve well. Real-world use is essential to making the editor better.
 
-Runyte has no plugin system. Keeping its features integrated lets them work
-together and be optimized as one whole, favoring consistency and performance
-over the flexibility of a broadly configurable plugin platform.
+Runyte’s features are designed and optimized as one system. The project favors
+consistency, performance, and maintainability over supporting every possible
+configuration or workflow.
 
-It will not be the right tool for every workflow. If you need something
-different, you are welcome to fork Runyte and make it your own. I believe the
-future of software lies in many focused projects shaped by the people who care
-about them.
+Different tools suit different ways of working. If Runyte fits yours, I hope
+you enjoy using it. If it does not, your perspective is still valuable, and
+its open-source license leaves you free to adapt and build on its ideas.
 
 ## Acknowledgements
 
