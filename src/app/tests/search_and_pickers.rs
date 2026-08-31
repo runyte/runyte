@@ -1013,6 +1013,171 @@ fn repeated_terminal_output_does_not_starve_later_buffer_content() {
     panic!("continuous terminal output starved the later buffer source");
 }
 
+#[cfg(unix)]
+#[test]
+fn terminal_output_after_a_complete_scan_refreshes_only_that_terminal() {
+    let root = temporary("project-finder-idle-terminal-refresh");
+    fs::create_dir_all(&root).unwrap();
+    let ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    app.execute_command("buffer-new").unwrap();
+    let scratch = app.active().buffer;
+    app.buffers[scratch].apply(&Transaction::insert(0, "preserved-needle in buffer"));
+    app.open_terminal_at(Some("/bin/cat".to_owned()), root.clone());
+    let terminal = app.active_terminal().unwrap();
+    app.apply_terminal_output(TerminalOutput::Bytes {
+        id: terminal,
+        bytes: b"preserved-needle in terminal\r\n".to_vec(),
+    });
+
+    app.open_project_picker().unwrap();
+    key(&mut app, KeyCode::Tab, Modifiers::NONE);
+    type_text(&mut app, "preserved-needle");
+    while app.resource_finder_scan_pending() {
+        app.advance_resource_finder_scan();
+    }
+    let buffer_match = app
+        .finder
+        .as_ref()
+        .unwrap()
+        .matches
+        .iter()
+        .position(|found| {
+            matches!(
+                found.source,
+                FinderMatchSource::Resource(item)
+                    if matches!(
+                        app.finder.as_ref().unwrap().items[item].target,
+                        ResourceTarget::BufferLocation { buffer, .. } if buffer == scratch
+                    )
+            )
+        })
+        .unwrap();
+    app.finder.as_mut().unwrap().first();
+    for _ in 0..buffer_match {
+        app.finder.as_mut().unwrap().down();
+    }
+    let claimed = app
+        .finder
+        .as_ref()
+        .unwrap()
+        .selected_target(app.picker.as_ref().unwrap());
+
+    app.apply_terminal_output(TerminalOutput::Bytes {
+        id: terminal,
+        bytes: b"new terminal row\r\n".to_vec(),
+    });
+    assert!(app.resource_finder_scan_pending());
+    assert!(app.finder.as_ref().unwrap().items.iter().any(|item| {
+        matches!(
+            item.target,
+            ResourceTarget::BufferLocation { buffer, .. } if buffer == scratch
+        )
+    }));
+    assert_eq!(
+        app.finder
+            .as_ref()
+            .unwrap()
+            .selected_target(app.picker.as_ref().unwrap()),
+        claimed
+    );
+    while app.resource_finder_scan_pending() {
+        app.advance_resource_finder_scan();
+    }
+    assert_eq!(
+        app.finder
+            .as_ref()
+            .unwrap()
+            .selected_target(app.picker.as_ref().unwrap()),
+        claimed
+    );
+    app.close_terminal_id(terminal);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn dirty_terminal_rows_are_invalidated_when_another_source_reaches_the_limit() {
+    let root = temporary("project-finder-dirty-terminal-at-limit");
+    fs::create_dir_all(&root).unwrap();
+    let ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    app.open_terminal_at(Some("/bin/cat".to_owned()), root.clone());
+    let terminal = app.active_terminal().unwrap();
+    app.terminals.apply(TerminalOutput::Bytes {
+        id: terminal,
+        bytes: b"fresh needle\r\n".to_vec(),
+    });
+
+    let mut picker = FilePicker::grep(91, root.clone());
+    picker.insert_query_text("needle");
+    picker.add_content(vec![content_hits("disk.txt", CONTENT_ENTRY_LIMIT - 1)]);
+    picker.finish(0, false);
+    let mut finder = ResourceFinder::new(FinderMode::Contents);
+    finder.begin_content_scan(&picker, "needle", std::iter::empty());
+    finder.append_items(
+        [ResourceItem::content(
+            "terminal:1",
+            "stale needle",
+            ResourceTarget::TerminalLocation {
+                terminal,
+                row: 0,
+                column: 6,
+            },
+            ResourceKind::Terminal,
+        )],
+        &picker,
+        "needle",
+    );
+    finder.finish_content_scan(false);
+    app.picker = Some(picker);
+    app.finder = Some(finder);
+    app.finder_content_scan = Some(FinderContentScan {
+        query: "needle".to_owned(),
+        sources: vec![FinderContentSource::Buffer {
+            buffer: 0,
+            label: "scratch".to_owned(),
+            path: None,
+        }],
+        source: 0,
+        row: 0,
+        limited: false,
+    });
+    app.finder_content_dirty_terminals.insert(terminal);
+
+    app.advance_resource_finder_scan();
+    assert!(app.resource_finder_scan_pending());
+    assert!(
+        app.finder
+            .as_ref()
+            .unwrap()
+            .items
+            .iter()
+            .all(|item| item.detail != "stale needle")
+    );
+    while app.resource_finder_scan_pending() {
+        app.advance_resource_finder_scan();
+    }
+    let finder = app.finder.as_ref().unwrap();
+    assert!(finder.limited);
+    assert!(
+        finder
+            .items
+            .iter()
+            .any(|item| item.detail == "fresh needle")
+    );
+    assert_eq!(
+        finder.items.len() + app.picker.as_ref().unwrap().entries.len(),
+        CONTENT_ENTRY_LIMIT
+    );
+    app.close_terminal_id(terminal);
+    fs::remove_dir_all(root).unwrap();
+}
+
 #[test]
 fn fuzzy_picker_preview_prefers_unsaved_text_and_ignores_stale_scan_events() {
     let directory = temporary("picker-preview");
