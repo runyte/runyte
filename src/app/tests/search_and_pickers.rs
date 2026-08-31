@@ -898,7 +898,7 @@ fn project_finder_indexes_terminal_names_and_content_and_reveals_the_matching_ro
             selected,
             Some(FinderTarget::Resource(ResourceTarget::TerminalLocation {
                 terminal,
-                row: 0,
+                line_id: 0,
                 ..
             })) if terminal == id
         ),
@@ -1175,6 +1175,132 @@ fn terminal_output_after_a_complete_scan_refreshes_only_that_terminal() {
 
 #[cfg(unix)]
 #[test]
+fn terminal_content_selection_follows_stable_line_identity_through_eviction() {
+    let root = temporary("project-finder-terminal-stable-lines");
+    fs::create_dir_all(&root).unwrap();
+    let ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    app.open_terminal_at(Some("/bin/cat".to_owned()), root.clone());
+    let terminal = app.active_terminal().unwrap();
+    let initial = (0..crate::terminal::grid::SCROLLBACK_LIMIT + 64)
+        .map(|row| format!("stable-repeat {row}\r\n"))
+        .collect::<String>();
+    app.apply_terminal_output(TerminalOutput::Bytes {
+        id: terminal,
+        bytes: initial.into_bytes(),
+    });
+    let target_row = 64;
+    let (target_line_id, target_text) = app
+        .terminals
+        .get(terminal)
+        .unwrap()
+        .plain_line_with_id(target_row)
+        .unwrap();
+
+    app.open_project_grep().unwrap();
+    type_text(&mut app, "stable-repeat");
+    while app.resource_finder_scan_pending() {
+        app.advance_resource_finder_scan();
+    }
+    let target_match = app
+        .finder
+        .as_ref()
+        .unwrap()
+        .matches
+        .iter()
+        .position(|found| {
+            matches!(
+                found.source,
+                FinderMatchSource::Resource(item)
+                    if app.finder.as_ref().unwrap().items[item].target
+                        == ResourceTarget::TerminalLocation {
+                            terminal,
+                            line_id: target_line_id,
+                            column: 0,
+                        }
+            )
+        })
+        .unwrap();
+    app.finder.as_mut().unwrap().first();
+    for _ in 0..target_match {
+        app.finder.as_mut().unwrap().down();
+    }
+    let claimed = app
+        .finder
+        .as_ref()
+        .unwrap()
+        .selected_target(app.picker.as_ref().unwrap());
+
+    let shifted = (0..10)
+        .map(|row| format!("unrelated shift {row}\r\n"))
+        .collect::<String>();
+    app.apply_terminal_output(TerminalOutput::Bytes {
+        id: terminal,
+        bytes: shifted.into_bytes(),
+    });
+    while app.resource_finder_scan_pending() {
+        app.advance_resource_finder_scan();
+    }
+    assert_eq!(
+        app.finder
+            .as_ref()
+            .unwrap()
+            .selected_target(app.picker.as_ref().unwrap()),
+        claimed,
+        "the selected retained line must survive a row-index shift"
+    );
+    assert!(
+        app.finder
+            .as_ref()
+            .unwrap()
+            .selected_preview()
+            .is_some_and(|preview| preview.contains(&target_text))
+    );
+
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    let session = app.terminals.get_mut(terminal).unwrap();
+    session.select_review_line(true, false);
+    assert_eq!(session.review_selection_text(), target_text);
+    app.leave_terminal();
+
+    app.open_project_grep().unwrap();
+    type_text(&mut app, "stable-repeat");
+    while app.resource_finder_scan_pending() {
+        app.advance_resource_finder_scan();
+    }
+    assert!(app.finder.as_ref().unwrap().items.iter().any(|item| {
+        matches!(
+            item.target,
+            ResourceTarget::TerminalLocation { line_id, .. } if line_id == target_line_id
+        )
+    }));
+
+    let evicting = (0..100)
+        .map(|row| format!("eviction row {row}\r\n"))
+        .collect::<String>();
+    app.apply_terminal_output(TerminalOutput::Bytes {
+        id: terminal,
+        bytes: evicting.into_bytes(),
+    });
+    while app.resource_finder_scan_pending() {
+        app.advance_resource_finder_scan();
+    }
+    assert!(app.finder.as_ref().unwrap().items.iter().all(|item| {
+        !matches!(
+            item.target,
+            ResourceTarget::TerminalLocation { line_id, .. } if line_id == target_line_id
+        )
+    }));
+
+    app.close_file_picker();
+    app.close_terminal_id(terminal);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
 fn dirty_terminal_rows_are_invalidated_when_another_source_reaches_the_limit() {
     let root = temporary("project-finder-dirty-terminal-at-limit");
     fs::create_dir_all(&root).unwrap();
@@ -1201,7 +1327,7 @@ fn dirty_terminal_rows_are_invalidated_when_another_source_reaches_the_limit() {
             "stale needle",
             ResourceTarget::TerminalLocation {
                 terminal,
-                row: 0,
+                line_id: 0,
                 column: 6,
             },
             ResourceKind::Terminal,

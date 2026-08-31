@@ -747,6 +747,31 @@ impl Grid {
         self.scrollback.len() + self.lines.len()
     }
 
+    /// Stable identity of one retained presentation row.
+    pub fn retained_line_id(&self, row: usize) -> Option<u64> {
+        let oldest = self.retired.saturating_sub(self.scrollback.len() as u64);
+        if row < self.scrollback.len() {
+            Some(oldest + row as u64)
+        } else {
+            let screen_row = row - self.scrollback.len();
+            (screen_row < self.lines.len()).then_some(self.retired + screen_row as u64)
+        }
+    }
+
+    /// Current retained-row index for a stable identity, if it was not
+    /// evicted from bounded scrollback.
+    pub fn retained_row(&self, line_id: u64) -> Option<usize> {
+        let oldest = self.retired.saturating_sub(self.scrollback.len() as u64);
+        if (oldest..self.retired).contains(&line_id) {
+            Some((line_id - oldest) as usize)
+        } else if line_id >= self.retired {
+            let screen_row = usize::try_from(line_id - self.retired).ok()?;
+            (screen_row < self.lines.len()).then_some(self.scrollback.len() + screen_row)
+        } else {
+            None
+        }
+    }
+
     pub fn plain_line(&self, row: usize) -> Option<String> {
         let line = if row < self.scrollback.len() {
             self.scrollback.get(row)
