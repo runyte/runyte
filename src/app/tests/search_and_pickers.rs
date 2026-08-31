@@ -806,6 +806,9 @@ fn pathless_buffer_content_is_scanned_in_bounded_slices() {
     key(&mut app, KeyCode::Tab, Modifiers::NONE);
     type_text(&mut app, "Zunique");
     assert!(app.resource_finder_scan_pending());
+    // A pass over a new query starts from nothing, so every row it finds is
+    // progress and the loop is free to show it arriving.
+    assert!(!app.finder_scan_refills());
     assert!(app.finder.as_ref().unwrap().matches.is_empty());
     settle_finder(&mut app);
 
@@ -1264,6 +1267,123 @@ fn terminal_output_after_a_complete_scan_refreshes_only_that_terminal() {
             .selected_target(app.picker.as_ref().unwrap()),
         claimed
     );
+    app.close_terminal_id(terminal);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn a_refilling_pass_is_marked_as_a_state_not_worth_showing() {
+    let root = temporary("project-finder-terminal-refill-frames");
+    fs::create_dir_all(&root).unwrap();
+    let ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    app.open_terminal_at(Some("/bin/cat".to_owned()), root.clone());
+    let terminal = app.active_terminal().unwrap();
+    app.apply_terminal_output(TerminalOutput::Bytes {
+        id: terminal,
+        bytes: b"refill needle\r\n".to_vec(),
+    });
+
+    app.open_project_grep().unwrap();
+    type_text(&mut app, "refill needle");
+    settle_finder(&mut app);
+    let settled = app.finder.as_ref().unwrap().matches.len();
+    assert!(settled > 0);
+
+    app.apply_terminal_output(TerminalOutput::Bytes {
+        id: terminal,
+        bytes: b"unrelated row\r\n".to_vec(),
+    });
+    assert!(app.refresh_finder_terminals());
+    assert!(
+        app.finder_scan_refills(),
+        "a refresh must declare itself a refill"
+    );
+    assert!(
+        app.finder.as_ref().unwrap().matches.len() < settled,
+        "the refresh drops the rows it is about to read back, so what stands \
+         between it and the end of the pass is a list with a hole in it"
+    );
+
+    settle_finder(&mut app);
+    assert!(!app.finder_scan_refills());
+    assert_eq!(app.finder.as_ref().unwrap().matches.len(), settled);
+
+    app.close_file_picker();
+    app.close_terminal_id(terminal);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn narrowing_a_terminal_reads_back_the_rows_it_truncated() {
+    let root = temporary("project-finder-terminal-narrowed");
+    fs::create_dir_all(&root).unwrap();
+    let ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    app.open_terminal_at(Some("/bin/cat".to_owned()), root.clone());
+    let terminal = app.active_terminal().unwrap();
+    // Nothing but the needle itself can spell the needle, so a truncated line
+    // cannot go on matching by accident.
+    let padding = "x".repeat(50);
+    // Deep enough in history that the rows a narrowing retires cannot reach
+    // it: only the width it was read at says this row has changed.
+    let output = std::iter::once(format!("{padding}needle-past-the-fold\r\n"))
+        .chain((0..40).map(|row| format!("ordinary row {row}\r\n")))
+        .collect::<String>();
+    app.apply_terminal_output(TerminalOutput::Bytes {
+        id: terminal,
+        bytes: output.into_bytes(),
+    });
+
+    app.open_project_grep().unwrap();
+    type_text(&mut app, "needle-past-the-fold");
+    settle_finder(&mut app);
+    assert!(
+        app.finder.as_ref().unwrap().items.iter().any(|item| {
+            matches!(item.target, ResourceTarget::TerminalLocation { .. })
+                && item.detail.contains("needle-past-the-fold")
+        }),
+        "the row matches at its full width"
+    );
+
+    // Narrowing truncates every retained line in place and leaves its identity
+    // alone, so identity alone cannot tell the finder that the row changed.
+    app.prepare_view(FrameGeometry {
+        screen: Rect {
+            width: 40,
+            height: 22,
+            ..Rect::default()
+        },
+        editor: Rect {
+            width: 40,
+            height: 20,
+            ..Rect::default()
+        },
+        status: Rect::default(),
+        message: Rect::default(),
+    });
+    assert!(
+        app.finder_terminals_dirty(),
+        "a resize is a change the finder has to be told about"
+    );
+    settle_finder(&mut app);
+    assert!(
+        app.finder
+            .as_ref()
+            .unwrap()
+            .items
+            .iter()
+            .all(|item| { !matches!(item.target, ResourceTarget::TerminalLocation { .. }) }),
+        "the row no longer holds the text it was found by"
+    );
+
+    app.close_file_picker();
     app.close_terminal_id(terminal);
     fs::remove_dir_all(root).unwrap();
 }
@@ -1761,6 +1881,7 @@ fn dirty_terminal_rows_are_invalidated_when_another_source_reaches_the_limit() {
         source: 0,
         row: 0,
         limited: false,
+        refilling: false,
     });
     app.finder_dirty_terminals.insert(terminal);
 

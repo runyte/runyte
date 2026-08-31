@@ -1264,6 +1264,11 @@ impl TerminalSession {
         self.emulator.grid().scrollback_len()
     }
 
+    /// The width every retained row is currently held at.
+    pub fn columns(&self) -> usize {
+        self.emulator.columns()
+    }
+
     /// A row's place in everything the child has written, counting from one.
     ///
     /// Unlike the retained row index this does not change when history

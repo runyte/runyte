@@ -1661,22 +1661,28 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
                 }
             }
             _ = finder_refresh_tick.tick(), if app.finder_terminals_dirty() => {
-                if !app.refresh_finder_terminals() {
+                // A content refresh drops the rows it is about to read back,
+                // so this state is a hole rather than an answer. The pass that
+                // refills it decides when there is a frame worth drawing.
+                if !app.refresh_finder_terminals() || app.resource_finder_scan_pending() {
                     continue;
                 }
             }
             _ = tokio::task::yield_now(), if app.resource_finder_scan_pending() => {
                 app.advance_resource_finder_scan();
-                // A slice is one of many states a pass moves through. Only the
-                // one that ends it is worth a frame of its own; the rest wait
-                // for the frame tick so a long scan does not flicker through
-                // dozens of partial lists.
+                // A slice is one of many states a pass moves through; only the
+                // one that ends it is worth a frame of its own. The rest wait
+                // for the frame tick, which holds them back entirely while a
+                // refresh is refilling.
                 if app.resource_finder_scan_pending() {
                     frame_pending = true;
                     continue;
                 }
             }
-            _ = frame_tick.tick(), if frame_pending => {}
+            // Nothing a refill passes through is worth drawing: between
+            // dropping a terminal's rows and finding them again the list has a
+            // hole where results the reader was looking at used to be.
+            _ = frame_tick.tick(), if frame_pending && !app.finder_scan_refills() => {}
             _ = tokio::time::sleep(hint_timeout.unwrap_or_default()), if hint_timeout.is_some() => {
                 key_hints.expire_at(Instant::now());
             }
@@ -2332,23 +2338,32 @@ async fn run_host_server(
                 changed = true;
             }
             _ = finder_refresh_tick.tick(), if host.finder_terminals_dirty() => {
-                if host.refresh_finder_terminals() {
+                // A content refresh drops the rows it is about to read back,
+                // so this state is a hole rather than an answer. The pass that
+                // refills it decides when there is a frame worth publishing.
+                if host.refresh_finder_terminals() && !host.resource_finder_scan_pending() {
                     changed = true;
                 }
             }
             _ = tokio::task::yield_now(), if host.resource_finder_scan_pending() => {
                 host.advance_resource_finder_scan();
-                // A slice is one of many states a pass moves through. Only the
-                // one that ends it is worth publishing on its own; the rest
-                // wait for the frame tick so a long scan does not flicker
-                // through dozens of partial lists.
+                // A slice is one of many states a pass moves through; only the
+                // one that ends it is worth publishing on its own. The rest
+                // wait for the frame tick, which holds them back entirely
+                // while a refresh is refilling.
                 if host.resource_finder_scan_pending() {
                     frame_pending = true;
                 } else {
                     changed = true;
                 }
             }
-            _ = frame_tick.tick(), if frame_pending && active.is_some() => {
+            // Nothing a refill passes through is worth publishing: between
+            // dropping a terminal's rows and finding them again the list has a
+            // hole where results the reader was looking at used to be.
+            _ = frame_tick.tick(), if frame_pending
+                && active.is_some()
+                && !host.finder_scan_refills() =>
+            {
                 changed = true;
             }
             _ = async {

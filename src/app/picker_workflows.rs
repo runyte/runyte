@@ -7,7 +7,7 @@ use super::{
     App, Buffer, CONTENT_ENTRY_LIMIT, FilePicker, FilePickerEvent, FilePickerKind, FilePreview,
     FileScanner, FinderContentScan, FinderContentSource, FinderMatchSource, FinderMode,
     FinderTarget, Mode, PathBuf, Range, ResourceFinder, ResourceItem, ResourceKind, ResourceTarget,
-    Result, Selection, TerminalSession, buffer_picker_columns, buffer_preview,
+    Result, Selection, TerminalContentMark, TerminalSession, buffer_picker_columns, buffer_preview,
     resource_path_fields, scan_content, scan_files, terminal_preview,
 };
 
@@ -380,13 +380,22 @@ impl App {
             return;
         };
         finder.begin_content_scan(picker, &query, suppressed_paths);
+        // Nothing survives a new query, so this pass has nothing to refill.
         self.finder_dirty_terminals.clear();
         // This pass takes every session whole, so what it is about to read is
         // exactly what each of them holds now.
         self.finder_terminal_marks = self
             .terminals
             .iter()
-            .map(|terminal| (terminal.id(), terminal.retired_lines()))
+            .map(|terminal| {
+                (
+                    terminal.id(),
+                    TerminalContentMark {
+                        retired: terminal.retired_lines(),
+                        columns: terminal.columns(),
+                    },
+                )
+            })
             .collect();
         self.finder_content_scan = Some(FinderContentScan {
             query,
@@ -394,6 +403,7 @@ impl App {
             source: 0,
             row: 0,
             limited: false,
+            refilling: false,
         });
         self.refresh_finder_preview();
     }
@@ -403,6 +413,19 @@ impl App {
     /// without allowing stale rows into the finder.
     pub fn resource_finder_scan_pending(&self) -> bool {
         self.finder_content_scan.is_some()
+    }
+
+    /// Whether the pass in flight is refilling rows it has just dropped.
+    ///
+    /// A refresh drops a terminal's rows before reading them back, so between
+    /// the two the list has a hole where results the reader was looking at
+    /// used to be. Drawing that would move the selection and put the rows
+    /// back a moment later, which is the churn this pacing exists to prevent,
+    /// so the event loop holds its frame until the pass ends.
+    pub fn finder_scan_refills(&self) -> bool {
+        self.finder_content_scan
+            .as_ref()
+            .is_some_and(|scan| scan.refilling)
     }
 
     /// Records that a terminal's output no longer matches what the finder
@@ -493,14 +516,20 @@ impl App {
                 kept.insert(terminal, HashSet::new());
                 continue;
             };
-            let retired = session.retired_lines();
+            let mark = TerminalContentMark {
+                retired: session.retired_lines(),
+                columns: session.columns(),
+            };
             let scrollback = session.scrollback_rows();
-            // A retired count that has gone backwards is a different screen
-            // rather than later output, and so is a session nothing has read
-            // yet: both start over from the first row.
+            // Three things make earlier rows unusable rather than merely old,
+            // and all of them start this session over from its first row: a
+            // retired count that has gone backwards, which is a different
+            // screen rather than later output; a width that has changed,
+            // which rewrote every retained line in place; and a session
+            // nothing has read yet.
             let from = match self.finder_terminal_marks.get(&terminal) {
-                Some(mark) if retired >= *mark => {
-                    let added = usize::try_from(retired - *mark).unwrap_or(usize::MAX);
+                Some(read) if read.columns == mark.columns && mark.retired >= read.retired => {
+                    let added = usize::try_from(mark.retired - read.retired).unwrap_or(usize::MAX);
                     scrollback.saturating_sub(added)
                 }
                 _ => 0,
@@ -512,7 +541,7 @@ impl App {
                 label,
                 from,
             });
-            self.finder_terminal_marks.insert(terminal, retired);
+            self.finder_terminal_marks.insert(terminal, mark);
         }
         let limited = self.finder.as_ref().is_some_and(|finder| finder.limited);
         let Some((finder, picker)) = self.finder.as_mut().zip(self.picker.as_ref()) else {
@@ -525,6 +554,7 @@ impl App {
             sources,
             source: 0,
             limited,
+            refilling: true,
         });
         self.refresh_finder_preview();
     }

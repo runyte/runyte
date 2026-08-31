@@ -140,6 +140,11 @@ struct FinderContentScan {
     source: usize,
     row: usize,
     limited: bool,
+    /// Whether this pass is re-reading rows it has just dropped. A pass over
+    /// a new query starts from nothing, so every row it finds is progress; a
+    /// refresh starts by dropping what it is about to find again, so what it
+    /// passes through are holes and none of them is worth showing.
+    refilling: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -158,6 +163,20 @@ enum FinderContentSource {
         /// found again.
         from: usize,
     },
+}
+
+/// How much of one terminal the finder has read, and what it read.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct TerminalContentMark {
+    /// Lines that had left the top of the screen when the finder last looked.
+    /// The count only grows while a screen lives, so the difference names
+    /// exactly the rows that have arrived since.
+    retired: u64,
+    /// The width those rows were read at. Narrowing a grid truncates every
+    /// retained line in place and leaves its identity alone, so rows read at
+    /// another width no longer say what the finder recorded them as saying
+    /// and cannot be told apart by identity.
+    columns: usize,
 }
 
 impl FinderContentSource {
@@ -2424,10 +2443,9 @@ pub struct App {
     /// is allowed to look, so a running child cannot rebuild the list on every
     /// chunk it writes.
     finder_dirty_terminals: HashSet<TerminalId>,
-    /// How much of each terminal the finder has already read, as the retired
-    /// count standing when it last looked. Absent means nothing has been read
-    /// and the next pass takes the whole session.
-    finder_terminal_marks: HashMap<TerminalId, u64>,
+    /// How much of each terminal the finder has already read. Absent means
+    /// nothing has been read and the next pass takes the whole session.
+    finder_terminal_marks: HashMap<TerminalId, TerminalContentMark>,
     file_scanner: Option<FileScanner>,
     next_file_scan_id: u64,
     /// A filesystem plan waiting for a separate, explicit confirmation.

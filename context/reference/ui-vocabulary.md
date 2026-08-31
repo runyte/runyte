@@ -93,10 +93,13 @@ them, regardless of which extensibility direction is chosen.
   finder is a list to be read, so it holds still while a build or a test run
   scrolls, and its rows are current as of the last interval rather than of the
   last write. A refresh reads only what the child has added since, so results
-  already found stay put rather than being dropped and found again. A content
-  result from a terminal is numbered by its place in the child's whole output,
-  which does not change as bounded history scrolls or is evicted, rather than
-  by its retained row.
+  already found stay put rather than being dropped and found again, and a
+  resize counts as a change because narrowing rewrites every retained line the
+  finder has read. No frame is drawn between a refresh dropping a terminal's
+  rows and finding them again: that state is a hole rather than an answer. A
+  content result from a terminal is numbered by its place in the child's whole
+  output, which does not change as bounded history scrolls or is evicted,
+  rather than by its retained row.
 - **Context overlay** — temporary information or assistance tied to the source
   under the caret, such as hover documentation, completion, or a signature.
   It leaves the source pane active and declares its own bounds and dismissal

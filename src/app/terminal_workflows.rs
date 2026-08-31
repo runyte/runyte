@@ -219,8 +219,11 @@ impl App {
         let (columns, rows) = self.pane_cells(pane_id);
         self.panes.get_mut(&pane_id).unwrap().terminal = Some(id);
         let session = self.terminals.get_mut(id).unwrap();
-        session.resize(columns, rows);
+        let resized = session.resize(columns, rows);
         session.mark_viewed();
+        if resized {
+            self.note_terminal_finder_change(id);
+        }
         true
     }
 
