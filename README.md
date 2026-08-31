@@ -106,26 +106,38 @@ Full-size versions are on the
 ## Performance
 
 The benchmark opens generated documents at 500, 5,000, and 50,000 lines. Each
-size is written twice with byte-identical content: the `.txt` file measures
-reading and drawing without language processing, while the `.lua` file makes
-Neovim, Helix, and Runyte parse the same document with a single Tree-sitter Lua
-grammar.
+size is written twice with byte-identical content: no editor assigns a language
+to the `.txt` file, while the `.lua` file enables one Tree-sitter Lua grammar in
+Neovim, Helix, and Runyte.
 
-Startup time is in milliseconds as **first output / settled frame**: the first
-byte written to the terminal, then the moment substantive drawing goes quiet.
-Each result is the median of 10 runs in a 120×40 pseudo-terminal with an empty
-editor configuration and isolated home and XDG storage. Runyte's first output
-begins a stable `Opening workspace…` presentation; document text first appears
-in the complete highlighted editor frame.
+The startup comparison reports **first document content emitted** in
+milliseconds: time from immediately before process launch until a shared token
+from the first document line is emitted in the raw terminal stream. Each result
+is the median of 10 runs in a 120×40 pseudo-terminal with an empty editor
+configuration and isolated home and XDG storage.
+
+This is a common output event, not proof that the terminal has presented the
+whole screen, input is accepted, highlighting is complete, or background work
+has finished. The first terminal byte is excluded from the comparison because
+it can be an invisible terminal query, terminal setup, a loading presentation,
+or document drawing depending on the editor. Runyte's raw first byte was 4–5 ms
+in this result set, but the harness cannot infer what that byte represents.
+Runyte separately draws `Opening workspace…` before it emits document content.
 
 | Fixture | LOC | Size | Neovim | Helix | Runyte |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| `short.txt` | 0.5k | 17 kB | 4 / 17 | 16 / 17 | **4 / 6** |
-| `medium.txt` | 5k | 171 kB | 6 / 18 | 17 / 18 | **4 / 7** |
-| `long.txt` | 50k | 1.7 MB | 6 / 20 | 18 / 18 | **4 / 14** |
-| `short.lua` | 0.5k | 17 kB | 5 / 28 | 23 / 24 | **4 / 12** |
-| `medium.lua` | 5k | 171 kB | 5 / 48 | 46 / 48 | **4 / 27** |
-| `long.lua` | 50k | 1.7 MB | 5 / 175 | 222 / 223 | **4 / 149** |
+| `short.txt` | 0.5k | 17 kB | 19 | 17 | 6 |
+| `medium.txt` | 5k | 171 kB | 21 | 21 | 8 |
+| `long.txt` | 50k | 1.7 MB | 23 | 21 | 15 |
+| `short.lua` | 0.5k | 17 kB | 33 | 27 | 14 |
+| `medium.lua` | 5k | 171 kB | 27 | 48 | 28 |
+| `long.lua` | 50k | 1.7 MB | 28 | 215 | 176 |
+
+Runyte does not emit document text until its complete highlighted editor frame.
+That is not assumed for Neovim or Helix: in particular, this result shows
+Neovim emitting the `long.lua` marker well before the later drawing quiet used
+by the old benchmark. The table therefore compares one exact output event, not
+editor readiness, completed parsing, or overall editor performance.
 
 Absolute values are machine-specific. See the
 [benchmark methodology](benchmarks/README.md) for how each fixture is measured

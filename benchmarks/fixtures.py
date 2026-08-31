@@ -10,19 +10,19 @@ which is the opposite of what a regression benchmark is for.
 The matrix is one document at three sizes, written twice: once as ``.lua``,
 which every measured editor parses with the same single tree-sitter grammar, and
 once as ``.txt``, which no editor claims a language for. The two files of a size
-are byte-identical, so the difference between them is the whole cost of treating
-a document as a language and nothing else. The difference along the size axis is
-how each of those costs scales.
+are byte-identical, so only the language assignment can explain different
+first-content timing within a pair. That difference is not the complete parser
+cost because an editor may emit content before parsing finishes. The size axis
+shows how document size affects the same output event.
 
-``short.txt``   500 lines with no language: reading and drawing alone.
+``short.txt``   500 lines with no language assigned.
 ``medium.txt``  5,000 lines with no language.
 ``long.txt``    50,000 lines with no language.
-``short.lua``   the same 500 lines parsed with the Lua grammar. Against
-                ``short.txt`` this is dominated by compiling one language's
-                queries, since the document is too small to matter.
-``medium.lua``  the same 5,000 lines parsed with the Lua grammar.
-``long.lua``    the same 50,000 lines parsed with the Lua grammar. Against
-                ``long.txt`` this is parsing.
+``short.lua``   the same 500 lines with the Lua grammar enabled.
+``medium.lua``  the same 5,000 lines with the Lua grammar enabled.
+``long.lua``    the same 50,000 lines with the Lua grammar enabled, where an
+                editor's choice to emit content before or after parsing is
+                visible in the result.
 """
 
 from __future__ import annotations

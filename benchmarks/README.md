@@ -106,8 +106,9 @@ does not change when Runyte's own source does. Deleting `.work/` is safe; the
 next run rebuilds everything in it.
 
 The matrix is one document at three sizes, written twice. Every editor measured
-here parses `.lua` with the same single tree-sitter grammar, and no editor claims
-a language for `.txt`.
+here has the same single tree-sitter Lua grammar enabled for `.lua`, and no
+editor claims a language for `.txt`. The startup metric does not wait for that
+parse to complete.
 
 | Size | Lines | On disk |
 | --- | ---: | ---: |
@@ -115,31 +116,33 @@ a language for `.txt`.
 | medium | 5,000 | 171 kB |
 | long | 50,000 | 1.7 MB |
 
-| Fixture | Isolates |
+| Fixture | Varies |
 | --- | --- |
-| `short.txt` | Fixed startup cost with no language involved: reading and drawing alone, on a document too small to matter. |
-| `medium.txt` | The same on a realistic working file. |
-| `long.txt` | The same at a size where reading the file is measurable on its own. |
-| `short.lua` | The cost of treating a small document as a language, which at this size is dominated by compiling one language's queries. |
-| `medium.lua` | A realistic working file parsed with tree-sitter. |
-| `long.lua` | A document large enough that parsing dominates everything else. |
+| `short.txt` | First content from a small document with no language assigned. |
+| `medium.txt` | The same event from a realistic working file. |
+| `long.txt` | The same event from a large file. |
+| `short.lua` | First content from the byte-identical small file with Lua assigned. |
+| `medium.lua` | The same language-assigned event from a realistic working file. |
+| `long.lua` | The same event where editors' choices about drawing before or after a large parse are visible. |
 
 **The `.txt` and `.lua` files of a size are byte-identical.** Only the extension
-differs, so the difference between the two figures is the whole cost of treating
-the document as a language: nothing else about the document can account for it.
-The `.txt` file is Lua source that no editor recognises as such, which is what
-makes it a control rather than a second document.
+differs. The difference between their first-content timestamps therefore shows
+how assigning a language affects that output event. It is not the complete
+language or parser cost: an editor may emit document text and finish parsing or
+highlighting later. The `.txt` file is Lua source that no editor recognises as
+such, which makes it a control rather than a second document.
 
 Reading the two axes:
 
-- Across a pair, `.lua` minus `.txt` is language cost. At `short` that is mostly
-  compiling the grammar's queries; at `long` it is mostly parsing.
-- Down a column, the same measurement at ten and a hundred times the size shows
-  how each of those costs scales.
+- Across a pair, the difference shows how language assignment affects time to
+  the shared output event. It says nothing about later silent work.
+- Down a column, the same output event at ten and a hundred times the size shows
+  how document size affects time to that event.
 
 The Lua fixture contains no comments, long strings, or calls recognized by any
-editor's Lua injection query. All three editors therefore parse it with the Lua
-grammar alone, which is what makes it a fair cross-editor row.
+editor's Lua injection query. All three editors therefore use the Lua grammar
+alone. That keeps the setup controlled, but does not imply that parsing has
+finished when the marker is emitted.
 
 Rust, Markdown and JSON fixtures were measured previously and have been removed.
 Neovim bundles parsers for a fixed short list that does not include Rust, so its
@@ -152,19 +155,18 @@ as history and neither is measured now.
 
 ## Reading the results
 
-**Rows are only comparable across editors when each editor is doing the same
-work.** The clearest case is tree-sitter: an editor with no parser installed for
-a language highlights that file with regular expressions over the visible window,
-or not at all, while an editor with a parser builds a tree over the whole
-document. Those are different amounts of work and the times are not comparable.
+**The startup rows compare one shared output event, not equal completed work.**
+Each editor receives the same bytes and the harness timestamps the same token,
+but an editor can emit that token before or after parsing, highlighting, or
+becoming interactive. The supported cross-editor claim is therefore only that
+one editor emitted the shared document content earlier than another. It is not
+evidence that the editor was ready, finished more work, or is globally faster.
 
-The matrix is chosen so that both kinds of row support a cross-editor claim:
+The fixture configuration is still controlled and recorded:
 
 - The `.lua` rows — Neovim, Helix and Runyte all ship and enable a Lua parser,
-  and the fixture triggers no editor's injection queries, so each builds one
-  tree with one grammar over the same bytes.
-- The `.txt` rows — no editor claims a language, so they compare reading and
-  drawing alone.
+  and the fixture triggers no editor's injection queries.
+- The `.txt` rows — no editor claims a language.
 
 To check what an editor is actually doing, open the fixture and ask it. For
 Neovim:
@@ -178,9 +180,10 @@ nvim --headless FIXTURE \
 `true` with an empty `syntax` is a tree-sitter parse; `false` with a syntax name
 is the regular-expression fallback.
 
-**Comparisons of one editor against its own earlier numbers are sound** as long
-as the fixtures and the machine are unchanged, which is what the fixture seed is
-for. This is the intended use.
+**Comparisons of one editor against its own earlier numbers use the same event**
+as long as the fixtures, harness, and machine are unchanged. Ordinary run
+variation still applies; a small difference is not automatically a code
+improvement.
 
 Absolute values are machine-specific. Record the machine alongside any result
 set that will be compared against another.
