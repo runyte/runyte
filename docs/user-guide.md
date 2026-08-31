@@ -1022,11 +1022,14 @@ To build from a clone instead:
 ./target/release/runyte README.md
 ```
 
-Runyte accepts multiple startup text files and opens them all before entering
-the terminal, leaving the first text file active. Put a one-based `+LINE` or
-`+LINE:COLUMN` immediately before a file to place its caret when that buffer is
-first shown; columns count Unicode characters rather than bytes. For example,
-`runyte +12:4 "notes with spaces.md" src/main.rs` opens both files at once.
+Runyte accepts multiple startup text files and leaves the first text file
+active. Standalone launches show a stable `Opening workspace…` presentation
+while those files and their syntax are prepared; document text first appears
+as the complete highlighted editor frame, never as a partially highlighted
+intermediate frame. Put a one-based `+LINE` or `+LINE:COLUMN` immediately before
+a file to place its caret when that buffer is first shown; columns count Unicode
+characters rather than bytes. For example, `runyte +12:4 "notes with spaces.md"
+src/main.rs` opens both files at once.
 Repeated spellings of the same resolved path share one buffer, both at startup
 and when opened later in standalone or persistent mode. A save-as refuses a
 path already owned by another live buffer, including its resolved aliases;

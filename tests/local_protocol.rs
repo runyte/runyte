@@ -816,6 +816,116 @@ fn termination_signal_restores_the_terminal_and_preserves_its_exit_status() {
     fs::remove_dir_all(root).unwrap();
 }
 
+#[tokio::test]
+async fn a_blocked_document_open_presents_an_intentional_startup_screen() {
+    use std::ffi::CString;
+    use std::io::Write;
+
+    let root = project();
+    let config = default_config(&root);
+    let fifo = root.join("blocking.lua");
+    let fifo_name = CString::new(fifo.to_string_lossy().as_bytes()).unwrap();
+    // SAFETY: `fifo_name` is a live NUL-terminated path and the mode contains
+    // only ordinary owner permissions.
+    assert_eq!(unsafe { libc::mkfifo(fifo_name.as_ptr(), 0o600) }, 0);
+    let (child, terminal) = spawn_in_pty(
+        bundled_runyte()
+            .args(["--standalone", "--config"])
+            .arg(config)
+            .arg("blocking.lua")
+            .current_dir(&root)
+            .env("XDG_RUNTIME_DIR", test_runtime_dir())
+            .env("XDG_CACHE_HOME", test_cache_dir()),
+    );
+    let mut child = ChildGuard(Some(child));
+    let output = capture_terminal_output(&terminal);
+
+    wait_for_terminal_screen(&output, "Opening workspace…").await;
+    assert!(
+        child.0.as_mut().unwrap().try_wait().unwrap().is_none(),
+        "the editor exited instead of waiting for the startup target"
+    );
+    assert!(
+        output.raw.lock().unwrap().len() < 256,
+        "the document-free presentation alone crossed the benchmark's substantive-frame threshold"
+    );
+    // Startup probes once for binary data, then opens the same path for the
+    // authoritative text and disk state. Feed both reads without creating or
+    // executing a test program.
+    let writer_path = fifo.clone();
+    let writers = std::thread::spawn(move || {
+        for read in 0..2 {
+            let mut writer = fs::OpenOptions::new()
+                .write(true)
+                .open(&writer_path)
+                .unwrap();
+            writer.write_all(b"return 1\n").unwrap();
+            drop(writer);
+            if read == 0 {
+                std::thread::sleep(Duration::from_millis(100));
+            }
+        }
+    });
+    wait_for_terminal_screen(&output, "blocking.lua").await;
+    writers.join().unwrap();
+
+    // SAFETY: `child.id()` names this test's live child process.
+    assert_eq!(
+        unsafe { libc::kill(child.0.as_ref().unwrap().id() as libc::pid_t, libc::SIGTERM,) },
+        0
+    );
+    assert_eq!(
+        wait_child(child.0.as_mut().unwrap()).await.code(),
+        Some(128 + libc::SIGTERM)
+    );
+    child.0.take();
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn termination_during_a_blocked_startup_open_restores_the_terminal() {
+    use std::ffi::CString;
+
+    let root = project();
+    let config = default_config(&root);
+    let fifo = root.join("blocked-forever.lua");
+    let fifo_name = CString::new(fifo.to_string_lossy().as_bytes()).unwrap();
+    // SAFETY: `fifo_name` is a live NUL-terminated path and the mode contains
+    // only ordinary owner permissions.
+    assert_eq!(unsafe { libc::mkfifo(fifo_name.as_ptr(), 0o600) }, 0);
+    let (child, terminal, initial) = spawn_in_pty_with_initial_termios(
+        bundled_runyte()
+            .args(["--standalone", "--config"])
+            .arg(config)
+            .arg("blocked-forever.lua")
+            .current_dir(&root)
+            .env("XDG_RUNTIME_DIR", test_runtime_dir())
+            .env("XDG_CACHE_HOME", test_cache_dir()),
+    );
+    let mut child = ChildGuard(Some(child));
+    let output = capture_terminal_output(&terminal);
+
+    wait_for_terminal_screen(&output, "Opening workspace…").await;
+    // SAFETY: `child.id()` names this test's live child process.
+    assert_eq!(
+        unsafe { libc::kill(child.0.as_ref().unwrap().id() as libc::pid_t, libc::SIGTERM) },
+        0
+    );
+    assert_eq!(
+        wait_child(child.0.as_mut().unwrap()).await.code(),
+        Some(128 + libc::SIGTERM)
+    );
+    child.0.take();
+
+    let restored = terminal_attributes(terminal.as_raw_fd());
+    assert_eq!(restored.c_iflag, initial.c_iflag);
+    assert_eq!(restored.c_oflag, initial.c_oflag);
+    assert_eq!(restored.c_cflag, initial.c_cflag);
+    assert_eq!(restored.c_lflag, initial.c_lflag);
+    assert_eq!(restored.c_cc, initial.c_cc);
+    fs::remove_dir_all(root).unwrap();
+}
+
 async fn connect_control(endpoint: &LocalEndpoint) -> LocalClient {
     try_connect_control(endpoint).await.unwrap()
 }

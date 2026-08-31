@@ -1,9 +1,9 @@
 # Startup, quit and idle benchmark
 
-Measures how long a terminal editor takes to present a settled first frame, and
-then to quit, plus what it costs while sitting idle. Runyte is measured alongside
-Neovim and Helix where those are installed, so a change in Runyte's numbers can
-be separated from a change in the machine.
+Measures how long a terminal editor takes to begin presenting and reach a
+settled frame, and then to quit, plus what it costs while sitting idle. Runyte
+is measured alongside Neovim and Helix where those are installed, so a change
+in Runyte's numbers can be separated from a change in the machine.
 
 Results are recorded in
 [`context/reference/startup-performance.md`](../context/reference/startup-performance.md).
@@ -34,10 +34,15 @@ Missing editors are skipped with a note rather than failing the run, so
 
 ## What is measured
 
-**Time to a settled first frame.** The editor is spawned on a pseudo-terminal,
-and the harness records the first byte of output and the moment output goes
-quiet. Small repaints do not restart the settle clock, so an editor that
-repaints on a timer still reaches a settled state.
+**Time to first output and a settled frame.** The editor is spawned on a
+pseudo-terminal, and the harness records the first byte of output and the
+moment output goes quiet. Runyte's first output begins a stable, document-free
+startup presentation; its document text appears only in the complete
+highlighted editor frame. The quiet-period test is not armed until output has
+reached a substantive-frame byte threshold, so a short capability exchange or
+loading presentation cannot settle by itself. Small later repaints do not
+restart the settle clock, so an editor that repaints on a timer still reaches a
+settled state.
 
 **Quit time.** After the startup frame settles, the harness sends
 <kbd>Escape</kbd> <kbd>:</kbd> <kbd>q</kbd> <kbd>!</kbd> <kbd>Enter</kbd> and
@@ -59,7 +64,9 @@ intermittent nonzero sample remains visible even when the median is zero. A
 fully event-driven editor reports zero for both. `--idle-runs` changes the
 sample count and accepts three or more; the report is marked incomplete instead
 of taking a median from a subset if any editor exits before its whole window
-finishes.
+finishes. Linux process accounting includes both descendants still live at a
+sample boundary and the cumulative ticks of children reaped within the window,
+so short-lived helpers do not disappear between samples.
 
 CPU sampling is unavailable where `/proc` is absent, including macOS, and is
 reported that way rather than as a fabricated zero. Screen writes remain

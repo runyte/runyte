@@ -14,16 +14,16 @@ import ptybench
 class MedianStartupTests(unittest.TestCase):
     def test_ready_and_quit_completeness_are_counted_independently(self) -> None:
         samples = [
-            {"first_paint": 0.001, "ready": 0.003, "quit": 0.007, "bytes": 100},
-            {"first_paint": 0.002, "ready": 0.004, "quit": 0.005, "bytes": 120},
-            {"first_paint": 0.003, "ready": 0.005, "quit": None, "bytes": 140},
-            {"first_paint": 0.004, "ready": None, "quit": None, "bytes": 160},
+            {"first_output": 0.001, "ready": 0.003, "quit": 0.007, "bytes": 100},
+            {"first_output": 0.002, "ready": 0.004, "quit": 0.005, "bytes": 120},
+            {"first_output": 0.003, "ready": 0.005, "quit": None, "bytes": 140},
+            {"first_output": 0.004, "ready": None, "quit": None, "bytes": 160},
         ]
 
         with mock.patch("ptybench.measure_startup", side_effect=samples):
             result = ptybench.median_startup(["editor"], {}, runs=4)
 
-        self.assertEqual(result["first_paint_ms"], 2.5)
+        self.assertEqual(result["first_output_ms"], 2.5)
         self.assertEqual(result["ready_ms"], 4.0)
         self.assertEqual(result["quit_ms"], 6.0)
         self.assertEqual(result["bytes"], 130)
@@ -37,6 +37,28 @@ class QuitValidityTests(unittest.TestCase):
         result = ptybench.measure_startup([sys.executable, "-c", "pass"], {})
 
         self.assertIsNone(result["quit"])
+
+    def test_loading_presentation_cannot_settle_before_the_editor_frame(self) -> None:
+        script = (
+            "import os,time; "
+            "os.write(1,b'L'*17); time.sleep(0.6); "
+            "os.write(1,b'F'*300); os.read(0,5)"
+        )
+
+        result = ptybench.measure_startup([sys.executable, "-c", script], {})
+
+        self.assertGreater(result["ready"], 0.5)
+        self.assertGreaterEqual(result["bytes"], 317)
+
+
+class CpuAccountingTests(unittest.TestCase):
+    def test_proc_stat_includes_reaped_child_ticks(self) -> None:
+        # Process names may contain spaces and parentheses. The fields after
+        # the final `)` begin with state; positions 11-14 are fields 14-17.
+        fields = ["S", *["0"] * 10, "2", "3", "5", "7", "0"]
+        stat = f"123 (helper (finished)) {' '.join(fields)}"
+
+        self.assertEqual(ptybench._stat_cpu_ticks(stat), 17)
 
 
 class MedianIdleTests(unittest.TestCase):

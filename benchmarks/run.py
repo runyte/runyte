@@ -225,7 +225,10 @@ def main() -> int:
 
     print("### Startup")
     print()
-    print("First paint is the first byte of output; ready is when drawing goes quiet.")
+    print(
+        "First output is the first byte written; ready is when substantive drawing "
+        "goes quiet."
+    )
     print()
     print("| Fixture | Size | " + " | ".join(f"{n} first / ready" for n, _ in editors) + " |")
     print("| --- | --- | " + " | ".join("---:" for _ in editors) + " |")
@@ -238,7 +241,7 @@ def main() -> int:
                 argv + [fixture], env, cwd=str(FIXTURES), runs=args.runs
             )
             startup_results.setdefault(fixture, []).append(result)
-            first, ready = result["first_paint_ms"], result["ready_ms"]
+            first, ready = result["first_output_ms"], result["ready_ms"]
             if ready is None or result["complete"] < result["runs"]:
                 cells.append("no settled frame")
             else:

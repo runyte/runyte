@@ -36,11 +36,21 @@ enum WorkerMessage {
 
 pub struct FileMonitorHandle {
     commands: SyncSender<WorkerMessage>,
+    synced_requests: Vec<FileObservationRequest>,
 }
 
 impl FileMonitorHandle {
-    pub fn sync(&self, requests: Vec<FileObservationRequest>) {
-        let _ = self.commands.try_send(WorkerMessage::Sync(requests));
+    pub fn sync(&mut self, requests: Vec<FileObservationRequest>) {
+        if self.synced_requests == requests {
+            return;
+        }
+        if self
+            .commands
+            .try_send(WorkerMessage::Sync(requests.clone()))
+            .is_ok()
+        {
+            self.synced_requests = requests;
+        }
     }
 
     pub fn observe(&self, request: FileObservationRequest) {
@@ -66,7 +76,13 @@ pub fn spawn() -> (FileMonitorHandle, mpsc::Receiver<FileObservationEvent>) {
         .name("runyte-file-monitor".to_owned())
         .spawn(move || run_worker(watcher.as_mut(), receiver, events))
         .expect("file monitor thread must start");
-    (FileMonitorHandle { commands }, event_receiver)
+    (
+        FileMonitorHandle {
+            commands,
+            synced_requests: Vec::new(),
+        },
+        event_receiver,
+    )
 }
 
 fn run_worker(
@@ -81,7 +97,10 @@ fn run_worker(
     let mut next_reconcile = Instant::now() + RECONCILE_INTERVAL;
 
     loop {
-        match receiver.recv_timeout(Duration::from_millis(25)) {
+        let now = Instant::now();
+        let next_due = due.values().copied().min().unwrap_or(next_reconcile);
+        let wake_at = next_reconcile.min(next_due);
+        match receiver.recv_timeout(wake_at.saturating_duration_since(now)) {
             Ok(WorkerMessage::Sync(requests)) => {
                 sync_registrations(
                     watcher.as_deref_mut(),
@@ -242,7 +261,7 @@ mod tests {
         let generation = request.generation;
         fs::write(&path, "external").unwrap();
 
-        let (monitor, mut events) = spawn();
+        let (mut monitor, mut events) = spawn();
         monitor.sync(vec![request]);
         let event = tokio::time::timeout(Duration::from_secs(2), events.recv())
             .await
@@ -282,5 +301,28 @@ mod tests {
             .add_path(path.to_path_buf());
         assert!(!native_affects(&access, path));
         assert!(native_affects(&modify, path));
+    }
+
+    #[test]
+    fn unchanged_registrations_do_not_wake_the_worker_again() {
+        let (commands, receiver) = sync_channel(2);
+        let mut monitor = FileMonitorHandle {
+            commands,
+            synced_requests: Vec::new(),
+        };
+        let request = FileObservationRequest {
+            buffer: 7,
+            path: PathBuf::from("/tmp/notes.txt"),
+            generation: 3,
+            baseline_metadata: None,
+        };
+
+        monitor.sync(vec![request.clone()]);
+        assert!(matches!(receiver.try_recv(), Ok(WorkerMessage::Sync(_))));
+        monitor.sync(vec![request]);
+        assert!(matches!(
+            receiver.try_recv(),
+            Err(std::sync::mpsc::TryRecvError::Empty)
+        ));
     }
 }

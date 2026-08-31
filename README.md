@@ -112,23 +112,26 @@ Neovim, Helix, and Runyte parse the same document with a single Tree-sitter Lua
 grammar.
 
 Startup time is in milliseconds as **first output / settled frame**: the first
-byte written to the terminal, then the moment drawing goes quiet. Each result
-is the median of 10 runs in a 120×40 pseudo-terminal with an empty editor
-configuration.
+byte written to the terminal, then the moment substantive drawing goes quiet.
+Each result is the median of 10 runs in a 120×40 pseudo-terminal with an empty
+editor configuration and isolated home and XDG storage. Runyte's first output
+begins a stable `Opening workspace…` presentation; document text first appears
+in the complete highlighted editor frame.
 
 | Fixture | LOC | Size | Neovim | Helix | Runyte |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| `short.txt` | 0.5k | 17 kB | 6 / 18 | 17 / 18 | **5 / 6** |
-| `medium.txt` | 5k | 171 kB | 6 / 17 | 19 / 20 | **6 / 7** |
-| `long.txt` | 50k | 1.7 MB | 6 / 22 | 22 / 23 | **16 / 17** |
-| `short.lua` | 0.5k | 17 kB | 6 / 30 | 22 / 23 | **10 / 12** |
-| `medium.lua` | 5k | 171 kB | 6 / 46 | 48 / 50 | **28 / 29** |
-| `long.lua` | 50k | 1.7 MB | 6 / 175 | 214 / 215 | **150 / 152** |
+| `short.txt` | 0.5k | 17 kB | 4 / 17 | 16 / 17 | **4 / 6** |
+| `medium.txt` | 5k | 171 kB | 6 / 18 | 17 / 18 | **4 / 7** |
+| `long.txt` | 50k | 1.7 MB | 6 / 20 | 18 / 18 | **4 / 14** |
+| `short.lua` | 0.5k | 17 kB | 5 / 28 | 23 / 24 | **4 / 12** |
+| `medium.lua` | 5k | 171 kB | 5 / 48 | 46 / 48 | **4 / 27** |
+| `long.lua` | 50k | 1.7 MB | 5 / 175 | 222 / 223 | **4 / 149** |
 
 Absolute values are machine-specific. See the
 [benchmark methodology](benchmarks/README.md) for how each fixture is measured
 and [startup performance](context/reference/startup-performance.md) for the
-machine, versions, and idle cost behind this result set.
+machine, versions, comparative quit time, and repeated idle cost behind this
+result set.
 
 ## Installation
 

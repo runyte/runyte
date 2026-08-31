@@ -35,9 +35,10 @@ import struct
 import termios
 import time
 
-# Silence long enough to call the initial draw finished. Chunks below
-# SIGNIFICANT_BYTES do not restart this clock, so an editor that repaints a
-# cursor on a timer still reaches a settled state.
+# Silence long enough to call the initial draw finished. Output must first
+# reach SIGNIFICANT_BYTES in total, so a short capability exchange or loading
+# presentation cannot settle in place of the editor frame. Later chunks below
+# that size do not restart the clock, which lets cursor repaints settle.
 SETTLE_SECONDS = 0.25
 SIGNIFICANT_BYTES = 256
 
@@ -108,17 +109,18 @@ def _reap(pid: int) -> None:
 
 
 def measure_startup(argv, env, cwd=None):
-    """Open a document and quit. Returns first-paint, ready, quit and byte count.
+    """Open a document and quit. Returns first-output, ready, quit and bytes.
 
-    ``first_paint`` is the first byte of output; ``ready`` is when output goes
+    ``first_output`` is the first byte written; ``ready`` is when output goes
     quiet. ``quit`` begins after the final keystroke, so a value near zero means
     the editor exited as soon as it read the command.
     """
     pid, fd = _spawn(argv, env, cwd)
     start = time.perf_counter()
-    first_paint = None
+    first_output = None
     last_significant = start
     total_bytes = 0
+    substantive_output = False
     ready = None
     closed = False
 
@@ -133,13 +135,16 @@ def measure_startup(argv, env, cwd=None):
             if not data:
                 closed = True
                 break
-            if first_paint is None:
-                first_paint = time.perf_counter() - start
+            if first_output is None:
+                first_output = time.perf_counter() - start
                 # Start the settle clock at the first byte, not at spawn, or an
                 # editor that queries the terminal before drawing settles at zero.
                 last_significant = time.perf_counter()
             total_bytes += len(data)
-            if len(data) >= SIGNIFICANT_BYTES:
+            if not substantive_output and total_bytes >= SIGNIFICANT_BYTES:
+                substantive_output = True
+                last_significant = time.perf_counter()
+            elif len(data) >= SIGNIFICANT_BYTES:
                 last_significant = time.perf_counter()
             reply = terminal_replies(data)
             if reply:
@@ -147,7 +152,7 @@ def measure_startup(argv, env, cwd=None):
                     os.write(fd, reply)
                 except OSError:
                     pass
-        elif first_paint is not None and time.perf_counter() - last_significant > SETTLE_SECONDS:
+        elif substantive_output and time.perf_counter() - last_significant > SETTLE_SECONDS:
             ready = last_significant - start
             break
 
@@ -206,7 +211,7 @@ def measure_startup(argv, env, cwd=None):
         pass
 
     return {
-        "first_paint": first_paint,
+        "first_output": first_output,
         "ready": ready,
         "quit": (
             None
@@ -224,13 +229,26 @@ def measure_startup(argv, env, cwd=None):
     }
 
 
+def _stat_cpu_ticks(stat: str) -> int:
+    """Own and reaped-child CPU ticks from one Linux `/proc/PID/stat`."""
+    fields = stat.rsplit(")", 1)[-1].split()
+    # Fields 14-17 are utime, stime, cutime and cstime. `fields` starts at
+    # process state (field 3), so their zero-based positions here are 11-14.
+    return sum(int(fields[index]) for index in range(11, 15))
+
+
 def _cpu_ticks(pid: int) -> int:
-    """User + system ticks for `pid` and every descendant it has spawned."""
+    """User + system ticks for `pid` and every descendant it has spawned.
+
+    A live child is traversed through `/proc`; a child reaped between samples
+    remains represented by its parent's cumulative child ticks. Combining the
+    two keeps short-lived helpers inside the measured window without counting
+    a live child twice.
+    """
     total = 0
     try:
         with open(f"/proc/{pid}/stat") as stat_file:
-            fields = stat_file.read().rsplit(")", 1)[-1].split()
-        total += int(fields[11]) + int(fields[12])
+            total += _stat_cpu_ticks(stat_file.read())
     except (OSError, IndexError, ValueError):
         return total
     try:
@@ -372,7 +390,7 @@ def median_startup(argv, env, cwd=None, runs=5):
         return round(statistics.median(values) * 1000, 1) if values else None
 
     return {
-        "first_paint_ms": median_ms("first_paint"),
+        "first_output_ms": median_ms("first_output"),
         "ready_ms": median_ms("ready"),
         "quit_ms": median_ms("quit"),
         "bytes": int(statistics.median(s["bytes"] for s in samples)),

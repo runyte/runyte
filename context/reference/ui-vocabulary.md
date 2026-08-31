@@ -5,6 +5,11 @@ frontend protocol fields, and help text. Any future extension API must inherit
 them, regardless of which extensibility direction is chosen.
 
 - **Runyte screen** — the complete terminal surface owned by Runyte.
+- **Startup presentation** — the stable, document-free Runyte screen shown by
+  a standalone launch while its initial editor state is built. It says
+  `Opening workspace…` and is replaced once by the first complete editor frame;
+  it never previews unhighlighted document text or changes layout while work is
+  pending.
 - **Editor area** — the part of the screen above the two global lines. It
   contains every pane and overlay.
 - **Pane** — one view of one buffer. Splits create panes; buffers may be shared
