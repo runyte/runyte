@@ -11,9 +11,23 @@ use super::{
     resource_path_fields, scan_content, scan_files, terminal_preview,
 };
 
+use crate::file_picker::FileHits;
 use crate::file_picker::line_hit;
 
 const RESOURCE_CONTENT_SLICE_ROWS: usize = 128;
+
+/// Applies the part of the unified content budget still available to disk
+/// hits. Keeping this admission step outside `FilePicker::add_content` makes
+/// the picker and the already-collected live resources share one ceiling.
+pub(super) fn truncate_content_hits(entries: &mut Vec<FileHits>, mut available: usize) -> bool {
+    let mut limited = false;
+    for hits in entries.iter_mut() {
+        limited |= hits.truncate(available);
+        available = available.saturating_sub(hits.len());
+    }
+    entries.retain(|hits| !hits.is_empty());
+    limited
+}
 
 impl App {
     pub(super) fn open_project_picker(&mut self) -> Result<()> {
@@ -55,6 +69,7 @@ impl App {
         }
         self.finder = None;
         self.finder_content_scan = None;
+        self.finder_content_dirty_terminals.clear();
         let scan_id = self.next_file_scan_id;
         self.next_file_scan_id = self.next_file_scan_id.wrapping_add(1).max(1);
         self.picker = Some(match kind {
@@ -201,6 +216,7 @@ impl App {
     pub(super) fn close_file_picker(&mut self) {
         self.finder = None;
         self.finder_content_scan = None;
+        self.finder_content_dirty_terminals.clear();
         if let Some(picker) = self.picker.take()
             && let Some(scanner) = &self.file_scanner
         {
@@ -269,6 +285,7 @@ impl App {
             return;
         }
         self.finder_content_scan = None;
+        self.finder_content_dirty_terminals.clear();
         let mut items = Vec::new();
         let active = self
             .active_terminal()
@@ -396,6 +413,7 @@ impl App {
             return;
         };
         finder.begin_content_scan(picker, &query, suppressed_paths);
+        self.finder_content_dirty_terminals.clear();
         self.finder_content_scan = Some(FinderContentScan {
             query,
             sources,
@@ -413,6 +431,19 @@ impl App {
         self.finder_content_scan.is_some()
     }
 
+    pub(super) fn note_terminal_finder_change(&mut self, terminal: crate::terminal::TerminalId) {
+        let Some(mode) = self.finder.as_ref().map(|finder| finder.mode) else {
+            return;
+        };
+        if mode == FinderMode::Names {
+            self.rebuild_resource_finder();
+        } else if self.finder_content_scan.is_some() {
+            self.finder_content_dirty_terminals.insert(terminal);
+        } else {
+            self.start_resource_content_scan();
+        }
+    }
+
     /// Advances live buffer and terminal matching without materializing the
     /// complete corpus or holding the input loop for an unbounded scan.
     pub fn advance_resource_finder_scan(&mut self) {
@@ -422,7 +453,12 @@ impl App {
         let mut visited = 0usize;
         let mut found = Vec::new();
         while scan.source < scan.sources.len() && visited < RESOURCE_CONTENT_SLICE_ROWS {
-            if found.len() + self.finder.as_ref().map_or(0, |finder| finder.items.len())
+            if found.len()
+                + self.finder.as_ref().map_or(0, |finder| finder.items.len())
+                + self
+                    .picker
+                    .as_ref()
+                    .map_or(0, |picker| picker.entries.len())
                 >= CONTENT_ENTRY_LIMIT
             {
                 scan.limited = true;
@@ -478,41 +514,52 @@ impl App {
                         },
                         ResourceKind::Buffer,
                     );
-                    if let Some(buffer) = self.buffers.get(buffer) {
-                        item = item.with_preview(buffer_content_preview(buffer, row));
-                    }
                     if let Some(path) = path {
                         item = item.with_path(path);
                     }
                     item
                 }
-                FinderContentSource::Terminal { terminal, label } => {
-                    let mut item = ResourceItem::content(
-                        format!("{label}:{}", row + 1),
-                        hit.text,
-                        ResourceTarget::TerminalLocation {
-                            terminal,
-                            row,
-                            column: hit.column,
-                        },
-                        ResourceKind::Terminal,
-                    );
-                    if let Some(terminal) = self.terminals.get(terminal) {
-                        item = item.with_preview(terminal_content_preview(terminal, row));
-                    }
-                    item
-                }
+                FinderContentSource::Terminal { terminal, label } => ResourceItem::content(
+                    format!("{label}:{}", row + 1),
+                    hit.text,
+                    ResourceTarget::TerminalLocation {
+                        terminal,
+                        row,
+                        column: hit.column,
+                    },
+                    ResourceKind::Terminal,
+                ),
             };
             found.push(item);
         }
 
-        let finished = scan.source >= scan.sources.len();
-        let limited = scan.limited;
         let query = scan.query.clone();
         if let (Some(finder), Some(picker)) = (self.finder.as_mut(), self.picker.as_ref()) {
             finder.append_items(found, picker, &query);
-            if finished {
-                finder.finish_content_scan(picker, &query, limited);
+        }
+        if scan.source >= scan.sources.len()
+            && !scan.limited
+            && !self.finder_content_dirty_terminals.is_empty()
+        {
+            let dirty = std::mem::take(&mut self.finder_content_dirty_terminals);
+            if let (Some(finder), Some(picker)) = (self.finder.as_mut(), self.picker.as_ref()) {
+                finder.remove_terminal_content(&dirty, picker, &query);
+            }
+            scan.sources
+                .extend(dirty.into_iter().filter_map(|terminal| {
+                    self.terminals
+                        .get(terminal)
+                        .map(|session| FinderContentSource::Terminal {
+                            terminal,
+                            label: session.display_name(),
+                        })
+                }));
+        }
+        let finished = scan.source >= scan.sources.len();
+        if finished {
+            self.finder_content_dirty_terminals.clear();
+            if let (Some(finder), Some(picker)) = (self.finder.as_mut(), self.picker.as_ref()) {
+                finder.finish_content_scan(picker, &query, scan.limited);
             }
         }
         if !finished {
@@ -683,6 +730,27 @@ impl App {
     }
 
     pub(super) fn refresh_finder_preview(&mut self) {
+        let resource_preview = self
+            .finder
+            .as_ref()
+            .zip(self.picker.as_ref())
+            .and_then(|(finder, picker)| finder.selected_target(picker))
+            .and_then(|target| match target {
+                FinderTarget::Resource(ResourceTarget::BufferLocation { buffer, row, .. }) => self
+                    .buffers
+                    .get(buffer)
+                    .map(|buffer| buffer_content_preview(buffer, row)),
+                FinderTarget::Resource(ResourceTarget::TerminalLocation {
+                    terminal, row, ..
+                }) => self
+                    .terminals
+                    .get(terminal)
+                    .map(|terminal| terminal_content_preview(terminal, row)),
+                _ => None,
+            });
+        if let Some(finder) = self.finder.as_mut() {
+            finder.set_selected_preview(resource_preview);
+        }
         let selected_file = self
             .finder
             .as_ref()
@@ -725,7 +793,13 @@ impl App {
                             && buffer.path.as_deref() == Some(hits.path.as_path())
                     })
                 });
+                let available = CONTENT_ENTRY_LIMIT.saturating_sub(
+                    self.finder.as_ref().map_or(0, |finder| finder.items.len())
+                        + picker.entries.len(),
+                );
+                let shared_limit_reached = truncate_content_hits(&mut entries, available);
                 picker.add_content(entries);
+                picker.limited |= shared_limit_reached;
             }
             FilePickerEvent::Finished {
                 scan_id,

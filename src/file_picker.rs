@@ -1542,7 +1542,7 @@ impl FileHits {
     }
 
     /// Keeps at most `limit` of the lines, reporting whether any were dropped.
-    fn truncate(&mut self, limit: usize) -> bool {
+    pub(crate) fn truncate(&mut self, limit: usize) -> bool {
         let dropped = self.lines.len() > limit;
         self.lines.truncate(limit);
         dropped

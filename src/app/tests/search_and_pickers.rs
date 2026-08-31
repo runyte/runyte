@@ -2,6 +2,43 @@
 
 use super::*;
 
+fn content_hits(path: &str, lines: usize) -> crate::file_picker::FileHits {
+    crate::file_picker::FileHits {
+        path: PathBuf::from(path),
+        lines: (0..lines)
+            .map(|row| crate::file_picker::LineHit {
+                row,
+                column: 0,
+                text: format!("match {row}"),
+            })
+            .collect(),
+    }
+}
+
+#[test]
+fn disk_hits_use_only_the_unified_content_budget_left_by_resources() {
+    let mut entries = vec![
+        content_hits("a.txt", 2),
+        content_hits("b.txt", 2),
+        content_hits("c.txt", 1),
+    ];
+
+    assert!(super::super::picker_workflows::truncate_content_hits(
+        &mut entries,
+        3
+    ));
+    assert_eq!(entries.len(), 2);
+    assert_eq!(entries[0].len(), 2);
+    assert_eq!(entries[1].len(), 1);
+    assert_eq!(
+        entries
+            .iter()
+            .map(crate::file_picker::FileHits::len)
+            .sum::<usize>(),
+        3
+    );
+}
+
 #[test]
 fn search_prompt_repeats_and_wraps_unicode_matches() {
     let mut app = App::new(Config::default(), None).unwrap();
@@ -553,6 +590,13 @@ fn project_finder_switches_name_and_content_modes_without_losing_its_query() {
             .iter()
             .any(|action| { action.key_hint == "Ctrl-t" && action.label == "toggle preview" })
     );
+    assert!(
+        overlay
+            .actions
+            .iter()
+            .all(|action| action.key_hint != "Ctrl-s" && action.key_hint != "Ctrl-v"),
+        "live buffer results must not advertise file-only split actions"
+    );
 
     key(&mut app, KeyCode::Char('t'), Modifiers::CONTROL);
     assert!(!app.picker.as_ref().unwrap().show_preview);
@@ -595,6 +639,23 @@ fn project_finder_keeps_file_split_activation() {
             .selected_target(app.picker.as_ref().unwrap()),
         Some(FinderTarget::File(_))
     ));
+    let overlay = app
+        .overlay_snapshots()
+        .into_iter()
+        .find(|overlay| overlay.kind == crate::snapshot::OverlayKind::FilePicker)
+        .unwrap();
+    assert!(
+        overlay
+            .actions
+            .iter()
+            .any(|action| action.key_hint == "Ctrl-s")
+    );
+    assert!(
+        overlay
+            .actions
+            .iter()
+            .any(|action| action.key_hint == "Ctrl-v")
+    );
     key(&mut app, KeyCode::Char('s'), Modifiers::CONTROL);
 
     assert!(app.picker.is_none());
@@ -684,6 +745,18 @@ fn project_finder_content_reaches_and_activates_a_pathless_buffer() {
             .map(|item| (&item.label, &item.detail))
             .collect::<Vec<_>>()
     );
+    let overlay = app
+        .overlay_snapshots()
+        .into_iter()
+        .find(|overlay| overlay.kind == crate::snapshot::OverlayKind::FilePicker)
+        .unwrap();
+    let row = overlay.rows.get(overlay.selected.unwrap()).unwrap();
+    let emphasized = row
+        .detail_emphasis
+        .iter()
+        .map(|position| row.detail.chars().nth(*position).unwrap())
+        .collect::<String>();
+    assert_eq!(emphasized, "needle");
     key(&mut app, KeyCode::Enter, Modifiers::NONE);
     assert_eq!(app.active().buffer, scratch);
     assert_eq!(cursor(&app).row, 1);
@@ -887,6 +960,57 @@ fn terminal_output_restarts_a_bounded_incremental_finder_scan() {
         })) if terminal == id
     ));
     fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn repeated_terminal_output_does_not_starve_later_buffer_content() {
+    let root = temporary("project-finder-terminal-output-coalescing");
+    fs::create_dir_all(&root).unwrap();
+    let ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    app.execute_command("buffer-new").unwrap();
+    let scratch = app.active().buffer;
+    let text = (0..400)
+        .map(|row| {
+            if row == 350 {
+                "late-buffer-needle".to_owned()
+            } else {
+                format!("ordinary row {row}")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    app.buffers[scratch].apply(&Transaction::insert(0, text));
+    app.open_terminal_at(Some("/bin/cat".to_owned()), root.clone());
+    let terminal = app.active_terminal().unwrap();
+
+    app.open_project_picker().unwrap();
+    key(&mut app, KeyCode::Tab, Modifiers::NONE);
+    type_text(&mut app, "late-buffer-needle");
+    for tick in 0..12 {
+        app.apply_terminal_output(TerminalOutput::Bytes {
+            id: terminal,
+            bytes: format!("tick {tick}\r\n").into_bytes(),
+        });
+        app.advance_resource_finder_scan();
+        if app.finder.as_ref().unwrap().items.iter().any(|item| {
+            matches!(
+                item.target,
+                ResourceTarget::BufferLocation {
+                    buffer,
+                    row: 350,
+                    ..
+                } if buffer == scratch
+            )
+        }) {
+            fs::remove_dir_all(root).unwrap();
+            return;
+        }
+    }
+    panic!("continuous terminal output starved the later buffer source");
 }
 
 #[test]

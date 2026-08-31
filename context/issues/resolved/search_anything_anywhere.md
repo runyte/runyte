@@ -37,8 +37,21 @@ terminal content is visited in cancellable 128-row event-loop slices instead
 of being materialized and scanned in one input pass; filesystem loading,
 failure, skipped-file, and result-limit state reaches both semantic snapshots
 and the terminal UI; and the retained keymap record describes `S` consistently.
-Terminal output replaces the pending live-content scan cursor, so a busy child
-cannot force a synchronous whole-corpus rescan for each output event.
+Terminal output marks that terminal dirty without replacing a pending scan
+cursor, then refreshes only its rows after the current corpus pass, so a busy
+child cannot starve later buffer or terminal sources.
+
+A second review tightened incremental behavior and presentation. Newly ranked
+results may replace the automatic selection until explicit navigation claims
+it; afterwards refreshes preserve the selected target. Disk and live content
+hits share the one `CONTENT_ENTRY_LIMIT` admission budget, and live previews
+are produced only for the selected row instead of being duplicated on every
+hit. Filesystem failures remain visible without replacing valid buffer or
+terminal rows, while file-only `Ctrl-s` and `Ctrl-v` actions are advertised
+only for file targets. Content matches now carry character emphasis for the
+detail column through both the core and protocol snapshots, so matching text
+in buffer and terminal rows is visibly accented in standalone and attached
+frontends.
 
 Coverage includes:
 
@@ -48,11 +61,18 @@ Coverage includes:
   `project_finder_content_reaches_and_activates_a_pathless_buffer`, and
   `project_finder_indexes_terminal_names_and_content_and_reveals_the_matching_row`
   in `src/app/tests/search_and_pickers.rs`;
-- `pathless_buffer_content_is_scanned_in_bounded_slices` and
-  `terminal_output_restarts_a_bounded_incremental_finder_scan` in
+- `pathless_buffer_content_is_scanned_in_bounded_slices`,
+  `terminal_output_restarts_a_bounded_incremental_finder_scan`, and
+  `repeated_terminal_output_does_not_starve_later_buffer_content` in
   `src/app/tests/search_and_pickers.rs`;
 - finder ranking, smart-case, literal content-term, and soft type-hint tests in
   `src/finder.rs`;
+- `disk_hits_use_only_the_unified_content_budget_left_by_resources` in
+  `src/app/tests/search_and_pickers.rs`;
+- `resource_finder_highlights_matching_buffer_content`,
+  `a_selected_row_keeps_match_emphasis_in_its_detail_column`, and
+  `resource_finder_renders_buffer_preview_and_narrow_fallback` in `src/ui.rs`,
+  together with the overlay-row wire round trip in `src/protocol/frame.rs`;
 - `finder_and_workspace_search_are_global_in_every_buffer_scope` in
   `tests/keymap.rs` and the registry-derived hint assertions in
   `tests/key_hints.rs`;
@@ -144,7 +164,9 @@ palette.
 ### Result presentation
 
 The finder is a live fuzzy picker in both modes, with the existing ranking,
-preview, and `Ctrl-t` preview toggle.
+preview, and `Ctrl-t` preview toggle. A content result emphasizes the matching
+characters in the displayed buffer or terminal line, including while that row
+is selected.
 
 `global-search` and `global-search-regex` keep their retained `[workspace
 search]` special buffer, with registry-backed Enter on a result jumping to its

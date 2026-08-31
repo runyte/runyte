@@ -129,6 +129,7 @@ impl ResourceItem {
 pub struct ResourceMatch {
     pub item: usize,
     pub emphasis: Vec<usize>,
+    pub detail_emphasis: Vec<usize>,
     score: i64,
     type_boost: bool,
 }
@@ -143,6 +144,7 @@ pub enum FinderMatchSource {
 pub struct FinderMatch {
     pub source: FinderMatchSource,
     pub emphasis: Vec<usize>,
+    pub detail_emphasis: Vec<usize>,
     score: i64,
     type_boost: bool,
 }
@@ -157,6 +159,8 @@ pub struct ResourceFinder {
     pub loading: bool,
     pub limited: bool,
     suppressed_paths: HashSet<PathBuf>,
+    selection_user_owned: bool,
+    selected_preview: Option<String>,
 }
 
 impl Default for ResourceFinder {
@@ -176,6 +180,8 @@ impl ResourceFinder {
             loading: false,
             limited: false,
             suppressed_paths: HashSet::new(),
+            selection_user_owned: false,
+            selected_preview: None,
         }
     }
 
@@ -190,6 +196,8 @@ impl ResourceFinder {
         self.suppressed_paths = suppressed_paths.into_iter().collect();
         self.loading = true;
         self.limited = false;
+        self.selection_user_owned = false;
+        self.selected_preview = None;
         self.merge(picker, query, None);
     }
 
@@ -199,7 +207,10 @@ impl ResourceFinder {
         picker: &FilePicker,
         query: &str,
     ) {
-        let selected = self.selected_target(picker);
+        let selected = self
+            .selection_user_owned
+            .then(|| self.selected_target(picker))
+            .flatten();
         let first_new = self.items.len();
         self.items.extend(items);
         let parsed = ParsedQuery::new(query, self.mode == FinderMode::Names);
@@ -212,12 +223,15 @@ impl ResourceFinder {
                         .score(candidate)
                         .map(|found| (first_new + offset, found))
                 })
-                .map(|(item, (score, type_boost, emphasis))| ResourceMatch {
-                    item,
-                    emphasis,
-                    score,
-                    type_boost: self.mode == FinderMode::Names && type_boost,
-                }),
+                .map(
+                    |(item, (score, type_boost, emphasis, detail_emphasis))| ResourceMatch {
+                        item,
+                        emphasis,
+                        detail_emphasis,
+                        score,
+                        type_boost: self.mode == FinderMode::Names && type_boost,
+                    },
+                ),
         );
         self.sort_resource_matches(&parsed);
         self.merge(picker, query, selected.as_ref());
@@ -230,7 +244,10 @@ impl ResourceFinder {
     }
 
     pub fn replace_items(&mut self, items: Vec<ResourceItem>, picker: &FilePicker, query: &str) {
-        let selected = self.selected_target(picker);
+        let selected = self
+            .selection_user_owned
+            .then(|| self.selected_target(picker))
+            .flatten();
         self.items = items;
         self.loading = false;
         self.limited = false;
@@ -240,12 +257,37 @@ impl ResourceFinder {
     }
 
     pub fn rank(&mut self, picker: &FilePicker, query: &str) {
+        self.selection_user_owned = false;
         self.rank_resources(query);
         self.merge(picker, query, None);
     }
 
     pub fn merge_files(&mut self, picker: &FilePicker, query: &str) {
-        let selected = self.selected_target(picker);
+        let selected = self
+            .selection_user_owned
+            .then(|| self.selected_target(picker))
+            .flatten();
+        self.merge(picker, query, selected.as_ref());
+    }
+
+    pub fn remove_terminal_content(
+        &mut self,
+        terminals: &HashSet<TerminalId>,
+        picker: &FilePicker,
+        query: &str,
+    ) {
+        let selected = self
+            .selection_user_owned
+            .then(|| self.selected_target(picker))
+            .flatten();
+        self.items.retain(|item| {
+            !matches!(
+                item.target,
+                ResourceTarget::TerminalLocation { terminal, .. }
+                    if terminals.contains(&terminal)
+            )
+        });
+        self.rank_resources(query);
         self.merge(picker, query, selected.as_ref());
     }
 
@@ -256,12 +298,15 @@ impl ResourceFinder {
             .iter()
             .enumerate()
             .filter_map(|(item, candidate)| parsed.score(candidate).map(|found| (item, found)))
-            .map(|(item, (score, type_boost, emphasis))| ResourceMatch {
-                item,
-                emphasis,
-                score,
-                type_boost: self.mode == FinderMode::Names && type_boost,
-            })
+            .map(
+                |(item, (score, type_boost, emphasis, detail_emphasis))| ResourceMatch {
+                    item,
+                    emphasis,
+                    detail_emphasis,
+                    score,
+                    type_boost: self.mode == FinderMode::Names && type_boost,
+                },
+            )
             .collect::<Vec<_>>();
         self.sort_resource_matches(&parsed);
     }
@@ -297,12 +342,14 @@ impl ResourceFinder {
             .map(|found| FinderMatch {
                 source: FinderMatchSource::File(found.entry),
                 emphasis: found.positions.clone(),
+                detail_emphasis: Vec::new(),
                 score: found.score,
                 type_boost: self.mode == FinderMode::Names && parsed.file_boost,
             })
             .chain(self.resource_matches.iter().map(|found| FinderMatch {
                 source: FinderMatchSource::Resource(found.item),
                 emphasis: found.emphasis.clone(),
+                detail_emphasis: found.detail_emphasis.clone(),
                 score: found.score,
                 type_boost: found.type_boost,
             }))
@@ -320,6 +367,7 @@ impl ResourceFinder {
             matches.truncate(CONTENT_ENTRY_LIMIT);
         }
         self.matches = matches;
+        self.selected_preview = None;
         self.selected = selected
             .and_then(|target| {
                 self.matches
@@ -369,18 +417,26 @@ impl ResourceFinder {
     }
 
     pub fn selected_preview(&self) -> Option<&str> {
-        self.selected_item()?.preview.as_deref()
+        self.selected_preview
+            .as_deref()
+            .or_else(|| self.selected_item()?.preview.as_deref())
+    }
+
+    pub fn set_selected_preview(&mut self, preview: Option<String>) {
+        self.selected_preview = preview;
     }
 
     pub fn down(&mut self) {
         if !self.matches.is_empty() {
             self.selected = (self.selected + 1) % self.matches.len();
+            self.selection_user_owned = true;
         }
     }
 
     pub fn up(&mut self) {
         if !self.matches.is_empty() {
             self.selected = (self.selected + self.matches.len() - 1) % self.matches.len();
+            self.selection_user_owned = true;
         }
     }
 
@@ -389,18 +445,22 @@ impl ResourceFinder {
             .selected
             .saturating_add(amount.max(1))
             .min(self.matches.len().saturating_sub(1));
+        self.selection_user_owned = true;
     }
 
     pub fn page_up(&mut self, amount: usize) {
         self.selected = self.selected.saturating_sub(amount.max(1));
+        self.selection_user_owned = true;
     }
 
     pub fn first(&mut self) {
         self.selected = 0;
+        self.selection_user_owned = true;
     }
 
     pub fn last(&mut self) {
         self.selected = self.matches.len().saturating_sub(1);
+        self.selection_user_owned = true;
     }
 }
 
@@ -449,9 +509,10 @@ impl ParsedQuery {
         self.file_boost || self.buffer_boost || self.terminal_boost
     }
 
-    fn score(&self, item: &ResourceItem) -> Option<(i64, bool, Vec<usize>)> {
+    fn score(&self, item: &ResourceItem) -> Option<(i64, bool, Vec<usize>, Vec<usize>)> {
         let mut score = 0i64;
         let mut emphasis = Vec::new();
+        let mut detail_emphasis = Vec::new();
         for term in &self.terms {
             let mut matcher = FuzzyMatcher::for_lines(term);
             let best = item
@@ -464,14 +525,20 @@ impl ParsedQuery {
             if let Some((_, positions)) = label_matcher.score(&item.label) {
                 emphasis.extend(positions);
             }
+            let mut detail_matcher = FuzzyMatcher::for_lines(term);
+            if let Some((_, positions)) = detail_matcher.score(&item.detail) {
+                detail_emphasis.extend(positions);
+            }
         }
         emphasis.sort_unstable();
         emphasis.dedup();
+        detail_emphasis.sort_unstable();
+        detail_emphasis.dedup();
         let type_boost = match item.kind {
             ResourceKind::Buffer => self.buffer_boost,
             ResourceKind::Terminal => self.terminal_boost,
         };
-        Some((score, type_boost, emphasis))
+        Some((score, type_boost, emphasis, detail_emphasis))
     }
 }
 
@@ -614,6 +681,66 @@ mod tests {
         );
         assert_eq!(finder.matches.len(), 1);
         assert_eq!(finder.selected_item().unwrap().detail, "terminal output");
+        assert_eq!(
+            finder.selected_match().unwrap().detail_emphasis,
+            (0.."terminal".chars().count()).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn a_better_incremental_match_becomes_selected_until_navigation_claims_it() {
+        let picker = empty_picker();
+        let mut finder = ResourceFinder::new(FinderMode::Contents);
+        finder.begin_content_scan(&picker, "target", []);
+        finder.append_items(
+            [ResourceItem::content(
+                "notes:1",
+                "t a r g e t",
+                ResourceTarget::BufferLocation {
+                    buffer: 1,
+                    row: 0,
+                    column: 0,
+                },
+                ResourceKind::Buffer,
+            )],
+            &picker,
+            "target",
+        );
+        assert_eq!(finder.selected_item().unwrap().detail, "t a r g e t");
+
+        finder.append_items(
+            [ResourceItem::content(
+                "notes:2",
+                "target",
+                ResourceTarget::BufferLocation {
+                    buffer: 1,
+                    row: 1,
+                    column: 0,
+                },
+                ResourceKind::Buffer,
+            )],
+            &picker,
+            "target",
+        );
+        assert_eq!(finder.selected_item().unwrap().detail, "target");
+
+        finder.down();
+        let claimed = finder.selected_target(&picker).unwrap();
+        finder.append_items(
+            [ResourceItem::content(
+                "notes:3",
+                "target target",
+                ResourceTarget::BufferLocation {
+                    buffer: 1,
+                    row: 2,
+                    column: 0,
+                },
+                ResourceKind::Buffer,
+            )],
+            &picker,
+            "target",
+        );
+        assert_eq!(finder.selected_target(&picker), Some(claimed));
     }
 
     #[test]

@@ -928,6 +928,7 @@ impl WorkspaceHost {
                         dimmed: false,
                         muted: Vec::new(),
                         emphasis: Vec::new(),
+                        detail_emphasis: Vec::new(),
                     }
                 })
                 .collect::<Vec<_>>();

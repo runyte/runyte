@@ -203,6 +203,8 @@ pub struct OverlayRow {
     /// active signature parameter, or the available command in a categorized
     /// palette row).
     pub emphasis: Vec<usize>,
+    /// Character positions emphasized in the separate detail column.
+    pub detail_emphasis: Vec<usize>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

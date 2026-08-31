@@ -7,7 +7,7 @@
 use super::WorkspaceRow;
 use super::{
     App, BindingScope, Buffer, CompletionSource, ConfirmationOverlay, ContentAlignment,
-    ContentLayout, DiffProjection, DiffSession, FinderMatchSource, FrameGeometry,
+    ContentLayout, DiffProjection, DiffSession, FinderMatchSource, FinderTarget, FrameGeometry,
     GeneratedViewIdentity, HelpTopic, ListPurpose, MaximizedView, Mode, Pane, Path, Position,
     PreparedPane, PreparedRow, PreparedView, PromptKind, Rect, ResourceKind, Selection,
     SettingType, Side, StashMutation, adjust_scroll, adjust_scroll_wrapped, diff_projection,
@@ -949,6 +949,7 @@ impl App {
                 dimmed: false,
                 muted: Vec::new(),
                 emphasis: Vec::new(),
+                detail_emphasis: Vec::new(),
             }
         }
 
@@ -1011,6 +1012,7 @@ impl App {
                                 let mut row =
                                     row(identity, item.label.clone(), item.detail.clone());
                                 row.emphasis = found.emphasis.clone();
+                                row.detail_emphasis = found.detail_emphasis.clone();
                                 Some(row)
                             }
                         })
@@ -1020,21 +1022,27 @@ impl App {
                 );
                 snapshot.query_cursor = Some(picker.query_cursor);
                 snapshot.layout = OverlayLayout::Preview;
-                snapshot.actions = vec![
-                    OverlayAction::new("Enter", "open"),
-                    OverlayAction::new("Ctrl-s", "open horizontally"),
-                    OverlayAction::new("Ctrl-v", "open vertically"),
-                    OverlayAction::new(
-                        "Tab",
-                        if finder.mode == crate::finder::FinderMode::Names {
-                            "contents"
-                        } else {
-                            "names"
-                        },
-                    ),
-                    OverlayAction::new("Ctrl-t", "toggle preview"),
-                    OverlayAction::new("Esc", "cancel"),
-                ];
+                snapshot.actions = vec![OverlayAction::new("Enter", "open")];
+                if matches!(finder.selected_target(picker), Some(FinderTarget::File(_))) {
+                    snapshot
+                        .actions
+                        .push(OverlayAction::new("Ctrl-s", "open file horizontally"));
+                    snapshot
+                        .actions
+                        .push(OverlayAction::new("Ctrl-v", "open file vertically"));
+                }
+                snapshot.actions.push(OverlayAction::new(
+                    "Tab",
+                    if finder.mode == crate::finder::FinderMode::Names {
+                        "contents"
+                    } else {
+                        "names"
+                    },
+                ));
+                snapshot
+                    .actions
+                    .push(OverlayAction::new("Ctrl-t", "toggle preview"));
+                snapshot.actions.push(OverlayAction::new("Esc", "cancel"));
                 snapshot.show_preview = picker.show_preview;
                 if let Some(item) = finder.selected_item() {
                     snapshot.preview_title = Some(match item.kind {
@@ -1662,6 +1670,7 @@ fn context_action_rows(actions: &[ContextAction]) -> Vec<crate::snapshot::Overla
                 dimmed: false,
                 muted: Vec::new(),
                 emphasis: Vec::new(),
+                detail_emphasis: Vec::new(),
             }
         })
         .collect()

@@ -1807,8 +1807,10 @@ Use Up/Down, `Ctrl-p`/`Ctrl-n`, paging, and Home/End to move. In the project
 finder `Tab` switches name/content modes; `Shift-Tab` selects the previous row, as it does
 in directory-scoped and fuzzy-content pickers. In those other pickers, `Tab`
 retains its previous next-row navigation.
-Enter opens, `Ctrl-s` opens horizontally, `Ctrl-v` opens vertically, and
-Escape or `Ctrl-c` closes. A bare `Space` also closes a newly opened overlay;
+Enter opens any selected result. For a selected file result, `Ctrl-s` opens it
+horizontally and `Ctrl-v` opens it vertically; those split actions do not apply
+to buffer or terminal results. Escape or `Ctrl-c` closes. A bare `Space` also
+closes a newly opened overlay;
 after a project or content finder query has begun, it retains its term-separator
 role. Backspace/Delete and the ordinary prompt control keys edit the query.
 Printable letters such as `q`, `j`, and `k` are query text rather than

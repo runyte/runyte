@@ -982,11 +982,6 @@ fn draw_snapshot_overlay(
         if !row.available {
             style = style.fg(theme.muted).add_modifier(Modifier::DIM);
         }
-        let detail = if row.detail.is_empty() {
-            String::new()
-        } else {
-            format!("  {}", row.detail)
-        };
         let emphasized = row
             .emphasis
             .iter()
@@ -1026,7 +1021,22 @@ fn draw_snapshot_overlay(
         if !row.available {
             detail_style = detail_style.fg(theme.muted).add_modifier(Modifier::DIM);
         }
-        spans.push(Span::styled(detail, detail_style));
+        if !row.detail.is_empty() {
+            spans.push(Span::styled("  ", detail_style));
+            let detail_emphasized = row
+                .detail_emphasis
+                .iter()
+                .copied()
+                .collect::<std::collections::HashSet<_>>();
+            spans.extend(row.detail.chars().enumerate().map(|(position, character)| {
+                let style = if detail_emphasized.contains(&position) {
+                    detail_style.fg(emphasis_color).bold()
+                } else {
+                    detail_style
+                };
+                Span::styled(character.to_string(), style)
+            }));
+        }
         let trailing = (!row.trailing_detail.is_empty())
             .then(|| Span::styled(format!("  {}", row.trailing_detail), detail_style));
         lines.push(fit_row_with_trailing(
@@ -2405,16 +2415,21 @@ fn draw_resource_finder(
     } else {
         ""
     };
+    let failure = picker
+        .error
+        .as_ref()
+        .map_or(String::new(), |error| format!(" · scan failed: {error}"));
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(app.theme.accent))
         .title(format!(
-            " Find · {} · {progress} · {}/{}{}{} · Tab {} · Ctrl-t preview ",
+            " Find · {} · {progress} · {}/{}{}{}{} · Tab {} · Ctrl-t preview ",
             finder.mode.title(),
             finder.matches.len(),
             picker.entries.len() + finder.items.len(),
             skipped,
             limited,
+            failure,
             if finder.mode == crate::finder::FinderMode::Names {
                 "contents"
             } else {
@@ -2478,7 +2493,9 @@ fn draw_resource_finder(
         .selected
         .saturating_add(1)
         .saturating_sub(visible_rows);
-    let items = if let Some(error) = &picker.error {
+    let items = if let Some(error) = &picker.error
+        && finder.matches.is_empty()
+    {
         vec![
             ListItem::new(format!("Scan failed: {error}"))
                 .style(Style::default().fg(app.theme.error)),
@@ -2519,9 +2536,22 @@ fn draw_resource_finder(
                         app.theme.accent,
                     );
                     if !item.detail.is_empty() {
-                        line.spans.push(Span::styled(
-                            format!("  {}", item.detail),
-                            Style::default().fg(app.theme.muted),
+                        let detail_style = Style::default().fg(app.theme.muted);
+                        let emphasized = found
+                            .detail_emphasis
+                            .iter()
+                            .copied()
+                            .collect::<std::collections::HashSet<_>>();
+                        line.spans.push(Span::styled("  ", detail_style));
+                        line.spans.extend(item.detail.chars().enumerate().map(
+                            |(position, character)| {
+                                let style = if emphasized.contains(&position) {
+                                    Style::default().fg(app.theme.accent).bold()
+                                } else {
+                                    detail_style
+                                };
+                                Span::styled(character.to_string(), style)
+                            },
                         ));
                     }
                     Some(ListItem::new(line))
@@ -5947,6 +5977,7 @@ mod tests {
                 dimmed: false,
                 muted: Vec::new(),
                 emphasis: Vec::new(),
+                detail_emphasis: Vec::new(),
             })
             .collect();
         overlay.kind = OverlayKind::BufferActions;
@@ -6124,6 +6155,22 @@ mod tests {
             theme.foreground,
             "an unemphasized character does not"
         );
+    }
+
+    #[test]
+    fn a_selected_row_keeps_match_emphasis_in_its_detail_column() {
+        let mut app = App::new(Config::default(), None).unwrap();
+        let theme = TuiTheme::new(&app.theme);
+        let mut overlay = action_menu_overlay(&mut app, vec![("notes:2", "prefix needle")], 0);
+        overlay.rows[0].detail_emphasis = (7..13).collect();
+        let buffer = draw_overlay_alone(&mut app, &theme, &overlay);
+
+        let (detail, row) = find_text(&buffer, "prefix needle").expect("the detail column");
+        for column in detail + 7..detail + 13 {
+            assert_eq!(buffer[(column, row)].fg, theme.accent);
+            assert!(buffer[(column, row)].modifier.contains(Modifier::BOLD));
+        }
+        assert_eq!(buffer[(detail, row)].fg, theme.muted);
     }
 
     /// The same rule through the Ratatui list renderer, which is where it
@@ -7569,9 +7616,49 @@ mod tests {
             .fail("discovery refused".to_owned());
         let failed = rendered(&mut app, 120, 30);
         assert!(
-            failed.contains("Scan failed: discovery refused"),
+            failed.contains("scan failed: discovery refused"),
             "{failed}"
         );
+        assert!(failed.contains("notes.txt"), "{failed}");
+    }
+
+    #[test]
+    fn resource_finder_highlights_matching_buffer_content() {
+        let mut app = App::new(Config::default(), None).unwrap();
+        let mut picker =
+            crate::file_picker::FilePicker::new(1, std::path::PathBuf::from("/project"));
+        picker.insert_query_text("needle");
+        picker.finish(0, false);
+        let mut finder = crate::finder::ResourceFinder::new(crate::finder::FinderMode::Contents);
+        finder.replace_items(
+            vec![crate::finder::ResourceItem::content(
+                "notes:2",
+                "prefix needle suffix",
+                crate::finder::ResourceTarget::BufferLocation {
+                    buffer: 0,
+                    row: 1,
+                    column: 7,
+                },
+                crate::finder::ResourceKind::Buffer,
+            )],
+            &picker,
+            "needle",
+        );
+        app.picker = Some(picker);
+        app.finder = Some(finder);
+
+        let theme = TuiTheme::new(&app.theme);
+        let mut terminal = Terminal::new(TestBackend::new(100, 20)).unwrap();
+        terminal
+            .draw(|frame| render_test_frame(frame, &mut app, &KeyHintState::default()))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let (detail, row) = find_text(buffer, "prefix needle suffix").expect("the content result");
+        for column in detail + 7..detail + 13 {
+            assert_eq!(buffer[(column, row)].fg, theme.accent);
+            assert!(buffer[(column, row)].modifier.contains(Modifier::BOLD));
+        }
+        assert_eq!(buffer[(detail, row)].fg, theme.muted);
     }
 
     #[test]

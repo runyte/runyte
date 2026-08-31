@@ -481,9 +481,7 @@ impl App {
         {
             session.mark_viewed();
         }
-        if self.finder.is_some() {
-            self.rebuild_resource_finder();
-        }
+        self.note_terminal_finder_change(id);
     }
 
     /// Retains a child's last decoded screen after it ends.
@@ -531,9 +529,7 @@ impl App {
         if manager_open {
             self.open_terminal_list();
         }
-        if self.finder.is_some() {
-            self.rebuild_resource_finder();
-        }
+        self.note_terminal_finder_change(id);
         self.status(message);
     }
 
