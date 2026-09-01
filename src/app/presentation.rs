@@ -1012,7 +1012,7 @@ impl App {
                         .take(ROW_LIMIT)
                         .filter_map(|found| match found.source {
                             FinderMatchSource::File(entry) => {
-                                let entry = picker.view(entry)?;
+                                let entry = finder.file_entry(picker, entry)?;
                                 let identity = format!(
                                     "{}:{}",
                                     entry.path.display(),

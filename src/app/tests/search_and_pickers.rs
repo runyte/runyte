@@ -3257,3 +3257,64 @@ fn truncated_content_rescan_reranks_under_the_query_it_restarts_for() {
     app.close_file_picker();
     fs::remove_dir_all(root).unwrap();
 }
+
+#[cfg(unix)]
+#[test]
+fn output_that_leaves_a_terminal_item_unchanged_does_not_move_the_name_list() {
+    let root = temporary("project-finder-quiet-terminal-name-mode");
+    fs::create_dir_all(&root).unwrap();
+    let ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    app.open_terminal_at(Some("/bin/cat".to_owned()), root.clone());
+    let terminal = app.active_terminal().unwrap();
+    app.open_project_picker().unwrap();
+    let before = app.finder.as_ref().unwrap().matches.clone();
+
+    // Output is what marks a terminal dirty, but a name-mode item describes
+    // the session rather than its output. A child that writes without saying
+    // anything new about itself leaves the list exactly as it was.
+    for row in 0..64 {
+        app.apply_terminal_output(TerminalOutput::Bytes {
+            id: terminal,
+            bytes: format!("busy row {row}\r\n").into_bytes(),
+        });
+    }
+    assert!(app.finder_terminals_dirty());
+    assert!(
+        !app.refresh_finder_terminals(),
+        "a repeat of the item already held is not a change worth a frame"
+    );
+    assert!(!app.finder_terminals_dirty());
+    assert!(!app.picker.as_ref().unwrap().ranking);
+    assert_eq!(
+        app.finder
+            .as_ref()
+            .unwrap()
+            .matches
+            .iter()
+            .map(|found| found.source)
+            .collect::<Vec<_>>(),
+        before.iter().map(|found| found.source).collect::<Vec<_>>(),
+        "no row moved"
+    );
+
+    // A title the reader can search for is a change, and is taken.
+    app.apply_terminal_output(TerminalOutput::Bytes {
+        id: terminal,
+        bytes: b"\x1b]2;hot-title\x07".to_vec(),
+    });
+    assert!(app.refresh_finder_terminals());
+    type_text(&mut app, "hot-title");
+    assert_eq!(
+        app.finder
+            .as_ref()
+            .unwrap()
+            .selected_target(app.picker.as_ref().unwrap()),
+        Some(FinderTarget::Resource(ResourceTarget::Terminal(terminal)))
+    );
+    app.close_file_picker();
+    app.close_terminal_id(terminal);
+    fs::remove_dir_all(root).unwrap();
+}

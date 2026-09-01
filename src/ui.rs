@@ -2521,7 +2521,7 @@ fn draw_resource_finder(
             .take(visible_rows)
             .filter_map(|found| match found.source {
                 crate::finder::FinderMatchSource::File(entry) => {
-                    let entry = picker.view(entry)?;
+                    let entry = finder.file_entry(picker, entry)?;
                     Some(ListItem::new(matched_path_line(
                         &entry.label(),
                         &entry.match_positions_in_label(&found.emphasis),

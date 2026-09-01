@@ -640,18 +640,29 @@ impl App {
         let dirty = std::mem::take(&mut self.finder_dirty_terminals);
         match mode {
             FinderMode::Names => {
+                let mut changed = false;
                 for terminal in dirty {
-                    self.refresh_terminal_finder_item(terminal);
+                    changed |= self.refresh_terminal_finder_item(terminal);
                 }
+                changed
             }
-            FinderMode::Contents => self.start_terminal_content_refresh(dirty),
+            FinderMode::Contents => {
+                self.start_terminal_content_refresh(dirty);
+                true
+            }
         }
-        true
     }
 
-    fn refresh_terminal_finder_item(&mut self, terminal: crate::terminal::TerminalId) {
+    /// Re-reads one terminal's name-mode item, and reports whether the list
+    /// changed because of it.
+    ///
+    /// Output is what marks a terminal dirty, but a name-mode item describes
+    /// the session rather than its output, so most refreshes find exactly
+    /// what they already had. Ranking those anyway would replace every row
+    /// in the list once an interval for the whole time a child is writing.
+    fn refresh_terminal_finder_item(&mut self, terminal: crate::terminal::TerminalId) -> bool {
         let Some(session) = self.terminals.get(terminal) else {
-            return;
+            return false;
         };
         let shown = self
             .panes
@@ -664,23 +675,31 @@ impl App {
             self.home_directory.as_deref(),
         );
         let Some(query) = self.picker.as_ref().map(|picker| picker.query.clone()) else {
-            return;
+            return false;
         };
+        if self
+            .finder
+            .as_ref()
+            .is_none_or(|finder| !finder.terminal_item_differs(terminal, &item))
+        {
+            return false;
+        }
         if self.file_scanner.is_some() {
             let Some((finder, picker)) = self.finder.as_mut().zip(self.picker.as_mut()) else {
-                return;
+                return false;
             };
             finder.preserve_selection(picker);
             picker.ranking = true;
             finder.replace_terminal_unmerged(terminal, item, &query);
         } else {
             let Some((finder, picker)) = self.finder.as_mut().zip(self.picker.as_ref()) else {
-                return;
+                return false;
             };
             finder.replace_terminal(terminal, item, picker, &query);
         }
         self.update_background_finder_context();
         self.refresh_finder_preview();
+        true
     }
 
     /// Revisits the terminals that changed after an otherwise complete content
@@ -1313,20 +1332,19 @@ impl App {
         if let Some(finder) = self.finder.as_mut() {
             finder.set_selected_preview(resource_preview);
         }
-        let selected_file = self
-            .finder
-            .as_ref()
-            .and_then(ResourceFinder::selected_match)
-            .and_then(|found| match found.source {
-                FinderMatchSource::File(entry) => Some(entry),
-                FinderMatchSource::Resource(_) => None,
-            });
-        if let Some(entry) = selected_file
-            && let Some(selected) = self
-                .picker
+        let selected_file =
+            self.finder
                 .as_ref()
-                .and_then(|picker| picker.matches.iter().position(|found| found.entry == entry))
-        {
+                .zip(self.picker.as_ref())
+                .and_then(|(finder, picker)| {
+                    let entry = match finder.selected_match()?.source {
+                        FinderMatchSource::File(entry) => entry,
+                        FinderMatchSource::Resource(_) => return None,
+                    };
+                    finder.file_entry(picker, entry)?;
+                    picker.matches.iter().position(|found| found.entry == entry)
+                });
+        if let Some(selected) = selected_file {
             self.picker.as_mut().unwrap().selected = selected;
             self.refresh_file_picker_preview();
         }
@@ -1417,6 +1435,7 @@ impl App {
                     && let (Some(finder), Some(_)) = (self.finder.as_mut(), finder_revision)
                 {
                     discarded_finder_matches = finder.apply_background_matches(
+                        scan_id,
                         std::mem::take(&mut discarded_finder_matches),
                         &finder_positions,
                     );

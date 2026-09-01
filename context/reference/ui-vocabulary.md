@@ -96,14 +96,20 @@ them, regardless of which extensibility direction is chosen.
   live-resource matching, result merging, and disk previews advance outside
   input handling and are tagged with the query revision. The previous rows may
   remain visible while a new revision ranks, but cannot be accepted, and an
-  older result or preview never replaces the current revision. A live terminal is
-  read on a slow interval rather than on each chunk its child writes: the
+  older result or preview never replaces the current revision. A file match is
+  an index into one scan's entry table and is read only together with that
+  scan, so a restarted scan retires the rows ranked against the table it
+  replaced rather than resolving their indices in the new one. A live terminal
+  is read on a slow interval rather than on each chunk its child writes: the
   finder is a list to be read, so it holds still while a build or a test run
   scrolls, and its rows are current as of the last interval rather than of the
   last write. A refresh reads only what the child has added since, so results
   already found stay put rather than being dropped and found again, and a
   resize counts as a change because narrowing rewrites every retained line the
-  finder has read. No frame is drawn between a refresh dropping a terminal's
+  finder has read. In name mode a terminal contributes its title, command, and
+  activity rather than its output, so a refresh that finds the item it already
+  held changes nothing and is not ranked: writing alone does not move the
+  list. No frame is drawn between a refresh dropping a terminal's
   rows and finding them again: that state is a hole rather than an answer. A
   content result from a terminal is numbered by its place in the child's whole
   output, which does not change as bounded history scrolls or is evicted,

@@ -59,8 +59,22 @@ with dead indices. The query-edit path now states this twice, which costs one
 superseded rank request and no scanning work, since the resource scan
 advances in bounded slices from the event loop.
 
+A later change hardened the boundary the report exposed rather than only the
+path that crossed it. An entry index is meaningless without the scan that
+produced it, so `ResourceFinder` now records which picker scan its file
+matches were ranked against, and `ResourceFinder::file_entry` is the single
+way one of those matches becomes an entry view. Rows, previews, and what
+`Enter` opens all resolve through it, so a match ranked against a table the
+picker has since rebuilt resolves to nothing instead of silently naming an
+unrelated line. That is a guard rather than a second fix: with the
+restatement above in place, no path is expected to reach it.
+
 Tests: `truncated_content_rescan_reranks_under_the_query_it_restarts_for` in
-`src/app/tests/search_and_pickers.rs` is the regression test. It drives the
+`src/app/tests/search_and_pickers.rs` is the regression test, with
+`a_restarted_scan_retires_the_file_matches_ranked_against_its_entries` in
+`src/finder.rs` covering the guard directly — it asserts that the rebuilt
+table does answer the stale index, which is the hazard, and that the finder
+refuses to read it there anyway. It drives the
 real background scanner, types a query the initial scan did not run under,
 injects the truncated `Finished` that triggers the restart, and requires the
 restarted scan to be ranked, every finder row to resolve against the rebuilt

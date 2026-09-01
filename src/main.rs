@@ -73,8 +73,10 @@ const MAINTENANCE_INTERVAL: Duration = Duration::from_secs(1);
 /// A running child changes the corpus faster than the list can be read, and a
 /// finder whose rows move on every chunk a child writes is unusable however
 /// cheap the rebuild is. The finder trades freshness for a list that holds
-/// still: this bounds how often its terminal rows can change.
-const FINDER_TERMINAL_REFRESH_INTERVAL: Duration = Duration::from_secs(3);
+/// still: this bounds how often its terminal rows can change. Long enough
+/// that a reader who has found their row keeps it while they read it, since
+/// stale terminal output costs nothing next to a list that moves under them.
+const FINDER_TERMINAL_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
 #[cfg(unix)]
 const WAIT_LIFECYCLE_RECOVERY_BUDGET: Duration = Duration::from_millis(500);
 /// How long a shutting-down host waits for its connections to finish writing.
