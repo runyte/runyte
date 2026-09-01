@@ -217,7 +217,10 @@ impl App {
             }
         }
         let (columns, rows) = self.pane_cells(pane_id);
-        self.panes.get_mut(&pane_id).unwrap().terminal = Some(id);
+        let pane = self.panes.get_mut(&pane_id).unwrap();
+        pane.terminal = Some(id);
+        // A pane showing a terminal has nothing left to uncover.
+        pane.covered_terminal = None;
         let session = self.terminals.get_mut(id).unwrap();
         let resized = session.resize(columns, rows);
         session.mark_viewed();
@@ -246,6 +249,54 @@ impl App {
             "{name} is still running · {} lists it",
             self.binding_label(EditorCommand::OpenTerminalList)
         ));
+    }
+
+    /// The terminal `pane_id` returns to when it is finished with `document`.
+    ///
+    /// The return is owed for that document alone, so a pane showing anything
+    /// else owes nothing. The session also has to have outlived the document,
+    /// and no other pane may have taken it in the meantime: moving a terminal
+    /// out from under the pane now showing it is not a return.
+    pub(super) fn covered_terminal(&self, pane_id: usize, document: usize) -> Option<TerminalId> {
+        let pane = self.panes.get(&pane_id)?;
+        let (covered, id) = pane.covered_terminal.filter(|_| pane.terminal.is_none())?;
+        if covered != document {
+            return None;
+        }
+        self.terminals.get(id)?;
+        self.panes
+            .values()
+            .all(|pane| pane.terminal != Some(id))
+            .then_some(id)
+    }
+
+    /// Shows the terminal this pane covered with `document` again, if it still
+    /// has one to return to.
+    ///
+    /// Reported so a caller that would otherwise close the pane can leave it
+    /// standing: the pane is the terminal's, and the document was the detour.
+    /// Either way the claim is answered: a terminal that has ended, or that
+    /// another pane has taken, is no longer one this pane owes a return to.
+    /// Naming the document is what keeps a spent claim from being read again;
+    /// dropping it here is the same rule stated where it is decided.
+    pub(super) fn uncover_terminal(&mut self, pane_id: usize, document: usize) -> bool {
+        if let Some(id) = self.covered_terminal(pane_id, document)
+            && self.move_terminal_to_pane(id, pane_id)
+        {
+            self.last_terminal = Some(id);
+            if pane_id == self.active_pane {
+                self.settle_terminal_focus(id);
+            }
+            return true;
+        }
+        if let Some(pane) = self.panes.get_mut(&pane_id)
+            && pane
+                .covered_terminal
+                .is_some_and(|(covered, _)| covered == document)
+        {
+            pane.covered_terminal = None;
+        }
+        false
     }
 
     pub(super) fn show_terminal_target(&mut self, target: &str) {

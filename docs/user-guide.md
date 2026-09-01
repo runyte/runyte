@@ -402,6 +402,13 @@ owned by a pending wait are never replaced. If that host already has a TUI,
 the file appears there while the invoking process waits; if the TUI detaches
 before completion, the invoking terminal takes over. If no host exists, Runyte
 starts one and attaches the invoking terminal so the request is never invisible.
+When the pane the file appears in was showing an integrated terminal — the
+usual case, because the program that asked for the file is running in that
+terminal — the terminal is covered rather than given up. Finishing with the
+document through `:q`, `:q!`, `:wq`, `:close`, or `:wbc` shows the same
+terminal again in the same pane instead of closing that pane. Navigating the
+pane to another document first ends that detour, after which `:q` closes the
+pane as it always does.
 The command used to complete the buffer owns what happens next: `:wbc` leaves
 the host and unrelated buffers running, while `:wq` applies `:q` after writing
 an ordinary file and therefore stops a clean persistent session from its last

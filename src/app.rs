@@ -366,6 +366,19 @@ pub struct Pane {
     /// meaning while this is set: it is the document the pane returns to when
     /// the terminal ends or is switched away from.
     pub terminal: Option<TerminalId>,
+    /// The document an outside request put over a live terminal in this pane,
+    /// and the terminal it covered.
+    ///
+    /// A `--wait` request arrives from a program running inside that very
+    /// terminal, so the pane stopped showing it without anyone in the editor
+    /// asking it to. Finishing with that document therefore uncovers the
+    /// terminal again instead of closing a pane the person never opened.
+    /// Navigating this pane anywhere else is that ask, and clears it.
+    ///
+    /// The document is named because the return is owed for it alone: a pane
+    /// that has moved on to some other buffer owes nothing, and retiring that
+    /// other buffer must not reveal a terminal nobody asked for.
+    covered_terminal: Option<(usize, TerminalId)>,
     pub selection: Selection,
     /// The model used by the operation that most recently produced this
     /// selection. This is provenance, not a coordinate witness: two different
@@ -410,6 +423,7 @@ impl Pane {
             buffer,
             buffer_history: Vec::new(),
             terminal: None,
+            covered_terminal: None,
             selection: Selection::point(0),
             selection_semantics: SelectionSemantics::Runyte,
             selection_revision: 0,
@@ -430,6 +444,7 @@ impl Pane {
         // Even retargeting to the buffer already named leaves the terminal:
         // asking for a document is asking to stop looking at a terminal.
         self.terminal = None;
+        self.covered_terminal = None;
         if self.buffer != buffer {
             self.remember_buffer(self.buffer);
             self.buffer = buffer;
