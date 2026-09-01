@@ -1583,6 +1583,116 @@ fn blame_refuses_oversized_and_binary_buffers_before_service_submission() {
     fs::remove_dir_all(root).unwrap();
 }
 
+#[test]
+fn valid_current_line_blame_submits_the_live_buffer_and_exact_line() {
+    let root = temporary("git-blame-service-request");
+    fs::create_dir_all(&root).unwrap();
+    let root = root.canonicalize().unwrap();
+    let path = root.join("source.txt");
+    fs::write(&path, "one\ntwo\nthree\n").unwrap();
+    let mut app = App::new_in_isolated_project(
+        &root,
+        HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+            String::new(),
+        ))))),
+    )
+    .unwrap();
+    app.open_file(path.clone()).unwrap();
+    app.git.attach(Some(Repository::new(&root)));
+    let (service, operations) = GitServiceHandle::recording_for_test();
+    app.attach_git_service(service);
+    assert!(matches!(
+        operations.recv_timeout(Duration::from_secs(1)).unwrap(),
+        GitOperation::Discover { .. }
+    ));
+
+    set_cursor(&mut app, 1, 1);
+    app.request_git_blame(false);
+    let operation = operations.recv_timeout(Duration::from_secs(1)).unwrap();
+    let GitOperation::Blame {
+        repository,
+        request,
+        source,
+    } = operation
+    else {
+        panic!("current-line blame submitted the wrong Git operation");
+    };
+    assert_eq!(repository.workdir(), root);
+    assert_eq!(request.path, path);
+    assert_eq!(request.content, "one\ntwo\nthree\n");
+    assert_eq!(request.lines, Some((2, 2)));
+    assert!(!source.full_file);
+    assert_eq!(source.revision.get(), app.active_buffer().revision());
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn asynchronous_branch_results_create_reuse_and_reselect_one_projection() {
+    let root = temporary("git-branch-result-projection");
+    fs::create_dir_all(&root).unwrap();
+    let root = root.canonicalize().unwrap();
+    let mut app = App::new(Config::default(), None).unwrap();
+    let repository = Repository::new(&root);
+    let operation = || GitOperation::Branches {
+        repository: repository.clone(),
+    };
+
+    app.apply_git_response(
+        operation(),
+        GitResponse::Branches(crate::git::BranchList {
+            local: vec![Branch::new("feature", false), Branch::new("main", true)],
+            remote: Vec::new(),
+        }),
+        (None, GitServiceState::Completed),
+        RequestedGitViews::default(),
+        None,
+        None,
+    );
+    let branches = app.active().buffer;
+    assert!(app.active_buffer().is_git_branches());
+    let selected = app.active_buffer().offset_to_row(app.active().head());
+    assert_eq!(
+        app.git_state.branch_rows()[selected]
+            .branch
+            .as_ref()
+            .map(|branch| branch.name.as_str()),
+        Some("main")
+    );
+    assert_eq!(app.mode, Mode::Normal);
+
+    app.active_mut().scroll_row = 20;
+    app.active_mut().scroll_wrap = 3;
+    app.active_mut().scroll_col = 7;
+    app.mode = Mode::Insert;
+    app.apply_git_response(
+        operation(),
+        GitResponse::Branches(crate::git::BranchList {
+            local: vec![Branch::new("main", false), Branch::new("topic", true)],
+            remote: Vec::new(),
+        }),
+        (None, GitServiceState::Completed),
+        RequestedGitViews::default(),
+        None,
+        None,
+    );
+
+    assert_eq!(app.active().buffer, branches, "the projection is reused");
+    let selected = app.active_buffer().offset_to_row(app.active().head());
+    assert_eq!(
+        app.git_state.branch_rows()[selected]
+            .branch
+            .as_ref()
+            .map(|branch| branch.name.as_str()),
+        Some("topic")
+    );
+    assert_eq!(app.active().scroll_row, 0);
+    assert_eq!(app.active().scroll_wrap, 0);
+    assert_eq!(app.active().scroll_col, 0);
+    assert_eq!(app.mode, Mode::Normal);
+    fs::remove_dir_all(root).unwrap();
+}
+
 /// Marks measured against a base that has moved are wrong until asked to
 /// re-read it, which is the whole reason the command exists.
 #[test]

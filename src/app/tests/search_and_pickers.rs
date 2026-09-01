@@ -90,6 +90,52 @@ fn search_prompt_repeats_and_wraps_unicode_matches() {
     assert_eq!(text(&app), "α one\ntwo z");
 }
 
+#[test]
+fn scalar_prompt_editing_supports_character_word_and_line_controls() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    seed(&mut app, "search target");
+    press(&mut app, 's');
+    for character in "alpha beta".chars() {
+        press(&mut app, character);
+    }
+
+    key(&mut app, KeyCode::Left, Modifiers::NONE);
+    key(&mut app, KeyCode::Char('b'), Modifiers::ALT);
+    assert_eq!(app.command_cursor, 6);
+    key(&mut app, KeyCode::Char('f'), Modifiers::ALT);
+    key(&mut app, KeyCode::Right, Modifiers::NONE);
+    assert_eq!(app.command_cursor, app.command.chars().count());
+    key(&mut app, KeyCode::Home, Modifiers::NONE);
+    key(&mut app, KeyCode::Right, Modifiers::NONE);
+    key(&mut app, KeyCode::Delete, Modifiers::NONE);
+    assert_eq!(app.command, "apha beta");
+    key(&mut app, KeyCode::End, Modifiers::NONE);
+    key(&mut app, KeyCode::Backspace, Modifiers::NONE);
+    assert_eq!(app.command, "apha bet");
+
+    key(&mut app, KeyCode::Char('a'), Modifiers::CONTROL);
+    key(&mut app, KeyCode::Char('f'), Modifiers::CONTROL);
+    key(&mut app, KeyCode::Char('d'), Modifiers::CONTROL);
+    assert_eq!(app.command, "aha bet");
+    key(&mut app, KeyCode::Char('e'), Modifiers::CONTROL);
+    key(&mut app, KeyCode::Char('b'), Modifiers::CONTROL);
+    key(&mut app, KeyCode::Char('h'), Modifiers::CONTROL);
+    assert_eq!(app.command, "aha bt");
+    key(&mut app, KeyCode::Char('w'), Modifiers::CONTROL);
+    assert_eq!(app.command, "aha t");
+    key(&mut app, KeyCode::Char('u'), Modifiers::CONTROL);
+    assert_eq!(app.command, "t");
+
+    type_text(&mut app, "wo words");
+    key(&mut app, KeyCode::Char('a'), Modifiers::CONTROL);
+    key(&mut app, KeyCode::Char('k'), Modifiers::CONTROL);
+    assert!(app.command.is_empty());
+    key(&mut app, KeyCode::Char('z'), Modifiers::CONTROL);
+    assert_eq!(app.mode, Mode::Command);
+    key(&mut app, KeyCode::Char('c'), Modifiers::CONTROL);
+    assert_eq!(app.mode, Mode::Normal);
+}
+
 /// Runs one of the search prompts and submits `pattern`.
 fn search_for(app: &mut App, opener: char, pattern: &str) {
     press(app, opener);
@@ -678,6 +724,17 @@ fn project_finder_keeps_file_split_activation() {
     assert!(app.picker.is_none());
     assert_eq!(app.panes.len(), 2);
     assert_eq!(app.active_buffer().path.as_deref(), Some(target.as_path()));
+
+    let ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    app.open_project_picker().unwrap();
+    type_text(&mut app, "split-target");
+    key(&mut app, KeyCode::Char('v'), Modifiers::CONTROL);
+    assert!(app.picker.is_none());
+    assert_eq!(app.panes.len(), 2);
+    assert_eq!(app.active_buffer().path.as_deref(), Some(target.as_path()));
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -722,6 +779,81 @@ fn directory_picker_keeps_tab_navigation_and_has_no_resource_mode() {
     assert_eq!(app.picker.as_ref().unwrap().selected, 0);
     key(&mut app, KeyCode::Tab, Modifiers::NONE);
     assert_eq!(app.picker.as_ref().unwrap().selected, 1);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn project_finder_keyboard_editing_and_navigation_are_symmetric() {
+    let root = temporary("project-finder-keyboard");
+    fs::create_dir_all(&root).unwrap();
+    for index in 0..25 {
+        fs::write(
+            root.join(format!("entry-{index:02}.txt")),
+            format!("row {index}\n"),
+        )
+        .unwrap();
+    }
+    let ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    app.open_project_picker().unwrap();
+    let total = app.finder.as_ref().unwrap().matches.len();
+    assert!(total >= 25);
+
+    key(&mut app, KeyCode::Down, Modifiers::NONE);
+    key(&mut app, KeyCode::Char('n'), Modifiers::CONTROL);
+    assert_eq!(app.finder.as_ref().unwrap().selected, 2);
+    key(&mut app, KeyCode::Up, Modifiers::NONE);
+    key(&mut app, KeyCode::Char('p'), Modifiers::CONTROL);
+    assert_eq!(app.finder.as_ref().unwrap().selected, 0);
+
+    key(&mut app, KeyCode::PageDown, Modifiers::NONE);
+    key(&mut app, KeyCode::Char('d'), Modifiers::CONTROL);
+    assert_eq!(app.finder.as_ref().unwrap().selected, 20);
+    key(&mut app, KeyCode::PageUp, Modifiers::NONE);
+    key(&mut app, KeyCode::Char('u'), Modifiers::CONTROL);
+    assert_eq!(app.finder.as_ref().unwrap().selected, 0);
+    key(&mut app, KeyCode::End, Modifiers::NONE);
+    assert_eq!(app.finder.as_ref().unwrap().selected, total - 1);
+    key(&mut app, KeyCode::Home, Modifiers::NONE);
+    assert_eq!(app.finder.as_ref().unwrap().selected, 0);
+
+    type_text(&mut app, "entry-12 tail");
+    let picker = app.picker.as_ref().unwrap();
+    assert_eq!(picker.query_cursor, picker.query.chars().count());
+    key(&mut app, KeyCode::Left, Modifiers::NONE);
+    key(&mut app, KeyCode::Char('b'), Modifiers::CONTROL);
+    key(&mut app, KeyCode::Right, Modifiers::NONE);
+    key(&mut app, KeyCode::Char('f'), Modifiers::CONTROL);
+    assert_eq!(
+        app.picker.as_ref().unwrap().query_cursor,
+        app.picker.as_ref().unwrap().query.chars().count()
+    );
+    key(&mut app, KeyCode::Backspace, Modifiers::NONE);
+    key(&mut app, KeyCode::Char('h'), Modifiers::CONTROL);
+    assert_eq!(app.picker.as_ref().unwrap().query, "entry-12 ta");
+    key(&mut app, KeyCode::Char('a'), Modifiers::CONTROL);
+    key(&mut app, KeyCode::Delete, Modifiers::NONE);
+    assert_eq!(app.picker.as_ref().unwrap().query, "ntry-12 ta");
+    key(&mut app, KeyCode::Char('e'), Modifiers::CONTROL);
+    key(&mut app, KeyCode::Char('w'), Modifiers::CONTROL);
+    assert_eq!(app.picker.as_ref().unwrap().query, "ntry-12 ");
+    key(&mut app, KeyCode::Char('a'), Modifiers::CONTROL);
+    key(&mut app, KeyCode::Char('k'), Modifiers::CONTROL);
+    assert!(app.picker.as_ref().unwrap().query.is_empty());
+    key(&mut app, KeyCode::Char('e'), Modifiers::CONTROL);
+
+    let preview = app.picker.as_ref().unwrap().show_preview;
+    key(&mut app, KeyCode::Char('t'), Modifiers::CONTROL);
+    assert_eq!(app.picker.as_ref().unwrap().show_preview, !preview);
+    key(&mut app, KeyCode::Null, Modifiers::NONE);
+    assert!(
+        app.picker.is_some(),
+        "an unrelated key leaves the finder open"
+    );
+
+    app.close_file_picker();
     fs::remove_dir_all(root).unwrap();
 }
 
