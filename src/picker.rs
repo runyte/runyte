@@ -307,7 +307,10 @@ impl ListPicker {
                 })
                 .collect();
         }
-        let mut matcher = crate::file_picker::FuzzyMatcher::new(&query);
+        // A row is text, not a path: `/` in an object id or a commit subject
+        // is an ordinary character, so the project finder's line matcher is
+        // the one that answers a typed query here.
+        let mut matcher = crate::file_picker::FuzzyMatcher::for_lines(&query);
         let mut matches = self
             .items
             .iter()
@@ -342,12 +345,24 @@ impl ListPicker {
         let Some(preview) = self.selected_preview() else {
             return Vec::new();
         };
-        crate::file_picker::fuzzy_match(&self.filter.to_lowercase(), preview)
-            .map_or_else(Vec::new, |(_, positions)| positions)
+        self.emphasis(preview)
     }
 
     pub fn item_label_emphasis(&self, item: &PickerItem) -> Vec<usize> {
-        crate::file_picker::fuzzy_match(&self.filter.to_lowercase(), &item.label)
+        self.emphasis(&item.label)
+    }
+
+    /// Where the filter matched, under the same matcher that narrowed the
+    /// list, so a highlighted row cannot disagree with why it is on screen.
+    fn emphasis(&self, candidate: &str) -> Vec<usize> {
+        let query = self.filter.to_lowercase();
+        let mut matcher = if self.fuzzy {
+            crate::file_picker::FuzzyMatcher::for_lines(&query)
+        } else {
+            crate::file_picker::FuzzyMatcher::new(&query)
+        };
+        matcher
+            .score(candidate)
             .map_or_else(Vec::new, |(_, positions)| positions)
     }
 
@@ -596,6 +611,35 @@ mod tests {
         let visible = picker.visible_indices();
         assert_eq!(visible, vec![1, 0]);
         assert_eq!(picker.selected_item().unwrap().index, 1);
+    }
+
+    #[test]
+    fn fuzzy_filter_ranks_rows_as_lines_rather_than_paths() {
+        let mut picker = ListPicker::fuzzy(
+            "Git commits",
+            vec![
+                PickerItem::searchable(
+                    "abc123 Log the Git refresh",
+                    "",
+                    "log the git refresh src/git/service.rs",
+                    0,
+                ),
+                PickerItem::searchable(
+                    "def456 Rename the picker",
+                    "",
+                    "rename the picker src/git/log.rs",
+                    1,
+                ),
+            ],
+        );
+        for character in "log".chars() {
+            picker.push_filter(character);
+        }
+        // A path matcher weighs everything after the last `/` above the rest
+        // of the candidate, which would put the commit that merely touches
+        // `log.rs` above the one whose subject the query names. A row here is
+        // a line, so the subject wins.
+        assert_eq!(picker.visible_indices(), vec![0, 1]);
     }
 
     #[test]

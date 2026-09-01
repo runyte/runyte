@@ -597,6 +597,41 @@ fn space_closes_a_new_picker_but_remains_a_query_separator_after_text() {
 }
 
 #[test]
+fn space_closes_a_new_result_list_but_remains_a_filter_separator_after_text() {
+    let items = || {
+        vec![PickerItem::searchable(
+            "abcdef123456 Refresh workspace Git state",
+            "",
+            "Refresh workspace Git state Ada 2026-08-16 abcdef123456",
+            0,
+        )]
+    };
+    let mut app = App::new(Config::default(), None).unwrap();
+    app.list = Some(ListPicker::fuzzy("Git commits", items()));
+
+    key(&mut app, KeyCode::Char(' '), Modifiers::NONE);
+    assert!(app.list.is_none(), "initial Space dismisses the list");
+
+    app.list = Some(ListPicker::fuzzy("Git commits", items()));
+    for character in "workspace".chars() {
+        press(&mut app, character);
+    }
+    key(&mut app, KeyCode::Char(' '), Modifiers::NONE);
+    press(&mut app, 'g');
+    assert_eq!(
+        app.list.as_ref().map(|list| list.filter.as_str()),
+        Some("workspace g"),
+        "a space narrows a commit search the way it narrows the finder"
+    );
+    assert_eq!(app.list.as_ref().unwrap().visible_indices(), vec![0]);
+
+    // A report has no filter for a space to belong to.
+    app.list = Some(ListPicker::new("Service health", items()).as_report());
+    key(&mut app, KeyCode::Char(' '), Modifiers::NONE);
+    assert!(app.list.is_none(), "Space still closes a report");
+}
+
+#[test]
 fn project_finder_switches_name_and_content_modes_without_losing_its_query() {
     let root = temporary("project-finder-modes");
     fs::create_dir_all(&root).unwrap();

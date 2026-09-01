@@ -435,7 +435,8 @@ panes behind it with, so the running hosts stand out without any row being
 hidden.
 `Space Space` is the complete binding,
 not a prefix with subcommands. A third `Space` closes the manager, just like
-Escape or `Ctrl-c`. Tab opens one manager menu listing only the
+Escape or `Ctrl-c`; once the filter holds any text, `Space` is filter text and
+Escape or `Ctrl-c` is what closes. Tab opens one manager menu listing only the
 actions the selected row's own state can answer: a running row offers Open,
 Rename, Renumber, Close, and Force close, and a stopped row offers Open,
 Rename, and Forget. Open is identical to Enter. Close stops the host
@@ -1648,7 +1649,7 @@ cancellation keys.
 | `Space c y` / `Space c p` / `Space c P` | System clipboard yank / paste after / paste before |
 | `Space e` | Open the active buffer's directory as an editable explorer; from a file, select that file |
 | `Space E` | Open the working directory (controlled by `:cd`) as an editable explorer |
-| `Space Space` | Open the persistent-session manager (`:session-list`, `:sl`); another `Space` closes it, `1`-`9` attach to a numbered session while the filter is empty, and `Tab` shows the selected row's actions |
+| `Space Space` | Open the persistent-session manager (`:session-list`, `:sl`); another `Space` closes it while the filter is empty, `1`-`9` attach to a numbered session then too, and `Tab` shows the selected row's actions |
 | `Space / /` or `/` | Find files, buffers, and terminals by name or content; `Tab` switches modes and `Ctrl-t` toggles preview |
 | `:file-picker-directory` | Fuzzy-find a file or directory below the active file/explorer directory |
 | `:fuzzy-grep-directory` | Fuzzy-search contents below the active file/explorer directory |
@@ -1854,7 +1855,9 @@ horizontally and `Ctrl-v` opens it vertically; those split actions do not apply
 to buffer or terminal results. Escape or `Ctrl-c` closes. A bare `Space` also
 closes a newly opened overlay;
 after a project or content finder query has begun, it retains its term-separator
-role. Backspace/Delete and the ordinary prompt control keys edit the query.
+role. Every filterable result list follows the same rule: a `Space` typed into
+an empty filter closes the list, and one typed after any text separates fuzzy
+terms. A report, which has no filter, always closes on `Space`. Backspace/Delete and the ordinary prompt control keys edit the query.
 Printable letters such as `q`, `j`, and `k` are query text rather than
 navigation commands.
 
@@ -2160,7 +2163,11 @@ sits behind a commit boundary, so its history cannot change underneath you.
 newest first. Matching covers everything a row stands for rather than only what
 its author wrote: subject lines, message bodies, the object ID, the author, and
 the author date. A prefix of an object ID matches, so the abbreviated ID a row
-shows is enough to find it. Rows show the subject, author date, author, and
+shows is enough to find it. Rows are ranked as lines rather than as paths, so a
+`/` in an object ID or a subject is an ordinary character. Spaces separate the
+query into terms that must appear in order, which is how a message is narrowed
+past the first word; the first `Space` typed into an empty filter still closes
+the picker. Rows show the subject, author date, author, and
 abbreviated object ID. Enter
 opens the same bounded commit detail used by the log and blame views. Discovery
 is asynchronous and capped at the newest 5,000 commits; the picker says when

@@ -1254,6 +1254,13 @@ impl App {
             // separators between fuzzy terms.
             return picker.query.is_empty();
         }
+        if let Some(list) = self.list.as_ref() {
+            // A filterable list is the same interaction as the finder above
+            // and follows the same rule, so a commit search can be narrowed
+            // with more than one word. A report has no filter for a space to
+            // belong to, so Space still closes it outright.
+            return !list.accepts_filter_input() || list.filter.is_empty();
+        }
         self.has_input_overlay()
     }
 
