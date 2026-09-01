@@ -813,6 +813,12 @@ fn ranking_a_full_content_budget_stays_within_a_frame() {
 /// This fills the same candidate ceiling in the 128-row chunks used by the
 /// event loop; a whole-corpus sort after each chunk turns this deliberately
 /// broad query into a multi-second foreground stall.
+///
+/// The budget is what separates that stall from linear merging, not a target
+/// for the merge itself: a development machine fills the ceiling in about
+/// 210ms and the shared CI runner, roughly half as fast, in about 480ms. At
+/// the 480ms this test used to carry, the slower of those two had no headroom
+/// at all and failed on its own timing.
 #[test]
 #[ignore = "run serially in the release performance job"]
 fn incrementally_ranking_a_full_live_content_budget_stays_bounded() {
@@ -872,7 +878,7 @@ fn incrementally_ranking_a_full_live_content_budget_stays_bounded() {
     let mut ordered = samples.clone();
     ordered.sort_unstable();
     let median = ordered[ordered.len() / 2];
-    let limit = budget(FRAME * 30);
+    let limit = budget(FRAME * 60);
     eprintln!(
         "incremental live-content ranking samples: {samples:?}; median: {median:?}; budget: {limit:?}"
     );
