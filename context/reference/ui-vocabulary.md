@@ -87,6 +87,9 @@ them, regardless of which extensibility direction is chosen.
   in-memory buffer lines including pathless buffers, and decoded retained
   terminal rows. Matching characters are emphasized in the content detail
   column, including on the selected row and in attached-client snapshots. The
+  preview column shows a content match as a numbered snippet around the
+  matching row with the matched text highlighted, and does so for an open
+  buffer or a terminal row exactly as for a file on disk. The
   query and `Ctrl-t` preview preference survive the switch; modes are not
   separate overlays or separate stops in a picker cycle. A live terminal is
   read on a slow interval rather than on each chunk its child writes: the

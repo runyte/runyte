@@ -2573,39 +2573,15 @@ fn draw_resource_finder(
                 crate::finder::ResourceKind::Buffer => "Contents",
                 crate::finder::ResourceKind::Terminal => "Output",
             };
-            let preview = finder.selected_preview().map_or_else(
-                || vec![Line::from("No preview")],
-                |preview| {
-                    preview
-                        .split('\n')
-                        .map(|line| Line::from(line.to_owned()))
-                        .collect()
-                },
-            );
-            (title, preview)
+            (
+                title,
+                file_preview_lines(&picker.query, finder.selected_preview(), &app.theme),
+            )
         } else {
-            let preview = match picker.preview.as_ref() {
-                Some(crate::file_picker::FilePreview::Text(lines)) => {
-                    lines.iter().cloned().map(Line::from).collect()
-                }
-                Some(crate::file_picker::FilePreview::Snippet(snippet)) => fuzzy_preview_lines(
-                    &picker.query,
-                    &snippet.lines,
-                    snippet.start_row,
-                    snippet.focus_row,
-                    &snippet.emphasis,
-                    &app.theme,
-                ),
-                Some(crate::file_picker::FilePreview::Binary) => vec![Line::from("<Binary file>")],
-                Some(crate::file_picker::FilePreview::Directory(lines)) => {
-                    lines.iter().cloned().map(Line::from).collect()
-                }
-                Some(crate::file_picker::FilePreview::Unreadable(error)) => {
-                    vec![Line::from(format!("<Preview unavailable: {error}>"))]
-                }
-                None => vec![Line::from("No preview")],
-            };
-            ("Preview", preview)
+            (
+                "Preview",
+                file_preview_lines(&picker.query, picker.preview.as_ref(), &app.theme),
+            )
         };
         frame.render_widget(
             Paragraph::new(preview)
@@ -2618,6 +2594,39 @@ fn draw_resource_finder(
                 .style(Style::default().fg(app.theme.foreground)),
             columns[1],
         );
+    }
+}
+
+/// A file preview as rendered lines.
+///
+/// The finder's live buffers and terminals produce the same preview value a
+/// scanned file does, so a content match is drawn with its matched text
+/// highlighted whether the row came from disk, an open buffer, or terminal
+/// scrollback.
+fn file_preview_lines(
+    query: &str,
+    preview: Option<&crate::file_picker::FilePreview>,
+    theme: &TuiTheme,
+) -> Vec<Line<'static>> {
+    use crate::file_picker::FilePreview;
+
+    match preview {
+        Some(FilePreview::Text(lines) | FilePreview::Directory(lines)) => {
+            lines.iter().cloned().map(Line::from).collect()
+        }
+        Some(FilePreview::Snippet(snippet)) => fuzzy_preview_lines(
+            query,
+            &snippet.lines,
+            snippet.start_row,
+            snippet.focus_row,
+            &snippet.emphasis,
+            theme,
+        ),
+        Some(FilePreview::Binary) => vec![Line::from("<Binary file>")],
+        Some(FilePreview::Unreadable(error)) => {
+            vec![Line::from(format!("<Preview unavailable: {error}>"))]
+        }
+        None => vec![Line::from("No preview")],
     }
 }
 
@@ -7597,7 +7606,9 @@ mod tests {
             app.picker.as_ref().unwrap(),
             "",
         );
-        finder.set_selected_preview(Some("authoritative buffer preview".to_owned()));
+        finder.set_selected_preview(Some(crate::file_picker::FilePreview::from_text(
+            "authoritative buffer preview",
+        )));
         app.finder = Some(finder);
 
         let wide = rendered(&mut app, 120, 30);

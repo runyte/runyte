@@ -1058,35 +1058,10 @@ impl App {
                         ResourceKind::Buffer => "Contents".to_owned(),
                         ResourceKind::Terminal => "Output".to_owned(),
                     });
-                    snapshot.preview = Some(finder.selected_preview().map_or(
-                        OverlayPreview::Empty,
-                        |preview| {
-                            OverlayPreview::Text(preview.split('\n').map(str::to_owned).collect())
-                        },
-                    ));
+                    snapshot.preview = Some(file_overlay_preview(finder.selected_preview()));
                 } else {
                     snapshot.preview_title = Some("Preview".to_owned());
-                    snapshot.preview = Some(match picker.preview.as_ref() {
-                        Some(crate::file_picker::FilePreview::Text(lines)) => {
-                            OverlayPreview::Text(lines.clone())
-                        }
-                        Some(crate::file_picker::FilePreview::Snippet(snippet)) => {
-                            OverlayPreview::Snippet {
-                                lines: snippet.lines.clone(),
-                                start_row: snippet.start_row,
-                                focus_row: snippet.focus_row,
-                                emphasis: snippet.emphasis.clone(),
-                            }
-                        }
-                        Some(crate::file_picker::FilePreview::Binary) => OverlayPreview::Binary,
-                        Some(crate::file_picker::FilePreview::Directory(lines)) => {
-                            OverlayPreview::Text(lines.clone())
-                        }
-                        Some(crate::file_picker::FilePreview::Unreadable(error)) => {
-                            OverlayPreview::Unavailable(error.clone())
-                        }
-                        None => OverlayPreview::Empty,
-                    });
+                    snapshot.preview = Some(file_overlay_preview(picker.preview.as_ref()));
                 }
                 overlays.push(snapshot);
             } else {
@@ -1123,27 +1098,7 @@ impl App {
                 snapshot.query_cursor = Some(picker.query_cursor);
                 snapshot.show_preview = picker.show_preview;
                 snapshot.preview_title = Some("Preview".to_owned());
-                snapshot.preview = Some(match picker.preview.as_ref() {
-                    Some(crate::file_picker::FilePreview::Text(lines)) => {
-                        OverlayPreview::Text(lines.clone())
-                    }
-                    Some(crate::file_picker::FilePreview::Snippet(snippet)) => {
-                        OverlayPreview::Snippet {
-                            lines: snippet.lines.clone(),
-                            start_row: snippet.start_row,
-                            focus_row: snippet.focus_row,
-                            emphasis: snippet.emphasis.clone(),
-                        }
-                    }
-                    Some(crate::file_picker::FilePreview::Binary) => OverlayPreview::Binary,
-                    Some(crate::file_picker::FilePreview::Directory(lines)) => {
-                        OverlayPreview::Text(lines.clone())
-                    }
-                    Some(crate::file_picker::FilePreview::Unreadable(error)) => {
-                        OverlayPreview::Unavailable(error.clone())
-                    }
-                    None => OverlayPreview::Empty,
-                });
+                snapshot.preview = Some(file_overlay_preview(picker.preview.as_ref()));
                 if self.finder.is_some() {
                     snapshot
                         .actions
@@ -1630,6 +1585,33 @@ impl App {
             overlays.push(snapshot);
         }
         overlays
+    }
+}
+
+/// One reading of a file preview as an overlay preview.
+///
+/// Buffers and terminals produce the same value a file on disk does, so the
+/// finder's live resources and its scanned files reach a frontend describing
+/// their content, and their matched text, in one vocabulary.
+fn file_overlay_preview(
+    preview: Option<&crate::file_picker::FilePreview>,
+) -> crate::snapshot::OverlayPreview {
+    use crate::file_picker::FilePreview;
+    use crate::snapshot::OverlayPreview;
+
+    match preview {
+        Some(FilePreview::Text(lines) | FilePreview::Directory(lines)) => {
+            OverlayPreview::Text(lines.clone())
+        }
+        Some(FilePreview::Snippet(snippet)) => OverlayPreview::Snippet {
+            lines: snippet.lines.clone(),
+            start_row: snippet.start_row,
+            focus_row: snippet.focus_row,
+            emphasis: snippet.emphasis.clone(),
+        },
+        Some(FilePreview::Binary) => OverlayPreview::Binary,
+        Some(FilePreview::Unreadable(error)) => OverlayPreview::Unavailable(error.clone()),
+        None => OverlayPreview::Empty,
     }
 }
 

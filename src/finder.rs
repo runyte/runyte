@@ -14,7 +14,7 @@ use std::{
 };
 
 use crate::{
-    file_picker::{CONTENT_ENTRY_LIMIT, FilePicker, FuzzyMatcher, PickerTarget},
+    file_picker::{CONTENT_ENTRY_LIMIT, FilePicker, FilePreview, FuzzyMatcher, PickerTarget},
     terminal::{TerminalId, TerminalLineId},
 };
 
@@ -156,7 +156,7 @@ pub struct ResourceFinder {
     suppressed_paths: HashSet<PathBuf>,
     selection_user_owned: bool,
     claimed_selection: Option<FinderTarget>,
-    selected_preview: Option<String>,
+    selected_preview: Option<FilePreview>,
 }
 
 impl Default for ResourceFinder {
@@ -493,11 +493,14 @@ impl ResourceFinder {
         }
     }
 
-    pub fn selected_preview(&self) -> Option<&str> {
-        self.selected_preview.as_deref()
+    /// The selected resource's preview, in the same shape a file preview
+    /// takes so that a content match in a buffer or terminal is shown, and
+    /// highlighted, exactly as one in a file on disk is.
+    pub fn selected_preview(&self) -> Option<&FilePreview> {
+        self.selected_preview.as_ref()
     }
 
-    pub fn set_selected_preview(&mut self, preview: Option<String>) {
+    pub fn set_selected_preview(&mut self, preview: Option<FilePreview>) {
         self.selected_preview = preview;
     }
 

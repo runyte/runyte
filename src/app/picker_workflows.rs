@@ -4,7 +4,7 @@
 
 // Application-module dependencies:
 use super::{
-    App, Buffer, CONTENT_ENTRY_LIMIT, FilePicker, FilePickerEvent, FilePickerKind, FilePreview,
+    App, CONTENT_ENTRY_LIMIT, FilePicker, FilePickerEvent, FilePickerKind, FilePreview,
     FileScanner, FinderContentScan, FinderContentSource, FinderMatchSource, FinderMode,
     FinderTarget, Mode, PathBuf, Range, ResourceFinder, ResourceItem, ResourceKind, ResourceTarget,
     Result, Selection, TerminalContentMark, TerminalSession, buffer_picker_columns, buffer_preview,
@@ -866,32 +866,50 @@ impl App {
     }
 
     pub(super) fn refresh_finder_preview(&mut self) {
-        let resource_preview = self
-            .finder
-            .as_ref()
-            .zip(self.picker.as_ref())
-            .and_then(|(finder, picker)| finder.selected_target(picker))
-            .and_then(|target| match target {
-                FinderTarget::Resource(ResourceTarget::Buffer(buffer)) => {
-                    self.buffers.get(buffer).map(buffer_preview)
-                }
-                FinderTarget::Resource(ResourceTarget::BufferLocation { buffer, row, .. }) => self
+        // A content match ranked the trimmed text of one row, so its
+        // emphasis is relative to that text. Shifting by the row's own
+        // indent puts the positions back in the line the preview shows.
+        let selected =
+            self.finder
+                .as_ref()
+                .zip(self.picker.as_ref())
+                .and_then(|(finder, picker)| {
+                    let emphasis = finder.selected_match()?.detail_emphasis.clone();
+                    Some((finder.selected_target(picker)?, emphasis))
+                });
+        let resource_preview = selected.and_then(|(target, emphasis)| {
+            let shifted = |column: usize| {
+                emphasis
+                    .iter()
+                    .map(|position| position + column)
+                    .collect::<Vec<_>>()
+            };
+            match target {
+                FinderTarget::Resource(ResourceTarget::Buffer(buffer)) => self
                     .buffers
                     .get(buffer)
-                    .map(|buffer| buffer_content_preview(buffer, row)),
-                FinderTarget::Resource(ResourceTarget::Terminal(terminal)) => {
-                    self.terminals.get(terminal).map(terminal_preview)
-                }
+                    .map(|buffer| FilePreview::from_text(&buffer_preview(buffer))),
+                FinderTarget::Resource(ResourceTarget::BufferLocation {
+                    buffer,
+                    row,
+                    column,
+                }) => self.buffers.get(buffer).map(|buffer| {
+                    FilePreview::snippet_from_lines(buffer.lines(), row, shifted(column))
+                }),
+                FinderTarget::Resource(ResourceTarget::Terminal(terminal)) => self
+                    .terminals
+                    .get(terminal)
+                    .map(|terminal| FilePreview::from_text(&terminal_preview(terminal))),
                 FinderTarget::Resource(ResourceTarget::TerminalLocation {
                     terminal,
                     line_id,
-                    ..
-                }) => self
-                    .terminals
-                    .get(terminal)
-                    .and_then(|terminal| terminal_content_preview(terminal, line_id)),
+                    column,
+                }) => self.terminals.get(terminal).and_then(|terminal| {
+                    terminal_content_preview(terminal, line_id, shifted(column))
+                }),
                 _ => None,
-            });
+            }
+        });
         if let Some(finder) = self.finder.as_mut() {
             finder.set_selected_preview(resource_preview);
         }
@@ -975,30 +993,37 @@ impl App {
     }
 }
 
-fn buffer_content_preview(buffer: &Buffer, row: usize) -> String {
-    const CONTEXT: usize = 6;
-    buffer
-        .lines()
-        .skip(row.saturating_sub(CONTEXT))
-        .take(CONTEXT * 2 + 1)
-        .map(|line| line.chars().take(512).collect::<String>())
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
+/// Scrollback around a matching terminal row, read by index.
+///
+/// Terminal history answers a row directly, so this takes the snippet's own
+/// range rather than skipping a line iterator over everything before it.
 fn terminal_content_preview(
     terminal: &TerminalSession,
     line_id: crate::terminal::TerminalLineId,
-) -> Option<String> {
-    const CONTEXT: usize = 6;
+    emphasis: Vec<usize>,
+) -> Option<FilePreview> {
     let row = terminal.retained_line_row(line_id)?;
-    let start = row.saturating_sub(CONTEXT);
-    Some(
-        (start..terminal.plain_line_count().min(start + CONTEXT * 2 + 1))
-            .filter_map(|row| terminal.plain_line(row))
-            .collect::<Vec<_>>()
-            .join("\n"),
-    )
+    let rows = FilePreview::snippet_rows(row);
+    let end = rows.end.min(terminal.plain_line_count());
+    // The iterator is positioned with retained indices, but those indices
+    // shift whenever bounded history evicts a row. Snippet labels use the
+    // terminal's stable, zero-based output positions instead.
+    let start_row = terminal
+        .output_line_number(rows.start)
+        .checked_sub(1)?
+        .try_into()
+        .ok()?;
+    let focus_row = terminal
+        .output_line_number(row)
+        .checked_sub(1)?
+        .try_into()
+        .ok()?;
+    Some(FilePreview::snippet_from_rows(
+        (rows.start..end).filter_map(|row| terminal.plain_line(row)),
+        start_row,
+        focus_row,
+        emphasis,
+    ))
 }
 
 fn terminal_finder_item(
