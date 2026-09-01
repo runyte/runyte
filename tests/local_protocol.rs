@@ -1832,6 +1832,51 @@ async fn killing_the_host_fails_an_outstanding_wait_process() {
 }
 
 #[tokio::test]
+async fn killing_the_host_fails_an_attached_persistent_tui() {
+    let root = project();
+    let endpoint = LocalEndpoint::discover_with_runtime(
+        &root.join(".runyte"),
+        &root,
+        Some(test_runtime_dir()),
+    )
+    .unwrap();
+    let Some(mut host) = start_host(&root, &endpoint).await else {
+        fs::remove_dir_all(root).unwrap();
+        return;
+    };
+    let mut control = connect_control(&endpoint).await;
+    let (tui, terminal) = spawn_in_pty(
+        bundled_runyte()
+            .arg("--persistent")
+            .current_dir(&root)
+            .env("XDG_RUNTIME_DIR", test_runtime_dir())
+            .env("XDG_CACHE_HOME", test_cache_dir()),
+    );
+    let mut tui = ChildGuard(Some(tui));
+    let output = capture_terminal_output(&terminal);
+    wait_for_interactive_attachment(
+        &mut control,
+        tui.0.as_mut().unwrap(),
+        None,
+        "the persistent TUI had completed its handshake",
+        Some(&output),
+    )
+    .await;
+
+    host.0.as_mut().unwrap().kill().unwrap();
+    let _ = host.0.take().unwrap().wait();
+    let status = wait_child(tui.0.as_mut().unwrap()).await;
+    assert!(
+        !status.success(),
+        "an unannounced host disconnect was reported as a successful detach: {}; {}",
+        status,
+        captured_terminal_state(Some(&output)),
+    );
+    let _ = tui.0.take().unwrap().wait();
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
 async fn git_commit_wait_closes_its_buffer_without_detaching_an_existing_tui() {
     let root = project();
     git(&root, &["add", "note.txt", "other.txt"]);

@@ -1768,6 +1768,34 @@ impl ResponseSender {
         }
         self.messages.send(response).await
     }
+
+    /// Thread-blocking counterpart used by the attached TUI's independent
+    /// socket reader. Visual updates remain replaceable; only irreplaceable
+    /// semantic and lifecycle replies apply bounded backpressure.
+    fn blocking_send(
+        &self,
+        response: HostResponse,
+    ) -> Result<(), mpsc::error::SendError<HostResponse>> {
+        if is_final_response(&response) {
+            return self.final_messages.blocking_send(response);
+        }
+        if matches!(
+            response,
+            HostResponse::Frame { .. } | HostResponse::TerminalDamage { .. }
+        ) {
+            let visual = VisualResponse {
+                sequence: self
+                    .next_visual
+                    .fetch_add(1, Ordering::Relaxed)
+                    .wrapping_add(1),
+                response,
+            };
+            return self.frame.send(Some(visual)).map_err(|error| {
+                mpsc::error::SendError(error.0.expect("visual response is present").response)
+            });
+        }
+        self.messages.blocking_send(response)
+    }
 }
 
 impl ResponseReceiver {
@@ -1924,6 +1952,61 @@ pub struct LocalClient {
     writer: Option<OwnedWriteHalf>,
 }
 
+/// A local client whose dedicated socket-reader thread stays responsive while
+/// its consumer is doing synchronous work.
+///
+/// The terminal frontend can block while writing a frame to the outer
+/// terminal, including when Tokio has only one worker. Reading the host on an
+/// OS thread keeps that backpressure from reaching the host's bounded
+/// connection writer. The same response channel used by the server keeps
+/// semantic replies FIFO and coalesces visual updates into one replaceable
+/// slot, so a blocked frontend does not create an unbounded client-side queue.
+pub struct BufferedLocalClient {
+    writer: Option<UnixStream>,
+    responses: Option<ResponseReceiver>,
+    shutdown: Option<std::os::unix::net::UnixStream>,
+    reader: Option<std::thread::JoinHandle<Result<()>>>,
+}
+
+fn client_hello(
+    endpoint: &LocalEndpoint,
+    geometry: FrameGeometry,
+    interactive: bool,
+    directory_handoff: bool,
+) -> ClientRequest {
+    ClientRequest::Hello {
+        protocol: PROTOCOL_VERSION,
+        directory_handoff,
+        features: if interactive {
+            vec![
+                FeatureGroup::Snapshots,
+                FeatureGroup::Input,
+                FeatureGroup::Buffers,
+                FeatureGroup::Wait,
+            ]
+        } else {
+            vec![
+                FeatureGroup::Control,
+                FeatureGroup::Buffers,
+                FeatureGroup::Wait,
+            ]
+        },
+        project_root_bytes: encode_path(&endpoint.project_root),
+        client_kind: if interactive {
+            ClientKind::Tui
+        } else {
+            ClientKind::Control
+        },
+        client_version: CLIENT_VERSION.to_owned(),
+        role: if interactive {
+            ClientRole::Interactive
+        } else {
+            ClientRole::Control
+        },
+        geometry: geometry.into(),
+    }
+}
+
 impl LocalClient {
     pub async fn connect(
         endpoint: &LocalEndpoint,
@@ -1952,37 +2035,12 @@ impl LocalClient {
             writer: Some(writer),
         };
         client
-            .send(&ClientRequest::Hello {
-                protocol: PROTOCOL_VERSION,
+            .send(&client_hello(
+                endpoint,
+                geometry,
+                interactive,
                 directory_handoff,
-                features: if interactive {
-                    vec![
-                        FeatureGroup::Snapshots,
-                        FeatureGroup::Input,
-                        FeatureGroup::Buffers,
-                        FeatureGroup::Wait,
-                    ]
-                } else {
-                    vec![
-                        FeatureGroup::Control,
-                        FeatureGroup::Buffers,
-                        FeatureGroup::Wait,
-                    ]
-                },
-                project_root_bytes: encode_path(&endpoint.project_root),
-                client_kind: if interactive {
-                    ClientKind::Tui
-                } else {
-                    ClientKind::Control
-                },
-                client_version: CLIENT_VERSION.to_owned(),
-                role: if interactive {
-                    ClientRole::Interactive
-                } else {
-                    ClientRole::Control
-                },
-                geometry: geometry.into(),
-            })
+            ))
             .await?;
         Ok(client)
     }
@@ -1996,6 +2054,209 @@ impl LocalClient {
     /// desynchronize the stream.
     pub async fn recv(&mut self) -> Result<Option<HostResponse>> {
         self.reader.read().await
+    }
+}
+
+impl BufferedLocalClient {
+    /// Connects an interactive client whose response reader cannot be blocked
+    /// by the synchronous terminal renderer or by Tokio worker availability.
+    pub async fn connect_with_handoff(
+        endpoint: &LocalEndpoint,
+        geometry: FrameGeometry,
+        directory_handoff: bool,
+    ) -> Result<Self> {
+        let metadata = endpoint.verify_compatible_for_connect()?;
+        let socket = decode_path(metadata.socket_bytes);
+        let mut stream = UnixStream::connect(&socket)
+            .await
+            .with_context(|| format!("cannot attach to workspace host {}", socket.display()))?;
+        write_message(
+            &mut stream,
+            &client_hello(endpoint, geometry, true, directory_handoff),
+        )
+        .await?;
+        Self::from_connected_stream(stream)
+    }
+
+    fn from_connected_stream(stream: UnixStream) -> Result<Self> {
+        let reader = stream.into_std()?;
+        let shutdown = reader
+            .try_clone()
+            .context("cannot clone local socket for reader shutdown")?;
+        let writer = reader
+            .try_clone()
+            .context("cannot clone local socket for client writes")?;
+        writer.set_nonblocking(true)?;
+        let writer = UnixStream::from_std(writer)?;
+        let (responses, response_rx) = response_channel();
+        let thread = std::thread::Builder::new()
+            .name("runyte-host-responses".to_owned())
+            .spawn(move || buffer_host_responses(reader, responses))
+            .context("cannot start local response reader")?;
+        Ok(Self {
+            writer: Some(writer),
+            responses: Some(response_rx),
+            shutdown: Some(shutdown),
+            reader: Some(thread),
+        })
+    }
+
+    pub async fn send(&mut self, request: &ClientRequest) -> Result<()> {
+        write_client_message(&mut self.writer, request).await
+    }
+
+    /// Cancellation-safe for the same reason as an ordinary Tokio channel
+    /// receive: cancelling this future cannot consume part of a response.
+    pub async fn recv(&mut self) -> Result<Option<HostResponse>> {
+        let responses = self
+            .responses
+            .as_mut()
+            .expect("buffered response receiver exists until drop");
+        if let Some(response) = responses.recv().await {
+            responses.mark_delivered();
+            return Ok(Some(response));
+        }
+        let Some(reader) = self.reader.take() else {
+            return Ok(None);
+        };
+        reader
+            .join()
+            .map_err(|_| anyhow::anyhow!("local response reader panicked"))??;
+        Ok(None)
+    }
+}
+
+impl Drop for BufferedLocalClient {
+    fn drop(&mut self) {
+        use std::net::Shutdown;
+
+        if let Some(shutdown) = self.shutdown.take() {
+            let _ = shutdown.shutdown(Shutdown::Both);
+        }
+        drop(self.responses.take());
+        if let Some(reader) = self.reader.take() {
+            let _ = reader.join();
+        }
+    }
+}
+
+fn buffer_host_responses(
+    stream: std::os::unix::net::UnixStream,
+    responses: ResponseSender,
+) -> Result<()> {
+    let mut reader = BlockingMessageReader::new(stream);
+    let mut latest_frame = None;
+    while let Some(response) = reader.read::<HostResponse>()? {
+        // Socket delivery lets the host use that frame as the base of later
+        // terminal damage, but the synchronous frontend may not have rendered
+        // it yet. Fold every received delta into the reader's latest complete
+        // frame before entering the local replaceable slot. Replacing one
+        // complete frame with another is always safe, however far the renderer
+        // is behind.
+        let response = match response {
+            HostResponse::Frame { frame } => {
+                latest_frame = Some((*frame).clone());
+                HostResponse::Frame { frame }
+            }
+            HostResponse::TerminalDamage { damage } => {
+                if let Some(frame) = latest_frame.as_mut()
+                    && damage.apply(frame)
+                {
+                    HostResponse::Frame {
+                        frame: Box::new(frame.clone()),
+                    }
+                } else {
+                    HostResponse::TerminalDamage { damage }
+                }
+            }
+            response => response,
+        };
+        responses
+            .blocking_send(response)
+            .map_err(|_| anyhow::anyhow!("local response consumer stopped"))?;
+    }
+    Ok(())
+}
+
+/// Cancellation-safe newline framing for the dedicated nonblocking socket
+/// reader. Polling happens on this OS thread, independently of Tokio's runtime
+/// workers; bytes beyond one message remain in `BufReader` for the next call.
+struct BlockingMessageReader {
+    reader: std::io::BufReader<std::os::unix::net::UnixStream>,
+    pending: Vec<u8>,
+}
+
+impl BlockingMessageReader {
+    fn new(stream: std::os::unix::net::UnixStream) -> Self {
+        Self {
+            reader: std::io::BufReader::new(stream),
+            pending: Vec::new(),
+        }
+    }
+
+    fn read<T: DeserializeOwned>(&mut self) -> Result<Option<T>> {
+        use std::io::BufRead as _;
+        use std::os::fd::AsRawFd as _;
+
+        loop {
+            let available = match self.reader.fill_buf() {
+                Ok(available) => available,
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                    wait_for_socket_readable(self.reader.get_ref().as_raw_fd())?;
+                    continue;
+                }
+                Err(error) => return Err(error.into()),
+            };
+            if available.is_empty() {
+                if self.pending.is_empty() {
+                    return Ok(None);
+                }
+                let pending = self.pending.len();
+                self.pending.clear();
+                bail!("workspace transport ended {pending} bytes inside a message");
+            }
+            let take = available
+                .iter()
+                .position(|byte| *byte == b'\n')
+                .map_or(available.len(), |position| position + 1);
+            if self.pending.len().saturating_add(take) > MAX_MESSAGE_BYTES {
+                self.pending.clear();
+                bail!("workspace transport message exceeds {MAX_MESSAGE_BYTES} bytes");
+            }
+            self.pending.extend_from_slice(&available[..take]);
+            self.reader.consume(take);
+            if self.pending.last() == Some(&b'\n') {
+                self.pending.pop();
+                let message = serde_json::from_slice(&self.pending)
+                    .context("malformed workspace transport message");
+                self.pending.clear();
+                return message.map(Some);
+            }
+        }
+    }
+}
+
+fn wait_for_socket_readable(descriptor: std::os::fd::RawFd) -> io::Result<()> {
+    let mut poll = libc::pollfd {
+        fd: descriptor,
+        events: libc::POLLIN,
+        revents: 0,
+    };
+    loop {
+        // SAFETY: `poll` points to one initialized writable descriptor record,
+        // and the descriptor belongs to the reader for this complete call.
+        let result = unsafe { libc::poll(&mut poll, 1, -1) };
+        if result == -1 {
+            let error = io::Error::last_os_error();
+            if error.kind() == io::ErrorKind::Interrupted {
+                continue;
+            }
+            return Err(error);
+        }
+        if poll.revents & libc::POLLNVAL != 0 {
+            return Err(io::Error::from_raw_os_error(libc::EBADF));
+        }
+        return Ok(());
     }
 }
 
@@ -3962,6 +4223,53 @@ mod tests {
         ));
         endpoint.cleanup().unwrap();
         drop(root);
+    }
+
+    #[tokio::test]
+    async fn buffered_client_drains_the_socket_while_its_consumer_is_blocked() {
+        use std::io::Write as _;
+
+        // `#[tokio::test]` uses one current-thread worker. Both the blocking
+        // wait below and a synchronous terminal draw therefore prevent any
+        // Tokio response task from running; only a genuinely independent
+        // reader can drain more than the socket buffer during that interval.
+        let (client, mut server) = std::os::unix::net::UnixStream::pair().unwrap();
+        client.set_nonblocking(true).unwrap();
+        let client = UnixStream::from_std(client).unwrap();
+        let mut client = BufferedLocalClient::from_connected_stream(client).unwrap();
+        let payload = "x".repeat(4 * 1024 * 1024);
+        let mut encoded = serde_json::to_vec(&HostResponse::Error {
+            message: payload.clone(),
+        })
+        .unwrap();
+        encoded.push(b'\n');
+        let (finished, completion) = std::sync::mpsc::sync_channel(1);
+        let writer = std::thread::spawn(move || {
+            let result = server.write_all(&encoded);
+            let _ = finished.send(result);
+        });
+
+        std::thread::sleep(CONNECTION_WRITE_STALL + Duration::from_millis(250));
+        let written = completion
+            .try_recv()
+            .expect("the independent reader did not drain a blocked one-worker client");
+        if written
+            .as_ref()
+            .err()
+            .is_some_and(|error| error.raw_os_error() == Some(libc::EPERM))
+        {
+            writer.join().unwrap();
+            drop(client);
+            return;
+        }
+        written.unwrap();
+
+        assert!(matches!(
+            client.recv().await.unwrap(),
+            Some(HostResponse::Error { message }) if message == payload
+        ));
+        writer.join().unwrap();
+        drop(client);
     }
 
     #[tokio::test]

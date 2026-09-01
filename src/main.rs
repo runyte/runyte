@@ -115,8 +115,8 @@ use runyte::workspace::lifecycle::{
 };
 #[cfg(unix)]
 use runyte::workspace::transport::{
-    ClientRequest, FeatureGroup, HostResponse, IncompatibleHost, LocalClient, LocalEndpoint,
-    LocalServer, ServerEvent, TransportChange, decode_path, encode_path,
+    BufferedLocalClient, ClientRequest, FeatureGroup, HostResponse, IncompatibleHost, LocalClient,
+    LocalEndpoint, LocalServer, ServerEvent, TransportChange, decode_path, encode_path,
     registered_hosts_all_namespaces,
 };
 #[cfg(unix)]
@@ -3520,7 +3520,7 @@ async fn run_attached(
         color_depth,
     } = options;
     let mut client =
-        LocalClient::connect_with_handoff(endpoint, *geometry, true, cwd_file.is_some()).await?;
+        BufferedLocalClient::connect_with_handoff(endpoint, *geometry, cwd_file.is_some()).await?;
     match client.recv().await? {
         Some(response @ HostResponse::Welcome { .. }) => {
             validate_welcome(&response, true).map_err(anyhow::Error::msg)?;
@@ -3731,9 +3731,12 @@ async fn run_attached(
                         }
                         break;
                     }
-                    Some(HostResponse::ShuttingDown) | None => {
+                    Some(HostResponse::ShuttingDown) => {
                         anyhow::ensure!(wait_token.is_none(), "wait request ended before completion");
                         break;
+                    }
+                    None => {
+                        anyhow::bail!("workspace host disconnected without ending the attachment");
                     }
                     Some(HostResponse::SwitchWorkspace {
                         selector_bytes,
@@ -3778,7 +3781,7 @@ async fn run_attached(
 /// terminal state before treating the failed write as success.
 #[cfg(unix)]
 async fn recover_attached_wait_after_status_write(
-    client: &mut LocalClient,
+    client: &mut BufferedLocalClient,
     token: WaitToken,
     write_error: anyhow::Error,
 ) -> Result<()> {
