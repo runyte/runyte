@@ -3520,7 +3520,7 @@ async fn run_attached(
         color_depth,
     } = options;
     let mut client =
-        LocalClient::connect_with_handoff(endpoint, *geometry, true, cwd_file.is_some()).await?;
+        BufferedLocalClient::connect_with_handoff(endpoint, *geometry, cwd_file.is_some()).await?;
     match client.recv().await? {
         Some(response @ HostResponse::Welcome { .. }) => {
             validate_welcome(&response, true).map_err(anyhow::Error::msg)?;
@@ -3529,7 +3529,6 @@ async fn run_attached(
         Some(response) => anyhow::bail!("unexpected workspace handshake response: {response:?}"),
         None => anyhow::bail!("workspace host disconnected during handshake"),
     }
-    let mut client = client.buffer_responses();
     let _activity = AttachedWorkspaceActivity::begin(endpoint.project_root());
     if let Some(message) = notice {
         client.send(&ClientRequest::Notify { message }).await?;

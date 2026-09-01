@@ -17,32 +17,41 @@ the host correctly released the stalled attachment. The client then treated
 the resulting unannounced end of stream exactly like an explicit
 `ShuttingDown` response and returned success.
 
-Interactive clients now move response reading onto a Tokio runtime worker
-after the handshake. The reader feeds the same bounded response-channel
-contract used by the host: semantic replies retain FIFO order and their
-existing fixed capacity, while visual updates occupy one replaceable slot.
-Socket delivery can let the host base terminal damage on a frame the blocked
-renderer has not consumed, so the reader applies each delta to its own latest
-complete wire frame before entering that slot. The renderer therefore always
-converges on a self-contained frame without unbounded buffering. An EOF that
-was not preceded by `Detached` or `ShuttingDown` is now an attachment error
-rather than a successful user exit.
+Interactive clients now move response reading onto a dedicated OS thread
+after sending the handshake. The nonblocking socket reader waits with `poll`,
+so it remains independent even when synchronous drawing blocks a one-worker
+Tokio runtime. It feeds the same bounded response-channel contract used by the
+host: semantic replies retain FIFO order and their existing fixed capacity,
+while visual updates occupy one replaceable slot. Socket delivery can let the
+host base terminal damage on a frame the blocked renderer has not consumed,
+so the reader applies each delta to its own latest complete wire frame before
+entering that slot. The renderer therefore always converges on a
+self-contained frame without unbounded buffering. An EOF that was not
+preceded by `Detached` or `ShuttingDown` is now an attachment error rather
+than a successful user exit.
+
+The first implementation put that reader in a spawned Tokio task. Review
+found that `TOKIO_WORKER_THREADS=1`, or a default runtime on a one-CPU
+allocation, still let synchronous terminal drawing occupy the only worker and
+recreate the same socket backpressure. The dedicated thread closes that gap;
+its shutdown clone and joined teardown also keep reader lifetime owned by the
+client.
 
 `workspace::transport::tests::buffered_client_drains_the_socket_while_its_consumer_is_blocked`
 in `src/workspace/transport.rs` blocks the consuming runtime worker for longer
-than the host's write-stall budget while a response larger than a Unix socket
-buffer is delivered, and proves the independent reader retains the
-attachment. `killing_the_host_fails_an_attached_persistent_tui` in
+than the host's write-stall budget on a one-worker runtime while a response
+larger than a Unix socket buffer is delivered by another thread, and proves
+the independent reader retains the attachment. `killing_the_host_fails_an_attached_persistent_tui` in
 `tests/local_protocol.rs` proves an unannounced host loss exits a real PTY TUI
 with failure. `creating_a_worktree_starts_and_attaches_its_persistent_session`
 in the same file continues to cover the reported worktree-creation path.
 
-Known limitation: a client process whose complete async runtime is suspended
-or starved past the host's bounded write-stall budget can still lose its
-attachment. The host must retain that bound so a genuinely abandoned client
-cannot occupy the only interactive slot indefinitely; such a loss is now
-reported as failure and the persistent host retains the workspace for
-reattachment.
+Known limitation: a client process that is completely suspended, or whose
+dedicated socket-reader thread is not scheduled past the host's bounded
+write-stall budget, can still lose its attachment. The host must retain that
+bound so a genuinely abandoned client cannot occupy the only interactive slot
+indefinitely; such a loss is now reported as failure and the persistent host
+retains the workspace for reattachment.
 
 ## Report
 
