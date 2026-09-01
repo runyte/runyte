@@ -1905,6 +1905,21 @@ pub struct LocalClient {
     writer: Option<OwnedWriteHalf>,
 }
 
+/// A local client whose socket reader stays responsive while its consumer is
+/// doing synchronous work.
+///
+/// The terminal frontend can block while writing a frame to the outer
+/// terminal. Reading the host on a runtime worker keeps that backpressure from
+/// reaching the host's bounded connection writer. The same response channel
+/// used by the server keeps semantic replies FIFO and coalesces visual updates
+/// into one replaceable slot, so a blocked frontend does not create an
+/// unbounded client-side queue.
+pub struct BufferedLocalClient {
+    writer: Option<OwnedWriteHalf>,
+    responses: ResponseReceiver,
+    reader: Option<tokio::task::JoinHandle<Result<()>>>,
+}
+
 impl LocalClient {
     pub async fn connect(
         endpoint: &LocalEndpoint,
@@ -1977,6 +1992,82 @@ impl LocalClient {
     /// desynchronize the stream.
     pub async fn recv(&mut self) -> Result<Option<HostResponse>> {
         self.reader.read().await
+    }
+
+    /// Moves response reading onto the async runtime and retains a bounded,
+    /// coalescing stream for a synchronous consumer such as the TUI renderer.
+    pub fn buffer_responses(self) -> BufferedLocalClient {
+        let Self { mut reader, writer } = self;
+        let (responses, response_rx) = response_channel();
+        let task = tokio::spawn(async move {
+            let mut latest_frame = None;
+            while let Some(response) = reader.read::<HostResponse>().await? {
+                // Socket delivery lets the host use that frame as the base of
+                // later terminal damage, but the synchronous frontend may not
+                // have rendered it yet. Fold every received delta into the
+                // reader's latest complete frame before entering the local
+                // replaceable slot. Replacing one complete frame with another
+                // is always safe, however far the renderer is behind.
+                let response = match response {
+                    HostResponse::Frame { frame } => {
+                        latest_frame = Some((*frame).clone());
+                        HostResponse::Frame { frame }
+                    }
+                    HostResponse::TerminalDamage { damage } => {
+                        if let Some(frame) = latest_frame.as_mut()
+                            && damage.apply(frame)
+                        {
+                            HostResponse::Frame {
+                                frame: Box::new(frame.clone()),
+                            }
+                        } else {
+                            HostResponse::TerminalDamage { damage }
+                        }
+                    }
+                    response => response,
+                };
+                responses
+                    .send(response)
+                    .await
+                    .map_err(|_| anyhow::anyhow!("local response consumer stopped"))?;
+            }
+            Ok(())
+        });
+        BufferedLocalClient {
+            writer,
+            responses: response_rx,
+            reader: Some(task),
+        }
+    }
+}
+
+impl BufferedLocalClient {
+    pub async fn send(&mut self, request: &ClientRequest) -> Result<()> {
+        write_client_message(&mut self.writer, request).await
+    }
+
+    /// Cancellation-safe for the same reason as an ordinary Tokio channel
+    /// receive: cancelling this future cannot consume part of a response.
+    pub async fn recv(&mut self) -> Result<Option<HostResponse>> {
+        if let Some(response) = self.responses.recv().await {
+            self.responses.mark_delivered();
+            return Ok(Some(response));
+        }
+        let Some(reader) = self.reader.take() else {
+            return Ok(None);
+        };
+        reader
+            .await
+            .context("local response reader stopped unexpectedly")??;
+        Ok(None)
+    }
+}
+
+impl Drop for BufferedLocalClient {
+    fn drop(&mut self) {
+        if let Some(reader) = self.reader.take() {
+            reader.abort();
+        }
     }
 }
 
@@ -3890,6 +3981,70 @@ mod tests {
                 .expect("connection did not report its end"),
             Some(ServerEvent::Disconnected { id: disconnected }) if disconnected == id
         ));
+        endpoint.cleanup().unwrap();
+        drop(root);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn buffered_client_drains_the_socket_while_its_consumer_is_blocked() {
+        // A persistent TUI renders synchronously. If its outer terminal stops
+        // accepting bytes, response reads still have to continue on another
+        // runtime worker or the host's bounded writer will end the attachment.
+        let (root, endpoint) = endpoint("buffered-client");
+        let Some(mut server) = bind_or_skip(&endpoint).await else {
+            drop(root);
+            return;
+        };
+        let mut client = LocalClient::connect(&endpoint, FrameGeometry::default(), true)
+            .await
+            .unwrap();
+        let ServerEvent::Connected { responses, .. } = server.recv().await.unwrap() else {
+            panic!("expected connection")
+        };
+        responses
+            .send(HostResponse::Welcome {
+                protocol: PROTOCOL_VERSION,
+                pid: std::process::id(),
+                features: vec![
+                    FeatureGroup::Snapshots,
+                    FeatureGroup::Input,
+                    FeatureGroup::Buffers,
+                    FeatureGroup::Wait,
+                ],
+                host_version: CLIENT_VERSION.to_owned(),
+            })
+            .await
+            .unwrap();
+        assert!(matches!(
+            client.recv().await.unwrap(),
+            Some(HostResponse::Welcome { .. })
+        ));
+        let mut client = client.buffer_responses();
+        let payload = "x".repeat(4 * 1024 * 1024);
+        responses
+            .try_send(HostResponse::Error {
+                message: payload.clone(),
+            })
+            .unwrap();
+
+        // Longer than the production per-write stall budget. This worker is
+        // unavailable just as the TUI worker is while a terminal write blocks;
+        // the response reader must keep the socket draining on the other one.
+        std::thread::sleep(CONNECTION_WRITE_STALL + Duration::from_millis(250));
+
+        assert!(matches!(
+            client.recv().await.unwrap(),
+            Some(HostResponse::Error { message }) if message == payload
+        ));
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), server.recv())
+                .await
+                .is_err(),
+            "the host released an attachment whose response reader was still draining"
+        );
+        drop(client);
+        drop(responses);
+        drop(server);
         endpoint.cleanup().unwrap();
         drop(root);
     }
