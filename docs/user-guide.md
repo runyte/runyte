@@ -1005,8 +1005,16 @@ The active theme is not among them; `Space o t` shows and changes it.
 Runyte currently supports Linux and macOS. Windows support is planned for a
 future release, but current releases should not be considered Windows-supported.
 
-You need Rust 1.88 or newer and a C compiler; the bundled tree-sitter grammars
-are built from C source during the install.
+Prebuilt archives for x86-64 and ARM64 Linux and macOS are available from the
+[GitHub Releases page](https://github.com/runyte/runyte/releases). Download the
+archive for the machine and `SHA256SUMS`, then compare the archive's
+`sha256sum` output on Linux or `shasum -a 256` output on macOS with its entry
+in that file before extracting it. The archive's versioned top-level directory
+contains the editor, configuration example, and complete licence material.
+The macOS executables are currently unsigned and are not notarized.
+
+To install from source, you need Rust 1.88 or newer and a C compiler; the
+bundled tree-sitter grammars are built from C source during the install.
 
 ```sh
 cargo install runyte --locked

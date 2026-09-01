@@ -5,15 +5,19 @@ release. Linux and macOS users should be able to download archives built from
 the exact version tag associated with a release. Windows is not currently a
 supported target.
 
-Version 0.1.0 is already published on crates.io, and tag `v0.1.0` points to the
-initial public commit. The binary-release workflow will therefore be introduced
-after the first tag it must support.
+Versions 0.1.0 through 0.1.7 are already published on crates.io and their
+matching tags, `v0.1.0` through `v0.1.7`, exist in the public repository. Only
+`v0.1.7` currently has a GitHub Release. The binary-release workflow will
+therefore be introduced after the first GitHub Release it must support. Its
+documented one-time backfill is `v0.1.7`; backfilling the older crate tags is
+not required by this issue, although the generic manual path may be used for
+them later.
 
 ## Expected behavior
 
 Future semantic-version tags matching `vMAJOR.MINOR.PATCH` trigger the binary
 workflow automatically. A manual workflow dispatch with a required tag input
-supports the one-time retroactive build of an existing tag such as `v0.1.0`.
+supports the one-time retroactive build of `v0.1.7` and any later recovery run.
 Both paths check out and build the exact requested tag rather than the default
 branch. The workflow validates the tag format, confirms that the tag exists,
 and verifies that it matches `[package] version` in `Cargo.toml`; missing tags,
@@ -23,24 +27,27 @@ Cargo publishing and GitHub binary releases remain separate operations. The
 documented manual procedure publishes successfully to crates.io before pushing
 the matching tag. Pushing that tag starts the GitHub binary release.
 
-The target matrix is:
+The target matrix and current official GitHub-hosted runner labels, confirmed
+on 2026-09-01, are:
 
-- `x86_64-unknown-linux-gnu` on an Ubuntu 22.04 x86-64 runner;
-- `aarch64-unknown-linux-gnu` on an Ubuntu 22.04 ARM64 runner;
-- `x86_64-apple-darwin` on an Intel macOS runner; and
-- `aarch64-apple-darwin` on an Apple Silicon macOS runner.
+- `x86_64-unknown-linux-gnu` on `ubuntu-22.04`;
+- `aarch64-unknown-linux-gnu` on `ubuntu-22.04-arm`;
+- `x86_64-apple-darwin` on `macos-15-intel`; and
+- `aarch64-apple-darwin` on `macos-15`.
 
-Current official GitHub runner labels must be confirmed when the workflow is
-implemented. The Intel macOS label is the unstable one: `macos-13` was the last
-Intel image under the classic naming, while `macos-15-intel` was introduced as
-its replacement as GitHub retired Intel images.
+The Ubuntu 22.04 labels retain the glibc 2.35 compatibility floor already
+checked by CI. GitHub has announced their deprecation beginning on 2026-09-17,
+so moving the release floor will require an explicit compatibility decision
+before those images become unavailable. `macos-15-intel` is GitHub's supported
+Intel replacement label through August 2027.
 
-Each target is built with `cargo build --release --locked` and smoke-tested
-with a safe command such as `runyte --version` or `runyte --help`. Tree-sitter
-grammars are statically linked, so no runtime grammar directory is packaged.
+Each target is built with
+`cargo build --release --locked --target <target>` and smoke-tested with a safe
+command such as `runyte --version` or `runyte --help`. Tree-sitter grammars are
+statically linked, so no runtime grammar directory is packaged.
 
 Each target produces a clearly named archive such as
-`runyte-v0.1.0-x86_64-unknown-linux-gnu.tar.xz`. The archive has a versioned
+`runyte-v0.1.7-x86_64-unknown-linux-gnu.tar.xz`. The archive has a versioned
 top-level directory, preserves executable permissions, and contains:
 
 - the `runyte` executable;
@@ -55,7 +62,7 @@ Build jobs upload these archives as intermediate Actions artifacts. A final
 Ubuntu publishing job downloads all four archives, generates one combined
 `SHA256SUMS`, creates or updates the GitHub Release for the exact tag, uploads
 the archives and checksum file, and uses a clear title such as
-`Runyte 0.1.0`. A failed publishing job can be rerun safely and reasonably
+`Runyte 0.1.7`. A failed publishing job can be rerun safely and reasonably
 idempotently without moving or recreating the tag.
 
 ## Security and maintenance constraints
@@ -92,7 +99,7 @@ manual step from every GitHub-managed step.
 
 The documentation should also record:
 
-- how to run the manual `v0.1.0` backfill after the workflow reaches `main`;
+- how to run the manual `v0.1.7` backfill after the workflow reaches `main`;
 - artifact names and supported targets;
 - checksum verification;
 - rerun behavior; and
@@ -118,6 +125,6 @@ cargo test
 The final review checks for excessive workflow permissions, unpinned actions,
 unsafe interpolation, incorrect target selection, documentation
 inconsistencies, and unrelated changes. The handoff records the files changed,
-exact triggers and target matrix, the `v0.1.0` backfill procedure, security
+exact triggers and target matrix, the `v0.1.7` backfill procedure, security
 decisions, validation results, and any remaining limitation, especially the
 unsigned macOS binaries.

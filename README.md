@@ -146,8 +146,22 @@ result set.
 
 Runyte currently supports **Linux and macOS**. Windows support is planned for a
 future release, but current releases should not be considered
-Windows-supported. Building requires Rust 1.88 or newer and a C compiler for
-the bundled Tree-sitter grammars.
+Windows-supported.
+
+Prebuilt archives are attached to each [GitHub Release](https://github.com/runyte/runyte/releases)
+for these targets:
+
+- `x86_64-unknown-linux-gnu` and `aarch64-unknown-linux-gnu`;
+- `x86_64-apple-darwin` and `aarch64-apple-darwin`.
+
+Download the archive matching the machine together with `SHA256SUMS`, compare
+the archive's `sha256sum` (Linux) or `shasum -a 256` (macOS) output with its
+line in that file, and extract it. Each archive contains a versioned directory
+with the `runyte` executable, configuration example, and licence material.
+The macOS executables are currently unsigned and are not notarized.
+
+Installing from source requires Rust 1.88 or newer and a C compiler for the
+bundled Tree-sitter grammars:
 
 ```sh
 cargo install runyte --locked

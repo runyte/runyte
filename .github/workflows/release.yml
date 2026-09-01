@@ -1,0 +1,231 @@
+# SPDX-License-Identifier: MPL-2.0
+
+name: Binary release
+
+'on':
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing vMAJOR.MINOR.PATCH tag to build and publish
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: binary-release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  validate:
+    name: Validate release tag
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+      version: ${{ steps.release.outputs.version }}
+      source_sha: ${{ steps.release.outputs.source_sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate tag and package version
+        id: release
+        env:
+          REQUESTED_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ ! "$REQUESTED_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "release tag must match vMAJOR.MINOR.PATCH: $REQUESTED_TAG" >&2
+            exit 1
+          fi
+
+          if ! git rev-parse --verify --quiet "refs/tags/${REQUESTED_TAG}^{commit}" >/dev/null; then
+            echo "release tag does not exist: $REQUESTED_TAG" >&2
+            exit 1
+          fi
+
+          source_sha="$(git rev-parse "refs/tags/${REQUESTED_TAG}^{commit}")"
+          git checkout --detach "$source_sha"
+
+          version="$(
+            cargo metadata --locked --no-deps --format-version 1 |
+              jq -r --arg manifest "$GITHUB_WORKSPACE/Cargo.toml" \
+                '.packages[] | select(.manifest_path == $manifest) | .version'
+          )"
+          if [[ -z "$version" || "$version" == null ]]; then
+            echo "could not read the runyte package version" >&2
+            exit 1
+          fi
+          if [[ "$REQUESTED_TAG" != "v${version}" ]]; then
+            echo "tag $REQUESTED_TAG does not match Cargo.toml version $version" >&2
+            exit 1
+          fi
+
+          {
+            echo "tag=$REQUESTED_TAG"
+            echo "version=$version"
+            echo "source_sha=$source_sha"
+          } >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build ${{ matrix.target }}
+    needs: validate
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-22.04
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-22.04-arm
+          - target: x86_64-apple-darwin
+            runner: macos-15-intel
+          - target: aarch64-apple-darwin
+            runner: macos-15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.validate.outputs.source_sha }}
+          persist-credentials: false
+
+      - name: Build exact tagged source
+        env:
+          SOURCE_SHA: ${{ needs.validate.outputs.source_sha }}
+          TARGET: ${{ matrix.target }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          rustup target add "$TARGET"
+          cargo build --release --locked --target "$TARGET"
+
+      - name: Smoke test
+        env:
+          TARGET: ${{ matrix.target }}
+          VERSION: ${{ needs.validate.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$("target/${TARGET}/release/runyte" --version)"
+          test "$output" = "runyte $VERSION"
+
+      - name: Package archive
+        env:
+          RELEASE_TAG: ${{ needs.validate.outputs.tag }}
+          TARGET: ${{ matrix.target }}
+          VERSION: ${{ needs.validate.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          archive="runyte-${RELEASE_TAG}-${TARGET}.tar.xz"
+          package_root="$RUNNER_TEMP/runyte-package"
+          package_dir="$package_root/runyte-${VERSION}-${TARGET}"
+          archive_path="$RUNNER_TEMP/$archive"
+
+          mkdir -p "$package_dir"
+          install -m 0755 "target/${TARGET}/release/runyte" "$package_dir/runyte"
+          install -m 0644 \
+            README.md \
+            LICENSE \
+            NOTICE \
+            THIRD_PARTY_NOTICES.md \
+            config.example.yaml \
+            "$package_dir/"
+          cp -R licenses "$package_dir/licenses"
+
+          COPYFILE_DISABLE=1 tar -C "$package_root" -cJf "$archive_path" \
+            "runyte-${VERSION}-${TARGET}"
+          tar -tJf "$archive_path"
+          "$package_dir/runyte" --version
+
+      - name: Upload packaged archive
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-${{ matrix.target }}
+          path: ${{ runner.temp }}/runyte-${{ needs.validate.outputs.tag }}-${{ matrix.target }}.tar.xz
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+  publish:
+    name: Publish GitHub Release
+    needs: [validate, build]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.validate.outputs.source_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Download packaged archives
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
+
+      - name: Verify archives and generate checksums
+        env:
+          RELEASE_TAG: ${{ needs.validate.outputs.tag }}
+          SOURCE_SHA: ${{ needs.validate.outputs.source_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          test "$(git rev-parse "refs/tags/${RELEASE_TAG}^{commit}")" = "$SOURCE_SHA"
+
+          for target in \
+            x86_64-unknown-linux-gnu \
+            aarch64-unknown-linux-gnu \
+            x86_64-apple-darwin \
+            aarch64-apple-darwin
+          do
+            test -f "dist/runyte-${RELEASE_TAG}-${target}.tar.xz"
+          done
+          test "$(find dist -maxdepth 1 -type f -name 'runyte-*.tar.xz' | wc -l)" -eq 4
+
+          (
+            cd dist
+            sha256sum runyte-*.tar.xz | sort -k2 > SHA256SUMS
+          )
+          test "$(wc -l < dist/SHA256SUMS)" -eq 4
+
+      - name: Create or update GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.validate.outputs.tag }}
+          VERSION: ${{ needs.validate.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release edit "$RELEASE_TAG" --title "Runyte $VERSION"
+            gh release upload "$RELEASE_TAG" dist/* --clobber
+          else
+            gh release create "$RELEASE_TAG" dist/* \
+              --verify-tag \
+              --title "Runyte $VERSION" \
+              --notes "Prebuilt Linux and macOS archives are attached. Verify the selected archive with SHA256SUMS. The macOS executables are unsigned."
+          fi

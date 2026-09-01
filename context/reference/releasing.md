@@ -17,6 +17,11 @@ curated `## Changes` list describing what changed since the previous version,
 not a dump of commit subjects. Release notes are drafted outside the working
 tree, so they do not become a third file in the release commit.
 
+The `Binary release` GitHub Actions workflow attaches four prebuilt archives
+and one combined `SHA256SUMS` to that GitHub Release. It builds the exact tag on
+native x86-64 and ARM64 Linux and macOS runners. Cargo publishing remains a
+manual local operation; the workflow never publishes to crates.io.
+
 The public Git history was reset after version 0.0.51. Earlier versions remain
 available from crates.io, but their private-development commits and release
 tags are not reproduced in the public repository. The cleaned root snapshot is
@@ -79,7 +84,7 @@ The example version below is 0.1.1. Substitute the real one.
    ```
 
    Read the finished notes once against the range to catch omissions and claims
-   the diff does not support. Keep this file until step 12. It lives outside
+   the diff does not support. Keep this file until step 13. It lives outside
    the repository so `git status` remains clean. Confirm that the GitHub CLI is
    ready to publish it before proceeding:
 
@@ -151,22 +156,33 @@ The example version below is 0.1.1. Substitute the real one.
    git push origin v0.1.1
    ```
 
-12. **Publish the `Changes` notes.** Create a GitHub Release from the tag that
-    was just pushed. `--verify-tag` prevents `gh` from silently creating a tag
-    at some other commit:
+    Pushing the tag starts the `Binary release` workflow. It validates the tag
+    and package version, builds and smoke-tests all four native targets, then
+    creates or updates the GitHub Release and its binary assets. It does not
+    move or create the tag.
+
+12. **Require a green binary workflow for the exact tag.** Wait for the
+    `Binary release` workflow triggered by step 11. Verify that its event is
+    the pushed tag and that the validated source SHA is the release commit.
+    Every build and the publishing job must pass. Diagnose a failed build;
+    rerunning a failed job is safe because publishing replaces only assets
+    with the expected names and preserves the release body.
+
+13. **Publish the `Changes` notes.** The workflow creates the GitHub Release
+    with a minimal binary-download note when it does not already exist. Replace
+    that note with the curated draft without changing the tag or assets:
 
     ```sh
-    gh release create v0.1.1 \
-      --verify-tag \
+    gh release edit v0.1.1 \
       --title "Runyte 0.1.1" \
       --notes-file /tmp/runyte-v0.1.1-CHANGES.md
     ```
 
     Open the URL printed by `gh` and verify the title, tag, comparison link,
-    and rendered `Changes` list. The GitHub Release is the published changes
-    record; the temporary draft may then be removed.
+    rendered `Changes` list, four archives, and `SHA256SUMS`. The GitHub Release
+    is the published changes record; the temporary draft may then be removed.
 
-13. **Carry the release commit back to `dev`**, so the branches do not diverge
+14. **Carry the release commit back to `dev`**, so the branches do not diverge
     over a version bump:
 
     ```sh
@@ -185,8 +201,8 @@ branches. Where each branch has a worktree of its own, `git switch` refuses:
 fatal: 'main' is already used by worktree at <path>
 ```
 
-That is the only thing that changes. Run steps 1 through 12 from whichever
-worktree holds `main`, and step 13's merge from the one holding `dev`, dropping
+That is the only thing that changes. Run steps 1 through 13 from whichever
+worktree holds `main`, and step 14's merge from the one holding `dev`, dropping
 the two `git switch` lines — a worktree keeps its branch, so there is nothing to
 switch back to at the end. `git worktree list` names which is which. Every
 command in between is unchanged, and so are the commits and pushes it produces.
@@ -232,6 +248,55 @@ two-file release commit or the crate contents.
 **Tags.** The reconstructed public history does not reproduce tags through
 `v0.0.51`. Do not backfill or retarget them. The root snapshot may receive
 `v0.1.0`; tag each later release normally.
+
+## Binary archives
+
+The tag workflow publishes these files, where `<version>` includes its leading
+`v`:
+
+- `runyte-<version>-x86_64-unknown-linux-gnu.tar.xz`;
+- `runyte-<version>-aarch64-unknown-linux-gnu.tar.xz`;
+- `runyte-<version>-x86_64-apple-darwin.tar.xz`;
+- `runyte-<version>-aarch64-apple-darwin.tar.xz`; and
+- `SHA256SUMS`, covering all four archives.
+
+Each archive has one top-level directory named
+`runyte-MAJOR.MINOR.PATCH-<target>`. It contains the executable, `README.md`,
+`LICENSE`, `NOTICE`, `THIRD_PARTY_NOTICES.md`, the complete `licenses/`
+directory, and `config.example.yaml`. Linux archives are built on Ubuntu 22.04
+to retain the glibc 2.35 floor. The macOS executables are unsigned and are not
+notarized.
+
+To verify one downloaded archive, compute `sha256sum <archive>` on Linux or
+`shasum -a 256 <archive>` on macOS and compare the complete digest with the
+archive's line in `SHA256SUMS`. Downloading all four archives permits the
+direct `sha256sum -c SHA256SUMS` or `shasum -a 256 -c SHA256SUMS` form.
+
+Build jobs keep only read access to repository contents. The final publishing
+job alone receives `contents: write`, through the workflow-provided
+`GITHUB_TOKEN`. Actions are pinned to complete commit hashes. A rerun checks
+out the immutable commit resolved from the requested tag, replaces only the
+five expected assets, and neither recreates nor moves the tag. Build-provenance
+attestations are deliberately omitted for now because they require additional
+permissions; archive checksums and exact-tag validation add no such authority.
+
+### One-time 0.1.7 backfill
+
+The workflow entered the repository after `v0.1.7`, so pushing that existing
+tag again is neither necessary nor permitted. After `release.yml` is present
+on `main`, dispatch `Binary release` from the Actions page with tag `v0.1.7`,
+or run:
+
+```sh
+gh workflow run release.yml --ref main -f tag=v0.1.7
+```
+
+Wait for that manual run and verify its requested tag and validated source SHA
+before accepting it. It updates the existing `Runyte 0.1.7` release without
+replacing its curated notes. The same manual path can recover a failed future
+tag workflow. Tags `v0.1.0` through `v0.1.6` exist, but retroactively creating
+GitHub Releases for those crate versions is outside the current release
+procedure.
 
 ## Notes
 

@@ -138,6 +138,81 @@ fn ci_enforces_the_committed_dependency_graph() {
 }
 
 #[test]
+fn binary_release_is_tag_bound_native_and_narrowly_privileged() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(".github/workflows/release.yml");
+    let source = fs::read_to_string(path).unwrap();
+    let workflow: serde_yaml::Value = serde_yaml::from_str(&source).unwrap();
+
+    assert_eq!(workflow["permissions"]["contents"], "read");
+    assert_eq!(
+        workflow["jobs"]["publish"]["permissions"]["contents"],
+        "write"
+    );
+    assert_eq!(
+        workflow["on"]["workflow_dispatch"]["inputs"]["tag"]["required"],
+        true
+    );
+    assert_eq!(
+        workflow["concurrency"]["group"],
+        "binary-release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}"
+    );
+    assert_eq!(workflow["concurrency"]["cancel-in-progress"], false);
+
+    let matrix = workflow["jobs"]["build"]["strategy"]["matrix"]["include"]
+        .as_sequence()
+        .unwrap()
+        .iter()
+        .map(|entry| {
+            (
+                entry["target"].as_str().unwrap(),
+                entry["runner"].as_str().unwrap(),
+            )
+        })
+        .collect::<HashSet<_>>();
+    assert_eq!(
+        matrix,
+        HashSet::from([
+            ("x86_64-unknown-linux-gnu", "ubuntu-22.04"),
+            ("aarch64-unknown-linux-gnu", "ubuntu-22.04-arm"),
+            ("x86_64-apple-darwin", "macos-15-intel"),
+            ("aarch64-apple-darwin", "macos-15"),
+        ])
+    );
+
+    assert!(source.contains("cargo build --release --locked --target \"$TARGET\""));
+    assert!(source.contains("runyte-${RELEASE_TAG}-${TARGET}.tar.xz"));
+    assert!(source.contains("sha256sum runyte-*.tar.xz | sort -k2 > SHA256SUMS"));
+    assert!(source.contains("gh release upload \"$RELEASE_TAG\" dist/* --clobber"));
+    assert!(!source.contains("${{ inputs.tag }}"));
+    for required in [
+        "README.md",
+        "LICENSE",
+        "NOTICE",
+        "THIRD_PARTY_NOTICES.md",
+        "config.example.yaml",
+        "cp -R licenses",
+    ] {
+        assert!(source.contains(required), "archive omits {required}");
+    }
+
+    for action in source
+        .lines()
+        .map(str::trim)
+        .filter_map(|line| line.strip_prefix("- uses: "))
+    {
+        let (_, revision) = action
+            .split_once('@')
+            .unwrap_or_else(|| panic!("action is not pinned: {action}"));
+        let revision = revision.split_whitespace().next().unwrap();
+        assert_eq!(revision.len(), 40, "action is not SHA-pinned: {action}");
+        assert!(
+            revision.bytes().all(|byte| byte.is_ascii_hexdigit()),
+            "action is not SHA-pinned: {action}"
+        );
+    }
+}
+
+#[test]
 fn editor_help_hides_internal_options_and_uses_workspace_modes() {
     // `--cwd-file` is an internal detail of the `runyte()` shell function
     // documented in README.md, not something anyone should pass by hand, so
