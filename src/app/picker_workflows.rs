@@ -1420,6 +1420,7 @@ impl App {
                 finder_matches,
                 finder_revision,
                 finder_positions,
+                flushed,
             } if scan_id == picker.scan_id && query_revision == picker.query_revision => {
                 let finder_current = match (&self.finder, finder_revision) {
                     (None, None) => true,
@@ -1428,8 +1429,12 @@ impl App {
                 };
                 let finder_complete =
                     finder_current && self.finder.as_ref().is_none_or(|finder| !finder.loading);
-                let old_matches =
-                    picker.apply_background_matches(matches, &match_positions, finder_complete);
+                let old_matches = picker.apply_background_matches(
+                    matches,
+                    &match_positions,
+                    finder_complete,
+                    flushed,
+                );
                 let mut discarded_finder_matches = finder_matches.unwrap_or_default();
                 if finder_current
                     && let (Some(finder), Some(_)) = (self.finder.as_mut(), finder_revision)
@@ -1488,8 +1493,9 @@ impl App {
                 if let Some(scanner) = scanner.as_ref() {
                     // The flush is the first ranking request for any tail
                     // smaller than RANK_PUBLISH_BATCH. Keep the rows inert
-                    // until its Ranked event installs that complete answer.
-                    picker.ranking = true;
+                    // until its Ranked event installs that complete answer:
+                    // a publish already in flight answers a shorter list.
+                    picker.begin_final_rank();
                     scanner.flush_rank(scan_id);
                 }
                 // A truncated scan is the one case where typing on ahead was

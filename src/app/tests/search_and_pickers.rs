@@ -2260,6 +2260,67 @@ fn finished_background_scan_stays_pending_until_the_final_rank_arrives() {
 }
 
 #[test]
+fn a_rank_already_in_flight_when_a_scan_finishes_leaves_the_rows_pending() {
+    let root = temporary("background-picker-in-flight-rank");
+    fs::create_dir_all(&root).unwrap();
+    let path = root.join("only.rs");
+    fs::write(&path, "one candidate\n").unwrap();
+    let ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    let (scanner, _events) = crate::file_picker::scanner();
+    app.attach_file_scanner(scanner);
+    let mut picker = FilePicker::new(9, root.clone());
+    picker.add_paths(vec![ScanEntry::file(path)]);
+    let complete = picker.matches.clone();
+    app.picker = Some(picker);
+
+    app.apply_file_picker_event(FilePickerEvent::Finished {
+        scan_id: 9,
+        skipped: 0,
+        limited: false,
+    });
+    assert!(app.picker.as_ref().unwrap().ranking);
+
+    // A publish the ranker had already sent when the scan finished answers
+    // only the candidates it held then, so it cannot release the rows.
+    app.apply_file_picker_event(FilePickerEvent::Ranked {
+        scan_id: 9,
+        query_revision: 0,
+        matches: Vec::new(),
+        match_positions: vec![None],
+        finder_matches: None,
+        finder_revision: None,
+        finder_positions: HashMap::new(),
+        flushed: false,
+    });
+    let picker = app.picker.as_ref().unwrap();
+    assert!(
+        picker.ranking,
+        "a rank published before the flush must keep the picker pending"
+    );
+    assert!(picker.selected_target().is_none(), "Enter stays disabled");
+
+    app.apply_file_picker_event(FilePickerEvent::Ranked {
+        scan_id: 9,
+        query_revision: 0,
+        matches: complete.clone(),
+        match_positions: vec![Some(0)],
+        finder_matches: None,
+        finder_revision: None,
+        finder_positions: HashMap::new(),
+        flushed: true,
+    });
+    let picker = app.picker.as_ref().unwrap();
+    assert!(!picker.ranking);
+    assert_eq!(picker.matches, complete);
+    assert!(picker.selected_target().is_some());
+    app.close_file_picker();
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn background_picker_rejects_a_stale_query_revision() {
     let root = temporary("background-picker-stale-rank");
     fs::create_dir_all(&root).unwrap();
@@ -2284,6 +2345,7 @@ fn background_picker_rejects_a_stale_query_revision() {
         finder_matches: None,
         finder_revision: None,
         finder_positions: HashMap::new(),
+        flushed: false,
     });
 
     assert_eq!(app.picker.as_ref().unwrap().matches, visible);
@@ -2338,6 +2400,7 @@ fn background_picker_rejects_a_stale_resource_revision() {
         finder_matches: Some(vec![stale.clone()]),
         finder_revision: Some(stale_revision),
         finder_positions: [(stale.source, 0)].into_iter().collect(),
+        flushed: false,
     });
 
     assert_eq!(app.finder.as_ref().unwrap().matches, vec![stale]);

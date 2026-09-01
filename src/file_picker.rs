@@ -459,6 +459,11 @@ pub struct FilePicker {
     pub loading: bool,
     /// Whether the background ranker is still answering the displayed query.
     pub ranking: bool,
+    /// Whether the answer still owed is the ranker's flush of a finished
+    /// scan. A publish the ranker had already sent when the scan finished
+    /// answers only the candidates it held then, so it cannot be the one
+    /// that lets the rows be read.
+    final_rank_pending: bool,
     pub skipped: usize,
     pub limited: bool,
     pub error: Option<String>,
@@ -505,6 +510,7 @@ impl FilePicker {
             selected: 0,
             loading: true,
             ranking: false,
+            final_rank_pending: false,
             skipped: 0,
             limited: false,
             error: None,
@@ -541,6 +547,7 @@ impl FilePicker {
         };
         self.selected = 0;
         self.loading = true;
+        self.final_rank_pending = false;
         self.skipped = 0;
         self.limited = false;
         self.error = None;
@@ -769,6 +776,7 @@ impl FilePicker {
         self.selected = 0;
         self.selection_user_owned = false;
         self.loading = true;
+        self.final_rank_pending = false;
         self.skipped = 0;
         self.limited = false;
         self.error = None;
@@ -818,6 +826,7 @@ impl FilePicker {
     pub fn fail(&mut self, message: String) {
         self.loading = false;
         self.ranking = false;
+        self.final_rank_pending = false;
         self.error = Some(message);
     }
 
@@ -877,6 +886,12 @@ impl FilePicker {
     fn note_query_changed(&mut self) {
         self.query_revision = self.query_revision.wrapping_add(1);
         self.ranking = true;
+        // A new query supersedes the flush a finished scan asked for: the
+        // rank it starts covers every candidate the scan produced, and the
+        // answer to the old revision will be discarded as stale. Holding the
+        // gate open for a flush nothing will match again would leave the rows
+        // inert for the rest of the picker's life.
+        self.final_rank_pending = false;
         self.selected = 0;
         self.selection_user_owned = false;
         self.preview = None;
@@ -1001,6 +1016,7 @@ impl FilePicker {
         matches: Vec<FuzzyMatch>,
         positions: &[Option<usize>],
         complete: bool,
+        flushed: bool,
     ) -> Vec<FuzzyMatch> {
         let selected = self
             .selection_user_owned
@@ -1010,10 +1026,20 @@ impl FilePicker {
         self.selected = selected
             .and_then(|entry| positions.get(entry).copied().flatten())
             .unwrap_or(0);
-        if complete {
+        if flushed {
+            self.final_rank_pending = false;
+        }
+        if complete && !self.final_rank_pending {
             self.ranking = false;
         }
         old
+    }
+
+    /// Holds the rows inert until the ranker answers the flush that a
+    /// finished scan asks for.
+    pub(crate) fn begin_final_rank(&mut self) {
+        self.ranking = true;
+        self.final_rank_pending = true;
     }
 
     pub(crate) fn preview_request(&self) -> Option<&(u64, PickerTarget)> {
@@ -1776,6 +1802,9 @@ pub enum FilePickerEvent {
         finder_matches: Option<Vec<crate::finder::FinderMatch>>,
         finder_revision: Option<u64>,
         finder_positions: HashMap<crate::finder::FinderMatchSource, usize>,
+        /// Whether this publish is the one the flush of a finished scan
+        /// asked for, and so covers every candidate that scan produced.
+        flushed: bool,
     },
     Preview {
         scan_id: u64,
@@ -2245,6 +2274,7 @@ fn file_rank_worker(
             finder_matches,
             finder_revision,
             finder_positions,
+            flushed: flush,
         });
     }
 }
@@ -3631,6 +3661,24 @@ mod tests {
         picker.backspace_query();
         assert_eq!(picker.query, "p");
         assert_eq!(picker.selected_entry().unwrap().relative, "src/picker.rs");
+    }
+
+    #[test]
+    fn editing_the_query_releases_the_wait_for_a_finished_scan_flush() {
+        let root = PathBuf::from("/project");
+        let mut picker = FilePicker::new(1, root.clone());
+        picker.add_paths(vec![ScanEntry::file(root.join("alpha.rs"))]);
+        let matches = picker.matches.clone();
+        picker.begin_final_rank();
+        picker.insert_query_unranked('a');
+
+        // The flush answers the revision that is now stale, so nothing will
+        // ever carry it. The rank this edit starts is complete on its own.
+        let positions = vec![Some(0)];
+        picker.apply_background_matches(matches, &positions, true, false);
+
+        assert!(!picker.ranking);
+        assert!(picker.selected_target().is_some());
     }
 
     #[test]
