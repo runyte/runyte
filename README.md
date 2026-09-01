@@ -76,26 +76,42 @@ documents attachment, switching, lifecycle commands, and `--wait`.
 
 ## Screenshots
 
-![Runyte displaying the About screen, Rust source code, Git status, and an integrated terminal in a tiled workspace.](https://runyte.com/images/screenshots/runyte_1.webp)
+![Runyte About screen showing the logo, version number, and getting-started keyboard shortcuts.](https://runyte.com/images/screenshots/about.webp)
 
-*Editor, Git status, and an integrated terminal in a persistent workspace.*
+*The About screen with Runyte's essential navigation and workspace shortcuts.*
 
-![Runyte displaying Rust source code beside the file explorer and its contextual help manual.](https://runyte.com/images/screenshots/runyte_2.webp)
+![Runyte workspace with a process monitor and Git branch list on the left and a project file explorer on the right.](https://runyte.com/images/screenshots/terminal-git-explorer.webp)
 
-*Source editing alongside the file explorer and contextual help.*
+*A process monitor, Git branches, and the file explorer arranged in one
+workspace.*
 
-![Runyte displaying terminal review, the About screen, and the file explorer in three panes.](https://runyte.com/images/screenshots/runyte_3.webp)
+![Runyte's workspace search matching htop across files and a terminal, with a result preview beside the match list.](https://runyte.com/images/screenshots/workspace-search.webp)
 
-*Terminal review, the welcome screen, and the file explorer in a three-pane
-layout.*
+*Workspace-wide fuzzy search across files, buffers, and terminals, with a live
+preview.*
 
-![Runyte displaying the persistent-session picker with session and Git worktree details.](https://runyte.com/images/screenshots/runyte_4.webp)
+![Runyte comparing the indexed and worktree versions of a README side by side, with additions and deletions highlighted.](https://runyte.com/images/screenshots/side-by-side-diff.webp)
 
-*The persistent-session picker with session details and worktree metadata.*
+*A side-by-side Git diff comparing the indexed file with the working-tree
+version.*
 
-![Runyte displaying the command palette filtered to Git commands, above a terminal pane, an open Markdown file, and Rust source.](https://runyte.com/images/screenshots/runyte_5.webp)
+![Runyte in a light theme with a process monitor and file explorer beside a Rust source file containing multiple selections.](https://runyte.com/images/screenshots/light-theme.webp)
 
-*The searchable command palette, narrowed to the Git namespace.*
+*Terminal, file explorer, and multi-selection source editing in a unified light
+theme.*
+
+![Runyte showing Claude Code and OpenAI Codex in two terminal panes above a Git log and Git branch list.](https://runyte.com/images/screenshots/coding-agents.webp)
+
+*Claude Code and OpenAI Codex working alongside the Git log and branch browser.*
+
+![Runyte command palette filtered to Git commands over an open Rust source file.](https://runyte.com/images/screenshots/git-commands.webp)
+
+*The searchable command palette filtered to Runyte's built-in Git commands.*
+
+![Runyte session picker listing persistent workspaces with details for the selected runyte-dev session.](https://runyte.com/images/screenshots/sessions.webp)
+
+*The persistent-session picker with activity, process, branch, directory, and
+worktree details.*
 
 Full-size versions are on the
 [screenshots page](https://runyte.com/screenshots/).
