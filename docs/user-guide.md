@@ -611,7 +611,7 @@ immediate manual reconciliation.
 
 A refresh rewrites a Git view's text and moves the cursor to the nearest row
 that survived, so it waits while you are working. It is skipped until you have
-paused briefly, while a prompt is open — including the `/` and `s` search
+paused briefly, while a prompt is open — including the `s` and `S` search
 queries — and while a Git view holds a deliberate selection
 such as the matches `s` leaves behind. Nothing is dropped: the refresh runs as
 soon as you stop, the prompt closes, or the selection collapses back to a
@@ -714,7 +714,7 @@ the character where it began and the character they land on, in either
 direction. `Escape` cancels a selection made either way. `f`/`F`/`t`/`T` find
 characters in the snapshot, and `gw` labels its visible words and jumps to the
 chosen one. `%` selects all retained review text. `s` searches it
-case-insensitively, `/` searches it with a regular
+case-insensitively, `S` searches it with a regular
 expression, and `n`/`N` or `)`/`(` move through stable highlighted matches. `y` copies the caret
 character or review selection to the unnamed Runyte register and `Space c y`
 copies it to the system clipboard. `p` or `P` discards review, sends text from
@@ -1302,6 +1302,8 @@ context; scoped explorer keys are documented under
 | `Home` / `0`; `End` / `$` | Start / end of line |
 | `Ctrl-b` / `Ctrl-f`; `Ctrl-u` / `Ctrl-d` | Page up / down; half-page up / down |
 | `PageUp` / `PageDown` | Page up / down |
+| `H` / `M` / `L` | Move to the top / center / bottom of the view, which stays where it is |
+| `^` | Move to the first non-whitespace character of the line |
 | `gg` / `ge` or `G` | Start / end of file |
 | `gp` / `gP` | Next / previous paragraph |
 | `gw` | Dim the view, label nearby words with one key and farther words with two, then type a label to jump |
@@ -1312,7 +1314,7 @@ context; scoped explorer keys are documented under
 | `x` / `X` | Select current line, then extend down / up |
 | `%` | Select the entire buffer |
 | `C` / `Alt-C` | Add a cursor on the nearest line below / above holding a character at the cursor's column, skipping the ones too short |
-| `V` | Add a cursor on the next line, padding short or empty lines with spaces to the same display column |
+| `V` / `Alt-V` | Add a cursor on the next / previous line, padding short or empty lines with spaces to the same display column |
 | `;` / `Alt-;` | Collapse selections / flip their direction |
 | `,` / `Space s c` / `Alt-,` | Keep only the primary selection / drop it |
 | `)` / `(` | Make the next / previous selection primary |
@@ -1327,11 +1329,13 @@ context; scoped explorer keys are documented under
 | `>` / `<` | Indent / unindent |
 | `Ctrl-c` | Comment or uncomment every line the selection touches, using the buffer language's line comment; also bound in Insert mode |
 | `u` / `U` | Undo / redo |
-| `s` | Search, ignoring case |
-| `/` | Search with a regular expression |
+| `s` | Search the buffer, ignoring case |
+| `S` | Search the buffer with a regular expression |
+| `/` | Open the project finder over files, buffers, and terminals; canonically `Space / /` |
 | `n` / `N` | Step to the next / previous match |
 | `*` | Select every occurrence of the word or selection under the caret |
 | `Ctrl-o` / `Ctrl-i` | Jump backward / forward through navigation history |
+| `Alt-o` / `Alt-i` | Walk the same history but stop only on a different buffer or terminal surface |
 | `Tab` | Open contextual actions for the selection or row under the caret |
 | `Ctrl-s` | Save |
 | `:` | Open the command palette |
@@ -1342,7 +1346,7 @@ context; scoped explorer keys are documented under
 | `Space m …` | Record, replay, and list macros; see [Macros](#macros) |
 | `mm` | Jump to the matching bracket |
 | `z…` / `Z…` | View alignment and scrolling |
-| `Esc` | Return to Normal mode |
+| `Esc` or `Ctrl-\` | Return to Normal mode; `Ctrl-4` is the legacy spelling of `Ctrl-\` |
 
 <a id="insert-mode"></a>
 
@@ -1906,7 +1910,7 @@ message without affecting the internal registers.
 | `Ctrl-u` / `Ctrl-d`, `Ctrl-b` / `Ctrl-f` | Move the review caret by half / full pages, keeping it visible |
 | `gg` / `ge` in a terminal | Move to the oldest / newest rows in the captured review snapshot |
 | `gw` in terminal review | Label visible terminal words and jump to the chosen one |
-| `s` / `/`, then `n` / `N` | Search an immutable terminal review snapshot and move among matches |
+| `s` / `S`, then `n` / `N` | Search an immutable terminal review snapshot by literal / regular expression and move among matches |
 | `y` / `Space c y` in terminal review | Copy the caret character or every selection, joined by newlines, to the unnamed register / system clipboard |
 | `p` / `P` in a terminal | Leave review and send Runyte's selected register to the live program |
 | `Space c p` / `Space c P` in a terminal | Leave review and send the system clipboard to the live program |
@@ -2522,8 +2526,19 @@ are enabled.
 :git-search-commits     fuzzy-search commits by message, ID, author, or date with a full-message preview
 :git-refresh            re-read branch, changed files, and changed lines from Git
 :git-stage              stage the active file, or every file selected in the list
+:git-stage-hunk         stage the exact hunk under the cursor
+:git-stage-lines        stage the supported saved source-line selection
+:git-stash-all <name>   stash tracked worktree and index changes, after a confirmation
+:git-stash-apply        apply the selected stash without dropping it, after a confirmation
+:git-stash-drop         drop the selected stash, after a confirmation
+:git-stash-tracked <name>
+                        stash a tracked-worktree snapshot, leaving the index applied
+:git-stash-untracked <name>
+                        stash tracked changes and untracked files together
+:git-stashes            open or refresh the bounded stash list
 :git-status             open the changed-file list
 :git-unstage            unstage the active file, or every file selected in the list
+:git-unstage-hunk       unstage the exact staged hunk under the cursor
 :git-worktrees          open the repository worktree list
 :grammar [runyte]       report the active Runyte editing grammar
 :help [topic]           open the general manual, optionally at a named section (alias: ?)
@@ -3156,6 +3171,7 @@ src/
   external_open.rs
                   binary detection and the remembered programs that open them
   file_picker.rs  fuzzy matching, ignore-aware discovery, and text previews
+  finder.rs       buffer and terminal ranking merged into the file scan
   picker.rs       shared presentation-neutral filterable result state
   help.rs         per-view prose and the registry-derived help document
   jump_labels.rs  proximity-ranked one- and two-key `gw` labels and narrowing
