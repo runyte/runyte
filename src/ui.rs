@@ -2203,7 +2203,11 @@ fn draw_picker(frame: &mut Frame<'_>, app: &TuiApp<'_>, editor_area: Rect) {
     if area.width < 4 || area.height < 4 {
         return;
     }
-    let progress = if picker.loading { "scanning" } else { "ready" };
+    let progress = if picker.loading || picker.ranking {
+        "scanning"
+    } else {
+        "ready"
+    };
     let skipped = if picker.skipped > 0 {
         format!(" · {} skipped", picker.skipped)
     } else {
@@ -2300,7 +2304,7 @@ fn draw_picker(frame: &mut Frame<'_>, app: &TuiApp<'_>, editor_area: Rect) {
                 .style(Style::default().fg(app.theme.error)),
         ]
     } else if picker.matches.is_empty() {
-        let message = if picker.loading {
+        let message = if picker.loading || picker.ranking {
             "Scanning…"
         } else if picker.entries.is_empty() {
             if picker.kind == crate::file_picker::FilePickerKind::Contents {
@@ -2400,7 +2404,7 @@ fn draw_resource_finder(
     if area.width < 4 || area.height < 4 {
         return;
     }
-    let progress = if picker.loading || finder.loading {
+    let progress = if picker.loading || picker.ranking || finder.loading {
         "scanning"
     } else {
         "ready"
@@ -2502,7 +2506,7 @@ fn draw_resource_finder(
         ]
     } else if finder.matches.is_empty() {
         vec![
-            ListItem::new(if picker.loading || finder.loading {
+            ListItem::new(if picker.loading || picker.ranking || finder.loading {
                 "Scanning…"
             } else {
                 "No matching files, buffers, or terminals"

@@ -11,6 +11,7 @@
 use std::{
     collections::{HashMap, HashSet},
     path::PathBuf,
+    sync::Arc,
 };
 
 use crate::{
@@ -125,11 +126,11 @@ pub struct ResourceMatch {
     pub item: usize,
     pub emphasis: Vec<usize>,
     pub detail_emphasis: Vec<usize>,
-    score: i64,
-    type_boost: bool,
+    pub(crate) score: i64,
+    pub(crate) type_boost: bool,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum FinderMatchSource {
     File(usize),
     Resource(usize),
@@ -140,8 +141,20 @@ pub struct FinderMatch {
     pub source: FinderMatchSource,
     pub emphasis: Vec<usize>,
     pub detail_emphasis: Vec<usize>,
-    score: i64,
-    type_boost: bool,
+    pub(crate) score: i64,
+    pub(crate) type_boost: bool,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct FinderFileRankContext {
+    pub revision: u64,
+    pub resource_matches: Vec<ResourceMatch>,
+    pub replace_resources: bool,
+    pub removed_resources: Vec<usize>,
+    pub remap_resources: Option<Vec<Option<usize>>>,
+    pub suppressed_paths: Arc<HashSet<PathBuf>>,
+    pub file_boost: bool,
+    pub sort: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -154,9 +167,21 @@ pub struct ResourceFinder {
     pub loading: bool,
     pub limited: bool,
     suppressed_paths: HashSet<PathBuf>,
+    file_suppressed_paths: Arc<HashSet<PathBuf>>,
+    name_rank: Option<(String, usize)>,
+    unpublished_resource_matches: usize,
+    file_rank_replace_resources: bool,
+    file_rank_removed_resources: Vec<usize>,
+    file_rank_remap_resources: Option<Vec<Option<usize>>>,
+    terminal_content_items: HashMap<TerminalId, Vec<(TerminalLineId, usize)>>,
+    free_content_items: Vec<usize>,
+    pending_free_content_items: Vec<usize>,
+    active_content_items: usize,
     selection_user_owned: bool,
     claimed_selection: Option<FinderTarget>,
+    claimed_match_source: Option<FinderMatchSource>,
     selected_preview: Option<FilePreview>,
+    file_rank_revision: u64,
 }
 
 impl Default for ResourceFinder {
@@ -176,10 +201,65 @@ impl ResourceFinder {
             loading: false,
             limited: false,
             suppressed_paths: HashSet::new(),
+            file_suppressed_paths: Arc::new(HashSet::new()),
+            name_rank: None,
+            unpublished_resource_matches: 0,
+            file_rank_replace_resources: false,
+            file_rank_removed_resources: Vec::new(),
+            file_rank_remap_resources: None,
+            terminal_content_items: HashMap::new(),
+            free_content_items: Vec::new(),
+            pending_free_content_items: Vec::new(),
+            active_content_items: 0,
             selection_user_owned: false,
             claimed_selection: None,
+            claimed_match_source: None,
             selected_preview: None,
+            file_rank_revision: 0,
         }
+    }
+
+    /// Moves the potentially large result corpus out in constant time before
+    /// an attached finder starts a new query. Name ranking retains its stable
+    /// resource identities; content ranking replaces them with new rows.
+    pub(crate) fn retire_background_corpus(&mut self, retain_items: bool) -> impl Send + 'static {
+        let items = if retain_items {
+            Vec::new()
+        } else {
+            std::mem::take(&mut self.items)
+        };
+        let resource_matches = std::mem::take(&mut self.resource_matches);
+        let matches = std::mem::take(&mut self.matches);
+        let suppressed_paths = if retain_items {
+            HashSet::new()
+        } else {
+            std::mem::take(&mut self.suppressed_paths)
+        };
+        let file_suppressed_paths = if retain_items {
+            Arc::new(HashSet::new())
+        } else {
+            std::mem::replace(&mut self.file_suppressed_paths, Arc::new(HashSet::new()))
+        };
+        let selected_preview = self.selected_preview.take();
+        let claimed_selection = self.claimed_selection.take();
+        let claimed_match_source = self.claimed_match_source.take();
+        let terminal_content_items = std::mem::take(&mut self.terminal_content_items);
+        let free_content_items = std::mem::take(&mut self.free_content_items);
+        let pending_free_content_items = std::mem::take(&mut self.pending_free_content_items);
+        self.active_content_items = 0;
+        (
+            items,
+            resource_matches,
+            matches,
+            suppressed_paths,
+            file_suppressed_paths,
+            selected_preview,
+            claimed_selection,
+            claimed_match_source,
+            terminal_content_items,
+            free_content_items,
+            pending_free_content_items,
+        )
     }
 
     pub fn begin_content_scan(
@@ -189,14 +269,51 @@ impl ResourceFinder {
         suppressed_paths: impl IntoIterator<Item = PathBuf>,
     ) {
         self.items.clear();
+        self.terminal_content_items.clear();
+        self.free_content_items.clear();
+        self.pending_free_content_items.clear();
+        self.active_content_items = 0;
         self.resource_matches.clear();
         self.suppressed_paths = suppressed_paths.into_iter().collect();
+        self.rebuild_file_suppressed_paths();
+        self.name_rank = None;
+        self.unpublished_resource_matches = 0;
         self.loading = true;
         self.limited = false;
         self.selection_user_owned = false;
         self.claimed_selection = None;
+        self.claimed_match_source = None;
         self.selected_preview = None;
         self.merge(picker, query, None);
+    }
+
+    pub(crate) fn begin_content_scan_unmerged(
+        &mut self,
+        query: &str,
+        suppressed_paths: Arc<HashSet<PathBuf>>,
+    ) {
+        self.note_file_rank_change();
+        self.file_rank_replace_resources = true;
+        self.file_rank_removed_resources.clear();
+        self.file_rank_remap_resources = None;
+        self.items.clear();
+        self.terminal_content_items.clear();
+        self.free_content_items.clear();
+        self.pending_free_content_items.clear();
+        self.active_content_items = 0;
+        self.resource_matches.clear();
+        self.matches.clear();
+        self.suppressed_paths.clear();
+        self.file_suppressed_paths = suppressed_paths;
+        self.name_rank = None;
+        self.unpublished_resource_matches = 0;
+        self.loading = true;
+        self.limited = false;
+        self.selection_user_owned = false;
+        self.claimed_selection = None;
+        self.claimed_match_source = None;
+        self.selected_preview = None;
+        self.rank_resources(query);
     }
 
     pub fn append_items(
@@ -208,6 +325,7 @@ impl ResourceFinder {
         let selected = self.preserved_selection(picker);
         let first_new = self.items.len();
         self.items.extend(items);
+        self.rebuild_file_suppressed_paths();
         let parsed = ParsedQuery::new(query, self.mode == FinderMode::Names);
         let mut additions = self.items[first_new..]
             .iter()
@@ -240,9 +358,175 @@ impl ResourceFinder {
         self.restore_selection(picker, selected.as_ref());
     }
 
+    pub(crate) fn append_items_unmerged(
+        &mut self,
+        items: impl IntoIterator<Item = ResourceItem>,
+        query: &str,
+    ) {
+        self.note_file_rank_change();
+        let first_new = self.items.len();
+        self.items.extend(items);
+        let parsed = ParsedQuery::new(query, self.mode == FinderMode::Names);
+        let mut additions = self.items[first_new..]
+            .iter()
+            .enumerate()
+            .filter_map(|(offset, candidate)| {
+                parsed
+                    .score(candidate)
+                    .map(|found| (first_new + offset, found))
+            })
+            .map(
+                |(item, (score, type_boost, emphasis, detail_emphasis))| ResourceMatch {
+                    item,
+                    emphasis,
+                    detail_emphasis,
+                    score,
+                    type_boost: self.mode == FinderMode::Names && type_boost,
+                },
+            )
+            .collect::<Vec<_>>();
+        additions.sort_by(resource_match_order);
+        merge_sorted_by(&mut self.resource_matches, additions, resource_match_order);
+    }
+
+    /// Admits one bounded live-content batch without repeatedly merging or
+    /// cloning the complete accumulated result set. A `true` return means a
+    /// publication-sized immutable snapshot is now worth sending.
+    pub(crate) fn append_content_items_unmerged(
+        &mut self,
+        items: impl IntoIterator<Item = ResourceItem>,
+        query: &str,
+    ) -> bool {
+        let parsed = ParsedQuery::new(query, false);
+        let mut additions = Vec::new();
+        for candidate in items {
+            let item = if let Some(item) = self.free_content_items.pop() {
+                self.items[item] = candidate;
+                item
+            } else {
+                let item = self.items.len();
+                self.items.push(candidate);
+                item
+            };
+            self.active_content_items += 1;
+            if let ResourceTarget::TerminalLocation {
+                terminal, line_id, ..
+            } = self.items[item].target
+            {
+                self.terminal_content_items
+                    .entry(terminal)
+                    .or_default()
+                    .push((line_id, item));
+            }
+            if self.selection_user_owned
+                && self.claimed_selection.as_ref()
+                    == Some(&FinderTarget::Resource(self.items[item].target))
+            {
+                self.claimed_match_source = Some(FinderMatchSource::Resource(item));
+            }
+            if let Some((score, _, emphasis, detail_emphasis)) = parsed.score(&self.items[item]) {
+                additions.push(ResourceMatch {
+                    item,
+                    emphasis,
+                    detail_emphasis,
+                    score,
+                    type_boost: false,
+                });
+            }
+        }
+        self.unpublished_resource_matches += additions.len();
+        self.resource_matches.extend(additions);
+        false
+    }
+
+    pub(crate) fn content_item_count(&self) -> usize {
+        self.active_content_items
+    }
+
+    /// Moves one terminal's ordered content index into a refresh cursor.
+    /// The potentially large vector is never copied or traversed here.
+    pub(crate) fn take_terminal_content_items(
+        &mut self,
+        terminal: TerminalId,
+    ) -> Vec<(TerminalLineId, usize)> {
+        self.terminal_content_items
+            .remove(&terminal)
+            .unwrap_or_default()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn terminal_content_index_storage(&self, terminal: TerminalId) -> (usize, usize) {
+        self.terminal_content_items
+            .get(&terminal)
+            .map_or((0, 0), |items| (items.as_ptr() as usize, items.len()))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn selection_is_user_owned(&self) -> bool {
+        self.selection_user_owned
+    }
+
+    pub(crate) fn keep_terminal_content_item(
+        &mut self,
+        terminal: TerminalId,
+        line_id: TerminalLineId,
+        item: usize,
+    ) {
+        self.terminal_content_items
+            .entry(terminal)
+            .or_default()
+            .push((line_id, item));
+    }
+
+    pub(crate) fn retire_content_item(
+        &mut self,
+        item: usize,
+        preserve_selection: bool,
+    ) -> Option<ResourceItem> {
+        if item >= self.items.len() {
+            return None;
+        }
+        self.active_content_items = self.active_content_items.saturating_sub(1);
+        if !preserve_selection
+            && self.selection_user_owned
+            && self
+                .selected_match()
+                .is_some_and(|found| found.source == FinderMatchSource::Resource(item))
+        {
+            self.selection_user_owned = false;
+            self.claimed_selection = None;
+            self.claimed_match_source = None;
+            self.selected = 0;
+        }
+        if preserve_selection
+            && self.claimed_match_source == Some(FinderMatchSource::Resource(item))
+        {
+            self.claimed_match_source = None;
+        }
+        self.pending_free_content_items.push(item);
+        self.file_rank_removed_resources.push(item);
+        Some(std::mem::replace(
+            &mut self.items[item],
+            ResourceItem::content(
+                "",
+                "",
+                ResourceTarget::Buffer(usize::MAX),
+                ResourceKind::Buffer,
+            ),
+        ))
+    }
+
     pub fn finish_content_scan(&mut self, limited: bool) {
         self.loading = false;
         self.limited = limited;
+    }
+
+    pub(crate) fn finish_content_scan_unmerged(&mut self, limited: bool) {
+        self.loading = false;
+        self.limited = limited;
+        self.publish_resource_matches();
+        self.free_content_items
+            .append(&mut self.pending_free_content_items);
     }
 
     pub fn replace_items(&mut self, items: Vec<ResourceItem>, picker: &FilePicker, query: &str) {
@@ -251,15 +535,160 @@ impl ResourceFinder {
         self.loading = false;
         self.limited = false;
         self.suppressed_paths.clear();
+        self.name_rank = None;
+        self.unpublished_resource_matches = 0;
+        self.rebuild_file_suppressed_paths();
         self.rank_resources(query);
         self.merge(picker, query, selected.as_ref());
+    }
+
+    pub(crate) fn replace_items_unmerged(&mut self, items: Vec<ResourceItem>, _query: &str) {
+        self.note_file_rank_change();
+        self.file_rank_replace_resources = true;
+        self.file_rank_removed_resources.clear();
+        self.file_rank_remap_resources = None;
+        self.items = items;
+        self.matches.clear();
+        self.resource_matches.clear();
+        self.loading = false;
+        self.limited = false;
+        self.suppressed_paths.clear();
+        self.selection_user_owned = false;
+        self.claimed_selection = None;
+        self.claimed_match_source = None;
+        self.selected = 0;
+        self.name_rank = None;
+        self.unpublished_resource_matches = 0;
+        self.rebuild_file_suppressed_paths();
     }
 
     pub fn rank(&mut self, picker: &FilePicker, query: &str) {
         self.selection_user_owned = false;
         self.claimed_selection = None;
+        self.claimed_match_source = None;
         self.rank_resources(query);
         self.merge(picker, query, None);
+    }
+
+    /// Starts a cooperative name-ranking pass. Query input only replaces this
+    /// cursor; the event loop performs bounded slices between input events.
+    pub(crate) fn begin_name_rank(&mut self, query: &str, reset_selection: bool) {
+        if reset_selection {
+            self.selection_user_owned = false;
+            self.claimed_selection = None;
+            self.claimed_match_source = None;
+            self.selected = 0;
+        }
+        self.note_file_rank_change();
+        self.file_rank_replace_resources = true;
+        self.file_rank_removed_resources.clear();
+        self.file_rank_remap_resources = None;
+        self.resource_matches.clear();
+        self.loading = !self.items.is_empty();
+        self.unpublished_resource_matches = 0;
+        self.name_rank = (!self.items.is_empty()).then(|| (query.to_owned(), 0));
+    }
+
+    pub(crate) fn name_rank_pending(&self) -> bool {
+        self.name_rank.is_some()
+    }
+
+    pub(crate) fn advance_name_rank(&mut self, limit: usize) -> bool {
+        let Some((query, first)) = self.name_rank.take() else {
+            return false;
+        };
+        let last = first.saturating_add(limit).min(self.items.len());
+        let parsed = ParsedQuery::new(&query, true);
+        let additions = self.items[first..last]
+            .iter()
+            .enumerate()
+            .filter_map(|(offset, candidate)| {
+                parsed.score(candidate).map(|found| (first + offset, found))
+            })
+            .map(
+                |(item, (score, type_boost, emphasis, detail_emphasis))| ResourceMatch {
+                    item,
+                    emphasis,
+                    detail_emphasis,
+                    score,
+                    type_boost,
+                },
+            )
+            .collect::<Vec<_>>();
+        self.unpublished_resource_matches += additions.len();
+        self.resource_matches.extend(additions);
+        if last < self.items.len() {
+            self.name_rank = Some((query, last));
+            false
+        } else {
+            self.loading = false;
+            self.publish_resource_matches();
+            true
+        }
+    }
+
+    pub(crate) fn take_file_rank_context(&mut self, query: &str) -> FinderFileRankContext {
+        let parsed = ParsedQuery::new(query, self.mode == FinderMode::Names);
+        FinderFileRankContext {
+            revision: self.file_rank_revision,
+            resource_matches: std::mem::take(&mut self.resource_matches),
+            replace_resources: std::mem::take(&mut self.file_rank_replace_resources),
+            removed_resources: std::mem::take(&mut self.file_rank_removed_resources),
+            remap_resources: self.file_rank_remap_resources.take(),
+            suppressed_paths: self.file_suppressed_paths.clone(),
+            file_boost: self.mode == FinderMode::Names && parsed.file_boost,
+            sort: !parsed.terms.is_empty() || parsed.has_type_hint(),
+        }
+    }
+
+    pub(crate) fn file_rank_revision(&self) -> u64 {
+        self.file_rank_revision
+    }
+
+    fn note_file_rank_change(&mut self) {
+        self.file_rank_revision = self.file_rank_revision.wrapping_add(1);
+    }
+
+    fn rebuild_file_suppressed_paths(&mut self) {
+        self.file_suppressed_paths = Arc::new(
+            self.items
+                .iter()
+                .filter_map(|item| item.path.clone())
+                .chain(self.suppressed_paths.iter().cloned())
+                .collect(),
+        );
+    }
+
+    fn publish_resource_matches(&mut self) {
+        self.unpublished_resource_matches = 0;
+        self.note_file_rank_change();
+    }
+
+    pub(crate) fn apply_background_matches(
+        &mut self,
+        matches: Vec<FinderMatch>,
+        positions: &HashMap<FinderMatchSource, usize>,
+    ) -> Vec<FinderMatch> {
+        let claimed_target = self.claimed_selection.is_some();
+        let selected = self.selection_user_owned.then(|| {
+            if claimed_target {
+                self.claimed_match_source
+            } else {
+                self.selected_match().map(|found| found.source)
+            }
+        });
+        let old = std::mem::replace(&mut self.matches, matches);
+        self.selected = selected
+            .flatten()
+            .and_then(|source| positions.get(&source).copied())
+            .unwrap_or(0);
+        if claimed_target && selected.flatten().is_none() {
+            self.selection_user_owned = false;
+            self.claimed_selection = None;
+            self.claimed_match_source = None;
+        }
+        self.selected_preview = None;
+        old
     }
 
     pub fn merge_files(&mut self, picker: &FilePicker, query: &str) {
@@ -286,6 +715,7 @@ impl ResourceFinder {
         };
         let selected = self.preserved_selection(picker);
         self.items[index] = item;
+        self.rebuild_file_suppressed_paths();
         self.resource_matches.retain(|found| found.item != index);
         self.matches.retain(
             |found| !matches!(found.source, FinderMatchSource::Resource(item) if item == index),
@@ -313,6 +743,41 @@ impl ResourceFinder {
             );
         }
         self.restore_selection(picker, selected.as_ref());
+    }
+
+    pub(crate) fn replace_terminal_unmerged(
+        &mut self,
+        terminal: TerminalId,
+        item: ResourceItem,
+        query: &str,
+    ) {
+        self.note_file_rank_change();
+        let Some(index) = self
+            .items
+            .iter()
+            .position(|item| matches!(item.target, ResourceTarget::Terminal(id) if id == terminal))
+        else {
+            self.append_items_unmerged([item], query);
+            return;
+        };
+        self.items[index] = item;
+        self.file_rank_removed_resources.push(index);
+        let parsed = ParsedQuery::new(query, true);
+        if let Some((score, type_boost, emphasis, detail_emphasis)) =
+            parsed.score(&self.items[index])
+        {
+            merge_sorted_by(
+                &mut self.resource_matches,
+                vec![ResourceMatch {
+                    item: index,
+                    emphasis,
+                    detail_emphasis,
+                    score,
+                    type_boost,
+                }],
+                resource_match_order,
+            );
+        }
     }
 
     /// Drops the content rows a refresh is about to read again.
@@ -345,6 +810,7 @@ impl ResourceFinder {
             retained.push(item);
         }
         self.items = retained;
+        self.rebuild_file_suppressed_paths();
         self.resource_matches.retain_mut(|found| {
             let Some(item) = remap[found.item] else {
                 return false;
@@ -438,9 +904,14 @@ impl ResourceFinder {
             return None;
         }
         if self.claimed_selection.is_none() {
+            self.claimed_match_source = self.selected_match().map(|found| found.source);
             self.claimed_selection = self.selected_target(picker);
         }
         self.claimed_selection.clone()
+    }
+
+    pub(crate) fn preserve_selection(&mut self, picker: &FilePicker) {
+        let _ = self.preserved_selection(picker);
     }
 
     fn restore_selection(&mut self, picker: &FilePicker, selected: Option<&FinderTarget>) {
@@ -452,6 +923,8 @@ impl ResourceFinder {
                     .position(|found| self.target_for_match(picker, found).as_ref() == Some(target))
             })
             .unwrap_or(0);
+        self.claimed_match_source =
+            selected.and_then(|_| self.matches.get(self.selected).map(|found| found.source));
     }
 
     pub fn selected_match(&self) -> Option<&FinderMatch> {
@@ -467,6 +940,9 @@ impl ResourceFinder {
     }
 
     pub fn selected_target(&self, picker: &FilePicker) -> Option<FinderTarget> {
+        if picker.ranking {
+            return None;
+        }
         self.selected_match()
             .and_then(|found| self.target_for_match(picker, found))
     }
@@ -509,6 +985,7 @@ impl ResourceFinder {
             self.selected = (self.selected + 1) % self.matches.len();
             self.selection_user_owned = true;
             self.claimed_selection = None;
+            self.claimed_match_source = None;
         }
     }
 
@@ -517,6 +994,7 @@ impl ResourceFinder {
             self.selected = (self.selected + self.matches.len() - 1) % self.matches.len();
             self.selection_user_owned = true;
             self.claimed_selection = None;
+            self.claimed_match_source = None;
         }
     }
 
@@ -527,28 +1005,32 @@ impl ResourceFinder {
             .min(self.matches.len().saturating_sub(1));
         self.selection_user_owned = true;
         self.claimed_selection = None;
+        self.claimed_match_source = None;
     }
 
     pub fn page_up(&mut self, amount: usize) {
         self.selected = self.selected.saturating_sub(amount.max(1));
         self.selection_user_owned = true;
         self.claimed_selection = None;
+        self.claimed_match_source = None;
     }
 
     pub fn first(&mut self) {
         self.selected = 0;
         self.selection_user_owned = true;
         self.claimed_selection = None;
+        self.claimed_match_source = None;
     }
 
     pub fn last(&mut self) {
         self.selected = self.matches.len().saturating_sub(1);
         self.selection_user_owned = true;
         self.claimed_selection = None;
+        self.claimed_match_source = None;
     }
 }
 
-fn resource_to_finder_match(found: &ResourceMatch) -> FinderMatch {
+pub(crate) fn resource_to_finder_match(found: &ResourceMatch) -> FinderMatch {
     FinderMatch {
         source: FinderMatchSource::Resource(found.item),
         emphasis: found.emphasis.clone(),
@@ -566,7 +1048,7 @@ fn resource_match_order(left: &ResourceMatch, right: &ResourceMatch) -> std::cmp
         .then_with(|| left.item.cmp(&right.item))
 }
 
-fn finder_match_order(left: &FinderMatch, right: &FinderMatch) -> std::cmp::Ordering {
+pub(crate) fn finder_match_order(left: &FinderMatch, right: &FinderMatch) -> std::cmp::Ordering {
     right
         .type_boost
         .cmp(&left.type_boost)
@@ -915,6 +1397,84 @@ mod tests {
                 .collect::<Vec<_>>()
         };
         assert_eq!(targets(&incremental), targets(&one_shot));
+    }
+
+    #[test]
+    fn large_background_content_scan_publishes_only_bounded_snapshots() {
+        let mut finder = ResourceFinder::new(FinderMode::Contents);
+        finder.begin_content_scan_unmerged("target", Arc::new(HashSet::new()));
+        let mut publications = 0;
+        for first in (0..CONTENT_ENTRY_LIMIT).step_by(128) {
+            publications += usize::from(finder.append_content_items_unmerged(
+                (first..(first + 128).min(CONTENT_ENTRY_LIMIT)).map(|row| {
+                    ResourceItem::content(
+                        format!("notes:{}", row + 1),
+                        format!("target {row}"),
+                        ResourceTarget::BufferLocation {
+                            buffer: 1,
+                            row,
+                            column: 0,
+                        },
+                        ResourceKind::Buffer,
+                    )
+                }),
+                "target",
+            ));
+        }
+        finder.finish_content_scan_unmerged(false);
+
+        assert_eq!(publications, 0, "only completion publishes the corpus");
+        assert_eq!(finder.resource_matches.len(), CONTENT_ENTRY_LIMIT);
+        let context = finder.take_file_rank_context("target");
+        assert!(finder.resource_matches.is_empty());
+        assert_eq!(context.resource_matches.len(), CONTENT_ENTRY_LIMIT);
+    }
+
+    #[test]
+    fn retired_content_slot_is_not_reused_until_the_refill_finishes() {
+        let mut finder = ResourceFinder::new(FinderMode::Contents);
+        finder.begin_content_scan_unmerged("target", Arc::new(HashSet::new()));
+        finder.append_content_items_unmerged(
+            [ResourceItem::content(
+                "notes:1",
+                "target old",
+                ResourceTarget::BufferLocation {
+                    buffer: 1,
+                    row: 0,
+                    column: 0,
+                },
+                ResourceKind::Buffer,
+            )],
+            "target",
+        );
+        finder.matches = finder
+            .resource_matches
+            .iter()
+            .map(resource_to_finder_match)
+            .collect();
+        finder.selection_user_owned = true;
+
+        let retired = finder.retire_content_item(0, false).unwrap();
+        finder.append_content_items_unmerged(
+            [ResourceItem::content(
+                "notes:2",
+                "target new",
+                ResourceTarget::BufferLocation {
+                    buffer: 1,
+                    row: 1,
+                    column: 0,
+                },
+                ResourceKind::Buffer,
+            )],
+            "target",
+        );
+
+        assert_eq!(retired.detail, "target old");
+        assert_eq!(finder.items.len(), 2);
+        assert_eq!(finder.resource_matches.last().unwrap().item, 1);
+        assert!(!finder.selection_user_owned);
+        finder.finish_content_scan_unmerged(false);
+        assert_eq!(finder.free_content_items, vec![0]);
     }
 
     #[test]

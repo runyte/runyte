@@ -2050,11 +2050,16 @@ fn dirty_terminal_rows_are_invalidated_when_another_source_reaches_the_limit() {
             buffer: 0,
             label: "scratch".to_owned(),
             path: None,
-        }],
+        }]
+        .into(),
         source: 0,
         row: 0,
+        column: 0,
+        retirements: Vec::new(),
+        retirement: 0,
         limited: false,
         refilling: false,
+        drop_observer: None,
     });
     app.finder_dirty_terminals.insert(terminal);
 
@@ -2124,6 +2129,829 @@ fn fuzzy_picker_preview_prefers_unsaved_text_and_ignores_stale_scan_events() {
     });
     assert_eq!(app.picker.as_ref().unwrap().entries.len(), 1);
     fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn background_picker_query_is_visible_before_the_ranker_answers() {
+    let root = temporary("background-picker-query");
+    fs::create_dir_all(&root).unwrap();
+    let ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    let (scanner, _events) = crate::file_picker::scanner();
+    app.attach_file_scanner(scanner);
+    app.open_project_picker().unwrap();
+
+    press(&mut app, 'n');
+
+    let picker = app.picker.as_ref().unwrap();
+    assert_eq!(picker.query, "n");
+    assert_eq!(picker.query_revision, 1);
+    assert!(picker.ranking);
+    assert!(
+        app.overlay_snapshots()
+            .into_iter()
+            .find(|overlay| overlay.kind == crate::snapshot::OverlayKind::FilePicker)
+            .unwrap()
+            .actions
+            .iter()
+            .all(|action| action.key_hint != "Enter")
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn background_picker_rejects_a_stale_query_revision() {
+    let root = temporary("background-picker-stale-rank");
+    fs::create_dir_all(&root).unwrap();
+    let path = root.join("alpha.rs");
+    let ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    let (scanner, _events) = crate::file_picker::scanner();
+    app.attach_file_scanner(scanner);
+    let mut picker = FilePicker::new(9, root.clone());
+    picker.add_paths(vec![ScanEntry::file(path)]);
+    picker.insert_query_unranked('a');
+    let visible = picker.matches.clone();
+    app.picker = Some(picker);
+
+    app.apply_file_picker_event(FilePickerEvent::Ranked {
+        scan_id: 9,
+        query_revision: 0,
+        matches: Vec::new(),
+        match_positions: vec![None],
+        finder_matches: None,
+        finder_revision: None,
+        finder_positions: HashMap::new(),
+    });
+
+    assert_eq!(app.picker.as_ref().unwrap().matches, visible);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn background_picker_rejects_a_stale_resource_revision() {
+    let root = temporary("background-picker-stale-resource");
+    fs::create_dir_all(&root).unwrap();
+    let mut app = App::new_in_isolated_project(
+        &root,
+        HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+            String::new(),
+        ))))),
+    )
+    .unwrap();
+    let (scanner, _events) = crate::file_picker::scanner();
+    app.attach_file_scanner(scanner);
+    let mut picker = FilePicker::new(4, root.clone());
+    picker.finish(0, false);
+    picker.ranking = true;
+    app.picker = Some(picker);
+    let mut finder = ResourceFinder::new(FinderMode::Names);
+    let item = |label: &str| {
+        ResourceItem::new(
+            label,
+            "",
+            ResourceTarget::Buffer(0),
+            ResourceKind::Buffer,
+            Vec::<String>::new(),
+        )
+    };
+    finder.replace_items_unmerged(vec![item("old")], "");
+    let stale_revision = finder.file_rank_revision();
+    let stale = crate::finder::FinderMatch {
+        source: FinderMatchSource::Resource(0),
+        emphasis: Vec::new(),
+        detail_emphasis: Vec::new(),
+        score: 0,
+        type_boost: false,
+    };
+    finder.matches = vec![stale.clone()];
+    finder.append_items_unmerged([item("current")], "");
+    app.finder = Some(finder);
+
+    app.apply_file_picker_event(FilePickerEvent::Ranked {
+        scan_id: 4,
+        query_revision: 0,
+        matches: Vec::new(),
+        match_positions: Vec::new(),
+        finder_matches: Some(vec![stale.clone()]),
+        finder_revision: Some(stale_revision),
+        finder_positions: [(stale.source, 0)].into_iter().collect(),
+    });
+
+    assert_eq!(app.finder.as_ref().unwrap().matches, vec![stale]);
+    assert!(app.picker.as_ref().unwrap().ranking);
+    assert!(
+        app.finder
+            .as_ref()
+            .unwrap()
+            .selected_target(app.picker.as_ref().unwrap())
+            .is_none(),
+        "old rows must remain inert until both halves have the current revision"
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn background_file_scan_rank_and_preview_converge() {
+    let root = temporary("background-picker-converges");
+    fs::create_dir_all(&root).unwrap();
+    fs::write(root.join("alpha.rs"), "alpha preview\n").unwrap();
+    fs::write(root.join("beta.rs"), "beta preview\n").unwrap();
+    let ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    let (scanner, mut events) = crate::file_picker::scanner();
+    app.attach_file_scanner(scanner);
+    app.open_project_picker().unwrap();
+
+    tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .build()
+        .unwrap()
+        .block_on(async {
+            tokio::time::timeout(std::time::Duration::from_secs(2), async {
+                loop {
+                    while app.resource_finder_scan_pending() {
+                        app.advance_resource_finder_scan();
+                    }
+                    let event = events.recv().await.unwrap();
+                    app.apply_file_picker_event(event);
+                    let settled = app.picker.as_ref().is_some_and(|picker| {
+                        !picker.loading
+                            && !picker.ranking
+                            && picker.entries.len() == 2
+                            && picker.matches.len() == 2
+                            && picker.preview.is_some()
+                    });
+                    if settled {
+                        break;
+                    }
+                }
+            })
+            .await
+            .expect("background finder work should settle");
+        });
+
+    let finder = app.finder.as_ref().unwrap();
+    assert_eq!(finder.matches.len(), 3);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn background_content_query_converges_after_rapid_typing() {
+    let root = temporary("background-content-converges");
+    fs::create_dir_all(&root).unwrap();
+    fs::write(root.join("alpha.rs"), "ordinary\nthe needle is here\n").unwrap();
+    let ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    let (scanner, mut events) = crate::file_picker::scanner();
+    app.attach_file_scanner(scanner);
+    app.open_project_grep().unwrap();
+    for character in "needle".chars() {
+        press(&mut app, character);
+    }
+    assert_eq!(app.picker.as_ref().unwrap().query, "needle");
+
+    tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .build()
+        .unwrap()
+        .block_on(async {
+            tokio::time::timeout(std::time::Duration::from_secs(2), async {
+                loop {
+                    while app.resource_finder_scan_pending() {
+                        app.advance_resource_finder_scan();
+                    }
+                    let event = events.recv().await.unwrap();
+                    app.apply_file_picker_event(event);
+                    let settled = app.picker.as_ref().is_some_and(|picker| {
+                        !picker.loading
+                            && !picker.ranking
+                            && picker.query == "needle"
+                            && picker.matches.len() == 1
+                            && picker.preview.is_some()
+                    });
+                    if settled {
+                        break;
+                    }
+                }
+            })
+            .await
+            .expect("the latest content query should settle");
+        });
+
+    assert_eq!(
+        app.picker.as_ref().unwrap().selected_entry().unwrap().text,
+        Some("the needle is here")
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn live_content_scan_reaches_text_after_very_long_indentation() {
+    let root = temporary("finder-long-indentation");
+    fs::create_dir_all(&root).unwrap();
+    let ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    seed(&mut app, &format!("{}needle\n", " ".repeat(4_096)));
+    let (scanner, _events) = crate::file_picker::scanner();
+    app.attach_file_scanner(scanner);
+    app.open_project_grep().unwrap();
+    type_text(&mut app, "needle");
+    settle_finder(&mut app);
+
+    let match_item = app
+        .finder
+        .as_ref()
+        .unwrap()
+        .items
+        .iter()
+        .find(|item| item.detail == "needle")
+        .expect("authoritative live text after long indentation must match");
+    assert!(matches!(
+        match_item.target,
+        ResourceTarget::BufferLocation { column: 4_096, .. }
+    ));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn attached_terminal_refill_makes_remapped_rows_inert_before_rank_response() {
+    let root = temporary("finder-terminal-refill-readiness");
+    fs::create_dir_all(&root).unwrap();
+    let ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    app.open_terminal_at(Some("/bin/cat".to_owned()), root.clone());
+    let terminal = app.active_terminal().unwrap();
+    app.terminals.apply(TerminalOutput::Bytes {
+        id: terminal,
+        bytes: b"first needle\r\nsecond needle\r\n".to_vec(),
+    });
+    let rows = (0..app.terminals.get(terminal).unwrap().plain_line_count())
+        .filter_map(|row| {
+            let (line_id, line) = app
+                .terminals
+                .get(terminal)
+                .unwrap()
+                .plain_line_with_id(row)?;
+            line.contains("needle").then_some((line_id, row, line))
+        })
+        .collect::<Vec<_>>();
+    assert!(rows.len() >= 2);
+
+    let mut picker = FilePicker::grep(77, root.clone());
+    picker.insert_query_text("needle");
+    picker.finish(0, false);
+    let mut finder = ResourceFinder::new(FinderMode::Contents);
+    finder.begin_content_scan(&picker, "needle", std::iter::empty());
+    finder.append_items(
+        rows.iter()
+            .enumerate()
+            .map(|(index, (line_id, row, line))| {
+                ResourceItem::content(
+                    format!("terminal:{}", row + 1),
+                    line.clone(),
+                    ResourceTarget::TerminalLocation {
+                        terminal,
+                        line_id: *line_id,
+                        column: 0,
+                    },
+                    ResourceKind::Terminal,
+                )
+                .with_path(root.join(format!("terminal-{index}")))
+            }),
+        &picker,
+        "needle",
+    );
+    finder.finish_content_scan(false);
+    finder.down();
+    assert!(finder.selected_target(&picker).is_some());
+    app.picker = Some(picker);
+    app.finder = Some(finder);
+    let (scanner, _events) = crate::file_picker::scanner();
+    app.attach_file_scanner(scanner);
+
+    app.start_terminal_content_refresh([terminal].into_iter().collect());
+
+    assert!(app.picker.as_ref().unwrap().ranking);
+    assert!(
+        app.finder
+            .as_ref()
+            .unwrap()
+            .selected_target(app.picker.as_ref().unwrap())
+            .is_none(),
+        "Enter must not resolve a stale resource index while refill remaps items"
+    );
+    app.close_terminal_id(terminal);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn attached_terminal_refill_moves_its_large_index_and_advances_it_in_slices() {
+    let root = temporary("finder-terminal-refill-sliced");
+    fs::create_dir_all(&root).unwrap();
+    let ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    app.open_terminal_at(Some("/bin/cat".to_owned()), root.clone());
+    let terminal = app.active_terminal().unwrap();
+    app.terminals.apply(TerminalOutput::Bytes {
+        id: terminal,
+        bytes: b"needle\r\n".to_vec(),
+    });
+    let line_id = app
+        .terminals
+        .get(terminal)
+        .unwrap()
+        .plain_line_with_id(0)
+        .unwrap()
+        .0;
+    let mut picker = FilePicker::grep(78, root.clone());
+    picker.insert_query_text("needle");
+    picker.finish(0, false);
+    let mut finder = ResourceFinder::new(FinderMode::Contents);
+    finder.begin_content_scan_unmerged("needle", Arc::new(HashSet::new()));
+    finder.append_content_items_unmerged(
+        (0..CONTENT_ENTRY_LIMIT).map(|row| {
+            ResourceItem::content(
+                format!("terminal:{row}"),
+                "needle",
+                ResourceTarget::TerminalLocation {
+                    terminal,
+                    line_id,
+                    column: 0,
+                },
+                ResourceKind::Terminal,
+            )
+        }),
+        "needle",
+    );
+    let storage = finder.terminal_content_index_storage(terminal);
+    assert_eq!(storage.1, CONTENT_ENTRY_LIMIT);
+    app.picker = Some(picker);
+    app.finder = Some(finder);
+    let (scanner, _events) = crate::file_picker::scanner();
+    app.attach_file_scanner(scanner);
+
+    app.start_terminal_content_refresh([terminal].into_iter().collect());
+
+    let scan = app.finder_content_scan.as_ref().unwrap();
+    assert_eq!(scan.retirements[0].items.as_ptr() as usize, storage.0);
+    assert_eq!(scan.retirements[0].items.len(), CONTENT_ENTRY_LIMIT);
+    app.advance_resource_finder_scan();
+    assert_eq!(
+        app.finder_content_scan.as_ref().unwrap().retirements[0].item,
+        128
+    );
+    app.close_terminal_id(terminal);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn attached_terminal_shift_during_retirement_forces_a_full_repair_pass() {
+    let root = temporary("finder-terminal-refill-shift");
+    fs::create_dir_all(&root).unwrap();
+    let ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    app.open_terminal_at(Some("/bin/cat".to_owned()), root.clone());
+    let terminal = app.active_terminal().unwrap();
+    let initial = (0..5_100)
+        .map(|row| format!("stable-needle-{row}\r\n"))
+        .collect::<String>();
+    app.apply_terminal_output(TerminalOutput::Bytes {
+        id: terminal,
+        bytes: initial.into_bytes(),
+    });
+    let (scanner, mut events) = crate::file_picker::scanner();
+    app.attach_file_scanner(scanner);
+    app.open_project_grep().unwrap();
+    type_text(&mut app, "stable-needle");
+    while app.resource_finder_scan_pending() {
+        app.advance_resource_finder_scan();
+    }
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            while app.picker.as_ref().unwrap().ranking {
+                app.apply_file_picker_event(events.recv().await.unwrap());
+            }
+        })
+        .await
+        .expect("the initial terminal ranking should settle");
+    });
+    let target_line_id = app
+        .terminals
+        .get(terminal)
+        .unwrap()
+        .plain_line_with_id(130)
+        .unwrap()
+        .0;
+    assert!(app.finder.as_ref().unwrap().items.iter().any(|item| {
+        matches!(
+            item.target,
+            ResourceTarget::TerminalLocation { line_id, .. } if line_id == target_line_id
+        )
+    }));
+    let selected = app
+        .finder
+        .as_ref()
+        .unwrap()
+        .matches
+        .iter()
+        .position(|found| match found.source {
+            FinderMatchSource::Resource(item) => matches!(
+                app.finder.as_ref().unwrap().items[item].target,
+                ResourceTarget::TerminalLocation { line_id, .. } if line_id == target_line_id
+            ),
+            FinderMatchSource::File(_) => false,
+        })
+        .unwrap();
+    app.finder.as_mut().unwrap().first();
+    for _ in 0..selected {
+        app.finder.as_mut().unwrap().down();
+    }
+    let claimed = app
+        .finder
+        .as_ref()
+        .unwrap()
+        .selected_target(app.picker.as_ref().unwrap())
+        .unwrap();
+
+    app.start_terminal_content_refresh([terminal].into_iter().collect());
+    app.advance_resource_finder_scan();
+    let shifted = (0..12)
+        .map(|row| format!("stable-needle-new-{row}\r\n"))
+        .collect::<String>();
+    app.apply_terminal_output(TerminalOutput::Bytes {
+        id: terminal,
+        bytes: shifted.into_bytes(),
+    });
+    let mut saw_full_repair = false;
+    while app.resource_finder_scan_pending() {
+        app.advance_resource_finder_scan();
+        saw_full_repair |= app.finder_content_scan.as_ref().is_some_and(|scan| {
+            scan.refilling
+                && scan
+                    .sources
+                    .first()
+                    .is_some_and(|source| source.first_row() == 0)
+        });
+        assert!(
+            app.finder_content_scan.is_none() || app.finder_scan_refills(),
+            "the intermediate false drop must not become a drawable frame"
+        );
+    }
+    assert!(saw_full_repair);
+    assert!(!app.finder_dirty_terminals.contains(&terminal));
+    assert!(app.finder_terminal_marks.contains_key(&terminal));
+
+    assert!(
+        app.finder.as_ref().unwrap().items.iter().any(|item| {
+            matches!(
+                item.target,
+                ResourceTarget::TerminalLocation { line_id, .. } if line_id == target_line_id
+            )
+        }),
+        "the still-retained match must be restored by the full repair pass"
+    );
+    runtime.block_on(async {
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            while app.picker.as_ref().unwrap().ranking {
+                app.apply_file_picker_event(events.recv().await.unwrap());
+            }
+        })
+        .await
+        .expect("the repaired terminal ranking should settle");
+    });
+    assert_eq!(
+        app.finder
+            .as_ref()
+            .unwrap()
+            .selected_target(app.picker.as_ref().unwrap()),
+        Some(claimed)
+    );
+
+    let evicted_line_id = app
+        .terminals
+        .get(terminal)
+        .unwrap()
+        .plain_line_with_id(130)
+        .unwrap()
+        .0;
+    let selected = app
+        .finder
+        .as_ref()
+        .unwrap()
+        .matches
+        .iter()
+        .position(|found| match found.source {
+            FinderMatchSource::Resource(item) => matches!(
+                app.finder.as_ref().unwrap().items[item].target,
+                ResourceTarget::TerminalLocation { line_id, .. } if line_id == evicted_line_id
+            ),
+            FinderMatchSource::File(_) => false,
+        })
+        .unwrap();
+    app.finder.as_mut().unwrap().first();
+    for _ in 0..selected {
+        app.finder.as_mut().unwrap().down();
+    }
+    let evicted_claim = app
+        .finder
+        .as_ref()
+        .unwrap()
+        .selected_target(app.picker.as_ref().unwrap())
+        .unwrap();
+    app.start_terminal_content_refresh([terminal].into_iter().collect());
+    app.advance_resource_finder_scan();
+    let replacement = (0..5_100)
+        .map(|row| format!("stable-needle-replacement-{row}\r\n"))
+        .collect::<String>();
+    app.apply_terminal_output(TerminalOutput::Bytes {
+        id: terminal,
+        bytes: replacement.into_bytes(),
+    });
+    while app.resource_finder_scan_pending() {
+        app.advance_resource_finder_scan();
+    }
+    runtime.block_on(async {
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            while app.picker.as_ref().unwrap().ranking {
+                app.apply_file_picker_event(events.recv().await.unwrap());
+            }
+        })
+        .await
+        .expect("the eviction repair ranking should settle");
+    });
+    let finder = app.finder.as_ref().unwrap();
+    assert!(!finder.selection_is_user_owned());
+    assert_ne!(
+        finder.selected_target(app.picker.as_ref().unwrap()),
+        Some(evicted_claim),
+        "a recycled resource slot must not inherit the evicted stable-line claim"
+    );
+    app.close_file_picker();
+    app.close_terminal_id(terminal);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn replacing_a_large_live_content_cursor_drops_it_on_the_rank_worker() {
+    let root = temporary("finder-content-cursor-cancel");
+    fs::create_dir_all(&root).unwrap();
+    let ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    app.open_terminal_at(Some("/bin/cat".to_owned()), root.clone());
+    let terminal = app.active_terminal().unwrap();
+    app.terminals.apply(TerminalOutput::Bytes {
+        id: terminal,
+        bytes: b"needle\r\n".to_vec(),
+    });
+    let line_id = app
+        .terminals
+        .get(terminal)
+        .unwrap()
+        .plain_line_with_id(0)
+        .unwrap()
+        .0;
+    let (scanner, _events) = crate::file_picker::scanner();
+    app.attach_file_scanner(scanner);
+    app.open_project_grep().unwrap();
+    let scan = app.finder_content_scan.as_mut().unwrap();
+    scan.retirements.push(TerminalContentRetirement {
+        terminal,
+        items: vec![(line_id, 0); CONTENT_ENTRY_LIMIT],
+        item: 0,
+        retained_row: 0,
+        retained_until: 1,
+    });
+    let editor_thread = std::thread::current().id();
+    let (dropped, observed) = std::sync::mpsc::channel();
+    scan.drop_observer = Some(dropped);
+
+    press(&mut app, 'n');
+
+    let worker_thread = observed
+        .recv_timeout(std::time::Duration::from_secs(2))
+        .expect("the replaced scan should be destroyed promptly");
+    assert_ne!(worker_thread, editor_thread);
+    app.close_terminal_id(terminal);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn switching_a_large_content_finder_to_names_retires_ownership_on_the_rank_worker() {
+    let root = temporary("finder-mode-switch-retirement");
+    fs::create_dir_all(&root).unwrap();
+    let ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    let (scanner, _events) = crate::file_picker::scanner();
+    app.attach_file_scanner(scanner);
+    app.open_project_grep().unwrap();
+    app.finder.as_mut().unwrap().append_content_items_unmerged(
+        (0..CONTENT_ENTRY_LIMIT).map(|row| {
+            ResourceItem::content(
+                format!("scratch:{row}"),
+                "content",
+                ResourceTarget::BufferLocation {
+                    buffer: 0,
+                    row,
+                    column: 0,
+                },
+                ResourceKind::Buffer,
+            )
+        }),
+        "",
+    );
+    let scan = app.finder_content_scan.as_mut().unwrap();
+    scan.retirements = (0..CONTENT_ENTRY_LIMIT)
+        .map(|_| TerminalContentRetirement {
+            terminal: TerminalId::from_raw(99),
+            items: Vec::new(),
+            item: 0,
+            retained_row: 0,
+            retained_until: 0,
+        })
+        .collect();
+    let editor_thread = std::thread::current().id();
+    let (dropped, observed) = std::sync::mpsc::channel();
+    scan.drop_observer = Some(dropped);
+
+    app.toggle_finder_mode();
+
+    assert_eq!(app.finder.as_ref().unwrap().mode, FinderMode::Names);
+    assert!(app.finder.as_ref().unwrap().items.len() < CONTENT_ENTRY_LIMIT);
+    let worker_thread = observed
+        .recv_timeout(std::time::Duration::from_secs(2))
+        .expect("mode replacement should retire the content cursor promptly");
+    assert_ne!(worker_thread, editor_thread);
+    app.close_file_picker();
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn reopening_over_a_large_finder_retires_ownership_on_the_rank_worker() {
+    let root = temporary("finder-reopen-retirement");
+    fs::create_dir_all(&root).unwrap();
+    let ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    let (scanner, _events) = crate::file_picker::scanner();
+    app.attach_file_scanner(scanner);
+    app.open_project_grep().unwrap();
+    app.finder.as_mut().unwrap().append_content_items_unmerged(
+        (0..CONTENT_ENTRY_LIMIT).map(|row| {
+            ResourceItem::content(
+                format!("scratch:{row}"),
+                "content",
+                ResourceTarget::BufferLocation {
+                    buffer: 0,
+                    row,
+                    column: 0,
+                },
+                ResourceKind::Buffer,
+            )
+        }),
+        "",
+    );
+    let scan = app.finder_content_scan.as_mut().unwrap();
+    scan.retirements = (0..CONTENT_ENTRY_LIMIT)
+        .map(|_| TerminalContentRetirement {
+            terminal: TerminalId::from_raw(100),
+            items: Vec::new(),
+            item: 0,
+            retained_row: 0,
+            retained_until: 0,
+        })
+        .collect();
+    let editor_thread = std::thread::current().id();
+    let (dropped, observed) = std::sync::mpsc::channel();
+    scan.drop_observer = Some(dropped);
+
+    app.open_project_picker().unwrap();
+
+    assert_eq!(app.finder.as_ref().unwrap().mode, FinderMode::Names);
+    let worker_thread = observed
+        .recv_timeout(std::time::Duration::from_secs(2))
+        .expect("picker replacement should retire the old finder promptly");
+    assert_ne!(worker_thread, editor_thread);
+    app.close_file_picker();
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn attached_finder_switches_from_content_back_to_names_after_ranker_reset() {
+    let root = temporary("background-finder-mode-switch");
+    fs::create_dir_all(&root).unwrap();
+    fs::write(root.join("alpha.rs"), "alpha needle\n").unwrap();
+    let ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    let (scanner, mut events) = crate::file_picker::scanner();
+    app.attach_file_scanner(scanner);
+    app.open_project_picker().unwrap();
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .build()
+        .unwrap();
+    let settle = |app: &mut App,
+                  events: &mut tokio::sync::mpsc::Receiver<FilePickerEvent>,
+                  expected: FinderMode| {
+        runtime.block_on(async {
+            tokio::time::timeout(std::time::Duration::from_secs(2), async {
+                loop {
+                    while app.resource_finder_scan_pending() {
+                        app.advance_resource_finder_scan();
+                    }
+                    if app
+                        .finder
+                        .as_ref()
+                        .is_some_and(|finder| finder.mode == expected && !finder.loading)
+                        && app.picker.as_ref().is_some_and(|picker| {
+                            !picker.loading && !picker.ranking && !picker.matches.is_empty()
+                        })
+                    {
+                        break;
+                    }
+                    let event = events.recv().await.unwrap();
+                    app.apply_file_picker_event(event);
+                }
+            })
+            .await
+            .expect("finder mode should settle");
+        });
+    };
+
+    settle(&mut app, &mut events, FinderMode::Names);
+    key(&mut app, KeyCode::Tab, Modifiers::NONE);
+    settle(&mut app, &mut events, FinderMode::Contents);
+    key(&mut app, KeyCode::Tab, Modifiers::NONE);
+    settle(&mut app, &mut events, FinderMode::Names);
+    assert_eq!(
+        app.picker
+            .as_ref()
+            .unwrap()
+            .selected_entry()
+            .unwrap()
+            .relative,
+        "alpha.rs"
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn attached_finder_snapshot_materializes_only_its_selected_window() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    let root = PathBuf::from("/project");
+    let mut picker = FilePicker::new(1, root.clone());
+    picker.add_paths(
+        (0..1_500)
+            .map(|index| ScanEntry::file(root.join(format!("file-{index:04}.rs"))))
+            .collect(),
+    );
+    picker.finish(0, false);
+    let mut finder = ResourceFinder::new(FinderMode::Names);
+    finder.replace_items(Vec::new(), &picker, "");
+    finder.last();
+    app.picker = Some(picker);
+    app.finder = Some(finder);
+
+    let snapshot = app
+        .overlay_snapshots()
+        .into_iter()
+        .find(|overlay| overlay.kind == crate::snapshot::OverlayKind::FilePicker)
+        .unwrap();
+    assert_eq!(snapshot.rows.len(), 512);
+    assert_eq!(snapshot.total_rows, 1_500);
+    assert_eq!(snapshot.omitted_rows, 988);
+    assert_eq!(snapshot.row_offset, 988);
+    assert_eq!(snapshot.selected, Some(511));
+    assert_eq!(snapshot.scroll_anchor, Some(1_499));
 }
 
 #[test]

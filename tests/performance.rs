@@ -758,16 +758,14 @@ fn a_content_scan_finds_a_match_anywhere_in_a_large_project() {
     );
 }
 
-/// Typing into content search has to stay inside a few frames.
+/// One complete content-ranking pass has to stay bounded.
 ///
-/// The picker holds at most `CONTENT_ENTRY_LIMIT` candidates and re-ranks them
-/// on every keystroke, so this is the cost the person feels between pressing a
-/// key and seeing the list move, and it is what the candidate budget is really
-/// a budget on. Every candidate here matches, which is the state a picker is
-/// in immediately after a scan, and the ranked line is the same shape as the
-/// query, which is the expensive case rather than the typical one. The scan
-/// itself is not measured: it runs on its own thread and cannot stall a
-/// redraw.
+/// The terminal editor queues this pass on the background file ranker, so it
+/// is no longer work a keystroke waits for. The candidate ceiling remains a
+/// useful bound on how soon the current revision's rows arrive. Every
+/// candidate here matches, which is the expensive case rather than the
+/// typical one. The synchronous `FilePicker` seam used by embedders exercises
+/// the same scoring kernel without including scanner I/O.
 #[test]
 #[ignore = "run serially in the release performance job"]
 fn ranking_a_full_content_budget_stays_within_a_frame() {

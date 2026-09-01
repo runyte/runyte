@@ -105,8 +105,8 @@ use crate::{
         SyntaxSelectionTransform,
     },
     terminal::{
-        DefaultColors, SentTextUndo, TerminalId, TerminalOutput, TerminalRequest, TerminalSession,
-        TerminalSessions,
+        DefaultColors, SentTextUndo, TerminalId, TerminalLineId, TerminalOutput, TerminalRequest,
+        TerminalSession, TerminalSessions,
     },
     text::{Assoc, Change, Offset, Text, Transaction},
     tutorial::{MotionHints, TutorialState},
@@ -133,18 +133,49 @@ struct ReplaceSession {
 /// Files keep using the background filesystem scanner. Buffers and terminals
 /// cannot be handed to that scanner without copying their complete live text,
 /// so the event loop advances this cursor in small row slices instead.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 struct FinderContentScan {
     query: String,
-    sources: Vec<FinderContentSource>,
+    sources: Arc<[FinderContentSource]>,
     source: usize,
     row: usize,
+    /// Characters of leading buffer indentation already visited for the
+    /// current row. Long indentation advances across slices rather than
+    /// making one slice traverse the whole row.
+    column: usize,
+    retirements: Vec<TerminalContentRetirement>,
+    retirement: usize,
     limited: bool,
     /// Whether this pass is re-reading rows it has just dropped. A pass over
     /// a new query starts from nothing, so every row it finds is progress; a
     /// refresh starts by dropping what it is about to find again, so what it
     /// passes through are holes and none of them is worth showing.
     refilling: bool,
+    #[cfg(test)]
+    drop_observer: Option<std::sync::mpsc::Sender<std::thread::ThreadId>>,
+}
+
+#[cfg(test)]
+impl Drop for FinderContentScan {
+    fn drop(&mut self) {
+        if let Some(observer) = self.drop_observer.take() {
+            let _ = observer.send(std::thread::current().id());
+        }
+    }
+}
+
+/// One terminal's prior matches, moved into a merge cursor in constant time.
+///
+/// Both sequences are in retained-row order. Advancing them together lets a
+/// refresh distinguish retained and evicted stable line identities without
+/// first building a set containing every retained line.
+#[derive(Debug)]
+struct TerminalContentRetirement {
+    terminal: TerminalId,
+    items: Vec<(TerminalLineId, usize)>,
+    item: usize,
+    retained_row: usize,
+    retained_until: usize,
 }
 
 #[derive(Clone, Debug)]
@@ -2453,6 +2484,11 @@ pub struct App {
     /// pickers leave this absent and remain files-only.
     pub finder: Option<ResourceFinder>,
     finder_content_scan: Option<FinderContentScan>,
+    /// Live sources are rebuilt when the finder corpus changes, not for each
+    /// content-query keystroke. Restarting a query clones this shared table in
+    /// constant time and resets only the bounded scan cursor.
+    finder_content_sources: Arc<[FinderContentSource]>,
+    finder_content_suppressed_paths: Arc<HashSet<PathBuf>>,
     /// Terminals whose output the finder has not read yet. Output marks a
     /// terminal here and nothing more; the event loop decides when the finder
     /// is allowed to look, so a running child cannot rebuild the list on every
@@ -2924,6 +2960,8 @@ impl App {
             picker: None,
             finder: None,
             finder_content_scan: None,
+            finder_content_sources: Arc::from([]),
+            finder_content_suppressed_paths: Arc::new(HashSet::new()),
             finder_dirty_terminals: HashSet::new(),
             finder_terminal_marks: HashMap::new(),
             file_scanner: None,

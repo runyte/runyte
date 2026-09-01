@@ -985,7 +985,7 @@ impl App {
                     Some(format!("Scan failed: {error}"))
                 } else {
                     let mut parts = Vec::new();
-                    if picker.loading || finder.loading {
+                    if picker.loading || picker.ranking || finder.loading {
                         parts.push("Scanning…".to_owned());
                     }
                     if picker.skipped > 0 {
@@ -996,6 +996,11 @@ impl App {
                     }
                     (!parts.is_empty()).then(|| parts.join(" · "))
                 };
+                let total_rows = finder.matches.len();
+                let row_offset = finder
+                    .selected
+                    .saturating_sub(ROW_LIMIT / 2)
+                    .min(total_rows.saturating_sub(ROW_LIMIT));
                 let mut snapshot = bounded(
                     OverlayKind::FilePicker,
                     format!("Find · {}", finder.mode.title()),
@@ -1003,6 +1008,8 @@ impl App {
                     finder
                         .matches
                         .iter()
+                        .skip(row_offset)
+                        .take(ROW_LIMIT)
                         .filter_map(|found| match found.source {
                             FinderMatchSource::File(entry) => {
                                 let entry = picker.view(entry)?;
@@ -1026,12 +1033,20 @@ impl App {
                             }
                         })
                         .collect(),
-                    (!finder.matches.is_empty()).then_some(finder.selected),
+                    (!finder.matches.is_empty()).then_some(finder.selected - row_offset),
                     finder_status,
                 );
+                snapshot.row_offset = row_offset;
+                snapshot.total_rows = total_rows;
+                snapshot.omitted_rows = total_rows.saturating_sub(ROW_LIMIT);
+                snapshot.scroll_anchor = (!finder.matches.is_empty()).then_some(finder.selected);
                 snapshot.query_cursor = Some(picker.query_cursor);
                 snapshot.layout = OverlayLayout::Preview;
-                snapshot.actions = vec![OverlayAction::new("Enter", "open")];
+                snapshot.actions = if picker.ranking {
+                    Vec::new()
+                } else {
+                    vec![OverlayAction::new("Enter", "open")]
+                };
                 if matches!(finder.selected_target(picker), Some(FinderTarget::File(_))) {
                     snapshot
                         .actions
@@ -1065,6 +1080,11 @@ impl App {
                 }
                 overlays.push(snapshot);
             } else {
+                let total_rows = picker.matches.len();
+                let row_offset = picker
+                    .selected
+                    .saturating_sub(ROW_LIMIT / 2)
+                    .min(total_rows.saturating_sub(ROW_LIMIT));
                 let mut snapshot = bounded(
                     OverlayKind::FilePicker,
                     if self.finder.is_some() {
@@ -1076,6 +1096,8 @@ impl App {
                     picker
                         .matches
                         .iter()
+                        .skip(row_offset)
+                        .take(ROW_LIMIT)
                         .filter_map(|found| picker.view(found.entry).map(|entry| (found, entry)))
                         .map(|(found, entry)| {
                             let label = entry.label();
@@ -1089,16 +1111,25 @@ impl App {
                             row
                         })
                         .collect(),
-                    (!picker.matches.is_empty()).then_some(picker.selected),
-                    picker
-                        .error
-                        .clone()
-                        .or_else(|| picker.loading.then(|| "Scanning files…".to_owned())),
+                    (!picker.matches.is_empty()).then_some(picker.selected - row_offset),
+                    picker.error.clone().or_else(|| {
+                        (picker.loading || picker.ranking).then(|| "Scanning files…".to_owned())
+                    }),
                 );
+                snapshot.row_offset = row_offset;
+                snapshot.total_rows = total_rows;
+                snapshot.omitted_rows = total_rows.saturating_sub(ROW_LIMIT);
+                snapshot.scroll_anchor = (!picker.matches.is_empty()).then_some(picker.selected);
                 snapshot.query_cursor = Some(picker.query_cursor);
                 snapshot.show_preview = picker.show_preview;
                 snapshot.preview_title = Some("Preview".to_owned());
                 snapshot.preview = Some(file_overlay_preview(picker.preview.as_ref()));
+                if picker.ranking {
+                    snapshot.actions = vec![
+                        OverlayAction::new("Ctrl-t", "toggle preview"),
+                        OverlayAction::new("Esc", "cancel"),
+                    ];
+                }
                 if self.finder.is_some() {
                     snapshot
                         .actions

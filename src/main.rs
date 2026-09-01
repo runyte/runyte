@@ -104,6 +104,18 @@ fn frame_publication_ready(
     true
 }
 
+/// Scanner and ranker progress can arrive much faster than a terminal can
+/// present it. Input takes a different select branch and still draws
+/// immediately; only these background intermediate states use frame pacing.
+fn pace_file_picker_event(event: &file_picker::FilePickerEvent) -> bool {
+    matches!(
+        event,
+        file_picker::FilePickerEvent::Files { .. }
+            | file_picker::FilePickerEvent::Content { .. }
+            | file_picker::FilePickerEvent::Ranked { .. }
+    )
+}
+
 #[cfg(unix)]
 use runyte::protocol::{MAX_POINTER_REPETITIONS, WaitStatus, WaitToken, validate_welcome};
 #[cfg(unix)]
@@ -1629,7 +1641,12 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
             }
             event = services.file_picker_events.recv() => {
                 if let Some(event) = event {
+                    let paced = pace_file_picker_event(&event);
                     app.apply_event(HostEvent::FilePicker(event));
+                    if paced {
+                        frame_pending = true;
+                        continue;
+                    }
                 }
             }
             event = services.file_monitor_events.recv() => {
@@ -2278,8 +2295,13 @@ async fn run_host_server(
             }
             event = services.file_picker_events.recv() => {
                 if let Some(event) = event {
+                    let paced = pace_file_picker_event(&event);
                     host.apply_event(HostEvent::FilePicker(event));
-                    changed = true;
+                    if paced {
+                        frame_pending = true;
+                    } else {
+                        changed = true;
+                    }
                 }
             }
             event = services.file_monitor_events.recv() => {
@@ -5116,9 +5138,9 @@ mod tests {
     use super::{
         KeyRepeatDetector, frame_publication_ready, initialize_attached_directory,
         is_passive_pointer, is_redraw_only_event, motion_repeat_dispatches,
-        observe_key_or_text_hint, rejected_text_input, resolve_cwd_file_path,
-        resolve_requested_project_root, starts_on_about, uses_automatic_persistent_mode,
-        write_cwd_file, write_startup_screen,
+        observe_key_or_text_hint, pace_file_picker_event, rejected_text_input,
+        resolve_cwd_file_path, resolve_requested_project_root, starts_on_about,
+        uses_automatic_persistent_mode, write_cwd_file, write_startup_screen,
     };
     use runyte::launch::LaunchArguments;
     use runyte::{
@@ -5153,6 +5175,23 @@ mod tests {
             !frame_pending,
             "a refill with no frame request must not invent one"
         );
+    }
+
+    #[test]
+    fn intermediate_file_picker_work_is_frame_paced_but_completion_is_immediate() {
+        assert!(pace_file_picker_event(
+            &runyte::file_picker::FilePickerEvent::Files {
+                scan_id: 1,
+                paths: Vec::new(),
+            }
+        ));
+        assert!(!pace_file_picker_event(
+            &runyte::file_picker::FilePickerEvent::Finished {
+                scan_id: 1,
+                skipped: 0,
+                limited: false,
+            }
+        ));
     }
 
     #[cfg(unix)]

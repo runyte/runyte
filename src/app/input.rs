@@ -1307,7 +1307,11 @@ impl App {
             return Ok(());
         }
         if let Some(picker) = self.picker.as_mut() {
-            picker.insert_query_text(text);
+            if self.file_scanner.is_some() {
+                picker.insert_query_text_unranked(text);
+            } else {
+                picker.insert_query_text(text);
+            }
             self.restart_content_scan_if_needed();
             self.rank_resource_finder();
             if self.finder.is_some() {
@@ -3109,35 +3113,55 @@ impl App {
             (KeyCode::Backspace, _) => {
                 let picker = self.picker.as_mut().unwrap();
                 query_changed = picker.query_cursor > 0;
-                picker.backspace_query();
+                if self.file_scanner.is_some() {
+                    picker.backspace_query_unranked();
+                } else {
+                    picker.backspace_query();
+                }
                 selection_changed = query_changed;
                 Ok(None)
             }
             (KeyCode::Char('h'), _) if control => {
                 let picker = self.picker.as_mut().unwrap();
                 query_changed = picker.query_cursor > 0;
-                picker.backspace_query();
+                if self.file_scanner.is_some() {
+                    picker.backspace_query_unranked();
+                } else {
+                    picker.backspace_query();
+                }
                 selection_changed = query_changed;
                 Ok(None)
             }
             (KeyCode::Delete, _) => {
                 let picker = self.picker.as_mut().unwrap();
                 query_changed = picker.query_cursor < picker.query.chars().count();
-                picker.delete_query();
+                if self.file_scanner.is_some() {
+                    picker.delete_query_unranked();
+                } else {
+                    picker.delete_query();
+                }
                 selection_changed = query_changed;
                 Ok(None)
             }
             (KeyCode::Char('w'), _) if control => {
                 let picker = self.picker.as_mut().unwrap();
                 query_changed = picker.query_cursor > 0;
-                picker.delete_query_word();
+                if self.file_scanner.is_some() {
+                    picker.delete_query_word_unranked();
+                } else {
+                    picker.delete_query_word();
+                }
                 selection_changed = query_changed;
                 Ok(None)
             }
             (KeyCode::Char('k'), _) if control => {
                 let picker = self.picker.as_mut().unwrap();
                 query_changed = picker.query_cursor < picker.query.chars().count();
-                picker.delete_query_end();
+                if self.file_scanner.is_some() {
+                    picker.delete_query_end_unranked();
+                } else {
+                    picker.delete_query_end();
+                }
                 selection_changed = query_changed;
                 Ok(None)
             }
@@ -3156,7 +3180,14 @@ impl App {
                     .modifiers
                     .intersects(Modifiers::CONTROL | Modifiers::ALT | Modifiers::SUPER) =>
             {
-                self.picker.as_mut().unwrap().insert_query(character);
+                if self.file_scanner.is_some() {
+                    self.picker
+                        .as_mut()
+                        .unwrap()
+                        .insert_query_unranked(character);
+                } else {
+                    self.picker.as_mut().unwrap().insert_query(character);
+                }
                 selection_changed = true;
                 query_changed = true;
                 Ok(None)
@@ -3216,27 +3247,47 @@ impl App {
             (KeyCode::Backspace, _) => {
                 let picker = self.picker.as_mut().unwrap();
                 query_changed = picker.query_cursor > 0;
-                picker.backspace_query();
+                if self.file_scanner.is_some() {
+                    picker.backspace_query_unranked();
+                } else {
+                    picker.backspace_query();
+                }
             }
             (KeyCode::Char('h'), _) if control => {
                 let picker = self.picker.as_mut().unwrap();
                 query_changed = picker.query_cursor > 0;
-                picker.backspace_query();
+                if self.file_scanner.is_some() {
+                    picker.backspace_query_unranked();
+                } else {
+                    picker.backspace_query();
+                }
             }
             (KeyCode::Delete, _) => {
                 let picker = self.picker.as_mut().unwrap();
                 query_changed = picker.query_cursor < picker.query.chars().count();
-                picker.delete_query();
+                if self.file_scanner.is_some() {
+                    picker.delete_query_unranked();
+                } else {
+                    picker.delete_query();
+                }
             }
             (KeyCode::Char('w'), _) if control => {
                 let picker = self.picker.as_mut().unwrap();
                 query_changed = picker.query_cursor > 0;
-                picker.delete_query_word();
+                if self.file_scanner.is_some() {
+                    picker.delete_query_word_unranked();
+                } else {
+                    picker.delete_query_word();
+                }
             }
             (KeyCode::Char('k'), _) if control => {
                 let picker = self.picker.as_mut().unwrap();
                 query_changed = picker.query_cursor < picker.query.chars().count();
-                picker.delete_query_end();
+                if self.file_scanner.is_some() {
+                    picker.delete_query_end_unranked();
+                } else {
+                    picker.delete_query_end();
+                }
             }
             (KeyCode::Char('a'), _) if control => {
                 self.picker.as_mut().unwrap().query_cursor = 0;
@@ -3288,7 +3339,14 @@ impl App {
                     .modifiers
                     .intersects(Modifiers::CONTROL | Modifiers::ALT | Modifiers::SUPER) =>
             {
-                self.picker.as_mut().unwrap().insert_query(character);
+                if self.file_scanner.is_some() {
+                    self.picker
+                        .as_mut()
+                        .unwrap()
+                        .insert_query_unranked(character);
+                } else {
+                    self.picker.as_mut().unwrap().insert_query(character);
+                }
                 query_changed = true;
             }
             _ => {}

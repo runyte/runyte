@@ -1243,6 +1243,12 @@ impl TerminalSession {
         self.emulator.grid().retained_row(line_id)
     }
 
+    /// Stable identity at one retained presentation row, without decoding
+    /// the row's text.
+    pub(crate) fn retained_line_id(&self, row: usize) -> Option<TerminalLineId> {
+        self.emulator.grid().retained_line_id(row)
+    }
+
     /// The identities of the retained rows, history first, in row order.
     pub fn retained_line_ids(&self) -> impl Iterator<Item = TerminalLineId> + '_ {
         self.emulator.grid().retained_lines().map(|(id, _)| id)
