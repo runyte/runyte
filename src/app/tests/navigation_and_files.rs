@@ -674,6 +674,53 @@ fn explorer_yank_and_paste_copies_into_a_retargeted_pane_on_write() {
 }
 
 #[test]
+fn filesystem_plan_review_supports_single_step_page_and_boundary_navigation() {
+    let root = temporary("filesystem-confirmation-navigation");
+    fs::create_dir_all(&root).unwrap();
+    let snapshot = crate::fs_plan::DirectorySnapshot::read(&root).unwrap();
+    let desired = (0..25)
+        .map(|index| {
+            crate::fs_plan::DesiredEntry::create(
+                format!("entry-{index:02}"),
+                crate::fs_plan::EntryKind::File,
+            )
+        })
+        .collect();
+    let plan = crate::fs_plan::FsPlan::build(root.clone(), snapshot, desired).unwrap();
+    let mut app = App::new(Config::default(), None).unwrap();
+    app.fs_confirmation = Some(FsConfirmation {
+        buffer: app.active().buffer,
+        plan,
+        selected: 0,
+    });
+
+    key(&mut app, KeyCode::Down, Modifiers::NONE);
+    key(&mut app, KeyCode::Char('n'), Modifiers::CONTROL);
+    assert_eq!(app.fs_confirmation.as_ref().unwrap().selected, 2);
+    key(&mut app, KeyCode::Up, Modifiers::NONE);
+    key(&mut app, KeyCode::Char('p'), Modifiers::CONTROL);
+    assert_eq!(app.fs_confirmation.as_ref().unwrap().selected, 0);
+
+    key(&mut app, KeyCode::PageDown, Modifiers::NONE);
+    key(&mut app, KeyCode::Char('d'), Modifiers::CONTROL);
+    assert_eq!(app.fs_confirmation.as_ref().unwrap().selected, 20);
+    key(&mut app, KeyCode::PageUp, Modifiers::NONE);
+    key(&mut app, KeyCode::Char('u'), Modifiers::CONTROL);
+    assert_eq!(app.fs_confirmation.as_ref().unwrap().selected, 0);
+    key(&mut app, KeyCode::End, Modifiers::NONE);
+    key(&mut app, KeyCode::Down, Modifiers::NONE);
+    assert_eq!(app.fs_confirmation.as_ref().unwrap().selected, 24);
+    key(&mut app, KeyCode::Home, Modifiers::NONE);
+    key(&mut app, KeyCode::Char('x'), Modifiers::NONE);
+    assert_eq!(app.fs_confirmation.as_ref().unwrap().selected, 0);
+
+    key(&mut app, KeyCode::Char('c'), Modifiers::CONTROL);
+    assert!(app.fs_confirmation.is_none());
+    assert_eq!(app.status, "filesystem plan cancelled");
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn explorer_yank_of_a_bare_caret_takes_the_whole_entry() {
     let parent = temporary("explorer-caret-yank");
     let source = parent.join("source");

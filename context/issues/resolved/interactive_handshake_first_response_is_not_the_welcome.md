@@ -1,4 +1,41 @@
-# The first response on a new interactive connection is not always the welcome
+---
+title: "The first response on a new interactive connection was not always the welcome"
+status: resolved
+reported: 2026-08-31
+resolved: 2026-09-01
+commit: aec9644
+---
+
+## Resolution
+
+Commit `aec9644` (`Order connection handshakes before visual updates`) fixed
+the ordering in `serve_connection` in `src/workspace/transport.rs`. The host
+already sent `Welcome` before publishing the initial frame, but
+`ResponseReceiver::recv` tried to preserve that order by merging the semantic
+queue and replaceable visual slot with a biased `tokio::select!`. Bias only
+orders branches that are ready when each branch is polled. The receiver could
+poll an empty semantic queue, have the host enqueue `Welcome` and a frame, and
+then observe the now-ready visual branch during that same poll. The frame was
+therefore returned and written before the semantic branch was polled again.
+
+`ResponseReceiver::recv_handshake` now waits on the semantic queue alone, and
+`serve_connection` writes that response before entering the loop that
+multiplexes semantic replies, final messages, visuals, and client requests.
+This makes the first-response rule a connection-transport invariant rather
+than a scheduler-dependent consequence of select bias. It retains the
+replaceable visual slot and all later asynchronous frame behavior; no retry,
+test serialization, or protocol-shape change was needed.
+
+Tests covering the behavior are:
+
+- `interactive_handshake_precedes_a_visual_that_woke_the_writer_first` in
+  `src/workspace/transport.rs`, which wakes the writer with a frame before
+  supplying `Welcome` and requires the welcome to reach the client first;
+- `revision_protocol_is_stale_safe_undoable_and_bounded` and
+  `incompatible_worktree_host_returns_the_tui_to_its_source` in
+  `tests/local_protocol.rs`, the two integration paths from the report.
+
+## Report
 
 Two tests in `tests/local_protocol.rs` fail intermittently when whole copies
 of the suite run concurrently on a loaded machine, and both failures are
@@ -53,18 +90,18 @@ order in an `mpsc`, final messages have a one-slot queue of their own, and
 complete frames and terminal damage share a replaceable `watch` slot.
 `ResponseReceiver::recv` merges the three with a biased `select!` that polls
 the semantic queue first, so a welcome already sitting in that queue should
-reach the wire ahead of a frame published afterwards. Why it did not is
-unidentified.
+reach the wire ahead of a frame published afterwards. Why it did not was
+unidentified in the original report.
 
 The expected behavior is that a client connecting interactively receives its
-`Welcome` first. Where the correction belongs is open. The positional read in
-`revision_protocol_is_stale_safe_undoable_and_bounded` is worth hardening
-either way, because the file already documents that frames and terminal
-deltas are uncorrelated with a request and provides `receive_semantic_response`
-for reading past them, but hardening that test would only stop it observing
-the ordering rather than establish that the ordering holds. The correction
-must not weaken the lifecycle-stress gate with retries, ignored failures,
-reduced parallelism, or serialized tests.
+`Welcome` first. Where the correction belongs was initially open. The
+positional read in `revision_protocol_is_stale_safe_undoable_and_bounded` was
+worth hardening either way, because the file already documents that frames
+and terminal deltas are uncorrelated with a request and provides
+`receive_semantic_response` for reading past them, but hardening that test
+would only stop it observing the ordering rather than establish that the
+ordering holds. The correction must not weaken the lifecycle-stress gate with
+retries, ignored failures, reduced parallelism, or serialized tests.
 
 The two failures were observed across three campaigns totalling 160
 whole-suite executions: `revision_protocol_is_stale_safe_undoable_and_bounded`

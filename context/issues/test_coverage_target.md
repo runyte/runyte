@@ -12,6 +12,64 @@ enforced 83% line floor.
 The target is above 95% line coverage, with the CI floor and the README badge
 raised to match.
 
+## Progress
+
+Commit `26deb27` (`Expand behavior-driven test coverage`) made the target apply
+to the total **Lines** percentage printed by the canonical coverage command.
+This reported figure remains affected by inline `#[cfg(test)]` code, but it is
+the measure the pinned stable tool can enforce directly and consistently. A
+custom source parser was rejected as a second, compiler-unverified
+implementation of Rust item and configuration semantics. The command,
+decision, and platform baselines are recorded in
+`context/reference/test-coverage.md`.
+
+That commit added standalone behavior coverage for every protocol input key,
+media key, modifier key, pointer identity, literal text, and frame-geometry
+round trip. Application-level tests now also cover project-finder navigation
+and editing, both file-split directions, scalar-prompt editing, filesystem-plan
+review navigation, horizontal pointer scrolling, valid asynchronous Git blame
+requests, and asynchronous branch-projection creation and reuse.
+
+On `x86_64-unknown-linux-gnu` with Rust 1.97.1 and `cargo-llvm-cov` 0.9.0,
+covered lines increased by 385 without changing the 96,014-line denominator:
+85,264 of 96,014 lines (88.80%) became 85,649 of 96,014 (89.20%). Covered
+regions increased by 603. `protocol/input.rs` reached 100% line coverage;
+`app/input.rs` gained 163 covered lines and `app/git_workflows.rs` gained 58.
+
+The issue remains open. The Linux result still has 10,365 uncovered lines, and
+the current largest per-file gaps are `app/git_workflows.rs` (1,132),
+`app/input.rs` (828), `main.rs` (775), `lsp/mod.rs` (562), and `git/cli.rs`
+(528). The last recorded macOS baseline predates this pass, so a current macOS
+measurement is also still required before raising the cross-platform floor.
+The CI floor and README badge remain at 83% until the target holds on both
+first-class targets.
+
+## Pending macOS baseline
+
+The standard GitHub-hosted `macos-latest` runner is currently an Apple Silicon
+runner, so CI can produce the required `aarch64-apple-darwin` baseline without
+a larger or self-hosted runner. The existing macOS job only runs the ordinary
+test suite and does not collect coverage.
+
+A future pull request may add a temporary, non-gating `coverage-macos` job that
+uses `macos-latest`, sets `TMPDIR=/private/tmp`, and follows the pinned Linux
+coverage recipe. The job must verify the target before measuring so a change to
+GitHub's moving runner alias cannot silently record an Intel baseline:
+
+```sh
+test "$(rustc -vV | sed -n 's/^host: //p')" = aarch64-apple-darwin
+cargo llvm-cov --locked --workspace --no-report
+cargo llvm-cov report | tee coverage-summary-macos.txt
+```
+
+The job should install `cargo-llvm-cov` 0.9.0, use a distinct macOS coverage
+cache key, publish the summary in the job summary, and retain it under a unique
+artifact name such as `rust-coverage-macos-arm64`. It must not enforce a new
+floor on its first run. Record the resulting toolchain, target, covered and
+total counts in `context/reference/test-coverage.md` before deciding whether
+the macOS coverage job should remain in CI or whether the cross-platform floor
+can change.
+
 ## What the number has to mean first
 
 The recorded baseline counts some inline `#[cfg(test)]` modules in both the

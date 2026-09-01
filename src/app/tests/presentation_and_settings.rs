@@ -260,6 +260,31 @@ fn pointer_click_drag_wheel_and_resize_use_the_prepared_projection() {
     .unwrap();
     assert_eq!(app.active().scroll_row, 9);
 
+    app.handle_pointer_repeated(
+        PointerEvent {
+            kind: PointerEventKind::ScrollRight,
+            column: body.x,
+            row: body.y,
+            modifiers: Modifiers::NONE,
+        },
+        &view,
+        2,
+    )
+    .unwrap();
+    assert_eq!(app.active().scroll_col, 6);
+    assert!(app.active().preserve_scroll);
+    app.handle_pointer(
+        PointerEvent {
+            kind: PointerEventKind::ScrollLeft,
+            column: body.x,
+            row: body.y,
+            modifiers: Modifiers::NONE,
+        },
+        &view,
+    )
+    .unwrap();
+    assert_eq!(app.active().scroll_col, 3);
+
     app.split(Axis::Horizontal, None).unwrap();
     let before = app.prepare_view(geometry);
     let left = before.pane(0).unwrap().area;
