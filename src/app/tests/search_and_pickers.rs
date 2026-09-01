@@ -3165,3 +3165,95 @@ fn terminal_content_preview_highlights_the_matched_text() {
     app.close_terminal_id(terminal);
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn truncated_content_rescan_reranks_under_the_query_it_restarts_for() {
+    let root = temporary("background-content-rescan-reranks");
+    fs::create_dir_all(&root).unwrap();
+    fs::write(root.join("alpha.rs"), "one\nneedle here\nthree\n").unwrap();
+    fs::write(root.join("beta.rs"), "needle again\n").unwrap();
+    let ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    let (scanner, mut events) = crate::file_picker::scanner();
+    app.attach_file_scanner(scanner);
+    app.open_project_grep().unwrap();
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .build()
+        .unwrap();
+    let settle =
+        |app: &mut App, events: &mut tokio::sync::mpsc::Receiver<FilePickerEvent>, what: &str| {
+            runtime.block_on(async {
+                tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                    loop {
+                        while app.resource_finder_scan_pending() {
+                            app.advance_resource_finder_scan();
+                        }
+                        let settled = app.finder.as_ref().zip(app.picker.as_ref()).is_some_and(
+                            |(finder, picker)| {
+                                !finder.loading
+                                    && !picker.loading
+                                    && !picker.ranking
+                                    && !picker.content_rescan_needed()
+                                    && !picker.matches.is_empty()
+                                    && picker.preview.is_some()
+                            },
+                        );
+                        if settled {
+                            break;
+                        }
+                        app.apply_file_picker_event(events.recv().await.unwrap());
+                    }
+                })
+                .await
+                .unwrap_or_else(|_| panic!("{what}"));
+            });
+        };
+
+    settle(
+        &mut app,
+        &mut events,
+        "the initial content scan should settle",
+    );
+    type_text(&mut app, "needle");
+    settle(&mut app, &mut events, "the typed query should settle");
+
+    // The scan that collected these entries ran under the empty query and
+    // stopped at the entry ceiling, so the entries on hand cannot answer
+    // "needle" and the picker restarts the scan the moment it learns that.
+    let scan_id = app.picker.as_ref().unwrap().scan_id;
+    app.apply_file_picker_event(FilePickerEvent::Finished {
+        scan_id,
+        skipped: 0,
+        limited: true,
+    });
+    assert_ne!(
+        app.picker.as_ref().unwrap().scan_id,
+        scan_id,
+        "a truncated scan restarts under the current query"
+    );
+    settle(&mut app, &mut events, "the restarted scan should settle");
+
+    let picker = app.picker.as_ref().unwrap();
+    let finder = app.finder.as_ref().unwrap();
+    assert!(
+        !picker.matches.is_empty(),
+        "the restarted scan must be ranked for the query it restarted under"
+    );
+    assert!(
+        finder.matches.iter().all(|found| match found.source {
+            FinderMatchSource::File(entry) => picker.view(entry).is_some(),
+            FinderMatchSource::Resource(item) => finder.items.get(item).is_some(),
+        }),
+        "every finder row must resolve against the rebuilt entry table"
+    );
+    assert!(
+        picker.preview.is_some(),
+        "the selected file match must still be previewable"
+    );
+    app.close_file_picker();
+    fs::remove_dir_all(root).unwrap();
+}
