@@ -91,7 +91,12 @@ them, regardless of which extensibility direction is chosen.
   matching row with the matched text highlighted, and does so for an open
   buffer or a terminal row exactly as for a file on disk. The
   query and `Ctrl-t` preview preference survive the switch; modes are not
-  separate overlays or separate stops in a picker cycle. A live terminal is
+  separate overlays or separate stops in a picker cycle. Query text and its
+  caret are immediate editor-owned state; filesystem discovery, file ranking,
+  live-resource matching, result merging, and disk previews advance outside
+  input handling and are tagged with the query revision. The previous rows may
+  remain visible while a new revision ranks, but cannot be accepted, and an
+  older result or preview never replaces the current revision. A live terminal is
   read on a slow interval rather than on each chunk its child writes: the
   finder is a list to be read, so it holds still while a build or a test run
   scrolls, and its rows are current as of the last interval rather than of the

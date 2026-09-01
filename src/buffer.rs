@@ -2478,6 +2478,17 @@ impl Buffer {
         self.text.line_string(row)
     }
 
+    /// A bounded row fragment for cooperative background readers. Unlike
+    /// `line_string`, one pathological line cannot make an event-loop slice
+    /// allocate or traverse the complete row.
+    pub(crate) fn line_slice_string(&self, row: usize, from: usize, characters: usize) -> String {
+        let line_len = self.text.line_len(row);
+        let from = from.min(line_len);
+        let start = self.text.line_to_offset(row) + from;
+        let len = line_len.saturating_sub(from).min(characters);
+        self.text.slice_string(start, start + len)
+    }
+
     pub fn lines(&self) -> impl Iterator<Item = String> + '_ {
         self.text.lines()
     }

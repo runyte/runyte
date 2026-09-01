@@ -8,14 +8,16 @@
 //! editor remains the sole owner of picker state.
 
 use std::{
+    collections::HashMap,
     fs,
     io::{self, BufRead, BufReader, Read},
     num::NonZero,
     ops::Range,
     path::{Component, Path, PathBuf},
     sync::{
-        Arc, OnceLock,
+        Arc, Mutex, OnceLock,
         atomic::{AtomicU64, Ordering},
+        mpsc as sync_mpsc,
     },
     thread,
     time::Duration,
@@ -25,7 +27,13 @@ use anyhow::{Context, Result};
 use regex::Regex;
 use tokio::sync::mpsc::{Receiver, Sender, channel};
 
-const SCAN_BATCH: usize = 1024;
+const SCAN_BATCH: usize = 128;
+/// Files admitted between background result publications.
+///
+/// The editor sees scanner batches of `SCAN_BATCH`, which bounds admission on
+/// its thread. The ranker combines several of those batches before it merges
+/// and publishes, avoiding a whole growing-list clone for every 128 paths.
+const RANK_PUBLISH_BATCH: usize = 4_096;
 const PREVIEW_BYTES: u64 = 64 * 1024;
 const PREVIEW_CONTEXT_BEFORE: usize = 4;
 const PREVIEW_CONTEXT_LINES: usize = PREVIEW_CONTEXT_BEFORE * 2 + 1;
@@ -434,6 +442,11 @@ pub struct FilePicker {
     pub entries: Vec<FileEntry>,
     pub matches: Vec<FuzzyMatch>,
     pub query: String,
+    /// Monotonic identity of the query shown in the prompt.
+    ///
+    /// Background rankings carry this value back. A result for an older
+    /// revision is stale even when it belongs to the same filesystem scan.
+    pub query_revision: u64,
     /// The query the entries on hand were collected for.
     ///
     /// Only content search sets this to anything but the empty string: its
@@ -444,6 +457,8 @@ pub struct FilePicker {
     pub query_cursor: usize,
     pub selected: usize,
     pub loading: bool,
+    /// Whether the background ranker is still answering the displayed query.
+    pub ranking: bool,
     pub skipped: usize,
     pub limited: bool,
     pub error: Option<String>,
@@ -461,6 +476,9 @@ pub struct FilePicker {
     /// preferences. Directory-scoped pickers still match those words
     /// literally.
     unified_finder: bool,
+    path_files: HashMap<PathBuf, u32>,
+    preview_request: Option<(u64, PickerTarget)>,
+    next_preview_request_id: u64,
 }
 
 impl FilePicker {
@@ -481,10 +499,12 @@ impl FilePicker {
             entries: Vec::new(),
             matches: Vec::new(),
             query: String::new(),
+            query_revision: 0,
             scan_query: String::new(),
             query_cursor: 0,
             selected: 0,
             loading: true,
+            ranking: false,
             skipped: 0,
             limited: false,
             error: None,
@@ -493,6 +513,9 @@ impl FilePicker {
             selection_user_owned: false,
             directory_only: false,
             unified_finder: false,
+            path_files: HashMap::new(),
+            preview_request: None,
+            next_preview_request_id: 1,
         }
     }
 
@@ -503,12 +526,14 @@ impl FilePicker {
 
     /// Changes the project finder's filesystem engine while retaining the
     /// query, cursor, and preview preference held by the overlay.
-    pub fn switch_kind(&mut self, scan_id: u64, kind: FilePickerKind) {
+    pub(crate) fn switch_kind(
+        &mut self,
+        scan_id: u64,
+        kind: FilePickerKind,
+    ) -> DiscardedPickerCorpus {
+        let discarded = self.take_corpus();
         self.scan_id = scan_id;
         self.kind = kind;
-        self.files.clear();
-        self.entries.clear();
-        self.matches.clear();
         self.scan_query = if kind == FilePickerKind::Contents {
             self.query.clone()
         } else {
@@ -519,20 +544,41 @@ impl FilePicker {
         self.skipped = 0;
         self.limited = false;
         self.error = None;
-        self.preview = None;
         self.selection_user_owned = false;
         self.directory_only = false;
+        discarded
     }
 
     pub fn add_paths(&mut self, paths: Vec<ScanEntry>) {
+        let candidates = self.add_paths_unranked(paths);
         let selected = self
             .selection_user_owned
             .then(|| self.selected_target())
             .flatten();
-        let first_new = self.entries.len();
+        let first_new = candidates
+            .first()
+            .map_or(self.entries.len(), |entry| entry.entry);
+        self.rank_new_entries(first_new, selected);
+    }
+
+    /// Admits a filesystem batch without doing any ranking on the editor
+    /// thread. The returned lightweight candidates are sent to the background
+    /// ranker; their indices are exactly the entries just admitted here.
+    pub(crate) fn add_paths_unranked(&mut self, paths: Vec<ScanEntry>) -> Vec<FileRankCandidate> {
+        let mut candidates = Vec::with_capacity(paths.len());
         for entry in paths {
-            let file = self.intern(entry.path, entry.is_dir);
-            let candidate_characters = self.files[file as usize].relative.chars().count();
+            let path = entry.path;
+            let is_dir = entry.is_dir;
+            let relative = path_text(path.strip_prefix(&self.root).unwrap_or(&path));
+            let file = self.files.len() as u32;
+            self.files.push(PickerFile {
+                path: path.clone(),
+                relative: relative.clone(),
+                is_dir,
+            });
+            self.path_files.insert(path.clone(), file);
+            let candidate_characters = relative.chars().count();
+            let entry = self.entries.len();
             self.entries.push(FileEntry {
                 file,
                 row: None,
@@ -540,14 +586,31 @@ impl FilePicker {
                 text: None,
                 candidate_characters,
             });
+            candidates.push(FileRankCandidate {
+                entry,
+                path,
+                relative: relative.clone(),
+                text: relative,
+                row: None,
+                candidate_characters,
+                is_dir,
+            });
         }
-        self.rank_new_entries(first_new, selected);
+        candidates
     }
 
     pub fn add_content(&mut self, files: Vec<FileHits>) {
+        let candidates = self.add_content_unranked(files);
         let selected = self.selection_user_owned.then(|| self.selected_target());
-        let first_new = self.entries.len();
-        let mut available = CONTENT_ENTRY_LIMIT.saturating_sub(first_new);
+        let first_new = candidates
+            .first()
+            .map_or(self.entries.len(), |entry| entry.entry);
+        self.rank_new_entries(first_new, selected.flatten());
+    }
+
+    pub(crate) fn add_content_unranked(&mut self, files: Vec<FileHits>) -> Vec<FileRankCandidate> {
+        let mut candidates = Vec::new();
+        let mut available = CONTENT_ENTRY_LIMIT.saturating_sub(self.entries.len());
         for mut hits in files {
             // The budget counts lines, not files, so one very large file
             // cannot be admitted whole past the ceiling.
@@ -559,35 +622,47 @@ impl FilePicker {
             }
             available -= hits.lines.len();
             let file = self.intern(hits.path, false);
-            self.entries.extend(hits.lines.into_iter().map(|line| {
+            let path = self.files[file as usize].path.clone();
+            let relative = self.files[file as usize].relative.clone();
+            for line in hits.lines {
                 let candidate_characters = line.text.chars().count();
-                FileEntry {
+                let entry = self.entries.len();
+                candidates.push(FileRankCandidate {
+                    entry,
+                    path: path.clone(),
+                    relative: relative.clone(),
+                    text: line.text.clone(),
+                    row: Some(line.row),
+                    candidate_characters,
+                    is_dir: false,
+                });
+                self.entries.push(FileEntry {
                     file,
                     row: Some(line.row),
                     column: line.column,
                     text: Some(line.text),
                     candidate_characters,
-                }
-            }));
+                });
+            }
         }
-        self.rank_new_entries(first_new, selected.flatten());
+        candidates
     }
 
     /// The file table index for `path`, adding it if this is its first line.
-    ///
-    /// Batches arrive per file and a restart clears the table, so the file
-    /// wanted is almost always the one just used; a scan of a few hundred rows
-    /// on the rare miss is cheaper than a map that has to be maintained.
+    /// Dense files can span many scanner batches, so the path index keeps each
+    /// admission independent of the number of files already seen.
     fn intern(&mut self, path: PathBuf, is_dir: bool) -> u32 {
-        if let Some(index) = self.files.iter().rposition(|file| file.path == path) {
-            return index as u32;
+        if let Some(index) = self.path_files.get(&path) {
+            return *index;
         }
         self.files.push(PickerFile {
             relative: path_text(path.strip_prefix(&self.root).unwrap_or(&path)),
-            path,
+            path: path.clone(),
             is_dir,
         });
-        self.files.len() as u32 - 1
+        let index = self.files.len() as u32 - 1;
+        self.path_files.insert(path, index);
+        index
     }
 
     /// An entry with its file resolved.
@@ -642,6 +717,21 @@ impl FilePicker {
         }
     }
 
+    pub(crate) fn background_rank_request(
+        &self,
+        finder: Option<crate::finder::FinderFileRankContext>,
+    ) -> FileRankRequest {
+        let (directory_only, query) = self.directory_only_query();
+        FileRankRequest {
+            scan_id: self.scan_id,
+            query_revision: self.query_revision,
+            query,
+            directory_only,
+            kind: self.kind,
+            finder,
+        }
+    }
+
     fn rank_new_entries(&mut self, first_new: usize, selected: Option<PickerTarget>) {
         let (directory_only, query) = self.directory_only_query();
         let new = (first_new..self.entries.len()).collect::<Vec<_>>();
@@ -672,20 +762,31 @@ impl FilePicker {
     /// holding on screen, so they survive; everything the previous query's
     /// scan produced does not, because those entries answered a different
     /// question and cannot be narrowed into this one.
-    pub fn restart_content_scan(&mut self, scan_id: u64) {
+    pub(crate) fn restart_content_scan(&mut self, scan_id: u64) -> DiscardedPickerCorpus {
+        let discarded = self.take_corpus();
         self.scan_id = scan_id;
         self.scan_query = self.query.clone();
-        self.files.clear();
-        self.entries.clear();
-        self.matches.clear();
         self.selected = 0;
         self.selection_user_owned = false;
         self.loading = true;
         self.skipped = 0;
         self.limited = false;
         self.error = None;
-        self.preview = None;
         self.directory_only = false;
+        discarded
+    }
+
+    fn take_corpus(&mut self) -> DiscardedPickerCorpus {
+        DiscardedPickerCorpus {
+            files: std::mem::take(&mut self.files),
+            entries: std::mem::take(&mut self.entries),
+            matches: std::mem::take(&mut self.matches),
+            path_files: std::mem::take(&mut self.path_files),
+            preview: self.preview.take(),
+            scan_query: std::mem::take(&mut self.scan_query),
+            error: self.error.take(),
+            preview_request: self.preview_request.take(),
+        }
     }
 
     /// Whether the entries on hand can still answer the current query.
@@ -716,6 +817,7 @@ impl FilePicker {
 
     pub fn fail(&mut self, message: String) {
         self.loading = false;
+        self.ranking = false;
         self.error = Some(message);
     }
 
@@ -734,6 +836,9 @@ impl FilePicker {
     }
 
     pub fn selected_target(&self) -> Option<PickerTarget> {
+        if self.ranking {
+            return None;
+        }
         let found = self.selected_match()?;
         let entry = self.view(found.entry)?;
         Some(PickerTarget {
@@ -755,6 +860,29 @@ impl FilePicker {
         self.rank(true, appended);
     }
 
+    pub(crate) fn insert_query_unranked(&mut self, character: char) {
+        let byte = char_to_byte(&self.query, self.query_cursor);
+        self.query.insert(byte, character);
+        self.query_cursor += 1;
+        self.note_query_changed();
+    }
+
+    pub(crate) fn insert_query_text_unranked(&mut self, text: &str) {
+        let byte = char_to_byte(&self.query, self.query_cursor);
+        self.query.insert_str(byte, text);
+        self.query_cursor += text.chars().count();
+        self.note_query_changed();
+    }
+
+    fn note_query_changed(&mut self) {
+        self.query_revision = self.query_revision.wrapping_add(1);
+        self.ranking = true;
+        self.selected = 0;
+        self.selection_user_owned = false;
+        self.preview = None;
+        self.preview_request = None;
+    }
+
     pub fn insert_query_text(&mut self, text: &str) {
         let byte = char_to_byte(&self.query, self.query_cursor);
         let appended = byte == self.query.len();
@@ -774,6 +902,17 @@ impl FilePicker {
         self.rank(true, false);
     }
 
+    pub(crate) fn backspace_query_unranked(&mut self) {
+        if self.query_cursor == 0 {
+            return;
+        }
+        let from = char_to_byte(&self.query, self.query_cursor - 1);
+        let to = char_to_byte(&self.query, self.query_cursor);
+        self.query.replace_range(from..to, "");
+        self.query_cursor -= 1;
+        self.note_query_changed();
+    }
+
     pub fn delete_query(&mut self) {
         if self.query_cursor >= self.query.chars().count() {
             return;
@@ -782,6 +921,16 @@ impl FilePicker {
         let to = char_to_byte(&self.query, self.query_cursor + 1);
         self.query.replace_range(from..to, "");
         self.rank(true, false);
+    }
+
+    pub(crate) fn delete_query_unranked(&mut self) {
+        if self.query_cursor >= self.query.chars().count() {
+            return;
+        }
+        let from = char_to_byte(&self.query, self.query_cursor);
+        let to = char_to_byte(&self.query, self.query_cursor + 1);
+        self.query.replace_range(from..to, "");
+        self.note_query_changed();
     }
 
     pub fn delete_query_word(&mut self) {
@@ -803,6 +952,25 @@ impl FilePicker {
         self.rank(true, false);
     }
 
+    pub(crate) fn delete_query_word_unranked(&mut self) {
+        if self.query_cursor == 0 {
+            return;
+        }
+        let chars = self.query.chars().collect::<Vec<_>>();
+        let mut from = self.query_cursor;
+        while from > 0 && chars[from - 1].is_whitespace() {
+            from -= 1;
+        }
+        while from > 0 && !chars[from - 1].is_whitespace() {
+            from -= 1;
+        }
+        let start = char_to_byte(&self.query, from);
+        let end = char_to_byte(&self.query, self.query_cursor);
+        self.query.replace_range(start..end, "");
+        self.query_cursor = from;
+        self.note_query_changed();
+    }
+
     pub fn delete_query_start(&mut self) {
         let end = char_to_byte(&self.query, self.query_cursor);
         self.query.replace_range(..end, "");
@@ -817,6 +985,58 @@ impl FilePicker {
         let start = char_to_byte(&self.query, self.query_cursor);
         self.query.truncate(start);
         self.rank(true, false);
+    }
+
+    pub(crate) fn delete_query_end_unranked(&mut self) {
+        if self.query_cursor >= self.query.chars().count() {
+            return;
+        }
+        let start = char_to_byte(&self.query, self.query_cursor);
+        self.query.truncate(start);
+        self.note_query_changed();
+    }
+
+    pub(crate) fn apply_background_matches(
+        &mut self,
+        matches: Vec<FuzzyMatch>,
+        positions: &[Option<usize>],
+        complete: bool,
+    ) -> Vec<FuzzyMatch> {
+        let selected = self
+            .selection_user_owned
+            .then(|| self.selected_match().map(|found| found.entry))
+            .flatten();
+        let old = std::mem::replace(&mut self.matches, matches);
+        self.selected = selected
+            .and_then(|entry| positions.get(entry).copied().flatten())
+            .unwrap_or(0);
+        if complete {
+            self.ranking = false;
+        }
+        old
+    }
+
+    pub(crate) fn preview_request(&self) -> Option<&(u64, PickerTarget)> {
+        self.preview_request.as_ref()
+    }
+
+    pub(crate) fn set_preview_request(&mut self, request: Option<(u64, PickerTarget)>) {
+        self.preview_request = request;
+    }
+
+    pub(crate) fn begin_preview_request(&mut self, target: PickerTarget) -> Option<u64> {
+        if self
+            .preview_request
+            .as_ref()
+            .is_some_and(|(_, pending)| pending == &target)
+        {
+            return None;
+        }
+        let request = self.next_preview_request_id;
+        self.next_preview_request_id = self.next_preview_request_id.wrapping_add(1).max(1);
+        self.preview_request = Some((request, target));
+        self.preview = None;
+        Some(request)
     }
 
     pub fn query_left(&mut self) {
@@ -1548,6 +1768,21 @@ pub enum FilePickerEvent {
         scan_id: u64,
         entries: Vec<FileHits>,
     },
+    Ranked {
+        scan_id: u64,
+        query_revision: u64,
+        matches: Vec<FuzzyMatch>,
+        match_positions: Vec<Option<usize>>,
+        finder_matches: Option<Vec<crate::finder::FinderMatch>>,
+        finder_revision: Option<u64>,
+        finder_positions: HashMap<crate::finder::FinderMatchSource, usize>,
+    },
+    Preview {
+        scan_id: u64,
+        query_revision: u64,
+        request_id: u64,
+        preview: FilePreview,
+    },
     Finished {
         scan_id: u64,
         skipped: usize,
@@ -1557,6 +1792,745 @@ pub enum FilePickerEvent {
         scan_id: u64,
         message: String,
     },
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct FileRankCandidate {
+    entry: usize,
+    path: PathBuf,
+    relative: String,
+    text: String,
+    row: Option<usize>,
+    candidate_characters: usize,
+    is_dir: bool,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct FileRankRequest {
+    pub scan_id: u64,
+    pub query_revision: u64,
+    pub query: String,
+    pub directory_only: bool,
+    pub kind: FilePickerKind,
+    pub finder: Option<crate::finder::FinderFileRankContext>,
+}
+
+#[derive(Debug)]
+pub(crate) struct DiscardedPickerCorpus {
+    files: Vec<PickerFile>,
+    entries: Vec<FileEntry>,
+    matches: Vec<FuzzyMatch>,
+    path_files: HashMap<PathBuf, u32>,
+    preview: Option<FilePreview>,
+    scan_query: String,
+    error: Option<String>,
+    preview_request: Option<(u64, PickerTarget)>,
+}
+
+impl DiscardedPickerCorpus {
+    fn discard(self) {
+        let Self {
+            files,
+            entries,
+            matches,
+            path_files,
+            preview,
+            scan_query,
+            error,
+            preview_request,
+        } = self;
+        drop((
+            files,
+            entries,
+            matches,
+            path_files,
+            preview,
+            scan_query,
+            error,
+            preview_request,
+        ));
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct FilePreviewRequest {
+    pub scan_id: u64,
+    pub query_revision: u64,
+    pub request_id: u64,
+    pub path: PathBuf,
+    pub is_dir: bool,
+    pub content_match: Option<(usize, Vec<usize>)>,
+    pub show_hidden: bool,
+}
+
+#[derive(Debug)]
+struct FilePreviewMailbox {
+    pending: Mutex<Option<FilePreviewRequest>>,
+    wake: sync_mpsc::SyncSender<()>,
+}
+
+impl FilePreviewMailbox {
+    fn request(&self, request: FilePreviewRequest) {
+        *self
+            .pending
+            .lock()
+            .unwrap_or_else(|error| error.into_inner()) = Some(request);
+        let _ = self.wake.try_send(());
+    }
+}
+
+#[derive(Debug)]
+struct DiscardedFileRankResult {
+    matches: Vec<FuzzyMatch>,
+    finder_matches: Vec<crate::finder::FinderMatch>,
+    match_positions: Vec<Option<usize>>,
+    finder_positions: HashMap<crate::finder::FinderMatchSource, usize>,
+}
+
+struct WorkerGarbage(Box<dyn Send>);
+
+impl std::fmt::Debug for WorkerGarbage {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("WorkerGarbage(..)")
+    }
+}
+
+#[derive(Debug, Default)]
+struct PendingFileRankWork {
+    reset: Option<(u64, FilePickerKind)>,
+    add_scan_id: u64,
+    candidates: Vec<FileRankCandidate>,
+    query: Option<(u64, FileRankRequest)>,
+    finder: Option<(u64, u64, Option<crate::finder::FinderFileRankContext>)>,
+    flush: Option<u64>,
+    discarded: Vec<DiscardedFileRankResult>,
+    discarded_corpora: Vec<DiscardedPickerCorpus>,
+    discarded_candidates: Vec<Vec<FileRankCandidate>>,
+    discarded_queries: Vec<FileRankRequest>,
+    discarded_finders: Vec<Option<crate::finder::FinderFileRankContext>>,
+    garbage: Vec<WorkerGarbage>,
+    close: bool,
+}
+
+#[derive(Debug)]
+struct FileRankMailbox {
+    pending: Mutex<PendingFileRankWork>,
+    wake: sync_mpsc::SyncSender<()>,
+}
+
+impl FileRankMailbox {
+    fn notify(&self) {
+        let _ = self.wake.try_send(());
+    }
+
+    fn reset(&self, scan_id: u64, kind: FilePickerKind) {
+        let mut pending = self
+            .pending
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        pending.reset = Some((scan_id, kind));
+        // A newly opened picker supersedes a close that the worker has not
+        // consumed yet. Keeping `close` set would make the worker discard this
+        // reset and every coalesced candidate/query behind it.
+        pending.close = false;
+        pending.add_scan_id = scan_id;
+        let candidates = std::mem::take(&mut pending.candidates);
+        if !candidates.is_empty() {
+            pending.discarded_candidates.push(candidates);
+        }
+        if let Some((_, query)) = pending.query.take() {
+            pending.discarded_queries.push(query);
+        }
+        if let Some((_, _, finder)) = pending.finder.take() {
+            pending.discarded_finders.push(finder);
+        }
+        pending.flush = None;
+        drop(pending);
+        self.notify();
+    }
+
+    fn add(&self, scan_id: u64, candidates: Vec<FileRankCandidate>) {
+        let mut pending = self
+            .pending
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if pending.add_scan_id != scan_id {
+            pending.add_scan_id = scan_id;
+            let discarded = std::mem::take(&mut pending.candidates);
+            if !discarded.is_empty() {
+                pending.discarded_candidates.push(discarded);
+            }
+        }
+        pending.candidates.extend(candidates);
+        drop(pending);
+        self.notify();
+    }
+
+    fn query(&self, token: u64, request: FileRankRequest) {
+        let mut pending = self
+            .pending
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if let Some((_, discarded)) = pending.query.replace((token, request)) {
+            pending.discarded_queries.push(discarded);
+        }
+        drop(pending);
+        self.notify();
+    }
+
+    fn finder_context(
+        &self,
+        scan_id: u64,
+        query_revision: u64,
+        finder: Option<crate::finder::FinderFileRankContext>,
+    ) {
+        let mut pending = self
+            .pending
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if let Some((pending_scan, pending_query, pending_finder)) = pending.finder.as_mut()
+            && *pending_scan == scan_id
+            && *pending_query == query_revision
+        {
+            match finder {
+                Some(finder) => compose_finder_context(pending_finder, finder),
+                None => *pending_finder = None,
+            }
+            drop(pending);
+            self.notify();
+            return;
+        }
+        if let Some((_, _, discarded)) = pending.finder.replace((scan_id, query_revision, finder)) {
+            pending.discarded_finders.push(discarded);
+        }
+        drop(pending);
+        self.notify();
+    }
+
+    fn flush(&self, scan_id: u64) {
+        let mut pending = self
+            .pending
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        pending.flush = Some(scan_id);
+        drop(pending);
+        self.notify();
+    }
+
+    fn discard(&self, result: DiscardedFileRankResult) {
+        let mut pending = self
+            .pending
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        pending.discarded.push(result);
+        drop(pending);
+        self.notify();
+    }
+
+    fn discard_corpus(&self, corpus: DiscardedPickerCorpus) {
+        let mut pending = self
+            .pending
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        pending.discarded_corpora.push(corpus);
+        drop(pending);
+        self.notify();
+    }
+
+    fn discard_owned(&self, value: impl Send + 'static) {
+        let mut pending = self
+            .pending
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        pending.garbage.push(WorkerGarbage(Box::new(value)));
+        drop(pending);
+        self.notify();
+    }
+
+    fn close(&self) {
+        let mut pending = self
+            .pending
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let candidates = std::mem::take(&mut pending.candidates);
+        if !candidates.is_empty() {
+            pending.discarded_candidates.push(candidates);
+        }
+        if let Some((_, query)) = pending.query.take() {
+            pending.discarded_queries.push(query);
+        }
+        if let Some((_, _, finder)) = pending.finder.take() {
+            pending.discarded_finders.push(finder);
+        }
+        pending.reset = None;
+        pending.flush = None;
+        pending.close = true;
+        drop(pending);
+        self.notify();
+    }
+}
+
+struct FileRankState {
+    scan_id: u64,
+    kind: FilePickerKind,
+    candidates: Vec<FileRankCandidate>,
+    query_revision: u64,
+    query: String,
+    directory_only: bool,
+    matches: Vec<FuzzyMatch>,
+    finder: Option<crate::finder::FinderFileRankContext>,
+    token: u64,
+    ranked_candidates: usize,
+}
+
+impl Default for FileRankState {
+    fn default() -> Self {
+        Self {
+            scan_id: 0,
+            kind: FilePickerKind::Files,
+            candidates: Vec::new(),
+            query_revision: 0,
+            query: String::new(),
+            directory_only: false,
+            matches: Vec::new(),
+            finder: None,
+            token: 0,
+            ranked_candidates: 0,
+        }
+    }
+}
+
+fn close_file_rank_state(state: &mut FileRankState) {
+    *state = FileRankState::default();
+}
+
+fn file_rank_worker(
+    mailbox: Arc<FileRankMailbox>,
+    wake: sync_mpsc::Receiver<()>,
+    events: Sender<FilePickerEvent>,
+    active_rank: Arc<AtomicU64>,
+) {
+    let mut state = FileRankState::default();
+    while wake.recv().is_ok() {
+        let mut pending = {
+            let mut queued = mailbox
+                .pending
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            std::mem::take(&mut *queued)
+        };
+        for discarded in pending.discarded.drain(..) {
+            drop((
+                discarded.matches,
+                discarded.finder_matches,
+                discarded.match_positions,
+                discarded.finder_positions,
+            ));
+        }
+        for corpus in pending.discarded_corpora {
+            corpus.discard();
+        }
+        for WorkerGarbage(value) in pending.garbage {
+            drop(value);
+        }
+        drop((
+            pending.discarded_candidates,
+            pending.discarded_queries,
+            pending.discarded_finders,
+        ));
+        if pending.close {
+            close_file_rank_state(&mut state);
+            continue;
+        }
+        if let Some((scan_id, kind)) = pending.reset {
+            state = FileRankState {
+                scan_id,
+                kind,
+                ..FileRankState::default()
+            };
+        }
+        if pending.add_scan_id == state.scan_id && !pending.candidates.is_empty() {
+            let first = state.candidates.len();
+            debug_assert!(
+                pending
+                    .candidates
+                    .iter()
+                    .enumerate()
+                    .all(|(offset, candidate)| candidate.entry == first + offset)
+            );
+            state.candidates.append(&mut pending.candidates);
+        }
+
+        let mut publish = false;
+        if let Some((token, request)) = pending.query
+            && request.scan_id == state.scan_id
+        {
+            state.token = token;
+            state.kind = request.kind;
+            state.query_revision = request.query_revision;
+            state.query = request.query;
+            state.directory_only = request.directory_only;
+            state.finder = None;
+            if let Some(finder) = request.finder {
+                apply_finder_context(&mut state.finder, finder);
+            }
+            let Some(mut matches) = rank_file_candidates(
+                &state.candidates,
+                &state.query,
+                state.directory_only,
+                state.kind,
+                || active_rank.load(Ordering::Acquire) != token,
+            ) else {
+                continue;
+            };
+            if active_rank.load(Ordering::Acquire) != token {
+                continue;
+            }
+            sort_file_matches(&mut matches, &state.candidates, &state.query);
+            if active_rank.load(Ordering::Acquire) != token {
+                continue;
+            }
+            state.matches = matches;
+            state.ranked_candidates = state.candidates.len();
+            publish = true;
+        }
+        if let Some((scan_id, query_revision, finder)) = pending.finder
+            && scan_id == state.scan_id
+            && query_revision == state.query_revision
+        {
+            match finder {
+                Some(finder) => apply_finder_context(&mut state.finder, finder),
+                None => state.finder = None,
+            }
+            publish = true;
+        }
+        let flush = pending.flush == Some(state.scan_id);
+        if state.ranked_candidates < state.candidates.len()
+            && (flush || state.candidates.len() - state.ranked_candidates >= RANK_PUBLISH_BATCH)
+        {
+            let first = state.ranked_candidates;
+            let mut additions = rank_file_candidates(
+                &state.candidates[first..],
+                &state.query,
+                state.directory_only,
+                state.kind,
+                || false,
+            )
+            .unwrap_or_default();
+            sort_file_matches(&mut additions, &state.candidates, &state.query);
+            merge_file_matches(
+                &mut state.matches,
+                additions,
+                &state.candidates,
+                &state.query,
+            );
+            state.ranked_candidates = state.candidates.len();
+            publish = true;
+        } else if flush {
+            publish = true;
+        }
+        if !publish {
+            continue;
+        }
+        let (finder_matches, finder_revision, finder_positions) = combined_finder_matches(&state);
+        let mut match_positions = vec![None; state.candidates.len()];
+        for (position, found) in state.matches.iter().enumerate() {
+            match_positions[found.entry] = Some(position);
+        }
+        let _ = events.blocking_send(FilePickerEvent::Ranked {
+            scan_id: state.scan_id,
+            query_revision: state.query_revision,
+            matches: state.matches.clone(),
+            match_positions,
+            finder_matches,
+            finder_revision,
+            finder_positions,
+        });
+    }
+}
+
+fn file_preview_worker(
+    mailbox: Arc<FilePreviewMailbox>,
+    wake: sync_mpsc::Receiver<()>,
+    events: Sender<FilePickerEvent>,
+    active: Arc<AtomicU64>,
+) {
+    while wake.recv().is_ok() {
+        let Some(request) = mailbox
+            .pending
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .take()
+        else {
+            continue;
+        };
+        let FilePreviewRequest {
+            scan_id,
+            query_revision,
+            request_id,
+            path,
+            is_dir,
+            content_match,
+            show_hidden,
+        } = request;
+        let preview = if is_dir {
+            FilePreview::from_directory(&path, show_hidden)
+        } else if let Some((row, emphasis)) = content_match {
+            FilePreview::snippet_from_path(&path, row, emphasis)
+        } else {
+            FilePreview::from_path(&path)
+        };
+        if active.load(Ordering::Acquire) == request_id {
+            let _ = events.blocking_send(FilePickerEvent::Preview {
+                scan_id,
+                query_revision,
+                request_id,
+                preview,
+            });
+        }
+    }
+}
+
+fn rank_file_candidates(
+    candidates: &[FileRankCandidate],
+    query: &str,
+    directory_only: bool,
+    kind: FilePickerKind,
+    mut cancelled: impl FnMut() -> bool,
+) -> Option<Vec<FuzzyMatch>> {
+    let candidate_kind = match kind {
+        FilePickerKind::Files => FuzzyCandidate::Path,
+        FilePickerKind::Contents => FuzzyCandidate::Line,
+    };
+    let mut matcher = FuzzyMatcher::for_candidate(query, candidate_kind);
+    let mut matches = Vec::new();
+    for (offset, candidate) in candidates.iter().enumerate() {
+        if offset % 128 == 0 && cancelled() {
+            return None;
+        }
+        if directory_only && !candidate.is_dir {
+            continue;
+        }
+        if let Some((score, positions)) = matcher.score(&candidate.text) {
+            matches.push(FuzzyMatch {
+                entry: candidate.entry,
+                score,
+                positions,
+            });
+        }
+    }
+    Some(matches)
+}
+
+fn file_match_order(
+    left: &FuzzyMatch,
+    right: &FuzzyMatch,
+    candidates: &[FileRankCandidate],
+    query: &str,
+) -> std::cmp::Ordering {
+    let left_entry = &candidates[left.entry];
+    let right_entry = &candidates[right.entry];
+    if query.is_empty() {
+        return (&left_entry.relative, left_entry.row)
+            .cmp(&(&right_entry.relative, right_entry.row));
+    }
+    right
+        .score
+        .cmp(&left.score)
+        .then_with(|| {
+            left_entry
+                .candidate_characters
+                .cmp(&right_entry.candidate_characters)
+        })
+        .then_with(|| {
+            (&left_entry.relative, left_entry.row).cmp(&(&right_entry.relative, right_entry.row))
+        })
+}
+
+fn sort_file_matches(matches: &mut [FuzzyMatch], candidates: &[FileRankCandidate], query: &str) {
+    matches.sort_by(|left, right| file_match_order(left, right, candidates, query));
+}
+
+fn merge_file_matches(
+    current: &mut Vec<FuzzyMatch>,
+    additions: Vec<FuzzyMatch>,
+    candidates: &[FileRankCandidate],
+    query: &str,
+) {
+    if additions.is_empty() {
+        return;
+    }
+    let mut existing = std::mem::take(current).into_iter().peekable();
+    let mut incoming = additions.into_iter().peekable();
+    let mut merged = Vec::with_capacity(existing.len() + incoming.len());
+    while let (Some(left), Some(right)) = (existing.peek(), incoming.peek()) {
+        if file_match_order(left, right, candidates, query).is_le() {
+            merged.push(existing.next().unwrap());
+        } else {
+            merged.push(incoming.next().unwrap());
+        }
+    }
+    merged.extend(existing);
+    merged.extend(incoming);
+    *current = merged;
+}
+
+fn combined_finder_matches(
+    state: &FileRankState,
+) -> (
+    Option<Vec<crate::finder::FinderMatch>>,
+    Option<u64>,
+    HashMap<crate::finder::FinderMatchSource, usize>,
+) {
+    let Some(finder) = state.finder.as_ref() else {
+        return (None, None, HashMap::new());
+    };
+    let mut matches = state
+        .matches
+        .iter()
+        .filter(|found| {
+            !finder
+                .suppressed_paths
+                .contains(&state.candidates[found.entry].path)
+        })
+        .map(|found| crate::finder::FinderMatch {
+            source: crate::finder::FinderMatchSource::File(found.entry),
+            emphasis: found.positions.clone(),
+            detail_emphasis: Vec::new(),
+            score: found.score,
+            type_boost: finder.file_boost,
+        })
+        .chain(
+            finder
+                .resource_matches
+                .iter()
+                .map(crate::finder::resource_to_finder_match),
+        )
+        .collect::<Vec<_>>();
+    if finder.sort {
+        matches.sort_by(crate::finder::finder_match_order);
+    }
+    if state.kind == FilePickerKind::Contents && matches.len() > CONTENT_ENTRY_LIMIT {
+        matches.truncate(CONTENT_ENTRY_LIMIT);
+    }
+    let positions = matches
+        .iter()
+        .enumerate()
+        .map(|(position, found)| (found.source, position))
+        .collect();
+    (Some(matches), Some(finder.revision), positions)
+}
+
+fn apply_finder_context(
+    current: &mut Option<crate::finder::FinderFileRankContext>,
+    mut incoming: crate::finder::FinderFileRankContext,
+) {
+    if incoming.replace_resources || current.is_none() {
+        if !incoming.sort {
+            incoming.resource_matches.sort_by_key(|found| found.item);
+        }
+        incoming.replace_resources = false;
+        incoming.removed_resources.clear();
+        incoming.remap_resources = None;
+        *current = Some(incoming);
+        return;
+    }
+    apply_finder_delta(current.as_mut().expect("checked as present"), incoming);
+}
+
+fn apply_finder_delta(
+    current: &mut crate::finder::FinderFileRankContext,
+    mut incoming: crate::finder::FinderFileRankContext,
+) {
+    if let Some(remap) = incoming.remap_resources.take() {
+        current.resource_matches.retain_mut(|found| {
+            let Some(item) = remap.get(found.item).copied().flatten() else {
+                return false;
+            };
+            found.item = item;
+            true
+        });
+    }
+    if !incoming.removed_resources.is_empty() {
+        incoming.removed_resources.sort_unstable();
+        incoming.removed_resources.dedup();
+        current.resource_matches.retain(|found| {
+            incoming
+                .removed_resources
+                .binary_search(&found.item)
+                .is_err()
+        });
+    }
+    current
+        .resource_matches
+        .append(&mut incoming.resource_matches);
+    current.revision = incoming.revision;
+    current.suppressed_paths = incoming.suppressed_paths;
+    current.file_boost = incoming.file_boost;
+    current.sort = incoming.sort;
+    if !current.sort {
+        current.resource_matches.sort_by_key(|found| found.item);
+    }
+}
+
+fn compose_finder_context(
+    current: &mut Option<crate::finder::FinderFileRankContext>,
+    mut incoming: crate::finder::FinderFileRankContext,
+) {
+    if incoming.replace_resources || current.is_none() {
+        *current = Some(incoming);
+        return;
+    }
+    let current = current.as_mut().expect("checked as present");
+    if current.replace_resources {
+        apply_finder_delta(current, incoming);
+        current.replace_resources = true;
+        return;
+    }
+    if let Some(next_remap) = incoming.remap_resources.take() {
+        for found in &mut current.resource_matches {
+            let Some(item) = next_remap.get(found.item).copied().flatten() else {
+                found.item = usize::MAX;
+                continue;
+            };
+            found.item = item;
+        }
+        current
+            .resource_matches
+            .retain(|found| found.item != usize::MAX);
+        current.removed_resources = current
+            .removed_resources
+            .drain(..)
+            .filter_map(|item| next_remap.get(item).copied().flatten())
+            .collect();
+        current.remap_resources = Some(match current.remap_resources.take() {
+            Some(previous) => previous
+                .into_iter()
+                .map(|item| item.and_then(|item| next_remap.get(item).copied().flatten()))
+                .collect(),
+            None => next_remap,
+        });
+    }
+    if !incoming.removed_resources.is_empty() {
+        incoming.removed_resources.sort_unstable();
+        incoming.removed_resources.dedup();
+        current.resource_matches.retain(|found| {
+            incoming
+                .removed_resources
+                .binary_search(&found.item)
+                .is_err()
+        });
+    }
+    current
+        .removed_resources
+        .append(&mut incoming.removed_resources);
+    current
+        .resource_matches
+        .append(&mut incoming.resource_matches);
+    current.revision = incoming.revision;
+    current.suppressed_paths = incoming.suppressed_paths;
+    current.file_boost = incoming.file_boost;
+    current.sort = incoming.sort;
 }
 
 /// One matching line, named only by where it sits in its file.
@@ -1598,10 +2572,168 @@ impl FileHits {
 #[derive(Clone, Debug)]
 pub struct FileScanner {
     active: Arc<AtomicU64>,
+    active_rank: Arc<AtomicU64>,
+    next_rank: Arc<AtomicU64>,
+    active_preview: Arc<AtomicU64>,
+    rank_commands: Arc<OnceLock<Option<Arc<FileRankMailbox>>>>,
+    preview_commands: Arc<OnceLock<Option<Arc<FilePreviewMailbox>>>>,
     events: Sender<FilePickerEvent>,
 }
 
 impl FileScanner {
+    fn rank_mailbox(&self, scan_id: u64) -> Option<&Arc<FileRankMailbox>> {
+        self.rank_commands
+            .get_or_init(|| {
+                let (wake, receiver) = sync_mpsc::sync_channel(1);
+                let mailbox = Arc::new(FileRankMailbox {
+                    pending: Mutex::new(PendingFileRankWork::default()),
+                    wake,
+                });
+                let events = self.events.clone();
+                let rank_events = self.events.clone();
+                let rank_cancellation = self.active_rank.clone();
+                let worker_mailbox = mailbox.clone();
+                match thread::Builder::new()
+                    .name("runyte-file-rank".to_owned())
+                    .spawn(move || {
+                        file_rank_worker(worker_mailbox, receiver, rank_events, rank_cancellation);
+                    }) {
+                    Ok(_) => Some(mailbox),
+                    Err(error) => {
+                        let _ = events.try_send(FilePickerEvent::Failed {
+                            scan_id,
+                            message: format!("failed to start file ranker: {error}"),
+                        });
+                        None
+                    }
+                }
+            })
+            .as_ref()
+    }
+
+    fn reset_ranker(&self, scan_id: u64, kind: FilePickerKind) {
+        self.active_rank.store(
+            self.next_rank.fetch_add(1, Ordering::Relaxed),
+            Ordering::Release,
+        );
+        if let Some(mailbox) = self.rank_mailbox(scan_id) {
+            mailbox.reset(scan_id, kind);
+        }
+    }
+
+    pub(crate) fn add_rank_candidates(&self, scan_id: u64, candidates: Vec<FileRankCandidate>) {
+        if !candidates.is_empty()
+            && let Some(mailbox) = self.rank_mailbox(scan_id)
+        {
+            mailbox.add(scan_id, candidates);
+        }
+    }
+
+    pub(crate) fn rank(&self, request: FileRankRequest) {
+        let token = self.next_rank.fetch_add(1, Ordering::Relaxed);
+        self.active_rank.store(token, Ordering::Release);
+        if let Some(mailbox) = self.rank_mailbox(request.scan_id) {
+            mailbox.query(token, request);
+        }
+    }
+
+    pub(crate) fn update_finder_context(
+        &self,
+        scan_id: u64,
+        query_revision: u64,
+        finder: Option<crate::finder::FinderFileRankContext>,
+    ) {
+        if let Some(mailbox) = self.rank_mailbox(scan_id) {
+            mailbox.finder_context(scan_id, query_revision, finder);
+        }
+    }
+
+    pub(crate) fn flush_rank(&self, scan_id: u64) {
+        if let Some(mailbox) = self.rank_mailbox(scan_id) {
+            mailbox.flush(scan_id);
+        }
+    }
+
+    pub(crate) fn discard_rank_result(
+        &self,
+        matches: Vec<FuzzyMatch>,
+        finder_matches: Vec<crate::finder::FinderMatch>,
+        match_positions: Vec<Option<usize>>,
+        finder_positions: HashMap<crate::finder::FinderMatchSource, usize>,
+    ) {
+        if let Some(mailbox) = self.rank_commands.get().and_then(Option::as_ref) {
+            mailbox.discard(DiscardedFileRankResult {
+                matches,
+                finder_matches,
+                match_positions,
+                finder_positions,
+            });
+        }
+    }
+
+    pub(crate) fn discard_picker_corpus(&self, corpus: DiscardedPickerCorpus) {
+        if let Some(mailbox) = self.rank_commands.get().and_then(Option::as_ref) {
+            mailbox.discard_corpus(corpus);
+        } else {
+            corpus.discard();
+        }
+    }
+
+    pub(crate) fn discard_owned(&self, value: impl Send + 'static) {
+        if let Some(mailbox) = self.rank_commands.get().and_then(Option::as_ref) {
+            mailbox.discard_owned(value);
+        } else {
+            drop(value);
+        }
+    }
+
+    pub(crate) fn close_ranker(&self) {
+        self.active_rank.store(
+            self.next_rank.fetch_add(1, Ordering::Relaxed),
+            Ordering::Release,
+        );
+        if let Some(mailbox) = self.rank_commands.get().and_then(Option::as_ref) {
+            mailbox.close();
+        }
+    }
+
+    pub(crate) fn preview(&self, request: FilePreviewRequest) {
+        self.active_preview
+            .store(request.request_id, Ordering::Release);
+        let commands = self.preview_commands.get_or_init(|| {
+            let (wake, receiver) = sync_mpsc::sync_channel(1);
+            let mailbox = Arc::new(FilePreviewMailbox {
+                pending: Mutex::new(None),
+                wake,
+            });
+            let events = self.events.clone();
+            let preview_events = self.events.clone();
+            let active = self.active_preview.clone();
+            let worker_mailbox = mailbox.clone();
+            match thread::Builder::new()
+                .name("runyte-file-preview".to_owned())
+                .spawn(move || {
+                    file_preview_worker(worker_mailbox, receiver, preview_events, active);
+                }) {
+                Ok(_) => Some(mailbox),
+                Err(error) => {
+                    let _ = events.try_send(FilePickerEvent::Preview {
+                        scan_id: request.scan_id,
+                        query_revision: request.query_revision,
+                        request_id: request.request_id,
+                        preview: FilePreview::Unreadable(format!(
+                            "failed to start file previewer: {error}"
+                        )),
+                    });
+                    None
+                }
+            }
+        });
+        if let Some(mailbox) = commands {
+            mailbox.request(request);
+        }
+    }
+
     pub fn scan(
         &self,
         scan_id: u64,
@@ -1610,6 +2742,7 @@ impl FileScanner {
         state_root: PathBuf,
         show_hidden: bool,
     ) {
+        self.reset_ranker(scan_id, FilePickerKind::Files);
         self.active.store(scan_id, Ordering::Release);
         let active = self.active.clone();
         let events = self.events.clone();
@@ -1671,6 +2804,7 @@ impl FileScanner {
         show_hidden: bool,
         query: String,
     ) {
+        self.reset_ranker(scan_id, FilePickerKind::Contents);
         self.active.store(scan_id, Ordering::Release);
         let active = self.active.clone();
         let events = self.events.clone();
@@ -1697,7 +2831,8 @@ impl FileScanner {
                     || active.load(Ordering::Acquire) != scan_id,
                     |paths| {
                         let mut entries = Vec::<FileHits>::new();
-                        let mut batch = 0;
+                        let mut batch = 0usize;
+                        let mut admitted = 0usize;
                         for path in paths {
                             if active.load(Ordering::Acquire) != scan_id {
                                 return false;
@@ -1705,18 +2840,41 @@ impl FileScanner {
                             let Some(mut hits) = content_entries(&path.path, &query) else {
                                 continue;
                             };
-                            if hits.truncate(CONTENT_ENTRY_LIMIT - emitted - batch) {
+                            if hits.truncate(CONTENT_ENTRY_LIMIT - emitted - admitted) {
                                 limited = true;
                             }
-                            batch += hits.len();
-                            if !hits.is_empty() {
-                                entries.push(hits);
+                            admitted += hits.len();
+                            let hit_path = hits.path;
+                            let mut lines = hits.lines.into_iter();
+                            loop {
+                                let available = SCAN_BATCH - batch;
+                                let chunk = lines.by_ref().take(available).collect::<Vec<_>>();
+                                if chunk.is_empty() {
+                                    break;
+                                }
+                                batch += chunk.len();
+                                entries.push(FileHits {
+                                    path: hit_path.clone(),
+                                    lines: chunk,
+                                });
+                                if batch == SCAN_BATCH {
+                                    if events
+                                        .blocking_send(FilePickerEvent::Content {
+                                            scan_id,
+                                            entries: std::mem::take(&mut entries),
+                                        })
+                                        .is_err()
+                                    {
+                                        return false;
+                                    }
+                                    batch = 0;
+                                }
                             }
                             if limited {
                                 break;
                             }
                         }
-                        emitted += batch;
+                        emitted += admitted;
                         (entries.is_empty()
                             || events
                                 .blocking_send(FilePickerEvent::Content { scan_id, entries })
@@ -1755,14 +2913,26 @@ impl FileScanner {
         let _ = self
             .active
             .compare_exchange(scan_id, 0, Ordering::AcqRel, Ordering::Acquire);
+        self.active_rank.store(
+            self.next_rank.fetch_add(1, Ordering::Relaxed),
+            Ordering::Release,
+        );
+        self.active_preview.store(0, Ordering::Release);
     }
 }
 
 pub fn scanner() -> (FileScanner, Receiver<FilePickerEvent>) {
     let (events, receiver) = channel(16);
+    let active_rank = Arc::new(AtomicU64::new(0));
+    let next_rank = Arc::new(AtomicU64::new(1));
     (
         FileScanner {
             active: Arc::new(AtomicU64::new(0)),
+            active_rank,
+            next_rank,
+            active_preview: Arc::new(AtomicU64::new(0)),
+            rank_commands: Arc::new(OnceLock::new()),
+            preview_commands: Arc::new(OnceLock::new()),
             events,
         },
         receiver,
@@ -1872,6 +3042,15 @@ pub fn line_hits(text: &str, query: &str) -> Vec<LineHit> {
 pub fn line_hit(line: &str, query: &str) -> Option<LineHit> {
     let without_trailing = line.trim_end();
     let trimmed = without_trailing.trim_start();
+    let column = without_trailing
+        .chars()
+        .take_while(|character| character.is_whitespace())
+        .count();
+    line_hit_from_trimmed(trimmed, query, column)
+}
+
+pub(crate) fn line_hit_from_trimmed(trimmed: &str, query: &str, column: usize) -> Option<LineHit> {
+    let trimmed = trimmed.trim_end();
     // The ranked candidate is the truncated line, so the filter has to read
     // the same text: a query matched against the tail of a very long line
     // would produce an entry nothing later can highlight.
@@ -1881,10 +3060,7 @@ pub fn line_hit(line: &str, query: &str) -> Option<LineHit> {
     };
     (!text.is_empty() && matches_fuzzy(query, text)).then(|| LineHit {
         row: 0,
-        column: without_trailing
-            .chars()
-            .take_while(|character| character.is_whitespace())
-            .count(),
+        column,
         text: text.to_owned(),
     })
 }
@@ -2202,7 +3378,7 @@ fn glob_expression(pattern: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, path::Path};
+    use std::{collections::HashSet, fs, path::Path};
 
     use super::*;
 
@@ -2458,6 +3634,407 @@ mod tests {
     }
 
     #[test]
+    fn deferred_query_edit_never_ranks_the_candidate_table() {
+        let root = PathBuf::from("/project");
+        let mut picker = FilePicker::new(1, root.clone());
+        picker.add_paths(vec![ScanEntry::file(root.join("alpha.rs"))]);
+        assert_eq!(picker.matches.len(), 1);
+
+        picker.insert_query_unranked('z');
+
+        assert_eq!(picker.query, "z");
+        assert_eq!(picker.query_revision, 1);
+        assert!(picker.ranking);
+        assert_eq!(
+            picker.matches.len(),
+            1,
+            "the old immutable result stays visible until the worker answers"
+        );
+    }
+
+    #[test]
+    fn background_ranker_answers_the_latest_query_revision() {
+        let (scanner, mut events) = scanner();
+        let root = PathBuf::from("/project");
+        scanner.reset_ranker(7, FilePickerKind::Files);
+        let mut picker = FilePicker::new(7, root.clone());
+        let candidates = picker.add_paths_unranked(vec![
+            ScanEntry::file(root.join("alpha.rs")),
+            ScanEntry::file(root.join("beta.rs")),
+        ]);
+        scanner.add_rank_candidates(7, candidates);
+        picker.insert_query_unranked('b');
+        scanner.rank(picker.background_rank_request(None));
+
+        let ranked = loop {
+            let event = events.blocking_recv().unwrap();
+            if let FilePickerEvent::Ranked {
+                scan_id: 7,
+                query_revision: 1,
+                matches,
+                ..
+            } = event
+            {
+                break matches;
+            }
+        };
+        assert_eq!(ranked.len(), 1);
+        assert_eq!(picker.view(ranked[0].entry).unwrap().relative, "beta.rs");
+    }
+
+    #[test]
+    fn blocked_ranker_coalesces_scan_batches_and_keeps_only_the_latest_query() {
+        let (wake, receiver) = sync_mpsc::sync_channel(1);
+        let mailbox = FileRankMailbox {
+            pending: Mutex::new(PendingFileRankWork::default()),
+            wake,
+        };
+        let root = PathBuf::from("/project");
+        for entry in 0..1_000 {
+            let relative = format!("file-{entry}.rs");
+            mailbox.add(
+                9,
+                vec![FileRankCandidate {
+                    entry,
+                    path: root.join(&relative),
+                    text: relative.clone(),
+                    relative,
+                    row: None,
+                    candidate_characters: 12,
+                    is_dir: false,
+                }],
+            );
+        }
+        for query_revision in 1..=20 {
+            mailbox.query(
+                query_revision,
+                FileRankRequest {
+                    scan_id: 9,
+                    query_revision,
+                    query: format!("query-{query_revision}"),
+                    directory_only: false,
+                    kind: FilePickerKind::Files,
+                    finder: None,
+                },
+            );
+        }
+
+        let pending = mailbox.pending.lock().unwrap();
+        assert_eq!(pending.candidates.len(), 1_000);
+        assert_eq!(pending.query.as_ref().unwrap().1.query_revision, 20);
+        assert!(receiver.try_recv().is_ok());
+        assert!(receiver.try_recv().is_err(), "only one wake may queue");
+    }
+
+    #[test]
+    fn rank_mailbox_retires_replaced_payloads_for_worker_side_drop() {
+        let (wake, _receiver) = sync_mpsc::sync_channel(1);
+        let mailbox = FileRankMailbox {
+            pending: Mutex::new(PendingFileRankWork::default()),
+            wake,
+        };
+        let request = |revision| FileRankRequest {
+            scan_id: 3,
+            query_revision: revision,
+            query: "x".repeat(8_192),
+            directory_only: false,
+            kind: FilePickerKind::Files,
+            finder: None,
+        };
+        mailbox.add(
+            3,
+            vec![FileRankCandidate {
+                entry: 0,
+                path: PathBuf::from("/project/large"),
+                relative: "large".to_owned(),
+                text: "large".to_owned(),
+                row: None,
+                candidate_characters: 5,
+                is_dir: false,
+            }],
+        );
+        mailbox.query(1, request(1));
+        mailbox.query(2, request(2));
+        mailbox.reset(4, FilePickerKind::Contents);
+
+        let pending = mailbox.pending.lock().unwrap();
+        assert_eq!(pending.discarded_queries.len(), 2);
+        assert_eq!(pending.discarded_candidates.len(), 1);
+        assert!(pending.query.is_none());
+        assert!(pending.candidates.is_empty());
+    }
+
+    #[test]
+    fn reset_supersedes_a_pending_ranker_close() {
+        let (wake, _receiver) = sync_mpsc::sync_channel(1);
+        let mailbox = FileRankMailbox {
+            pending: Mutex::new(PendingFileRankWork::default()),
+            wake,
+        };
+        mailbox.close();
+        mailbox.reset(12, FilePickerKind::Files);
+        mailbox.add(
+            12,
+            vec![FileRankCandidate {
+                entry: 0,
+                path: PathBuf::from("/project/reopened.rs"),
+                relative: "reopened.rs".to_owned(),
+                text: "reopened.rs".to_owned(),
+                row: None,
+                candidate_characters: 11,
+                is_dir: false,
+            }],
+        );
+        mailbox.query(
+            4,
+            FileRankRequest {
+                scan_id: 12,
+                query_revision: 1,
+                query: "reopen".to_owned(),
+                directory_only: false,
+                kind: FilePickerKind::Files,
+                finder: None,
+            },
+        );
+
+        let pending = mailbox.pending.lock().unwrap();
+        assert!(!pending.close);
+        assert_eq!(pending.reset, Some((12, FilePickerKind::Files)));
+        assert_eq!(pending.candidates.len(), 1);
+        assert_eq!(pending.query.as_ref().unwrap().1.query_revision, 1);
+    }
+
+    #[test]
+    fn worker_finder_context_applies_resource_remaps_and_deltas() {
+        let context = |revision, items: &[usize], replace_resources, remap_resources| {
+            crate::finder::FinderFileRankContext {
+                revision,
+                resource_matches: items
+                    .iter()
+                    .map(|item| crate::finder::ResourceMatch {
+                        item: *item,
+                        emphasis: vec![*item],
+                        detail_emphasis: Vec::new(),
+                        score: *item as i64,
+                        type_boost: false,
+                    })
+                    .collect(),
+                replace_resources,
+                removed_resources: Vec::new(),
+                remap_resources,
+                suppressed_paths: Arc::new(HashSet::new()),
+                file_boost: false,
+                sort: true,
+            }
+        };
+        let mut current = None;
+        apply_finder_context(&mut current, context(1, &[0, 1], true, None));
+        apply_finder_context(
+            &mut current,
+            context(2, &[1], false, Some(vec![None, Some(0)])),
+        );
+
+        let current = current.unwrap();
+        assert_eq!(current.revision, 2);
+        assert_eq!(
+            current
+                .resource_matches
+                .iter()
+                .map(|found| found.item)
+                .collect::<Vec<_>>(),
+            vec![0, 1]
+        );
+    }
+
+    #[test]
+    fn worker_composes_multiple_empty_query_resource_replacements_in_source_order() {
+        let resource = |item, score| crate::finder::ResourceMatch {
+            item,
+            emphasis: Vec::new(),
+            detail_emphasis: Vec::new(),
+            score,
+            type_boost: false,
+        };
+        let context =
+            |revision, matches, removed, replace_resources| crate::finder::FinderFileRankContext {
+                revision,
+                resource_matches: matches,
+                replace_resources,
+                removed_resources: removed,
+                remap_resources: None,
+                suppressed_paths: Arc::new(HashSet::new()),
+                file_boost: false,
+                sort: false,
+            };
+        let mut materialized = None;
+        apply_finder_context(
+            &mut materialized,
+            context(
+                1,
+                vec![resource(0, 0), resource(1, 1), resource(2, 2)],
+                Vec::new(),
+                true,
+            ),
+        );
+        let mut pending = Some(context(2, vec![resource(1, 20)], vec![1], false));
+        compose_finder_context(
+            &mut pending,
+            context(3, vec![resource(2, 30)], vec![2], false),
+        );
+        apply_finder_context(&mut materialized, pending.unwrap());
+
+        let materialized = materialized.unwrap();
+        assert_eq!(
+            materialized
+                .resource_matches
+                .iter()
+                .map(|found| (found.item, found.score))
+                .collect::<Vec<_>>(),
+            vec![(0, 0), (1, 20), (2, 30)]
+        );
+    }
+
+    #[test]
+    fn worker_composition_drops_superseded_pending_additions() {
+        let resource = |item, score| crate::finder::ResourceMatch {
+            item,
+            emphasis: Vec::new(),
+            detail_emphasis: Vec::new(),
+            score,
+            type_boost: false,
+        };
+        let context =
+            |revision, matches, removed, replace_resources| crate::finder::FinderFileRankContext {
+                revision,
+                resource_matches: matches,
+                replace_resources,
+                removed_resources: removed,
+                remap_resources: None,
+                suppressed_paths: Arc::new(HashSet::new()),
+                file_boost: false,
+                sort: false,
+            };
+        let seeded = || {
+            let mut materialized = None;
+            apply_finder_context(
+                &mut materialized,
+                context(1, vec![resource(0, 0), resource(1, 1)], Vec::new(), true),
+            );
+            materialized
+        };
+
+        let mut pending = Some(context(2, vec![resource(2, 20)], Vec::new(), false));
+        compose_finder_context(&mut pending, context(3, Vec::new(), vec![2], false));
+        let mut materialized = seeded();
+        apply_finder_context(&mut materialized, pending.unwrap());
+        assert_eq!(
+            materialized
+                .unwrap()
+                .resource_matches
+                .iter()
+                .map(|found| found.item)
+                .collect::<Vec<_>>(),
+            vec![0, 1]
+        );
+
+        let mut pending = Some(context(2, vec![resource(1, 20)], Vec::new(), false));
+        compose_finder_context(
+            &mut pending,
+            context(3, vec![resource(1, 30)], vec![1], false),
+        );
+        let mut materialized = seeded();
+        apply_finder_context(&mut materialized, pending.unwrap());
+        assert_eq!(
+            materialized
+                .unwrap()
+                .resource_matches
+                .iter()
+                .map(|found| (found.item, found.score))
+                .collect::<Vec<_>>(),
+            vec![(0, 0), (1, 30)]
+        );
+    }
+
+    #[test]
+    fn attached_picker_garbage_is_destroyed_on_the_rank_worker() {
+        struct DropReporter(sync_mpsc::Sender<thread::ThreadId>);
+
+        impl Drop for DropReporter {
+            fn drop(&mut self) {
+                let _ = self.0.send(thread::current().id());
+            }
+        }
+
+        let editor_thread = thread::current().id();
+        let (scanner, _events) = scanner();
+        scanner.reset_ranker(1, FilePickerKind::Files);
+        let (dropped, observed) = sync_mpsc::channel();
+        scanner.discard_owned(DropReporter(dropped));
+
+        let worker_thread = observed
+            .recv_timeout(Duration::from_secs(1))
+            .expect("rank worker should dispose retired picker ownership");
+        assert_ne!(worker_thread, editor_thread);
+    }
+
+    #[test]
+    fn closing_the_ranker_releases_its_retained_candidate_capacity() {
+        let mut state = FileRankState {
+            candidates: Vec::with_capacity(50_000),
+            matches: Vec::with_capacity(50_000),
+            ..FileRankState::default()
+        };
+        state.candidates.push(FileRankCandidate {
+            entry: 0,
+            path: PathBuf::from("/project/large"),
+            relative: "large".to_owned(),
+            text: "large".to_owned(),
+            row: None,
+            candidate_characters: 5,
+            is_dir: false,
+        });
+
+        close_file_rank_state(&mut state);
+
+        assert_eq!(state.candidates.capacity(), 0);
+        assert_eq!(state.matches.capacity(), 0);
+    }
+
+    #[test]
+    fn preview_mailbox_keeps_one_wake_and_only_the_latest_target() {
+        let (wake, receiver) = sync_mpsc::sync_channel(1);
+        let mailbox = FilePreviewMailbox {
+            pending: Mutex::new(None),
+            wake,
+        };
+        for request_id in 1..=100 {
+            mailbox.request(FilePreviewRequest {
+                scan_id: 1,
+                query_revision: 2,
+                request_id,
+                path: PathBuf::from(format!("/project/{request_id}")),
+                is_dir: false,
+                content_match: None,
+                show_hidden: false,
+            });
+        }
+
+        assert_eq!(
+            mailbox.pending.lock().unwrap().as_ref().unwrap().request_id,
+            100
+        );
+        assert!(receiver.try_recv().is_ok());
+        assert!(receiver.try_recv().is_err());
+    }
+
+    #[test]
+    fn constructing_the_scanner_does_not_start_an_idle_ranker() {
+        let (scanner, _events) = scanner();
+        assert!(scanner.rank_commands.get().is_none());
+        assert!(scanner.preview_commands.get().is_none());
+    }
+
+    #[test]
     fn equal_scores_prefer_fewer_unicode_characters() {
         let root = PathBuf::from("/project");
         let mut picker = FilePicker::grep(1, root.clone());
@@ -2628,6 +4205,7 @@ mod tests {
                     break;
                 }
                 FilePickerEvent::Content { .. } => panic!("file scan emitted content"),
+                FilePickerEvent::Ranked { .. } | FilePickerEvent::Preview { .. } => continue,
                 FilePickerEvent::Failed { message, .. } => panic!("scan failed: {message}"),
             }
         }
@@ -3227,6 +4805,7 @@ mod tests {
                     break;
                 }
                 FilePickerEvent::Files { .. } => panic!("content scan emitted file paths"),
+                FilePickerEvent::Ranked { .. } | FilePickerEvent::Preview { .. } => continue,
                 FilePickerEvent::Failed { message, .. } => panic!("scan failed: {message}"),
             }
         }
@@ -3237,6 +4816,45 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["first line", "second line"]
         );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn one_dense_file_reaches_the_editor_in_bounded_batches() {
+        let root = temporary("bounded-background-content");
+        fs::create_dir_all(&root).unwrap();
+        let lines = (0..SCAN_BATCH * 3 + 7)
+            .map(|row| format!("matching line {row}\n"))
+            .collect::<String>();
+        fs::write(root.join("dense.txt"), lines).unwrap();
+        let (scanner, mut receiver) = scanner();
+        scanner.scan_content(
+            17,
+            root.clone(),
+            root.clone(),
+            root.join(".runyte"),
+            false,
+            "matching".to_owned(),
+        );
+
+        let mut seen = 0usize;
+        loop {
+            match receiver.blocking_recv().unwrap() {
+                FilePickerEvent::Content {
+                    scan_id: 17,
+                    entries,
+                } => {
+                    let batch = entries.iter().map(FileHits::len).sum::<usize>();
+                    assert!(batch <= SCAN_BATCH);
+                    seen += batch;
+                }
+                FilePickerEvent::Finished { scan_id: 17, .. } => break,
+                FilePickerEvent::Ranked { .. } | FilePickerEvent::Preview { .. } => continue,
+                FilePickerEvent::Failed { message, .. } => panic!("scan failed: {message}"),
+                event => panic!("unexpected event: {event:?}"),
+            }
+        }
+        assert_eq!(seen, SCAN_BATCH * 3 + 7);
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -3285,6 +4903,7 @@ mod tests {
                     break;
                 }
                 FilePickerEvent::Files { .. } => panic!("content scan emitted file paths"),
+                FilePickerEvent::Ranked { .. } | FilePickerEvent::Preview { .. } => continue,
                 FilePickerEvent::Failed { message, .. } => panic!("scan failed: {message}"),
             }
         }

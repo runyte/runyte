@@ -171,7 +171,7 @@ pub type Line = Vec<Cell>;
 /// `local` follows a line while bounded history shifts around it. `generation`
 /// keeps an active primary grid distinct from the alternate screen and from a
 /// grid whose complete contents were cleared or reset.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct TerminalLineId {
     generation: u64,
     local: u64,

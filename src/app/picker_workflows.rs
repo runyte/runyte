@@ -7,17 +7,19 @@ use super::{
     App, CONTENT_ENTRY_LIMIT, FilePicker, FilePickerEvent, FilePickerKind, FilePreview,
     FileScanner, FinderContentScan, FinderContentSource, FinderMatchSource, FinderMode,
     FinderTarget, Mode, PathBuf, Range, ResourceFinder, ResourceItem, ResourceKind, ResourceTarget,
-    Result, Selection, TerminalContentMark, TerminalSession, buffer_picker_columns, buffer_preview,
-    resource_path_fields, scan_content, scan_files, terminal_preview,
+    Result, Selection, TerminalContentMark, TerminalContentRetirement, TerminalSession,
+    buffer_picker_columns, buffer_preview, resource_path_fields, scan_content, scan_files,
+    terminal_preview,
 };
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
+use std::sync::Arc;
 
-use crate::file_picker::FileHits;
-use crate::file_picker::line_hit;
+use crate::file_picker::{FileHits, FilePreviewRequest, line_hit, line_hit_from_trimmed};
 use crate::terminal::TerminalId;
 
 const RESOURCE_CONTENT_SLICE_ROWS: usize = 128;
+const RESOURCE_CONTENT_LINE_CHARACTERS: usize = 1_024;
 
 /// Applies the part of the unified content budget still available to disk
 /// hits. Keeping this admission step outside `FilePicker::add_content` makes
@@ -33,6 +35,48 @@ pub(super) fn truncate_content_hits(entries: &mut Vec<FileHits>, mut available: 
 }
 
 impl App {
+    fn request_background_file_rank(&mut self, reset_resource_selection: bool) -> bool {
+        let Some(scanner) = self.file_scanner.clone() else {
+            return false;
+        };
+        let query = self
+            .picker
+            .as_ref()
+            .map(|picker| picker.query.clone())
+            .unwrap_or_default();
+        let finder = self.finder.as_mut().map(|finder| {
+            if finder.mode == FinderMode::Names {
+                let discarded = finder.retire_background_corpus(true);
+                scanner.discard_owned(discarded);
+                finder.begin_name_rank(&query, reset_resource_selection);
+            }
+            finder.take_file_rank_context(&query)
+        });
+        let Some(picker) = self.picker.as_mut() else {
+            return false;
+        };
+        picker.ranking = true;
+        scanner.rank(picker.background_rank_request(finder));
+        true
+    }
+
+    fn update_background_finder_context(&mut self) {
+        let Some(scanner) = self.file_scanner.clone() else {
+            return;
+        };
+        let Some(picker) = self.picker.as_ref() else {
+            return;
+        };
+        let query = picker.query.clone();
+        let scan_id = picker.scan_id;
+        let query_revision = picker.query_revision;
+        let finder = self
+            .finder
+            .as_mut()
+            .map(|finder| finder.take_file_rank_context(&query));
+        scanner.update_finder_context(scan_id, query_revision, finder);
+    }
+
     pub(super) fn open_project_picker(&mut self) -> Result<()> {
         self.open_picker_at(self.project_root.clone(), FilePickerKind::Files)?;
         self.picker.as_mut().unwrap().enable_unified_finder();
@@ -65,15 +109,9 @@ impl App {
             anyhow::anyhow!("failed to open picker at {}: {error}", root.display())
         })?;
         anyhow::ensure!(root.is_dir(), "{} is not a directory", root.display());
-        if let Some(picker) = self.picker.take()
-            && let Some(scanner) = &self.file_scanner
-        {
-            scanner.cancel(picker.scan_id);
+        if self.picker.is_some() || self.finder.is_some() || self.finder_content_scan.is_some() {
+            self.close_file_picker();
         }
-        self.finder = None;
-        self.finder_content_scan = None;
-        self.finder_dirty_terminals.clear();
-        self.finder_terminal_marks.clear();
         let scan_id = self.next_file_scan_id;
         self.next_file_scan_id = self.next_file_scan_id.wrapping_add(1).max(1);
         self.picker = Some(match kind {
@@ -107,6 +145,7 @@ impl App {
             }
             self.refresh_file_picker_preview();
         }
+        self.request_background_file_rank(false);
         Ok(())
     }
 
@@ -133,7 +172,10 @@ impl App {
         let scan_id = self.next_file_scan_id;
         self.next_file_scan_id = self.next_file_scan_id.wrapping_add(1).max(1);
         let picker = self.picker.as_mut().expect("the picker was just borrowed");
-        picker.restart_content_scan(scan_id);
+        let discarded = picker.restart_content_scan(scan_id);
+        if let Some(scanner) = &self.file_scanner {
+            scanner.discard_picker_corpus(discarded);
+        }
         let query = picker.query.clone();
         if self.finder.is_none() {
             let live = self
@@ -202,7 +244,13 @@ impl App {
             }
             self.refresh_file_picker_preview();
         }
-        self.merge_finder_matches();
+        if self.file_scanner.is_some() && self.finder.is_none() {
+            self.request_background_file_rank(false);
+        } else {
+            if self.file_scanner.is_none() {
+                self.merge_finder_matches();
+            }
+        }
     }
 
     /// Re-scans when the query has moved past what the entries on hand can
@@ -218,14 +266,28 @@ impl App {
     }
 
     pub(super) fn close_file_picker(&mut self) {
-        self.finder = None;
-        self.finder_content_scan = None;
-        self.finder_dirty_terminals.clear();
-        self.finder_terminal_marks.clear();
-        if let Some(picker) = self.picker.take()
-            && let Some(scanner) = &self.file_scanner
-        {
-            scanner.cancel(picker.scan_id);
+        let picker = self.picker.take();
+        let scan_id = picker.as_ref().map(|picker| picker.scan_id);
+        let discarded = (
+            picker,
+            self.finder.take(),
+            self.finder_content_scan.take(),
+            std::mem::replace(&mut self.finder_content_sources, Arc::from([])),
+            std::mem::replace(
+                &mut self.finder_content_suppressed_paths,
+                Arc::new(HashSet::new()),
+            ),
+            std::mem::take(&mut self.finder_dirty_terminals),
+            std::mem::take(&mut self.finder_terminal_marks),
+        );
+        if let Some(scanner) = &self.file_scanner {
+            if let Some(scan_id) = scan_id {
+                scanner.cancel(scan_id);
+            }
+            scanner.discard_owned(discarded);
+            scanner.close_ranker();
+        } else {
+            drop(discarded);
         }
     }
 
@@ -234,6 +296,7 @@ impl App {
             let found = picker.selected_match()?;
             let entry = picker.view(found.entry)?;
             Some((
+                picker.selected_target()?,
                 entry.path.to_path_buf(),
                 entry.is_dir,
                 entry.row.map(|row| {
@@ -248,33 +311,64 @@ impl App {
                 }),
             ))
         });
-        let preview = selected.map(|(path, is_dir, content_match)| {
-            if is_dir {
-                return FilePreview::from_directory(&path, self.config.editor.show_hidden_files);
+        let Some((target, path, is_dir, content_match)) = selected else {
+            if let Some(picker) = self.picker.as_mut() {
+                picker.preview = None;
+                picker.set_preview_request(None);
             }
-            let live_buffer = self
-                .buffers
-                .iter()
-                .enumerate()
-                .find(|(index, buffer)| {
-                    !self.closed_buffers.contains(index)
-                        && !buffer.is_directory()
-                        && buffer.path.as_deref() == Some(path.as_path())
+            return;
+        };
+        let live_preview =
+            (!is_dir)
+                .then(|| {
+                    let live_buffer = self
+                        .buffers
+                        .iter()
+                        .enumerate()
+                        .find(|(index, buffer)| {
+                            !self.closed_buffers.contains(index)
+                                && !buffer.is_directory()
+                                && buffer.path.as_deref() == Some(path.as_path())
+                        })
+                        .map(|(_, buffer)| buffer);
+                    match (live_buffer, content_match.as_ref()) {
+                        (Some(buffer), Some((row, emphasis))) => Some(
+                            FilePreview::snippet_from_lines(buffer.lines(), *row, emphasis.clone()),
+                        ),
+                        (Some(buffer), None) => Some(FilePreview::from_lines(buffer.lines())),
+                        (None, _) => None,
+                    }
                 })
-                .map(|(_, buffer)| buffer);
-            match (live_buffer, content_match) {
-                (Some(buffer), Some((row, emphasis))) => {
-                    FilePreview::snippet_from_lines(buffer.lines(), row, emphasis)
-                }
-                (Some(buffer), None) => FilePreview::from_lines(buffer.lines()),
-                (None, Some((row, emphasis))) => {
-                    FilePreview::snippet_from_path(&path, row, emphasis)
-                }
-                (None, None) => FilePreview::from_path(&path),
-            }
-        });
-        if let Some(picker) = self.picker.as_mut() {
-            picker.preview = preview;
+                .flatten();
+        if let Some(preview) = live_preview {
+            let picker = self.picker.as_mut().unwrap();
+            picker.preview = Some(preview);
+            picker.set_preview_request(None);
+            return;
+        }
+        if let Some(scanner) = self.file_scanner.clone() {
+            let picker = self.picker.as_mut().unwrap();
+            let Some(request_id) = picker.begin_preview_request(target) else {
+                return;
+            };
+            scanner.preview(FilePreviewRequest {
+                scan_id: picker.scan_id,
+                query_revision: picker.query_revision,
+                request_id,
+                path,
+                is_dir,
+                content_match,
+                show_hidden: self.config.editor.show_hidden_files,
+            });
+        } else {
+            let preview = if is_dir {
+                FilePreview::from_directory(&path, self.config.editor.show_hidden_files)
+            } else if let Some((row, emphasis)) = content_match {
+                FilePreview::snippet_from_path(&path, row, emphasis)
+            } else {
+                FilePreview::from_path(&path)
+            };
+            self.picker.as_mut().unwrap().preview = Some(preview);
         }
     }
 
@@ -287,11 +381,10 @@ impl App {
         };
         if mode == FinderMode::Contents {
             self.start_resource_content_scan();
+            self.request_background_file_rank(true);
             return;
         }
-        self.finder_content_scan = None;
-        self.finder_dirty_terminals.clear();
-        self.finder_terminal_marks.clear();
+        self.retire_finder_content_state();
         let mut items = Vec::new();
         let active = self
             .active_terminal()
@@ -341,16 +434,25 @@ impl App {
             ));
         }
         if let (Some(finder), Some(picker)) = (self.finder.as_mut(), self.picker.as_ref()) {
-            finder.replace_items(items, picker, &query);
+            if let Some(scanner) = &self.file_scanner {
+                let discarded = finder.retire_background_corpus(false);
+                scanner.discard_owned(discarded);
+                finder.replace_items_unmerged(items, &query);
+            } else {
+                finder.replace_items(items, picker, &query);
+            }
+        }
+        if self.file_scanner.is_some() {
+            self.request_background_file_rank(false);
         }
         self.refresh_finder_preview();
     }
 
     fn start_resource_content_scan(&mut self) {
-        let Some(query) = self.picker.as_ref().map(|picker| picker.query.clone()) else {
+        if self.picker.is_none() {
             self.finder_content_scan = None;
             return;
-        };
+        }
         let sources = self
             .buffers
             .iter()
@@ -370,20 +472,16 @@ impl App {
                         from: 0,
                     }),
             )
-            .collect::<Vec<_>>();
-        let suppressed_paths = sources.iter().filter_map(|source| match source {
-            FinderContentSource::Buffer { path, .. } => path.clone(),
-            FinderContentSource::Terminal { .. } => None,
-        });
-        let Some((picker, finder)) = self.picker.as_ref().zip(self.finder.as_mut()) else {
-            self.finder_content_scan = None;
-            return;
-        };
-        finder.begin_content_scan(picker, &query, suppressed_paths);
-        // Nothing survives a new query, so this pass has nothing to refill.
-        self.finder_dirty_terminals.clear();
-        // This pass takes every session whole, so what it is about to read is
-        // exactly what each of them holds now.
+            .collect::<Arc<[_]>>();
+        self.finder_content_suppressed_paths = Arc::new(
+            sources
+                .iter()
+                .filter_map(|source| match source {
+                    FinderContentSource::Buffer { path, .. } => path.clone(),
+                    FinderContentSource::Terminal { .. } => None,
+                })
+                .collect(),
+        );
         self.finder_terminal_marks = self
             .terminals
             .iter()
@@ -397,13 +495,69 @@ impl App {
                 )
             })
             .collect();
+        self.finder_content_sources = sources.clone();
+        self.begin_resource_content_scan(sources);
+    }
+
+    fn restart_resource_content_scan(&mut self) {
+        self.begin_resource_content_scan(self.finder_content_sources.clone());
+    }
+
+    fn discard_finder_content_scan(&mut self) {
+        let Some(scan) = self.finder_content_scan.take() else {
+            return;
+        };
+        if let Some(scanner) = &self.file_scanner {
+            scanner.discard_owned(scan);
+        }
+    }
+
+    fn retire_finder_content_state(&mut self) {
+        let discarded = (
+            self.finder_content_scan.take(),
+            std::mem::replace(&mut self.finder_content_sources, Arc::from([])),
+            std::mem::replace(
+                &mut self.finder_content_suppressed_paths,
+                Arc::new(HashSet::new()),
+            ),
+            std::mem::take(&mut self.finder_dirty_terminals),
+            std::mem::take(&mut self.finder_terminal_marks),
+        );
+        if let Some(scanner) = &self.file_scanner {
+            scanner.discard_owned(discarded);
+        }
+    }
+
+    fn begin_resource_content_scan(&mut self, sources: Arc<[FinderContentSource]>) {
+        self.discard_finder_content_scan();
+        let Some(query) = self.picker.as_ref().map(|picker| picker.query.clone()) else {
+            return;
+        };
+        let suppressed_paths = self.finder_content_suppressed_paths.clone();
+        let Some((picker, finder)) = self.picker.as_ref().zip(self.finder.as_mut()) else {
+            return;
+        };
+        if let Some(scanner) = &self.file_scanner {
+            let discarded = finder.retire_background_corpus(false);
+            scanner.discard_owned(discarded);
+            finder.begin_content_scan_unmerged(&query, suppressed_paths);
+        } else {
+            finder.begin_content_scan(picker, &query, suppressed_paths.iter().cloned());
+        }
+        // Nothing survives a new query, so this pass has nothing to refill.
+        self.finder_dirty_terminals.clear();
         self.finder_content_scan = Some(FinderContentScan {
             query,
             sources,
             source: 0,
             row: 0,
+            column: 0,
+            retirements: Vec::new(),
+            retirement: 0,
             limited: false,
             refilling: false,
+            #[cfg(test)]
+            drop_observer: None,
         });
         self.refresh_finder_preview();
     }
@@ -413,6 +567,10 @@ impl App {
     /// without allowing stale rows into the finder.
     pub fn resource_finder_scan_pending(&self) -> bool {
         self.finder_content_scan.is_some()
+            || self
+                .finder
+                .as_ref()
+                .is_some_and(ResourceFinder::name_rank_pending)
     }
 
     /// Whether the pass in flight is refilling rows it has just dropped.
@@ -456,7 +614,10 @@ impl App {
     /// abandon the sources it has not reached. The terminals stay dirty and
     /// the next tick picks them up.
     pub fn refresh_finder_terminals(&mut self) -> bool {
-        if self.finder_dirty_terminals.is_empty() || self.finder_content_scan.is_some() {
+        if self.finder_dirty_terminals.is_empty()
+            || self.finder_content_scan.is_some()
+            || self.picker.as_ref().is_some_and(|picker| picker.ranking)
+        {
             return false;
         }
         let Some(mode) = self.finder.as_ref().map(|finder| finder.mode) else {
@@ -492,28 +653,39 @@ impl App {
         let Some(query) = self.picker.as_ref().map(|picker| picker.query.clone()) else {
             return;
         };
-        let Some((finder, picker)) = self.finder.as_mut().zip(self.picker.as_ref()) else {
-            return;
-        };
-        finder.replace_terminal(terminal, item, picker, &query);
+        if self.file_scanner.is_some() {
+            let Some((finder, picker)) = self.finder.as_mut().zip(self.picker.as_mut()) else {
+                return;
+            };
+            finder.preserve_selection(picker);
+            picker.ranking = true;
+            finder.replace_terminal_unmerged(terminal, item, &query);
+        } else {
+            let Some((finder, picker)) = self.finder.as_mut().zip(self.picker.as_ref()) else {
+                return;
+            };
+            finder.replace_terminal(terminal, item, picker, &query);
+        }
+        self.update_background_finder_context();
         self.refresh_finder_preview();
     }
 
     /// Revisits the terminals that changed after an otherwise complete content
     /// scan. Every other live result, and a claimed selection, stay in place
     /// while their bounded rows are read again.
-    fn start_terminal_content_refresh(&mut self, terminals: HashSet<TerminalId>) {
+    pub(super) fn start_terminal_content_refresh(&mut self, terminals: HashSet<TerminalId>) {
+        self.discard_finder_content_scan();
         let Some(query) = self.picker.as_ref().map(|picker| picker.query.clone()) else {
             return;
         };
         // A terminal that is gone still has rows to drop, so every dirty
         // session names what it keeps and only the surviving ones are read.
         let mut sources = Vec::new();
-        let mut kept = HashMap::new();
-        for terminal in terminals {
+        let mut retirement_specs = Vec::with_capacity(terminals.len());
+        for &terminal in &terminals {
             let Some(session) = self.terminals.get(terminal) else {
                 self.finder_terminal_marks.remove(&terminal);
-                kept.insert(terminal, HashSet::new());
+                retirement_specs.push((terminal, 0));
                 continue;
             };
             let mark = TerminalContentMark {
@@ -535,7 +707,7 @@ impl App {
                 _ => 0,
             };
             let label = session.display_name();
-            kept.insert(terminal, session.retained_line_ids().take(from).collect());
+            retirement_specs.push((terminal, from));
             sources.push(FinderContentSource::Terminal {
                 terminal,
                 label,
@@ -544,18 +716,70 @@ impl App {
             self.finder_terminal_marks.insert(terminal, mark);
         }
         let limited = self.finder.as_ref().is_some_and(|finder| finder.limited);
-        let Some((finder, picker)) = self.finder.as_mut().zip(self.picker.as_ref()) else {
-            return;
-        };
-        finder.retain_terminal_content(&kept, picker);
-        self.finder_content_scan = Some(FinderContentScan {
-            row: sources.first().map_or(0, FinderContentSource::first_row),
-            query,
-            sources,
-            source: 0,
-            limited,
-            refilling: true,
-        });
+        if self.file_scanner.is_some() {
+            let Some((finder, picker)) = self.finder.as_mut().zip(self.picker.as_mut()) else {
+                return;
+            };
+            finder.preserve_selection(picker);
+            picker.ranking = true;
+            let retirements = retirement_specs
+                .into_iter()
+                .map(|(terminal, retained_until)| TerminalContentRetirement {
+                    terminal,
+                    items: finder.take_terminal_content_items(terminal),
+                    item: 0,
+                    retained_row: 0,
+                    retained_until,
+                })
+                .collect();
+            self.finder_content_scan = Some(FinderContentScan {
+                row: sources.first().map_or(0, FinderContentSource::first_row),
+                query,
+                sources: sources.into(),
+                source: 0,
+                column: 0,
+                retirements,
+                retirement: 0,
+                limited,
+                refilling: true,
+                #[cfg(test)]
+                drop_observer: None,
+            });
+        } else {
+            let kept = retirement_specs
+                .into_iter()
+                .map(|(terminal, retained_until)| {
+                    let lines = self
+                        .terminals
+                        .get(terminal)
+                        .map(|session| {
+                            session
+                                .retained_line_ids()
+                                .take(retained_until)
+                                .collect::<HashSet<_>>()
+                        })
+                        .unwrap_or_default();
+                    (terminal, lines)
+                })
+                .collect();
+            let Some((finder, picker)) = self.finder.as_mut().zip(self.picker.as_ref()) else {
+                return;
+            };
+            finder.retain_terminal_content(&kept, picker);
+            self.finder_content_scan = Some(FinderContentScan {
+                row: sources.first().map_or(0, FinderContentSource::first_row),
+                query,
+                sources: sources.into(),
+                source: 0,
+                column: 0,
+                retirements: Vec::new(),
+                retirement: 0,
+                limited,
+                refilling: true,
+                #[cfg(test)]
+                drop_observer: None,
+            });
+        }
         self.refresh_finder_preview();
     }
 
@@ -563,13 +787,67 @@ impl App {
     /// complete corpus or holding the input loop for an unbounded scan.
     pub fn advance_resource_finder_scan(&mut self) {
         let Some(mut scan) = self.finder_content_scan.take() else {
+            let publish = self
+                .finder
+                .as_mut()
+                .is_some_and(|finder| finder.advance_name_rank(RESOURCE_CONTENT_SLICE_ROWS));
+            if publish {
+                self.update_background_finder_context();
+                self.refresh_finder_preview();
+            }
             return;
         };
         let mut visited = 0usize;
         let mut found = Vec::new();
+        let mut retired = Vec::new();
+        while scan.retirement < scan.retirements.len() && visited < RESOURCE_CONTENT_SLICE_ROWS {
+            let retirement = &mut scan.retirements[scan.retirement];
+            if retirement.item >= retirement.items.len() {
+                scan.retirement += 1;
+                continue;
+            }
+            let (line_id, item) = retirement.items[retirement.item];
+            let retained = (retirement.retained_row < retirement.retained_until)
+                .then(|| {
+                    self.terminals
+                        .get(retirement.terminal)?
+                        .retained_line_id(retirement.retained_row)
+                })
+                .flatten();
+            visited += 1;
+            match retained.map(|retained| retained.cmp(&line_id)) {
+                Some(std::cmp::Ordering::Less) => retirement.retained_row += 1,
+                Some(std::cmp::Ordering::Equal) => {
+                    retirement.retained_row += 1;
+                    retirement.item += 1;
+                    if let Some(finder) = self.finder.as_mut() {
+                        finder.keep_terminal_content_item(retirement.terminal, line_id, item);
+                    }
+                }
+                Some(std::cmp::Ordering::Greater) | None => {
+                    retirement.item += 1;
+                    if let Some(finder) = self.finder.as_mut()
+                        && let Some(item) = finder.retire_content_item(item, true)
+                    {
+                        retired.push(item);
+                    }
+                }
+            }
+        }
+        if !retired.is_empty()
+            && let Some(scanner) = &self.file_scanner
+        {
+            scanner.discard_owned(retired);
+        }
         while scan.source < scan.sources.len() && visited < RESOURCE_CONTENT_SLICE_ROWS {
             if found.len()
-                + self.finder.as_ref().map_or(0, |finder| finder.items.len())
+                + self.finder.as_ref().map_or(0, |finder| {
+                    if self.file_scanner.is_some() {
+                        finder.content_item_count()
+                    } else {
+                        finder.items.len()
+                    }
+                })
                 + self
                     .picker
                     .as_ref()
@@ -593,33 +871,80 @@ impl App {
                     .map_or(0, |terminal| terminal.plain_line_count()),
             };
             if scan.row >= rows {
+                if let FinderContentSource::Terminal { terminal, .. } = source
+                    && let Some(session) = self.terminals.get(terminal)
+                {
+                    if self.finder_dirty_terminals.contains(&terminal) {
+                        // The retained-row sequence changed while this cursor
+                        // was merging stable identities. Its row cursor was a
+                        // reading of the old sequence, so no incremental mark
+                        // may survive: the already-queued refresh must start
+                        // at zero and repair both false keeps and false drops.
+                        self.finder_terminal_marks.remove(&terminal);
+                    } else {
+                        self.finder_terminal_marks.insert(
+                            terminal,
+                            TerminalContentMark {
+                                retired: session.retired_lines(),
+                                columns: session.columns(),
+                            },
+                        );
+                    }
+                }
                 scan.source += 1;
                 scan.row = scan
                     .sources
                     .get(scan.source)
                     .map_or(0, FinderContentSource::first_row);
+                scan.column = 0;
                 continue;
             }
             let row = scan.row;
-            scan.row += 1;
-            visited += 1;
             let decoded = match &source {
-                FinderContentSource::Buffer { buffer, .. } => self
-                    .buffers
-                    .get(*buffer)
-                    .map(|buffer| buffer.line_string(row))
-                    .map(|line| (line, None)),
+                FinderContentSource::Buffer { buffer, .. } => {
+                    let Some(buffer) = self.buffers.get(*buffer) else {
+                        scan.row += 1;
+                        scan.column = 0;
+                        continue;
+                    };
+                    let line_len = buffer.line_len(row);
+                    let chunk = buffer.line_slice_string(
+                        row,
+                        scan.column,
+                        RESOURCE_CONTENT_LINE_CHARACTERS,
+                    );
+                    visited += 1;
+                    let chunk_characters = chunk.chars().count();
+                    let leading = chunk
+                        .chars()
+                        .take_while(|character| character.is_whitespace())
+                        .count();
+                    if leading == chunk_characters && scan.column + leading < line_len {
+                        scan.column += leading;
+                        continue;
+                    }
+                    let column = scan.column + leading;
+                    scan.row += 1;
+                    scan.column = 0;
+                    if column >= line_len {
+                        continue;
+                    }
+                    let text =
+                        buffer.line_slice_string(row, column, RESOURCE_CONTENT_LINE_CHARACTERS);
+                    line_hit_from_trimmed(&text, &scan.query, column).map(|hit| (hit, None))
+                }
                 FinderContentSource::Terminal { terminal, .. } => {
+                    scan.row += 1;
+                    scan.column = 0;
+                    visited += 1;
                     self.terminals.get(*terminal).and_then(|session| {
                         let (line_id, line) = session.plain_line_with_id(row)?;
-                        Some((line, Some((line_id, session.output_line_number(row)))))
+                        let hit = line_hit(&line, &scan.query)?;
+                        Some((hit, Some((line_id, session.output_line_number(row)))))
                     })
                 }
             };
-            let Some((line, terminal_line)) = decoded else {
-                continue;
-            };
-            let Some(hit) = line_hit(&line, &scan.query) else {
+            let Some((hit, terminal_line)) = decoded else {
                 continue;
             };
             let item = match source {
@@ -670,23 +995,80 @@ impl App {
         }
 
         let query = scan.query.clone();
+        let mut publish = false;
         if let (Some(finder), Some(picker)) = (self.finder.as_mut(), self.picker.as_ref()) {
-            finder.append_items(found, picker, &query);
+            if self.file_scanner.is_some() {
+                publish = finder.append_content_items_unmerged(found, &query);
+            } else {
+                finder.append_items(found, picker, &query);
+            }
         }
         // Terminals that wrote while this pass ran stay dirty. Folding them
         // in here would let a running child keep one pass alive indefinitely,
         // which is the churn the refresh tick exists to bound.
-        let finished = scan.source >= scan.sources.len();
+        let finished =
+            scan.retirement >= scan.retirements.len() && scan.source >= scan.sources.len();
+        let repair = if finished && scan.refilling && self.file_scanner.is_some() {
+            scan.sources
+                .iter()
+                .filter_map(|source| match source {
+                    FinderContentSource::Terminal { terminal, .. }
+                        if self.finder_dirty_terminals.contains(terminal) =>
+                    {
+                        Some(*terminal)
+                    }
+                    _ => None,
+                })
+                .collect::<HashSet<_>>()
+        } else {
+            HashSet::new()
+        };
         if finished && let Some(finder) = self.finder.as_mut() {
-            finder.finish_content_scan(scan.limited);
+            if self.file_scanner.is_some() {
+                finder.finish_content_scan_unmerged(scan.limited);
+                publish = true;
+            } else {
+                finder.finish_content_scan(scan.limited);
+            }
+        }
+        if !repair.is_empty() {
+            // The worker needs this slot delta before the repair starts
+            // reusing completed-pass slots. Its result remains inert: the
+            // repair advances the live revision before this turn returns,
+            // and the next cursor remains a refill so no hole is drawn.
+            self.update_background_finder_context();
+            if let Some(scanner) = self.file_scanner.clone() {
+                scanner.discard_owned(scan);
+            }
+            for terminal in &repair {
+                self.finder_dirty_terminals.remove(terminal);
+            }
+            self.start_terminal_content_refresh(repair);
+            return;
         }
         if !finished {
             self.finder_content_scan = Some(scan);
         }
-        self.refresh_finder_preview();
+        if publish || self.file_scanner.is_none() {
+            self.update_background_finder_context();
+            self.refresh_finder_preview();
+        }
     }
 
     pub(super) fn rank_resource_finder(&mut self) {
+        if self.file_scanner.is_some() {
+            if self
+                .finder
+                .as_ref()
+                .is_some_and(|finder| finder.mode == FinderMode::Contents)
+            {
+                self.restart_resource_content_scan();
+                self.request_background_file_rank(true);
+                return;
+            }
+            self.request_background_file_rank(true);
+            return;
+        }
         if self
             .finder
             .as_ref()
@@ -728,16 +1110,21 @@ impl App {
             FinderMode::Names => FilePickerKind::Files,
             FinderMode::Contents => FilePickerKind::Contents,
         };
-        self.picker.as_mut().unwrap().switch_kind(scan_id, kind);
+        let discarded = self.picker.as_mut().unwrap().switch_kind(scan_id, kind);
+        if let Some(scanner) = &self.file_scanner {
+            scanner.discard_picker_corpus(discarded);
+        }
         match next {
             FinderMode::Contents => {
                 self.start_content_scan();
                 self.rebuild_resource_finder();
-                self.advance_resource_finder_scan();
+                if self.file_scanner.is_none() {
+                    self.advance_resource_finder_scan();
+                }
             }
             FinderMode::Names => {
-                self.rebuild_resource_finder();
                 self.start_file_scan();
+                self.rebuild_resource_finder();
             }
         }
     }
@@ -937,12 +1324,36 @@ impl App {
     }
 
     pub fn apply_file_picker_event(&mut self, event: FilePickerEvent) {
-        let Some(picker) = self.picker.as_mut() else {
+        let scanner = self.file_scanner.clone();
+        if self.picker.is_none() {
+            if let FilePickerEvent::Ranked {
+                matches,
+                match_positions,
+                finder_matches,
+                finder_positions,
+                ..
+            } = event
+                && let Some(scanner) = scanner.as_ref()
+            {
+                scanner.discard_rank_result(
+                    matches,
+                    finder_matches.unwrap_or_default(),
+                    match_positions,
+                    finder_positions,
+                );
+            }
             return;
-        };
+        }
+        let picker = self.picker.as_mut().unwrap();
         match event {
             FilePickerEvent::Files { scan_id, paths } if scan_id == picker.scan_id => {
-                picker.add_paths(paths);
+                if let Some(scanner) = scanner.as_ref() {
+                    let candidates = picker.add_paths_unranked(paths);
+                    scanner.add_rank_candidates(scan_id, candidates);
+                    return;
+                } else {
+                    picker.add_paths(paths);
+                }
             }
             FilePickerEvent::Content {
                 scan_id,
@@ -960,14 +1371,91 @@ impl App {
                         + picker.entries.len(),
                 );
                 let shared_limit_reached = truncate_content_hits(&mut entries, available);
-                picker.add_content(entries);
+                if let Some(scanner) = scanner.as_ref() {
+                    let candidates = picker.add_content_unranked(entries);
+                    scanner.add_rank_candidates(scan_id, candidates);
+                    picker.limited |= shared_limit_reached;
+                    return;
+                } else {
+                    picker.add_content(entries);
+                }
                 picker.limited |= shared_limit_reached;
+            }
+            FilePickerEvent::Ranked {
+                scan_id,
+                query_revision,
+                matches,
+                match_positions,
+                finder_matches,
+                finder_revision,
+                finder_positions,
+            } if scan_id == picker.scan_id && query_revision == picker.query_revision => {
+                let finder_current = match (&self.finder, finder_revision) {
+                    (None, None) => true,
+                    (Some(finder), Some(revision)) => finder.file_rank_revision() == revision,
+                    _ => false,
+                };
+                let finder_complete =
+                    finder_current && self.finder.as_ref().is_none_or(|finder| !finder.loading);
+                let old_matches =
+                    picker.apply_background_matches(matches, &match_positions, finder_complete);
+                let mut discarded_finder_matches = finder_matches.unwrap_or_default();
+                if finder_current
+                    && let (Some(finder), Some(_)) = (self.finder.as_mut(), finder_revision)
+                {
+                    discarded_finder_matches = finder.apply_background_matches(
+                        std::mem::take(&mut discarded_finder_matches),
+                        &finder_positions,
+                    );
+                }
+                if let Some(scanner) = scanner.as_ref() {
+                    scanner.discard_rank_result(
+                        old_matches,
+                        discarded_finder_matches,
+                        match_positions,
+                        finder_positions,
+                    );
+                }
+            }
+            FilePickerEvent::Preview {
+                scan_id,
+                query_revision,
+                request_id,
+                preview,
+            } if scan_id == picker.scan_id && query_revision == picker.query_revision => {
+                if picker
+                    .preview_request()
+                    .is_some_and(|(pending, _)| *pending == request_id)
+                {
+                    picker.preview = Some(preview);
+                }
+                return;
+            }
+            FilePickerEvent::Ranked {
+                matches,
+                match_positions,
+                finder_matches,
+                finder_positions,
+                ..
+            } => {
+                if let Some(scanner) = scanner.as_ref() {
+                    scanner.discard_rank_result(
+                        matches,
+                        finder_matches.unwrap_or_default(),
+                        match_positions,
+                        finder_positions,
+                    );
+                }
+                return;
             }
             FilePickerEvent::Finished {
                 scan_id,
                 skipped,
                 limited,
             } if scan_id == picker.scan_id => {
+                if let Some(scanner) = scanner.as_ref() {
+                    scanner.flush_rank(scan_id);
+                }
                 // A truncated scan is the one case where typing on ahead was
                 // allowed to narrow in memory but should not have been: the
                 // scan stopped before the whole project, so matches for the
@@ -981,10 +1469,13 @@ impl App {
             }
             FilePickerEvent::Files { .. }
             | FilePickerEvent::Content { .. }
+            | FilePickerEvent::Preview { .. }
             | FilePickerEvent::Finished { .. }
             | FilePickerEvent::Failed { .. } => return,
         }
-        self.merge_finder_matches();
+        if scanner.is_none() {
+            self.merge_finder_matches();
+        }
         if self.finder.is_some() {
             self.refresh_finder_preview();
         } else {

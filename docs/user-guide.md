@@ -1858,6 +1858,15 @@ role. Backspace/Delete and the ordinary prompt control keys edit the query.
 Printable letters such as `q`, `j`, and `k` are query text rather than
 navigation commands.
 
+In the project finder, query editing does not wait for filesystem discovery,
+ranking, sorting, live-resource matching, or a file preview. The prompt and
+caret update in the next frame while those jobs continue in the background;
+the progress label remains visible until the ranked rows answer the displayed
+query. Rows from the previous query may stay visible during that brief handoff
+so the overlay does not flash empty, but they cannot be opened until the
+current ranking arrives. Results and previews tagged for an older query are
+discarded.
+
 A space separates the query into terms rather than being matched. One word is
 the fuzzy subsequence it has always been, so `fpick` finds `file_picker.rs`.
 Two or more words each have to be present as themselves, in the order they were
