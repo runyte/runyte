@@ -48,8 +48,11 @@ notifications:
 #     command: marksman
 #     args: ["server"]
 
-# Built-ins: dark, light, base16, paper, gruvbox, and Everforest's dark/light
-# hard/medium/soft variants (for example, everforest-dark-medium).
+# Built-ins: default-dark (the default), default-light, dark, light, base16,
+# paper, gruvbox, atom-one-light, github-light, the four Catppuccin flavours,
+# the six Everforest variants, the Nightfox pair and Terafox, and the Zenbones
+# collection. Run `:theme` with no name to browse them all; docs/user-guide.md
+# lists them.
 theme: gruvbox
 
 # Custom themes can be added here. Every color has a default, so fields may be

@@ -611,7 +611,7 @@ immediate manual reconciliation.
 
 A refresh rewrites a Git view's text and moves the cursor to the nearest row
 that survived, so it waits while you are working. It is skipped until you have
-paused briefly, while a prompt is open — including the `/` and `s` search
+paused briefly, while a prompt is open — including the `s` and `S` search
 queries — and while a Git view holds a deliberate selection
 such as the matches `s` leaves behind. Nothing is dropped: the refresh runs as
 soon as you stop, the prompt closes, or the selection collapses back to a
@@ -714,7 +714,7 @@ the character where it began and the character they land on, in either
 direction. `Escape` cancels a selection made either way. `f`/`F`/`t`/`T` find
 characters in the snapshot, and `gw` labels its visible words and jumps to the
 chosen one. `%` selects all retained review text. `s` searches it
-case-insensitively, `/` searches it with a regular
+case-insensitively, `S` searches it with a regular
 expression, and `n`/`N` or `)`/`(` move through stable highlighted matches. `y` copies the caret
 character or review selection to the unnamed Runyte register and `Space c y`
 copies it to the system clipboard. `p` or `P` discards review, sends text from
@@ -1932,7 +1932,7 @@ message without affecting the internal registers.
 | `Ctrl-u` / `Ctrl-d`, `Ctrl-b` / `Ctrl-f` | Move the review caret by half / full pages, keeping it visible |
 | `gg` / `ge` in a terminal | Move to the oldest / newest rows in the captured review snapshot |
 | `gw` in terminal review | Label visible terminal words and jump to the chosen one |
-| `s` / `/`, then `n` / `N` | Search an immutable terminal review snapshot and move among matches |
+| `s` / `S`, then `n` / `N` | Search an immutable terminal review snapshot by literal / regular expression and move among matches |
 | `y` / `Space c y` in terminal review | Copy the caret character or every selection, joined by newlines, to the unnamed register / system clipboard |
 | `p` / `P` in a terminal | Leave review and send Runyte's selected register to the live program |
 | `Space c p` / `Space c P` in a terminal | Leave review and send the system clipboard to the live program |
@@ -2548,8 +2548,19 @@ are enabled.
 :git-search-commits     fuzzy-search commits by message, ID, author, or date with a full-message preview
 :git-refresh            re-read branch, changed files, and changed lines from Git
 :git-stage              stage the active file, or every file selected in the list
+:git-stage-hunk         stage the exact hunk under the cursor
+:git-stage-lines        stage the supported saved source-line selection
+:git-stash-all <name>   stash tracked worktree and index changes, after a confirmation
+:git-stash-apply        apply the selected stash without dropping it, after a confirmation
+:git-stash-drop         drop the selected stash, after a confirmation
+:git-stash-tracked <name>
+                        stash a tracked-worktree snapshot, leaving the index applied
+:git-stash-untracked <name>
+                        stash tracked changes and untracked files together
+:git-stashes            open or refresh the bounded stash list
 :git-status             open the changed-file list
 :git-unstage            unstage the active file, or every file selected in the list
+:git-unstage-hunk       unstage the exact staged hunk under the cursor
 :git-worktrees          open the repository worktree list
 :grammar [runyte]       report the active Runyte editing grammar
 :help [topic]           open the general manual, optionally at a named section (alias: ?)
@@ -3182,6 +3193,7 @@ src/
   external_open.rs
                   binary detection and the remembered programs that open them
   file_picker.rs  fuzzy matching, ignore-aware discovery, and text previews
+  finder.rs       buffer and terminal ranking merged into the file scan
   picker.rs       shared presentation-neutral filterable result state
   help.rs         per-view prose and the registry-derived help document
   jump_labels.rs  proximity-ranked one- and two-key `gw` labels and narrowing
