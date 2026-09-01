@@ -2303,6 +2303,72 @@ mod tests {
         }
     }
 
+    /// The user guide calls its Editing table the complete direct-binding
+    /// inventory. Keep that claim tied to the registry: prose may group
+    /// related keys into one row, but every one-key modal sequence must still
+    /// be named exactly somewhere in the table.
+    #[test]
+    fn user_guide_covers_every_direct_editing_binding() {
+        let guide =
+            std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/docs/user-guide.md"))
+                .expect("read the user guide");
+        let editing = guide
+            .split_once("### Editing")
+            .expect("user guide has an Editing section")
+            .1
+            .split_once("<a id=\"insert-mode\"></a>")
+            .expect("Editing section ends at the Insert-mode anchor")
+            .0
+            .replace("\\|", "|");
+
+        let insert = guide
+            .split_once("### Insert and Replace modes")
+            .expect("user guide has an Insert and Replace modes section")
+            .1
+            .split_once("### Search")
+            .expect("Insert and Replace modes section ends at Search")
+            .0;
+
+        let missing_from = |mode, section: &str| {
+            default_keymap()
+                .bindings_for_mode(mode)
+                .filter(|binding| binding.sequence.len() == 1)
+                .map(|binding| binding.sequence.to_string())
+                .map(|label| {
+                    if label == "Shift-BackTab" {
+                        "Shift-Tab".to_owned()
+                    } else {
+                        label
+                    }
+                })
+                .filter(|label| !section.contains(&format!("`{label}`")))
+                .collect::<Vec<_>>()
+        };
+
+        let missing = missing_from(Mode::Normal, &editing);
+        assert!(
+            missing.is_empty(),
+            "docs/user-guide.md Editing table is missing direct modal bindings: {}",
+            missing.join(", ")
+        );
+
+        let missing = missing_from(Mode::Insert, insert);
+        assert!(
+            missing.is_empty(),
+            "docs/user-guide.md Insert and Replace modes section is missing direct bindings: {}",
+            missing.join(", ")
+        );
+
+        assert!(
+            editing.contains("| `/` | Open the project finder"),
+            "the direct `/` binding must be documented as the project finder"
+        );
+        assert!(
+            !editing.contains("| `/` | Search with a regular expression"),
+            "the retired direct `/` regex binding is still documented"
+        );
+    }
+
     /// Every top-level prefix can be named. A prefix with nothing to call
     /// itself is a key a reader can only find by accident, which is the gap
     /// entry points exist to close.

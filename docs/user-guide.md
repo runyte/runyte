@@ -1302,17 +1302,18 @@ context; scoped explorer keys are documented under
 
 | Key | Action |
 | --- | --- |
-| `h` `j` `k` `l` or arrow keys | Move left, down, up, right |
+| `h` / `j` / `k` / `l`; `Left` / `Down` / `Up` / `Right` | Move left, down, up, right |
 | `w` / `b` / `e` | Next word / previous word / word end |
 | `W` / `B` / `E` | Long-word variants |
 | `f` | Find the next typed character in the buffer |
 | `F` / `t` / `T` | Find backward, or move until a character forward / backward |
-| `Home` / `0`; `End` / `$` | Start / end of line |
+| `Home` / `0`; `^`; `End` / `$` | Start / first non-whitespace / end of line |
 | `Ctrl-b` / `Ctrl-f`; `Ctrl-u` / `Ctrl-d` | Page up / down; half-page up / down |
 | `PageUp` / `PageDown` | Page up / down |
 | `gg` / `ge` or `G` | Start / end of file |
 | `gp` / `gP` | Next / previous paragraph |
 | `gw` | Dim the view, label nearby words with one key and farther words with two, then type a label to jump |
+| `gt` / `gc` / `gb`; `H` / `M` / `L` | Move to the top / center / bottom of the visible window |
 | `i` / `a` / `I` / `A` | Insert before/after cursor or at line boundary |
 | `o` / `O` | Open line below / above |
 | `r` / `R` / `~` | Replace once / enter Replace mode / toggle case |
@@ -1320,7 +1321,7 @@ context; scoped explorer keys are documented under
 | `x` / `X` | Select current line, then extend down / up |
 | `%` | Select the entire buffer |
 | `C` / `Alt-C` | Add a cursor on the nearest line below / above holding a character at the cursor's column, skipping the ones too short |
-| `V` | Add a cursor on the next line, padding short or empty lines with spaces to the same display column |
+| `V` / `Alt-V` | Add a cursor on the next / previous line, padding short or empty lines with spaces to the same display column |
 | `;` / `Alt-;` | Collapse selections / flip their direction |
 | `,` / `Space s c` / `Alt-,` | Keep only the primary selection / drop it |
 | `)` / `(` | Make the next / previous selection primary |
@@ -1335,11 +1336,11 @@ context; scoped explorer keys are documented under
 | `>` / `<` | Indent / unindent |
 | `Ctrl-c` | Comment or uncomment every line the selection touches, using the buffer language's line comment; also bound in Insert mode |
 | `u` / `U` | Undo / redo |
-| `s` | Search, ignoring case |
-| `/` | Search with a regular expression |
+| `s` / `S` | Search with an escaped literal, ignoring case / with a regular expression |
+| `/` | Open the project finder (`Space / /`) |
 | `n` / `N` | Step to the next / previous match |
 | `*` | Select every occurrence of the word or selection under the caret |
-| `Ctrl-o` / `Ctrl-i` | Jump backward / forward through navigation history |
+| `Ctrl-o` / `Ctrl-i`; `Alt-o` / `Alt-i` | Jump backward / forward through every navigation point; jump backward / forward to another buffer |
 | `Tab` | Open contextual actions for the selection or row under the caret |
 | `Ctrl-s` | Save |
 | `:` | Open the command palette |
@@ -1350,7 +1351,7 @@ context; scoped explorer keys are documented under
 | `Space m …` | Record, replay, and list macros; see [Macros](#macros) |
 | `mm` | Jump to the matching bracket |
 | `z…` / `Z…` | View alignment and scrolling |
-| `Esc` | Return to Normal mode |
+| `Esc` / `Ctrl-\` (`Ctrl-4` on legacy terminals) | Return to Normal mode |
 
 <a id="insert-mode"></a>
 
@@ -1361,6 +1362,23 @@ every selection to its active head, and overwrites the character ahead of each
 caret as text is entered. A caret already at line end appends instead, and a
 newline inserts a line break rather than consuming the existing terminator.
 Unicode characters are replaced one for one and CRLF remains one line ending.
+
+The direct editing keys shared by Insert and Replace modes are:
+
+| Key | Action |
+| --- | --- |
+| `Esc` / `Ctrl-\` (`Ctrl-4` on legacy terminals) | Return to Normal mode |
+| `Backspace` / `Shift-Backspace`; `Delete` | Delete the previous / next character |
+| `Alt-Backspace` / `Alt-Delete` | Delete the previous / next word |
+| `Ctrl-u` / `Ctrl-k` | Delete to the start / end of the line |
+| `Enter` / `Ctrl-j` | Insert a newline with the current indentation and optional smart indentation |
+| `Tab` / `Shift-Tab` | Insert spaces to the next configured tab stop / insert a literal tab |
+| `Left` / `Down` / `Up` / `Right` | Move the caret |
+| `Home` / `End`; `PageUp` / `PageDown` | Move to a line boundary; move by a page |
+| `Ctrl-x` | Ask the language server for completions |
+| `Ctrl-c` | Comment or uncomment the lines holding the carets |
+| `Ctrl-s` | Save |
+| `Ctrl-w` then a pane suffix | Move to another pane without first leaving Insert or Replace mode |
 
 Backspace or Shift-Backspace in Replace mode retraces the current overwrite
 run: overwritten characters return, while characters appended past line end
