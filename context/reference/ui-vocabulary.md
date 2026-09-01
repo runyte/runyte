@@ -79,7 +79,13 @@ them, regardless of which extensibility direction is chosen.
   printable input.
 - **Picker overlay** — a transient choose-one overlay. Printable input filters
   candidates, Enter accepts the selected candidate, and Escape, `Ctrl-c`, or
-  an initial bare Space cancels the request. Once a project/content finder
+  an initial bare Space cancels the request. The counts in a picker's header
+  — how many candidates matched, out of how many are on hand — are paced
+  rather than live: they change at most once a second while work is in
+  flight, and at once when it stops, so a settled header is exact rather than
+  merely recent. Scanner and ranker progress arrives far faster than a header
+  can be read, and the counts sit inside the title, so every digit they gain
+  or lose also moves the words after them. Once a project/content finder
   query contains text, Space remains its term separator. The **project
   finder** is one picker with two Tab-switched modes over the same three source
   kinds. **Name mode** merges files, open buffers, and terminal sessions by

@@ -2213,12 +2213,11 @@ fn draw_picker(frame: &mut Frame<'_>, app: &TuiApp<'_>, editor_area: Rect) {
     } else {
         String::new()
     };
+    let (found, candidates) = app.picker_progress_counts();
     let title = if app.finder.is_some() {
         format!(
-            " Find · Files · {} · {progress} · {}/{}{}{} · Tab buffers + terminals · Ctrl-t preview ",
+            " Find · Files · {} · {progress} · {found}/{candidates}{}{} · Tab buffers + terminals · Ctrl-t preview ",
             picker.root.display(),
-            picker.matches.len(),
-            picker.entries.len(),
             skipped,
             if picker.limited {
                 " · result limit reached"
@@ -2228,11 +2227,9 @@ fn draw_picker(frame: &mut Frame<'_>, app: &TuiApp<'_>, editor_area: Rect) {
         )
     } else {
         format!(
-            " {} · {} · {progress} · {}/{}{}{} · Ctrl-t preview ",
+            " {} · {} · {progress} · {found}/{candidates}{}{} · Ctrl-t preview ",
             picker.kind.title(),
             picker.root.display(),
-            picker.matches.len(),
-            picker.entries.len(),
             skipped,
             if picker.limited {
                 " · result limit reached"
@@ -2423,14 +2420,13 @@ fn draw_resource_finder(
         .error
         .as_ref()
         .map_or(String::new(), |error| format!(" · scan failed: {error}"));
+    let (found, candidates) = app.picker_progress_counts();
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(app.theme.accent))
         .title(format!(
-            " Find · {} · {progress} · {}/{}{}{}{} · Tab {} · Ctrl-t preview ",
+            " Find · {} · {progress} · {found}/{candidates}{}{}{} · Tab {} · Ctrl-t preview ",
             finder.mode.title(),
-            finder.matches.len(),
-            picker.entries.len() + finder.items.len(),
             skipped,
             limited,
             failure,

@@ -50,14 +50,22 @@ taken. `busy_terminal_updates_only_its_name_finder_item_and_selected_preview`
 in the same file continues to cover the case where a burst does change the
 item.
 
-Known limitation: the header's counts still update at the frame rate while a
-scan is in flight, so on a very large project `{matches}/{entries}` churns
-and the title's width moves with it. That is progress the reader asked for by
-opening the finder, and pacing it is a separate change to how background
-progress reaches a frame rather than to the finder. The `scanning`/`ready`
-word is stable for the duration of a scan, since `picker.loading` covers it;
-what made it flicker after a scan settled was the name-mode terminal rank
-above.
+The header's counts were left updating at the frame rate in the change above
+and were paced in a follow-up. `App::pace_picker_progress` runs once per
+frame from `prepare_view`, and both header renderers read the value it holds
+rather than the live corpus. It republishes at most once a second while work
+is in flight, and at once when the work settles, because a settled header
+reading something merely recent is wrong rather than slow. It covers the
+plain picker's header as well as the finder's, since both show the same pair
+and reading them from one place is what keeps the two renderers from
+disagreeing about it. Its test is
+`a_header_count_changes_once_a_second_and_publishes_what_the_work_settled_on`
+in `src/app/tests/search_and_pickers.rs`, which drives the clock by rewinding
+the published instant rather than by sleeping.
+
+The `scanning`/`ready` word is stable for the duration of a scan, since
+`picker.loading` covers it; what made it flicker after a scan settled was the
+name-mode terminal rank above.
 
 ## Report
 

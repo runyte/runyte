@@ -8,13 +8,14 @@ use super::WorkspaceRow;
 use super::{
     App, BindingScope, Buffer, CompletionSource, ConfirmationOverlay, ContentAlignment,
     ContentLayout, DiffProjection, DiffSession, FinderMatchSource, FinderTarget, FrameGeometry,
-    GeneratedViewIdentity, HelpTopic, ListPurpose, MaximizedView, Mode, Pane, Path, Position,
-    PreparedPane, PreparedRow, PreparedView, PromptKind, Rect, ResourceKind, Selection,
-    SettingType, Side, StashMutation, adjust_scroll, adjust_scroll_wrapped, diff_projection,
-    fold_hiding_row, move_projected_start_backward, project_aligned_rows, project_visible_rows,
-    selection_for_launch_position,
+    GeneratedViewIdentity, HelpTopic, ListPurpose, MaximizedView, Mode, PICKER_PROGRESS_INTERVAL,
+    Pane, Path, PickerProgress, Position, PreparedPane, PreparedRow, PreparedView, PromptKind,
+    Rect, ResourceKind, Selection, SettingType, Side, StashMutation, adjust_scroll,
+    adjust_scroll_wrapped, diff_projection, fold_hiding_row, move_projected_start_backward,
+    project_aligned_rows, project_visible_rows, selection_for_launch_position,
 };
 use crate::keymap::{ActionContext, ContextAction};
+use std::time::Instant;
 
 impl App {
     pub fn active(&self) -> &Pane {
@@ -172,7 +173,53 @@ impl App {
     ///
     /// This is the only frame lifecycle step allowed to mutate view state.
     /// Rendering consumes the returned owned values and an immutable `App`.
+    /// Advances the counts the picker and finder headers show.
+    ///
+    /// The headers read this rather than the live corpus, so their numbers
+    /// change on their own clock instead of on whatever a background scan
+    /// happened to deliver into this frame. Work that has stopped publishes
+    /// at once: the numbers it stopped on are the answer, and holding those
+    /// back would leave a settled header reading something merely recent.
+    fn pace_picker_progress(&mut self) {
+        let Some(picker) = self.picker.as_ref() else {
+            self.picker_progress = None;
+            return;
+        };
+        let finder = self.finder.as_ref();
+        let counts = PickerProgress {
+            matches: finder.map_or(picker.matches.len(), |finder| finder.matches.len()),
+            candidates: picker.entries.len() + finder.map_or(0, |finder| finder.items.len()),
+            published: Instant::now(),
+        };
+        let settled =
+            !picker.loading && !picker.ranking && finder.is_none_or(|finder| !finder.loading);
+        let publish = match self.picker_progress {
+            None => true,
+            Some(held)
+                if held.matches == counts.matches && held.candidates == counts.candidates =>
+            {
+                false
+            }
+            Some(_) if settled => true,
+            Some(held) => {
+                counts.published.saturating_duration_since(held.published)
+                    >= PICKER_PROGRESS_INTERVAL
+            }
+        };
+        if publish {
+            self.picker_progress = Some(counts);
+        }
+    }
+
+    /// What the picker and finder headers say they have found, and out of how
+    /// many candidates. Both are the paced values, not the live corpus.
+    pub fn picker_progress_counts(&self) -> (usize, usize) {
+        self.picker_progress
+            .map_or((0, 0), |held| (held.matches, held.candidates))
+    }
+
     pub fn prepare_view(&mut self, geometry: FrameGeometry) -> PreparedView {
+        self.pace_picker_progress();
         self.flush_lsp_replies();
         self.sync_word_index();
         let pane_ids_to_reveal = self.panes.keys().copied().collect::<Vec<_>>();
