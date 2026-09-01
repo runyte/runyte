@@ -642,6 +642,9 @@ impl App {
     /// view cancels it, with force required when authored text would be lost.
     pub(super) fn request_view_quit(&mut self, force: bool) {
         let buffer = self.active().buffer;
+        if self.quit_to_covered_terminal(force) {
+            return;
+        }
         if self.panes.len() == 1 {
             if self.active_terminal().is_none() && self.buffers[buffer].is_commit_message() {
                 if self.buffers[buffer].dirty && !force {
@@ -686,6 +689,40 @@ impl App {
             }
         }
         self.close_pane();
+    }
+
+    /// Finishes with a document an external request put over a terminal.
+    ///
+    /// This runs before every other reading of `:q`, including the one that
+    /// would stop a single-pane editor: the pane belongs to the terminal, and
+    /// the document was the detour. The buffer is retired under the ordinary
+    /// rules, except that a buffer another pane is also showing stays open,
+    /// and then the terminal is visible again where it was.
+    fn quit_to_covered_terminal(&mut self, force: bool) -> bool {
+        let pane_id = self.active_pane;
+        let buffer = self.active().buffer;
+        if self.covered_terminal(pane_id, buffer).is_none() {
+            return false;
+        }
+        let displayed_elsewhere = self.panes.iter().any(|(other, pane)| {
+            *other != pane_id && pane.terminal.is_none() && pane.buffer == buffer
+        });
+        if !displayed_elsewhere {
+            if self.buffers[buffer].dirty && !force {
+                self.action_warning(
+                    "Quit refused",
+                    "modified buffer; use :q! to discard its unsaved changes",
+                );
+                return true;
+            }
+            if force {
+                self.close_buffer_discarding(buffer);
+            } else {
+                self.close_buffer_returning_from_commit(buffer);
+            }
+        }
+        self.uncover_terminal(pane_id, buffer);
+        true
     }
 
     pub(super) fn request_quit_here(&mut self, force: bool) {

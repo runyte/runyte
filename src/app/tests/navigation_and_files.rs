@@ -2206,3 +2206,279 @@ fn vim_directory_scope_opens_entries_and_parents_before_global_interpretation() 
 
     fs::remove_dir_all(directory).unwrap();
 }
+
+/// An editor-wait request arrives from a program running inside the terminal
+/// the pane is showing, so covering that terminal with the requested document
+/// is a detour rather than a decision to stop using the terminal. Finishing
+/// with the document has to put the terminal back where it was.
+#[cfg(unix)]
+#[test]
+fn quitting_a_wait_document_uncovers_the_terminal_it_replaced() {
+    let directory = temporary("wait-over-terminal-quit");
+    fs::create_dir_all(&directory).unwrap();
+    let note = directory.join("note.txt");
+    let merge = directory.join("MERGE_MSG");
+    fs::write(&note, "alpha\n").unwrap();
+    fs::write(&merge, "Merge branch 'dev'\n").unwrap();
+
+    let mut app = App::new(Config::default(), Some(note)).unwrap();
+    app.split(Axis::Vertical, None).unwrap();
+    app.open_terminal_at(Some("/bin/cat".to_owned()), directory.clone());
+    let terminal = app.active_terminal().unwrap();
+    let pane = app.active_pane;
+
+    app.host_open_wait_files(vec![merge], true, &HashSet::new())
+        .unwrap();
+    assert_eq!(app.terminal_of_pane(pane), None);
+    assert_eq!(app.mode, Mode::Normal);
+
+    app.execute_command("quit").unwrap();
+
+    assert_eq!(app.panes.len(), 2, "the terminal's pane was closed");
+    assert_eq!(app.active_pane, pane);
+    assert_eq!(app.terminal_of_pane(pane), Some(terminal));
+    assert_eq!(app.mode, Mode::Insert, "the terminal did not take input");
+    fs::remove_dir_all(directory).unwrap();
+}
+
+/// The uncovering happens before every other reading of `:quit`, so the one
+/// pane of a single-pane editor is not asked whether the whole editor should
+/// stop.
+#[cfg(unix)]
+#[test]
+fn quitting_a_wait_document_over_the_only_pane_uncovers_rather_than_exits() {
+    let directory = temporary("wait-over-terminal-single-pane");
+    fs::create_dir_all(&directory).unwrap();
+    let merge = directory.join("MERGE_MSG");
+    fs::write(&merge, "Merge branch 'dev'\n").unwrap();
+
+    let mut app = App::new(Config::default(), Some(directory.clone())).unwrap();
+    app.open_terminal_at(Some("/bin/cat".to_owned()), directory.clone());
+    let terminal = app.active_terminal().unwrap();
+    let pane = app.active_pane;
+
+    app.host_open_wait_files(vec![merge], true, &HashSet::new())
+        .unwrap();
+    app.execute_command("quit").unwrap();
+
+    assert!(!app.should_quit, "quitting the detour stopped the editor");
+    assert_eq!(app.panes.len(), 1);
+    assert_eq!(app.terminal_of_pane(pane), Some(terminal));
+    fs::remove_dir_all(directory).unwrap();
+}
+
+/// `:close` and `:wbc` retire the requested buffer without touching the pane
+/// layout, so the pane they leave behind is the terminal's, not an unrelated
+/// fallback document.
+#[cfg(unix)]
+#[test]
+fn closing_a_wait_document_uncovers_the_terminal_it_replaced() {
+    let directory = temporary("wait-over-terminal-close");
+    fs::create_dir_all(&directory).unwrap();
+    let note = directory.join("note.txt");
+    let merge = directory.join("MERGE_MSG");
+    fs::write(&note, "alpha\n").unwrap();
+    fs::write(&merge, "Merge branch 'dev'\n").unwrap();
+
+    let mut app = App::new(Config::default(), Some(note)).unwrap();
+    app.split(Axis::Vertical, None).unwrap();
+    app.open_terminal_at(Some("/bin/cat".to_owned()), directory.clone());
+    let terminal = app.active_terminal().unwrap();
+    let pane = app.active_pane;
+
+    app.host_open_wait_files(vec![merge], true, &HashSet::new())
+        .unwrap();
+    app.execute_command("close").unwrap();
+
+    assert_eq!(app.panes.len(), 2);
+    assert_eq!(app.terminal_of_pane(pane), Some(terminal));
+    fs::remove_dir_all(directory).unwrap();
+}
+
+/// Navigating the pane somewhere else is the person saying they are done with
+/// the terminal, so the detour ends and `:quit` closes the pane as it always
+/// does for a document.
+#[cfg(unix)]
+#[test]
+fn navigating_away_from_a_wait_document_ends_the_terminal_detour() {
+    let directory = temporary("wait-over-terminal-navigated");
+    fs::create_dir_all(&directory).unwrap();
+    let note = directory.join("note.txt");
+    let other = directory.join("other.txt");
+    let merge = directory.join("MERGE_MSG");
+    fs::write(&note, "alpha\n").unwrap();
+    fs::write(&other, "beta\n").unwrap();
+    fs::write(&merge, "Merge branch 'dev'\n").unwrap();
+
+    let mut app = App::new(Config::default(), Some(note)).unwrap();
+    app.split(Axis::Vertical, None).unwrap();
+    app.open_terminal_at(Some("/bin/cat".to_owned()), directory.clone());
+    let terminal = app.active_terminal().unwrap();
+    let pane = app.active_pane;
+
+    app.host_open_wait_files(vec![merge], true, &HashSet::new())
+        .unwrap();
+    app.open_file(other).unwrap();
+    app.execute_command("quit").unwrap();
+
+    assert_eq!(app.panes.len(), 1, "the pane was kept for a left terminal");
+    assert!(!app.panes.contains_key(&pane));
+    assert!(
+        app.terminals
+            .get(terminal)
+            .is_some_and(TerminalSession::live)
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
+/// A terminal another pane has taken in the meantime is that pane's; the
+/// detour cannot move it back out from under it.
+#[cfg(unix)]
+#[test]
+fn a_terminal_taken_by_another_pane_is_not_uncovered_again() {
+    let directory = temporary("wait-over-terminal-taken");
+    fs::create_dir_all(&directory).unwrap();
+    let note = directory.join("note.txt");
+    let merge = directory.join("MERGE_MSG");
+    fs::write(&note, "alpha\n").unwrap();
+    fs::write(&merge, "Merge branch 'dev'\n").unwrap();
+
+    let mut app = App::new(Config::default(), Some(note)).unwrap();
+    app.split(Axis::Vertical, None).unwrap();
+    app.open_terminal_at(Some("/bin/cat".to_owned()), directory.clone());
+    let terminal = app.active_terminal().unwrap();
+    let covered = app.active_pane;
+
+    app.host_open_wait_files(vec![merge], true, &HashSet::new())
+        .unwrap();
+    let other = *app.panes.keys().find(|pane| **pane != covered).unwrap();
+    app.activate_pane(other);
+    app.show_terminal(terminal);
+    app.activate_pane(covered);
+    app.execute_command("quit").unwrap();
+
+    assert_eq!(app.terminal_of_pane(other), Some(terminal));
+    assert_eq!(app.panes.len(), 1, "the emptied pane was kept");
+    fs::remove_dir_all(directory).unwrap();
+}
+
+/// An ordinary host open is the same kind of outside request as a wait: a
+/// second client, or `runyte file` run elsewhere, did not ask this pane to
+/// stop showing its terminal either.
+#[cfg(unix)]
+#[test]
+fn a_host_open_over_a_terminal_is_also_a_detour() {
+    let directory = temporary("host-open-over-terminal");
+    fs::create_dir_all(&directory).unwrap();
+    let note = directory.join("note.txt");
+    let other = directory.join("other.txt");
+    fs::write(&note, "alpha\n").unwrap();
+    fs::write(&other, "beta\n").unwrap();
+
+    let mut app = App::new(Config::default(), Some(note)).unwrap();
+    app.split(Axis::Vertical, None).unwrap();
+    app.open_terminal_at(Some("/bin/cat".to_owned()), directory.clone());
+    let terminal = app.active_terminal().unwrap();
+    let pane = app.active_pane;
+
+    app.host_open_files(vec![other], true).unwrap();
+    assert_eq!(app.terminal_of_pane(pane), None);
+
+    app.execute_command("quit").unwrap();
+
+    assert_eq!(app.panes.len(), 2);
+    assert_eq!(app.terminal_of_pane(pane), Some(terminal));
+    fs::remove_dir_all(directory).unwrap();
+}
+
+/// A split copies the pane it came from, and one terminal has one size, so
+/// the copy must not also inherit the claim on it. Two panes racing to reveal
+/// the same session is the failure the split's own terminal rule avoids.
+#[cfg(unix)]
+#[test]
+fn a_split_does_not_inherit_the_claim_on_a_covered_terminal() {
+    let directory = temporary("wait-over-terminal-split");
+    fs::create_dir_all(&directory).unwrap();
+    let note = directory.join("note.txt");
+    let merge = directory.join("MERGE_MSG");
+    fs::write(&note, "alpha\n").unwrap();
+    fs::write(&merge, "Merge branch 'dev'\n").unwrap();
+
+    let mut app = App::new(Config::default(), Some(note)).unwrap();
+    app.split(Axis::Vertical, None).unwrap();
+    app.open_terminal_at(Some("/bin/cat".to_owned()), directory.clone());
+    let terminal = app.active_terminal().unwrap();
+    let covered = app.active_pane;
+
+    app.host_open_wait_files(vec![merge], true, &HashSet::new())
+        .unwrap();
+    app.split(Axis::Horizontal, None).unwrap();
+    let split = app.active_pane;
+    assert_ne!(split, covered);
+
+    app.execute_command("quit").unwrap();
+
+    assert!(
+        !app.panes.contains_key(&split),
+        "the split kept itself open on a terminal it never showed"
+    );
+    assert_eq!(app.terminal_of_pane(covered), None);
+
+    app.activate_pane(covered);
+    app.execute_command("quit").unwrap();
+
+    assert_eq!(app.terminal_of_pane(covered), Some(terminal));
+    fs::remove_dir_all(directory).unwrap();
+}
+
+/// A claim is owed for the one document that covered the terminal. Once the
+/// pane has fallen back to another buffer, retiring that buffer is not the
+/// request being finished with, so it must not reveal the terminal.
+#[cfg(unix)]
+#[test]
+fn a_spent_claim_does_not_reveal_the_terminal_under_a_later_buffer() {
+    let directory = temporary("wait-over-terminal-superseded");
+    fs::create_dir_all(&directory).unwrap();
+    let note = directory.join("note.txt");
+    let other = directory.join("other.txt");
+    let merge = directory.join("MERGE_MSG");
+    fs::write(&note, "alpha\n").unwrap();
+    fs::write(&other, "beta\n").unwrap();
+    fs::write(&merge, "Merge branch 'dev'\n").unwrap();
+
+    let mut app = App::new(Config::default(), Some(note)).unwrap();
+    app.split(Axis::Vertical, None).unwrap();
+    app.open_file(other).unwrap();
+    app.open_terminal_at(Some("/bin/cat".to_owned()), directory.clone());
+    let terminal = app.active_terminal().unwrap();
+    let covered = app.active_pane;
+
+    app.host_open_wait_files(vec![merge], true, &HashSet::new())
+        .unwrap();
+    // The person puts the session in front of the other pane themselves, so
+    // the covered pane is no longer the one that owes it a return.
+    let elsewhere = *app.panes.keys().find(|pane| **pane != covered).unwrap();
+    app.activate_pane(elsewhere);
+    app.show_terminal(terminal);
+    app.activate_pane(covered);
+    app.execute_command("close").unwrap();
+    assert_eq!(app.terminal_of_pane(elsewhere), Some(terminal));
+    // Falling back is not navigating, so it does not go through the ask that
+    // ends a detour; the pane reaches another buffer with its claim intact.
+    let fallback = app.active().buffer;
+
+    // That pane then leaves the terminal, freeing the session again. Retiring
+    // the unrelated buffer the covered pane fell back to must not adopt it.
+    app.activate_pane(elsewhere);
+    app.leave_terminal();
+    app.activate_pane(covered);
+    assert_eq!(app.active().buffer, fallback);
+    app.execute_command("close").unwrap();
+
+    assert_eq!(
+        app.terminal_of_pane(covered),
+        None,
+        "a spent claim revealed the terminal under an unrelated buffer"
+    );
+    fs::remove_dir_all(directory).unwrap();
+}

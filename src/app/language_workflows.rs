@@ -3234,6 +3234,7 @@ impl App {
                 pane.last_explorer_directory = Some(directory.clone());
             }
         }
+        let mut uncover = Vec::new();
         for (pane_id, fallback) in replacements {
             let selection = self
                 .take_pending_launch_selection(fallback)
@@ -3245,6 +3246,16 @@ impl App {
             pane.scroll_wrap = 0;
             pane.scroll_col = 0;
             pane.preserve_scroll = false;
+            uncover.push(pane_id);
+        }
+        // A document an external request put over a terminal is done with the
+        // pane once it is retired, so `:close` and `:wbc` reveal the terminal
+        // again rather than leaving the person on an unrelated fallback
+        // buffer with their session only reachable through the terminal list.
+        // The retired buffer names the claim: a pane whose covering document
+        // is some other buffer is not the one being finished with here.
+        for pane_id in uncover {
+            self.uncover_terminal(pane_id, buffer);
         }
         self.stale_syntax.remove(&buffer);
         self.syntax[buffer] = None;

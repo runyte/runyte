@@ -694,6 +694,7 @@ impl App {
         activate: bool,
         pending_wait_buffers: Option<&HashSet<usize>>,
     ) -> Result<Vec<usize>> {
+        let covered_terminal = activate.then(|| self.active_terminal()).flatten();
         enum Prepared {
             /// Already open before this request, so nothing is staged for it.
             Live(usize),
@@ -838,6 +839,18 @@ impl App {
             // The buffer exists by now, so this retargets the pane rather than
             // reading the path again.
             self.open_file(path.clone())?;
+        }
+        // Recorded after the activation, because retargeting the pane is what
+        // took the terminal off it. Nobody in the editor asked this pane to
+        // stop showing its terminal — a program did, usually one running in
+        // that very terminal — so the pane owes it a return once the document
+        // the request brought is finished with.
+        if let Some(id) = covered_terminal
+            && self.terminals.get(id).is_some()
+            && let Some(pane) = self.panes.get_mut(&self.active_pane)
+            && pane.terminal.is_none()
+        {
+            pane.covered_terminal = Some((pane.buffer, id));
         }
         Ok(opened)
     }
@@ -1360,6 +1373,10 @@ impl App {
         // it would fight over every resize; the terminal list is how a session
         // is put in front of another pane deliberately.
         pane.terminal = None;
+        // A covered terminal is owed a return by the one pane that gave it
+        // up, for the same reason. Two panes holding the claim would race to
+        // reveal one session.
+        pane.covered_terminal = None;
         self.panes.insert(new, pane);
         self.record_pane_opened(new);
         self.layout.split(old, new, axis);
