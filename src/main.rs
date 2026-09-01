@@ -3545,7 +3545,7 @@ async fn run_attached(
     } = options;
     let mut client =
         BufferedLocalClient::connect_with_handoff(endpoint, *geometry, cwd_file.is_some()).await?;
-    match client.recv().await? {
+    match client.recv_handshake().await? {
         Some(response @ HostResponse::Welcome { .. }) => {
             validate_welcome(&response, true).map_err(anyhow::Error::msg)?;
         }

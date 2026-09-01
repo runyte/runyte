@@ -2105,6 +2105,31 @@ impl BufferedLocalClient {
         write_client_message(&mut self.writer, request).await
     }
 
+    /// Receives the semantic response that answers this client's handshake.
+    ///
+    /// The reader thread classifies visual responses into a replaceable slot
+    /// of their own, and one `select!` pass polls its branches in turn: a
+    /// frame that lands after the semantic branch has been polled and found
+    /// empty otherwise wins the pass, even though the host wrote `Welcome`
+    /// first. Waiting on the semantic queue alone makes the handshake
+    /// ordering the same explicit rule on both ends of the connection.
+    pub async fn recv_handshake(&mut self) -> Result<Option<HostResponse>> {
+        let responses = self
+            .responses
+            .as_mut()
+            .expect("buffered response receiver exists until drop");
+        if let Some(response) = responses.recv_handshake().await {
+            return Ok(Some(response));
+        }
+        let Some(reader) = self.reader.take() else {
+            return Ok(None);
+        };
+        reader
+            .join()
+            .map_err(|_| anyhow::anyhow!("local response reader panicked"))??;
+        Ok(None)
+    }
+
     /// Cancellation-safe for the same reason as an ordinary Tokio channel
     /// receive: cancelling this future cannot consume part of a response.
     pub async fn recv(&mut self) -> Result<Option<HostResponse>> {
@@ -4223,6 +4248,52 @@ mod tests {
         ));
         endpoint.cleanup().unwrap();
         drop(root);
+    }
+
+    #[tokio::test]
+    async fn a_buffered_client_handshake_is_not_answered_by_a_waiting_frame() {
+        use std::io::Write as _;
+
+        let (client, mut server) = std::os::unix::net::UnixStream::pair().unwrap();
+        client.set_nonblocking(true).unwrap();
+        let client = UnixStream::from_std(client).unwrap();
+        let mut client = BufferedLocalClient::from_connected_stream(client).unwrap();
+        let mut host = WorkspaceHost::new(App::new(Config::default(), None).unwrap());
+        let mut frame = serde_json::to_vec(&HostResponse::Frame {
+            frame: Box::new(host.prepare_frame(FrameGeometry::default()).into()),
+        })
+        .unwrap();
+        frame.push(b'\n');
+        server.write_all(&frame).unwrap();
+
+        // The reader thread puts that frame in the replaceable visual slot,
+        // where a `select!` pass can reach it while the semantic queue is
+        // still empty. The handshake must wait for the semantic answer.
+        assert!(
+            tokio::time::timeout(Duration::from_millis(250), client.recv_handshake())
+                .await
+                .is_err(),
+            "a frame answered the client handshake"
+        );
+
+        let mut welcome = serde_json::to_vec(&HostResponse::Welcome {
+            protocol: PROTOCOL_VERSION,
+            pid: std::process::id(),
+            features: vec![FeatureGroup::Snapshots, FeatureGroup::Input],
+            host_version: CLIENT_VERSION.to_owned(),
+        })
+        .unwrap();
+        welcome.push(b'\n');
+        server.write_all(&welcome).unwrap();
+
+        assert!(matches!(
+            client.recv_handshake().await.unwrap(),
+            Some(HostResponse::Welcome { .. })
+        ));
+        assert!(matches!(
+            client.recv().await.unwrap(),
+            Some(HostResponse::Frame { .. })
+        ));
     }
 
     #[tokio::test]
