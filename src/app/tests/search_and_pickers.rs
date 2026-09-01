@@ -3257,3 +3257,145 @@ fn truncated_content_rescan_reranks_under_the_query_it_restarts_for() {
     app.close_file_picker();
     fs::remove_dir_all(root).unwrap();
 }
+
+#[cfg(unix)]
+#[test]
+fn output_that_leaves_a_terminal_item_unchanged_does_not_move_the_name_list() {
+    let root = temporary("project-finder-quiet-terminal-name-mode");
+    fs::create_dir_all(&root).unwrap();
+    let ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    app.open_terminal_at(Some("/bin/cat".to_owned()), root.clone());
+    let terminal = app.active_terminal().unwrap();
+    app.open_project_picker().unwrap();
+    let before = app.finder.as_ref().unwrap().matches.clone();
+
+    // Output is what marks a terminal dirty, but a name-mode item describes
+    // the session rather than its output. A child that writes without saying
+    // anything new about itself leaves the list exactly as it was.
+    for row in 0..64 {
+        app.apply_terminal_output(TerminalOutput::Bytes {
+            id: terminal,
+            bytes: format!("busy row {row}\r\n").into_bytes(),
+        });
+    }
+    assert!(app.finder_terminals_dirty());
+    assert!(
+        !app.refresh_finder_terminals(),
+        "a repeat of the item already held is not a change worth a frame"
+    );
+    assert!(!app.finder_terminals_dirty());
+    assert!(!app.picker.as_ref().unwrap().ranking);
+    assert_eq!(
+        app.finder
+            .as_ref()
+            .unwrap()
+            .matches
+            .iter()
+            .map(|found| found.source)
+            .collect::<Vec<_>>(),
+        before.iter().map(|found| found.source).collect::<Vec<_>>(),
+        "no row moved"
+    );
+
+    // A title the reader can search for is a change, and is taken.
+    app.apply_terminal_output(TerminalOutput::Bytes {
+        id: terminal,
+        bytes: b"\x1b]2;hot-title\x07".to_vec(),
+    });
+    assert!(app.refresh_finder_terminals());
+    type_text(&mut app, "hot-title");
+    assert_eq!(
+        app.finder
+            .as_ref()
+            .unwrap()
+            .selected_target(app.picker.as_ref().unwrap()),
+        Some(FinderTarget::Resource(ResourceTarget::Terminal(terminal)))
+    );
+    app.close_file_picker();
+    app.close_terminal_id(terminal);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn a_header_count_changes_once_a_second_and_publishes_what_the_work_settled_on() {
+    let root = temporary("picker-header-count-pacing");
+    fs::create_dir_all(&root).unwrap();
+    let ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    let geometry = FrameGeometry {
+        screen: Rect {
+            width: 80,
+            height: 24,
+            ..Rect::default()
+        },
+        editor: Rect {
+            width: 80,
+            height: 22,
+            ..Rect::default()
+        },
+        status: Rect::default(),
+        message: Rect::default(),
+    };
+    let candidates = |app: &App| {
+        app.picker.as_ref().unwrap().entries.len() + app.finder.as_ref().unwrap().items.len()
+    };
+    app.open_project_picker().unwrap();
+    let scan_id = app.picker.as_ref().unwrap().scan_id;
+    app.prepare_view(geometry);
+    let held = app.picker_progress_counts();
+    assert_eq!(held.1, candidates(&app));
+
+    // A scan the header is watching delivers far more states than a header
+    // can be read at, so the rest of the second the last one was shown in is
+    // not shown at all.
+    app.picker.as_mut().unwrap().loading = true;
+    app.apply_file_picker_event(FilePickerEvent::Files {
+        scan_id,
+        paths: vec![ScanEntry::file(root.join("alpha.rs"))],
+    });
+    app.prepare_view(geometry);
+    assert_ne!(candidates(&app), held.1, "the corpus did move");
+    assert_eq!(
+        app.picker_progress_counts(),
+        held,
+        "a header does not follow the scanner within the same second"
+    );
+
+    // A second on, it catches up.
+    app.picker_progress.as_mut().unwrap().published -= Duration::from_secs(1);
+    app.prepare_view(geometry);
+    let caught_up = app.picker_progress_counts();
+    assert_ne!(caught_up, held);
+    assert_eq!(caught_up.1, candidates(&app));
+
+    // Whatever the work stops on is published at once: a settled header that
+    // reads something merely recent is wrong, not slow.
+    app.apply_file_picker_event(FilePickerEvent::Files {
+        scan_id,
+        paths: vec![ScanEntry::file(root.join("beta.rs"))],
+    });
+    app.prepare_view(geometry);
+    assert_eq!(
+        app.picker_progress_counts(),
+        caught_up,
+        "still inside the second the catch-up started"
+    );
+    app.apply_file_picker_event(FilePickerEvent::Finished {
+        scan_id,
+        skipped: 0,
+        limited: false,
+    });
+    app.prepare_view(geometry);
+    assert_eq!(
+        app.picker_progress_counts().1,
+        candidates(&app),
+        "the counts the scan finished on are exact"
+    );
+    app.close_file_picker();
+    fs::remove_dir_all(root).unwrap();
+}

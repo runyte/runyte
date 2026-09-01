@@ -15,7 +15,9 @@ use std::{
 };
 
 use crate::{
-    file_picker::{CONTENT_ENTRY_LIMIT, FilePicker, FilePreview, FuzzyMatcher, PickerTarget},
+    file_picker::{
+        CONTENT_ENTRY_LIMIT, EntryView, FilePicker, FilePreview, FuzzyMatcher, PickerTarget,
+    },
     terminal::{TerminalId, TerminalLineId},
 };
 
@@ -62,7 +64,7 @@ pub enum FinderTarget {
     Resource(ResourceTarget),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ResourceItem {
     pub label: String,
     pub detail: String,
@@ -182,6 +184,14 @@ pub struct ResourceFinder {
     claimed_match_source: Option<FinderMatchSource>,
     selected_preview: Option<FilePreview>,
     file_rank_revision: u64,
+    /// The picker scan whose entry table this finder's file matches index.
+    ///
+    /// An entry index means nothing on its own. A restarted scan refills
+    /// `entries` from scratch, so the same index names a different line, and
+    /// a finder that outlives one scan can hold matches that no longer
+    /// describe anything. Recording the scan lets every reading of a file
+    /// match ask whether the two still agree before it resolves an index.
+    file_match_scan: Option<u64>,
 }
 
 impl Default for ResourceFinder {
@@ -216,6 +226,7 @@ impl ResourceFinder {
             claimed_match_source: None,
             selected_preview: None,
             file_rank_revision: 0,
+            file_match_scan: None,
         }
     }
 
@@ -240,6 +251,7 @@ impl ResourceFinder {
         } else {
             std::mem::replace(&mut self.file_suppressed_paths, Arc::new(HashSet::new()))
         };
+        self.file_match_scan = None;
         let selected_preview = self.selected_preview.take();
         let claimed_selection = self.claimed_selection.take();
         let claimed_match_source = self.claimed_match_source.take();
@@ -303,6 +315,7 @@ impl ResourceFinder {
         self.active_content_items = 0;
         self.resource_matches.clear();
         self.matches.clear();
+        self.file_match_scan = None;
         self.suppressed_paths.clear();
         self.file_suppressed_paths = suppressed_paths;
         self.name_rank = None;
@@ -549,6 +562,7 @@ impl ResourceFinder {
         self.file_rank_remap_resources = None;
         self.items = items;
         self.matches.clear();
+        self.file_match_scan = None;
         self.resource_matches.clear();
         self.loading = false;
         self.limited = false;
@@ -666,9 +680,11 @@ impl ResourceFinder {
 
     pub(crate) fn apply_background_matches(
         &mut self,
+        scan_id: u64,
         matches: Vec<FinderMatch>,
         positions: &HashMap<FinderMatchSource, usize>,
     ) -> Vec<FinderMatch> {
+        self.file_match_scan = Some(scan_id);
         let claimed_target = self.claimed_selection.is_some();
         let selected = self.selection_user_owned.then(|| {
             if claimed_target {
@@ -743,6 +759,22 @@ impl ResourceFinder {
             );
         }
         self.restore_selection(picker, selected.as_ref());
+    }
+
+    /// Whether `item` says anything the finder does not already hold about
+    /// the terminal it describes.
+    ///
+    /// In name mode a terminal contributes its title, its command, and its
+    /// activity — not its output. A child writing continuously marks the
+    /// terminal changed on every chunk and then almost always produces the
+    /// identical item, and acting on one of those costs a rank of the whole
+    /// file corpus and replaces every row in the list. That is a list that
+    /// moves under the reader for no new information, so ask first.
+    pub(crate) fn terminal_item_differs(&self, terminal: TerminalId, item: &ResourceItem) -> bool {
+        self.items
+            .iter()
+            .find(|held| matches!(held.target, ResourceTarget::Terminal(id) if id == terminal))
+            .is_none_or(|held| held != item)
     }
 
     pub(crate) fn replace_terminal_unmerged(
@@ -896,6 +928,7 @@ impl ResourceFinder {
             matches.truncate(CONTENT_ENTRY_LIMIT);
         }
         self.matches = matches;
+        self.file_match_scan = Some(picker.scan_id);
         self.restore_selection(picker, selected);
     }
 
@@ -947,10 +980,25 @@ impl ResourceFinder {
             .and_then(|found| self.target_for_match(picker, found))
     }
 
+    /// The picker entry a file match names, or `None` when the picker has
+    /// rebuilt the entry table that match was ranked against.
+    ///
+    /// Rows, previews, and what `Enter` opens all resolve a file match
+    /// through here, so none of them can read one scan's index in another
+    /// scan's table. A restarted scan refills `entries` from scratch while
+    /// the finder still holds the rows the previous ranking produced, and an
+    /// index read across that boundary silently names an unrelated line.
+    pub fn file_entry<'a>(&self, picker: &'a FilePicker, entry: usize) -> Option<EntryView<'a>> {
+        if self.file_match_scan != Some(picker.scan_id) {
+            return None;
+        }
+        picker.view(entry)
+    }
+
     fn target_for_match(&self, picker: &FilePicker, found: &FinderMatch) -> Option<FinderTarget> {
         match found.source {
             FinderMatchSource::File(entry) => {
-                let view = picker.view(entry)?;
+                let view = self.file_entry(picker, entry)?;
                 let column = view.column
                     + view
                         .row
@@ -1518,5 +1566,53 @@ mod tests {
             "alpha",
         );
         assert_eq!(finder.matches[0].emphasis, vec![1, 2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn a_restarted_scan_retires_the_file_matches_ranked_against_its_entries() {
+        let mut picker = FilePicker::grep(1, PathBuf::from("/project"));
+        picker.enable_unified_finder();
+        picker.add_content(vec![crate::file_picker::FileHits {
+            path: PathBuf::from("/project/alpha.rs"),
+            lines: vec![crate::file_picker::LineHit {
+                row: 0,
+                column: 0,
+                text: "needle".to_owned(),
+            }],
+        }]);
+        picker.finish(0, true);
+        picker.insert_query_text("needle");
+
+        let mut finder = ResourceFinder::new(FinderMode::Contents);
+        finder.merge_files(&picker, "needle");
+        let found = finder.selected_match().expect("the file line matched");
+        assert!(matches!(found.source, FinderMatchSource::File(0)));
+        assert!(finder.file_entry(&picker, 0).is_some());
+
+        // A truncated scan is restarted under the query it could not answer,
+        // which refills the entry table from nothing. The rows the previous
+        // ranking produced are still here, and index a table that is gone.
+        let _discarded = picker.restart_content_scan(2);
+        picker.add_content(vec![crate::file_picker::FileHits {
+            path: PathBuf::from("/project/zeta.rs"),
+            lines: vec![crate::file_picker::LineHit {
+                row: 41,
+                column: 0,
+                text: "needle".to_owned(),
+            }],
+        }]);
+
+        assert!(
+            picker.view(0).is_some(),
+            "the rebuilt table does answer the stale index, which is the hazard"
+        );
+        assert!(
+            finder.file_entry(&picker, 0).is_none(),
+            "a file match cannot resolve against a table it was not ranked against"
+        );
+        assert!(
+            finder.selected_target(&picker).is_none(),
+            "and neither can what Enter would open"
+        );
     }
 }

@@ -164,6 +164,26 @@ impl Drop for FinderContentScan {
     }
 }
 
+/// How often a picker or finder header may change the counts it shows.
+///
+/// Scanner and ranker progress arrives far faster than a header can be read.
+/// A count that changes at the frame rate is not information, and because it
+/// sits inside the title every digit it gains or loses also shifts the words
+/// after it. One second is slow enough to read a number and fast enough to
+/// say the work is moving.
+const PICKER_PROGRESS_INTERVAL: Duration = Duration::from_secs(1);
+
+/// The counts a picker or finder header shows, and when they were published.
+///
+/// Held rather than read live so the header changes on its own slow clock
+/// instead of on whatever the scanner happened to deliver this frame.
+#[derive(Clone, Copy, Debug)]
+struct PickerProgress {
+    matches: usize,
+    candidates: usize,
+    published: Instant,
+}
+
 /// One terminal's prior matches, moved into a merge cursor in constant time.
 ///
 /// Both sequences are in retained-row order. Advancing them together lets a
@@ -2484,6 +2504,9 @@ pub struct App {
     /// pickers leave this absent and remain files-only.
     pub finder: Option<ResourceFinder>,
     finder_content_scan: Option<FinderContentScan>,
+    /// The counts the picker and finder headers show, held still between
+    /// refreshes. See [`App::pace_picker_progress`].
+    picker_progress: Option<PickerProgress>,
     /// Live sources are rebuilt when the finder corpus changes, not for each
     /// content-query keystroke. Restarting a query clones this shared table in
     /// constant time and resets only the bounded scan cursor.
@@ -2960,6 +2983,7 @@ impl App {
             picker: None,
             finder: None,
             finder_content_scan: None,
+            picker_progress: None,
             finder_content_sources: Arc::from([]),
             finder_content_suppressed_paths: Arc::new(HashSet::new()),
             finder_dirty_terminals: HashSet::new(),
