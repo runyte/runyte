@@ -7,12 +7,13 @@
 use super::WorkspaceRow;
 use super::{
     App, BindingScope, Buffer, CompletionSource, ConfirmationOverlay, ContentAlignment,
-    ContentLayout, DiffProjection, DiffSession, FinderMatchSource, FinderTarget, FrameGeometry,
-    GeneratedViewIdentity, HelpTopic, ListPurpose, MaximizedView, Mode, PICKER_PROGRESS_INTERVAL,
-    Pane, Path, PickerProgress, Position, PreparedPane, PreparedRow, PreparedView, PromptKind,
-    Rect, ResourceKind, Selection, SettingType, Side, StashMutation, adjust_scroll,
-    adjust_scroll_wrapped, diff_projection, fold_hiding_row, move_projected_start_backward,
-    project_aligned_rows, project_visible_rows, selection_for_launch_position,
+    ContentLayout, DiffProjection, DiffSession, FinderMatchSource, FinderMode, FinderTarget,
+    FrameGeometry, GeneratedViewIdentity, HelpTopic, ListPurpose, MaximizedView, Mode,
+    PICKER_PROGRESS_INTERVAL, Pane, Path, PickerProgress, Position, PreparedPane, PreparedRow,
+    PreparedView, PromptKind, Rect, ResourceKind, Selection, SettingType, Side, StashMutation,
+    adjust_scroll, adjust_scroll_wrapped, diff_projection, fold_hiding_row,
+    move_projected_start_backward, project_aligned_rows, project_visible_rows,
+    selection_for_launch_position,
 };
 use crate::keymap::{ActionContext, ContextAction};
 use std::time::Instant;
@@ -188,7 +189,11 @@ impl App {
         let finder = self.finder.as_ref();
         let counts = PickerProgress {
             matches: finder.map_or(picker.matches.len(), |finder| finder.matches.len()),
-            candidates: picker.entries.len() + finder.map_or(0, |finder| finder.items.len()),
+            candidates: picker.entries.len()
+                + finder.map_or(0, |finder| match finder.mode {
+                    FinderMode::Names => finder.items.len(),
+                    FinderMode::Contents => finder.content_item_count(),
+                }),
             published: Instant::now(),
         };
         let settled =

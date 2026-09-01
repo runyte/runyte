@@ -1486,6 +1486,10 @@ impl App {
                 limited,
             } if scan_id == picker.scan_id => {
                 if let Some(scanner) = scanner.as_ref() {
+                    // The flush is the first ranking request for any tail
+                    // smaller than RANK_PUBLISH_BATCH. Keep the rows inert
+                    // until its Ranked event installs that complete answer.
+                    picker.ranking = true;
                     scanner.flush_rank(scan_id);
                 }
                 // A truncated scan is the one case where typing on ahead was

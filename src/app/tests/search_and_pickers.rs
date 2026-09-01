@@ -2162,6 +2162,69 @@ fn background_picker_query_is_visible_before_the_ranker_answers() {
 }
 
 #[test]
+fn finished_background_scan_stays_pending_until_the_final_rank_arrives() {
+    let root = temporary("background-picker-final-rank-pending");
+    fs::create_dir_all(&root).unwrap();
+    fs::write(root.join("only.rs"), "one candidate\n").unwrap();
+    let ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    let (scanner, mut events) = crate::file_picker::scanner();
+    app.attach_file_scanner(scanner);
+    app.open_picker_at(root.clone(), FilePickerKind::Files)
+        .unwrap();
+    let scan_id = app.picker.as_ref().unwrap().scan_id;
+
+    tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .build()
+        .unwrap()
+        .block_on(async {
+            tokio::time::timeout(std::time::Duration::from_secs(2), async {
+                loop {
+                    let event = events.recv().await.unwrap();
+                    let finished = matches!(
+                        event,
+                        FilePickerEvent::Finished {
+                            scan_id: event_scan,
+                            ..
+                        } if event_scan == scan_id
+                    );
+                    app.apply_file_picker_event(event);
+                    if finished {
+                        break;
+                    }
+                }
+
+                let picker = app.picker.as_ref().unwrap();
+                assert!(!picker.loading);
+                assert!(
+                    picker.ranking,
+                    "the final sub-batch rank must keep the picker pending"
+                );
+                assert!(picker.selected_target().is_none(), "Enter stays disabled");
+
+                loop {
+                    app.apply_file_picker_event(events.recv().await.unwrap());
+                    if !app.picker.as_ref().unwrap().ranking {
+                        break;
+                    }
+                }
+            })
+            .await
+            .expect("the final rank should arrive");
+        });
+
+    let picker = app.picker.as_ref().unwrap();
+    assert_eq!(picker.entries.len(), 1);
+    assert_eq!(picker.matches.len(), 1);
+    assert!(picker.selected_target().is_some());
+    app.close_file_picker();
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn background_picker_rejects_a_stale_query_revision() {
     let root = temporary("background-picker-stale-rank");
     fs::create_dir_all(&root).unwrap();
@@ -3397,5 +3460,62 @@ fn a_header_count_changes_once_a_second_and_publishes_what_the_work_settled_on()
         "the counts the scan finished on are exact"
     );
     app.close_file_picker();
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn settled_content_header_excludes_retired_item_slots() {
+    let root = temporary("content-header-active-candidates");
+    fs::create_dir_all(&root).unwrap();
+    let ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    let mut picker = FilePicker::grep(19, root.clone());
+    picker.finish(0, false);
+    let mut finder = ResourceFinder::new(FinderMode::Contents);
+    finder.begin_content_scan_unmerged("needle", Arc::new(HashSet::new()));
+    finder.append_content_items_unmerged(
+        [0, 1].map(|row| {
+            ResourceItem::content(
+                format!("scratch:{}", row + 1),
+                "needle",
+                ResourceTarget::BufferLocation {
+                    buffer: 0,
+                    row,
+                    column: 0,
+                },
+                ResourceKind::Buffer,
+            )
+        }),
+        "needle",
+    );
+    finder.retire_content_item(0, false).unwrap();
+    finder.finish_content_scan_unmerged(false);
+    assert_eq!(finder.items.len(), 2, "the retired slot remains allocated");
+    assert_eq!(finder.content_item_count(), 1);
+    app.picker = Some(picker);
+    app.finder = Some(finder);
+
+    app.prepare_view(FrameGeometry {
+        screen: Rect {
+            width: 80,
+            height: 24,
+            ..Rect::default()
+        },
+        editor: Rect {
+            width: 80,
+            height: 22,
+            ..Rect::default()
+        },
+        status: Rect::default(),
+        message: Rect::default(),
+    });
+
+    assert_eq!(
+        app.picker_progress_counts().1,
+        1,
+        "the settled denominator counts only live content candidates"
+    );
     fs::remove_dir_all(root).unwrap();
 }
