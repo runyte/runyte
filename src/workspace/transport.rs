@@ -1771,6 +1771,25 @@ impl ResponseSender {
 }
 
 impl ResponseReceiver {
+    /// Receives the semantic response that establishes a connection before
+    /// visual updates are allowed onto the wire.
+    ///
+    /// A biased `select!` only prioritizes branches that are ready when they
+    /// are polled. If the semantic queue is empty at that instant and a frame
+    /// arrives before the watch branch is polled, the frame can otherwise win
+    /// even when the host queued `Welcome` first. Waiting on the semantic
+    /// queue alone makes the handshake ordering an explicit transport rule.
+    async fn recv_handshake(&mut self) -> Option<HostResponse> {
+        if self.messages_closed {
+            return None;
+        }
+        let response = self.messages.recv().await;
+        if response.is_none() {
+            self.messages_closed = true;
+        }
+        response
+    }
+
     async fn recv(&mut self) -> Option<HostResponse> {
         self.in_flight_visual = None;
         loop {
@@ -2099,6 +2118,11 @@ where
         .context("workspace host stopped")?;
     let mut writer = writer;
     let result: Result<()> = async {
+        let response = response_rx
+            .recv_handshake()
+            .await
+            .context("workspace host stopped before answering the client handshake")?;
+        write_message(&mut writer, &response).await?;
         loop {
             tokio::select! {
                 // Semantic replies are bounded and must drain before another
@@ -3405,6 +3429,52 @@ mod tests {
                 })
                 .is_err()
         );
+        drop(server);
+        endpoint.cleanup().unwrap();
+        drop(root);
+    }
+
+    #[tokio::test]
+    async fn interactive_handshake_precedes_a_visual_that_woke_the_writer_first() {
+        let (root, endpoint) = endpoint("handshake-before-visual");
+        let Some(mut server) = bind_or_skip(&endpoint).await else {
+            drop(root);
+            return;
+        };
+        let mut client = LocalClient::connect(&endpoint, FrameGeometry::default(), true)
+            .await
+            .unwrap();
+        let ServerEvent::Connected { responses, .. } = server.recv().await.unwrap() else {
+            panic!("expected connection")
+        };
+        let mut host = WorkspaceHost::new(App::new(Config::default(), None).unwrap());
+        responses
+            .try_send(HostResponse::Frame {
+                frame: Box::new(host.prepare_frame(FrameGeometry::default()).into()),
+            })
+            .unwrap();
+        // Let the connection writer observe the visual slot while its semantic
+        // queue is still empty. The handshake gate must keep that ready frame
+        // off the wire until the host supplies its semantic answer.
+        tokio::task::yield_now().await;
+        responses
+            .try_send(HostResponse::Welcome {
+                protocol: PROTOCOL_VERSION,
+                pid: std::process::id(),
+                features: vec![FeatureGroup::Snapshots, FeatureGroup::Input],
+                host_version: CLIENT_VERSION.to_owned(),
+            })
+            .unwrap();
+
+        assert!(matches!(
+            client.recv().await.unwrap(),
+            Some(HostResponse::Welcome { .. })
+        ));
+        assert!(matches!(
+            client.recv().await.unwrap(),
+            Some(HostResponse::Frame { .. })
+        ));
+
         drop(server);
         endpoint.cleanup().unwrap();
         drop(root);
