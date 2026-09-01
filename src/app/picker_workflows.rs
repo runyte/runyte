@@ -256,12 +256,25 @@ impl App {
     /// Re-scans when the query has moved past what the entries on hand can
     /// answer. Every path that edits a content query funnels through here.
     pub(super) fn restart_content_scan_if_needed(&mut self) {
-        if self
+        if !self
             .picker
             .as_ref()
             .is_some_and(FilePicker::content_rescan_needed)
         {
-            self.start_content_scan();
+            return;
+        }
+        self.start_content_scan();
+        // A restart hands the background ranker a new scan id, which resets
+        // it: the query it was answering, that query's revision, and the
+        // finder's live matches all go with the entry table they described.
+        // Re-state them here rather than in the callers, because the path
+        // that learns from `Finished` that the scan was truncated restarts
+        // without a keystroke behind it. Left unstated, the ranker answers
+        // the empty query at revision zero, the picker's own revision guard
+        // discards every one of those answers, and the finder keeps showing
+        // rows whose entry indices name a table that no longer exists.
+        if self.file_scanner.is_some() && self.finder.is_some() {
+            self.rank_resource_finder();
         }
     }
 
