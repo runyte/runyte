@@ -1,4 +1,55 @@
-# Automated GitHub binary releases
+---
+title: "GitHub Releases lack automated native binary archives"
+status: resolved
+reported: 2026-08-26
+resolved: 2026-09-01
+commit: ee22ef9
+---
+
+## Resolution
+
+Commit `ee22ef9` (`Automate binary releases`) added the missing release
+automation. There was no defective editor function: the repository had a
+manual crates.io runbook and an ordinary CI release-build floor, but no
+tag-bound path that assembled or published native executables.
+
+`.github/workflows/release.yml` now validates a pushed or manually supplied
+semantic-version tag, resolves it to an immutable commit, and refuses a
+`Cargo.toml` version mismatch before building. Four native jobs build and
+smoke-test the Linux and macOS target matrix, package the executable with the
+complete required documentation and licence material, and pass the archives
+to a final Ubuntu job. That job alone receives `contents: write`; it verifies
+the tag again, produces the combined `SHA256SUMS`, and creates or updates the
+release with rerunnable asset uploads. Concurrency is keyed by the requested
+tag so duplicate work contends without one version displacing a pending run
+for another. All action dependencies are pinned to complete commit hashes, and
+the manual tag reaches shell only through a quoted environment value.
+
+`README.md` and `docs/user-guide.md` describe archive installation and checksum
+verification. `context/reference/releasing.md` keeps crates.io publishing
+manual, places the automated binary workflow after the tag push, explains the
+four artifact names and unsigned macOS status, and records the manual `v0.1.7`
+backfill. That is a deliberate boundary: only `v0.1.7` had an existing GitHub
+Release when the workflow was added, while the generic dispatch remains able
+to build an older valid tag if a later decision calls for it. Provenance
+attestations were omitted because they would require additional permissions.
+
+Regression coverage is in
+`tests/release_packaging.rs::binary_release_is_tag_bound_native_and_narrowly_privileged`,
+which parses the workflow and fixes its permissions, per-tag concurrency,
+target/runner matrix, locked build, package manifest, checksum publication,
+rerun behavior, and full-SHA action pins. The complete repository gates are
+`cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, and
+`cargo test`. The workflow YAML and all six shell blocks were also parsed
+locally, and a real x86-64 Linux release archive probe verified its top-level
+directory, required files, smoke test, and executable mode.
+
+Known limitation: macOS archives are unsigned and not notarized. The Ubuntu
+22.04 runner labels also have a scheduled deprecation, so preserving or moving
+the glibc 2.35 binary floor will require a later explicit compatibility
+decision.
+
+## Report
 
 Runyte has a crates.io release procedure but no automated GitHub binary
 release. Linux and macOS users should be able to download archives built from
@@ -13,7 +64,7 @@ documented one-time backfill is `v0.1.7`; backfilling the older crate tags is
 not required by this issue, although the generic manual path may be used for
 them later.
 
-## Expected behavior
+### Expected behavior
 
 Future semantic-version tags matching `vMAJOR.MINOR.PATCH` trigger the binary
 workflow automatically. A manual workflow dispatch with a required tag input
@@ -65,7 +116,7 @@ the archives and checksum file, and uses a clear title such as
 `Runyte 0.1.7`. A failed publishing job can be rerun safely and reasonably
 idempotently without moving or recreating the tag.
 
-## Security and maintenance constraints
+### Security and maintenance constraints
 
 - Build jobs have read-only repository permissions. Only the final publishing
   job receives `contents: write`.
@@ -85,11 +136,10 @@ idempotently without moving or recreating the tag.
 - Signing and macOS notarization are out of scope for this work. Documentation
   identifies the macOS binaries as unsigned.
 
-The implementation is prepared locally and left uncommitted for review. It
-does not push, create tags, publish crates, create GitHub Releases, or otherwise
-modify remote state while the workflow itself is being developed.
+Workflow development must not push, create tags, publish crates, create GitHub
+Releases, or otherwise modify remote state before review.
 
-## Documentation
+### Documentation
 
 `README.md` installation instructions should mention downloadable GitHub
 Release archives while retaining `cargo install runyte --locked`.
@@ -105,7 +155,7 @@ The documentation should also record:
 - rerun behavior; and
 - the fact that macOS artifacts are currently unsigned.
 
-## Validation
+### Validation
 
 The implementation should be checked against `AGENTS.md`, `README.md`,
 `context/README.md`, `context/reference/releasing.md`, and the existing GitHub
