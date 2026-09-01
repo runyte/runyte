@@ -11,6 +11,7 @@ use std::{
     fs,
     io::{self, BufRead, BufReader, Read},
     num::NonZero,
+    ops::Range,
     path::{Component, Path, PathBuf},
     sync::{
         Arc, OnceLock,
@@ -229,6 +230,19 @@ pub fn is_direct_match(positions: &[usize], query: &str) -> bool {
 }
 
 impl FilePreview {
+    /// The preview's own lines.
+    ///
+    /// A snippet contributes the text it previews rather than the numbered
+    /// rows it displays, and a preview that has no content to show — a binary
+    /// file, or one that could not be read — contributes nothing.
+    pub fn lines(&self) -> &[String] {
+        match self {
+            Self::Text(lines) | Self::Directory(lines) => lines,
+            Self::Snippet(snippet) => &snippet.lines,
+            Self::Binary | Self::Unreadable(_) => &[],
+        }
+    }
+
     pub fn from_text(text: &str) -> Self {
         Self::from_lines(text.lines().map(str::to_owned))
     }
@@ -248,16 +262,43 @@ impl FilePreview {
         Self::snippet_from_lines(text.lines().map(str::to_owned), focus_row, emphasis)
     }
 
-    pub fn snippet_from_lines(
+    /// The rows a content snippet shows around a match on `focus_row`.
+    ///
+    /// A source that can read one row directly, as terminal scrollback can,
+    /// reads this range instead of skipping a line iterator. Every content
+    /// preview then shows the same context whatever produced its lines.
+    pub const fn snippet_rows(focus_row: usize) -> Range<usize> {
+        let start_row = focus_row.saturating_sub(PREVIEW_CONTEXT_BEFORE);
+        start_row..start_row + PREVIEW_CONTEXT_LINES
+    }
+
+    /// A snippet from lines the caller has already positioned at `start_row`.
+    pub fn snippet_from_rows(
         lines: impl Iterator<Item = String>,
+        start_row: usize,
         focus_row: usize,
         emphasis: Vec<usize>,
     ) -> Self {
-        let start_row = focus_row.saturating_sub(PREVIEW_CONTEXT_BEFORE);
+        let focus_offset = focus_row.checked_sub(start_row);
+        let emphasized_end = emphasis
+            .iter()
+            .copied()
+            .max()
+            .map_or(0, |position| position.saturating_add(1));
         let lines = lines
-            .skip(start_row)
-            .take(PREVIEW_CONTEXT_LINES)
-            .map(|line| line.chars().take(512).collect::<String>())
+            .enumerate()
+            .map(|(offset, line)| {
+                // Content candidates omit indentation before applying their
+                // 512-character bound. The preview restores that indentation,
+                // so its focused line may need to extend past 512 to keep the
+                // already-bounded match visible.
+                let characters = if Some(offset) == focus_offset {
+                    GREP_LINE_CHARACTERS.max(emphasized_end)
+                } else {
+                    GREP_LINE_CHARACTERS
+                };
+                line.chars().take(characters).collect::<String>()
+            })
             .collect::<Vec<_>>();
         if lines.is_empty() {
             return Self::Unreadable("the matching line is no longer present".to_owned());
@@ -268,6 +309,20 @@ impl FilePreview {
             focus_row,
             emphasis,
         })
+    }
+
+    pub fn snippet_from_lines(
+        lines: impl Iterator<Item = String>,
+        focus_row: usize,
+        emphasis: Vec<usize>,
+    ) -> Self {
+        let rows = Self::snippet_rows(focus_row);
+        Self::snippet_from_rows(
+            lines.skip(rows.start).take(rows.len()),
+            rows.start,
+            focus_row,
+            emphasis,
+        )
     }
 
     pub fn snippet_from_path(path: &Path, focus_row: usize, emphasis: Vec<usize>) -> Self {
@@ -282,25 +337,16 @@ impl FilePreview {
             Ok(file) => file,
             Err(error) => return Self::Unreadable(error.to_string()),
         };
-        let start_row = focus_row.saturating_sub(PREVIEW_CONTEXT_BEFORE);
+        let rows = Self::snippet_rows(focus_row);
         match BufReader::new(file)
             .lines()
-            .skip(start_row)
-            .take(PREVIEW_CONTEXT_LINES)
+            .skip(rows.start)
+            .take(rows.len())
             .collect::<io::Result<Vec<_>>>()
         {
-            Ok(lines) if lines.is_empty() => {
-                Self::Unreadable("the matching line is no longer present".to_owned())
+            Ok(lines) => {
+                Self::snippet_from_rows(lines.into_iter(), rows.start, focus_row, emphasis)
             }
-            Ok(lines) => Self::Snippet(FilePreviewSnippet {
-                lines: lines
-                    .into_iter()
-                    .map(|line| line.chars().take(512).collect())
-                    .collect(),
-                start_row,
-                focus_row,
-                emphasis,
-            }),
             Err(error) => Self::Unreadable(error.to_string()),
         }
     }
@@ -3377,6 +3423,28 @@ mod tests {
                 .iter()
                 .all(|line| !line.contains("line 1 ")),
             "the preview must not begin at the head of a distant match"
+        );
+    }
+
+    #[test]
+    fn content_preview_retains_a_match_beyond_the_indented_line_bound() {
+        let line = format!("{}{}needle", " ".repeat(20), "x".repeat(500));
+        let emphasis = (520..526).collect::<Vec<_>>();
+        let FilePreview::Snippet(snippet) =
+            FilePreview::snippet_from_text(&line, 0, emphasis.clone())
+        else {
+            panic!("content snippet expected");
+        };
+
+        assert_eq!(snippet.emphasis, emphasis);
+        assert_eq!(snippet.lines[0].chars().count(), 526);
+        assert_eq!(
+            snippet
+                .emphasis
+                .iter()
+                .map(|position| snippet.lines[0].chars().nth(*position).unwrap())
+                .collect::<String>(),
+            "needle"
         );
     }
 }

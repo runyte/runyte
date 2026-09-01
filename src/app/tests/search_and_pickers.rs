@@ -637,10 +637,25 @@ fn project_finder_switches_name_and_content_modes_without_losing_its_query() {
     assert_eq!(overlay.title, "Find · Contents");
     assert_eq!(overlay.layout, crate::snapshot::OverlayLayout::Preview);
     assert_eq!(overlay.preview_title.as_deref(), Some("Contents"));
-    assert!(matches!(
-        overlay.preview,
-        Some(crate::snapshot::OverlayPreview::Text(_))
-    ));
+    // A live buffer's content match previews the same snippet a file on disk
+    // does, so the matched text is highlighted wherever the row came from.
+    let Some(crate::snapshot::OverlayPreview::Snippet {
+        lines,
+        focus_row,
+        emphasis,
+        ..
+    }) = &overlay.preview
+    else {
+        panic!("a content match previews a snippet: {:?}", overlay.preview);
+    };
+    assert_eq!(*focus_row, 0);
+    assert_eq!(
+        emphasis
+            .iter()
+            .map(|position| lines[0].chars().nth(*position).unwrap())
+            .collect::<String>(),
+        "alpha"
+    );
     assert!(
         overlay
             .actions
@@ -1016,7 +1031,10 @@ fn project_finder_indexes_terminal_names_and_content_and_reveals_the_matching_ro
             .as_ref()
             .unwrap()
             .selected_preview()
-            .is_some_and(|preview| preview.contains("combined finder terminal preview"))
+            .is_some_and(|preview| preview
+                .lines()
+                .join("\n")
+                .contains("combined finder terminal preview"))
     );
     let overlay = app
         .overlay_snapshots()
@@ -1142,8 +1160,8 @@ fn busy_terminal_updates_only_its_name_finder_item_and_selected_preview() {
         Some(FinderTarget::Resource(ResourceTarget::Terminal(terminal)))
     );
     let preview = app.finder.as_ref().unwrap().selected_preview().unwrap();
-    assert!(preview.contains("busy row 255"));
-    assert!(preview.lines().count() <= 200);
+    assert!(preview.lines().join("\n").contains("busy row 255"));
+    assert!(preview.lines().len() <= 200);
     app.close_file_picker();
     app.close_terminal_id(terminal);
     fs::remove_dir_all(root).unwrap();
@@ -1610,6 +1628,26 @@ fn a_terminal_refresh_reads_only_what_the_child_added() {
         "and that name still numbers the line it points at: {}",
         item.label
     );
+    let FilePreview::Snippet(snippet) = app
+        .finder
+        .as_ref()
+        .unwrap()
+        .selected_preview()
+        .expect("the selected terminal result has a preview")
+    else {
+        panic!("a terminal content result previews a snippet");
+    };
+    assert_eq!(
+        snippet.focus_row + 1,
+        usize::try_from(number).unwrap(),
+        "the preview focus uses the same stable output number as its result"
+    );
+    let retained_start = FilePreview::snippet_rows(shifted).start;
+    assert_eq!(
+        snippet.start_row + 1,
+        usize::try_from(session.output_line_number(retained_start)).unwrap(),
+        "the snippet context also uses stable output numbering"
+    );
 
     app.close_file_picker();
     app.close_terminal_id(terminal);
@@ -1695,7 +1733,7 @@ fn terminal_content_selection_follows_stable_line_identity_through_eviction() {
             .as_ref()
             .unwrap()
             .selected_preview()
-            .is_some_and(|preview| preview.contains(&target_text))
+            .is_some_and(|preview| preview.lines().join("\n").contains(&target_text))
     );
 
     key(&mut app, KeyCode::Enter, Modifiers::NONE);
@@ -1778,8 +1816,11 @@ fn terminal_content_selection_does_not_cross_primary_and_alternate_screens() {
             .as_ref()
             .unwrap()
             .selected_preview()
-            .is_some_and(|preview| preview.contains("screen-identity alternate")
-                && !preview.contains("screen-identity primary"))
+            .is_some_and(|preview| {
+                let text = preview.lines().join("\n");
+                text.contains("screen-identity alternate")
+                    && !text.contains("screen-identity primary")
+            })
     );
     assert!(
         app.finder
@@ -1868,7 +1909,7 @@ fn terminal_screen_clear_preserves_scrollback_match_identity() {
             .as_ref()
             .unwrap()
             .selected_preview()
-            .is_some_and(|preview| preview.contains("history-clear-match"))
+            .is_some_and(|preview| preview.lines().join("\n").contains("history-clear-match"))
     );
     key(&mut app, KeyCode::Enter, Modifiers::NONE);
     let session = app.terminals.get_mut(terminal).unwrap();
@@ -2205,5 +2246,94 @@ fn fuzzy_grep_reaches_a_match_the_candidate_limit_used_to_hide() {
         Some(root.canonicalize().unwrap().join("m_needle.rs").as_path())
     );
 
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// The emphasized text of a content preview, which is what the finder shows
+/// highlighted in its preview column.
+fn previewed_match(preview: &crate::file_picker::FilePreview) -> String {
+    let crate::file_picker::FilePreview::Snippet(snippet) = preview else {
+        panic!("a content match previews a snippet, not {preview:?}");
+    };
+    let focused = snippet
+        .lines
+        .get(snippet.focus_row - snippet.start_row)
+        .expect("the focused row is inside the snippet");
+    snippet
+        .emphasis
+        .iter()
+        .map(|position| focused.chars().nth(*position).unwrap())
+        .collect()
+}
+
+#[test]
+fn buffer_content_preview_highlights_the_matched_text() {
+    let root = temporary("project-finder-buffer-preview-emphasis");
+    fs::create_dir_all(&root).unwrap();
+    let ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    app.execute_command("buffer-new").unwrap();
+    let scratch = app.active().buffer;
+    let matching_line = format!("{}{}needle", " ".repeat(20), "x".repeat(500));
+    let contents = format!("first\n{matching_line}\nlast");
+    app.buffers[scratch].apply(&Transaction::insert(0, &contents));
+    app.open_project_grep().unwrap();
+    type_text(&mut app, "needle");
+    settle_finder(&mut app);
+    assert_eq!(
+        app.finder
+            .as_ref()
+            .unwrap()
+            .selected_target(app.picker.as_ref().unwrap()),
+        Some(FinderTarget::Resource(ResourceTarget::BufferLocation {
+            buffer: scratch,
+            row: 1,
+            column: 20,
+        }))
+    );
+    let preview = app.finder.as_ref().unwrap().selected_preview().unwrap();
+    assert_eq!(previewed_match(preview), "needle");
+    app.close_file_picker();
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn terminal_content_preview_highlights_the_matched_text() {
+    let root = temporary("project-finder-terminal-preview-emphasis");
+    fs::create_dir_all(&root).unwrap();
+    let ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    app.open_terminal_at(Some("/bin/cat".to_owned()), root.clone());
+    let terminal = app.active_terminal().unwrap();
+    app.apply_terminal_output(TerminalOutput::Bytes {
+        id: terminal,
+        bytes: b"quiet row\r\n   indented needle here\r\nquiet row\r\n".to_vec(),
+    });
+    app.open_project_grep().unwrap();
+    type_text(&mut app, "needle");
+    settle_finder(&mut app);
+    assert!(
+        matches!(
+            app.finder
+                .as_ref()
+                .unwrap()
+                .selected_target(app.picker.as_ref().unwrap()),
+            Some(FinderTarget::Resource(ResourceTarget::TerminalLocation {
+                terminal: selected,
+                column: 3,
+                ..
+            })) if selected == terminal
+        ),
+        "the indented terminal row is the selected match"
+    );
+    let preview = app.finder.as_ref().unwrap().selected_preview().unwrap();
+    assert_eq!(previewed_match(preview), "needle");
+    app.close_file_picker();
+    app.close_terminal_id(terminal);
     fs::remove_dir_all(root).unwrap();
 }
