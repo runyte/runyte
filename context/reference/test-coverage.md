@@ -41,7 +41,27 @@ days, and fails below 83% total line coverage. The floor is deliberately below
 the observed baseline because conditional Linux and macOS code changes both the
 instrumented denominator and the paths available to a run on one platform.
 
-## 2026-09-02
+## 2026-09-02 — macOS
+
+Measured with `cargo-llvm-cov` 0.9.0 and Rust 1.97.1 on
+`aarch64-apple-darwin` in GitHub Actions run 153. The job verified the host
+target before measuring, and the ordinary non-ignored workspace tests passed
+under instrumentation.
+
+| Measure | Covered | Total | Coverage |
+| --- | ---: | ---: | ---: |
+| Lines | 90,481 | 100,380 | 90.14% |
+| Functions | 8,450 | 9,253 | 91.32% |
+| Regions | 140,408 | 156,605 | 89.66% |
+
+This is the first macOS measurement after the behavior-focused coverage pass.
+It supersedes the 2026-08-30 macOS baseline for current floor decisions and
+confirms that total line coverage exceeds 90% on both first-class targets. The
+enforced floor remains 83%: the above-95% target has not been reached, and
+90.14% leaves too little platform headroom to make 90% a useful regression
+gate.
+
+## 2026-09-02 — Linux
 
 Measured with `cargo-llvm-cov` 0.9.0 and Rust 1.97.1 on
 `x86_64-unknown-linux-gnu`. The ordinary non-ignored workspace tests passed
@@ -61,9 +81,9 @@ observable refusal, recovery, lifecycle, protocol, picker, Git, LSP, terminal,
 and persistent-workspace behavior. Coverage-only command and provider sweeps
 were removed during review rather than retained for their reported gain.
 
-The enforced floor remains 83%. The 95% target has not been reached, and the
-macOS baseline below predates these tests; a current macOS run is still
-required before any cross-platform floor increase.
+The enforced floor remains 83%. The 95% target has not been reached. The
+same-tree macOS measurement above reached 90.14%, confirming the gain is not
+Linux-only but leaving too little headroom for a 90% cross-platform floor.
 
 ## 2026-09-01
 

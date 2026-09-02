@@ -4,8 +4,8 @@ Linux and macOS are Runyte's first-class platforms, and the test suite is the
 main evidence that both stay correct as the editor changes.
 
 `context/reference/test-coverage.md` records the current baseline, measured with
-`cargo-llvm-cov` 0.9.0 and Rust 1.97.1 on `aarch64-apple-darwin`: 78,625 of
-93,004 lines, 7,467 of 8,604 functions, and 123,133 of 145,814 regions. CI
+`cargo-llvm-cov` 0.9.0 and Rust 1.97.1 on `aarch64-apple-darwin`: 90,481 of
+100,380 lines, 8,450 of 9,253 functions, and 140,408 of 156,605 regions. CI
 publishes the per-file summary, retains an HTML report, and fails below an
 enforced 83% line floor.
 
@@ -46,23 +46,29 @@ generation gates, protocol-frame rejection, terminal-parser recovery,
 persistent-workspace PTY behavior, and process-termination reporting.
 Coverage-only command and provider sweeps found during review were removed.
 
-The issue remains open. The current Linux result has 9,833 uncovered lines.
-The last recorded macOS baseline predates this pass, so a current macOS
-measurement is also still required before raising the cross-platform floor.
-The CI floor and README badge remain at 83% until the target holds on both
-first-class targets.
+GitHub Actions run 153 measured the same tree on `aarch64-apple-darwin` after
+verifying the runner target. It covered 90,481 of 100,380 lines (90.14%), 8,450
+of 9,253 functions (91.32%), and 140,408 of 156,605 regions (89.66%). Both
+first-class targets now exceed 90% line coverage.
 
-## Pending macOS baseline
+The issue remains open. Linux still has 9,833 uncovered lines and macOS has
+9,899. The CI floor and README badge remain at 83% until the above-95% target
+holds on both first-class targets. A 90% floor would leave only 0.14 percentage
+points of headroom on the current macOS measurement, so it would not be a
+useful cross-platform regression gate.
 
-The standard GitHub-hosted `macos-latest` runner is currently an Apple Silicon
-runner, so CI can produce the required `aarch64-apple-darwin` baseline without
-a larger or self-hosted runner. The existing macOS job only runs the ordinary
-test suite and does not collect coverage.
+## Current macOS baseline
 
-The CI workflow now includes a temporary, non-gating `coverage-macos` job that
-uses `macos-latest`, sets `TMPDIR=/private/tmp`, and follows the pinned Linux
-coverage recipe. The job verifies the target before measuring so a change to
-GitHub's moving runner alias cannot silently record an Intel baseline:
+The standard GitHub-hosted `macos-latest` runner used by run 153 was Apple
+Silicon, so CI produced the required `aarch64-apple-darwin` baseline without a
+larger or self-hosted runner. The existing macOS test job still runs the
+ordinary suite without instrumentation.
+
+The baseline was collected by a temporary, non-gating `coverage-macos` job
+that used `macos-latest`, set `TMPDIR=/private/tmp`, and followed the pinned
+Linux coverage recipe. The job verified the target before measuring so a
+change to GitHub's moving runner alias could not silently record an Intel
+baseline:
 
 ```sh
 test "$(rustc -vV | sed -n 's/^host: //p')" = aarch64-apple-darwin
@@ -70,12 +76,13 @@ cargo llvm-cov --locked --workspace --no-report
 cargo llvm-cov report | tee coverage-summary-macos.txt
 ```
 
-It installs `cargo-llvm-cov` 0.9.0, uses a distinct macOS coverage cache key,
-publishes the summary in the job summary, and retains the HTML report and text
-summary as `rust-coverage-macos-arm64`. It does not enforce a new floor. Record
-the first successful run's toolchain, target, covered and total counts in
-`context/reference/test-coverage.md` before deciding whether the macOS coverage
-job should remain in CI or whether the cross-platform floor can change.
+It installed `cargo-llvm-cov` 0.9.0, used a distinct macOS coverage cache key,
+published the summary in the job summary, and retained the HTML report and text
+summary as `rust-coverage-macos-arm64`. It did not enforce a new floor. Run
+153's toolchain, target, and covered and total counts are recorded in
+`context/reference/test-coverage.md`. The temporary job was removed after that
+successful measurement rather than doubling the full macOS suite on every CI
+run; this recipe remains the way to refresh the baseline when needed.
 
 ## What the number has to mean first
 
