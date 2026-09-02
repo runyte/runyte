@@ -3,11 +3,12 @@
 Linux and macOS are Runyte's first-class platforms, and the test suite is the
 main evidence that both stay correct as the editor changes.
 
-`context/reference/test-coverage.md` records the current baseline, measured with
-`cargo-llvm-cov` 0.9.0 and Rust 1.97.1 on `aarch64-apple-darwin`: 90,481 of
-100,380 lines, 8,450 of 9,253 functions, and 140,408 of 156,605 regions. CI
-publishes the per-file summary, retains an HTML report, and fails below an
-enforced 86% line floor.
+`context/reference/test-coverage.md` records the current baselines. On
+`x86_64-unknown-linux-gnu`, `cargo-llvm-cov` 0.9.0 and Rust 1.97.1 cover 90,593
+of 100,194 lines, 8,449 of 9,238 functions, and 140,633 of 156,351 regions. The
+latest `aarch64-apple-darwin` measurement covers 90,481 of 100,380 lines, 8,450
+of 9,253 functions, and 140,408 of 156,605 regions. CI publishes the per-file
+summary, retains an HTML report, and fails below an enforced 86% line floor.
 
 The target is above 95% line coverage, with the CI floor and the README badge
 raised to match.
@@ -51,12 +52,43 @@ verifying the runner target. It covered 90,481 of 100,380 lines (90.14%), 8,450
 of 9,253 functions (91.32%), and 140,408 of 156,605 regions (89.66%). Both
 first-class targets now exceed 90% line coverage.
 
-The issue remains open. Linux still has 9,833 uncovered lines and macOS has
-9,899. The CI floor and README badge are raised from 83% to 86%, leaving 4.14
-percentage points of headroom below the lower measured platform while making a
-material regression fail CI. The above-95% target remains open. A 90% floor
-would leave only 0.14 percentage points of headroom on the current macOS
-measurement, so it would not be a useful cross-platform regression gate.
+A continuation pass on Linux began from a fresh same-tree measurement of
+90,308 of 100,134 lines (90.19%), 8,438 of 9,234 functions (91.38%), and
+140,184 of 156,240 regions (89.72%). The clean canonical result after the pass
+is 90,593 of 100,194 lines (90.42%), 8,449 of 9,238 functions (91.46%), and
+140,633 of 156,351 regions (89.95%). Covered lines rose by 285, the denominator
+rose by 60, and uncovered lines fell by 225, for a 0.23 percentage-point line
+gain.
+
+The retained tests exercise distinct observable behavior: Git cancellation
+distinguishes discardable reads, uncertain mutations, completed work, and an
+idle service; unborn branches refuse pull and rebase; pushes without upstreams
+require one unambiguous default remote; failed language-server launches remain
+queryable; real JSON-RPC error envelopes fail only their request; diagnostic
+clearing and actionable-message filtering reach editor events; malformed
+workspace edits receive an explicit wire refusal; repeated handshakes leave a
+control connection usable; wait buffers move from partial to completed; and
+standalone completion and command-path hints expose acceptance and entry types.
+
+Review corrected misleading LSP fixtures, replaced fixed-delay assertions with
+event and wire-message barriers, isolated the failed-launch executable under a
+private temporary directory, strengthened the file-versus-directory rendering
+assertions, and removed an existing Git test that only enumerated outcome
+variants. Unreachable UI code discovered during review was retained because
+removing production code was not necessary to establish the added behavior.
+
+The largest remaining Linux gaps by uncovered lines are
+`app/git_workflows.rs` (892), `app/input.rs` (763), `main.rs` (713),
+`git/cli.rs` (416), `app/language_workflows.rs` (407), `ui.rs` (341),
+`workspace/transport.rs` (341), `lsp/mod.rs` (330), `workspace/catalog.rs`
+(312), and `syntax/mod.rs` (310).
+
+The issue remains open. Linux still has 9,601 uncovered lines and the latest
+macOS measurement has 9,899. The CI floor and README badge remain at 86%,
+leaving 4.14 percentage points of headroom below the lower measured platform.
+There is no post-change macOS result to justify a higher cross-platform floor,
+and a 90% floor would leave only 0.14 percentage points of headroom on the
+current macOS measurement. The above-95% target remains open.
 
 ## Current macOS baseline
 

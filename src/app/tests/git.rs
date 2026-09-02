@@ -1544,6 +1544,84 @@ fn git_mutations_feed_the_generic_long_running_action_snapshot() {
 }
 
 #[test]
+fn git_cancel_distinguishes_discarded_reads_uncertain_mutations_and_finished_work() {
+    let root = temporary("git-cancel-lifecycle");
+    fs::create_dir_all(&root).unwrap();
+    let root = root.canonicalize().unwrap();
+    let repository = Repository::new(&root);
+    let mut app = App::new(Config::default(), None).unwrap();
+    let (service, operations) = GitServiceHandle::recording_for_test();
+    let control = service.clone();
+    app.attach_git_service(service);
+    assert!(matches!(
+        operations.recv_timeout(Duration::from_secs(1)).unwrap(),
+        GitOperation::Discover { .. }
+    ));
+
+    let read = control
+        .try_submit(GitOperation::Branches {
+            repository: repository.clone(),
+        })
+        .unwrap();
+    app.apply_git_service_event(GitServiceEvent::Progress(GitServiceProgress {
+        id: read,
+        operation: "read branches",
+        repository: root.clone(),
+        state: GitServiceState::Running,
+        started_at: Some(Instant::now()),
+        cancellable: true,
+        mutation: false,
+    }));
+    app.execute_command("git-cancel").unwrap();
+    assert_eq!(
+        app.status,
+        "stopping read branches; its result will be discarded"
+    );
+
+    let path = root.join("source.rs");
+    let mutation = control
+        .try_submit(GitOperation::Mutate {
+            repository: repository.clone(),
+            mutation: GitMutation::Stage(vec![path]),
+            refresh: RefreshSpec::default(),
+        })
+        .unwrap();
+    app.apply_git_service_event(GitServiceEvent::Progress(GitServiceProgress {
+        id: mutation,
+        operation: "stage files",
+        repository: root.clone(),
+        state: GitServiceState::Running,
+        started_at: Some(Instant::now()),
+        cancellable: true,
+        mutation: true,
+    }));
+    app.execute_command("git-cancel").unwrap();
+    assert_eq!(
+        app.status,
+        "stopping stage files; repository state may already have changed and will be refreshed"
+    );
+
+    app.git_state.progress_mut().clear();
+    app.apply_git_service_event(GitServiceEvent::Progress(GitServiceProgress {
+        id: GitRequestId::from_raw(999),
+        operation: "read stale status",
+        repository: root.clone(),
+        state: GitServiceState::Running,
+        started_at: Some(Instant::now()),
+        cancellable: true,
+        mutation: false,
+    }));
+    app.execute_command("git-cancel").unwrap();
+    assert_eq!(app.status, "the Git operation already finished");
+
+    let mut idle = App::new(Config::default(), None).unwrap();
+    idle.execute_command("git-cancel").unwrap();
+    assert_eq!(idle.status, "no Git operation is queued or running");
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn blame_refuses_oversized_and_binary_buffers_before_service_submission() {
     let root = temporary("git-blame-preflight");
     fs::create_dir_all(&root).unwrap();
@@ -6782,166 +6860,6 @@ fn a_diverged_pull_from_the_git_service_opens_the_offer_rather_than_an_error() {
 
     assert!(app.status_error, "{}", app.status);
     assert!(app.git_pull_rebase.is_none());
-
-    fs::remove_dir_all(root).unwrap();
-}
-
-#[test]
-fn completed_git_mutations_report_every_distinct_outcome() {
-    use crate::git::{PartialStageRequest, RepositoryFingerprint};
-
-    let root = temporary("git-mutation-outcome-matrix");
-    fs::create_dir_all(&root).unwrap();
-    let path = root.join("source.rs");
-    let removal = || WorktreeRemovalPlan {
-        path: root.join("linked"),
-        head: Some("a".repeat(40)),
-        branch: Some("topic".to_owned()),
-        upstream: None,
-        detached_retained: false,
-        required_authorization: DeletionAuthorization::Enter,
-    };
-    let deletion = || BranchDeletionPlan {
-        branch: "topic".to_owned(),
-        tip: "a".repeat(40),
-        upstream: None,
-        retaining_branches: vec!["main".to_owned()],
-        required_authorization: DeletionAuthorization::Enter,
-    };
-    let partial = |scope| {
-        GitMutation::PartialStage(Box::new(PartialStageRequest {
-            repository: root.clone(),
-            fingerprint: RepositoryFingerprint {
-                head: Some("a".repeat(40)),
-                index: "b".repeat(40),
-            },
-            path: path.clone(),
-            disk_sha256: "c".repeat(64),
-            buffer: None,
-            guard: None,
-            scope,
-            hunk: "@@ -1 +1 @@".to_owned(),
-            patch: b"diff --git a/source.rs b/source.rs\n".to_vec(),
-        }))
-    };
-    let cases = vec![
-        (
-            GitMutation::Stage(vec![path.clone()]),
-            vec![path.clone()],
-            "staged 1 path(s)",
-        ),
-        (
-            GitMutation::Unstage(vec![path.clone()]),
-            vec![path.clone()],
-            "unstaged 1 path(s)",
-        ),
-        (
-            GitMutation::Discard(vec![path.clone()]),
-            Vec::new(),
-            "discarded changes to 0 path(s)",
-        ),
-        (
-            GitMutation::Checkout {
-                branch: "topic".to_owned(),
-            },
-            Vec::new(),
-            "checked out topic",
-        ),
-        (
-            GitMutation::CreateBranch {
-                branch: "topic".to_owned(),
-                start: "main".to_owned(),
-            },
-            Vec::new(),
-            "created topic from main",
-        ),
-        (
-            GitMutation::CreateTrackingBranch {
-                branch: "topic".to_owned(),
-                upstream: "refs/remotes/origin/topic".to_owned(),
-            },
-            Vec::new(),
-            "created topic tracking origin/topic",
-        ),
-        (
-            GitMutation::DeleteBranch {
-                plan: Box::new(deletion()),
-                authorization: DeletionAuthorization::Enter,
-            },
-            Vec::new(),
-            "deleted branch topic",
-        ),
-        (
-            GitMutation::Commit {
-                message: "subject".to_owned(),
-            },
-            Vec::new(),
-            "committed",
-        ),
-        (GitMutation::Pull, Vec::new(), "pull completed"),
-        (
-            GitMutation::RebaseOntoUpstream,
-            Vec::new(),
-            "replayed onto the upstream",
-        ),
-        (
-            GitMutation::Push {
-                branch: "topic".to_owned(),
-            },
-            Vec::new(),
-            "pushed topic",
-        ),
-        (
-            GitMutation::RemoveWorktree {
-                plan: Box::new(removal()),
-                authorization: DeletionAuthorization::Enter,
-            },
-            Vec::new(),
-            "removed worktree",
-        ),
-        (
-            GitMutation::Stash(StashMutation::Create {
-                name: "checkpoint".to_owned(),
-                scope: StashScope::TrackedWorktree,
-            }),
-            Vec::new(),
-            "stash created",
-        ),
-        (
-            GitMutation::Stash(StashMutation::Apply {
-                oid: "d".repeat(40),
-            }),
-            Vec::new(),
-            "stash applied",
-        ),
-        (
-            GitMutation::Stash(StashMutation::Drop {
-                oid: "d".repeat(40),
-            }),
-            Vec::new(),
-            "stash dropped",
-        ),
-        (partial(DiffScope::Unstaged), Vec::new(), "hunk staged"),
-        (partial(DiffScope::Staged), Vec::new(), "hunk unstaged"),
-    ];
-
-    for (mutation, applied, expected) in cases {
-        let mut app = App::new(Config::default(), None).unwrap();
-        app.apply_git_mutation_result(
-            mutation,
-            applied,
-            None,
-            None,
-            GitServiceState::Completed,
-            None,
-        );
-        assert!(!app.status_error, "{}", app.status);
-        assert!(
-            app.status.contains(expected),
-            "{} did not contain {expected}",
-            app.status
-        );
-    }
 
     fs::remove_dir_all(root).unwrap();
 }

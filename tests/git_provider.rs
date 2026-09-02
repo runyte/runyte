@@ -2113,6 +2113,32 @@ fn pulling_needs_a_branch_with_an_upstream() {
     assert!(matches!(error, GitError::Failed { .. }), "{error:?}");
 }
 
+#[test]
+fn pulling_and_rebasing_an_unborn_branch_explain_that_it_has_no_commits() {
+    let repository = TempRepository::new("unborn-upstream");
+    let provider = provider();
+
+    for error in [
+        provider.pull(&repository.repository()).unwrap_err(),
+        provider
+            .rebase_onto_upstream(&repository.repository())
+            .unwrap_err(),
+    ] {
+        assert!(matches!(error, GitError::Failed { .. }), "{error:?}");
+        assert!(
+            error.to_string().contains("this branch has no commits yet"),
+            "{error}"
+        );
+    }
+
+    assert!(
+        git_output(&repository, &["for-each-ref", "--format=%(refname)"])
+            .trim()
+            .is_empty(),
+        "a network refusal must not create a ref in an unborn repository"
+    );
+}
+
 /// Pushing publishes to the ref the branch tracks, and creates that ref the
 /// first time round.
 #[test]
@@ -2156,6 +2182,51 @@ fn pushing_publishes_a_tracked_branch_and_adopts_an_untracked_one() {
         .expect("the push set an upstream");
     assert_eq!(upstream.name, "origin/feature");
     assert_eq!(upstream.divergence, Some(Divergence::default()));
+}
+
+#[test]
+fn pushing_an_untracked_branch_requires_one_unambiguous_default_remote() {
+    let repository = TempRepository::new("push-default-remote");
+    repository.write("source.rs", "base\n");
+    repository.commit("base");
+    let provider = provider();
+    let branch = match provider.status(&repository.repository()).unwrap().head {
+        Head::Branch(branch) => branch,
+        head => panic!("expected an attached branch, got {head:?}"),
+    };
+    let head_before = git_output(&repository, &["rev-parse", "HEAD"]);
+
+    let error = provider
+        .push(&repository.repository(), &branch)
+        .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("this repository has no remote to push to"),
+        "{error}"
+    );
+
+    repository.git(&["remote", "add", "backup", "/does/not/matter"]);
+    repository.git(&["remote", "add", "review", "/also/does/not/matter"]);
+    let error = provider
+        .push(&repository.repository(), &branch)
+        .unwrap_err();
+    let message = error.to_string();
+    assert!(
+        message.contains("there is no `origin` to choose"),
+        "{message}"
+    );
+    assert!(message.contains("backup, review"), "{message}");
+    assert_eq!(git_output(&repository, &["rev-parse", "HEAD"]), head_before);
+    assert!(
+        git_output(
+            &repository,
+            &["for-each-ref", "--format=%(refname)", "refs/remotes"]
+        )
+        .trim()
+        .is_empty(),
+        "refusing an ambiguous destination must not publish anything"
+    );
 }
 
 /// A branch that is not checked out can still be published, because pushing

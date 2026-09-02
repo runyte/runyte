@@ -18,7 +18,9 @@ use runyte::{
     app::FrameGeometry,
     input::{InputEvent, KeyCode, KeyStroke, Modifiers},
     layout::Rect,
-    protocol::{CommandRequest, SnapshotRow, decode_path},
+    protocol::{
+        ClientKind, ClientRole, CommandRequest, FeatureGroup, SnapshotRow, WaitStatus, decode_path,
+    },
     terminal::emulator::Emulator,
     test_support::TestRuntimeRoot,
     workspace::transport::{
@@ -1726,6 +1728,144 @@ async fn revision_protocol_is_stale_safe_undoable_and_bounded() {
         HostResponse::ShuttingDown
     );
 
+    let status = tokio::task::spawn_blocking(move || host.0.take().unwrap().wait())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(status.success());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn a_repeated_handshake_is_rejected_without_poisoning_the_control_connection() {
+    let root = project();
+    let endpoint = LocalEndpoint::discover_with_runtime(
+        &root.join(".runyte"),
+        &root,
+        Some(test_runtime_dir()),
+    )
+    .unwrap();
+    let Some(mut host) = start_host(&root, &endpoint).await else {
+        fs::remove_dir_all(root).unwrap();
+        return;
+    };
+    let mut client = connect_control(&endpoint).await;
+
+    client
+        .send(&ClientRequest::Hello {
+            protocol: PROTOCOL_VERSION,
+            features: vec![
+                FeatureGroup::Control,
+                FeatureGroup::Buffers,
+                FeatureGroup::Wait,
+            ],
+            project_root_bytes: encode_path(&root),
+            client_kind: ClientKind::Control,
+            client_version: env!("CARGO_PKG_VERSION").to_owned(),
+            role: ClientRole::Control,
+            geometry: FrameGeometry::default().into(),
+            directory_handoff: false,
+        })
+        .await
+        .unwrap();
+    let error = receive_semantic_response(&mut client, "rejecting a repeated handshake").await;
+    assert!(
+        matches!(error, HostResponse::Error { ref message } if message.contains("handshake is only valid once")),
+        "{error:?}"
+    );
+
+    client.send(&ClientRequest::Health).await.unwrap();
+    assert!(matches!(
+        receive_semantic_response(&mut client, "checking the connection after refusal").await,
+        HostResponse::Health {
+            protocol: PROTOCOL_VERSION,
+            ..
+        }
+    ));
+    shutdown(&mut client).await;
+    let status = tokio::task::spawn_blocking(move || host.0.take().unwrap().wait())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(status.success());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn completing_wait_buffers_transitions_from_partial_to_completed() {
+    let root = project();
+    let endpoint = LocalEndpoint::discover_with_runtime(
+        &root.join(".runyte"),
+        &root,
+        Some(test_runtime_dir()),
+    )
+    .unwrap();
+    let Some(mut host) = start_host(&root, &endpoint).await else {
+        fs::remove_dir_all(root).unwrap();
+        return;
+    };
+    let mut client = connect_control(&endpoint).await;
+
+    client
+        .send(&ClientRequest::CreateWait {
+            paths: vec![
+                encode_path(&root.join("note.txt")),
+                encode_path(&root.join("other.txt")),
+            ],
+        })
+        .await
+        .unwrap();
+    let (token, buffers) = match semantic_response(&mut client).await {
+        HostResponse::WaitCreated {
+            token,
+            buffers,
+            interactive_attached: false,
+        } => (token, buffers),
+        response => panic!("expected a wait request, got {response:?}"),
+    };
+    assert_eq!(buffers.len(), 2);
+
+    client
+        .send(&ClientRequest::CompleteWaitBuffer {
+            token,
+            buffer: buffers[0],
+        })
+        .await
+        .unwrap();
+    assert!(matches!(
+        semantic_response(&mut client).await,
+        HostResponse::WaitState {
+            token: returned,
+            status: WaitStatus::Pending { buffers: all, remaining },
+            interactive_attached: false,
+        } if returned == token && all == buffers && remaining == vec![buffers[1]]
+    ));
+
+    client
+        .send(&ClientRequest::CompleteWaitBuffer {
+            token,
+            buffer: buffers[1],
+        })
+        .await
+        .unwrap();
+    assert!(matches!(
+        semantic_response(&mut client).await,
+        HostResponse::WaitState {
+            token: returned,
+            status: WaitStatus::Completed,
+            interactive_attached: false,
+        } if returned == token
+    ));
+    client.send(&ClientRequest::Health).await.unwrap();
+    assert!(matches!(
+        semantic_response(&mut client).await,
+        HostResponse::Health {
+            pending_wait_requests: 0,
+            ..
+        }
+    ));
+
+    shutdown(&mut client).await;
     let status = tokio::task::spawn_blocking(move || host.0.take().unwrap().wait())
         .await
         .unwrap()

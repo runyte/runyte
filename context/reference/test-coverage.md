@@ -70,21 +70,40 @@ under instrumentation.
 
 | Measure | Covered | Total | Coverage |
 | --- | ---: | ---: | ---: |
-| Lines | 90,301 | 100,134 | 90.18% |
-| Functions | 8,436 | 9,234 | 91.36% |
-| Regions | 140,183 | 156,240 | 89.72% |
+| Lines | 90,593 | 100,194 | 90.42% |
+| Functions | 8,449 | 9,238 | 91.46% |
+| Regions | 140,633 | 156,351 | 89.95% |
 
-Against a clean same-toolchain run of the same tree before this pass, covered
-lines rose by 1,034, from 89,267 to 90,301, while the instrumented total rose
-by 228, from 99,906 to 100,134. Total line coverage therefore increased from
-89.35% to 90.18%, a gain of 0.83 percentage points. The added tests exercise
+The fresh same-tree baseline before the continuation pass was 90,308 of
+100,134 lines (90.19%), 8,438 of 9,234 functions (91.38%), and 140,184 of
+156,240 regions (89.72%). The earlier recorded line baseline covered seven
+fewer lines because concurrent paths varied between instrumented runs; the
+before-and-after comparison here uses the fresh run. Covered lines increased
+by 285 while the instrumented total increased by 60, leaving 225 fewer
+uncovered lines and raising total line coverage by 0.23 percentage points.
+
+The added tests cover Git cancellation outcomes, unborn-branch pull and rebase
+refusals, untracked-branch push remote selection, language-server launch and
+JSON-RPC failures, diagnostic clearing, notification filtering, malformed
+workspace-edit refusal, repeated local-protocol handshakes, partial and final
+wait completion, and standalone path-completion and command-path rendering.
+Review replaced fixed-delay LSP assertions with event or wire-message barriers,
+made the failed-launch test incapable of executing a stale temporary file,
+strengthened file-versus-directory UI assertions, and removed a Git outcome
+matrix that enumerated variants without establishing distinct behavior.
+
+The preceding behavior-focused pass had raised its own fresh same-tree Linux
+baseline from 89,267 of 99,906 lines (89.35%) to the recorded 90,301 of
+100,134 lines (90.18%), a gain of 0.83 percentage points. Its tests exercised
 observable refusal, recovery, lifecycle, protocol, picker, Git, LSP, terminal,
-and persistent-workspace behavior. Coverage-only command and provider sweeps
+and persistent-workspace behavior; coverage-only command and provider sweeps
 were removed during review rather than retained for their reported gain.
 
 The enforced floor is 86%. The 95% target has not been reached. The
-same-tree macOS measurement above reached 90.14%, confirming the gain is not
-Linux-only but leaving too little headroom for a 90% cross-platform floor.
+latest macOS measurement above reached 90.14%, leaving too little headroom for
+a 90% cross-platform floor. No post-change macOS measurement exists yet, so the
+lower measured platform still provides 4.14 percentage points of headroom
+above the floor; neither the floor nor the README badge changes.
 
 ## 2026-09-01
 

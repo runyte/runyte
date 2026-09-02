@@ -19,7 +19,7 @@ use runyte::{
     config::{LanguageServerConfig, LspConfig},
     lsp::{
         ChangeSync, DocumentSync, Encoding, Launch, LspCommand, LspEvent, LspHandle,
-        PENDING_CAPACITY, RequestKind, Response, Severity, path_to_uri, spawn_with,
+        PENDING_CAPACITY, RequestKind, Response, Severity, path_to_uri, spawn, spawn_with,
         transport::{self, Incoming},
     },
 };
@@ -37,6 +37,7 @@ type Reply = Box<dyn Fn(&Value) -> Value + Send + Sync>;
 #[derive(Default)]
 struct Script {
     replies: HashMap<String, Reply>,
+    errors: HashMap<String, Value>,
     initialize_result: Option<Value>,
     ignore_initialize: bool,
     ignored: HashSet<String>,
@@ -65,6 +66,12 @@ impl Script {
 
     fn result(self, method: &str, result: Value) -> Self {
         self.reply(method, move |_| result.clone())
+    }
+
+    fn error(mut self, method: &str, code: i64, message: &str) -> Self {
+        self.errors
+            .insert(method.to_owned(), json!({"code": code, "message": message}));
+        self
     }
 
     fn push(mut self, message: Value) -> Self {
@@ -171,6 +178,26 @@ impl Harness {
             .filter(|message| message.get("method").and_then(Value::as_str) == Some(method))
             .cloned()
             .collect()
+    }
+
+    async fn wait_for_sent(&self, mut predicate: impl FnMut(&Value) -> bool) -> Value {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if let Some(message) = self
+                    .sent
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .find(|message| predicate(message))
+                    .cloned()
+                {
+                    return message;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("the client should send the expected message within five seconds")
     }
 
     async fn settle(&self) {
@@ -290,9 +317,17 @@ async fn mock_server(
         if script.ignored.contains(&method) {
             continue;
         }
-        match script.replies.get(&method) {
-            Some(reply) => respond(&mut writer, id, reply(&params)).await,
-            None => respond(&mut writer, id, Value::Null).await,
+        if let Some(error) = script.errors.get(&method) {
+            let _ = transport::write_message(
+                &mut writer,
+                &json!({"jsonrpc": "2.0", "id": id, "error": error}),
+            )
+            .await;
+        } else {
+            match script.replies.get(&method) {
+                Some(reply) => respond(&mut writer, id, reply(&params)).await,
+                None => respond(&mut writer, id, Value::Null).await,
+            }
         }
     }
 }
@@ -325,6 +360,68 @@ fn location(line: u32) -> Value {
 }
 
 // -- Lifecycle -------------------------------------------------------------
+
+#[tokio::test]
+async fn a_language_server_that_cannot_start_is_stopped_with_an_actionable_reason() {
+    let root = std::env::temp_dir().join(format!(
+        "runyte-missing-language-server-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+    let missing = root.join("missing-language-server");
+    let mut configuration = config();
+    configuration.servers.get_mut("rust").unwrap().command = missing.clone();
+    let (handle, mut events) = spawn(configuration, root.clone());
+
+    assert!(handle.send(LspCommand::Ensure {
+        language: "rust".to_owned()
+    }));
+    let stopped = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let event = events.recv().await.expect("the manager remains available");
+            if let LspEvent::Stopped { language, message } = event {
+                break (language, message);
+            }
+        }
+    })
+    .await
+    .expect("the failed launch should be reported");
+
+    assert_eq!(stopped.0, "rust");
+    assert!(stopped.1.contains("cannot start"), "{}", stopped.1);
+    assert!(
+        stopped
+            .1
+            .contains(missing.file_name().unwrap().to_string_lossy().as_ref()),
+        "{}",
+        stopped.1
+    );
+
+    assert!(handle.send(LspCommand::Status));
+    let status = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let event = events.recv().await.expect("the manager remains available");
+            if let LspEvent::Status { message, error } = event
+                && !error
+                && message.contains("cannot start")
+            {
+                break message;
+            }
+        }
+    })
+    .await
+    .expect("status should retain the recorded launch failure");
+    assert!(
+        status.contains(missing.file_name().unwrap().to_string_lossy().as_ref()),
+        "{status}"
+    );
+    drop(handle);
+    std::fs::remove_dir_all(root).unwrap();
+}
 
 #[tokio::test]
 async fn the_handshake_negotiates_an_encoding_and_gates_document_notifications() {
@@ -888,22 +985,29 @@ async fn every_advertised_request_round_trips_through_its_wire_shape() {
 
 #[tokio::test]
 async fn diagnostics_are_published_and_cleared() {
-    let script = Script::default().push(json!({
-        "jsonrpc": "2.0",
-        "method": "textDocument/publishDiagnostics",
-        "params": {
-            "uri": path_to_uri(std::path::Path::new("/tmp/runyte-lsp/a.rs")).unwrap(),
-            "diagnostics": [{
-                "range": {
-                    "start": {"line": 2, "character": 4},
-                    "end": {"line": 2, "character": 9},
-                },
-                "severity": 1,
-                "source": "mock",
-                "message": "mismatched types",
-            }],
-        },
-    }));
+    let uri = path_to_uri(std::path::Path::new("/tmp/runyte-lsp/a.rs")).unwrap();
+    let script = Script::default()
+        .push(json!({
+            "jsonrpc": "2.0",
+            "method": "textDocument/publishDiagnostics",
+            "params": {
+                "uri": uri,
+                "diagnostics": [{
+                    "range": {
+                        "start": {"line": 2, "character": 4},
+                        "end": {"line": 2, "character": 9},
+                    },
+                    "severity": 1,
+                    "source": "mock",
+                    "message": "mismatched types",
+                }],
+            },
+        }))
+        .push(json!({
+            "jsonrpc": "2.0",
+            "method": "textDocument/publishDiagnostics",
+            "params": {"uri": uri, "diagnostics": []},
+        }));
     let mut harness = harness(script);
     assert!(harness.handle.send(LspCommand::Ensure {
         language: "rust".to_owned()
@@ -919,6 +1023,50 @@ async fn diagnostics_are_published_and_cleared() {
     assert_eq!(diagnostics[0].severity, Severity::Error);
     assert_eq!(diagnostics[0].message, "mismatched types");
     assert_eq!(diagnostics[0].row(), 2);
+    let cleared = harness
+        .next_matching(|event| match event {
+            LspEvent::Diagnostics { diagnostics, .. } if diagnostics.is_empty() => Some(()),
+            _ => None,
+        })
+        .await;
+    assert_eq!(cleared, ());
+}
+
+#[tokio::test]
+async fn only_actionable_show_messages_reach_the_editor_status() {
+    let script = Script::default()
+        .push(json!({
+            "jsonrpc": "2.0",
+            "method": "window/logMessage",
+            "params": {"type": 1, "message": "private server log"},
+        }))
+        .push(json!({
+            "jsonrpc": "2.0",
+            "method": "window/showMessage",
+            "params": {"type": 3, "message": "routine information"},
+        }))
+        .push(json!({
+            "jsonrpc": "2.0",
+            "method": "window/showMessage",
+            "params": {"type": 2, "message": "index is incomplete"},
+        }));
+    let mut harness = harness(script);
+    assert!(harness.handle.send(LspCommand::Ensure {
+        language: "rust".to_owned()
+    }));
+    harness.ready().await;
+    let mut statuses = Vec::new();
+    loop {
+        let event = harness.next().await;
+        if let LspEvent::Status { message, .. } = event {
+            let done = message == "rust: index is incomplete";
+            statuses.push(message);
+            if done {
+                break;
+            }
+        }
+    }
+    assert_eq!(statuses, ["rust: index is incomplete"]);
 }
 
 #[tokio::test]
@@ -1005,7 +1153,7 @@ async fn a_malformed_frame_is_reported_and_the_session_survives() {
 
 #[tokio::test]
 async fn a_server_error_response_fails_only_that_request() {
-    let script = Script::default().result("textDocument/hover", Value::Null);
+    let script = Script::default().error("textDocument/hover", -32603, "backend failed");
     let mut harness = harness(script);
     assert!(harness.handle.send(LspCommand::Ensure {
         language: "rust".to_owned()
@@ -1013,7 +1161,11 @@ async fn a_server_error_response_fails_only_that_request() {
     harness.ready().await;
 
     harness.request(RequestKind::Hover(runyte::lsp::LspPosition::new(0, 0)));
-    assert!(matches!(harness.response().await, Response::Empty));
+    let Response::Failed(message) = harness.response().await else {
+        panic!("the server error was not preserved");
+    };
+    assert!(message.contains("documentation"), "{message}");
+    assert!(message.contains("backend failed"), "{message}");
 
     // The server is still usable afterwards.
     harness.request(RequestKind::DocumentSymbols);
@@ -1021,11 +1173,7 @@ async fn a_server_error_response_fails_only_that_request() {
 }
 
 #[tokio::test]
-async fn a_cancelled_request_is_dropped_rather_than_delivered_late() {
-    // "Cancelled" from the editor's side means the response arrives for a
-    // token nothing is waiting on any more; the manager still delivers it, and
-    // the editor discards it. This asserts the manager does not confuse it
-    // with another request's answer.
+async fn concurrent_requests_keep_their_editor_tokens() {
     let script = Script::default().result("textDocument/definition", json!([location(1)]));
     let mut harness = harness(script);
     assert!(harness.handle.send(LspCommand::Ensure {
@@ -1198,6 +1346,28 @@ async fn invalid_json_rpc_requests_are_rejected_before_dispatch() {
         message.get("id") == Some(&json!(901)) && message["error"]["code"] == json!(-32600)
     });
     assert!(rejected, "invalid request was not rejected");
+}
+
+#[tokio::test]
+async fn malformed_workspace_edits_receive_an_explicit_refusal() {
+    let invalid = json!({
+        "jsonrpc": "2.0",
+        "id": 905,
+        "method": "workspace/applyEdit",
+        "params": {"edit": "not a workspace edit"},
+    });
+    let mut harness = harness(Script::default().push(invalid));
+    assert!(harness.handle.send(LspCommand::Ensure {
+        language: "rust".to_owned()
+    }));
+    harness.ready().await;
+    let refused = harness
+        .wait_for_sent(|message| {
+            message.get("id") == Some(&json!(905))
+                && message["result"]["applied"] == Value::Bool(false)
+        })
+        .await;
+    assert_eq!(refused["result"]["applied"], Value::Bool(false));
 }
 
 #[tokio::test]

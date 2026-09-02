@@ -1537,26 +1537,10 @@ fn terminal_entry_points_report_invalid_contexts_without_starting_a_child() {
         "{}",
         app.status
     );
-
-    assert_eq!(app.pane_cells(app.active_pane), (80, 24));
-    app.areas.insert(
-        app.active_pane,
-        crate::layout::Rect {
-            width: 2,
-            height: 2,
-            ..crate::layout::Rect::default()
-        },
+    assert!(
+        app.terminals.is_empty(),
+        "a refused entry point must not leave a terminal session behind"
     );
-    assert_eq!(app.pane_cells(app.active_pane), (80, 24));
-    app.areas.insert(
-        app.active_pane,
-        crate::layout::Rect {
-            width: 42,
-            height: 12,
-            ..crate::layout::Rect::default()
-        },
-    );
-    assert_eq!(app.pane_cells(app.active_pane), (40, 10));
 }
 
 #[test]

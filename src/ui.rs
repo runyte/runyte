@@ -5693,6 +5693,72 @@ mod tests {
     }
 
     #[test]
+    fn standalone_path_completion_names_the_candidate_and_acceptance_key() {
+        let root = std::env::temp_dir().join(format!(
+            "runyte-standalone-completion-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let config = root.join("config");
+        std::fs::create_dir_all(config.join("alacritty")).unwrap();
+        let note = root.join("note.txt");
+        std::fs::write(&note, "").unwrap();
+        let mut app = App::new_in_project(Config::default(), Some(note), &root).unwrap();
+        app.handle_key(crate::input::KeyStroke::char('i')).unwrap();
+        for character in "config/al".chars() {
+            app.handle_key(crate::input::KeyStroke::char(character))
+                .unwrap();
+        }
+
+        let screen = rendered(&mut app, 100, 24);
+
+        assert!(screen.contains("Complete"), "{screen}");
+        assert!(screen.contains("Tab accept"), "{screen}");
+        assert!(screen.contains("alacritty/"), "{screen}");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn command_path_hints_distinguish_files_from_directories() {
+        let root = std::env::temp_dir().join(format!(
+            "runyte-command-path-hints-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(root.join("folder")).unwrap();
+        std::fs::write(root.join("file.txt"), "text\n").unwrap();
+        let mut app = App::new(Config::default(), None).unwrap();
+        app.handle_key(crate::input::KeyStroke::char(':')).unwrap();
+        let command = format!("open {}/f", root.display());
+        for character in command.chars() {
+            app.handle_key(crate::input::KeyStroke::char(character))
+                .unwrap();
+        }
+
+        let screen = rendered(&mut app, 120, 24);
+
+        assert!(screen.contains("Paths"), "{screen}");
+        assert!(screen.contains("directories open as explorers"), "{screen}");
+        let file = screen
+            .lines()
+            .find(|line| line.contains("file.txt"))
+            .expect("the file hint should be rendered");
+        assert!(file.contains("file       "), "{file}");
+        let directory = screen
+            .lines()
+            .find(|line| line.contains("folder/"))
+            .expect("the directory hint should be rendered");
+        assert!(directory.contains("directory  "), "{directory}");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn the_status_line_carries_progress_beside_the_cursor_and_no_theme_name() {
         let config = Config {
             theme: Some("gruvbox".into()),
