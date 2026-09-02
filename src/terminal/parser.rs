@@ -616,4 +616,115 @@ mod tests {
         assert!(parser.intermediates.is_empty());
         assert_eq!(parser.sequence_size, 0);
     }
+
+    #[test]
+    fn malformed_and_intermediate_sequences_recover_at_every_state_boundary() {
+        let mut parser = Parser {
+            sequence_size: usize::MAX,
+            ..Parser::default()
+        };
+        assert!(!parser.reserve_sequence(1));
+
+        assert_eq!(
+            actions(&[0xf0, 0x80, 0x80, 0x80, 0xf8]),
+            vec![
+                Action::Print(char::REPLACEMENT_CHARACTER),
+                Action::Print(char::REPLACEMENT_CHARACTER)
+            ]
+        );
+        assert_eq!(
+            actions(b"\x1b 7"),
+            vec![Action::Escape {
+                intermediates: vec![b' '],
+                final_byte: b'7',
+            }]
+        );
+        assert_eq!(actions(b"\x1b\x18"), vec![Action::Execute(0x18)]);
+        assert!(actions(b"\x1b\x1bZ").iter().any(|action| matches!(
+            action,
+            Action::Escape {
+                final_byte: b'Z',
+                ..
+            }
+        )));
+        assert_eq!(
+            actions(b"\x1b\x80ok"),
+            vec![Action::Print('o'), Action::Print('k')]
+        );
+        assert_eq!(
+            actions(b"\x1b \x80ok"),
+            vec![Action::Print('o'), Action::Print('k')]
+        );
+
+        assert_eq!(
+            actions(b"\x1b[12 q"),
+            vec![Action::Csi {
+                private: None,
+                parameters: vec![vec![12]],
+                intermediates: vec![b' '],
+                final_byte: b'q',
+            }]
+        );
+        assert_eq!(
+            actions(b"\x1b[\x01m"),
+            vec![
+                Action::Execute(0x01),
+                Action::Csi {
+                    private: None,
+                    parameters: Vec::new(),
+                    intermediates: Vec::new(),
+                    final_byte: b'm',
+                }
+            ]
+        );
+        assert_eq!(actions(b"\x1b[ \x01m").len(), 2);
+        let ignored = actions(b"\x1b[\x80ignoredmX");
+        assert!(
+            !ignored
+                .iter()
+                .any(|action| matches!(action, Action::Csi { .. }))
+        );
+        assert_eq!(ignored.last(), Some(&Action::Print('X')));
+        assert_eq!(
+            actions(b"\x1b[\x80\x1b7"),
+            vec![Action::Escape {
+                intermediates: Vec::new(),
+                final_byte: b'7',
+            }]
+        );
+
+        let mut too_many = b"\x1b[".to_vec();
+        too_many.extend(std::iter::repeat_n(b"1;".as_slice(), 33).flatten().copied());
+        too_many.extend_from_slice(b"mX");
+        assert_eq!(actions(&too_many), vec![Action::Print('X')]);
+
+        for introducer in *b"PX^_" {
+            assert_eq!(
+                actions(&[0x1b, introducer, b'x', 0x1b, b'\\', b'Z']),
+                vec![Action::Print('Z')]
+            );
+        }
+        assert_eq!(
+            actions(b"\x1b]0;bad\x01ok"),
+            vec![Action::Print('o'), Action::Print('k')]
+        );
+        assert_eq!(
+            actions(b"\x1b]0;old\x1b7"),
+            vec![Action::Escape {
+                intermediates: Vec::new(),
+                final_byte: b'7',
+            }]
+        );
+    }
+
+    #[test]
+    fn parameter_helpers_distinguish_defaulted_and_literal_zero_values() {
+        let parameters = vec![vec![0, 2], vec![7]];
+        assert_eq!(parameter(&parameters, 0, 4), 4);
+        assert_eq!(parameter(&parameters, 1, 4), 7);
+        assert_eq!(parameter(&parameters, 9, 4), 4);
+        assert_eq!(raw_parameter(&parameters, 0), 0);
+        assert_eq!(raw_parameter(&parameters, 1), 7);
+        assert_eq!(raw_parameter(&parameters, 9), 0);
+    }
 }

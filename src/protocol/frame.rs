@@ -692,6 +692,88 @@ mod tests {
 
         assert_eq!(core::OverlayColumnHeader::from(decoded), header);
     }
+
+    #[test]
+    fn wire_enum_variants_and_terminal_damage_rejections_are_exhaustive() {
+        assert_eq!(FrameId::from_raw(42).get(), 42);
+
+        let previews = vec![
+            core::OverlayPreview::Text(vec!["text".to_owned()]),
+            core::OverlayPreview::MatchedText {
+                lines: vec!["match".to_owned()],
+                emphasis: vec![0],
+            },
+            core::OverlayPreview::Snippet {
+                lines: vec!["snippet".to_owned()],
+                start_row: 1,
+                focus_row: 2,
+                emphasis: vec![0],
+            },
+            core::OverlayPreview::Binary,
+            core::OverlayPreview::Unavailable("reason".to_owned()),
+            core::OverlayPreview::Empty,
+        ];
+        for preview in previews {
+            let wire = OverlayPreview::from(preview.clone());
+            assert_eq!(core::OverlayPreview::from(wire), preview);
+        }
+
+        let identities = vec![
+            core::OverlayIdentity::Text("text".to_owned()),
+            core::OverlayIdentity::Path(std::path::PathBuf::from("path")),
+            core::OverlayIdentity::Index(7),
+        ];
+        for identity in identities {
+            let wire = OverlayIdentity::from(identity.clone());
+            assert_eq!(core::OverlayIdentity::from(wire), identity);
+        }
+
+        for kind in [
+            crate::terminal::TerminalHighlightKind::Match,
+            crate::terminal::TerminalHighlightKind::ActiveMatch,
+            crate::terminal::TerminalHighlightKind::Selection,
+            crate::terminal::TerminalHighlightKind::JumpLabelImmediate,
+            crate::terminal::TerminalHighlightKind::JumpLabelPrefix,
+            crate::terminal::TerminalHighlightKind::JumpLabelSuffix,
+        ] {
+            let wire = TerminalHighlightKind::from(kind);
+            assert_eq!(crate::terminal::TerminalHighlightKind::from(wire), kind);
+        }
+        for color in [
+            crate::terminal::Color::Default,
+            crate::terminal::Color::Indexed(17),
+            crate::terminal::Color::Rgb(1, 2, 3),
+        ] {
+            let wire = TerminalColor::from(color);
+            assert_eq!(crate::terminal::Color::from(wire), color);
+        }
+
+        let base = terminal_frame(7, 10, 'a');
+        let mut no_terminal = base.clone();
+        no_terminal.editor.panes[0].terminal = None;
+        assert!(TerminalDamageFrame::between(&base, &no_terminal).is_none());
+        let mut no_panes = base.clone();
+        no_panes.editor.panes.clear();
+        assert!(TerminalDamageFrame::between(&base, &no_panes).is_none());
+
+        let next = terminal_frame(8, 11, 'b');
+        let damage = TerminalDamageFrame::between(&base, &next).unwrap();
+        let mut stale_frame = base.clone();
+        stale_frame.id = FrameId::from_raw(99);
+        assert!(!damage.apply(&mut stale_frame));
+        let mut stale_terminal = base.clone();
+        stale_terminal.editor.panes[0]
+            .terminal
+            .as_mut()
+            .unwrap()
+            .revision = 99;
+        assert!(!damage.apply(&mut stale_terminal));
+        let mut invalid_row = damage.clone();
+        invalid_row.panes[0].rows[0].row = 99;
+        let mut unchanged = base.clone();
+        assert!(!invalid_row.apply(&mut unchanged));
+        assert_eq!(unchanged, base);
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

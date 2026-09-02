@@ -674,6 +674,219 @@ async fn navigation_results_keep_the_sending_servers_encoding() {
 }
 
 #[tokio::test]
+async fn every_advertised_request_round_trips_through_its_wire_shape() {
+    let edit = json!({
+        "range": {
+            "start": {"line": 0, "character": 0},
+            "end": {"line": 0, "character": 1}
+        },
+        "newText": "replacement"
+    });
+    let script = Script::default()
+        .initialize_result(json!({
+            "capabilities": {
+                "positionEncoding": "utf-8",
+                "textDocumentSync": 2,
+                "definitionProvider": true,
+                "declarationProvider": true,
+                "typeDefinitionProvider": true,
+                "implementationProvider": true,
+                "referencesProvider": true,
+                "hoverProvider": true,
+                "completionProvider": {},
+                "signatureHelpProvider": {},
+                "documentSymbolProvider": true,
+                "workspaceSymbolProvider": true,
+                "renameProvider": true,
+                "codeActionProvider": {"resolveProvider": true},
+                "executeCommandProvider": {"commands": ["mock.command"]},
+                "documentFormattingProvider": true
+            },
+            "serverInfo": {"name": "mock-analyzer", "version": "1"}
+        }))
+        .result("textDocument/definition", json!([location(1)]))
+        .result("textDocument/declaration", location(2))
+        .result("textDocument/typeDefinition", json!([location(3)]))
+        .result("textDocument/implementation", json!([location(4)]))
+        .result("textDocument/references", json!([location(5)]))
+        .result("textDocument/hover", json!({"contents": "documentation"}))
+        .result(
+            "textDocument/completion",
+            json!({"isIncomplete": false, "items": [{"label": "candidate", "kind": 3}]}),
+        )
+        .result(
+            "textDocument/signatureHelp",
+            json!({"signatures": [{"label": "item(value)", "parameters": [{"label": "value"}]}]}),
+        )
+        .result(
+            "textDocument/documentSymbol",
+            json!([{
+                "name": "item",
+                "kind": 12,
+                "location": {"uri": "file:///tmp/runyte-lsp/a.rs", "range": {
+                    "start": {"line": 0, "character": 0},
+                    "end": {"line": 0, "character": 4}
+                }}
+            }]),
+        )
+        .result(
+            "workspace/symbol",
+            json!([{
+                "name": "item",
+                "kind": 12,
+                "location": {"uri": "file:///tmp/runyte-lsp/a.rs"}
+            }]),
+        )
+        .result(
+            "textDocument/rename",
+            json!({"changes": {"file:///tmp/runyte-lsp/a.rs": [edit.clone()]}}),
+        )
+        .result(
+            "textDocument/codeAction",
+            json!([{"title": "fix it", "command": "mock.command"}]),
+        )
+        .result(
+            "codeAction/resolve",
+            json!({
+                "title": "fix it",
+                "edit": {"changes": {"file:///tmp/runyte-lsp/a.rs": [edit.clone()]}}
+            }),
+        )
+        .result("workspace/executeCommand", json!({}))
+        .result("textDocument/formatting", json!([edit]));
+    let mut harness = harness(script);
+    assert!(harness.handle.send(LspCommand::Ensure {
+        language: "rust".to_owned()
+    }));
+    harness.ready().await;
+
+    let position = runyte::lsp::LspPosition::new(3, 7);
+    let range = runyte::lsp::LspRange::new(position, runyte::lsp::LspPosition::new(3, 9));
+    let action = serde_json::from_value::<lsp_types::CodeAction>(json!({
+        "title": "fix it",
+        "kind": "quickfix"
+    }))
+    .unwrap();
+    let command = lsp_types::Command {
+        title: "run fix".to_owned(),
+        command: "mock.command".to_owned(),
+        arguments: Some(vec![json!("argument")]),
+    };
+    let requests = vec![
+        RequestKind::Definition(position),
+        RequestKind::Declaration(position),
+        RequestKind::TypeDefinition(position),
+        RequestKind::Implementation(position),
+        RequestKind::References(position),
+        RequestKind::Hover(position),
+        RequestKind::Completion(position),
+        RequestKind::SignatureHelp {
+            position,
+            context: runyte::lsp::SignatureContext::default(),
+        },
+        RequestKind::DocumentSymbols,
+        RequestKind::WorkspaceSymbols("needle".to_owned()),
+        RequestKind::Rename {
+            position,
+            new_name: "renamed".to_owned(),
+        },
+        RequestKind::CodeActions {
+            range,
+            diagnostics: Vec::new(),
+        },
+        RequestKind::ResolveCodeAction(Box::new(action)),
+        RequestKind::ExecuteCommand(Box::new(command)),
+        RequestKind::Format {
+            tab_size: 4,
+            insert_spaces: true,
+        },
+    ];
+    let methods = [
+        "textDocument/definition",
+        "textDocument/declaration",
+        "textDocument/typeDefinition",
+        "textDocument/implementation",
+        "textDocument/references",
+        "textDocument/hover",
+        "textDocument/completion",
+        "textDocument/signatureHelp",
+        "textDocument/documentSymbol",
+        "workspace/symbol",
+        "textDocument/rename",
+        "textDocument/codeAction",
+        "codeAction/resolve",
+        "workspace/executeCommand",
+        "textDocument/formatting",
+    ];
+
+    for (index, (request, method)) in requests.into_iter().zip(methods).enumerate() {
+        harness.request(request);
+        let response = harness.response().await;
+        match (index, response) {
+            (0..=4, Response::Locations(locations)) => {
+                assert_eq!(locations.len(), 1);
+                assert_eq!(locations[0].range.start.line, index as u32 + 1);
+                assert_eq!(locations[0].encoding, Encoding::Utf8);
+            }
+            (5, Response::Hover(text)) => assert!(text.contains("documentation"), "{text}"),
+            (6, Response::Completions(items)) => assert_eq!(items[0].label, "candidate"),
+            (7, Response::Signatures(signatures)) => {
+                assert_eq!(signatures[0].label, "item(value)")
+            }
+            (8 | 9, Response::Symbols(symbols)) => assert_eq!(symbols[0].name, "item"),
+            (
+                10 | 14,
+                Response::Edits {
+                    edits,
+                    skipped: 0,
+                    encoding: Encoding::Utf8,
+                },
+            ) => {
+                assert_eq!(edits.len(), 1);
+                let expected_path = if index == 10 {
+                    PathBuf::from("/tmp/runyte-lsp/a.rs")
+                } else {
+                    PathBuf::new()
+                };
+                assert_eq!(edits[0].path, expected_path);
+                assert_eq!(edits[0].edits.len(), 1);
+            }
+            (11, Response::Actions(actions)) => assert_eq!(actions[0].title, "fix it"),
+            (
+                12,
+                Response::ActionEdits {
+                    edits,
+                    skipped: 0,
+                    encoding: Encoding::Utf8,
+                    command: None,
+                },
+            ) => assert_eq!(edits.len(), 1),
+            (13, Response::Empty) => {}
+            (_, response) => panic!("request {index} returned {response:?}"),
+        }
+        assert_eq!(
+            harness.sent_with(method).len(),
+            1,
+            "{method} was not consumed exactly once"
+        );
+    }
+
+    harness.settle().await;
+    assert_eq!(
+        harness.sent_with("textDocument/references")[0]["params"]["context"]["includeDeclaration"],
+        json!(true)
+    );
+    assert_eq!(
+        harness.sent_with("workspace/symbol")[0]["params"]["query"],
+        json!("needle")
+    );
+    assert_eq!(
+        harness.sent_with("textDocument/formatting")[0]["params"]["options"]["tabSize"],
+        json!(4)
+    );
+}
+
+#[tokio::test]
 async fn diagnostics_are_published_and_cleared() {
     let script = Script::default().push(json!({
         "jsonrpc": "2.0",

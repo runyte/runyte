@@ -1349,6 +1349,50 @@ mod tests {
     }
 
     #[test]
+    fn workspace_service_handle_distinguishes_full_and_closed_queues() {
+        let path = PathBuf::from("/workspace");
+        let invoke_all = |handle: &WorkspaceServiceHandle| {
+            [
+                handle.try_refresh(1),
+                handle.try_inspect(2, path.clone()),
+                handle.try_stop(3, path.clone(), path.clone(), false),
+                handle.try_forget(4, path.clone()),
+                handle.try_rename(5, path.clone(), path.clone(), "  named  ".to_owned()),
+                handle.try_number(6, path.clone(), path.clone(), Some(7)),
+            ]
+        };
+
+        let (full_tx, _full_rx) = mpsc::channel(1);
+        full_tx
+            .try_send(WorkspaceRequest::Refresh { generation: 0 })
+            .unwrap();
+        let (preview_tx, _preview_rx) = watch::channel(None);
+        let full = WorkspaceServiceHandle {
+            requests: full_tx,
+            previews: preview_tx,
+        };
+        for result in invoke_all(&full) {
+            assert_eq!(result, Err("session service queue is full"));
+        }
+
+        let (closed_tx, closed_rx) = mpsc::channel(1);
+        drop(closed_rx);
+        let (closed_preview_tx, closed_preview_rx) = watch::channel(None);
+        drop(closed_preview_rx);
+        let closed = WorkspaceServiceHandle {
+            requests: closed_tx,
+            previews: closed_preview_tx,
+        };
+        for result in invoke_all(&closed) {
+            assert_eq!(result, Err("session service is unavailable"));
+        }
+        assert_eq!(
+            closed.try_preview(7, path),
+            Err("session preview service is unavailable")
+        );
+    }
+
+    #[test]
     fn abbreviated_ids_stay_six_characters_while_they_tell_workspaces_apart() {
         let ids = [
             "96ceecd6a1f66da1b4ef385dbb62328a",

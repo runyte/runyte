@@ -36,10 +36,18 @@ covered lines increased by 385 without changing the 96,014-line denominator:
 regions increased by 603. `protocol/input.rs` reached 100% line coverage;
 `app/input.rs` gained 163 covered lines and `app/git_workflows.rs` gained 58.
 
-The issue remains open. The Linux result still has 10,365 uncovered lines, and
-the current largest per-file gaps are `app/git_workflows.rs` (1,132),
-`app/input.rs` (828), `main.rs` (775), `lsp/mod.rs` (562), and `git/cli.rs`
-(528). The last recorded macOS baseline predates this pass, so a current macOS
+A later behavior-focused pass on the same Linux toolchain raised a clean
+same-tree baseline from 89,267 of 99,906 lines (89.35%) to 90,301 of 100,134
+lines (90.18%), a gain of 1,034 covered lines and 0.83 percentage points after
+the larger denominator is accounted for. The retained tests cover guarded Git
+staging and branch deletion, mutation outcomes and refusals, LSP request wire
+shapes and transient cleanup, picker editing and navigation, workspace event
+generation gates, protocol-frame rejection, terminal-parser recovery,
+persistent-workspace PTY behavior, and process-termination reporting.
+Coverage-only command and provider sweeps found during review were removed.
+
+The issue remains open. The current Linux result has 9,833 uncovered lines.
+The last recorded macOS baseline predates this pass, so a current macOS
 measurement is also still required before raising the cross-platform floor.
 The CI floor and README badge remain at 83% until the target holds on both
 first-class targets.

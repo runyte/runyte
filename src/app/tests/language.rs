@@ -92,6 +92,113 @@ pub(super) fn drain(queue: &mut tokio::sync::mpsc::Receiver<LspCommand>) -> Vec<
     }
     commands
 }
+#[test]
+fn status_stop_and_restart_clear_every_language_owned_transient() {
+    let (mut app, _, mut queue) = rust_app("fn main() {}\n");
+    ready(&mut app, Encoding::Utf8);
+    drain(&mut queue);
+
+    app.apply_lsp_event(LspEvent::Status {
+        message: "indexing".to_owned(),
+        error: false,
+    });
+    assert!(!app.status_error);
+    app.apply_lsp_event(LspEvent::Status {
+        message: "index failed".to_owned(),
+        error: true,
+    });
+    assert!(app.status_error);
+
+    app.completion = Some(CompletionState {
+        items: vec![Completion {
+            label: "main".to_owned(),
+            filter_text: None,
+            sort_text: None,
+            detail: String::new(),
+            kind: "function",
+            insert: "main".to_owned(),
+            edit: None,
+            additional: Vec::new(),
+        }],
+        selected: 0,
+        buffer: 0,
+        anchor: 0,
+        filter: String::new(),
+        source: CompletionSource::Language,
+        explicit_session: None,
+    });
+    app.signature = Some(SignatureState {
+        signatures: Vec::new(),
+    });
+    app.hover = Some(HoverState {
+        lines: vec!["documentation".to_owned()],
+    });
+    app.lsp_action_source = Some(ActionSource {
+        buffer: 0,
+        revision: app.buffers[0].revision(),
+        documents: HashMap::new(),
+        language: "rust".to_owned(),
+        generation: 1,
+    });
+    app.lsp_actions
+        .push(crate::lsp::ActionEntry::unresolved_for_test("fix"));
+    app.list_actions.push(ListAction::CodeAction(0));
+    app.pending_lsp_replies.push_back(LspCommand::EditApplied {
+        language: "rust".to_owned(),
+        generation: 1,
+        id: serde_json::Value::from(1),
+        applied: true,
+    });
+    app.pending_lsp_replies.push_back(LspCommand::EditApplied {
+        language: "python".to_owned(),
+        generation: 1,
+        id: serde_json::Value::from(2),
+        applied: true,
+    });
+
+    app.apply_lsp_event(LspEvent::Stopped {
+        language: "rust".to_owned(),
+        message: "server exited".to_owned(),
+    });
+    assert!(app.status_error);
+    assert!(app.completion.is_none());
+    assert!(app.signature.is_none());
+    assert!(app.hover.is_none());
+    assert!(app.lsp_action_source.is_none());
+    assert!(app.lsp_actions.is_empty());
+    assert!(app.list_actions.is_empty());
+    assert!(matches!(
+        app.pending_lsp_replies.front(),
+        Some(LspCommand::EditApplied {
+            language,
+            id,
+            applied: true,
+            ..
+        }) if language == "python" && id == &serde_json::Value::from(2)
+    ));
+    assert_eq!(app.pending_lsp_replies.len(), 1);
+
+    ready(&mut app, Encoding::Utf8);
+    app.completion = Some(CompletionState {
+        items: Vec::new(),
+        selected: 0,
+        buffer: 0,
+        anchor: 0,
+        filter: String::new(),
+        source: CompletionSource::Language,
+        explicit_session: None,
+    });
+    app.signature = Some(SignatureState {
+        signatures: Vec::new(),
+    });
+    app.hover = Some(HoverState { lines: Vec::new() });
+    app.apply_lsp_event(LspEvent::Restarted {
+        language: "rust".to_owned(),
+    });
+    assert!(app.completion.is_none());
+    assert!(app.signature.is_none());
+    assert!(app.hover.is_none());
+}
 
 #[test]
 fn active_document_lsp_availability_tracks_server_lifecycle() {

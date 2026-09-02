@@ -1519,6 +1519,47 @@ fn working_directory_explorer_key_colon_and_direct_paths_are_equivalent() {
 }
 
 #[test]
+fn terminal_entry_points_report_invalid_contexts_without_starting_a_child() {
+    let mut app = App::new(Config::default(), None).unwrap();
+
+    app.open_terminal(Some("'unterminated".to_owned()));
+    assert!(app.status_error && app.status.contains("cannot read"));
+
+    app.open_terminal_file_directory(None);
+    assert!(app.status_error && app.status.contains("no file directory"));
+    app.open_terminal_directory_root(None);
+    assert!(app.status_error && app.status.contains("not a directory buffer"));
+    app.open_terminal_selected_directory(None);
+    assert_eq!(app.status, "buffer is not a directory");
+    app.open_terminal_session_directory("missing");
+    assert!(
+        app.status_error && app.status.contains("missing"),
+        "{}",
+        app.status
+    );
+
+    assert_eq!(app.pane_cells(app.active_pane), (80, 24));
+    app.areas.insert(
+        app.active_pane,
+        crate::layout::Rect {
+            width: 2,
+            height: 2,
+            ..crate::layout::Rect::default()
+        },
+    );
+    assert_eq!(app.pane_cells(app.active_pane), (80, 24));
+    app.areas.insert(
+        app.active_pane,
+        crate::layout::Rect {
+            width: 42,
+            height: 12,
+            ..crate::layout::Rect::default()
+        },
+    );
+    assert_eq!(app.pane_cells(app.active_pane), (40, 10));
+}
+
+#[test]
 fn space_r_reloads_files_and_refreshes_directories() {
     let directory = temporary("space-reload");
     fs::create_dir_all(&directory).unwrap();

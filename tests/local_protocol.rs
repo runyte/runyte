@@ -389,7 +389,16 @@ fn project() -> PathBuf {
     fs::create_dir_all(&root).unwrap();
     fs::write(root.join("note.txt"), "base\n").unwrap();
     fs::write(root.join("other.txt"), "other\n").unwrap();
-    git(&root, &["init", "--quiet"]);
+    git(
+        &root,
+        &[
+            "-c",
+            "init.defaultBranch=fixture-default",
+            "init",
+            "--quiet",
+        ],
+    );
+    git(&root, &["symbolic-ref", "HEAD", "refs/heads/main"]);
     git(&root, &["config", "user.name", "Runyte Test"]);
     git(&root, &["config", "user.email", "runyte@example.invalid"]);
     root.canonicalize().unwrap()
@@ -815,6 +824,92 @@ fn termination_signal_restores_the_terminal_and_preserves_its_exit_status() {
     assert_eq!(unsafe { libc::cfgetospeed(&restored) }, unsafe {
         libc::cfgetospeed(&initial)
     });
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn standalone_terminal_input_edits_and_quits_through_the_real_event_loop() {
+    let root = project();
+    let config = default_config(&root);
+    let (child, mut terminal) = spawn_in_pty(
+        bundled_runyte()
+            .args(["--standalone", "--config"])
+            .arg(config)
+            .current_dir(&root)
+            .env("XDG_RUNTIME_DIR", test_runtime_dir())
+            .env("XDG_CACHE_HOME", test_cache_dir()),
+    );
+    let mut child = ChildGuard(Some(child));
+    let output = capture_terminal_output(&terminal);
+
+    wait_for_terminal_screen(&output, "Runyte").await;
+    wait_for_terminal_screen(&output, "main (unborn)").await;
+    type_colon_command(&mut terminal, "git-status");
+    wait_for_terminal_screen(&output, "note.txt").await;
+    std::io::Write::write_all(&mut terminal, b" /s").unwrap();
+    std::io::Write::flush(&mut terminal).unwrap();
+    wait_for_terminal_screen(&output, "workspace search:").await;
+    std::io::Write::write_all(&mut terminal, b"base\r").unwrap();
+    std::io::Write::flush(&mut terminal).unwrap();
+    wait_for_terminal_screen(&output, "[workspace search]").await;
+    type_colon_command(&mut terminal, "file-picker");
+    std::io::Write::write_all(&mut terminal, b"other").unwrap();
+    std::io::Write::flush(&mut terminal).unwrap();
+    wait_for_terminal_screen(&output, "other.txt").await;
+    std::io::Write::write_all(&mut terminal, b"\x03").unwrap();
+    std::io::Write::flush(&mut terminal).unwrap();
+    let deadline = Instant::now() + ASYNC_STATE_TIMEOUT;
+    while output.screen_text().contains("Find · Names") {
+        assert!(Instant::now() < deadline, "file picker did not close");
+        tokio::time::sleep(ASYNC_STATE_POLL_INTERVAL).await;
+    }
+    tokio::time::sleep(ASYNC_STATE_POLL_INTERVAL).await;
+    assert!(!output.screen_text().contains("Find · Names"));
+    type_colon_command(&mut terminal, "buffer-new");
+    wait_for_terminal_screen(&output, "[scratch]").await;
+    std::io::Write::write_all(&mut terminal, b"ihello\x1b").unwrap();
+    std::io::Write::flush(&mut terminal).unwrap();
+    wait_for_terminal_screen(&output, "hello").await;
+    type_colon_command(&mut terminal, "quit-all!");
+
+    assert!(wait_child(child.0.as_mut().unwrap()).await.success());
+    child.0.take();
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn standalone_event_loop_drains_integrated_terminal_output_before_quitting() {
+    let root = project();
+    let config = default_config(&root);
+    let (child, mut terminal) = spawn_in_pty(
+        bundled_runyte()
+            .args(["--standalone", "--config"])
+            .arg(config)
+            .arg("note.txt")
+            .current_dir(&root)
+            .env("XDG_RUNTIME_DIR", test_runtime_dir())
+            .env("XDG_CACHE_HOME", test_cache_dir()),
+    );
+    let mut child = ChildGuard(Some(child));
+    let output = capture_terminal_output(&terminal);
+
+    wait_for_terminal_screen(&output, "note.txt").await;
+    type_colon_command(
+        &mut terminal,
+        "terminal /bin/sh -c 'printf terminal-ready; read _'",
+    );
+    wait_for_terminal_screen(&output, "terminal-ready").await;
+    std::io::Write::write_all(&mut terminal, b"\r").unwrap();
+    std::io::Write::flush(&mut terminal).unwrap();
+    let deadline = Instant::now() + ASYNC_STATE_TIMEOUT;
+    while output.screen_text().contains("terminal-ready") {
+        assert!(Instant::now() < deadline, "exited terminal stayed visible");
+        tokio::time::sleep(ASYNC_STATE_POLL_INTERVAL).await;
+    }
+    type_colon_command(&mut terminal, "quit-all!");
+
+    assert!(wait_child(child.0.as_mut().unwrap()).await.success());
+    child.0.take();
     fs::remove_dir_all(root).unwrap();
 }
 

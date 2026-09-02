@@ -2520,6 +2520,85 @@ fn workspace_switch_requests_are_platform_guarded_persistent_and_preserve_dirty_
     fs::remove_dir_all(root).unwrap();
 }
 
+#[cfg(unix)]
+#[test]
+fn workspace_lifecycle_events_keep_generation_gates_and_distinct_failures() {
+    let path = PathBuf::from("/workspace/topic");
+    let mut app = App::new(Config::default(), None).unwrap();
+    app.workspace_generation = 7;
+    let status_before_stale = (app.status.clone(), app.status_error);
+
+    app.apply_workspace_event(WorkspaceEvent::Stopped {
+        generation: 6,
+        selector: path.clone(),
+        result: Err("stale stop".to_owned()),
+    });
+    assert_eq!((app.status.clone(), app.status_error), status_before_stale);
+
+    for (event, expected) in [
+        (
+            WorkspaceEvent::Stopped {
+                generation: 7,
+                selector: path.clone(),
+                result: Err("stop refused".to_owned()),
+            },
+            "stop refused",
+        ),
+        (
+            WorkspaceEvent::Forgotten {
+                generation: 7,
+                path: path.clone(),
+                result: Err("forget refused".to_owned()),
+            },
+            "forget refused",
+        ),
+        (
+            WorkspaceEvent::Renamed {
+                generation: 7,
+                path: path.clone(),
+                name: "topic".to_owned(),
+                result: Err("rename refused".to_owned()),
+            },
+            "rename refused",
+        ),
+        (
+            WorkspaceEvent::Numbered {
+                generation: 7,
+                path: path.clone(),
+                number: Some(2),
+                result: Err("number refused".to_owned()),
+            },
+            "number refused",
+        ),
+    ] {
+        app.apply_workspace_event(event);
+        assert!(app.status_error, "{}", app.status);
+        assert_eq!(app.status, expected);
+    }
+
+    app.apply_workspace_event(WorkspaceEvent::Forgotten {
+        generation: 7,
+        path: path.clone(),
+        result: Ok(false),
+    });
+    assert!(!app.status_error);
+    assert!(app.status.contains("was not in the recent list"));
+
+    app.workspace_preview_generation = 9;
+    app.workspace_preview_target = Some(path.clone());
+    let status_before_preview = (app.status.clone(), app.status_error);
+    app.apply_workspace_event(WorkspaceEvent::Previewed {
+        generation: 8,
+        path: path.clone(),
+        result: Err("stale preview".to_owned()),
+    });
+    assert_eq!(app.workspace_preview_target.as_ref(), Some(&path));
+    assert_eq!(
+        (app.status.clone(), app.status_error),
+        status_before_preview
+    );
+}
+
 #[test]
 fn worktree_shift_d_confirms_cancels_and_removes_only_the_typed_path() {
     use crate::git::{MemoryGitProvider, Repository};

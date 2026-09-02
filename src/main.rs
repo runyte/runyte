@@ -5320,6 +5320,59 @@ mod tests {
             .unwrap();
     }
 
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn host_supervisor_pidfd_reports_child_exit() {
+        struct ChildGuard(std::process::Child);
+
+        impl Drop for ChildGuard {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+
+        let Ok(child) = std::process::Command::new("sleep").arg("120").spawn() else {
+            return;
+        };
+        let mut child = ChildGuard(child);
+        let supervisor = super::HostSupervisor::new(
+            super::HostSupervisorKind::TestProcess,
+            child.0.id() as libc::pid_t,
+        )
+        .unwrap();
+        if supervisor.pidfd.is_none() {
+            return;
+        }
+
+        assert_eq!(supervisor.pid(), child.0.id() as libc::pid_t);
+        assert!(!supervisor.exited().unwrap());
+        child.0.kill().unwrap();
+        let _ = child.0.wait().unwrap();
+        tokio::time::timeout(Duration::from_secs(5), supervisor.recv())
+            .await
+            .expect("the pidfd did not become readable")
+            .unwrap();
+        assert!(supervisor.exited().unwrap());
+    }
+
+    #[test]
+    fn process_termination_errors_keep_their_stable_user_messages() {
+        assert_eq!(
+            super::TerminatedBySignal(libc::SIGTERM).to_string(),
+            format!("terminated by signal {}", libc::SIGTERM)
+        );
+        assert_eq!(
+            super::terminated(libc::SIGINT).to_string(),
+            format!("terminated by signal {}", libc::SIGINT)
+        );
+        #[cfg(unix)]
+        assert_eq!(
+            super::WaitTerminalLost.to_string(),
+            "wait request lost its terminal before completion"
+        );
+    }
+
     #[cfg(unix)]
     #[test]
     fn read_only_wait_responses_do_not_publish_editor_frames() {

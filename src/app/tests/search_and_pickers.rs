@@ -585,10 +585,63 @@ fn picker_control_bindings_page_and_open_in_a_split() {
     );
     picker.finish(0, false);
     app.picker = Some(picker);
-    key(&mut app, KeyCode::Char('d'), Modifiers::CONTROL);
+
+    key(&mut app, KeyCode::Down, Modifiers::NONE);
+    assert_eq!(app.picker.as_ref().unwrap().selected, 1);
+    key(&mut app, KeyCode::Char('n'), Modifiers::CONTROL);
+    assert_eq!(app.picker.as_ref().unwrap().selected, 2);
+    key(&mut app, KeyCode::Up, Modifiers::NONE);
+    assert_eq!(app.picker.as_ref().unwrap().selected, 1);
+    key(&mut app, KeyCode::Char('p'), Modifiers::CONTROL);
+    assert_eq!(app.picker.as_ref().unwrap().selected, 0);
+    key(&mut app, KeyCode::PageDown, Modifiers::NONE);
     assert_eq!(app.picker.as_ref().unwrap().selected, 10);
+    key(&mut app, KeyCode::Char('d'), Modifiers::CONTROL);
+    assert_eq!(app.picker.as_ref().unwrap().selected, 14);
+    key(&mut app, KeyCode::PageUp, Modifiers::NONE);
+    assert_eq!(app.picker.as_ref().unwrap().selected, 4);
     key(&mut app, KeyCode::Char('u'), Modifiers::CONTROL);
     assert_eq!(app.picker.as_ref().unwrap().selected, 0);
+    key(&mut app, KeyCode::End, Modifiers::NONE);
+    assert_eq!(app.picker.as_ref().unwrap().selected, 14);
+    key(&mut app, KeyCode::Home, Modifiers::NONE);
+    assert_eq!(app.picker.as_ref().unwrap().selected, 0);
+    key(&mut app, KeyCode::Tab, Modifiers::NONE);
+    assert_eq!(app.picker.as_ref().unwrap().selected, 1);
+    key(&mut app, KeyCode::BackTab, Modifiers::SHIFT);
+    assert_eq!(app.picker.as_ref().unwrap().selected, 0);
+
+    type_text(&mut app, "12 tail");
+    assert_eq!(app.picker.as_ref().unwrap().query_cursor, 7);
+    key(&mut app, KeyCode::Left, Modifiers::NONE);
+    assert_eq!(app.picker.as_ref().unwrap().query_cursor, 6);
+    key(&mut app, KeyCode::Char('b'), Modifiers::CONTROL);
+    assert_eq!(app.picker.as_ref().unwrap().query_cursor, 5);
+    key(&mut app, KeyCode::Right, Modifiers::NONE);
+    assert_eq!(app.picker.as_ref().unwrap().query_cursor, 6);
+    key(&mut app, KeyCode::Char('f'), Modifiers::CONTROL);
+    assert_eq!(app.picker.as_ref().unwrap().query_cursor, 7);
+    key(&mut app, KeyCode::Backspace, Modifiers::NONE);
+    assert_eq!(app.picker.as_ref().unwrap().query, "12 tai");
+    key(&mut app, KeyCode::Char('h'), Modifiers::CONTROL);
+    assert_eq!(app.picker.as_ref().unwrap().query, "12 ta");
+    key(&mut app, KeyCode::Char('a'), Modifiers::CONTROL);
+    assert_eq!(app.picker.as_ref().unwrap().query_cursor, 0);
+    key(&mut app, KeyCode::Delete, Modifiers::NONE);
+    assert_eq!(app.picker.as_ref().unwrap().query, "2 ta");
+    key(&mut app, KeyCode::Char('e'), Modifiers::CONTROL);
+    assert_eq!(app.picker.as_ref().unwrap().query_cursor, 4);
+    key(&mut app, KeyCode::Char('w'), Modifiers::CONTROL);
+    assert_eq!(app.picker.as_ref().unwrap().query, "2 ");
+    key(&mut app, KeyCode::Char('a'), Modifiers::CONTROL);
+    assert_eq!(app.picker.as_ref().unwrap().query_cursor, 0);
+    key(&mut app, KeyCode::Char('k'), Modifiers::CONTROL);
+    assert!(app.picker.as_ref().unwrap().query.is_empty());
+    key(&mut app, KeyCode::Char('e'), Modifiers::CONTROL);
+
+    let preview = app.picker.as_ref().unwrap().show_preview;
+    key(&mut app, KeyCode::Char('t'), Modifiers::CONTROL);
+    assert_eq!(app.picker.as_ref().unwrap().show_preview, !preview);
     key(&mut app, KeyCode::Char('v'), Modifiers::CONTROL);
 
     assert!(app.picker.is_none());
@@ -602,6 +655,49 @@ fn picker_control_bindings_page_and_open_in_a_split() {
         "00.txt"
     );
 
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn background_picker_query_edits_remain_safe_while_the_scanner_owns_ranking() {
+    let directory = temporary("background-picker-keyboard");
+    fs::create_dir_all(&directory).unwrap();
+    fs::write(directory.join("alpha.txt"), "alpha").unwrap();
+    let mut app = App::new(Config::default(), None).unwrap();
+    let (scanner, _events) = crate::file_picker::scanner();
+    app.attach_file_scanner(scanner);
+    app.open_picker_at(
+        directory.clone(),
+        crate::file_picker::ScanScope::ignoring(&directory),
+        FilePickerKind::Files,
+    )
+    .unwrap();
+    assert!(app.file_scanner.is_some());
+
+    type_text(&mut app, "alpha tail");
+    assert_eq!(app.picker.as_ref().unwrap().query, "alpha tail");
+    assert_eq!(app.picker.as_ref().unwrap().query_cursor, 10);
+    key(&mut app, KeyCode::Left, Modifiers::NONE);
+    assert_eq!(app.picker.as_ref().unwrap().query_cursor, 9);
+    key(&mut app, KeyCode::Backspace, Modifiers::NONE);
+    assert_eq!(app.picker.as_ref().unwrap().query, "alpha tal");
+    key(&mut app, KeyCode::Char('h'), Modifiers::CONTROL);
+    assert_eq!(app.picker.as_ref().unwrap().query, "alpha tl");
+    key(&mut app, KeyCode::Char('a'), Modifiers::CONTROL);
+    assert_eq!(app.picker.as_ref().unwrap().query_cursor, 0);
+    key(&mut app, KeyCode::Delete, Modifiers::NONE);
+    assert_eq!(app.picker.as_ref().unwrap().query, "lpha tl");
+    key(&mut app, KeyCode::Char('e'), Modifiers::CONTROL);
+    assert_eq!(app.picker.as_ref().unwrap().query_cursor, 7);
+    key(&mut app, KeyCode::Char('w'), Modifiers::CONTROL);
+    assert_eq!(app.picker.as_ref().unwrap().query, "lpha ");
+    key(&mut app, KeyCode::Char('a'), Modifiers::CONTROL);
+    assert_eq!(app.picker.as_ref().unwrap().query_cursor, 0);
+    key(&mut app, KeyCode::Char('k'), Modifiers::CONTROL);
+    assert!(app.picker.as_ref().unwrap().query.is_empty());
+
+    key(&mut app, KeyCode::Escape, Modifiers::NONE);
+    assert!(app.picker.is_none());
     fs::remove_dir_all(directory).unwrap();
 }
 

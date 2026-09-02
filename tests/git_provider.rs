@@ -17,9 +17,9 @@ use std::{
 use runyte::git::{
     BaseContent, BlameRequest, DeletionAuthorization, DiffScope, Divergence, FileComparison,
     FileState, GitCliProvider, GitError, GitMutation, GitOperation, GitProvider, GitResponse,
-    GitService, GitServiceEvent, GitServiceHandle, Head, LineStats, LogRequest,
-    MAX_BLAME_INPUT_BYTES, PartialStageSelection, RefreshSpec, Repository, StashMutation,
-    StashScope, WorktreeCreate,
+    GitService, GitServiceEvent, GitServiceHandle, Head, LineStats, LogCursor, LogRequest,
+    MAX_BLAME_INPUT_BYTES, MAX_BLAME_LINES, MAX_LOG_PAGE_SIZE, PartialStageSelection, RefreshSpec,
+    Repository, StashMutation, StashScope, WorktreeCreate,
 };
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -368,6 +368,164 @@ fn discovery_finds_the_working_tree_from_any_directory_inside_it() {
     );
     assert_eq!(found.common_dir(), repository.path().join(".git"));
     assert_eq!(found.git_dir(), repository.path().join(".git"));
+}
+
+#[test]
+fn provider_refusals_validate_every_external_identity_before_mutating_git() {
+    let fixture = TempRepository::new("invalid-identities");
+    fixture.write("note.txt", "base\n");
+    fixture.commit("base");
+    let repository = fixture.repository();
+    let provider = provider();
+    let head_before = git_output(&fixture, &["rev-parse", "HEAD"]);
+    let refs_before = git_output(
+        &fixture,
+        &["for-each-ref", "--format=%(refname):%(objectname)"],
+    );
+    let worktrees_before = git_output(&fixture, &["worktree", "list", "--porcelain"]);
+
+    for request in [
+        LogRequest {
+            cursor: None,
+            limit: 0,
+        },
+        LogRequest {
+            cursor: None,
+            limit: MAX_LOG_PAGE_SIZE + 1,
+        },
+        LogRequest {
+            cursor: Some(LogCursor {
+                boundary: "not-an-object".to_owned(),
+            }),
+            limit: 1,
+        },
+    ] {
+        assert!(provider.log_page(&repository, &request).is_err());
+    }
+    assert!(provider.history_contains(&repository, "short").is_err());
+    assert!(provider.commit_detail(&repository, "short").is_err());
+
+    for mutation in [
+        StashMutation::Create {
+            name: String::new(),
+            scope: StashScope::TrackedWorktree,
+        },
+        StashMutation::Apply {
+            oid: "short".to_owned(),
+        },
+        StashMutation::Apply {
+            oid: "0".repeat(40),
+        },
+        StashMutation::Drop {
+            oid: "0".repeat(40),
+        },
+    ] {
+        assert!(provider.mutate_stash(&repository, &mutation).is_err());
+    }
+
+    let outside = fixture.path().parent().unwrap().join("outside.txt");
+    for request in [
+        BlameRequest {
+            path: fixture.path().join("note.txt"),
+            content: "binary\0text".to_owned(),
+            lines: None,
+        },
+        BlameRequest {
+            path: fixture.path().join("note.txt"),
+            content: "base\n".to_owned(),
+            lines: Some((0, 1)),
+        },
+        BlameRequest {
+            path: fixture.path().join("note.txt"),
+            content: "base\n".to_owned(),
+            lines: Some((2, 1)),
+        },
+        BlameRequest {
+            path: outside,
+            content: "base\n".to_owned(),
+            lines: None,
+        },
+        BlameRequest {
+            path: fixture.path().join("note.txt"),
+            content: "\n".repeat(MAX_BLAME_LINES + 1),
+            lines: None,
+        },
+    ] {
+        assert!(provider.blame(&repository, &request).is_err());
+    }
+
+    let destination = fixture.path().join("linked");
+    for request in [
+        WorktreeCreate {
+            destination: destination.clone(),
+            start: "-start".to_owned(),
+            new_branch: None,
+            upstream: None,
+        },
+        WorktreeCreate {
+            destination: destination.clone(),
+            start: "main".to_owned(),
+            new_branch: Some("-branch".to_owned()),
+            upstream: None,
+        },
+        WorktreeCreate {
+            destination: destination.clone(),
+            start: "main".to_owned(),
+            new_branch: Some("linked".to_owned()),
+            upstream: Some("-upstream".to_owned()),
+        },
+        WorktreeCreate {
+            destination: destination.clone(),
+            start: "missing".to_owned(),
+            new_branch: None,
+            upstream: None,
+        },
+        WorktreeCreate {
+            destination,
+            start: "main".to_owned(),
+            new_branch: Some("linked".to_owned()),
+            upstream: Some("refs/remotes/origin/missing".to_owned()),
+        },
+    ] {
+        assert!(provider.create_worktree(&repository, &request).is_err());
+    }
+
+    for (branch, start) in [("-branch", "main"), ("branch", "missing")] {
+        assert!(provider.create_branch(&repository, branch, start).is_err());
+    }
+    for (branch, upstream) in [
+        ("-branch", "refs/remotes/origin/main"),
+        ("branch", "-upstream"),
+        ("branch", "refs/remotes/origin/missing"),
+    ] {
+        assert!(
+            provider
+                .create_tracking_branch(&repository, branch, upstream)
+                .is_err()
+        );
+    }
+    assert!(provider.checkout_branch(&repository, "-branch").is_err());
+    assert!(provider.checkout_branch(&repository, "missing").is_err());
+    assert!(
+        provider
+            .delete_branch(&repository, "missing", false)
+            .is_err()
+    );
+    assert!(provider.delete_branch(&repository, "main", true).is_err());
+
+    assert_eq!(git_output(&fixture, &["rev-parse", "HEAD"]), head_before);
+    assert_eq!(
+        git_output(
+            &fixture,
+            &["for-each-ref", "--format=%(refname):%(objectname)"]
+        ),
+        refs_before
+    );
+    assert_eq!(
+        git_output(&fixture, &["worktree", "list", "--porcelain"]),
+        worktrees_before
+    );
+    assert!(!fixture.path().join("linked").exists());
 }
 
 #[test]

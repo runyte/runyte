@@ -41,6 +41,30 @@ days, and fails below 83% total line coverage. The floor is deliberately below
 the observed baseline because conditional Linux and macOS code changes both the
 instrumented denominator and the paths available to a run on one platform.
 
+## 2026-09-02
+
+Measured with `cargo-llvm-cov` 0.9.0 and Rust 1.97.1 on
+`x86_64-unknown-linux-gnu`. The ordinary non-ignored workspace tests passed
+under instrumentation.
+
+| Measure | Covered | Total | Coverage |
+| --- | ---: | ---: | ---: |
+| Lines | 90,301 | 100,134 | 90.18% |
+| Functions | 8,436 | 9,234 | 91.36% |
+| Regions | 140,183 | 156,240 | 89.72% |
+
+Against a clean same-toolchain run of the same tree before this pass, covered
+lines rose by 1,034, from 89,267 to 90,301, while the instrumented total rose
+by 228, from 99,906 to 100,134. Total line coverage therefore increased from
+89.35% to 90.18%, a gain of 0.83 percentage points. The added tests exercise
+observable refusal, recovery, lifecycle, protocol, picker, Git, LSP, terminal,
+and persistent-workspace behavior. Coverage-only command and provider sweeps
+were removed during review rather than retained for their reported gain.
+
+The enforced floor remains 83%. The 95% target has not been reached, and the
+macOS baseline below predates these tests; a current macOS run is still
+required before any cross-platform floor increase.
+
 ## 2026-09-01
 
 Measured with `cargo-llvm-cov` 0.9.0 and Rust 1.97.1 on

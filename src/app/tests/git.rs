@@ -6280,6 +6280,240 @@ fn selected_line_staging_refuses_a_dirty_live_buffer_before_submission() {
 }
 
 #[test]
+fn selected_lines_and_diff_hunks_complete_the_guarded_partial_stage_handshake() {
+    use crate::git::{GitServiceHandle, PartialStageRequest, RepositoryFingerprint};
+
+    let root = temporary("partial-stage-handshake");
+    fs::create_dir_all(&root).unwrap();
+    let path = root.join("source.txt");
+    fs::write(&path, "new\n").unwrap();
+    let repository = Repository::new(&root);
+
+    for (command, scope, selected_lines) in [
+        ("git-stage-lines", DiffScope::Unstaged, true),
+        ("git-stage-hunk", DiffScope::Unstaged, false),
+        ("git-unstage-hunk", DiffScope::Staged, false),
+    ] {
+        let mut app = App::new_in_isolated_project(
+            &root,
+            HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+                String::new(),
+            ))))),
+        )
+        .unwrap();
+        let (service, operations) = GitServiceHandle::recording_for_test();
+        app.attach_git_service(service);
+        let _ = operations.recv_timeout(Duration::from_secs(1)).unwrap();
+        app.git.attach(Some(repository.clone()));
+        app.open_file(path.clone()).unwrap();
+
+        if !selected_lines {
+            app.open_git_diff_result(
+                scope,
+                Some(path.clone()),
+                "diff --git a/source.txt b/source.txt\n--- a/source.txt\n+++ b/source.txt\n@@ -1 +1 @@\n-old\n+new\n"
+                    .to_owned(),
+            );
+            let diff = app.active().buffer;
+            let row = (0..app.buffers[diff].len_lines())
+                .find(|row| app.buffers[diff].line_string(*row).starts_with("@@ "))
+                .unwrap();
+            let offset = app.buffers[diff].line_to_offset(row);
+            app.active_mut().replace_selection(Selection::point(offset));
+        }
+
+        app.execute_command(command).unwrap();
+        let selection = loop {
+            if let GitOperation::PreparePartial { selection, .. } =
+                operations.recv_timeout(Duration::from_secs(1)).unwrap()
+            {
+                break selection;
+            }
+        };
+        assert_eq!(selection.scope, scope);
+        assert_eq!(selection.lines.is_some(), selected_lines);
+        assert_eq!(selection.hunk.is_some(), !selected_lines);
+
+        app.apply_git_response(
+            GitOperation::PreparePartial {
+                repository: repository.clone(),
+                selection: selection.clone(),
+            },
+            GitResponse::PreparedPartial(Box::new(PartialStageRequest {
+                repository: root.join(".git"),
+                fingerprint: RepositoryFingerprint {
+                    head: Some("a".repeat(40)),
+                    index: "0".repeat(64),
+                },
+                path: path.clone(),
+                disk_sha256: "0".repeat(64),
+                buffer: selection.buffer,
+                guard: selection.guard.clone(),
+                scope,
+                hunk: selection.hunk.clone().unwrap_or_else(|| "hunk".to_owned()),
+                patch: b"patch".to_vec(),
+            })),
+            (None, GitServiceState::Completed),
+            RequestedGitViews::default(),
+            None,
+            None,
+        );
+        let submitted = loop {
+            if let GitOperation::Mutate {
+                mutation: GitMutation::PartialStage(request),
+                ..
+            } = operations.recv_timeout(Duration::from_secs(1)).unwrap()
+            {
+                break request;
+            }
+        };
+        assert_eq!(submitted.path, path);
+        assert_eq!(submitted.scope, scope);
+        assert_eq!(submitted.buffer, selection.buffer);
+        assert_eq!(
+            submitted.hunk,
+            selection.hunk.clone().unwrap_or_else(|| "hunk".to_owned())
+        );
+        assert_eq!(submitted.patch, b"patch");
+    }
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn asynchronous_branch_deletion_preflights_plain_and_checkout_cascade_paths() {
+    use crate::git::{
+        BranchDeletionPlan, DeletionAuthorization, GitServiceHandle, WorktreeRemovalPlan,
+    };
+
+    let root = temporary("async-branch-delete-matrix");
+    fs::create_dir_all(&root).unwrap();
+    let checkout = root.join("topic-checkout");
+    fs::create_dir_all(&checkout).unwrap();
+    let repository = Repository::new(&root);
+
+    for cascaded in [false, true] {
+        let mut app = App::new_in_isolated_project(
+            &root,
+            HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+                String::new(),
+            ))))),
+        )
+        .unwrap();
+        let (service, operations) = GitServiceHandle::recording_for_test();
+        app.attach_git_service(service);
+        let _ = operations.recv_timeout(Duration::from_secs(1)).unwrap();
+        app.git.attach(Some(repository.clone()));
+
+        let mut topic = Branch::new("topic", false);
+        if cascaded {
+            topic.checkouts.push(checkout.clone());
+        }
+        app.apply_git_response(
+            GitOperation::Branches {
+                repository: repository.clone(),
+            },
+            GitResponse::Branches(BranchList {
+                local: vec![Branch::new("main", true), topic],
+                remote: Vec::new(),
+            }),
+            (None, GitServiceState::Completed),
+            RequestedGitViews::default(),
+            None,
+            None,
+        );
+        let row = app
+            .git_state
+            .branch_rows()
+            .iter()
+            .position(|row| {
+                row.branch
+                    .as_ref()
+                    .is_some_and(|branch| branch.name == "topic")
+            })
+            .unwrap();
+        let offset = app.active_buffer().line_to_offset(row);
+        app.active_mut().replace_selection(Selection::point(offset));
+
+        app.delete_selected_branch();
+        let operation = operations.recv_timeout(Duration::from_secs(1)).unwrap();
+        if cascaded {
+            let GitOperation::PrepareWorktreeRemoval { path, .. } = operation.clone() else {
+                panic!("checkout cascade did not prepare its worktree first");
+            };
+            assert_eq!(path, checkout);
+            let id = app.git_state.branch_cascade.as_ref().unwrap().id;
+            app.apply_git_service_event(GitServiceEvent::Completed {
+                id,
+                operation,
+                result: Box::new(Ok(GitResponse::PreparedWorktreeRemoval(
+                    WorktreeRemovalPlan {
+                        path: checkout.clone(),
+                        head: Some("b".repeat(40)),
+                        branch: Some("refs/heads/topic".to_owned()),
+                        upstream: None,
+                        detached_retained: false,
+                        required_authorization: DeletionAuthorization::Enter,
+                    },
+                ))),
+                state: GitServiceState::Completed,
+                coalesced: false,
+            });
+            let branch_operation = operations.recv_timeout(Duration::from_secs(1)).unwrap();
+            let id = app.git_state.branch_deletion_request.as_ref().unwrap().id;
+            app.apply_git_service_event(GitServiceEvent::Completed {
+                id,
+                operation: branch_operation,
+                result: Box::new(Ok(GitResponse::PreparedBranchDeletion(
+                    BranchDeletionPlan {
+                        branch: "topic".to_owned(),
+                        tip: "c".repeat(40),
+                        upstream: None,
+                        retaining_branches: vec!["main".to_owned()],
+                        required_authorization: DeletionAuthorization::Enter,
+                    },
+                ))),
+                state: GitServiceState::Completed,
+                coalesced: false,
+            });
+            assert!(
+                app.git_branch_deletion
+                    .as_ref()
+                    .is_some_and(|confirmation| confirmation.cascade.is_some())
+            );
+        } else {
+            assert!(matches!(
+                operation,
+                GitOperation::PrepareBranchDeletion { ref branch, .. } if branch == "topic"
+            ));
+            let id = app.git_state.branch_deletion_request.as_ref().unwrap().id;
+            app.apply_git_service_event(GitServiceEvent::Completed {
+                id,
+                operation,
+                result: Box::new(Ok(GitResponse::PreparedBranchDeletion(
+                    BranchDeletionPlan {
+                        branch: "topic".to_owned(),
+                        tip: "c".repeat(40),
+                        upstream: None,
+                        retaining_branches: vec!["main".to_owned()],
+                        required_authorization: DeletionAuthorization::Enter,
+                    },
+                ))),
+                state: GitServiceState::Completed,
+                coalesced: false,
+            });
+            assert!(
+                app.git_branch_deletion
+                    .as_ref()
+                    .is_some_and(|confirmation| confirmation.cascade.is_none())
+            );
+        }
+    }
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn selected_line_guard_is_stale_after_keyboard_or_pointer_intent() {
     let mut app = App::new(Config::default(), None).unwrap();
     let buffer = app.active().buffer;
@@ -6550,4 +6784,206 @@ fn a_diverged_pull_from_the_git_service_opens_the_offer_rather_than_an_error() {
     assert!(app.git_pull_rebase.is_none());
 
     fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn completed_git_mutations_report_every_distinct_outcome() {
+    use crate::git::{PartialStageRequest, RepositoryFingerprint};
+
+    let root = temporary("git-mutation-outcome-matrix");
+    fs::create_dir_all(&root).unwrap();
+    let path = root.join("source.rs");
+    let removal = || WorktreeRemovalPlan {
+        path: root.join("linked"),
+        head: Some("a".repeat(40)),
+        branch: Some("topic".to_owned()),
+        upstream: None,
+        detached_retained: false,
+        required_authorization: DeletionAuthorization::Enter,
+    };
+    let deletion = || BranchDeletionPlan {
+        branch: "topic".to_owned(),
+        tip: "a".repeat(40),
+        upstream: None,
+        retaining_branches: vec!["main".to_owned()],
+        required_authorization: DeletionAuthorization::Enter,
+    };
+    let partial = |scope| {
+        GitMutation::PartialStage(Box::new(PartialStageRequest {
+            repository: root.clone(),
+            fingerprint: RepositoryFingerprint {
+                head: Some("a".repeat(40)),
+                index: "b".repeat(40),
+            },
+            path: path.clone(),
+            disk_sha256: "c".repeat(64),
+            buffer: None,
+            guard: None,
+            scope,
+            hunk: "@@ -1 +1 @@".to_owned(),
+            patch: b"diff --git a/source.rs b/source.rs\n".to_vec(),
+        }))
+    };
+    let cases = vec![
+        (
+            GitMutation::Stage(vec![path.clone()]),
+            vec![path.clone()],
+            "staged 1 path(s)",
+        ),
+        (
+            GitMutation::Unstage(vec![path.clone()]),
+            vec![path.clone()],
+            "unstaged 1 path(s)",
+        ),
+        (
+            GitMutation::Discard(vec![path.clone()]),
+            Vec::new(),
+            "discarded changes to 0 path(s)",
+        ),
+        (
+            GitMutation::Checkout {
+                branch: "topic".to_owned(),
+            },
+            Vec::new(),
+            "checked out topic",
+        ),
+        (
+            GitMutation::CreateBranch {
+                branch: "topic".to_owned(),
+                start: "main".to_owned(),
+            },
+            Vec::new(),
+            "created topic from main",
+        ),
+        (
+            GitMutation::CreateTrackingBranch {
+                branch: "topic".to_owned(),
+                upstream: "refs/remotes/origin/topic".to_owned(),
+            },
+            Vec::new(),
+            "created topic tracking origin/topic",
+        ),
+        (
+            GitMutation::DeleteBranch {
+                plan: Box::new(deletion()),
+                authorization: DeletionAuthorization::Enter,
+            },
+            Vec::new(),
+            "deleted branch topic",
+        ),
+        (
+            GitMutation::Commit {
+                message: "subject".to_owned(),
+            },
+            Vec::new(),
+            "committed",
+        ),
+        (GitMutation::Pull, Vec::new(), "pull completed"),
+        (
+            GitMutation::RebaseOntoUpstream,
+            Vec::new(),
+            "replayed onto the upstream",
+        ),
+        (
+            GitMutation::Push {
+                branch: "topic".to_owned(),
+            },
+            Vec::new(),
+            "pushed topic",
+        ),
+        (
+            GitMutation::RemoveWorktree {
+                plan: Box::new(removal()),
+                authorization: DeletionAuthorization::Enter,
+            },
+            Vec::new(),
+            "removed worktree",
+        ),
+        (
+            GitMutation::Stash(StashMutation::Create {
+                name: "checkpoint".to_owned(),
+                scope: StashScope::TrackedWorktree,
+            }),
+            Vec::new(),
+            "stash created",
+        ),
+        (
+            GitMutation::Stash(StashMutation::Apply {
+                oid: "d".repeat(40),
+            }),
+            Vec::new(),
+            "stash applied",
+        ),
+        (
+            GitMutation::Stash(StashMutation::Drop {
+                oid: "d".repeat(40),
+            }),
+            Vec::new(),
+            "stash dropped",
+        ),
+        (partial(DiffScope::Unstaged), Vec::new(), "hunk staged"),
+        (partial(DiffScope::Staged), Vec::new(), "hunk unstaged"),
+    ];
+
+    for (mutation, applied, expected) in cases {
+        let mut app = App::new(Config::default(), None).unwrap();
+        app.apply_git_mutation_result(
+            mutation,
+            applied,
+            None,
+            None,
+            GitServiceState::Completed,
+            None,
+        );
+        assert!(!app.status_error, "{}", app.status);
+        assert!(
+            app.status.contains(expected),
+            "{} did not contain {expected}",
+            app.status
+        );
+    }
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn mutation_failures_preserve_partial_and_uncertain_outcomes() {
+    let path = PathBuf::from("source.rs");
+    let failure = || crate::git::GitError::Failed {
+        command: "git add".to_owned(),
+        code: Some(1),
+        signal: None,
+        stderr: "index refused".to_owned(),
+    };
+    let cases = [
+        (Vec::new(), GitServiceState::Failed, "index refused"),
+        (
+            vec![path.clone()],
+            GitServiceState::Failed,
+            "1 path(s) changed before failure",
+        ),
+        (
+            vec![path.clone()],
+            GitServiceState::CompletedWithUncertainState,
+            "outcome may be partial",
+        ),
+    ];
+
+    for (applied, state, expected) in cases {
+        let mut app = App::new(Config::default(), None).unwrap();
+        app.apply_git_mutation_result(
+            GitMutation::Stage(vec![path.clone()]),
+            applied,
+            None,
+            Some(failure()),
+            state,
+            None,
+        );
+        assert!(app.status_error);
+        assert!(
+            app.status.contains(expected),
+            "{} did not contain {expected}",
+            app.status
+        );
+    }
 }
