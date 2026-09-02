@@ -148,13 +148,23 @@ jobs:
       # retain their normal parallelism and production deadlines.
       - name: Repeat process and PTY integration suites
         run: |
+          set -o pipefail
           for attempt in {1..10}; do
-            echo "burn-in attempt ${attempt}/10"
-            cargo test --locked --test local_protocol
-            cargo test --locked --test diagnostic_log
-            cargo test --locked --test persistent_host
-            cargo test --locked --test workspace_bulk
+            echo "burn-in attempt ${attempt}/10" | tee -a lifecycle-stress.log
+            cargo test --locked --test local_protocol 2>&1 | tee -a lifecycle-stress.log
+            cargo test --locked --test diagnostic_log 2>&1 | tee -a lifecycle-stress.log
+            cargo test --locked --test persistent_host 2>&1 | tee -a lifecycle-stress.log
+            cargo test --locked --test workspace_bulk 2>&1 | tee -a lifecycle-stress.log
           done
+
+      - name: Upload lifecycle failure log
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: lifecycle-stress-${{ matrix.os }}
+          path: lifecycle-stress.log
+          if-no-files-found: error
+          retention-days: 14
 
   performance:
     name: Performance (ubuntu-latest)
