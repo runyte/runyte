@@ -472,7 +472,7 @@ editor_commands! {
     Redo => ("redo", "Redo the last change"),
     Yank => ("yank", "Yank the selection or character"),
     YankLine => ("yank-line", "Yank the lines the selection touches"),
-    PasteAfter => ("paste-after", "Paste after the selection"),
+    PasteAfter => ("paste-after", "Replace the selection, or paste after the caret"),
     PasteBefore => ("paste-before", "Paste before the selection"),
     Indent => ("indent", "Indent the selected lines"),
     Unindent => ("unindent", "Unindent the selected lines"),

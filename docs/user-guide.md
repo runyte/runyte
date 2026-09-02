@@ -1339,7 +1339,7 @@ context; scoped explorer keys are documented under
 | `Alt-_` | Shrink every selection past the whitespace at its ends, without changing the text |
 | `Space p .` | Toggle dim `·`, `→`, and `↵` markers for spaces, tabs, and line endings |
 | `d` / `c` | Delete / change selection or cursor character; `d` after transient `x`/`X` cuts whole lines |
-| `y` / `p` / `P` | Yank selection or cursor character / paste after / paste before |
+| `y` / `p` / `P` | Yank selection or cursor character / replace the selection, or paste after a bare caret / paste before |
 | `Y` | Yank every line the selection touches, as whole lines |
 | `>` / `<` | Indent / unindent |
 | `Ctrl-c` | Comment or uncomment every line the selection touches, using the buffer language's line comment; also bound in Insert mode |
@@ -1360,6 +1360,17 @@ context; scoped explorer keys are documented under
 | `mm` | Jump to the matching bracket |
 | `z…` / `Z…` | View alignment and scrolling |
 | `Esc` / `Ctrl-\` (`Ctrl-4` on legacy terminals) | Return to Normal mode |
+
+`p` reads the selection the same way `d` and `c` do. With a bare caret it
+pastes after the caret, as it always has; with a range that holds text it
+replaces that text, so selecting a word and pressing `p` puts the register
+there instead of beside it. A linewise register — the one `x y` or `Y`
+writes — replaces every line the selection touched rather than landing inside
+one. The register is not consumed and the replacement is left selected, so the
+same content can be pasted over one range after another, and a multi-selection
+from a search replaces every match at once. `P` never replaces: it stays the
+way to reach the start of a selection without giving up what is selected.
+`Space c p` and `Space c P` follow the same rule from the system clipboard.
 
 <a id="insert-mode"></a>
 
@@ -1654,7 +1665,7 @@ cancellation keys.
 
 | Key | Action |
 | --- | --- |
-| `Space c y` / `Space c p` / `Space c P` | System clipboard yank / paste after / paste before |
+| `Space c y` / `Space c p` / `Space c P` | System clipboard yank / replace the selection, or paste after a bare caret / paste before |
 | `Space e` | Open the active buffer's directory as an editable explorer; from a file, select that file |
 | `Space E` | Open the working directory (controlled by `:cd`) as an editable explorer |
 | `Space Space` | Open the persistent-session manager (`:session-list`, `:sl`); another `Space` closes it while the filter is empty, `1`-`9` attach to a numbered session then too, and `Tab` shows the selected row's actions |

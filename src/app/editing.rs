@@ -2475,6 +2475,13 @@ impl App {
         self.paste_register(&register, before);
     }
 
+    /// Pastes the register beside every caret and over every selection.
+    ///
+    /// `p` on a range that holds text replaces it, because with something
+    /// selected "paste here" means "put this there instead"; the register is
+    /// left alone, so the same content can be pasted over one range after
+    /// another. `P` never replaces, which is how text still reaches the edge
+    /// of a selection without consuming it.
     pub(super) fn paste_register(&mut self, register: &Register, before: bool) {
         if self.active_buffer().is_directory()
             && let Some(directory) = &register.directory
@@ -2487,13 +2494,22 @@ impl App {
         let buffer_id = self.active().buffer;
         let buffer = &self.buffers[buffer_id];
         let clipboard = register.text.clone();
+        let half_open = matches!(
+            self.active().selection_semantics(),
+            SelectionSemantics::HalfOpen | SelectionSemantics::VimLinewise
+        );
 
-        let changes = self
+        // Spans first, changes after: the replaced ones have to be found again
+        // once the text has moved under them, and that needs their widths.
+        let spans: Vec<(Offset, Offset, String)> = self
             .active()
             .selection
             .ranges()
             .iter()
             .map(|range| {
+                if !before && !range.is_empty() {
+                    return replaced_span(buffer, range, register, half_open);
+                }
                 let mut text = clipboard.clone();
                 let at = if register.linewise {
                     let row = buffer.offset_to_row(range.head);
@@ -2522,10 +2538,52 @@ impl App {
                     let row_end = buffer.line_to_offset(row) + buffer.line_len(row);
                     (range.to() + 1).min(row_end)
                 };
-                Change::new(at, at, text)
+                (at, at, text)
             })
             .collect();
-        self.edit(Transaction::new(changes));
+
+        // Ranges are sorted and disjoint, so each span's post-edit start is its
+        // own start shifted by everything the earlier spans added or removed.
+        let mut delta: isize = 0;
+        let mut pasted = Vec::with_capacity(spans.len());
+        for (from, to, text) in &spans {
+            let start = (*from as isize + delta) as usize;
+            let len = text.chars().count();
+            delta += len as isize - (*to - *from) as isize;
+            // A replacement always spans text and an insertion never
+            // does, so the span itself says which one this was.
+            pasted.push((*from < *to).then_some((start, len)));
+        }
+
+        let transaction = Transaction::new(
+            spans
+                .into_iter()
+                .map(|(from, to, text)| Change::new(from, to, text))
+                .collect(),
+        );
+        let primary = self.active().selection.primary_index();
+        // A caret keeps whatever position the edit maps it to; only a range
+        // that was replaced moves onto the text that replaced it.
+        let carets: Vec<Range> = self
+            .active()
+            .selection
+            .ranges()
+            .iter()
+            .map(|range| range.map(&transaction))
+            .collect();
+        if self.edit(transaction) {
+            let buffer = &self.buffers[buffer_id];
+            let ranges = pasted
+                .into_iter()
+                .zip(carets)
+                .map(|(pasted, caret)| match pasted {
+                    Some((start, len)) => pasted_range(buffer, start, len, half_open),
+                    None => caret,
+                })
+                .collect();
+            self.active_mut()
+                .replace_selection(Selection::new(ranges, primary));
+        }
         self.mode = Mode::Normal;
         self.normalize_buffer(buffer_id);
     }
@@ -2632,6 +2690,65 @@ impl App {
 }
 
 /// Existing line terminator and the offset of its `\n` token.
+/// The span a non-empty range gives up to a paste, and the text taking its
+/// place.
+///
+/// Characterwise content substitutes exactly what `d` would have deleted.
+/// Linewise content is whole lines, so it takes whole lines: the span grows to
+/// the rows the selection touched, and the register's own terminators shape the
+/// result. Replacing through a final line that never had a terminator must not
+/// leave one behind.
+fn replaced_span(
+    buffer: &Buffer,
+    range: &Range,
+    register: &Register,
+    half_open: bool,
+) -> (Offset, Offset, String) {
+    let (from, to) = if half_open {
+        (range.from(), range.to())
+    } else {
+        operative_span(buffer, range)
+    };
+    if !register.linewise {
+        return (from, to, register.text.clone());
+    }
+    let first = buffer.offset_to_row(from);
+    let last = buffer.offset_to_row(to.saturating_sub(1).max(from));
+    let start = buffer.line_to_offset(first);
+    if last < buffer.last_row() {
+        return (
+            start,
+            buffer.line_to_offset(last + 1),
+            register.text.clone(),
+        );
+    }
+    let mut text = register.text.clone();
+    if text.ends_with('\n') {
+        text.pop();
+        if text.ends_with('\r') {
+            text.pop();
+        }
+    }
+    (start, buffer.len_chars(), text)
+}
+
+/// The range covering `len` characters just pasted at `start`.
+///
+/// Under Runyte's inclusive selection the head sits on the last character
+/// rather than past it, and a linewise paste ends in a terminator no selection
+/// should point at, so the head stops where `x` would leave it.
+fn pasted_range(buffer: &Buffer, start: Offset, len: usize, half_open: bool) -> Range {
+    if len == 0 {
+        return Range::point(start);
+    }
+    let end = start + len;
+    if half_open {
+        return Range::new(start, end);
+    }
+    let end = without_trailing_line_terminator(buffer, start, end);
+    Range::new(start, end.saturating_sub(1).max(start))
+}
+
 fn line_terminator(buffer: &Buffer, row: usize) -> Option<(&'static str, Offset)> {
     let end = buffer.line_to_offset(row) + buffer.line_len(row);
     if buffer.char_at(end) == Some('\r') && buffer.char_at(end + 1) == Some('\n') {

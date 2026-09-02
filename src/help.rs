@@ -805,7 +805,7 @@ mod tests {
         assert!(direct.contains("Search for text, ignoring case"));
         assert!(!direct.contains("Delete the selection or character"));
         assert!(!direct.contains("Undo the last change"));
-        assert!(!direct.contains("Paste after the selection"));
+        assert!(!direct.contains("Replace the selection, or paste after the caret"));
 
         // Prefixes are named, and chords are grouped where someone would look.
         assert!(rendered.contains("Space …"));

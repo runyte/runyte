@@ -776,6 +776,109 @@ fn x_and_x_yanks_paste_whole_lines_but_v_yanks_remain_characterwise() {
 }
 
 #[test]
+fn p_replaces_a_selection_while_capital_p_still_pastes_beside_it() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    seed(&mut app, "alpha bravo");
+    press(&mut app, 'v');
+    for _ in 0..4 {
+        press(&mut app, 'l');
+    }
+    press(&mut app, 'y');
+    assert_eq!(app.registers[&'"'].text, "alpha");
+
+    set_cursor(&mut app, 0, 6);
+    press(&mut app, 'v');
+    for _ in 0..4 {
+        press(&mut app, 'l');
+    }
+    press(&mut app, 'p');
+    assert_eq!(text(&app), "alpha alpha");
+    assert_eq!(app.mode, Mode::Normal);
+    assert_eq!(
+        app.active().selection.primary(),
+        Range::new(6, 10),
+        "the replacement is left selected, so it can be replaced again"
+    );
+    assert_eq!(
+        app.registers[&'"'].text, "alpha",
+        "replacing does not consume the register"
+    );
+
+    // `P` is the way text still reaches a selection without consuming it.
+    press(&mut app, 'P');
+    assert_eq!(text(&app), "alpha alphaalpha");
+}
+
+#[test]
+fn a_linewise_paste_over_a_line_selection_replaces_whole_lines() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    seed(&mut app, "alpha\nbravo\ncharlie");
+    press(&mut app, 'x');
+    press(&mut app, 'y');
+    assert!(app.registers[&'"'].linewise);
+
+    set_cursor(&mut app, 1, 0);
+    press(&mut app, 'x');
+    press(&mut app, 'p');
+    assert_eq!(text(&app), "alpha\nalpha\ncharlie");
+    assert_eq!(
+        app.active().selection.primary(),
+        Range::new(6, 10),
+        "the pasted line is selected without its terminator"
+    );
+
+    set_cursor(&mut app, 2, 0);
+    press(&mut app, 'x');
+    press(&mut app, 'p');
+    assert_eq!(
+        text(&app),
+        "alpha\nalpha\nalpha",
+        "the final line gains no terminator it never had"
+    );
+}
+
+#[test]
+fn a_paste_replaces_every_range_that_holds_text_and_inserts_beside_the_rest() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    seed(&mut app, "one two one");
+    app.registers.insert(
+        '"',
+        Register {
+            text: "X".to_owned(),
+            linewise: false,
+            directory: None,
+        },
+    );
+    app.panes.get_mut(&0).unwrap().selection =
+        Selection::new(vec![Range::new(0, 2), Range::new(8, 10)], 0);
+    press(&mut app, 'p');
+    assert_eq!(text(&app), "X two X");
+    assert_eq!(
+        app.active().selection.ranges(),
+        [Range::point(0), Range::point(6)]
+    );
+
+    let mut mixed = App::new(Config::default(), None).unwrap();
+    seed(&mut mixed, "one two");
+    mixed.registers.insert(
+        '"',
+        Register {
+            text: "X".to_owned(),
+            linewise: false,
+            directory: None,
+        },
+    );
+    mixed.panes.get_mut(&0).unwrap().selection =
+        Selection::new(vec![Range::new(0, 2), Range::point(4)], 0);
+    press(&mut mixed, 'p');
+    assert_eq!(
+        text(&mixed),
+        "X tXwo",
+        "the range gives up its text; the bare caret keeps its own"
+    );
+}
+
+#[test]
 fn y_yanks_the_caret_character_and_capital_y_yanks_whole_lines() {
     let mut caret = App::new(Config::default(), None).unwrap();
     seed(&mut caret, "alpha\nbravo");
