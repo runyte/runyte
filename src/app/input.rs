@@ -317,18 +317,26 @@ impl App {
         ) {
             return None;
         }
+        Some(self.path_hints_for(argument))
+    }
 
+    /// Files and directories matching one typed path, wherever it was typed.
+    ///
+    /// Shared by the palette's path arguments and by the finder-path prompt,
+    /// so both spell `~`, a relative path, and a trailing separator the same
+    /// way and bound their rows the same way.
+    fn path_hints_for(&self, argument: &str) -> Vec<PathHint> {
         let argument = argument.trim_start();
         let raw = unclosed_or_complete_quoted_path(argument);
         let separator = std::path::MAIN_SEPARATOR;
         if raw == "~"
             && let Some(home) = &self.home_directory
         {
-            return Some(vec![PathHint {
+            return vec![PathHint {
                 value: format!("~{separator}"),
                 detail: display_path(home),
                 is_directory: true,
-            }]);
+            }];
         }
 
         let typed = PathBuf::from(raw);
@@ -350,7 +358,7 @@ impl App {
         let base_end = raw.rfind(is_path_separator).map_or(0, |index| index + 1);
         let display_base = &raw[..base_end];
         let Some(entries) = self.path_listings.borrow_mut().read(&directory) else {
-            return Some(Vec::new());
+            return Vec::new();
         };
         let show_hidden = self.config.editor.show_hidden_files || prefix.starts_with('.');
         // Where each row's detail column starts, resolved once: naming the
@@ -394,7 +402,17 @@ impl App {
                 kept.pop_last();
             }
         }
-        Some(kept.into_values().collect())
+        kept.into_values().collect()
+    }
+
+    /// Files and directories matching the finder-path prompt's text.
+    ///
+    /// The whole prompt is the path, so there is no command name to strip and
+    /// no argument gate to pass.
+    pub fn finder_path_hints(&self) -> Option<Vec<PathHint>> {
+        (self.prompt_kind == PromptKind::FinderPath
+            && self.command_cursor == self.command.chars().count())
+        .then(|| self.path_hints_for(&self.command))
     }
 
     fn resolve_hint_path(&self, path: PathBuf) -> PathBuf {
@@ -3693,6 +3711,8 @@ impl App {
             Command::OpenExplorer => self.open_active_directory_explorer()?,
             Command::OpenWorkingDirectoryExplorer => self.open_explorer(None)?,
             Command::OpenFilePicker => self.open_project_picker()?,
+            Command::OpenAllFilesPicker => self.open_all_files_picker()?,
+            Command::OpenPathFilePicker => self.open_prompt(PromptKind::FinderPath),
             Command::OpenDirectoryFilePicker => self.open_directory_picker()?,
             Command::OpenFuzzyGrep => self.open_project_grep()?,
             Command::OpenDirectoryFuzzyGrep => self.open_directory_grep()?,
@@ -3989,6 +4009,14 @@ impl App {
                     } else {
                         self.search_terminal_review(&value, mode);
                     }
+                } else if kind == PromptKind::FinderPath {
+                    if value.is_empty() {
+                        self.action_failed("finder path is empty");
+                    } else if let Err(error) = self
+                        .open_finder_path(Path::new(unclosed_or_complete_quoted_path(value.trim())))
+                    {
+                        self.action_failed(error.to_string());
+                    }
                 } else if let PromptKind::FilterSelections { keep } = kind {
                     if value.is_empty() {
                         self.action_failed("filter pattern is empty");
@@ -4067,6 +4095,18 @@ impl App {
             }
             KeyCode::Tab if self.prompt_kind == PromptKind::ExternalProgram => {
                 self.open_program_actions();
+            }
+            KeyCode::Up | KeyCode::BackTab if self.prompt_kind == PromptKind::FinderPath => {
+                self.command_selection = self.command_selection.saturating_sub(1);
+            }
+            KeyCode::Down if self.prompt_kind == PromptKind::FinderPath => {
+                let last = self
+                    .finder_path_hints()
+                    .map_or(0, |hints| hints.len().saturating_sub(1));
+                self.command_selection = (self.command_selection + 1).min(last);
+            }
+            KeyCode::Tab if self.prompt_kind == PromptKind::FinderPath => {
+                self.complete_selected_finder_path();
             }
             KeyCode::Char(ch) => {
                 prompt_insert(&mut self.command, self.command_cursor, ch);
@@ -4574,6 +4614,17 @@ impl App {
                     Some(path) => self.open_explorer(Some(path)),
                     None => {
                         self.execute_editor_command(EditorCommand::OpenWorkingDirectoryExplorer)
+                    }
+                };
+            }
+            (EditorCommand::OpenPathFilePicker, InvocationParameters::OptionalPath(path)) => {
+                return match path {
+                    Some(path) => self.open_finder_path(&path),
+                    // A bare `:file-picker-path` asks the same question the
+                    // key does rather than refusing for want of an argument.
+                    None => {
+                        self.open_prompt(PromptKind::FinderPath);
+                        Ok(())
                     }
                 };
             }
@@ -5107,6 +5158,20 @@ impl App {
         if count > 0 {
             self.command_selection = (self.command_selection + count - 1) % count;
         }
+    }
+
+    /// Accepts the selected finder-path row. The whole prompt is one path, so
+    /// nothing has to be quoted against a following argument.
+    fn complete_selected_finder_path(&mut self) {
+        let Some(hints) = self.finder_path_hints() else {
+            return;
+        };
+        let Some(hint) = hints.get(self.command_selection) else {
+            return;
+        };
+        self.command = hint.value.clone();
+        self.command_cursor = self.command.chars().count();
+        self.command_selection = 0;
     }
 
     pub(super) fn complete_selected_command(&mut self) {

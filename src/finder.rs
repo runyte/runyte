@@ -1285,14 +1285,22 @@ mod tests {
     }
 
     fn empty_picker() -> FilePicker {
-        let mut picker = FilePicker::new(1, PathBuf::from("/project"));
+        let mut picker = FilePicker::new(
+            1,
+            PathBuf::from("/project"),
+            crate::file_picker::ScanScope::ignoring("/project"),
+        );
         picker.finish(0, false);
         picker
     }
 
     #[test]
     fn a_name_rank_leaves_the_rows_the_reader_is_choosing_from_in_place() {
-        let mut picker = FilePicker::new(1, PathBuf::from("/project"));
+        let mut picker = FilePicker::new(
+            1,
+            PathBuf::from("/project"),
+            crate::file_picker::ScanScope::ignoring("/project"),
+        );
         picker.enable_unified_finder();
         picker.add_paths(vec![crate::file_picker::ScanEntry::file(PathBuf::from(
             "/project/picker.rs",
@@ -1339,7 +1347,11 @@ mod tests {
 
     #[test]
     fn non_type_terms_preserve_smart_case_for_files_and_resources() {
-        let mut picker = FilePicker::new(1, PathBuf::from("/project"));
+        let mut picker = FilePicker::new(
+            1,
+            PathBuf::from("/project"),
+            crate::file_picker::ScanScope::ignoring("/project"),
+        );
         picker.enable_unified_finder();
         picker.add_paths(vec![
             crate::file_picker::ScanEntry::file(PathBuf::from("/project/Foo.rs")),
@@ -1651,7 +1663,11 @@ mod tests {
 
     #[test]
     fn a_restarted_scan_retires_the_file_matches_ranked_against_its_entries() {
-        let mut picker = FilePicker::grep(1, PathBuf::from("/project"));
+        let mut picker = FilePicker::grep(
+            1,
+            PathBuf::from("/project"),
+            crate::file_picker::ScanScope::ignoring("/project"),
+        );
         picker.enable_unified_finder();
         picker.add_content(vec![crate::file_picker::FileHits {
             path: PathBuf::from("/project/alpha.rs"),

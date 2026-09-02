@@ -1089,6 +1089,10 @@ pub enum PromptKind {
     JoinDelimiter,
     /// Collects a non-enumerated setting value in a popup.
     SettingValue(SettingId),
+    /// Collects the directory the finder should be rooted at. Completes over
+    /// the filesystem as it is typed, and accepts a path outside the
+    /// workspace, which is the point of it.
+    FinderPath,
 }
 
 #[derive(Clone, Debug)]

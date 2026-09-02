@@ -1467,6 +1467,7 @@ you want the whole buffer again.
 Searching this buffer uses the two bare letters `s` and `S`. `Space /` widens
 them to the whole project as `Space / s` and `Space / S`. Bare `/` instead
 opens the project finder, whose canonical namespace spelling is `Space / /`;
+`Space / a` and `Space / p` open that same finder over a wider scope, and
 neither in-buffer flavour takes another namespace row. Neither flavour has a
 case-sensitive counterpart; write `(?-i)` in a regular expression when a
 search has to match case.
@@ -1483,6 +1484,8 @@ search has to match case.
 | `Space / s` | Search the workspace, ignoring case |
 | `Space / S` | Search the workspace with a regular expression |
 | `Space / /` or `/` | Find files, buffers, and terminals by name or content; `Tab` switches modes and `Ctrl-t` toggles preview |
+| `Space / a` | The same finder over every file, ignore files not consulted |
+| `Space / p` | The same unfiltered finder rooted at a typed path, inside the workspace or outside it |
 | `Space s c` | Keep only the primary selection in any multi-selection |
 | `Space s e` / `Space s b` | Put a cursor at the end / start of every selected line |
 | `Space s a` or `&` | Pad with spaces until every cursor shares the rightmost display column |
@@ -1490,6 +1493,11 @@ search has to match case.
 
 The directory-scoped pickers have no key. `:file-picker-directory` and
 `:fuzzy-grep-directory` search below the active file or explorer directory.
+
+The two workspace searches walk the project themselves and consult no ignore
+file: a gitignored path the finder omits is still searched by `Space / s` and
+`Space / S`. They skip `.git`, `.runyte`, and `target` by name, skip symlinks,
+apply `editor.show_hidden_files`, and read no file larger than 4 MiB.
 
 The two fixed workspace searches replace and open one read-only
 `[workspace search]` buffer. Its `path:line:column` rows are a query-time
@@ -1651,6 +1659,8 @@ cancellation keys.
 | `Space E` | Open the working directory (controlled by `:cd`) as an editable explorer |
 | `Space Space` | Open the persistent-session manager (`:session-list`, `:sl`); another `Space` closes it while the filter is empty, `1`-`9` attach to a numbered session then too, and `Tab` shows the selected row's actions |
 | `Space / /` or `/` | Find files, buffers, and terminals by name or content; `Tab` switches modes and `Ctrl-t` toggles preview |
+| `Space / a` | The same finder over every file, ignore files not consulted |
+| `Space / p` | The same unfiltered finder rooted at a typed path, inside the workspace or outside it |
 | `:file-picker-directory` | Fuzzy-find a file or directory below the active file/explorer directory |
 | `:fuzzy-grep-directory` | Fuzzy-search contents below the active file/explorer directory |
 | `Space b b` | Open the filterable buffer picker; `Ctrl-t` toggles preview and `Tab` shows valid actions |
@@ -1837,6 +1847,16 @@ It honors nested `.gitignore` and `.ignore` rules, including ancestor rules
 when `:file-picker-directory` starts below the project root. It never follows symlinks,
 refuses to scan `.git`, `.runyte`, or the configured workspace state
 directory, and applies `editor.show_hidden_files`.
+
+`Space / a` and `Space / p` open the same finder with the ignore rules alone
+switched off, so build output, vendored trees, and generated code are
+reachable. Every other exclusion still holds: `.git`, `.runyte`, the workspace
+state directory, symlinks, and `editor.show_hidden_files` apply exactly as
+before. `Space / p` asks for a path first, completing entries as they are
+typed; `~` expands, a relative path resolves against the working directory,
+and `Tab` accepts the selected row. The path need not be inside the workspace,
+and the finder's title names the root it was given. Both scopes survive the
+`Tab` into content mode, so an ignored file's lines are searchable too.
 Type an ordered subsequence to rank paths; exact basenames, basename prefixes,
 consecutive characters, and path-component boundaries rank highest. Ending the
 query with `/` narrows the results to directories, matched without the slash

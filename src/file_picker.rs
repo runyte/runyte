@@ -80,6 +80,28 @@ impl FilePickerKind {
     }
 }
 
+/// Which ignore files, if any, a scan under a picker root obeys.
+///
+/// Held by the picker rather than passed once per scan. Tab and a content
+/// re-scan restart the walk on the person's behalf, so a scope supplied only
+/// at open time would widen or narrow itself the first time either happened.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ScanScope {
+    /// Read `.gitignore` and `.ignore`, inheriting the rules that apply from
+    /// this directory down to the picker root.
+    Ignoring { from: PathBuf },
+    /// Read no ignore file at all. The reserved names, the workspace state
+    /// directory, symlinks, and the hidden-file rule still apply.
+    Everything,
+}
+
+impl ScanScope {
+    /// The ordinary scope: every ignore file from `from` down to the root.
+    pub fn ignoring(from: impl Into<PathBuf>) -> Self {
+        Self::Ignoring { from: from.into() }
+    }
+}
+
 /// A candidate path discovered by the walker, tagged with the file-type bit
 /// already known from `DirEntry::file_type`, so downstream code never needs
 /// a second `fs::metadata` call to tell files and directories apart.
@@ -449,6 +471,10 @@ impl FilePreview {
 pub struct FilePicker {
     pub scan_id: u64,
     pub root: PathBuf,
+    /// What the walk under `root` obeys. `root` is what the overlay shows;
+    /// this is what the scanner reads, and it has to outlive the individual
+    /// scan because Tab and a content re-scan start fresh ones.
+    pub scope: ScanScope,
     pub kind: FilePickerKind,
     /// Every distinct file the entries below refer to, each held once.
     files: Vec<PickerFile>,
@@ -503,18 +529,19 @@ pub struct FilePicker {
 }
 
 impl FilePicker {
-    pub fn new(scan_id: u64, root: PathBuf) -> Self {
-        Self::with_kind(scan_id, root, FilePickerKind::Files)
+    pub fn new(scan_id: u64, root: PathBuf, scope: ScanScope) -> Self {
+        Self::with_kind(scan_id, root, scope, FilePickerKind::Files)
     }
 
-    pub fn grep(scan_id: u64, root: PathBuf) -> Self {
-        Self::with_kind(scan_id, root, FilePickerKind::Contents)
+    pub fn grep(scan_id: u64, root: PathBuf, scope: ScanScope) -> Self {
+        Self::with_kind(scan_id, root, scope, FilePickerKind::Contents)
     }
 
-    fn with_kind(scan_id: u64, root: PathBuf, kind: FilePickerKind) -> Self {
+    fn with_kind(scan_id: u64, root: PathBuf, scope: ScanScope, kind: FilePickerKind) -> Self {
         Self {
             scan_id,
             root,
+            scope,
             kind,
             files: Vec::new(),
             entries: Vec::new(),
@@ -2835,7 +2862,7 @@ impl FileScanner {
         &self,
         scan_id: u64,
         root: PathBuf,
-        ignore_root: PathBuf,
+        scope: ScanScope,
         state_root: PathBuf,
         show_hidden: bool,
     ) {
@@ -2849,7 +2876,7 @@ impl FileScanner {
             .spawn(move || {
                 let result = scan_with(
                     &root,
-                    &ignore_root,
+                    &scope,
                     &state_root,
                     show_hidden,
                     true,
@@ -2896,7 +2923,7 @@ impl FileScanner {
         &self,
         scan_id: u64,
         root: PathBuf,
-        ignore_root: PathBuf,
+        scope: ScanScope,
         state_root: PathBuf,
         show_hidden: bool,
         query: String,
@@ -2921,7 +2948,7 @@ impl FileScanner {
                 let mut limited = false;
                 let result = scan_with(
                     &root,
-                    &ignore_root,
+                    &scope,
                     &state_root,
                     show_hidden,
                     false,
@@ -3039,14 +3066,14 @@ pub fn scanner() -> (FileScanner, Receiver<FilePickerEvent>) {
 /// Synchronous seam used by isolated tests and by non-TUI embedders.
 pub fn scan_files(
     root: &Path,
-    ignore_root: &Path,
+    scope: &ScanScope,
     state_root: &Path,
     show_hidden: bool,
 ) -> Result<(Vec<ScanEntry>, usize)> {
     let mut paths = Vec::new();
     let skipped = scan_with(
         root,
-        ignore_root,
+        scope,
         state_root,
         show_hidden,
         true,
@@ -3066,7 +3093,7 @@ pub fn scan_files(
 /// that query rather than more than that many lines.
 pub fn scan_content(
     root: &Path,
-    ignore_root: &Path,
+    scope: &ScanScope,
     state_root: &Path,
     show_hidden: bool,
     query: &str,
@@ -3076,7 +3103,7 @@ pub fn scan_content(
     let mut limited = false;
     let skipped = scan_with(
         root,
-        ignore_root,
+        scope,
         state_root,
         show_hidden,
         false,
@@ -3164,7 +3191,7 @@ pub(crate) fn line_hit_from_trimmed(trimmed: &str, query: &str, column: usize) -
 
 fn scan_with(
     root: &Path,
-    ignore_root: &Path,
+    scope: &ScanScope,
     state_root: &Path,
     show_hidden: bool,
     include_dirs: bool,
@@ -3187,35 +3214,42 @@ fn scan_with(
         "picker root {} is inside reserved Runyte or Git state",
         root.display()
     );
-    let ignore_root = ignore_root.canonicalize().unwrap_or_else(|_| root.clone());
-    let ignore_root = if root.starts_with(&ignore_root) {
-        ignore_root
-    } else {
-        root.clone()
-    };
-    let root_relative = root
-        .strip_prefix(&ignore_root)
-        .expect("the effective ignore root contains the picker root")
-        .to_path_buf();
+    let respect_ignore_files = matches!(scope, ScanScope::Ignoring { .. });
     let mut skipped = 0;
     let mut inherited = Vec::<IgnoreRule>::new();
-    if !root_relative.as_os_str().is_empty() {
-        let mut ancestor = ignore_root.clone();
-        let mut ancestor_relative = PathBuf::new();
-        for component in root_relative.components() {
-            if cancelled() {
-                return Ok(skipped);
+    // A path is matched against the rules of the directory that stated them,
+    // so it is spelled relative to where inheritance began. A scan that reads
+    // no rules has nothing to be relative to.
+    let mut root_relative = PathBuf::new();
+    if let ScanScope::Ignoring { from } = scope {
+        let ignore_root = from.canonicalize().unwrap_or_else(|_| root.clone());
+        let ignore_root = if root.starts_with(&ignore_root) {
+            ignore_root
+        } else {
+            root.clone()
+        };
+        root_relative = root
+            .strip_prefix(&ignore_root)
+            .expect("the effective ignore root contains the picker root")
+            .to_path_buf();
+        if !root_relative.as_os_str().is_empty() {
+            let mut ancestor = ignore_root.clone();
+            let mut ancestor_relative = PathBuf::new();
+            for component in root_relative.components() {
+                if cancelled() {
+                    return Ok(skipped);
+                }
+                read_ignore_files(&ancestor, &ancestor_relative, &mut inherited, &mut skipped);
+                let Component::Normal(component) = component else {
+                    continue;
+                };
+                let next_relative = ancestor_relative.join(component);
+                if ignored(&inherited, &next_relative, true) {
+                    return Ok(skipped);
+                }
+                ancestor.push(component);
+                ancestor_relative = next_relative;
             }
-            read_ignore_files(&ancestor, &ancestor_relative, &mut inherited, &mut skipped);
-            let Component::Normal(component) = component else {
-                continue;
-            };
-            let next_relative = ancestor_relative.join(component);
-            if ignored(&inherited, &next_relative, true) {
-                return Ok(skipped);
-            }
-            ancestor.push(component);
-            ancestor_relative = next_relative;
         }
     }
     let mut pending = vec![(root.clone(), root_relative, inherited)];
@@ -3224,7 +3258,9 @@ fn scan_with(
         if cancelled() {
             return Ok(skipped);
         }
-        read_ignore_files(&directory, &relative_directory, &mut rules, &mut skipped);
+        if respect_ignore_files {
+            read_ignore_files(&directory, &relative_directory, &mut rules, &mut skipped);
+        }
         if cancelled() {
             return Ok(skipped);
         }
@@ -3272,7 +3308,7 @@ fn scan_with(
                 || name_text == ".runyte"
                 || path == state_root
                 || (!show_hidden && name_text.starts_with('.'))
-                || ignored(&rules, &relative, is_directory)
+                || (respect_ignore_files && ignored(&rules, &relative, is_directory))
             {
                 continue;
             }
@@ -3540,7 +3576,7 @@ mod tests {
     #[test]
     fn streamed_results_follow_new_top_scores_until_the_user_navigates() {
         let root = PathBuf::from("/project");
-        let mut picker = FilePicker::new(1, root.clone());
+        let mut picker = FilePicker::new(1, root.clone(), ScanScope::ignoring(&root));
         picker.insert_query_text("picker");
         picker.add_paths(vec![ScanEntry::file(root.join("archive/picker_notes.md"))]);
         picker.add_paths(vec![ScanEntry::file(root.join("picker"))]);
@@ -3594,7 +3630,8 @@ mod tests {
         #[cfg(unix)]
         std::os::unix::fs::symlink(root.join("src/main.rs"), root.join("link.rs")).unwrap();
 
-        let (paths, skipped) = scan_files(&root, &root, &workspace, false).unwrap();
+        let (paths, skipped) =
+            scan_files(&root, &ScanScope::ignoring(&root), &workspace, false).unwrap();
         let relative = paths
             .iter()
             .map(|entry| {
@@ -3658,6 +3695,72 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
+    /// `ScanScope::Everything` drops the ignore files and nothing else. The
+    /// reserved names, the workspace state directory, symlinks, and the
+    /// hidden-file rule are separate filters and all still apply, so the same
+    /// fixture gains exactly the entries its `.gitignore` and `.ignore` had
+    /// been excluding.
+    #[test]
+    fn an_unfiltered_scan_drops_the_ignore_files_and_no_other_filter() {
+        let root = temporary("unfiltered");
+        let workspace = root.join(".runyte");
+        fs::create_dir_all(root.join("src/generated")).unwrap();
+        fs::create_dir_all(root.join("target")).unwrap();
+        fs::create_dir_all(&workspace).unwrap();
+        fs::write(
+            root.join(".gitignore"),
+            "target/\n*.log\nsrc/generated/**\n",
+        )
+        .unwrap();
+        fs::write(root.join("src/.gitignore"), "*.tmp\n").unwrap();
+        for path in [
+            "src/main.rs",
+            "src/drop.tmp",
+            "src/generated/code.rs",
+            "drop.log",
+            ".secret",
+            "target/build",
+            ".runyte/state",
+        ] {
+            if let Some(parent) = Path::new(path).parent() {
+                fs::create_dir_all(root.join(parent)).unwrap();
+            }
+            fs::write(root.join(path), "x").unwrap();
+        }
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(root.join("src/main.rs"), root.join("link.rs")).unwrap();
+
+        let (paths, skipped) =
+            scan_files(&root, &ScanScope::Everything, &workspace, false).unwrap();
+        let relative = paths
+            .iter()
+            .map(|entry| entry.path.strip_prefix(&root).unwrap().to_path_buf())
+            .collect::<Vec<_>>();
+        assert_eq!(skipped, 0);
+        for found in [
+            "src/main.rs",
+            "src/drop.tmp",
+            "src/generated/code.rs",
+            "drop.log",
+            "target",
+            "target/build",
+        ] {
+            assert!(
+                relative.iter().any(|path| path == Path::new(found)),
+                "an unfiltered scan keeps {found}: {relative:?}"
+            );
+        }
+        for omitted in [".secret", ".runyte/state", ".gitignore"] {
+            assert!(
+                !relative.iter().any(|path| path == Path::new(omitted)),
+                "{omitted} is excluded by a filter the scope does not touch: {relative:?}"
+            );
+        }
+        #[cfg(unix)]
+        assert!(!relative.iter().any(|path| path == Path::new("link.rs")));
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn directory_scans_inherit_ancestor_ignores_and_reserved_roots_are_rejected() {
         let project = temporary("ancestor-ignore");
@@ -3671,10 +3774,19 @@ mod tests {
         fs::write(root.join("generated/secret.rs"), "secret\n").unwrap();
         fs::write(workspace.join("journal"), "private\n").unwrap();
 
-        let (paths, _) = scan_files(&root, &project, &workspace, true).unwrap();
+        let (paths, _) =
+            scan_files(&root, &ScanScope::ignoring(&project), &workspace, true).unwrap();
         assert_eq!(paths, vec![ScanEntry::file(root.join("main.rs"))]);
-        assert!(scan_files(&workspace, &project, &workspace, true).is_err());
-        assert!(scan_files(&project.join(".git/objects"), &project, &workspace, true).is_err());
+        assert!(scan_files(&workspace, &ScanScope::ignoring(&project), &workspace, true).is_err());
+        assert!(
+            scan_files(
+                &project.join(".git/objects"),
+                &ScanScope::ignoring(&project),
+                &workspace,
+                true
+            )
+            .is_err()
+        );
         fs::remove_dir_all(project).unwrap();
     }
 
@@ -3689,7 +3801,7 @@ mod tests {
         let mut emissions = 0;
         scan_with(
             &root,
-            &root,
+            &ScanScope::ignoring(&root),
             &workspace,
             true,
             true,
@@ -3719,7 +3831,7 @@ mod tests {
     #[test]
     fn picker_ranks_and_edits_a_unicode_query() {
         let root = PathBuf::from("/project");
-        let mut picker = FilePicker::new(1, root.clone());
+        let mut picker = FilePicker::new(1, root.clone(), ScanScope::ignoring(&root));
         picker.add_paths(vec![
             ScanEntry::file(root.join("src/picker.rs")),
             ScanEntry::file(root.join("src/ui.rs")),
@@ -3733,7 +3845,7 @@ mod tests {
     #[test]
     fn editing_the_query_releases_the_wait_for_a_finished_scan_flush() {
         let root = PathBuf::from("/project");
-        let mut picker = FilePicker::new(1, root.clone());
+        let mut picker = FilePicker::new(1, root.clone(), ScanScope::ignoring(&root));
         picker.add_paths(vec![ScanEntry::file(root.join("alpha.rs"))]);
         let matches = picker.matches.clone();
         picker.begin_final_rank();
@@ -3751,7 +3863,7 @@ mod tests {
     #[test]
     fn deferred_query_edit_never_ranks_the_candidate_table() {
         let root = PathBuf::from("/project");
-        let mut picker = FilePicker::new(1, root.clone());
+        let mut picker = FilePicker::new(1, root.clone(), ScanScope::ignoring(&root));
         picker.add_paths(vec![ScanEntry::file(root.join("alpha.rs"))]);
         assert_eq!(picker.matches.len(), 1);
 
@@ -3772,7 +3884,7 @@ mod tests {
         let (scanner, mut events) = scanner();
         let root = PathBuf::from("/project");
         scanner.reset_ranker(7, FilePickerKind::Files);
-        let mut picker = FilePicker::new(7, root.clone());
+        let mut picker = FilePicker::new(7, root.clone(), ScanScope::ignoring(&root));
         let candidates = picker.add_paths_unranked(vec![
             ScanEntry::file(root.join("alpha.rs")),
             ScanEntry::file(root.join("beta.rs")),
@@ -4152,7 +4264,7 @@ mod tests {
     #[test]
     fn equal_scores_prefer_fewer_unicode_characters() {
         let root = PathBuf::from("/project");
-        let mut picker = FilePicker::grep(1, root.clone());
+        let mut picker = FilePicker::grep(1, root.clone(), ScanScope::ignoring(&root));
         picker.add_content(vec![FileHits {
             path: root.join("content.txt"),
             lines: vec![
@@ -4197,7 +4309,7 @@ mod tests {
     #[test]
     fn trailing_slash_narrows_matches_to_directories() {
         let root = PathBuf::from("/project");
-        let mut picker = FilePicker::new(1, root.clone());
+        let mut picker = FilePicker::new(1, root.clone(), ScanScope::ignoring(&root));
         picker.add_paths(vec![
             ScanEntry::directory(root.join("src")),
             ScanEntry::file(root.join("src.rs")),
@@ -4235,7 +4347,7 @@ mod tests {
     #[test]
     fn typing_past_a_trailing_slash_recovers_files_excluded_while_directory_only() {
         let root = PathBuf::from("/project");
-        let mut picker = FilePicker::new(1, root.clone());
+        let mut picker = FilePicker::new(1, root.clone(), ScanScope::ignoring(&root));
         picker.add_paths(vec![
             ScanEntry::directory(root.join("src")),
             ScanEntry::file(root.join("src/main.rs")),
@@ -4275,7 +4387,7 @@ mod tests {
     #[test]
     fn ranking_scales_across_a_large_streamed_inventory() {
         let root = PathBuf::from("/project");
-        let mut picker = FilePicker::new(1, root.clone());
+        let mut picker = FilePicker::new(1, root.clone(), ScanScope::ignoring(&root));
         picker.add_paths(
             (0..10_000)
                 .map(|index| {
@@ -4299,7 +4411,13 @@ mod tests {
         fs::write(root.join("src/main.rs"), "fn main() {}\n").unwrap();
         let workspace = root.join(".runyte");
         let (scanner, mut receiver) = scanner();
-        scanner.scan(7, root.clone(), root.clone(), workspace, false);
+        scanner.scan(
+            7,
+            root.clone(),
+            ScanScope::ignoring(&root),
+            workspace,
+            false,
+        );
 
         let mut paths = Vec::new();
         loop {
@@ -4337,7 +4455,7 @@ mod tests {
     #[test]
     fn fuzzy_grep_ranks_line_contents_and_keeps_a_jump_target() {
         let root = PathBuf::from("/project");
-        let mut picker = FilePicker::grep(1, root.clone());
+        let mut picker = FilePicker::grep(1, root.clone(), ScanScope::ignoring(&root));
         picker.add_content(vec![
             FileHits {
                 path: root.join("src/main.rs"),
@@ -4390,7 +4508,7 @@ mod tests {
         fs::write(root.join("binary.bin"), [0xff, 0x00]).unwrap();
 
         let (entries, skipped, limited) =
-            scan_content(&root, &root, &workspace, false, "").unwrap();
+            scan_content(&root, &ScanScope::ignoring(&root), &workspace, false, "").unwrap();
         assert_eq!(skipped, 0);
         assert!(!limited);
         assert_eq!(
@@ -4506,7 +4624,7 @@ mod tests {
         // literal with two that a path may satisfy far apart, and the path
         // holding them was thrown out by the term it never contained.
         let root = PathBuf::from("/project");
-        let mut picker = FilePicker::new(1, root.clone());
+        let mut picker = FilePicker::new(1, root.clone(), ScanScope::ignoring(&root));
         picker.add_paths(vec![
             ScanEntry::file(root.join("a_x_b_cd")),
             ScanEntry::file(root.join("ab_cd")),
@@ -4538,7 +4656,7 @@ mod tests {
 
         // Not a whitespace question. Growing a term from the middle rewrites
         // the literal just as splitting it does, and widens the same way.
-        let mut picker = FilePicker::new(2, root.clone());
+        let mut picker = FilePicker::new(2, root.clone(), ScanScope::ignoring(&root));
         picker.add_paths(vec![
             ScanEntry::file(root.join("aXb_cd")),
             ScanEntry::file(root.join("ab_cd")),
@@ -4565,7 +4683,7 @@ mod tests {
 
         // Growing the query at its end still narrows from what is on hand,
         // which is the case that has to stay cheap.
-        let mut picker = FilePicker::new(3, root.clone());
+        let mut picker = FilePicker::new(3, root.clone(), ScanScope::ignoring(&root));
         picker.add_paths(vec![
             ScanEntry::file(root.join("ab_cd")),
             ScanEntry::file(root.join("ab_ce")),
@@ -4740,8 +4858,14 @@ mod tests {
         )
         .unwrap();
 
-        let (entries, skipped, limited) =
-            scan_content(&root, &root, &workspace, false, "markedthing").unwrap();
+        let (entries, skipped, limited) = scan_content(
+            &root,
+            &ScanScope::ignoring(&root),
+            &workspace,
+            false,
+            "markedthing",
+        )
+        .unwrap();
         assert_eq!(skipped, 0);
         assert!(
             !limited,
@@ -4760,7 +4884,8 @@ mod tests {
             [(Path::new("zzz_last.rs"), "call_the_marked_thing();")]
         );
 
-        let (entries, _, limited) = scan_content(&root, &root, &workspace, false, "").unwrap();
+        let (entries, _, limited) =
+            scan_content(&root, &ScanScope::ignoring(&root), &workspace, false, "").unwrap();
         assert!(
             limited,
             "an unfiltered scan of twice the budget still fills the budget"
@@ -4781,7 +4906,7 @@ mod tests {
         // much memory on paths as on the matching text itself, and rebuilt the
         // displayed relative path per line.
         let root = PathBuf::from("/project");
-        let mut picker = FilePicker::grep(1, root.clone());
+        let mut picker = FilePicker::grep(1, root.clone(), ScanScope::ignoring(&root));
         let hits = |name: &str, rows: std::ops::Range<usize>| FileHits {
             path: root.join(name),
             lines: rows
@@ -4820,7 +4945,7 @@ mod tests {
     #[test]
     fn the_candidate_budget_counts_lines_rather_than_files() {
         let root = PathBuf::from("/project");
-        let mut picker = FilePicker::grep(1, root.clone());
+        let mut picker = FilePicker::grep(1, root.clone(), ScanScope::ignoring(&root));
         picker.add_content(vec![FileHits {
             path: root.join("huge.rs"),
             lines: (0..CONTENT_ENTRY_LIMIT + 10)
@@ -4841,7 +4966,11 @@ mod tests {
 
     #[test]
     fn content_entries_are_narrowed_in_memory_only_while_the_scan_was_complete() {
-        let mut picker = FilePicker::grep(1, PathBuf::from("/project"));
+        let mut picker = FilePicker::grep(
+            1,
+            PathBuf::from("/project"),
+            ScanScope::ignoring(Path::new("/project")),
+        );
         picker.restart_content_scan(1);
         picker.finish(0, false);
 
@@ -4876,7 +5005,11 @@ mod tests {
             "a query the scan filtered away asks about lines it discarded"
         );
 
-        let mut files = FilePicker::new(1, PathBuf::from("/project"));
+        let mut files = FilePicker::new(
+            1,
+            PathBuf::from("/project"),
+            ScanScope::ignoring(Path::new("/project")),
+        );
         files.finish(0, true);
         files.insert_query('a');
         assert!(
@@ -4895,7 +5028,7 @@ mod tests {
         scanner.scan_content(
             11,
             root.clone(),
-            root.clone(),
+            ScanScope::ignoring(&root),
             workspace,
             false,
             String::new(),
@@ -4946,7 +5079,7 @@ mod tests {
         scanner.scan_content(
             17,
             root.clone(),
-            root.clone(),
+            ScanScope::ignoring(&root),
             root.join(".runyte"),
             false,
             "matching".to_owned(),
@@ -4989,7 +5122,7 @@ mod tests {
         scanner.scan_content(
             11,
             root.clone(),
-            root.clone(),
+            ScanScope::ignoring(&root),
             workspace.clone(),
             false,
             "alpha".to_owned(),
@@ -4997,7 +5130,7 @@ mod tests {
         scanner.scan_content(
             12,
             root.clone(),
-            root.clone(),
+            ScanScope::ignoring(&root),
             workspace,
             false,
             "beta".to_owned(),

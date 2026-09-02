@@ -1554,6 +1554,35 @@ impl App {
                         None,
                     ));
                 }
+            } else if self.prompt_kind == PromptKind::FinderPath {
+                if let Some(hints) = self.finder_path_hints() {
+                    overlays.push(bounded(
+                        OverlayKind::CommandPalette,
+                        "Paths",
+                        self.command.clone(),
+                        hints
+                            .iter()
+                            .map(|hint| {
+                                row(
+                                    hint.value.clone(),
+                                    hint.value.clone(),
+                                    format!(
+                                        "{} · {}",
+                                        if hint.is_directory {
+                                            "directory"
+                                        } else {
+                                            "file"
+                                        },
+                                        hint.detail
+                                    ),
+                                )
+                            })
+                            .collect(),
+                        (!hints.is_empty())
+                            .then_some(self.command_selection.min(hints.len().saturating_sub(1))),
+                        None,
+                    ));
+                }
             } else if self.prompt_kind == PromptKind::ExternalProgram {
                 let choices = self.matching_program_choices();
                 overlays.push(bounded(

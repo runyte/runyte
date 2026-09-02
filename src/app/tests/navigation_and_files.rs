@@ -491,7 +491,11 @@ fn file_picker_lists_directories_and_enter_opens_the_explorer() {
     fs::write(directory.join("file.txt"), "hello").unwrap();
 
     let mut app = App::new(Config::default(), None).unwrap();
-    let mut picker = FilePicker::new(1, directory.clone());
+    let mut picker = FilePicker::new(
+        1,
+        directory.clone(),
+        crate::file_picker::ScanScope::ignoring(&directory),
+    );
     picker.add_paths(vec![
         ScanEntry::directory(child.clone()),
         ScanEntry::file(directory.join("file.txt")),

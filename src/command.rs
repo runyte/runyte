@@ -642,6 +642,14 @@ editor_commands! {
         "open-file-picker",
         "Find files, buffers, and terminals by name or content"
     ),
+    OpenAllFilesPicker => (
+        "open-all-files-picker",
+        "Find every file, buffer, and terminal, including ignored files"
+    ),
+    OpenPathFilePicker => (
+        "open-path-file-picker",
+        "Find every file under a path, including ignored files"
+    ),
     OpenDirectoryFilePicker => (
         "open-directory-file-picker",
         "Fuzzy-find a file or directory below the active directory"
@@ -1054,6 +1062,8 @@ impl EditorCommand {
             Self::OpenExplorer
             | Self::OpenWorkingDirectoryExplorer
             | Self::OpenFilePicker
+            | Self::OpenAllFilesPicker
+            | Self::OpenPathFilePicker
             | Self::OpenDirectoryFilePicker
             | Self::OpenDirectoryEntry
             | Self::OpenParentDirectory
@@ -1360,6 +1370,20 @@ pub const COMMANDS: &[CommandSpec] = &[
         [],
         "file-picker",
         NoArguments
+    ),
+    editor_spec!(
+        Editor::OpenAllFilesPicker,
+        "file-picker-all",
+        [],
+        "file-picker-all",
+        NoArguments
+    ),
+    editor_spec!(
+        Editor::OpenPathFilePicker,
+        "file-picker-path",
+        [],
+        "file-picker-path [path]",
+        Optional(Path)
     ),
     editor_spec!(
         Editor::OpenDirectoryFilePicker,
@@ -2499,6 +2523,7 @@ fn invocation_from_parts(
         CommandId::Editor(command) => match (command, argument) {
             (EditorCommand::CloseWindow, ParsedArgument::None)
             | (EditorCommand::OpenFilePicker, ParsedArgument::None)
+            | (EditorCommand::OpenAllFilesPicker, ParsedArgument::None)
             | (EditorCommand::OpenDirectoryFilePicker, ParsedArgument::None)
             | (EditorCommand::OpenFuzzyGrep, ParsedArgument::None)
             | (EditorCommand::OpenDirectoryFuzzyGrep, ParsedArgument::None)
@@ -2546,7 +2571,8 @@ fn invocation_from_parts(
             | (EditorCommand::CopyTerminalOutput, ParsedArgument::None) => {
                 Ok(CommandInvocation::new(id, InvocationParameters::None))
             }
-            (EditorCommand::OpenWorkingDirectoryExplorer, ParsedArgument::Path(path)) => Ok(
+            (EditorCommand::OpenWorkingDirectoryExplorer, ParsedArgument::Path(path))
+            | (EditorCommand::OpenPathFilePicker, ParsedArgument::Path(path)) => Ok(
                 CommandInvocation::new(id, InvocationParameters::OptionalPath(path)),
             ),
             (EditorCommand::OpenThemeSettings, ParsedArgument::Text(name)) => Ok(

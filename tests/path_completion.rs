@@ -121,6 +121,23 @@ fn palette_hints(root: &Path, argument: &str) -> Vec<String> {
         .collect()
 }
 
+/// The rows the finder-path prompt offers after typing `path` into it.
+///
+/// `Space / p` is the whole prompt, so unlike the palette there is no command
+/// name in front of the path and no argument gate to pass.
+fn finder_path_hints(root: &Path, path: &str) -> Vec<String> {
+    let mut app = editor(root);
+    press(&mut app, ' ');
+    press(&mut app, '/');
+    press(&mut app, 'p');
+    type_text(&mut app, path);
+    app.finder_path_hints()
+        .expect("the finder-path prompt owns the rows")
+        .into_iter()
+        .map(|hint| hint.value)
+        .collect()
+}
+
 #[test]
 fn a_wide_directory_offers_every_name_typed_into_it() {
     let root = temporary("wide-insert");
@@ -442,6 +459,44 @@ fn the_bounded_rows_are_the_ones_the_full_listing_would_lead_with() {
     narrowed.sort();
     narrowed.truncate(512);
     assert_eq!(insert_completions(&root, "mixed/beta_0"), narrowed);
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn a_wide_directory_offers_every_name_typed_into_the_finder_path_prompt() {
+    let root = temporary("wide-finder-path");
+    let wide = root.join("wide");
+    wide_directory(&wide);
+    let base = wide.display().to_string();
+
+    let opened = finder_path_hints(&root, &format!("{base}/"));
+    assert_eq!(opened.len(), 512);
+    assert!(opened[0].ends_with("dir_00000/"));
+
+    for probe in [0, 2_500, 5_123, 5_999] {
+        let typed = format!("{base}/file_{probe:05}.");
+        let offered = finder_path_hints(&root, &typed);
+        assert_eq!(
+            offered,
+            vec![format!("{base}/file_{probe:05}.txt")],
+            "typing {typed} should offer the file it names"
+        );
+    }
+
+    // Tab takes the selected row as the whole prompt, with no quoting to
+    // separate it from an argument that is not there.
+    let mut app = editor(&root);
+    press(&mut app, ' ');
+    press(&mut app, '/');
+    press(&mut app, 'p');
+    type_text(&mut app, &format!("{base}/dir_05990"));
+    app.handle_key(KeyStroke::new(KeyCode::Tab, Modifiers::NONE))
+        .unwrap();
+    assert_eq!(
+        app.command,
+        format!("{base}/dir_05990{}", std::path::MAIN_SEPARATOR)
+    );
 
     fs::remove_dir_all(root).unwrap();
 }

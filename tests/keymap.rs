@@ -120,6 +120,8 @@ fn finder_and_workspace_search_are_global_in_every_buffer_scope() {
         (" //", EditorCommand::OpenFilePicker),
         (" /s", EditorCommand::GlobalSearch),
         (" /S", EditorCommand::GlobalSearchRegex),
+        (" /a", EditorCommand::OpenAllFilesPicker),
+        (" /p", EditorCommand::OpenPathFilePicker),
     ];
     for scope in [
         BindingScope::Global,
@@ -448,6 +450,8 @@ fn nested_space_tree_is_exact_primary_and_keeps_fast_compatibility_paths() {
         (" //", Editor(EditorCommand::OpenFilePicker)),
         (" /s", Editor(EditorCommand::GlobalSearch)),
         (" /S", Editor(EditorCommand::GlobalSearchRegex)),
+        (" /a", Editor(EditorCommand::OpenAllFilesPicker)),
+        (" /p", Editor(EditorCommand::OpenPathFilePicker)),
         (" p.", Editor(EditorCommand::ToggleWhitespace)),
         (" g/", Colon(ColonCommand::GitSearchCommits)),
         (" gw", Colon(ColonCommand::GitWorktrees)),

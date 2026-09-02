@@ -556,6 +556,7 @@ pub enum PromptKind {
     WorktreeDestination,
     JoinDelimiter,
     SettingValue(String),
+    FinderPath,
 }
 
 impl From<CorePromptKind> for PromptKind {
@@ -580,6 +581,7 @@ impl From<CorePromptKind> for PromptKind {
             CorePromptKind::SettingValue(setting) => {
                 Self::SettingValue(setting.descriptor().key.to_owned())
             }
+            CorePromptKind::FinderPath => Self::FinderPath,
         }
     }
 }

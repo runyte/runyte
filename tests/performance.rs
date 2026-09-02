@@ -31,7 +31,7 @@ use runyte::{
     buffer::SOFT_WRAP_LINE_LIMIT,
     command::{CommandExecutionContext, CommandInvocation, EditorCommand, parse_colon_command},
     config::Config,
-    file_picker::{CONTENT_ENTRY_LIMIT, FileHits, FilePicker, scan_content},
+    file_picker::{CONTENT_ENTRY_LIMIT, FileHits, FilePicker, ScanScope, scan_content},
     finder::{FinderMode, ResourceFinder, ResourceItem, ResourceKind, ResourceTarget},
     headless::HeadlessEditor,
     input::{KeyCode, KeyStroke, Modifiers},
@@ -717,7 +717,14 @@ fn a_content_scan_finds_a_match_anywhere_in_a_large_project() {
     let state_root = root.join(".runyte");
 
     let start = Instant::now();
-    let (entries, _, limited) = scan_content(root, root, &state_root, false, GREP_QUERY).unwrap();
+    let (entries, _, limited) = scan_content(
+        root,
+        &ScanScope::ignoring(root),
+        &state_root,
+        false,
+        GREP_QUERY,
+    )
+    .unwrap();
     let elapsed = start.elapsed();
     assert!(
         !limited,
@@ -741,7 +748,8 @@ fn a_content_scan_finds_a_match_anywhere_in_a_large_project() {
     );
 
     let start = Instant::now();
-    let (entries, _, limited) = scan_content(root, root, &state_root, false, "").unwrap();
+    let (entries, _, limited) =
+        scan_content(root, &ScanScope::ignoring(root), &state_root, false, "").unwrap();
     assert!(
         limited,
         "a query matching every line has to stop at the cap"
@@ -770,10 +778,16 @@ fn a_content_scan_finds_a_match_anywhere_in_a_large_project() {
 #[ignore = "run serially in the release performance job"]
 fn ranking_a_full_content_budget_stays_within_a_frame() {
     let root = large_project();
-    let (entries, _, limited) =
-        scan_content(root, root, &root.join(".runyte"), false, "value").unwrap();
+    let (entries, _, limited) = scan_content(
+        root,
+        &ScanScope::ignoring(root),
+        &root.join(".runyte"),
+        false,
+        "value",
+    )
+    .unwrap();
     assert!(limited, "the fixture has to fill the ranking budget");
-    let mut picker = FilePicker::grep(1, root.to_path_buf());
+    let mut picker = FilePicker::grep(1, root.to_path_buf(), ScanScope::ignoring(root));
     picker.add_content(entries);
     assert_eq!(picker.entries.len(), CONTENT_ENTRY_LIMIT);
 
@@ -823,7 +837,11 @@ fn ranking_a_full_content_budget_stays_within_a_frame() {
 #[ignore = "run serially in the release performance job"]
 fn incrementally_ranking_a_full_live_content_budget_stays_bounded() {
     const SLICE: usize = 128;
-    let mut picker = FilePicker::grep(1, PathBuf::from("/project"));
+    let mut picker = FilePicker::grep(
+        1,
+        PathBuf::from("/project"),
+        ScanScope::ignoring("/project"),
+    );
     picker.insert_query_text("needle");
     picker.finish(0, false);
     // Every batch is built before the clock starts. What is measured is the

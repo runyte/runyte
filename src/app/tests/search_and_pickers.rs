@@ -573,7 +573,11 @@ fn picker_control_bindings_page_and_open_in_a_split() {
     }
 
     let mut app = App::new(Config::default(), None).unwrap();
-    let mut picker = FilePicker::new(1, directory.clone());
+    let mut picker = FilePicker::new(
+        1,
+        directory.clone(),
+        crate::file_picker::ScanScope::ignoring(&directory),
+    );
     picker.add_paths(
         (0..15)
             .map(|index| ScanEntry::file(directory.join(format!("{index:02}.txt"))))
@@ -604,12 +608,20 @@ fn picker_control_bindings_page_and_open_in_a_split() {
 #[test]
 fn space_closes_a_new_picker_but_remains_a_query_separator_after_text() {
     let mut app = App::new(Config::default(), None).unwrap();
-    app.picker = Some(FilePicker::new(1, PathBuf::from("/project")));
+    app.picker = Some(FilePicker::new(
+        1,
+        PathBuf::from("/project"),
+        crate::file_picker::ScanScope::ignoring("/project"),
+    ));
 
     key(&mut app, KeyCode::Char(' '), Modifiers::NONE);
     assert!(app.picker.is_none(), "initial Space dismisses the picker");
 
-    let mut picker = FilePicker::new(2, PathBuf::from("/project"));
+    let mut picker = FilePicker::new(
+        2,
+        PathBuf::from("/project"),
+        crate::file_picker::ScanScope::ignoring("/project"),
+    );
     picker.insert_query_text("src");
     app.picker = Some(picker);
     key(&mut app, KeyCode::Char(' '), Modifiers::NONE);
@@ -857,8 +869,12 @@ fn directory_picker_keeps_tab_navigation_and_has_no_resource_mode() {
     fs::write(root.join("a.txt"), "a").unwrap();
     fs::write(root.join("b.txt"), "b").unwrap();
     let mut app = App::new(Config::default(), None).unwrap();
-    app.open_picker_at(root.clone(), FilePickerKind::Files)
-        .unwrap();
+    app.open_picker_at(
+        root.clone(),
+        crate::file_picker::ScanScope::ignoring(&root),
+        FilePickerKind::Files,
+    )
+    .unwrap();
 
     assert!(app.finder.is_none());
     assert_eq!(app.picker.as_ref().unwrap().selected, 0);
@@ -2091,7 +2107,11 @@ fn dirty_terminal_rows_are_invalidated_when_another_source_reaches_the_limit() {
         })
         .unwrap();
 
-    let mut picker = FilePicker::grep(91, root.clone());
+    let mut picker = FilePicker::grep(
+        91,
+        root.clone(),
+        crate::file_picker::ScanScope::ignoring(&root),
+    );
     picker.insert_query_text("needle");
     picker.add_content(vec![content_hits("disk.txt", CONTENT_ENTRY_LIMIT - 1)]);
     picker.finish(0, false);
@@ -2182,7 +2202,11 @@ fn fuzzy_picker_preview_prefers_unsaved_text_and_ignores_stale_scan_events() {
     fs::write(&path, "disk text\n").unwrap();
     let mut app = App::new(Config::default(), Some(path.clone())).unwrap();
     app.buffers[0].apply(&Transaction::insert(0, "unsaved "));
-    let mut picker = FilePicker::new(9, directory.clone());
+    let mut picker = FilePicker::new(
+        9,
+        directory.clone(),
+        crate::file_picker::ScanScope::ignoring(&directory),
+    );
     picker.add_paths(vec![ScanEntry::file(path.clone())]);
     picker.finish(0, false);
     app.picker = Some(picker);
@@ -2245,8 +2269,12 @@ fn finished_background_scan_stays_pending_until_the_final_rank_arrives() {
     let mut app = App::new_in_isolated_project(&root, ports).unwrap();
     let (scanner, mut events) = crate::file_picker::scanner();
     app.attach_file_scanner(scanner);
-    app.open_picker_at(root.clone(), FilePickerKind::Files)
-        .unwrap();
+    app.open_picker_at(
+        root.clone(),
+        crate::file_picker::ScanScope::ignoring(&root),
+        FilePickerKind::Files,
+    )
+    .unwrap();
     let scan_id = app.picker.as_ref().unwrap().scan_id;
 
     tokio::runtime::Builder::new_current_thread()
@@ -2309,7 +2337,11 @@ fn a_rank_already_in_flight_when_a_scan_finishes_leaves_the_rows_pending() {
     let mut app = App::new_in_isolated_project(&root, ports).unwrap();
     let (scanner, _events) = crate::file_picker::scanner();
     app.attach_file_scanner(scanner);
-    let mut picker = FilePicker::new(9, root.clone());
+    let mut picker = FilePicker::new(
+        9,
+        root.clone(),
+        crate::file_picker::ScanScope::ignoring(&root),
+    );
     picker.add_paths(vec![ScanEntry::file(path)]);
     let complete = picker.matches.clone();
     app.picker = Some(picker);
@@ -2378,7 +2410,11 @@ fn background_picker_rejects_a_stale_query_revision() {
     let mut app = App::new_in_isolated_project(&root, ports).unwrap();
     let (scanner, _events) = crate::file_picker::scanner();
     app.attach_file_scanner(scanner);
-    let mut picker = FilePicker::new(9, root.clone());
+    let mut picker = FilePicker::new(
+        9,
+        root.clone(),
+        crate::file_picker::ScanScope::ignoring(&root),
+    );
     picker.add_paths(vec![ScanEntry::file(path)]);
     picker.insert_query_unranked('a');
     let visible = picker.matches.clone();
@@ -2415,7 +2451,11 @@ fn background_picker_rejects_a_stale_resource_revision() {
     .unwrap();
     let (scanner, _events) = crate::file_picker::scanner();
     app.attach_file_scanner(scanner);
-    let mut picker = FilePicker::new(4, root.clone());
+    let mut picker = FilePicker::new(
+        4,
+        root.clone(),
+        crate::file_picker::ScanScope::ignoring(&root),
+    );
     picker.finish(0, false);
     picker.ranking = true;
     app.picker = Some(picker);
@@ -2624,7 +2664,11 @@ fn attached_terminal_refill_makes_remapped_rows_inert_before_rank_response() {
         .collect::<Vec<_>>();
     assert!(rows.len() >= 2);
 
-    let mut picker = FilePicker::grep(77, root.clone());
+    let mut picker = FilePicker::grep(
+        77,
+        root.clone(),
+        crate::file_picker::ScanScope::ignoring(&root),
+    );
     picker.insert_query_text("needle");
     picker.finish(0, false);
     let mut finder = ResourceFinder::new(FinderMode::Contents);
@@ -2692,7 +2736,11 @@ fn attached_terminal_refill_moves_its_large_index_and_advances_it_in_slices() {
         .plain_line_with_id(0)
         .unwrap()
         .0;
-    let mut picker = FilePicker::grep(78, root.clone());
+    let mut picker = FilePicker::grep(
+        78,
+        root.clone(),
+        crate::file_picker::ScanScope::ignoring(&root),
+    );
     picker.insert_query_text("needle");
     picker.finish(0, false);
     let mut finder = ResourceFinder::new(FinderMode::Contents);
@@ -3142,7 +3190,11 @@ fn attached_finder_switches_from_content_back_to_names_after_ranker_reset() {
 fn attached_finder_snapshot_materializes_only_its_selected_window() {
     let mut app = App::new(Config::default(), None).unwrap();
     let root = PathBuf::from("/project");
-    let mut picker = FilePicker::new(1, root.clone());
+    let mut picker = FilePicker::new(
+        1,
+        root.clone(),
+        crate::file_picker::ScanScope::ignoring(&root),
+    );
     picker.add_paths(
         (0..1_500)
             .map(|index| ScanEntry::file(root.join(format!("file-{index:04}.rs"))))
@@ -3655,7 +3707,11 @@ fn a_ranked_answer_waits_for_the_rows_under_the_reader_and_a_list_key_takes_it()
     let mut app = App::new_in_isolated_project(&root, ports).unwrap();
     let (scanner, _events) = crate::file_picker::scanner();
     app.attach_file_scanner(scanner);
-    let mut picker = FilePicker::new(9, root.clone());
+    let mut picker = FilePicker::new(
+        9,
+        root.clone(),
+        crate::file_picker::ScanScope::ignoring(&root),
+    );
     picker.add_paths(vec![
         ScanEntry::file(root.join("alpha.rs")),
         ScanEntry::file(root.join("beta.rs")),
@@ -3728,7 +3784,11 @@ fn a_held_answer_offers_enter_only_when_publishing_it_would_release_the_rows() {
     let mut app = App::new_in_isolated_project(&root, ports).unwrap();
     let (scanner, _events) = crate::file_picker::scanner();
     app.attach_file_scanner(scanner);
-    let mut picker = FilePicker::new(9, root.clone());
+    let mut picker = FilePicker::new(
+        9,
+        root.clone(),
+        crate::file_picker::ScanScope::ignoring(&root),
+    );
     picker.enable_unified_finder();
     picker.add_paths(vec![ScanEntry::file(root.join("alpha.rs"))]);
     picker.ranking = true;
@@ -3844,7 +3904,11 @@ fn a_content_walk_with_nothing_yet_keeps_the_rows_it_is_replacing() {
     let mut app = App::new_in_isolated_project(&root, ports).unwrap();
     let (scanner, _events) = crate::file_picker::scanner();
     app.attach_file_scanner(scanner);
-    let mut picker = FilePicker::grep(9, root.clone());
+    let mut picker = FilePicker::grep(
+        9,
+        root.clone(),
+        crate::file_picker::ScanScope::ignoring(&root),
+    );
     picker.add_content(vec![content_hits("/project/alpha.rs", 1)]);
     let mut finder = ResourceFinder::new(FinderMode::Contents);
     finder.merge_files(&picker, "");
@@ -3890,7 +3954,11 @@ fn settled_content_header_excludes_retired_item_slots() {
         String::new(),
     )))));
     let mut app = App::new_in_isolated_project(&root, ports).unwrap();
-    let mut picker = FilePicker::grep(19, root.clone());
+    let mut picker = FilePicker::grep(
+        19,
+        root.clone(),
+        crate::file_picker::ScanScope::ignoring(&root),
+    );
     picker.finish(0, false);
     let mut finder = ResourceFinder::new(FinderMode::Contents);
     finder.begin_content_scan_unmerged("needle", Arc::new(HashSet::new()));
@@ -3935,6 +4003,202 @@ fn settled_content_header_excludes_retired_item_slots() {
         app.picker_progress_counts().1,
         1,
         "the settled denominator counts only live content candidates"
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// Every relative path the finder is currently offering as a file row.
+fn finder_file_rows(app: &App) -> Vec<String> {
+    let picker = app.picker.as_ref().unwrap();
+    let finder = app.finder.as_ref().unwrap();
+    finder
+        .matches
+        .iter()
+        .filter_map(|found| match found.source {
+            FinderMatchSource::File(entry) => finder
+                .file_entry(picker, entry)
+                .map(|view| view.relative.to_owned()),
+            FinderMatchSource::Resource(_) => None,
+        })
+        .collect()
+}
+
+/// A project whose `.gitignore` hides one file the tests then go looking for.
+fn ignored_file_project(name: &str) -> PathBuf {
+    let root = language::temporary(name);
+    fs::create_dir_all(root.join("build")).unwrap();
+    fs::write(root.join(".gitignore"), "build/\n").unwrap();
+    fs::write(root.join("tracked.rs"), "tracked marker\n").unwrap();
+    fs::write(root.join("build/out.rs"), "generated marker\n").unwrap();
+    root
+}
+
+fn isolated_app(root: &Path) -> App {
+    let ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    App::new_in_isolated_project(root, ports).unwrap()
+}
+
+#[test]
+fn the_all_files_finder_lists_what_the_project_ignore_files_hide() {
+    let root = ignored_file_project("all-files-finder");
+    let mut app = isolated_app(&root);
+
+    app.open_project_picker().unwrap();
+    let tracked = finder_file_rows(&app);
+    assert!(tracked.iter().any(|path| path == "tracked.rs"));
+    assert!(
+        !tracked.iter().any(|path| path == "build/out.rs"),
+        "the ordinary finder still obeys .gitignore: {tracked:?}"
+    );
+
+    app.open_all_files_picker().unwrap();
+    let everything = finder_file_rows(&app);
+    assert!(
+        everything.iter().any(|path| path == "build/out.rs"),
+        "the all-files finder offers the ignored file: {everything:?}"
+    );
+    assert!(everything.iter().any(|path| path == "tracked.rs"));
+    assert!(
+        app.finder.is_some(),
+        "it is the unified finder, not a bare picker"
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// Tab restarts the walk, so the scope has to outlive the scan that opened it.
+#[test]
+fn switching_the_all_files_finder_to_content_mode_keeps_its_scope() {
+    let root = ignored_file_project("all-files-finder-tab");
+    let mut app = isolated_app(&root);
+    app.open_all_files_picker().unwrap();
+
+    app.toggle_finder_mode();
+    assert_eq!(app.finder.as_ref().unwrap().mode, FinderMode::Contents);
+    let lines = finder_file_rows(&app);
+    assert!(
+        lines.iter().any(|path| path.starts_with("build/out.rs")),
+        "an ignored file's lines survive the mode switch: {lines:?}"
+    );
+
+    app.toggle_finder_mode();
+    assert_eq!(app.finder.as_ref().unwrap().mode, FinderMode::Names);
+    let names = finder_file_rows(&app);
+    assert!(
+        names.iter().any(|path| path == "build/out.rs"),
+        "and switching back does not narrow it again: {names:?}"
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn the_path_finder_roots_itself_outside_the_workspace() {
+    let root = ignored_file_project("path-finder-project");
+    let outside = language::temporary("path-finder-elsewhere");
+    fs::create_dir_all(outside.join("nested")).unwrap();
+    fs::write(outside.join(".gitignore"), "nested/\n").unwrap();
+    fs::write(outside.join("nested/buried.rs"), "buried marker\n").unwrap();
+    let mut app = isolated_app(&root);
+
+    app.open_finder_path(&outside).unwrap();
+    assert_eq!(
+        app.picker.as_ref().unwrap().root,
+        outside.canonicalize().unwrap()
+    );
+    let rows = finder_file_rows(&app);
+    assert!(
+        rows.iter().any(|path| path == "nested/buried.rs"),
+        "the path finder is unfiltered too: {rows:?}"
+    );
+    assert!(
+        !rows.iter().any(|path| path == "tracked.rs"),
+        "and it does not carry the workspace's files with it: {rows:?}"
+    );
+    fs::remove_dir_all(root).unwrap();
+    fs::remove_dir_all(outside).unwrap();
+}
+
+#[test]
+fn a_path_finder_target_that_cannot_be_scanned_is_reported() {
+    let root = ignored_file_project("path-finder-refusals");
+    let mut app = isolated_app(&root);
+
+    let error = app
+        .open_finder_path(&root.join("tracked.rs"))
+        .expect_err("a file is not a finder root");
+    assert!(error.to_string().contains("not a directory"), "{error}");
+    assert!(app.picker.is_none(), "nothing opens over a refused root");
+
+    // Reserved state is refused by the walk rather than by the open, so the
+    // overlay does appear and carries the failure.
+    fs::create_dir_all(root.join(".git/objects")).unwrap();
+    app.open_finder_path(&root.join(".git/objects")).unwrap();
+    let failure = app
+        .picker
+        .as_ref()
+        .unwrap()
+        .error
+        .as_deref()
+        .expect("a reserved root fails its scan");
+    assert!(failure.contains("reserved"), "{failure}");
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// A relative path and `~` mean what they mean at every other path prompt.
+#[test]
+fn the_path_finder_prompt_resolves_a_relative_path_against_the_working_directory() {
+    let root = ignored_file_project("path-finder-relative");
+    let mut app = isolated_app(&root);
+    app.working_directory = root.clone();
+
+    app.open_finder_path(Path::new("build")).unwrap();
+    assert_eq!(
+        app.picker.as_ref().unwrap().root,
+        root.join("build").canonicalize().unwrap()
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// The scope has to reach the background scanner too, which is the seam a
+/// real editor uses and the synchronous tests above never touch.
+#[test]
+fn the_background_scanner_honors_an_unfiltered_scope() {
+    let root = ignored_file_project("all-files-background");
+    let mut app = isolated_app(&root);
+    let (scanner, mut events) = crate::file_picker::scanner();
+    app.attach_file_scanner(scanner);
+    app.open_all_files_picker().unwrap();
+
+    tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .build()
+        .unwrap()
+        .block_on(async {
+            tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                loop {
+                    while app.resource_finder_scan_pending() {
+                        app.advance_resource_finder_scan();
+                    }
+                    let event = events.recv().await.unwrap();
+                    deliver(&mut app, event);
+                    let settled = app
+                        .picker
+                        .as_ref()
+                        .is_some_and(|picker| !picker.loading && !picker.ranking);
+                    if settled {
+                        break;
+                    }
+                }
+            })
+            .await
+            .expect("the background scan should settle");
+        });
+
+    let rows = finder_file_rows(&app);
+    assert!(
+        rows.iter().any(|path| path == "build/out.rs"),
+        "the scope reached the scanner thread: {rows:?}"
     );
     fs::remove_dir_all(root).unwrap();
 }

@@ -613,6 +613,16 @@ fn render_editor_frame(
     } else {
         if app.mode == Mode::Command && app.prompt_kind == PromptKind::Command {
             draw_command_palette(frame, &app, editor_area);
+        } else if app.mode == Mode::Command && app.prompt_kind == PromptKind::FinderPath {
+            if let Some(hints) = app.finder_path_hints() {
+                draw_command_path_hints(
+                    frame,
+                    &app,
+                    editor_area,
+                    &hints,
+                    " Paths · the finder is rooted here · ↑/↓ select · Tab complete ",
+                );
+            }
         } else if app.mode == Mode::Command && app.prompt_kind == PromptKind::ExternalProgram {
             draw_program_hints(frame, &app, editor_area);
             if app.program_action_menu.is_some() {
@@ -2411,12 +2421,24 @@ fn draw_resource_finder(
         .as_ref()
         .map_or(String::new(), |error| format!(" · scan failed: {error}"));
     let (found, candidates) = app.picker_progress_counts();
+    // Three keys open this overlay over three different scopes, so a finder
+    // that is not the ordinary project one says which it is.
+    let scope = match &picker.scope {
+        crate::file_picker::ScanScope::Ignoring { .. } => String::new(),
+        crate::file_picker::ScanScope::Everything if picker.root == app.project_root => {
+            " · all files".to_owned()
+        }
+        crate::file_picker::ScanScope::Everything => {
+            format!(" · {}", picker.root.display())
+        }
+    };
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(app.theme.accent))
         .title(format!(
-            " Find · {} · {found}/{candidates} matched{}{}{} · Tab {} · Ctrl-t preview ",
+            " Find · {}{} · {found}/{candidates} matched{}{}{} · Tab {} · Ctrl-t preview ",
             finder.mode.title(),
+            scope,
             skipped,
             limited,
             failure,
@@ -3268,7 +3290,13 @@ fn draw_command_palette(frame: &mut Frame<'_>, app: &TuiApp<'_>, editor_area: Re
         return;
     }
     if let Some(hints) = app.matching_path_hints() {
-        draw_command_path_hints(frame, app, editor_area, &hints);
+        draw_command_path_hints(
+            frame,
+            app,
+            editor_area,
+            &hints,
+            " Paths · directories open as explorers · ↑/↓ select · Tab complete ",
+        );
         return;
     }
     let matches = app.matching_commands();
@@ -3359,6 +3387,7 @@ fn draw_command_path_hints(
     app: &TuiApp<'_>,
     editor_area: Rect,
     hints: &[crate::app::PathHint],
+    title: &str,
 ) {
     let height = (hints.len().max(1) as u16)
         .saturating_add(2)
@@ -3403,7 +3432,7 @@ fn draw_command_path_hints(
             Block::default()
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(app.theme.accent))
-                .title(" Paths · directories open as explorers · ↑/↓ select · Tab complete "),
+                .title(title),
         )
         .style(
             Style::default()
@@ -7529,7 +7558,11 @@ mod tests {
     fn fuzzy_file_picker_renders_ranked_paths_preview_and_narrow_fallback() {
         let mut app = App::new(Config::default(), None).unwrap();
         let root = std::path::PathBuf::from("/project");
-        let mut picker = crate::file_picker::FilePicker::new(1, root.clone());
+        let mut picker = crate::file_picker::FilePicker::new(
+            1,
+            root.clone(),
+            crate::file_picker::ScanScope::ignoring(&root),
+        );
         picker.add_paths(vec![
             crate::file_picker::ScanEntry::file(root.join("src/ui/file_picker.rs")),
             crate::file_picker::ScanEntry::file(root.join("src/picker.rs")),
@@ -7590,6 +7623,7 @@ mod tests {
         app.picker = Some(crate::file_picker::FilePicker::new(
             1,
             std::path::PathBuf::from("/project"),
+            crate::file_picker::ScanScope::ignoring("/project"),
         ));
         let mut finder = crate::finder::ResourceFinder::new(crate::finder::FinderMode::Names);
         finder.replace_items(
@@ -7631,8 +7665,11 @@ mod tests {
     #[test]
     fn resource_finder_highlights_matching_buffer_content() {
         let mut app = App::new(Config::default(), None).unwrap();
-        let mut picker =
-            crate::file_picker::FilePicker::new(1, std::path::PathBuf::from("/project"));
+        let mut picker = crate::file_picker::FilePicker::new(
+            1,
+            std::path::PathBuf::from("/project"),
+            crate::file_picker::ScanScope::ignoring("/project"),
+        );
         picker.insert_query_text("needle");
         picker.finish(0, false);
         let mut finder = crate::finder::ResourceFinder::new(crate::finder::FinderMode::Contents);
@@ -7671,7 +7708,11 @@ mod tests {
     fn fuzzy_grep_picker_keeps_paths_in_the_list_and_content_in_the_preview() {
         let mut app = App::new(Config::default(), None).unwrap();
         let root = std::path::PathBuf::from("/project");
-        let mut picker = crate::file_picker::FilePicker::grep(2, root.clone());
+        let mut picker = crate::file_picker::FilePicker::grep(
+            2,
+            root.clone(),
+            crate::file_picker::ScanScope::ignoring(&root),
+        );
         picker.add_content(vec![crate::file_picker::FileHits {
             path: root.join("src/main.rs"),
             lines: vec![crate::file_picker::LineHit {

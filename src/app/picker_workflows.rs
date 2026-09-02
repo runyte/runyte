@@ -16,7 +16,9 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Instant;
 
-use crate::file_picker::{FileHits, FilePreviewRequest, line_hit, line_hit_from_trimmed};
+use crate::file_picker::{
+    FileHits, FilePreviewRequest, ScanScope, line_hit, line_hit_from_trimmed,
+};
 use crate::terminal::TerminalId;
 
 const RESOURCE_CONTENT_SLICE_ROWS: usize = 128;
@@ -98,8 +100,38 @@ impl App {
         scanner.update_finder_context(scan_id, query_revision, finder);
     }
 
+    /// The scope the project's own finders scan with: every ignore file from
+    /// the project root down.
+    pub(super) fn project_scan_scope(&self) -> ScanScope {
+        ScanScope::ignoring(&self.project_root)
+    }
+
     pub(super) fn open_project_picker(&mut self) -> Result<()> {
-        self.open_picker_at(self.project_root.clone(), FilePickerKind::Files)?;
+        self.open_finder_at(self.project_root.clone(), self.project_scan_scope())
+    }
+
+    /// The project finder over every file the project holds, ignore files not
+    /// consulted. Only the scope separates it from `open_project_picker`.
+    pub(super) fn open_all_files_picker(&mut self) -> Result<()> {
+        self.open_finder_at(self.project_root.clone(), ScanScope::Everything)
+    }
+
+    /// The same unfiltered finder rooted at a path that need not be inside
+    /// the workspace.
+    pub(super) fn open_path_picker(&mut self, root: PathBuf) -> Result<()> {
+        self.open_finder_at(root, ScanScope::Everything)
+    }
+
+    /// Opens the unfiltered finder at a path as a person spelled it: `~` and
+    /// a relative path mean what they mean everywhere else a path is typed.
+    pub(super) fn open_finder_path(&mut self, path: &std::path::Path) -> Result<()> {
+        self.open_path_picker(self.resolve_working_path(path.to_path_buf()))
+    }
+
+    /// Opens the unified name-mode finder: a file picker plus the open
+    /// buffers and terminals merged into its list.
+    fn open_finder_at(&mut self, root: PathBuf, scope: ScanScope) -> Result<()> {
+        self.open_picker_at(root, scope, FilePickerKind::Files)?;
         self.picker.as_mut().unwrap().enable_unified_finder();
         self.finder = Some(ResourceFinder::new(FinderMode::Names));
         self.rebuild_resource_finder();
@@ -107,11 +139,19 @@ impl App {
     }
 
     pub(super) fn open_directory_picker(&mut self) -> Result<()> {
-        self.open_picker_at(self.active_directory(), FilePickerKind::Files)
+        self.open_picker_at(
+            self.active_directory(),
+            self.project_scan_scope(),
+            FilePickerKind::Files,
+        )
     }
 
     pub(super) fn open_project_grep(&mut self) -> Result<()> {
-        self.open_picker_at(self.project_root.clone(), FilePickerKind::Contents)?;
+        self.open_picker_at(
+            self.project_root.clone(),
+            self.project_scan_scope(),
+            FilePickerKind::Contents,
+        )?;
         self.picker.as_mut().unwrap().enable_unified_finder();
         self.finder = Some(ResourceFinder::new(FinderMode::Contents));
         self.start_content_scan();
@@ -120,12 +160,21 @@ impl App {
     }
 
     pub(super) fn open_directory_grep(&mut self) -> Result<()> {
-        self.open_picker_at(self.active_directory(), FilePickerKind::Contents)?;
+        self.open_picker_at(
+            self.active_directory(),
+            self.project_scan_scope(),
+            FilePickerKind::Contents,
+        )?;
         self.start_content_scan();
         Ok(())
     }
 
-    pub(super) fn open_picker_at(&mut self, root: PathBuf, kind: FilePickerKind) -> Result<()> {
+    pub(super) fn open_picker_at(
+        &mut self,
+        root: PathBuf,
+        scope: ScanScope,
+        kind: FilePickerKind,
+    ) -> Result<()> {
         let root = root.canonicalize().map_err(|error| {
             anyhow::anyhow!("failed to open picker at {}: {error}", root.display())
         })?;
@@ -136,8 +185,8 @@ impl App {
         let scan_id = self.next_file_scan_id;
         self.next_file_scan_id = self.next_file_scan_id.wrapping_add(1).max(1);
         self.picker = Some(match kind {
-            FilePickerKind::Files => FilePicker::new(scan_id, root.clone()),
-            FilePickerKind::Contents => FilePicker::grep(scan_id, root.clone()),
+            FilePickerKind::Files => FilePicker::new(scan_id, root.clone(), scope.clone()),
+            FilePickerKind::Contents => FilePicker::grep(scan_id, root.clone(), scope.clone()),
         });
         if kind == FilePickerKind::Contents {
             return Ok(());
@@ -146,14 +195,14 @@ impl App {
             scanner.scan(
                 scan_id,
                 root,
-                self.project_root.clone(),
+                scope,
                 self.state_root.clone(),
                 self.config.editor.show_hidden_files,
             );
         } else {
             match scan_files(
                 &root,
-                &self.project_root,
+                &scope,
                 &self.state_root,
                 self.config.editor.show_hidden_files,
             ) {
@@ -186,6 +235,7 @@ impl App {
             return;
         };
         let root = picker.root.clone();
+        let scope = picker.scope.clone();
         let previous_scan_id = picker.scan_id;
         if let Some(scanner) = &self.file_scanner {
             scanner.cancel(previous_scan_id);
@@ -236,7 +286,7 @@ impl App {
             scanner.scan_content(
                 scan_id,
                 root,
-                self.project_root.clone(),
+                scope,
                 self.state_root.clone(),
                 self.config.editor.show_hidden_files,
                 query,
@@ -244,7 +294,7 @@ impl App {
         } else {
             match scan_content(
                 &root,
-                &self.project_root,
+                &scope,
                 &self.state_root,
                 self.config.editor.show_hidden_files,
                 &query,
@@ -1236,18 +1286,19 @@ impl App {
         };
         let scan_id = picker.scan_id;
         let root = picker.root.clone();
+        let scope = picker.scope.clone();
         if let Some(scanner) = &self.file_scanner {
             scanner.scan(
                 scan_id,
                 root,
-                self.project_root.clone(),
+                scope,
                 self.state_root.clone(),
                 self.config.editor.show_hidden_files,
             );
         } else {
             match scan_files(
                 &root,
-                &self.project_root,
+                &scope,
                 &self.state_root,
                 self.config.editor.show_hidden_files,
             ) {

@@ -99,7 +99,14 @@ them, regardless of which extensibility direction is chosen.
   it has to wait and comes back for them. Once a project/content finder
   query contains text, Space remains its term separator. The **project
   finder** is one picker with two Tab-switched modes over the same three source
-  kinds. **Name mode** merges files, open buffers, and terminal sessions by
+  kinds. A finder also has a **scan scope**: the root it walks and whether it
+  reads the ignore files it finds. The scope belongs to the picker rather than
+  to one scan, because a mode switch and a content re-scan both restart the
+  walk on the reader's behalf. Three keys open the same overlay over three
+  scopes — the project's ignore-aware files, every file the project holds, and
+  every file under a typed path that need not be inside the workspace — so a
+  finder that is not the ordinary project one names its scope in the title
+  rather than looking identical to the one that is. **Name mode** merges files, open buffers, and terminal sessions by
   resource identity. **Content mode** merges file lines, authoritative
   in-memory buffer lines including pathless buffers, and decoded retained
   terminal rows. Matching characters are emphasized in the content detail
@@ -160,6 +167,14 @@ them, regardless of which extensibility direction is chosen.
 - **Input overlay** — a bounded input surface used when editing a value needs
   choices, preview, or inline validation. It owns input until save or cancel,
   but is not a buffer.
+- **Completing prompt** — an interaction-line prompt whose typed value is
+  matched against the filesystem as it is edited, offering its rows in a
+  bounded hint list above the line. The rows are a completion of the value
+  being typed, not a choose-one request, so the prompt keeps the interaction
+  line and Enter still accepts what was typed rather than what is selected.
+  The palette's path arguments and the finder-path prompt behind `Space / p`
+  are the two of these; both spell `~`, a relative path, and a trailing
+  separator the same way, and both take `Tab` as accept.
 
 Runyte selects among these surfaces by task lifetime and interaction, not by
 the renderer that is most convenient or by whether the content looks like

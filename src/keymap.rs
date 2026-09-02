@@ -1192,6 +1192,16 @@ fn built_in_bindings() -> Vec<Binding> {
             [Key::char(' '), Key::char('/'), Key::char('S')],
             Command::GlobalSearchRegex,
         ),
+        // The same finder over a wider scope: `a` drops the ignore files the
+        // project states, `p` drops the project as the root as well.
+        primary_modal(
+            [Key::char(' '), Key::char('/'), Key::char('a')],
+            Command::OpenAllFilesPicker,
+        ),
+        primary_modal(
+            [Key::char(' '), Key::char('/'), Key::char('p')],
+            Command::OpenPathFilePicker,
+        ),
         primary_modal(
             [Key::char(' '), Key::char('s'), Key::char('e')],
             Command::SplitSelectionAtLineEnds,
@@ -2066,7 +2076,7 @@ fn build_keymap(bindings: Vec<Binding>) -> Keymap {
         BindingNamespace::global(
             MODAL,
             [Key::char(' '), Key::char('/')],
-            "Search the whole project",
+            "Look past this buffer",
         ),
         BindingNamespace::global(MODAL, [Key::char(' '), Key::char('w')], "Windows"),
         BindingNamespace::global(

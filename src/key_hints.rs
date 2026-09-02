@@ -461,7 +461,7 @@ mod tests {
         assert!(rows.iter().any(|row| {
             row.namespace
                 && row.sequence == KeySequence::from([Key::char(' '), Key::char('/')])
-                && row.description == "Search the whole project"
+                && row.description == "Look past this buffer"
         }));
     }
 

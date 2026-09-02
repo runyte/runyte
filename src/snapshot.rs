@@ -1378,6 +1378,7 @@ fn prompt_prefix(kind: crate::app::PromptKind) -> String {
         PromptKind::WorktreeDestination => "worktree destination: ".to_owned(),
         PromptKind::JoinDelimiter => "join with (empty joins directly): ".to_owned(),
         PromptKind::SettingValue(setting) => format!("{}: ", setting.descriptor().title),
+        PromptKind::FinderPath => "find under path: ".to_owned(),
     }
 }
 

@@ -233,10 +233,7 @@ fn the_search_namespaces_and_their_prompts_are_discoverable_on_screen() {
     );
     // Searching and selecting are two namespaces now, and the Space row says so.
     let space = render(100, 40, &mut app, &hints);
-    assert!(
-        space.contains("Search the whole project \u{203a}"),
-        "{space}"
-    );
+    assert!(space.contains("Look past this buffer \u{203a}"), "{space}");
     assert!(space.contains("Selections \u{203a}"), "{space}");
 
     hints.observe(
@@ -295,6 +292,8 @@ fn the_search_namespaces_and_their_prompts_are_discoverable_on_screen() {
         "Search the workspace with a regular expression",
         "Search the workspace, ignoring case",
         "Find files, buffers, and terminals by name or content",
+        "Find every file, buffer, and terminal, including ignored files",
+        "Find every file under a path, including ignored files",
     ] {
         assert!(project.contains(entry), "missing {entry:?}: {project}");
     }
