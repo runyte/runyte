@@ -4,9 +4,9 @@
 
 // Application-module dependencies:
 use super::{
-    App, BTreeMap, Buffer, Change, DelimiterPair, DirectoryRegister, HashSet, HistoryReset, Jump,
-    JumpLabels, KeyCode, KeyStroke, LanguageId, ListAction, ListPicker, Mode, Modifiers, Motion,
-    Offset, Outline, Pane, PickerItem, Press, Range, Regex, Register, Result,
+    App, Assoc, BTreeMap, Buffer, Change, DelimiterPair, DirectoryRegister, HashSet, HistoryReset,
+    Jump, JumpLabels, KeyCode, KeyStroke, LanguageId, ListAction, ListPicker, Mode, Modifiers,
+    Motion, Offset, Outline, Pane, PickerItem, Press, Range, Regex, Register, Result,
     SearchSelectionPresentation, Selection, SelectionSemantics, ShrinkResult, SyntaxError,
     SyntaxObject, SyntaxObjectPart, SyntaxSelectionRange, SyntaxSelectionTransform, TerminalId,
     Transaction, TransferMode, buffer_language, column_at_visual_column, fold_degradation_suffix,
@@ -2542,18 +2542,12 @@ impl App {
             })
             .collect();
 
-        // Ranges are sorted and disjoint, so each span's post-edit start is its
-        // own start shifted by everything the earlier spans added or removed.
-        let mut delta: isize = 0;
-        let mut pasted = Vec::with_capacity(spans.len());
-        for (from, to, text) in &spans {
-            let start = (*from as isize + delta) as usize;
-            let len = text.chars().count();
-            delta += len as isize - (*to - *from) as isize;
-            // A replacement always spans text and an insertion never
-            // does, so the span itself says which one this was.
-            pasted.push((*from < *to).then_some((start, len)));
-        }
+        // A replacement always spans text and an insertion never does, so the
+        // span itself says which ranges are about to be replaced.
+        let replaced: Vec<Option<(Offset, usize)>> = spans
+            .iter()
+            .map(|(from, to, text)| (from < to).then(|| (*from, text.chars().count())))
+            .collect();
 
         let transaction = Transaction::new(
             spans
@@ -2570,6 +2564,17 @@ impl App {
             .ranges()
             .iter()
             .map(|range| range.map(&transaction))
+            .collect();
+        // Where the replacements land has to come from the transaction rather
+        // than from adding up what each span changed: two ranges sharing a row
+        // both widen to that whole row under a linewise register, and
+        // `Transaction::new` drops the second as the overlap it is. A running
+        // total cannot know that happened; the transaction can be asked.
+        let pasted: Vec<Option<(Offset, usize)>> = replaced
+            .into_iter()
+            .map(|replaced| {
+                replaced.map(|(from, len)| (transaction.map_offset(from, Assoc::After), len))
+            })
             .collect();
         if self.edit(transaction) {
             let buffer = &self.buffers[buffer_id];
@@ -2738,10 +2743,13 @@ fn replaced_span(
 /// rather than past it, and a linewise paste ends in a terminator no selection
 /// should point at, so the head stops where `x` would leave it.
 fn pasted_range(buffer: &Buffer, start: Offset, len: usize, half_open: bool) -> Range {
-    if len == 0 {
+    // Clamped because a range whose change the transaction dropped is still
+    // asked where it went, and the answer is somebody else's text.
+    let start = start.min(buffer.len_chars());
+    let end = start.saturating_add(len).min(buffer.len_chars());
+    if end == start {
         return Range::point(start);
     }
-    let end = start + len;
     if half_open {
         return Range::new(start, end);
     }

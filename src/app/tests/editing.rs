@@ -879,6 +879,49 @@ fn a_paste_replaces_every_range_that_holds_text_and_inserts_beside_the_rest() {
 }
 
 #[test]
+fn a_linewise_paste_replaces_each_row_once_however_many_ranges_touch_it() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    seed(&mut app, "one two\nalpha");
+    app.registers.insert(
+        '"',
+        Register {
+            text: "X\n".to_owned(),
+            linewise: true,
+            directory: None,
+        },
+    );
+    app.panes.get_mut(&0).unwrap().selection =
+        Selection::new(vec![Range::new(0, 2), Range::new(4, 6)], 0);
+    press(&mut app, 'p');
+    assert_eq!(
+        text(&app),
+        "X\nalpha",
+        "whole lines two ranges share are replaced once, not once per range"
+    );
+    assert_eq!(app.active().selection.ranges(), [Range::point(0)]);
+
+    // Ranges on rows of their own each replace their own row.
+    let mut apart = App::new(Config::default(), None).unwrap();
+    seed(&mut apart, "one\ntwo\nthree");
+    apart.registers.insert(
+        '"',
+        Register {
+            text: "X\n".to_owned(),
+            linewise: true,
+            directory: None,
+        },
+    );
+    apart.panes.get_mut(&0).unwrap().selection =
+        Selection::new(vec![Range::new(0, 2), Range::new(8, 12)], 0);
+    press(&mut apart, 'p');
+    assert_eq!(text(&apart), "X\ntwo\nX");
+    assert_eq!(
+        apart.active().selection.ranges(),
+        [Range::point(0), Range::point(6)]
+    );
+}
+
+#[test]
 fn y_yanks_the_caret_character_and_capital_y_yanks_whole_lines() {
     let mut caret = App::new(Config::default(), None).unwrap();
     seed(&mut caret, "alpha\nbravo");
