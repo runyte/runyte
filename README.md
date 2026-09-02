@@ -7,6 +7,7 @@ What Runyte is depends on how you use it. It can be any or all of the following:
 
 - a **fast modal text editor** with batteries included and no configuration
   required
+- a multi-pane **file manager** that opens binary files in external applications
 - a **terminal multiplexer** with fuzzy search across files, buffers, and
   terminals
 - a **Git interface** with first-class worktree support
