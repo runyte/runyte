@@ -2498,6 +2498,10 @@ impl App {
             self.active().selection_semantics(),
             SelectionSemantics::HalfOpen | SelectionSemantics::VimLinewise
         );
+        // In Runyte's inclusive grammar a selected single character and a
+        // Normal-mode caret both have equal endpoints. Select mode is what
+        // distinguishes the former, including one-character search matches.
+        let replace_point_ranges = self.mode == Mode::Select;
 
         // Spans first, changes after: the replaced ones have to be found again
         // once the text has moved under them, and that needs their widths.
@@ -2507,7 +2511,7 @@ impl App {
             .ranges()
             .iter()
             .map(|range| {
-                if !before && !range.is_empty() {
+                if !before && (!range.is_empty() || replace_point_ranges) {
                     return replaced_span(buffer, range, register, half_open);
                 }
                 let mut text = clipboard.clone();
@@ -2544,9 +2548,9 @@ impl App {
 
         // A replacement always spans text and an insertion never does, so the
         // span itself says which ranges are about to be replaced.
-        let replaced: Vec<Option<(Offset, usize)>> = spans
+        let replaced: Vec<Option<Offset>> = spans
             .iter()
-            .map(|(from, to, text)| (from < to).then(|| (*from, text.chars().count())))
+            .map(|(from, to, _)| (from < to).then_some(*from))
             .collect();
 
         let transaction = Transaction::new(
@@ -2572,8 +2576,26 @@ impl App {
         // total cannot know that happened; the transaction can be asked.
         let pasted: Vec<Option<(Offset, usize)>> = replaced
             .into_iter()
-            .map(|replaced| {
-                replaced.map(|(from, len)| (transaction.map_offset(from, Assoc::After), len))
+            .map(|replaced_from| {
+                replaced_from.and_then(|from| {
+                    // Linewise widening can make disjoint selections overlap.
+                    // Transaction normalization retains the first replacement
+                    // and drops the later one; every original selection must
+                    // then point at that retained replacement, not at the
+                    // mapped end of it.
+                    transaction
+                        .changes()
+                        .iter()
+                        .find(|change| {
+                            change.from < change.to && change.from <= from && from < change.to
+                        })
+                        .map(|change| {
+                            (
+                                transaction.map_offset(change.from, Assoc::Before),
+                                change.text.chars().count(),
+                            )
+                        })
+                })
             })
             .collect();
         if self.edit(transaction) {

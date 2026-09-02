@@ -146,8 +146,10 @@ use crate::workspace::{
 /// host still running the previous binary owns key dispatch, so it would
 /// answer that action by attaching the terminal to the active pane and opening
 /// the command prompt instead, and it has no case for the new prompt on the
-/// wire.
-pub const VERSION: u32 = 44;
+/// wire. Version 45 adds the `finder-path` prompt used to change the finder
+/// scope. An older client has no case for that prompt, while an older host
+/// cannot dispatch the action that opens it.
+pub const VERSION: u32 = 45;
 pub const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const MAX_PATHS: usize = 32;
 pub const MAX_PATH_BYTES: usize = 32 * 1024;
@@ -921,7 +923,7 @@ mod tests {
 
     #[test]
     fn protocol_version_and_request_bounds_are_explicit() {
-        assert_eq!(VERSION, 44);
+        assert_eq!(VERSION, 45);
         let oversized_command = ClientRequest::Invoke {
             command: CommandRequest {
                 name: "open".to_owned(),

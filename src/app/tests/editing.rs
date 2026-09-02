@@ -879,6 +879,36 @@ fn a_paste_replaces_every_range_that_holds_text_and_inserts_beside_the_rest() {
 }
 
 #[test]
+fn a_paste_replaces_single_character_search_matches() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    seed(&mut app, "a b a");
+    app.registers.insert(
+        '"',
+        Register {
+            text: "X".to_owned(),
+            linewise: false,
+            directory: None,
+        },
+    );
+
+    press(&mut app, 's');
+    press(&mut app, 'a');
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert_eq!(app.mode, Mode::Select);
+    assert_eq!(
+        app.active().selection.ranges(),
+        [Range::point(0), Range::point(4)]
+    );
+
+    press(&mut app, 'p');
+    assert_eq!(text(&app), "X b X");
+    assert_eq!(
+        app.active().selection.ranges(),
+        [Range::point(0), Range::point(4)]
+    );
+}
+
+#[test]
 fn a_linewise_paste_replaces_each_row_once_however_many_ranges_touch_it() {
     let mut app = App::new(Config::default(), None).unwrap();
     seed(&mut app, "one two\nalpha");
@@ -899,6 +929,29 @@ fn a_linewise_paste_replaces_each_row_once_however_many_ranges_touch_it() {
         "whole lines two ranges share are replaced once, not once per range"
     );
     assert_eq!(app.active().selection.ranges(), [Range::point(0)]);
+
+    // Widening can also make spans overlap without giving them the same start.
+    // The later selection must resolve to the replacement retained for both,
+    // rather than becoming a phantom selection in the following row.
+    let mut overlapping = App::new(Config::default(), None).unwrap();
+    seed(&mut overlapping, "one two\nalpha beta\nomega");
+    overlapping.registers.insert(
+        '"',
+        Register {
+            text: "X\n".to_owned(),
+            linewise: true,
+            directory: None,
+        },
+    );
+    overlapping.panes.get_mut(&0).unwrap().selection =
+        Selection::new(vec![Range::new(0, 9), Range::new(14, 17)], 0);
+    press(&mut overlapping, 'p');
+    assert_eq!(text(&overlapping), "X\nomega");
+    assert_eq!(
+        overlapping.active().selection.ranges(),
+        [Range::point(0)],
+        "both widened spans resolve to the one retained replacement"
+    );
 
     // Ranges on rows of their own each replace their own row.
     let mut apart = App::new(Config::default(), None).unwrap();
