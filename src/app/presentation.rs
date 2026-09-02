@@ -1097,8 +1097,11 @@ impl App {
                 let mut snapshot = bounded(
                     OverlayKind::FilePicker,
                     format!(
-                        "Find · {} · {found}/{candidates} matched",
-                        finder.mode.title()
+                        "Find · {}{} · {found}/{candidates} matched",
+                        finder.mode.title(),
+                        picker
+                            .scope_label(&self.project_root)
+                            .map_or(String::new(), |scope| format!(" · {scope}"))
                     ),
                     picker.query.clone(),
                     finder

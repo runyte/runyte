@@ -569,6 +569,21 @@ impl FilePicker {
         }
     }
 
+    /// How this picker's scope reads in a title, or `None` for the ordinary
+    /// project one, which needs no saying.
+    ///
+    /// Three keys open the finder over three scopes, so every surface that
+    /// draws it has to name the one in front of the reader. It lives here so
+    /// that the drawn title and an attached client's snapshot cannot disagree
+    /// about which finder is open.
+    pub fn scope_label(&self, project_root: &Path) -> Option<String> {
+        match &self.scope {
+            ScanScope::Ignoring { .. } => None,
+            ScanScope::Everything if self.root == project_root => Some("all files".to_owned()),
+            ScanScope::Everything => Some(self.root.display().to_string()),
+        }
+    }
+
     pub fn enable_unified_finder(&mut self) {
         self.unified_finder = true;
         self.rank(true, false);

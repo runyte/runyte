@@ -4202,3 +4202,155 @@ fn the_background_scanner_honors_an_unfiltered_scope() {
     );
     fs::remove_dir_all(root).unwrap();
 }
+
+/// The drawn title and the snapshot an attached client renders read the same
+/// scope, because they read it from the same place.
+#[test]
+fn every_surface_names_the_finder_scope_in_front_of_the_reader() {
+    let root = ignored_file_project("finder-scope-title");
+    let outside = language::temporary("finder-scope-elsewhere");
+    fs::create_dir_all(&outside).unwrap();
+    let mut app = isolated_app(&root);
+
+    let scope_of = |app: &App| {
+        app.overlay_snapshots()
+            .into_iter()
+            .find(|overlay| overlay.kind == crate::snapshot::OverlayKind::FilePicker)
+            .expect("the finder is open")
+            .title
+    };
+
+    app.open_project_picker().unwrap();
+    let project = scope_of(&app);
+    assert!(
+        project.starts_with("Find · Names · ") && !project.contains("all files"),
+        "the ordinary project finder says nothing about its scope: {project}"
+    );
+
+    app.open_all_files_picker().unwrap();
+    assert!(
+        scope_of(&app).starts_with("Find · Names · all files · "),
+        "{}",
+        scope_of(&app)
+    );
+
+    app.open_finder_path(&outside).unwrap();
+    let named = scope_of(&app);
+    let expected = outside.canonicalize().unwrap();
+    assert!(
+        named.contains(&expected.display().to_string()),
+        "a finder rooted elsewhere names that root: {named}"
+    );
+
+    // The picker owns the label, so the drawn title cannot drift from it.
+    assert_eq!(
+        app.picker
+            .as_ref()
+            .unwrap()
+            .scope_label(&app.project_root)
+            .as_deref(),
+        Some(expected.display().to_string().as_str())
+    );
+    fs::remove_dir_all(root).unwrap();
+    fs::remove_dir_all(outside).unwrap();
+}
+
+/// The prompt itself, driven by its keys rather than by the method behind it:
+/// opening, completing, selecting, and accepting.
+#[test]
+fn the_finder_path_prompt_opens_completes_and_accepts_from_its_keys() {
+    let root = ignored_file_project("finder-path-keys");
+    let mut app = isolated_app(&root);
+    app.working_directory = root.clone();
+
+    press(&mut app, ' ');
+    press(&mut app, '/');
+    press(&mut app, 'p');
+    assert_eq!(app.mode, Mode::Command);
+    assert_eq!(app.prompt_kind, PromptKind::FinderPath);
+
+    // Both directories are offered; Down moves within them and Tab accepts
+    // the selected row as the whole prompt.
+    let offered = app.finder_path_hints().expect("the prompt owns the rows");
+    let names = offered
+        .iter()
+        .map(|hint| hint.value.clone())
+        .collect::<Vec<_>>();
+    assert!(
+        names.iter().any(|value| value.starts_with("build")),
+        "an ignored directory is still a legal root: {names:?}"
+    );
+    key(&mut app, KeyCode::Down, Modifiers::NONE);
+    let selected = app.command_selection;
+    key(&mut app, KeyCode::Up, Modifiers::NONE);
+    assert_eq!(app.command_selection + 1, selected, "Up undoes Down");
+
+    app.command_selection = names
+        .iter()
+        .position(|value| value.starts_with("build"))
+        .expect("build is offered");
+    key(&mut app, KeyCode::Tab, Modifiers::NONE);
+    assert_eq!(
+        app.command,
+        format!("build{}", std::path::MAIN_SEPARATOR),
+        "Tab takes the row as the whole path, unquoted"
+    );
+
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert_eq!(app.mode, Mode::Normal, "the prompt closes on accept");
+    assert_eq!(
+        app.picker.as_ref().unwrap().root,
+        root.join("build").canonicalize().unwrap()
+    );
+    assert!(app.finder.is_some(), "it opens the unified finder");
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn an_empty_or_unusable_finder_path_is_refused_at_the_prompt() {
+    let root = ignored_file_project("finder-path-refused");
+    let mut app = isolated_app(&root);
+    app.working_directory = root.clone();
+
+    press(&mut app, ' ');
+    press(&mut app, '/');
+    press(&mut app, 'p');
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert!(app.picker.is_none(), "an empty path opens nothing");
+
+    press(&mut app, ' ');
+    press(&mut app, '/');
+    press(&mut app, 'p');
+    for character in "tracked.rs".chars() {
+        press(&mut app, character);
+    }
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert!(app.picker.is_none(), "a file is not a finder root");
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// The colon spelling reaches the same finder, and takes its path in quotes
+/// the way every other path argument does.
+#[test]
+fn the_colon_path_finder_accepts_a_quoted_argument_and_a_bare_call() {
+    let root = ignored_file_project("finder-path-colon");
+    fs::create_dir_all(root.join("a directory")).unwrap();
+    let mut app = isolated_app(&root);
+    app.working_directory = root.clone();
+
+    app.execute_command("file-picker-path \"a directory\"")
+        .unwrap();
+    assert_eq!(
+        app.picker.as_ref().unwrap().root,
+        root.join("a directory").canonicalize().unwrap()
+    );
+
+    app.close_file_picker();
+    app.execute_command("file-picker-path").unwrap();
+    assert_eq!(
+        app.prompt_kind,
+        PromptKind::FinderPath,
+        "a bare call asks for the path rather than refusing"
+    );
+    fs::remove_dir_all(root).unwrap();
+}

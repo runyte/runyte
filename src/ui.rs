@@ -2423,15 +2423,9 @@ fn draw_resource_finder(
     let (found, candidates) = app.picker_progress_counts();
     // Three keys open this overlay over three different scopes, so a finder
     // that is not the ordinary project one says which it is.
-    let scope = match &picker.scope {
-        crate::file_picker::ScanScope::Ignoring { .. } => String::new(),
-        crate::file_picker::ScanScope::Everything if picker.root == app.project_root => {
-            " · all files".to_owned()
-        }
-        crate::file_picker::ScanScope::Everything => {
-            format!(" · {}", picker.root.display())
-        }
-    };
+    let scope = picker
+        .scope_label(&app.project_root)
+        .map_or(String::new(), |scope| format!(" · {scope}"));
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(app.theme.accent))
