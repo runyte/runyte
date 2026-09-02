@@ -130,6 +130,19 @@ pub struct FileEntry {
     candidate_characters: usize,
 }
 
+/// The corpus a content re-scan replaced, kept readable while the walk that
+/// replaces it is still finding its first results.
+///
+/// Rows already on screen name the scan they were ranked against, so they go
+/// on resolving through this until an answer for the new scan arrives. It is
+/// one generation deep: a second re-scan retires it.
+#[derive(Clone, Debug)]
+struct PreviousCorpus {
+    scan: u64,
+    files: Vec<PickerFile>,
+    entries: Vec<FileEntry>,
+}
+
 /// An entry with its file resolved, which is how anything outside the picker
 /// reads one.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -440,6 +453,9 @@ pub struct FilePicker {
     /// Every distinct file the entries below refer to, each held once.
     files: Vec<PickerFile>,
     pub entries: Vec<FileEntry>,
+    /// The corpus a content re-scan replaced, still read by the rows on
+    /// screen. See [`FilePicker::view_in`].
+    previous: Option<PreviousCorpus>,
     pub matches: Vec<FuzzyMatch>,
     pub query: String,
     /// Monotonic identity of the query shown in the prompt.
@@ -502,6 +518,7 @@ impl FilePicker {
             kind,
             files: Vec::new(),
             entries: Vec::new(),
+            previous: None,
             matches: Vec::new(),
             query: String::new(),
             query_revision: 0,
@@ -537,7 +554,13 @@ impl FilePicker {
         scan_id: u64,
         kind: FilePickerKind,
     ) -> DiscardedPickerCorpus {
-        let discarded = self.take_corpus();
+        let mut discarded = self.take_corpus();
+        // A mode switch replaces the rows as well as the table under them,
+        // so the corpus a content re-scan kept readable has no reader left.
+        if let Some(previous) = self.previous.take() {
+            discarded.files = previous.files;
+            discarded.entries = previous.entries;
+        }
         self.scan_id = scan_id;
         self.kind = kind;
         self.scan_query = if kind == FilePickerKind::Contents {
@@ -677,6 +700,31 @@ impl FilePicker {
         self.entries.get(entry).map(|entry| self.resolve(entry))
     }
 
+    /// Reads an entry ranked against `scan`, which may be the corpus a
+    /// content re-scan replaced.
+    ///
+    /// A row names the scan its index belongs to, so this is what lets rows
+    /// stay on screen across a re-scan instead of blanking until the new walk
+    /// has results. `None` once that corpus is gone, which is the same answer
+    /// the scan-id guard has always given.
+    pub fn view_in(&self, scan: u64, entry: usize) -> Option<EntryView<'_>> {
+        if scan == self.scan_id {
+            return self.view(entry);
+        }
+        let previous = self.previous.as_ref().filter(|held| held.scan == scan)?;
+        previous
+            .entries
+            .get(entry)
+            .map(|entry| resolve_in(&previous.files, entry))
+    }
+
+    /// Retires the replaced corpus once nothing reads it any more.
+    pub(crate) fn forget_previous_corpus(&mut self) -> Option<impl Send + 'static> {
+        self.previous
+            .take()
+            .map(|previous| (previous.files, previous.entries))
+    }
+
     /// Every entry, in the order they were collected.
     pub fn views(&self) -> impl Iterator<Item = EntryView<'_>> {
         self.entries.iter().map(|entry| self.resolve(entry))
@@ -770,7 +818,20 @@ impl FilePicker {
     /// scan produced does not, because those entries answered a different
     /// question and cannot be narrowed into this one.
     pub(crate) fn restart_content_scan(&mut self, scan_id: u64) -> DiscardedPickerCorpus {
-        let discarded = self.take_corpus();
+        let mut discarded = self.take_corpus();
+        // The rows on screen were ranked against the table just taken, so it
+        // stays readable under its own scan id until this walk answers for
+        // the new one. Only one generation is kept: a reader who has typed
+        // past two re-scans is no longer looking at the first one's rows.
+        let previous = PreviousCorpus {
+            scan: self.scan_id,
+            files: std::mem::take(&mut discarded.files),
+            entries: std::mem::take(&mut discarded.entries),
+        };
+        if let Some(older) = self.previous.replace(previous) {
+            discarded.files = older.files;
+            discarded.entries = older.entries;
+        }
         self.scan_id = scan_id;
         self.scan_query = self.query.clone();
         self.selected = 0;
@@ -1033,6 +1094,12 @@ impl FilePicker {
             self.ranking = false;
         }
         old
+    }
+
+    /// Whether the answer still owed is that flush, which is the only one
+    /// that can let the rows be read.
+    pub(crate) fn awaiting_final_rank(&self) -> bool {
+        self.final_rank_pending
     }
 
     /// Holds the rows inert until the ranker answers the flush that a

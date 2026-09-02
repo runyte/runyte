@@ -147,6 +147,13 @@ pub struct FinderMatch {
     pub(crate) type_boost: bool,
 }
 
+/// File rows kept across a content re-query, with the scan they were ranked
+/// against so the usual guard still decides whether they may be read.
+pub(crate) struct KeptFileRows {
+    rows: Vec<FinderMatch>,
+    scan: Option<u64>,
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct FinderFileRankContext {
     pub revision: u64,
@@ -240,7 +247,17 @@ impl ResourceFinder {
             std::mem::take(&mut self.items)
         };
         let resource_matches = std::mem::take(&mut self.resource_matches);
-        let matches = std::mem::take(&mut self.matches);
+        // A name rank replaces this list wholesale when its answer lands, and
+        // until then the reader is still choosing from it, so the rows stay
+        // where they are rather than blanking for the length of a round trip.
+        // The scan they were ranked against stays named with them: a scan
+        // that restarts underneath them is what retires them, and the guard
+        // in `file_entry` is what notices.
+        let matches = if retain_items {
+            Vec::new()
+        } else {
+            std::mem::take(&mut self.matches)
+        };
         let suppressed_paths = if retain_items {
             HashSet::new()
         } else {
@@ -251,7 +268,9 @@ impl ResourceFinder {
         } else {
             std::mem::replace(&mut self.file_suppressed_paths, Arc::new(HashSet::new()))
         };
-        self.file_match_scan = None;
+        if !retain_items {
+            self.file_match_scan = None;
+        }
         let selected_preview = self.selected_preview.take();
         let claimed_selection = self.claimed_selection.take();
         let claimed_match_source = self.claimed_match_source.take();
@@ -707,6 +726,40 @@ impl ResourceFinder {
         old
     }
 
+    /// Sets the file rows aside before a content re-query retires the rest.
+    ///
+    /// A content item belongs to the query that collected it, so a row naming
+    /// one goes with that query. A file row names a scan the new query does
+    /// not replace, so it can stay on screen until the ranker answers instead
+    /// of blanking the list for the length of a round trip. What is left
+    /// behind in `matches` is what the retirement moves off this thread.
+    pub(crate) fn take_file_rows(&mut self) -> KeptFileRows {
+        let mut rows = Vec::new();
+        let mut retired = Vec::with_capacity(self.matches.len());
+        for found in std::mem::take(&mut self.matches) {
+            if matches!(found.source, FinderMatchSource::File(_)) {
+                rows.push(found);
+            } else {
+                retired.push(found);
+            }
+        }
+        self.matches = retired;
+        KeptFileRows {
+            rows,
+            scan: self.file_match_scan,
+        }
+    }
+
+    /// Puts those rows back as the list the new content scan starts from.
+    ///
+    /// They keep the scan they were ranked against rather than adopting the
+    /// current one: a scan that restarted underneath them is what retires
+    /// them, and `file_entry` is what notices.
+    pub(crate) fn restore_file_rows(&mut self, kept: KeptFileRows) {
+        self.matches = kept.rows;
+        self.file_match_scan = kept.scan;
+    }
+
     pub fn merge_files(&mut self, picker: &FilePicker, query: &str) {
         let selected = self.preserved_selection(picker);
         self.merge(picker, query, selected.as_ref());
@@ -980,8 +1033,9 @@ impl ResourceFinder {
             .and_then(|found| self.target_for_match(picker, found))
     }
 
-    /// The picker entry a file match names, or `None` when the picker has
-    /// rebuilt the entry table that match was ranked against.
+    /// The picker entry a file match names, read from the table it was
+    /// ranked against: the one on hand, or the one a content re-scan has
+    /// replaced but not yet retired. `None` once that table is gone.
     ///
     /// Rows, previews, and what `Enter` opens all resolve a file match
     /// through here, so none of them can read one scan's index in another
@@ -989,10 +1043,7 @@ impl ResourceFinder {
     /// the finder still holds the rows the previous ranking produced, and an
     /// index read across that boundary silently names an unrelated line.
     pub fn file_entry<'a>(&self, picker: &'a FilePicker, entry: usize) -> Option<EntryView<'a>> {
-        if self.file_match_scan != Some(picker.scan_id) {
-            return None;
-        }
-        picker.view(entry)
+        picker.view_in(self.file_match_scan?, entry)
     }
 
     fn target_for_match(&self, picker: &FilePicker, found: &FinderMatch) -> Option<FinderTarget> {
@@ -1237,6 +1288,36 @@ mod tests {
         let mut picker = FilePicker::new(1, PathBuf::from("/project"));
         picker.finish(0, false);
         picker
+    }
+
+    #[test]
+    fn a_name_rank_leaves_the_rows_the_reader_is_choosing_from_in_place() {
+        let mut picker = FilePicker::new(1, PathBuf::from("/project"));
+        picker.enable_unified_finder();
+        picker.add_paths(vec![crate::file_picker::ScanEntry::file(PathBuf::from(
+            "/project/picker.rs",
+        ))]);
+        picker.finish(0, false);
+        let mut finder = ResourceFinder::default();
+        finder.replace_items(
+            vec![item(ResourceKind::Buffer, "notes.txt", &["notes.txt"], 0)],
+            &picker,
+            "",
+        );
+        assert_eq!(finder.matches.len(), 2);
+
+        // The query moved on, but the answer to it is a round trip away and
+        // the reader is still looking at these rows.
+        let discarded = finder.retire_background_corpus(true);
+        drop(discarded);
+        finder.begin_name_rank("p", true);
+
+        assert_eq!(finder.matches.len(), 2, "the rows stay where they are");
+        assert!(
+            finder.file_entry(&picker, 0).is_some(),
+            "a file row still resolves against the scan it was ranked against"
+        );
+        assert_eq!(finder.selected, 0, "a new query starts at the top again");
     }
 
     #[test]
@@ -1591,7 +1672,8 @@ mod tests {
 
         // A truncated scan is restarted under the query it could not answer,
         // which refills the entry table from nothing. The rows the previous
-        // ranking produced are still here, and index a table that is gone.
+        // ranking produced are still here, and index a table this one has
+        // replaced.
         let _discarded = picker.restart_content_scan(2);
         picker.add_content(vec![crate::file_picker::FileHits {
             path: PathBuf::from("/project/zeta.rs"),
@@ -1602,10 +1684,23 @@ mod tests {
             }],
         }]);
 
-        assert!(
-            picker.view(0).is_some(),
+        assert_eq!(
+            picker.view(0).map(|entry| entry.path.to_path_buf()),
+            Some(PathBuf::from("/project/zeta.rs")),
             "the rebuilt table does answer the stale index, which is the hazard"
         );
+        assert_eq!(
+            finder
+                .file_entry(&picker, 0)
+                .map(|entry| entry.path.to_path_buf()),
+            Some(PathBuf::from("/project/alpha.rs")),
+            "a file match reads the table it was ranked against, not the one that replaced it"
+        );
+
+        // That table is kept for one generation, so the rows stay on screen
+        // while the walk replacing them runs. Once its answer lands, nothing
+        // reads them and the index stops resolving at all.
+        picker.forget_previous_corpus();
         assert!(
             finder.file_entry(&picker, 0).is_none(),
             "a file match cannot resolve against a table it was not ranked against"

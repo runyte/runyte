@@ -19,6 +19,26 @@ fn settle_finder(app: &mut App) {
     }
 }
 
+/// Applies a background picker event the way an event loop does.
+///
+/// The loop's pacing wake-up follows a ranked answer within the list
+/// interval, so a test that is not about pacing takes the answer straight
+/// away rather than waiting a second of wall clock for it.
+fn deliver(app: &mut App, event: FilePickerEvent) {
+    app.apply_file_picker_event(event);
+    app.publish_paced_picker_rows();
+}
+
+/// Runs the picker's own clocks the way the event loop does when
+/// [`App::picker_pacing_delay`] comes round, without a test waiting out the
+/// interval in wall clock.
+fn pacing_tick(app: &mut App) {
+    if let Some(due) = app.content_rescan_due {
+        app.content_rescan_due = Some(due - PICKER_LIST_INTERVAL);
+    }
+    app.advance_picker_pacing();
+}
+
 fn content_hits(path: &str, lines: usize) -> crate::file_picker::FileHits {
     crate::file_picker::FileHits {
         path: PathBuf::from(path),
@@ -669,7 +689,19 @@ fn project_finder_switches_name_and_content_modes_without_losing_its_query() {
         .into_iter()
         .find(|overlay| overlay.kind == crate::snapshot::OverlayKind::FilePicker)
         .unwrap();
-    assert_eq!(overlay.title, "Find · Contents");
+    assert!(
+        overlay.title.starts_with("Find · Contents · ") && overlay.title.ends_with(" matched"),
+        "the header names the mode and says what its counts count: {}",
+        overlay.title
+    );
+    assert!(
+        overlay
+            .message
+            .as_deref()
+            .is_none_or(|message| !message.contains("Scanning")),
+        "an attached client's header does not report whether a scan is running: {:?}",
+        overlay.message
+    );
     assert_eq!(overlay.layout, crate::snapshot::OverlayLayout::Preview);
     assert_eq!(overlay.preview_title.as_deref(), Some("Contents"));
     // A live buffer's content match previews the same snippet a file on disk
@@ -798,10 +830,13 @@ fn project_finder_snapshot_reports_filesystem_scan_failure() {
     let mut app = App::new_in_isolated_project(&root, ports).unwrap();
     app.open_project_picker().unwrap();
     let scan_id = app.picker.as_ref().unwrap().scan_id;
-    app.apply_file_picker_event(FilePickerEvent::Failed {
-        scan_id,
-        message: "discovery refused".to_owned(),
-    });
+    deliver(
+        &mut app,
+        FilePickerEvent::Failed {
+            scan_id,
+            message: "discovery refused".to_owned(),
+        },
+    );
 
     let overlay = app
         .overlay_snapshots()
@@ -2158,10 +2193,13 @@ fn fuzzy_picker_preview_prefers_unsaved_text_and_ignores_stale_scan_events() {
     };
     assert_eq!(lines[0], "unsaved disk text");
 
-    app.apply_file_picker_event(FilePickerEvent::Files {
-        scan_id: 8,
-        paths: vec![ScanEntry::file(directory.join("stale.txt"))],
-    });
+    deliver(
+        &mut app,
+        FilePickerEvent::Files {
+            scan_id: 8,
+            paths: vec![ScanEntry::file(directory.join("stale.txt"))],
+        },
+    );
     assert_eq!(app.picker.as_ref().unwrap().entries.len(), 1);
     fs::remove_dir_all(directory).unwrap();
 }
@@ -2226,7 +2264,7 @@ fn finished_background_scan_stays_pending_until_the_final_rank_arrives() {
                             ..
                         } if event_scan == scan_id
                     );
-                    app.apply_file_picker_event(event);
+                    deliver(&mut app, event);
                     if finished {
                         break;
                     }
@@ -2241,7 +2279,7 @@ fn finished_background_scan_stays_pending_until_the_final_rank_arrives() {
                 assert!(picker.selected_target().is_none(), "Enter stays disabled");
 
                 loop {
-                    app.apply_file_picker_event(events.recv().await.unwrap());
+                    deliver(&mut app, events.recv().await.unwrap());
                     if !app.picker.as_ref().unwrap().ranking {
                         break;
                     }
@@ -2276,25 +2314,31 @@ fn a_rank_already_in_flight_when_a_scan_finishes_leaves_the_rows_pending() {
     let complete = picker.matches.clone();
     app.picker = Some(picker);
 
-    app.apply_file_picker_event(FilePickerEvent::Finished {
-        scan_id: 9,
-        skipped: 0,
-        limited: false,
-    });
+    deliver(
+        &mut app,
+        FilePickerEvent::Finished {
+            scan_id: 9,
+            skipped: 0,
+            limited: false,
+        },
+    );
     assert!(app.picker.as_ref().unwrap().ranking);
 
     // A publish the ranker had already sent when the scan finished answers
     // only the candidates it held then, so it cannot release the rows.
-    app.apply_file_picker_event(FilePickerEvent::Ranked {
-        scan_id: 9,
-        query_revision: 0,
-        matches: Vec::new(),
-        match_positions: vec![None],
-        finder_matches: None,
-        finder_revision: None,
-        finder_positions: HashMap::new(),
-        flushed: false,
-    });
+    deliver(
+        &mut app,
+        FilePickerEvent::Ranked {
+            scan_id: 9,
+            query_revision: 0,
+            matches: Vec::new(),
+            match_positions: vec![None],
+            finder_matches: None,
+            finder_revision: None,
+            finder_positions: HashMap::new(),
+            flushed: false,
+        },
+    );
     let picker = app.picker.as_ref().unwrap();
     assert!(
         picker.ranking,
@@ -2302,16 +2346,19 @@ fn a_rank_already_in_flight_when_a_scan_finishes_leaves_the_rows_pending() {
     );
     assert!(picker.selected_target().is_none(), "Enter stays disabled");
 
-    app.apply_file_picker_event(FilePickerEvent::Ranked {
-        scan_id: 9,
-        query_revision: 0,
-        matches: complete.clone(),
-        match_positions: vec![Some(0)],
-        finder_matches: None,
-        finder_revision: None,
-        finder_positions: HashMap::new(),
-        flushed: true,
-    });
+    deliver(
+        &mut app,
+        FilePickerEvent::Ranked {
+            scan_id: 9,
+            query_revision: 0,
+            matches: complete.clone(),
+            match_positions: vec![Some(0)],
+            finder_matches: None,
+            finder_revision: None,
+            finder_positions: HashMap::new(),
+            flushed: true,
+        },
+    );
     let picker = app.picker.as_ref().unwrap();
     assert!(!picker.ranking);
     assert_eq!(picker.matches, complete);
@@ -2337,16 +2384,19 @@ fn background_picker_rejects_a_stale_query_revision() {
     let visible = picker.matches.clone();
     app.picker = Some(picker);
 
-    app.apply_file_picker_event(FilePickerEvent::Ranked {
-        scan_id: 9,
-        query_revision: 0,
-        matches: Vec::new(),
-        match_positions: vec![None],
-        finder_matches: None,
-        finder_revision: None,
-        finder_positions: HashMap::new(),
-        flushed: false,
-    });
+    deliver(
+        &mut app,
+        FilePickerEvent::Ranked {
+            scan_id: 9,
+            query_revision: 0,
+            matches: Vec::new(),
+            match_positions: vec![None],
+            finder_matches: None,
+            finder_revision: None,
+            finder_positions: HashMap::new(),
+            flushed: false,
+        },
+    );
 
     assert_eq!(app.picker.as_ref().unwrap().matches, visible);
     fs::remove_dir_all(root).unwrap();
@@ -2392,16 +2442,19 @@ fn background_picker_rejects_a_stale_resource_revision() {
     finder.append_items_unmerged([item("current")], "");
     app.finder = Some(finder);
 
-    app.apply_file_picker_event(FilePickerEvent::Ranked {
-        scan_id: 4,
-        query_revision: 0,
-        matches: Vec::new(),
-        match_positions: Vec::new(),
-        finder_matches: Some(vec![stale.clone()]),
-        finder_revision: Some(stale_revision),
-        finder_positions: [(stale.source, 0)].into_iter().collect(),
-        flushed: false,
-    });
+    deliver(
+        &mut app,
+        FilePickerEvent::Ranked {
+            scan_id: 4,
+            query_revision: 0,
+            matches: Vec::new(),
+            match_positions: Vec::new(),
+            finder_matches: Some(vec![stale.clone()]),
+            finder_revision: Some(stale_revision),
+            finder_positions: [(stale.source, 0)].into_iter().collect(),
+            flushed: false,
+        },
+    );
 
     assert_eq!(app.finder.as_ref().unwrap().matches, vec![stale]);
     assert!(app.picker.as_ref().unwrap().ranking);
@@ -2441,7 +2494,7 @@ fn background_file_scan_rank_and_preview_converge() {
                         app.advance_resource_finder_scan();
                     }
                     let event = events.recv().await.unwrap();
-                    app.apply_file_picker_event(event);
+                    deliver(&mut app, event);
                     let settled = app.picker.as_ref().is_some_and(|picker| {
                         !picker.loading
                             && !picker.ranking
@@ -2491,7 +2544,7 @@ fn background_content_query_converges_after_rapid_typing() {
                         app.advance_resource_finder_scan();
                     }
                     let event = events.recv().await.unwrap();
-                    app.apply_file_picker_event(event);
+                    deliver(&mut app, event);
                     let settled = app.picker.as_ref().is_some_and(|picker| {
                         !picker.loading
                             && !picker.ranking
@@ -2712,7 +2765,7 @@ fn attached_terminal_shift_during_retirement_forces_a_full_repair_pass() {
     runtime.block_on(async {
         tokio::time::timeout(std::time::Duration::from_secs(2), async {
             while app.picker.as_ref().unwrap().ranking {
-                app.apply_file_picker_event(events.recv().await.unwrap());
+                deliver(&mut app, events.recv().await.unwrap());
             }
         })
         .await
@@ -2796,7 +2849,7 @@ fn attached_terminal_shift_during_retirement_forces_a_full_repair_pass() {
     runtime.block_on(async {
         tokio::time::timeout(std::time::Duration::from_secs(2), async {
             while app.picker.as_ref().unwrap().ranking {
-                app.apply_file_picker_event(events.recv().await.unwrap());
+                deliver(&mut app, events.recv().await.unwrap());
             }
         })
         .await
@@ -2856,7 +2909,7 @@ fn attached_terminal_shift_during_retirement_forces_a_full_repair_pass() {
     runtime.block_on(async {
         tokio::time::timeout(std::time::Duration::from_secs(2), async {
             while app.picker.as_ref().unwrap().ranking {
-                app.apply_file_picker_event(events.recv().await.unwrap());
+                deliver(&mut app, events.recv().await.unwrap());
             }
         })
         .await
@@ -3060,7 +3113,7 @@ fn attached_finder_switches_from_content_back_to_names_after_ranker_reset() {
                         break;
                     }
                     let event = events.recv().await.unwrap();
-                    app.apply_file_picker_event(event);
+                    deliver(app, event);
                 }
             })
             .await
@@ -3225,6 +3278,9 @@ fn fuzzy_grep_reaches_a_match_the_candidate_limit_used_to_hide() {
     );
 
     type_text(&mut app, "markedthing");
+    // The re-scan a truncated corpus owes this query waits for the query to
+    // settle, which here is the next turn of the event loop.
+    pacing_tick(&mut app);
     let picker = app.picker.as_ref().unwrap();
     assert!(
         !picker.limited,
@@ -3366,7 +3422,8 @@ fn truncated_content_rescan_reranks_under_the_query_it_restarts_for() {
                         if settled {
                             break;
                         }
-                        app.apply_file_picker_event(events.recv().await.unwrap());
+                        pacing_tick(app);
+                        deliver(app, events.recv().await.unwrap());
                     }
                 })
                 .await
@@ -3386,11 +3443,15 @@ fn truncated_content_rescan_reranks_under_the_query_it_restarts_for() {
     // stopped at the entry ceiling, so the entries on hand cannot answer
     // "needle" and the picker restarts the scan the moment it learns that.
     let scan_id = app.picker.as_ref().unwrap().scan_id;
-    app.apply_file_picker_event(FilePickerEvent::Finished {
-        scan_id,
-        skipped: 0,
-        limited: true,
-    });
+    deliver(
+        &mut app,
+        FilePickerEvent::Finished {
+            scan_id,
+            skipped: 0,
+            limited: true,
+        },
+    );
+    pacing_tick(&mut app);
     assert_ne!(
         app.picker.as_ref().unwrap().scan_id,
         scan_id,
@@ -3481,7 +3542,7 @@ fn output_that_leaves_a_terminal_item_unchanged_does_not_move_the_name_list() {
 }
 
 #[test]
-fn a_header_count_changes_once_a_second_and_publishes_what_the_work_settled_on() {
+fn a_header_count_changes_once_a_second_and_catches_up_after_the_work_stops() {
     let root = temporary("picker-header-count-pacing");
     fs::create_dir_all(&root).unwrap();
     let ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
@@ -3515,10 +3576,13 @@ fn a_header_count_changes_once_a_second_and_publishes_what_the_work_settled_on()
     // can be read at, so the rest of the second the last one was shown in is
     // not shown at all.
     app.picker.as_mut().unwrap().loading = true;
-    app.apply_file_picker_event(FilePickerEvent::Files {
-        scan_id,
-        paths: vec![ScanEntry::file(root.join("alpha.rs"))],
-    });
+    deliver(
+        &mut app,
+        FilePickerEvent::Files {
+            scan_id,
+            paths: vec![ScanEntry::file(root.join("alpha.rs"))],
+        },
+    );
     app.prepare_view(geometry);
     assert_ne!(candidates(&app), held.1, "the corpus did move");
     assert_eq!(
@@ -3534,29 +3598,286 @@ fn a_header_count_changes_once_a_second_and_publishes_what_the_work_settled_on()
     assert_ne!(caught_up, held);
     assert_eq!(caught_up.1, candidates(&app));
 
-    // Whatever the work stops on is published at once: a settled header that
-    // reads something merely recent is wrong, not slow.
-    app.apply_file_picker_event(FilePickerEvent::Files {
-        scan_id,
-        paths: vec![ScanEntry::file(root.join("beta.rs"))],
-    });
+    // Work that stops inside the interval does not release it: the reader
+    // asked for a header that holds still, and one that jumps the moment a
+    // scan happens to end is the flicker they asked to be rid of.
+    deliver(
+        &mut app,
+        FilePickerEvent::Files {
+            scan_id,
+            paths: vec![ScanEntry::file(root.join("beta.rs"))],
+        },
+    );
+    deliver(
+        &mut app,
+        FilePickerEvent::Finished {
+            scan_id,
+            skipped: 0,
+            limited: false,
+        },
+    );
     app.prepare_view(geometry);
     assert_eq!(
         app.picker_progress_counts(),
         caught_up,
         "still inside the second the catch-up started"
     );
-    app.apply_file_picker_event(FilePickerEvent::Finished {
-        scan_id,
-        skipped: 0,
-        limited: false,
-    });
+
+    // Nothing else would come back for those last counts, so the loop is
+    // told how long it has to wait for them.
+    let owed = app
+        .picker_pacing_delay(Instant::now())
+        .expect("a header behind the work owes the reader a catch-up");
+    assert!(owed <= PICKER_PROGRESS_INTERVAL);
+    app.picker_progress.as_mut().unwrap().published -= Duration::from_secs(1);
     app.prepare_view(geometry);
     assert_eq!(
         app.picker_progress_counts().1,
         candidates(&app),
-        "the counts the scan finished on are exact"
+        "the counts the scan finished on are exact once the interval is out"
     );
+    assert_eq!(
+        app.picker_pacing_delay(Instant::now()),
+        None,
+        "a header that has caught up leaves the loop nothing to wake for"
+    );
+    app.close_file_picker();
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn a_ranked_answer_waits_for_the_rows_under_the_reader_and_a_list_key_takes_it() {
+    let root = temporary("picker-row-pacing");
+    fs::create_dir_all(&root).unwrap();
+    let ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    let (scanner, _events) = crate::file_picker::scanner();
+    app.attach_file_scanner(scanner);
+    let mut picker = FilePicker::new(9, root.clone());
+    picker.add_paths(vec![
+        ScanEntry::file(root.join("alpha.rs")),
+        ScanEntry::file(root.join("beta.rs")),
+    ]);
+    let both = picker.matches.clone();
+    app.picker = Some(picker);
+    let answer = |matches: Vec<crate::file_picker::FuzzyMatch>,
+                  match_positions: Vec<Option<usize>>| {
+        FilePickerEvent::Ranked {
+            scan_id: 9,
+            query_revision: 0,
+            matches,
+            match_positions,
+            finder_matches: None,
+            finder_revision: None,
+            finder_positions: HashMap::new(),
+            flushed: false,
+        }
+    };
+
+    // An empty list has no rows to hold still, so the first answer is shown
+    // as it lands and starts the interval.
+    app.apply_file_picker_event(answer(both.clone(), vec![Some(0), Some(1)]));
+    assert_eq!(app.picker.as_ref().unwrap().matches.len(), 2);
+
+    // The next answer inside that interval waits. Rows are what the reader
+    // is choosing from, so they are not turned over underneath them.
+    app.apply_file_picker_event(answer(vec![both[0].clone()], vec![Some(0), None]));
+    assert_eq!(
+        app.picker.as_ref().unwrap().matches.len(),
+        2,
+        "the rows the reader is looking at hold still"
+    );
+    let owed = app
+        .picker_pacing_delay(Instant::now())
+        .expect("a held answer owes the reader a frame");
+    assert!(owed <= PICKER_LIST_INTERVAL);
+
+    // A key that reads the list reads the newest answer, not the paced one.
+    key(&mut app, KeyCode::Down, Modifiers::NONE);
+    assert_eq!(app.picker.as_ref().unwrap().matches.len(), 1);
+    assert!(app.held_rank.is_none());
+
+    // Typing is the one picker key that does not read the list, so it leaves
+    // a held answer where it is — and an answer to a query the reader has
+    // already moved on from is discarded rather than shown.
+    app.apply_file_picker_event(answer(both.clone(), vec![Some(0), Some(1)]));
+    assert!(app.held_rank.is_some());
+    press(&mut app, 'a');
+    assert!(app.held_rank.is_some(), "typing does not read the list");
+    app.publish_paced_picker_rows();
+    assert_eq!(
+        app.picker.as_ref().unwrap().matches.len(),
+        1,
+        "a stale answer is discarded on publication, not shown"
+    );
+
+    app.close_file_picker();
+    assert!(app.held_rank.is_none(), "a closed picker holds nothing");
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn a_held_answer_offers_enter_only_when_publishing_it_would_release_the_rows() {
+    let root = temporary("held-answer-enter-hint");
+    fs::create_dir_all(&root).unwrap();
+    let ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    let (scanner, _events) = crate::file_picker::scanner();
+    app.attach_file_scanner(scanner);
+    let mut picker = FilePicker::new(9, root.clone());
+    picker.enable_unified_finder();
+    picker.add_paths(vec![ScanEntry::file(root.join("alpha.rs"))]);
+    picker.ranking = true;
+    let mut finder = ResourceFinder::new(FinderMode::Names);
+    finder.merge_files(&picker, "");
+    assert!(!finder.matches.is_empty());
+    // The finder's own half is still ranking, so the answer below covers
+    // only part of the list.
+    finder.loading = true;
+    let revision = finder.file_rank_revision();
+    let held = finder.matches.clone();
+    app.picker = Some(picker);
+    app.finder = Some(finder);
+    // Rows this fresh are what pacing holds an answer back from.
+    app.picker_rows_published = Some(Instant::now());
+    app.apply_file_picker_event(FilePickerEvent::Ranked {
+        scan_id: 9,
+        query_revision: 0,
+        matches: Vec::new(),
+        match_positions: vec![Some(0)],
+        finder_matches: Some(held),
+        finder_revision: Some(revision),
+        finder_positions: HashMap::new(),
+        flushed: false,
+    });
+    assert!(app.held_rank.is_some(), "the answer is being held");
+
+    let offers_enter = |app: &App| {
+        app.overlay_snapshots()
+            .into_iter()
+            .find(|overlay| overlay.kind == crate::snapshot::OverlayKind::FilePicker)
+            .expect("the picker is open")
+            .actions
+            .iter()
+            .any(|action| action.key_hint == "Enter")
+    };
+    assert!(
+        !offers_enter(&app),
+        "a key that published this answer would still find the rows inert"
+    );
+
+    app.finder.as_mut().unwrap().loading = false;
+    assert!(
+        offers_enter(&app),
+        "an answer that completes the rank is worth offering Enter for"
+    );
+
+    app.close_file_picker();
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn a_content_rescan_waits_for_the_query_to_settle() {
+    let root = temporary("content-rescan-settles");
+    fs::create_dir_all(&root).unwrap();
+    fs::write(
+        root.join("alpha.rs"),
+        "alpha and beta
+",
+    )
+    .unwrap();
+    let ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    app.execute_command("fuzzy-grep").unwrap();
+    let scanned = app.picker.as_ref().unwrap().scan_id;
+    // A walk that stopped at the entry ceiling left matches in the project it
+    // never reached, so no longer query can be answered from the entries on
+    // hand. That is the case that re-walks.
+    app.picker.as_mut().unwrap().limited = true;
+
+    // The walk does not run on the keystroke: it replaces the corpus the rows
+    // on screen are read from, and one per character is what emptied and
+    // refilled the list for every letter typed.
+    press(&mut app, 'a');
+    assert!(app.picker.as_ref().unwrap().content_rescan_needed());
+    assert_eq!(
+        app.picker.as_ref().unwrap().scan_id,
+        scanned,
+        "the keystroke itself starts no walk"
+    );
+    let owed = app
+        .picker_pacing_delay(Instant::now())
+        .expect("the loop is owed a re-scan");
+    assert!(owed <= PICKER_LIST_INTERVAL);
+
+    // Typing on pushes it out rather than adding a second walk.
+    press(&mut app, 'p');
+    assert_eq!(app.picker.as_ref().unwrap().scan_id, scanned);
+    pacing_tick(&mut app);
+    assert_ne!(
+        app.picker.as_ref().unwrap().scan_id,
+        scanned,
+        "one walk, taken once the query stopped moving"
+    );
+    assert!(
+        app.content_rescan_due.is_none(),
+        "and no second walk left owed"
+    );
+
+    app.close_file_picker();
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn a_content_walk_with_nothing_yet_keeps_the_rows_it_is_replacing() {
+    let root = temporary("content-walk-not-yet");
+    fs::create_dir_all(&root).unwrap();
+    let ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    let (scanner, _events) = crate::file_picker::scanner();
+    app.attach_file_scanner(scanner);
+    let mut picker = FilePicker::grep(9, root.clone());
+    picker.add_content(vec![content_hits("/project/alpha.rs", 1)]);
+    let mut finder = ResourceFinder::new(FinderMode::Contents);
+    finder.merge_files(&picker, "");
+    assert_eq!(finder.matches.len(), 1);
+    let revision = finder.file_rank_revision();
+    app.picker = Some(picker);
+    app.finder = Some(finder);
+    let answer = |flushed| FilePickerEvent::Ranked {
+        scan_id: 9,
+        query_revision: 0,
+        matches: Vec::new(),
+        match_positions: vec![None],
+        finder_matches: Some(Vec::new()),
+        finder_revision: Some(revision),
+        finder_positions: HashMap::new(),
+        flushed,
+    };
+
+    // The walk is still running, so finding nothing yet is not an answer.
+    app.apply_file_picker_event(answer(false));
+    assert_eq!(
+        app.finder.as_ref().unwrap().matches.len(),
+        1,
+        "rows the reader is choosing from are not emptied by a walk in progress"
+    );
+
+    // The flush a finished scan asks for is the answer, empty or not.
+    app.apply_file_picker_event(answer(true));
+    assert!(
+        app.finder.as_ref().unwrap().matches.is_empty(),
+        "a finished walk that found nothing says so"
+    );
+
     app.close_file_picker();
     fs::remove_dir_all(root).unwrap();
 }

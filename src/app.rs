@@ -173,6 +173,16 @@ impl Drop for FinderContentScan {
 /// say the work is moving.
 const PICKER_PROGRESS_INTERVAL: Duration = Duration::from_secs(1);
 
+/// How often the picker's rows may change under the reader.
+///
+/// A rank is answered far faster than a list can be read, so showing each
+/// answer the moment it lands turns the whole list over on every keystroke.
+/// The rows are what the reader is choosing from, so they move on their own
+/// clock instead; a key that acts on the list publishes the newest answer
+/// before it runs, and nothing is ever accepted from a list the ranker has
+/// already replaced.
+const PICKER_LIST_INTERVAL: Duration = Duration::from_millis(250);
+
 /// The counts a picker or finder header shows, and when they were published.
 ///
 /// Held rather than read live so the header changes on its own slow clock
@@ -2507,6 +2517,14 @@ pub struct App {
     /// The counts the picker and finder headers show, held still between
     /// refreshes. See [`App::pace_picker_progress`].
     picker_progress: Option<PickerProgress>,
+    /// The ranked answer the reader has not been shown yet, and when the
+    /// rows they are reading last changed. See
+    /// [`App::publish_paced_picker_rows`].
+    held_rank: Option<FilePickerEvent>,
+    picker_rows_published: Option<Instant>,
+    /// When a content query that has outgrown its corpus may re-scan for it.
+    /// See [`App::restart_content_scan_if_needed`].
+    content_rescan_due: Option<Instant>,
     /// Live sources are rebuilt when the finder corpus changes, not for each
     /// content-query keystroke. Restarting a query clones this shared table in
     /// constant time and resets only the bounded scan cursor.
@@ -2984,6 +3002,9 @@ impl App {
             finder: None,
             finder_content_scan: None,
             picker_progress: None,
+            held_rank: None,
+            picker_rows_published: None,
+            content_rescan_due: None,
             finder_content_sources: Arc::from([]),
             finder_content_suppressed_paths: Arc::new(HashSet::new()),
             finder_dirty_terminals: HashSet::new(),

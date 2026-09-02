@@ -1521,6 +1521,7 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
             break;
         }
         let hint_timeout = key_hints.time_until_expiry(Instant::now());
+        let picker_pacing = app.picker_pacing_delay(Instant::now());
         tokio::select! {
             input = terminal_events.next() => {
                 match input.transpose()? {
@@ -1730,6 +1731,16 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
             // dropping a terminal's rows and finding them again the list has a
             // hole where results the reader was looking at used to be.
             _ = frame_tick.tick(), if frame_pending && !app.finder_scan_refills() => {}
+            // Paced picker state comes due without an event to carry it: a
+            // ranked answer waiting for the rows to age out, and header
+            // counts the work stopped short of. Nothing else would wake for
+            // either, so the loop sleeps until whichever is nearer — and,
+            // like a frame, neither is published through a refill.
+            _ = tokio::time::sleep(picker_pacing.unwrap_or_default()),
+                if picker_pacing.is_some() && !app.finder_scan_refills() =>
+            {
+                app.advance_picker_pacing();
+            }
             _ = tokio::time::sleep(hint_timeout.unwrap_or_default()), if hint_timeout.is_some() => {
                 key_hints.expire_at(Instant::now());
             }
@@ -1944,6 +1955,7 @@ async fn run_host_server(
         key_hints.expire_at(Instant::now());
         let mut changed = false;
         let hint_timeout = key_hints.time_until_expiry(Instant::now());
+        let picker_pacing = host.picker_pacing_delay(Instant::now());
         tokio::select! {
             event = server.recv() => {
                 let Some(event) = event else {
@@ -2425,6 +2437,17 @@ async fn run_host_server(
                 && active.is_some()
                 && !host.finder_scan_refills() =>
             {
+                changed = true;
+            }
+            // Paced picker state comes due without an event to carry it: a
+            // ranked answer waiting for the rows to age out, and header
+            // counts the work stopped short of. Only an attached client can
+            // be shown either, so a detached host has nothing to wake for —
+            // and, like a frame, neither is published through a refill.
+            _ = tokio::time::sleep(picker_pacing.unwrap_or_default()),
+                if picker_pacing.is_some() && active.is_some() && !host.finder_scan_refills() =>
+            {
+                host.advance_picker_pacing();
                 changed = true;
             }
             _ = async {

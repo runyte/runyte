@@ -2203,11 +2203,6 @@ fn draw_picker(frame: &mut Frame<'_>, app: &TuiApp<'_>, editor_area: Rect) {
     if area.width < 4 || area.height < 4 {
         return;
     }
-    let progress = if picker.loading || picker.ranking {
-        "scanning"
-    } else {
-        "ready"
-    };
     let skipped = if picker.skipped > 0 {
         format!(" · {} skipped", picker.skipped)
     } else {
@@ -2216,7 +2211,7 @@ fn draw_picker(frame: &mut Frame<'_>, app: &TuiApp<'_>, editor_area: Rect) {
     let (found, candidates) = app.picker_progress_counts();
     let title = if app.finder.is_some() {
         format!(
-            " Find · Files · {} · {progress} · {found}/{candidates}{}{} · Tab buffers + terminals · Ctrl-t preview ",
+            " Find · Files · {} · {found}/{candidates} matched{}{} · Tab buffers + terminals · Ctrl-t preview ",
             picker.root.display(),
             skipped,
             if picker.limited {
@@ -2227,7 +2222,7 @@ fn draw_picker(frame: &mut Frame<'_>, app: &TuiApp<'_>, editor_area: Rect) {
         )
     } else {
         format!(
-            " {} · {} · {progress} · {found}/{candidates}{}{} · Ctrl-t preview ",
+            " {} · {} · {found}/{candidates} matched{}{} · Ctrl-t preview ",
             picker.kind.title(),
             picker.root.display(),
             skipped,
@@ -2401,11 +2396,6 @@ fn draw_resource_finder(
     if area.width < 4 || area.height < 4 {
         return;
     }
-    let progress = if picker.loading || picker.ranking || finder.loading {
-        "scanning"
-    } else {
-        "ready"
-    };
     let skipped = if picker.skipped > 0 {
         format!(" · {} skipped", picker.skipped)
     } else {
@@ -2425,7 +2415,7 @@ fn draw_resource_finder(
         .borders(Borders::ALL)
         .border_style(Style::default().fg(app.theme.accent))
         .title(format!(
-            " Find · {} · {progress} · {found}/{candidates}{}{}{} · Tab {} · Ctrl-t preview ",
+            " Find · {} · {found}/{candidates} matched{}{}{} · Tab {} · Ctrl-t preview ",
             finder.mode.title(),
             skipped,
             limited,
@@ -7554,7 +7544,14 @@ mod tests {
         let wide = rendered(&mut app, 120, 30);
         assert!(wide.contains("src/picker.rs"));
         assert!(wide.contains("preview heading"));
-        assert!(wide.contains("2/2"));
+        assert!(
+            wide.contains("2/2 matched"),
+            "the header says what its counts are counting"
+        );
+        assert!(
+            !wide.contains("scanning") && !wide.contains(" ready "),
+            "the header does not report whether a scan is running: {wide}"
+        );
 
         let narrow = rendered(&mut app, 60, 20);
         assert!(narrow.contains("src/picker.rs"));

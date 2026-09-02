@@ -9,14 +9,21 @@ use super::{
     App, BindingScope, Buffer, CompletionSource, ConfirmationOverlay, ContentAlignment,
     ContentLayout, DiffProjection, DiffSession, FinderMatchSource, FinderMode, FinderTarget,
     FrameGeometry, GeneratedViewIdentity, HelpTopic, ListPurpose, MaximizedView, Mode,
-    PICKER_PROGRESS_INTERVAL, Pane, Path, PickerProgress, Position, PreparedPane, PreparedRow,
-    PreparedView, PromptKind, Rect, ResourceKind, Selection, SettingType, Side, StashMutation,
-    adjust_scroll, adjust_scroll_wrapped, diff_projection, fold_hiding_row,
-    move_projected_start_backward, project_aligned_rows, project_visible_rows,
+    PICKER_LIST_INTERVAL, PICKER_PROGRESS_INTERVAL, Pane, Path, PickerProgress, Position,
+    PreparedPane, PreparedRow, PreparedView, PromptKind, Rect, ResourceKind, Selection,
+    SettingType, Side, StashMutation, adjust_scroll, adjust_scroll_wrapped, diff_projection,
+    fold_hiding_row, move_projected_start_backward, project_aligned_rows, project_visible_rows,
     selection_for_launch_position,
 };
 use crate::keymap::{ActionContext, ContextAction};
-use std::time::Instant;
+use std::time::{Duration, Instant};
+
+/// How long a paced value published at `published` has left to hold.
+fn paced_delay(published: Option<Instant>, interval: Duration, now: Instant) -> Duration {
+    published.map_or(Duration::ZERO, |published| {
+        interval.saturating_sub(now.saturating_duration_since(published))
+    })
+}
 
 impl App {
     pub fn active(&self) -> &Pane {
@@ -170,50 +177,79 @@ impl App {
         }
     }
 
-    /// Prepares layout, gutter, wrapping, and scroll state before rendering.
-    ///
-    /// This is the only frame lifecycle step allowed to mutate view state.
-    /// Rendering consumes the returned owned values and an immutable `App`.
     /// Advances the counts the picker and finder headers show.
     ///
     /// The headers read this rather than the live corpus, so their numbers
-    /// change on their own clock instead of on whatever a background scan
-    /// happened to deliver into this frame. Work that has stopped publishes
-    /// at once: the numbers it stopped on are the answer, and holding those
-    /// back would leave a settled header reading something merely recent.
+    /// change on their own clock instead of on whatever a background scan or
+    /// the reader's own typing happened to deliver into this frame. Nothing
+    /// releases the interval early: a scan that stops between two frames is
+    /// exact one interval later, and [`App::picker_pacing_delay`] is what
+    /// tells an event loop to come back for it.
     fn pace_picker_progress(&mut self) {
-        let Some(picker) = self.picker.as_ref() else {
+        let Some((matches, candidates)) = self.live_picker_progress() else {
             self.picker_progress = None;
             return;
         };
+        let published = Instant::now();
+        let publish = match self.picker_progress {
+            None => true,
+            Some(held) if held.matches == matches && held.candidates == candidates => false,
+            Some(held) => {
+                published.saturating_duration_since(held.published) >= PICKER_PROGRESS_INTERVAL
+            }
+        };
+        if publish {
+            self.picker_progress = Some(PickerProgress {
+                matches,
+                candidates,
+                published,
+            });
+        }
+    }
+
+    /// What an open picker has matched right now, out of how many candidates.
+    fn live_picker_progress(&self) -> Option<(usize, usize)> {
+        let picker = self.picker.as_ref()?;
         let finder = self.finder.as_ref();
-        let counts = PickerProgress {
-            matches: finder.map_or(picker.matches.len(), |finder| finder.matches.len()),
-            candidates: picker.entries.len()
+        Some((
+            finder.map_or(picker.matches.len(), |finder| finder.matches.len()),
+            picker.entries.len()
                 + finder.map_or(0, |finder| match finder.mode {
                     FinderMode::Names => finder.items.len(),
                     FinderMode::Contents => finder.content_item_count(),
                 }),
-            published: Instant::now(),
-        };
-        let settled =
-            !picker.loading && !picker.ranking && finder.is_none_or(|finder| !finder.loading);
-        let publish = match self.picker_progress {
-            None => true,
-            Some(held)
-                if held.matches == counts.matches && held.candidates == counts.candidates =>
-            {
-                false
-            }
-            Some(_) if settled => true,
-            Some(held) => {
-                counts.published.saturating_duration_since(held.published)
-                    >= PICKER_PROGRESS_INTERVAL
-            }
-        };
-        if publish {
-            self.picker_progress = Some(counts);
-        }
+        ))
+    }
+
+    /// How long until paced picker state may next change on its own.
+    ///
+    /// The clocks come due without an event to carry them: a ranked answer
+    /// waiting for the rows to age out, header counts the work has left
+    /// behind, and a content query owed the re-scan its corpus cannot
+    /// answer. An event loop that draws nothing in between has no other
+    /// reason to wake, so it asks here and sleeps for the nearest of them.
+    pub fn picker_pacing_delay(&self, now: Instant) -> Option<Duration> {
+        let rows = self
+            .held_rank
+            .is_some()
+            .then(|| paced_delay(self.picker_rows_published, PICKER_LIST_INTERVAL, now));
+        let counts = self
+            .live_picker_progress()
+            .filter(|live| {
+                self.picker_progress
+                    .is_none_or(|held| (held.matches, held.candidates) != *live)
+            })
+            .map(|_| {
+                paced_delay(
+                    self.picker_progress.map(|held| held.published),
+                    PICKER_PROGRESS_INTERVAL,
+                    now,
+                )
+            });
+        let rescan = self
+            .content_rescan_due
+            .map(|due| due.saturating_duration_since(now));
+        rows.into_iter().chain(counts).chain(rescan).min()
     }
 
     /// What the picker and finder headers say they have found, and out of how
@@ -223,6 +259,10 @@ impl App {
             .map_or((0, 0), |held| (held.matches, held.candidates))
     }
 
+    /// Prepares layout, gutter, wrapping, and scroll state before rendering.
+    ///
+    /// This is the only frame lifecycle step allowed to mutate view state.
+    /// Rendering consumes the returned owned values and an immutable `App`.
     pub fn prepare_view(&mut self, geometry: FrameGeometry) -> PreparedView {
         self.pace_picker_progress();
         self.flush_lsp_replies();
@@ -1033,13 +1073,14 @@ impl App {
         }
         if let Some(picker) = &self.picker {
             if let Some(finder) = &self.finder {
+                // The header carries paced counts instead of saying whether a
+                // scan is running: a word that appears and goes on every
+                // keystroke is a blink rather than something to read.
+                let (found, candidates) = self.picker_progress_counts();
                 let finder_status = if let Some(error) = picker.error.as_ref() {
                     Some(format!("Scan failed: {error}"))
                 } else {
                     let mut parts = Vec::new();
-                    if picker.loading || picker.ranking || finder.loading {
-                        parts.push("Scanning…".to_owned());
-                    }
                     if picker.skipped > 0 {
                         parts.push(format!("{} skipped", picker.skipped));
                     }
@@ -1055,7 +1096,10 @@ impl App {
                     .min(total_rows.saturating_sub(ROW_LIMIT));
                 let mut snapshot = bounded(
                     OverlayKind::FilePicker,
-                    format!("Find · {}", finder.mode.title()),
+                    format!(
+                        "Find · {} · {found}/{candidates} matched",
+                        finder.mode.title()
+                    ),
                     picker.query.clone(),
                     finder
                         .matches
@@ -1094,7 +1138,7 @@ impl App {
                 snapshot.scroll_anchor = (!finder.matches.is_empty()).then_some(finder.selected);
                 snapshot.query_cursor = Some(picker.query_cursor);
                 snapshot.layout = OverlayLayout::Preview;
-                snapshot.actions = if picker.ranking {
+                snapshot.actions = if picker.ranking && !self.held_rank_releases_rows() {
                     Vec::new()
                 } else {
                     vec![OverlayAction::new("Enter", "open")]
@@ -1137,12 +1181,20 @@ impl App {
                     .selected
                     .saturating_sub(ROW_LIMIT / 2)
                     .min(total_rows.saturating_sub(ROW_LIMIT));
+                let (found, candidates) = self.picker_progress_counts();
                 let mut snapshot = bounded(
                     OverlayKind::FilePicker,
                     if self.finder.is_some() {
-                        format!("Find · Files · {}", picker.root.display())
+                        format!(
+                            "Find · Files · {} · {found}/{candidates} matched",
+                            picker.root.display()
+                        )
                     } else {
-                        format!("{} · {}", picker.kind.title(), picker.root.display())
+                        format!(
+                            "{} · {} · {found}/{candidates} matched",
+                            picker.kind.title(),
+                            picker.root.display()
+                        )
                     },
                     picker.query.clone(),
                     picker
@@ -1164,9 +1216,7 @@ impl App {
                         })
                         .collect(),
                     (!picker.matches.is_empty()).then_some(picker.selected - row_offset),
-                    picker.error.clone().or_else(|| {
-                        (picker.loading || picker.ranking).then(|| "Scanning files…".to_owned())
-                    }),
+                    picker.error.clone(),
                 );
                 snapshot.row_offset = row_offset;
                 snapshot.total_rows = total_rows;
@@ -1176,7 +1226,7 @@ impl App {
                 snapshot.show_preview = picker.show_preview;
                 snapshot.preview_title = Some("Preview".to_owned());
                 snapshot.preview = Some(file_overlay_preview(picker.preview.as_ref()));
-                if picker.ranking {
+                if picker.ranking && !self.held_rank_releases_rows() {
                     snapshot.actions = vec![
                         OverlayAction::new("Ctrl-t", "toggle preview"),
                         OverlayAction::new("Esc", "cancel"),

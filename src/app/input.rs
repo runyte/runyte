@@ -3014,6 +3014,14 @@ impl App {
             self.close_file_picker();
             return Ok(());
         }
+        // Pacing holds a ranked answer back from the reader, never from the
+        // reader's own keys. Every key but a query edit reads the list —
+        // moving the selection, opening a row, switching mode — and reads it
+        // as the ranker last left it, so nothing is accepted from a list that
+        // has already been answered.
+        if !edits_picker_query(key) {
+            self.publish_paced_picker_rows();
+        }
 
         if self.finder.is_some() && key.code == KeyCode::Tab && key.modifiers.is_empty() {
             self.toggle_finder_mode();
@@ -5182,6 +5190,24 @@ fn is_macro_replay_cancel(input: &InputEvent) -> bool {
             ..
         })
     ) || matches!(input, InputEvent::Key(key) if *key == KeyStroke::ctrl('c'))
+}
+
+/// Whether a key in a picker only edits its query.
+///
+/// Query editing is the one thing a picker does that does not read the list,
+/// so it is also the only thing that may run against rows the ranker has
+/// already replaced. Caret movement is counted with the rest: publishing a
+/// held answer before it costs nothing and keeps the rule one line long.
+fn edits_picker_query(key: KeyStroke) -> bool {
+    let control = key.modifiers.contains(Modifiers::CONTROL);
+    match key.code {
+        KeyCode::Backspace | KeyCode::Delete => true,
+        KeyCode::Char('w' | 'k') if control => true,
+        KeyCode::Char(_) => !key
+            .modifiers
+            .intersects(Modifiers::CONTROL | Modifiers::ALT | Modifiers::SUPER),
+        _ => false,
+    }
 }
 
 fn edit_confirmation_text(input: &mut String, cursor: &mut usize, key: KeyStroke) {

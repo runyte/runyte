@@ -80,12 +80,23 @@ them, regardless of which extensibility direction is chosen.
 - **Picker overlay** — a transient choose-one overlay. Printable input filters
   candidates, Enter accepts the selected candidate, and Escape, `Ctrl-c`, or
   an initial bare Space cancels the request. The counts in a picker's header
-  — how many candidates matched, out of how many are on hand — are paced
-  rather than live: they change at most once a second while work is in
-  flight, and at once when it stops, so a settled header is exact rather than
-  merely recent. Scanner and ranker progress arrives far faster than a header
-  can be read, and the counts sit inside the title, so every digit they gain
-  or lose also moves the words after them. Once a project/content finder
+  — how many candidates matched, out of how many are on hand, written
+  `140/570 matched` — are paced rather than live: they change at most once a
+  second, whether a background scan or the reader's own typing moved them,
+  and nothing releases that interval early. A header says nothing about
+  whether a scan is running, and an attached client's overlay header carries
+  the same counts and the same silence: one paced state, published into a
+  snapshot rather than drawn. Scanner and ranker progress arrives far faster
+  than a header can be read, and the counts sit inside the title, so every
+  digit they gain or lose also moves the words after them. The rows are paced
+  on a shorter clock of their own: a ranked answer waits until the list under
+  the reader is a quarter-second old, so typing does not turn the whole list
+  over on every keystroke. Pacing holds an answer back from the reader, never from
+  the reader's own keys — every picker key but a query edit reads the list
+  and publishes the newest answer before it runs, and a header offers `Enter`
+  only where publishing what is held would leave rows that can be opened — and both clocks come due
+  without an event to carry them, so an event loop asks the editor how long
+  it has to wait and comes back for them. Once a project/content finder
   query contains text, Space remains its term separator. The **project
   finder** is one picker with two Tab-switched modes over the same three source
   kinds. **Name mode** merges files, open buffers, and terminal sessions by
@@ -100,9 +111,22 @@ them, regardless of which extensibility direction is chosen.
   separate overlays or separate stops in a picker cycle. Query text and its
   caret are immediate editor-owned state; filesystem discovery, file ranking,
   live-resource matching, result merging, and disk previews advance outside
-  input handling and are tagged with the query revision. The previous rows may
-  remain visible while a new revision ranks, but cannot be accepted, and an
-  older result or preview never replaces the current revision. A file match is
+  input handling and are tagged with the query revision. The previous rows stay
+  visible while a new revision ranks — a query keystroke does not blank the
+  list for the length of a round trip — but cannot be accepted, and an older
+  result or preview never replaces the current revision. Content search keeps
+  that promise across the re-scan its own corpus forces. A content scan
+  collects the lines one query matches, so a query the entries on hand cannot
+  answer is re-walked rather than re-ranked; that walk waits for the query to
+  stop moving, so a burst of typing costs one of them rather than one per
+  character, and until it runs the rows narrow in memory against what the
+  last walk collected. The corpus a walk replaces is kept for one generation
+  so the rows ranked against it stay readable — a row names the scan it
+  belongs to and is read through that, never through the table that replaced
+  it — and while the new walk is still running an answer with no rows is
+  taken as not having found any yet rather than as the query having none.
+  The flush a finished scan asks for is the exception: that one is the
+  answer, empty or not. A file match is
   an index into one scan's entry table and is read only together with that
   scan, so a restarted scan retires the rows ranked against the table it
   replaced rather than resolving their indices in the new one. A live terminal

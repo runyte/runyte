@@ -6,20 +6,41 @@
 use super::{
     App, CONTENT_ENTRY_LIMIT, FilePicker, FilePickerEvent, FilePickerKind, FilePreview,
     FileScanner, FinderContentScan, FinderContentSource, FinderMatchSource, FinderMode,
-    FinderTarget, Mode, PathBuf, Range, ResourceFinder, ResourceItem, ResourceKind, ResourceTarget,
-    Result, Selection, TerminalContentMark, TerminalContentRetirement, TerminalSession,
-    buffer_picker_columns, buffer_preview, resource_path_fields, scan_content, scan_files,
-    terminal_preview,
+    FinderTarget, Mode, PICKER_LIST_INTERVAL, PathBuf, Range, ResourceFinder, ResourceItem,
+    ResourceKind, ResourceTarget, Result, Selection, TerminalContentMark,
+    TerminalContentRetirement, TerminalSession, buffer_picker_columns, buffer_preview,
+    resource_path_fields, scan_content, scan_files, terminal_preview,
 };
 
 use std::collections::HashSet;
 use std::sync::Arc;
+use std::time::Instant;
 
 use crate::file_picker::{FileHits, FilePreviewRequest, line_hit, line_hit_from_trimmed};
 use crate::terminal::TerminalId;
 
 const RESOURCE_CONTENT_SLICE_ROWS: usize = 128;
 const RESOURCE_CONTENT_LINE_CHARACTERS: usize = 1_024;
+
+/// Whether a ranked answer names the finder's current live matches, and
+/// whether it is the complete answer for them.
+///
+/// The second is what lets the rows be read: an answer that arrived while the
+/// finder's own half was still ranking covers only part of the list.
+fn rank_answer_state(
+    finder: Option<&ResourceFinder>,
+    finder_revision: Option<u64>,
+) -> (bool, bool) {
+    let current = match (finder, finder_revision) {
+        (None, None) => true,
+        (Some(finder), Some(revision)) => finder.file_rank_revision() == revision,
+        _ => false,
+    };
+    (
+        current,
+        current && finder.is_none_or(|finder| !finder.loading),
+    )
+}
 
 /// Applies the part of the unified content budget still available to disk
 /// hits. Keeping this admission step outside `FilePicker::add_content` makes
@@ -255,13 +276,42 @@ impl App {
 
     /// Re-scans when the query has moved past what the entries on hand can
     /// answer. Every path that edits a content query funnels through here.
+    ///
+    /// A re-scan replaces the corpus the rows on screen are read from, so one
+    /// per keystroke empties the list and fills it again for every character
+    /// typed. Each keystroke schedules it instead, and pushes it out again:
+    /// a burst of typing costs one walk of the project, taken once the query
+    /// stops moving, which is also when the reader starts reading. Until it
+    /// fires the rows narrow in memory against what the last scan collected,
+    /// which is a subset of the answer rather than a different one.
     pub(super) fn restart_content_scan_if_needed(&mut self) {
         if !self
             .picker
             .as_ref()
             .is_some_and(FilePicker::content_rescan_needed)
         {
+            self.content_rescan_due = None;
             return;
+        }
+        self.content_rescan_due = Some(Instant::now() + PICKER_LIST_INTERVAL);
+    }
+
+    /// Starts a scheduled re-scan once its query has been still long enough.
+    ///
+    /// It scans for the query as it stands now rather than the one that
+    /// scheduled it, so a burst of typing costs one re-scan rather than one
+    /// for each character of it.
+    pub(super) fn restart_due_content_scan(&mut self, now: Instant) -> bool {
+        if self.content_rescan_due.is_none_or(|due| now < due) {
+            return false;
+        }
+        self.content_rescan_due = None;
+        if !self
+            .picker
+            .as_ref()
+            .is_some_and(FilePicker::content_rescan_needed)
+        {
+            return false;
         }
         self.start_content_scan();
         // A restart hands the background ranker a new scan id, which resets
@@ -276,9 +326,26 @@ impl App {
         if self.file_scanner.is_some() && self.finder.is_some() {
             self.rank_resource_finder();
         }
+        true
+    }
+
+    /// Advances whatever the picker's own clocks have made due.
+    ///
+    /// The event loop calls this when [`App::picker_pacing_delay`] says one
+    /// of them has come round; both change what the reader is looking at, so
+    /// the caller draws afterwards.
+    pub fn advance_picker_pacing(&mut self) -> bool {
+        let rescanned = self.restart_due_content_scan(Instant::now());
+        let published = self.publish_paced_picker_rows();
+        rescanned || published
     }
 
     pub(super) fn close_file_picker(&mut self) {
+        self.content_rescan_due = None;
+        if let Some(held) = self.held_rank.take() {
+            self.discard_rank_event(held);
+        }
+        self.picker_rows_published = None;
         let picker = self.picker.take();
         let scan_id = picker.as_ref().map(|picker| picker.scan_id);
         let discarded = (
@@ -551,9 +618,11 @@ impl App {
             return;
         };
         if let Some(scanner) = &self.file_scanner {
+            let kept = finder.take_file_rows();
             let discarded = finder.retire_background_corpus(false);
             scanner.discard_owned(discarded);
             finder.begin_content_scan_unmerged(&query, suppressed_paths);
+            finder.restore_file_rows(kept);
         } else {
             finder.begin_content_scan(picker, &query, suppressed_paths.iter().cloned());
         }
@@ -1354,7 +1423,151 @@ impl App {
         self.file_scanner = Some(scanner);
     }
 
+    /// Applies a scanner or ranker event, pacing the rows it would replace.
+    ///
+    /// Every other frontend-visible effect lands at once; only the ranked
+    /// answer waits, and only for as long as the list under the reader is
+    /// younger than [`PICKER_LIST_INTERVAL`].
     pub fn apply_file_picker_event(&mut self, event: FilePickerEvent) {
+        let Some(event) = self.hold_paced_rank(event) else {
+            return;
+        };
+        self.apply_file_picker_event_now(event);
+    }
+
+    /// Holds back the answer to the query on screen while its rows are young.
+    ///
+    /// A result the picker's own guards would discard passes straight
+    /// through, so its buffers go back to the ranker at once rather than
+    /// waiting out an interval to be thrown away. A newer answer replaces a
+    /// held one rather than queueing behind it: the reader is shown the
+    /// current state of the list, not every state it passed through.
+    fn hold_paced_rank(&mut self, event: FilePickerEvent) -> Option<FilePickerEvent> {
+        let FilePickerEvent::Ranked {
+            scan_id,
+            query_revision,
+            matches,
+            finder_matches,
+            flushed,
+            ..
+        } = &event
+        else {
+            return Some(event);
+        };
+        let Some(picker) = self.picker.as_ref() else {
+            return Some(event);
+        };
+        if *scan_id != picker.scan_id || *query_revision != picker.query_revision {
+            return Some(event);
+        }
+        // Whether the reader has rows to be choosing from at all.
+        let showing = self
+            .finder
+            .as_ref()
+            .map_or(!picker.matches.is_empty(), |finder| {
+                !finder.matches.is_empty()
+            });
+        // A content walk collects the lines one query matches, so while it is
+        // still running an answer with no rows means it has not found any
+        // yet, not that the query has none. Installing that would empty the
+        // list and fill it again a moment later, which is what a re-scan on
+        // every keystroke used to look like. The flush a finished scan asks
+        // for is exempt: that one is the answer.
+        // Only the half the reader is looking at counts: with a finder open
+        // the list is its merged rows, and an answer carrying no finder half
+        // leaves those rows alone rather than emptying them.
+        let answered_nothing = match (self.finder.as_ref(), finder_matches.as_ref()) {
+            (Some(_), Some(found)) => found.is_empty(),
+            (Some(_), None) => false,
+            (None, _) => matches.is_empty(),
+        };
+        if answered_nothing
+            && !*flushed
+            && showing
+            && picker.loading
+            && picker.kind == FilePickerKind::Contents
+        {
+            self.discard_rank_event(event);
+            return None;
+        }
+        // An empty list has no rows to hold still, and a picker that has just
+        // opened is waiting on the scanner rather than on pacing, so the
+        // answer that first fills one lands as it arrives.
+        let now = Instant::now();
+        if !showing
+            || self
+                .picker_rows_published
+                .is_none_or(|shown| now.saturating_duration_since(shown) >= PICKER_LIST_INTERVAL)
+        {
+            self.picker_rows_published = Some(now);
+            return Some(event);
+        }
+        if let Some(replaced) = self.held_rank.replace(event) {
+            self.discard_rank_event(replaced);
+        }
+        None
+    }
+
+    /// Whether the answer pacing is holding would let the rows be read.
+    ///
+    /// A key that reads the list publishes that answer before it runs, so
+    /// what the reader is offered has to be what they will get: an answer
+    /// still short of the finder's half, or of the flush a finished scan
+    /// asked for, leaves the rows inert whichever key publishes it.
+    pub(crate) fn held_rank_releases_rows(&self) -> bool {
+        let Some(FilePickerEvent::Ranked {
+            finder_revision,
+            flushed,
+            ..
+        }) = self.held_rank.as_ref()
+        else {
+            return false;
+        };
+        let Some(picker) = self.picker.as_ref() else {
+            return false;
+        };
+        rank_answer_state(self.finder.as_ref(), *finder_revision).1
+            && (*flushed || !picker.awaiting_final_rank())
+    }
+
+    /// Shows the ranked answer pacing has been holding back, if there is one.
+    ///
+    /// Returns whether the rows moved, so a caller drawing on its own clock
+    /// knows there is a frame worth publishing. A key that reads the list
+    /// calls this before it runs: pacing holds an answer back from the
+    /// reader, never from the reader's own keys.
+    pub fn publish_paced_picker_rows(&mut self) -> bool {
+        let Some(event) = self.held_rank.take() else {
+            return false;
+        };
+        self.picker_rows_published = Some(Instant::now());
+        self.apply_file_picker_event_now(event);
+        true
+    }
+
+    /// Returns a ranked answer nothing will show to the ranker's free lists.
+    fn discard_rank_event(&self, event: FilePickerEvent) {
+        let FilePickerEvent::Ranked {
+            matches,
+            match_positions,
+            finder_matches,
+            finder_positions,
+            ..
+        } = event
+        else {
+            return;
+        };
+        if let Some(scanner) = self.file_scanner.as_ref() {
+            scanner.discard_rank_result(
+                matches,
+                finder_matches.unwrap_or_default(),
+                match_positions,
+                finder_positions,
+            );
+        }
+    }
+
+    fn apply_file_picker_event_now(&mut self, event: FilePickerEvent) {
         let scanner = self.file_scanner.clone();
         if self.picker.is_none() {
             if let FilePickerEvent::Ranked {
@@ -1422,13 +1635,8 @@ impl App {
                 finder_positions,
                 flushed,
             } if scan_id == picker.scan_id && query_revision == picker.query_revision => {
-                let finder_current = match (&self.finder, finder_revision) {
-                    (None, None) => true,
-                    (Some(finder), Some(revision)) => finder.file_rank_revision() == revision,
-                    _ => false,
-                };
-                let finder_complete =
-                    finder_current && self.finder.as_ref().is_none_or(|finder| !finder.loading);
+                let (finder_current, finder_complete) =
+                    rank_answer_state(self.finder.as_ref(), finder_revision);
                 let old_matches = picker.apply_background_matches(
                     matches,
                     &match_positions,
@@ -1445,7 +1653,19 @@ impl App {
                         &finder_positions,
                     );
                 }
+                // Once both halves name the new corpus, the one a re-scan
+                // replaced has no reader left.
+                let retired_corpus = (finder_current || self.finder.is_none())
+                    .then(|| {
+                        self.picker
+                            .as_mut()
+                            .and_then(FilePicker::forget_previous_corpus)
+                    })
+                    .flatten();
                 if let Some(scanner) = scanner.as_ref() {
+                    if let Some(corpus) = retired_corpus {
+                        scanner.discard_owned(corpus);
+                    }
                     scanner.discard_rank_result(
                         old_matches,
                         discarded_finder_matches,
