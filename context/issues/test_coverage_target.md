@@ -59,9 +59,9 @@ runner, so CI can produce the required `aarch64-apple-darwin` baseline without
 a larger or self-hosted runner. The existing macOS job only runs the ordinary
 test suite and does not collect coverage.
 
-A future pull request may add a temporary, non-gating `coverage-macos` job that
+The CI workflow now includes a temporary, non-gating `coverage-macos` job that
 uses `macos-latest`, sets `TMPDIR=/private/tmp`, and follows the pinned Linux
-coverage recipe. The job must verify the target before measuring so a change to
+coverage recipe. The job verifies the target before measuring so a change to
 GitHub's moving runner alias cannot silently record an Intel baseline:
 
 ```sh
@@ -70,13 +70,12 @@ cargo llvm-cov --locked --workspace --no-report
 cargo llvm-cov report | tee coverage-summary-macos.txt
 ```
 
-The job should install `cargo-llvm-cov` 0.9.0, use a distinct macOS coverage
-cache key, publish the summary in the job summary, and retain it under a unique
-artifact name such as `rust-coverage-macos-arm64`. It must not enforce a new
-floor on its first run. Record the resulting toolchain, target, covered and
-total counts in `context/reference/test-coverage.md` before deciding whether
-the macOS coverage job should remain in CI or whether the cross-platform floor
-can change.
+It installs `cargo-llvm-cov` 0.9.0, uses a distinct macOS coverage cache key,
+publishes the summary in the job summary, and retains the HTML report and text
+summary as `rust-coverage-macos-arm64`. It does not enforce a new floor. Record
+the first successful run's toolchain, target, covered and total counts in
+`context/reference/test-coverage.md` before deciding whether the macOS coverage
+job should remain in CI or whether the cross-platform floor can change.
 
 ## What the number has to mean first
 
