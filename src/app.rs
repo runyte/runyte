@@ -2427,6 +2427,7 @@ struct PendingWorkspaceSearch {
     id: u64,
     pattern: String,
     mode: SearchMode,
+    started_at: Instant,
 }
 
 /// Clean special buffers retained across pane switches. A working set this

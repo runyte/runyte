@@ -42,6 +42,12 @@ them, regardless of which extensibility direction is chosen.
   title, not this row, owns active-buffer identity.
   Active-buffer state includes `[+]`, `[STALE]`, and `[RO]` with the same
   meanings and order as the pane title.
+  A long-running background action temporarily replaces the ordinary fields
+  with its action name, target or query, elapsed time, optional cancellation
+  hint, and a rotating spinner directly beside that text at the right edge.
+  Workspace search uses `Searching workspace`; Git mutations name their
+  operation. The interaction line remains independent and available for input
+  and action results while this progress is visible.
 - **Interaction line** — the final global row. It is reserved for an active
   prompt or the last action echo. Notifications never replace it.
 - **Overlay** — a temporary surface drawn over the editor area, such as a

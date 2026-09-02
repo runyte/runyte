@@ -36,6 +36,13 @@ replace a newer query. A synchronous service-free seam remains for isolated
 application tests and embedders that deliberately construct `App` without its
 host services.
 
+Pending searches also participate in the shared long-running-action
+presentation. The global status line shows `Searching workspace`, the query,
+elapsed time, and a rotating spinner directly beside the action text until the
+identified completion or failure clears the request. Ordinary interaction-line
+input and feedback cannot overwrite that progress. Git mutations retain
+priority when both kinds of background work are active.
+
 Regression coverage is in:
 
 - `src/workspace_search.rs`:

@@ -1428,6 +1428,13 @@ fn workspace_search_returns_to_input_before_controlled_scan_completion() {
     let request = requests.try_recv().expect("the scan was queued");
     assert_eq!(app.status, "searching workspace in the background");
     assert!(!app.active_buffer().is_workspace_search());
+    let action = app
+        .long_running_action_snapshot()
+        .expect("the pending search owns the progress status");
+    assert_eq!(action.label, "Searching workspace");
+    assert_eq!(action.detail, "needle");
+    assert_eq!(action.cancel_hint, None);
+    assert!(app.has_long_running_action());
     press(&mut app, 'l');
     assert_eq!(app.active().head(), 1, "input remains live while scanning");
 
@@ -1443,6 +1450,7 @@ fn workspace_search_returns_to_input_before_controlled_scan_completion() {
 
     assert!(app.active_buffer().is_workspace_search());
     assert!(app.active_buffer().to_string().contains("example.txt:1:1"));
+    assert!(!app.has_long_running_action());
     fs::remove_dir_all(directory).unwrap();
 }
 

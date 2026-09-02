@@ -255,7 +255,9 @@ and `Space / S` providing the retained workspace-wide forms. Finder query
 editing stays interactive while filesystem discovery, ranking, and previews
 continue in the background. Retained workspace searches also traverse and
 match in the background; accepting their prompt returns immediately, and the
-result buffer opens when the identified request completes.
+result buffer opens when the identified request completes. While one is
+pending, the status row keeps a rotating spinner directly beside
+`Searching workspace`, the query, and its elapsed time.
 
 - `:tutorial` opens a guided two-pane introduction to modes, selection-first
   editing, search, multiple carets, command namespaces, panes, buffer types,

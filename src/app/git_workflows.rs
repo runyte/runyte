@@ -1585,33 +1585,46 @@ impl App {
 
     /// Whether a frontend should advance its long-running-action animation.
     ///
-    /// This is deliberately phrased in UI terms rather than Git terms. Git is
-    /// the first producer, but future background services can join the same
-    /// presentation contract without changing the event loops or renderer.
+    /// This is deliberately phrased in UI terms rather than service terms.
+    /// Git mutations and workspace searches share one presentation contract,
+    /// so the event loops and renderer need no producer-specific animation.
     pub fn has_long_running_action(&self) -> bool {
-        self.active_git_mutation().is_some()
+        self.active_git_mutation().is_some() || self.pending_workspace_search.is_some()
     }
 
     pub(crate) fn long_running_action_snapshot(
         &self,
     ) -> Option<crate::snapshot::LongRunningActionSnapshot> {
-        let progress = self.active_git_mutation()?;
-        let elapsed_millis = progress
+        if let Some(progress) = self.active_git_mutation() {
+            let elapsed_millis = progress
+                .started_at
+                .map_or(0, |started| started.elapsed().as_millis())
+                .min(u128::from(u64::MAX)) as u64;
+            return Some(crate::snapshot::LongRunningActionSnapshot {
+                label: format!(
+                    "Git · {} {}",
+                    match progress.state {
+                        GitServiceState::Queued => "queued",
+                        _ => "running",
+                    },
+                    progress.operation
+                ),
+                detail: progress.repository.display().to_string(),
+                elapsed_millis,
+                cancel_hint: progress.cancellable.then(|| ":git-cancel".to_owned()),
+            });
+        }
+        let pending = self.pending_workspace_search.as_ref()?;
+        let elapsed_millis = pending
             .started_at
-            .map_or(0, |started| started.elapsed().as_millis())
+            .elapsed()
+            .as_millis()
             .min(u128::from(u64::MAX)) as u64;
         Some(crate::snapshot::LongRunningActionSnapshot {
-            label: format!(
-                "Git · {} {}",
-                match progress.state {
-                    GitServiceState::Queued => "queued",
-                    _ => "running",
-                },
-                progress.operation
-            ),
-            detail: progress.repository.display().to_string(),
+            label: "Searching workspace".to_owned(),
+            detail: pending.pattern.clone(),
             elapsed_millis,
-            cancel_hint: progress.cancellable.then(|| ":git-cancel".to_owned()),
+            cancel_hint: None,
         })
     }
 

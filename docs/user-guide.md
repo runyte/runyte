@@ -1511,7 +1511,10 @@ file: a gitignored path the finder omits is still searched by `Space / s` and
 apply `editor.show_hidden_files`, and read no file larger than 4 MiB. Accepting
 the prompt queues this traversal in the background and returns to input; the
 result buffer opens when the request completes. A newer workspace search
-supersedes an older one, so a late result cannot replace the newer query.
+supersedes an older one, so a late result cannot replace the newer query. A
+pending request temporarily replaces the normal status row with its elapsed
+time and a rotating `- \ | /` spinner directly beside `Searching workspace`
+and the query.
 
 The two fixed workspace searches replace and open one read-only
 `[workspace search]` buffer. Its `path:line:column` rows are a query-time

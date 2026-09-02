@@ -2148,8 +2148,8 @@ fn draw_long_running_action(
     let label_width = UnicodeWidthStr::width(label.as_str());
     let gap_width = width.saturating_sub(label_width).saturating_sub(1);
     let spans = vec![
-        Span::styled(label, base),
         Span::styled(" ".repeat(gap_width), base),
+        Span::styled(label, base),
         Span::styled(
             long_running_spinner_frame(action.elapsed_millis),
             base.fg(theme.accent).add_modifier(Modifier::BOLD),
@@ -4037,7 +4037,7 @@ mod tests {
     }
 
     #[test]
-    fn long_running_action_uses_a_right_anchored_rotating_bar() {
+    fn long_running_action_right_aligns_its_name_beside_the_rotating_bar() {
         let app = App::new(Config::default(), None).unwrap();
         let theme = TuiTheme::new(&app.theme);
         // Command mode's caret is asserted through the style rather than a
@@ -4089,6 +4089,10 @@ mod tests {
         assert!(start.contains("Indexing workspace · /project · 0s · :stop-index"));
         for (line, spinner) in frames.iter().zip(['-', '\\', '|', '/', '-']) {
             assert_eq!(line.chars().last(), Some(spinner), "{line:?}");
+            assert!(
+                line.ends_with(&format!(":stop-index {spinner}")),
+                "the action text sits beside its spinner: {line:?}"
+            );
             assert!(!line.contains('─'), "{line:?}");
             assert!(!line.contains('━'), "{line:?}");
         }

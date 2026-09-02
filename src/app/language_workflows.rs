@@ -1070,6 +1070,7 @@ impl App {
             id,
             pattern: pattern.to_owned(),
             mode,
+            started_at: std::time::Instant::now(),
         });
         if let Some(service) = self.workspace_search.as_ref() {
             if let Err(error) = service.search(request) {
