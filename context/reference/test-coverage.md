@@ -37,7 +37,7 @@ recorded separately.
 
 CI uses `cargo-llvm-cov` 0.9.0, publishes the full per-file summary in the job
 summary, retains an HTML report as the `rust-coverage-html` artifact for 14
-days, and fails below 83% total line coverage. The floor is deliberately below
+days, and fails below 86% total line coverage. The floor is deliberately below
 the observed baseline because conditional Linux and macOS code changes both the
 instrumented denominator and the paths available to a run on one platform.
 
@@ -57,9 +57,10 @@ under instrumentation.
 This is the first macOS measurement after the behavior-focused coverage pass.
 It supersedes the 2026-08-30 macOS baseline for current floor decisions and
 confirms that total line coverage exceeds 90% on both first-class targets. The
-enforced floor remains 83%: the above-95% target has not been reached, and
-90.14% leaves too little platform headroom to make 90% a useful regression
-gate.
+enforced floor is raised from 83% to 86%: this turns a material regression red
+while retaining 4.14 percentage points of headroom below the lower measured
+platform. The above-95% target has not been reached, and 90.14% leaves too
+little platform headroom to make 90% a useful regression gate.
 
 ## 2026-09-02 — Linux
 
@@ -81,7 +82,7 @@ observable refusal, recovery, lifecycle, protocol, picker, Git, LSP, terminal,
 and persistent-workspace behavior. Coverage-only command and provider sweeps
 were removed during review rather than retained for their reported gain.
 
-The enforced floor remains 83%. The 95% target has not been reached. The
+The enforced floor is 86%. The 95% target has not been reached. The
 same-tree macOS measurement above reached 90.14%, confirming the gain is not
 Linux-only but leaving too little headroom for a 90% cross-platform floor.
 

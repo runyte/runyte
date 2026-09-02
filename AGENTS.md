@@ -232,6 +232,13 @@ registry.
 
 - Preserve unrelated user changes and inspect `git status` before editing.
 - Keep changes focused and add tests at the behavior boundary being changed.
+- Treat the enforced total line-coverage floor in
+  `context/reference/test-coverage.md` as a repository invariant. Every change
+  must keep the canonical `cargo llvm-cov --locked --workspace` result at or
+  above that baseline on each first-class target it can affect. Add meaningful
+  behavior coverage when needed; never lower the floor to accommodate a
+  regression. Update the CI threshold, README badge, and coverage register
+  together whenever the floor is raised.
 - Use temporary directories for storage tests; tests must not write into the
   repository's `context/` or `.runyte/`, nor into the person's configuration
   or platform cache directories.

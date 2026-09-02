@@ -1,7 +1,7 @@
 # Runyte
 
 [![CI](https://github.com/runyte/runyte/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/runyte/runyte/actions/workflows/ci.yml)
-[![Coverage](https://img.shields.io/badge/coverage-%E2%89%A583%25-brightgreen)](context/reference/test-coverage.md)
+[![Coverage](https://img.shields.io/badge/coverage-%E2%89%A586%25-brightgreen)](context/reference/test-coverage.md)
 
 What Runyte is depends on how you use it. It can be any or all of the following:
 
@@ -13,8 +13,7 @@ What Runyte is depends on how you use it. It can be any or all of the following:
 - a **Git interface** with first-class worktree support
 
 Runyte brings these tools together in a consistent terminal environment, with
-one theme and one set of keybindings for editing files, managing terminals, and
-working with Git.
+one theme and one set of keybindings.
 
 Editing is selection-first, with multiple selections inspired by Helix and
 motions familiar to both Helix and Vim users.

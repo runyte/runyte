@@ -7,7 +7,7 @@ main evidence that both stay correct as the editor changes.
 `cargo-llvm-cov` 0.9.0 and Rust 1.97.1 on `aarch64-apple-darwin`: 90,481 of
 100,380 lines, 8,450 of 9,253 functions, and 140,408 of 156,605 regions. CI
 publishes the per-file summary, retains an HTML report, and fails below an
-enforced 83% line floor.
+enforced 86% line floor.
 
 The target is above 95% line coverage, with the CI floor and the README badge
 raised to match.
@@ -52,10 +52,11 @@ of 9,253 functions (91.32%), and 140,408 of 156,605 regions (89.66%). Both
 first-class targets now exceed 90% line coverage.
 
 The issue remains open. Linux still has 9,833 uncovered lines and macOS has
-9,899. The CI floor and README badge remain at 83% until the above-95% target
-holds on both first-class targets. A 90% floor would leave only 0.14 percentage
-points of headroom on the current macOS measurement, so it would not be a
-useful cross-platform regression gate.
+9,899. The CI floor and README badge are raised from 83% to 86%, leaving 4.14
+percentage points of headroom below the lower measured platform while making a
+material regression fail CI. The above-95% target remains open. A 90% floor
+would leave only 0.14 percentage points of headroom on the current macOS
+measurement, so it would not be a useful cross-platform regression gate.
 
 ## Current macOS baseline
 
