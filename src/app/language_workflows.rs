@@ -6,20 +6,20 @@
 use super::{
     ActionEntry, App, Assoc, BTreeMap, Buffer, BufferAction, BufferActionMenu, BufferKind, Change,
     ChangeSync, Completion, CompletionSource, CompletionState, ContextAction, ContextActionMenu,
-    DocumentEdit, DocumentState, DocumentSyntax, Encoding, GLOBAL_SEARCH_RESULT_LIMIT, HashMap,
-    HashSet, HoverState, InputGrammar, KeyCode, KeyStroke, ListAction, ListPicker, ListPurpose,
-    LspCommand, LspEvent, LspHandle, LspRange, Mode, Modifiers, Offset,
-    PATH_COMPLETION_ITEM_LIMIT_PER_ROOT, Path, PathActionMenu, PathBuf, PathClipboardTarget,
-    PathPopup, PendingRequest, PickerItem, PromptKind, Range, Register, RequestKind, Response,
-    Result, SPECIAL_BUFFER_RETENTION_LIMIT, SearchMode, Selection, SelectionSemantics, ServerState,
-    SignatureContext, SignatureState, TerminalAction, TerminalActionMenu, TerminalSession, Text,
-    TextDocumentContentChangeEvent, TrackedRequest, Transaction, WORD_COMPLETION_ITEM_LIMIT,
-    WorkspaceSearchTarget, buffer_language, buffer_picker_columns, buffer_preview,
-    checked_lsp_range, display_path, edit_summary, from_lsp_position, from_lsp_range,
-    is_word_completion_character, language_completion_prefix_start, matches_in_text, open_or_new,
-    operative_span, parse_buffer, path_token_before, push_matching_words, response_name,
-    row_is_not_before, to_lsp_position, word_bounds, word_token_before,
-    workspace_edit_path_identity, workspace_matches,
+    DocumentEdit, DocumentState, DocumentSyntax, Encoding, HashMap, HashSet, HoverState,
+    InputGrammar, KeyCode, KeyStroke, ListAction, ListPicker, ListPurpose, LspCommand, LspEvent,
+    LspHandle, LspRange, Mode, Modifiers, Offset, PATH_COMPLETION_ITEM_LIMIT_PER_ROOT, Path,
+    PathActionMenu, PathBuf, PathClipboardTarget, PathPopup, PendingRequest, PickerItem,
+    PromptKind, Range, Register, RequestKind, Response, Result, SPECIAL_BUFFER_RETENTION_LIMIT,
+    SearchMode, Selection, SelectionSemantics, ServerState, SignatureContext, SignatureState,
+    TerminalAction, TerminalActionMenu, TerminalSession, Text, TextDocumentContentChangeEvent,
+    TrackedRequest, Transaction, WORD_COMPLETION_ITEM_LIMIT, WorkspaceMatch, WorkspaceSearchEvent,
+    WorkspaceSearchRequest, WorkspaceSearchService, WorkspaceSearchSnapshot, WorkspaceSearchTarget,
+    buffer_language, buffer_picker_columns, buffer_preview, checked_lsp_range, display_path,
+    edit_summary, from_lsp_position, from_lsp_range, is_word_completion_character,
+    language_completion_prefix_start, open_or_new, operative_span, parse_buffer, path_token_before,
+    push_matching_words, response_name, row_is_not_before, to_lsp_position, word_bounds,
+    word_token_before, workspace_edit_path_identity,
 };
 #[cfg(unix)]
 use super::{SessionAction, SessionActionMenu};
@@ -1030,6 +1030,10 @@ impl App {
         true
     }
 
+    pub fn attach_workspace_search(&mut self, service: WorkspaceSearchService) {
+        self.workspace_search = Some(service);
+    }
+
     pub(super) fn open_global_search(&mut self, pattern: &str, mode: SearchMode) {
         let matcher = match mode.compile(pattern) {
             Ok(matcher) => matcher,
@@ -1038,38 +1042,96 @@ impl App {
                 return;
             }
         };
-        let (mut matches, mut limited) = match workspace_matches(
-            &self.project_root,
-            &matcher,
-            self.config.editor.show_hidden_files,
-        ) {
-            Ok(matches) => matches,
-            Err(error) => {
-                self.action_failed(error.to_string());
+        let id = self.next_workspace_search_id;
+        self.next_workspace_search_id = self.next_workspace_search_id.wrapping_add(1).max(1);
+        let open_buffers = self
+            .buffers
+            .iter()
+            .enumerate()
+            .filter(|(buffer_id, _)| !self.closed_buffers.contains(buffer_id))
+            .filter_map(|(_, buffer)| {
+                let path = buffer.path.as_ref()?;
+                (!buffer.is_directory() && path.starts_with(&self.project_root)).then(|| {
+                    WorkspaceSearchSnapshot {
+                        path: path.clone(),
+                        text: buffer.text().clone(),
+                    }
+                })
+            })
+            .collect();
+        let request = WorkspaceSearchRequest {
+            id,
+            root: self.project_root.clone(),
+            matcher,
+            show_hidden: self.config.editor.show_hidden_files,
+            open_buffers,
+        };
+        self.pending_workspace_search = Some(super::PendingWorkspaceSearch {
+            id,
+            pattern: pattern.to_owned(),
+            mode,
+        });
+        if let Some(service) = self.workspace_search.as_ref() {
+            if let Err(error) = service.search(request) {
+                self.pending_workspace_search = None;
+                self.error_from("Runyte", "Workspace search failed", error);
                 return;
             }
-        };
-        // Open buffers are authoritative over their on-disk versions so a
-        // workspace search never jumps to text the person has already edited
-        // away but not saved yet.
-        for (buffer_id, buffer) in self.buffers.iter().enumerate() {
-            if self.closed_buffers.contains(&buffer_id) {
-                continue;
-            }
-            let Some(path) = buffer.path.as_deref() else {
-                continue;
-            };
-            if buffer.is_directory() || !path.starts_with(&self.project_root) {
-                continue;
-            }
-            matches.retain(|found| found.path != path);
-            matches.extend(matches_in_text(path, &buffer.to_string(), &matcher));
+            self.status("searching workspace in the background");
+            return;
         }
-        matches.sort_by(|left, right| {
-            (&left.path, left.row, left.column).cmp(&(&right.path, right.row, right.column))
-        });
-        limited |= matches.len() > GLOBAL_SEARCH_RESULT_LIMIT;
-        matches.truncate(GLOBAL_SEARCH_RESULT_LIMIT);
+        match crate::workspace_search::perform(request, || false) {
+            Ok(Some((matches, limited))) => {
+                self.apply_workspace_search_event(WorkspaceSearchEvent::Completed {
+                    id,
+                    matches,
+                    limited,
+                })
+            }
+            Ok(None) => {
+                self.pending_workspace_search = None;
+            }
+            Err(error) => self.apply_workspace_search_event(WorkspaceSearchEvent::Failed {
+                id,
+                message: error.to_string(),
+            }),
+        }
+    }
+
+    pub fn apply_workspace_search_event(&mut self, event: WorkspaceSearchEvent) {
+        let id = match &event {
+            WorkspaceSearchEvent::Completed { id, .. }
+            | WorkspaceSearchEvent::Failed { id, .. } => *id,
+        };
+        if self
+            .pending_workspace_search
+            .as_ref()
+            .map(|pending| pending.id)
+            != Some(id)
+        {
+            return;
+        }
+        let pending = self
+            .pending_workspace_search
+            .take()
+            .expect("the matching workspace search is pending");
+        match event {
+            WorkspaceSearchEvent::Completed {
+                matches, limited, ..
+            } => self.finish_global_search(&pending.pattern, pending.mode, matches, limited),
+            WorkspaceSearchEvent::Failed { message, .. } => {
+                self.error_from("Runyte", "Workspace search failed", message);
+            }
+        }
+    }
+
+    fn finish_global_search(
+        &mut self,
+        pattern: &str,
+        mode: SearchMode,
+        matches: Vec<WorkspaceMatch>,
+        limited: bool,
+    ) {
         let result_count = matches.len();
 
         let mut lines = vec![

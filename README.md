@@ -253,7 +253,9 @@ authoritative buffer text, and decoded terminal output. Buffer search remains
 on `s` for escaped literals and `S` for regular expressions, with `Space / s`
 and `Space / S` providing the retained workspace-wide forms. Finder query
 editing stays interactive while filesystem discovery, ranking, and previews
-continue in the background.
+continue in the background. Retained workspace searches also traverse and
+match in the background; accepting their prompt returns immediately, and the
+result buffer opens when the identified request completes.
 
 - `:tutorial` opens a guided two-pane introduction to modes, selection-first
   editing, search, multiple carets, command namespaces, panes, buffer types,

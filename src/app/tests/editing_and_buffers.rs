@@ -1410,6 +1410,123 @@ fn global_search_opens_a_reusable_result_buffer_and_jumps_to_a_match() {
     fs::remove_dir_all(directory).unwrap();
 }
 
+#[test]
+fn workspace_search_returns_to_input_before_controlled_scan_completion() {
+    let directory = temporary("workspace-search-background-input");
+    fs::create_dir_all(&directory).unwrap();
+    fs::write(directory.join("example.txt"), "needle\n").unwrap();
+    let mut app = App::new(Config::default(), None).unwrap();
+    app.project_root = directory.clone();
+    seed(&mut app, "abc");
+    let (service, requests) = WorkspaceSearchService::controlled();
+    app.attach_workspace_search(service);
+
+    type_text(&mut app, " /s");
+    type_text(&mut app, "needle");
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+
+    let request = requests.try_recv().expect("the scan was queued");
+    assert_eq!(app.status, "searching workspace in the background");
+    assert!(!app.active_buffer().is_workspace_search());
+    press(&mut app, 'l');
+    assert_eq!(app.active().head(), 1, "input remains live while scanning");
+
+    let id = request.id;
+    let (matches, limited) = crate::workspace_search::perform(request, || false)
+        .unwrap()
+        .unwrap();
+    app.apply_workspace_search_event(WorkspaceSearchEvent::Completed {
+        id,
+        matches,
+        limited,
+    });
+
+    assert!(app.active_buffer().is_workspace_search());
+    assert!(app.active_buffer().to_string().contains("example.txt:1:1"));
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn workspace_search_rejects_a_superseded_completion() {
+    let directory = temporary("workspace-search-superseded");
+    fs::create_dir_all(&directory).unwrap();
+    let path = directory.join("example.txt");
+    fs::write(&path, "first second\n").unwrap();
+    let mut app = App::new(Config::default(), None).unwrap();
+    app.project_root = directory.clone();
+    let (service, requests) = WorkspaceSearchService::controlled();
+    app.attach_workspace_search(service);
+
+    app.open_global_search("first", SearchMode::Insensitive);
+    let first = requests.recv().unwrap();
+    app.open_global_search("second", SearchMode::Insensitive);
+    let second = requests.recv().unwrap();
+    let first_id = first.id;
+    let (matches, limited) = crate::workspace_search::perform(first, || false)
+        .unwrap()
+        .unwrap();
+
+    app.apply_workspace_search_event(WorkspaceSearchEvent::Completed {
+        id: first_id,
+        matches,
+        limited,
+    });
+    assert!(!app.active_buffer().is_workspace_search());
+    assert_eq!(app.status, "searching workspace in the background");
+
+    let second_id = second.id;
+    let (matches, limited) = crate::workspace_search::perform(second, || false)
+        .unwrap()
+        .unwrap();
+    app.apply_workspace_search_event(WorkspaceSearchEvent::Completed {
+        id: second_id,
+        matches,
+        limited,
+    });
+    assert!(
+        app.active_buffer()
+            .to_string()
+            .starts_with("Query: second\n")
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn background_workspace_search_uses_the_open_buffer_snapshot() {
+    let directory = temporary("workspace-search-open-snapshot");
+    fs::create_dir_all(&directory).unwrap();
+    let path = directory.join("example.txt");
+    fs::write(&path, "needle on disk\n").unwrap();
+    let mut app = App::new(Config::default(), Some(path.clone())).unwrap();
+    app.project_root = directory.clone();
+    let length = app.active_buffer().len_chars();
+    assert!(app.apply_to_buffer(
+        app.active().buffer,
+        &Transaction::new(vec![Change::new(0, length, "needle live\n")]),
+    ));
+    let (service, requests) = WorkspaceSearchService::controlled();
+    app.attach_workspace_search(service);
+
+    app.open_global_search("needle", SearchMode::Insensitive);
+    let request = requests.recv().unwrap();
+    assert_eq!(request.open_buffers.len(), 1);
+    assert_eq!(request.open_buffers[0].text.to_string(), "needle live\n");
+    let id = request.id;
+    let (matches, limited) = crate::workspace_search::perform(request, || false)
+        .unwrap()
+        .unwrap();
+    app.apply_workspace_search_event(WorkspaceSearchEvent::Completed {
+        id,
+        matches,
+        limited,
+    });
+
+    let rendered = app.active_buffer().to_string();
+    assert!(rendered.contains("needle live"), "{rendered}");
+    assert!(!rendered.contains("needle on disk"), "{rendered}");
+    fs::remove_dir_all(directory).unwrap();
+}
+
 #[cfg(unix)]
 #[test]
 fn workspace_search_escapes_line_breaks_without_losing_path_identity() {
@@ -1439,7 +1556,11 @@ fn workspace_search_retains_disk_scan_truncation_after_live_reconciliation() {
     let omitted = directory.join("a-omitted.txt");
     let saturated = directory.join("z-saturated.txt");
     fs::write(&omitted, "needle omitted\n").unwrap();
-    fs::write(&saturated, "needle\n".repeat(GLOBAL_SEARCH_RESULT_LIMIT)).unwrap();
+    fs::write(
+        &saturated,
+        "needle\n".repeat(crate::workspace_search::GLOBAL_SEARCH_RESULT_LIMIT),
+    )
+    .unwrap();
     let mut app = App::new(Config::default(), Some(saturated.clone())).unwrap();
     app.project_root = directory.clone();
     let length = app.buffers[0].len_chars();

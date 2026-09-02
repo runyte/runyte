@@ -25,6 +25,7 @@ use crate::{
     snapshot::{EditorSnapshot, OverlayIdentity, OverlayKind, OverlayRow, OverlaySnapshot},
     syntax::{SyntaxEvent, SyntaxHandle},
     text::Transaction,
+    workspace_search::WorkspaceSearchEvent,
 };
 
 use super::buffers::WaitRequest;
@@ -184,6 +185,7 @@ pub enum HostEvent {
     Syntax(SyntaxEvent),
     Lsp(LspEvent),
     FilePicker(FilePickerEvent),
+    WorkspaceSearch(WorkspaceSearchEvent),
     FileObservation(FileObservationEvent),
     GitInvalidation(GitInvalidation),
     Git(GitServiceEvent),
@@ -1064,6 +1066,7 @@ impl WorkspaceHost {
             }
             HostEvent::Lsp(event) => self.app.apply_lsp_event(event),
             HostEvent::FilePicker(event) => self.app.apply_file_picker_event(event),
+            HostEvent::WorkspaceSearch(event) => self.app.apply_workspace_search_event(event),
             HostEvent::FileObservation(event) => self.app.apply_file_observation(event),
             HostEvent::GitInvalidation(event) => self.apply_git_invalidation(event),
             HostEvent::Git(event) => self.apply_git_service_event(event),

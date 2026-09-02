@@ -1652,6 +1652,13 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
                     }
                 }
             }
+            event = services.workspace_search_events.recv() => {
+                if let Some(event) = event {
+                    app.apply_event(HostEvent::WorkspaceSearch(event));
+                } else {
+                    note_ended_service(&mut ended_services, "workspace search");
+                }
+            }
             event = services.file_monitor_events.recv() => {
                 if let Some(event) = event {
                     app.apply_event(HostEvent::FileObservation(event));
@@ -2316,6 +2323,14 @@ async fn run_host_server(
                     } else {
                         changed = true;
                     }
+                }
+            }
+            event = services.workspace_search_events.recv() => {
+                if let Some(event) = event {
+                    host.apply_event(HostEvent::WorkspaceSearch(event));
+                    changed = true;
+                } else {
+                    note_ended_service(&mut ended_services, "workspace search");
                 }
             }
             event = services.file_monitor_events.recv() => {
@@ -4427,6 +4442,8 @@ struct HostServices {
     language_servers: LspHandle,
     lsp_events: tokio::sync::mpsc::Receiver<LspEvent>,
     file_picker_events: tokio::sync::mpsc::Receiver<runyte::file_picker::FilePickerEvent>,
+    workspace_search_events:
+        tokio::sync::mpsc::Receiver<runyte::workspace_search::WorkspaceSearchEvent>,
     file_monitor: runyte::file_monitor::FileMonitorHandle,
     file_monitor_events: tokio::sync::mpsc::Receiver<runyte::buffer::FileObservationEvent>,
     git_monitor: runyte::git_monitor::GitMonitorHandle,
@@ -4469,6 +4486,8 @@ fn start_host_services(
     app.attach_syntax_worker(syntax_worker);
     let (file_scanner, file_picker_events) = file_picker::scanner();
     app.attach_file_scanner(file_scanner);
+    let (workspace_search, workspace_search_events) = runyte::workspace_search::spawn();
+    app.attach_workspace_search(workspace_search);
     let (mut file_monitor, file_monitor_events) = file_monitor::spawn();
     file_monitor.sync(app.file_monitor_requests());
     let (mut git_monitor, git_monitor_events) = git_monitor::spawn();
@@ -4502,6 +4521,7 @@ fn start_host_services(
         language_servers,
         lsp_events,
         file_picker_events,
+        workspace_search_events,
         file_monitor,
         file_monitor_events,
         git_monitor,

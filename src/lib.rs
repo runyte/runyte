@@ -66,4 +66,5 @@ pub mod ui;
 pub(crate) mod user_paths;
 pub mod word_index;
 pub mod workspace;
+pub mod workspace_search;
 pub mod wrap;

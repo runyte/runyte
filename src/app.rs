@@ -111,6 +111,10 @@ use crate::{
     text::{Assoc, Change, Offset, Text, Transaction},
     tutorial::{MotionHints, TutorialState},
     word_index::WordIndexHandle,
+    workspace_search::{
+        WorkspaceMatch, WorkspaceSearchEvent, WorkspaceSearchRequest, WorkspaceSearchService,
+        WorkspaceSearchSnapshot,
+    },
 };
 
 pub use crate::command::Mode;
@@ -2418,6 +2422,13 @@ struct MacroReplay {
     last_action_error: bool,
 }
 
+#[derive(Clone, Debug)]
+struct PendingWorkspaceSearch {
+    id: u64,
+    pattern: String,
+    mode: SearchMode,
+}
+
 /// Clean special buffers retained across pane switches. A working set this
 /// size covers the generated views a task moves between — help, the explorer,
 /// Git views, workspace results — so back/forward navigation reaches all of
@@ -2544,6 +2555,9 @@ pub struct App {
     finder_terminal_marks: HashMap<TerminalId, TerminalContentMark>,
     file_scanner: Option<FileScanner>,
     next_file_scan_id: u64,
+    workspace_search: Option<WorkspaceSearchService>,
+    next_workspace_search_id: u64,
+    pending_workspace_search: Option<PendingWorkspaceSearch>,
     /// A filesystem plan waiting for a separate, explicit confirmation.
     pub fs_confirmation: Option<FsConfirmation>,
     confirmation_revision: u64,
@@ -3015,6 +3029,9 @@ impl App {
             finder_terminal_marks: HashMap::new(),
             file_scanner: None,
             next_file_scan_id: 1,
+            workspace_search: None,
+            next_workspace_search_id: 1,
+            pending_workspace_search: None,
             fs_confirmation: None,
             confirmation_revision: 0,
             directory_reload_confirmation: None,
@@ -3779,18 +3796,6 @@ fn resource_path_fields(path: &Path, project_root: &Path, home: Option<&Path>) -
     fields
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct WorkspaceMatch {
-    path: PathBuf,
-    row: usize,
-    column: usize,
-    length: usize,
-    preview: String,
-}
-
-const GLOBAL_SEARCH_FILE_LIMIT: u64 = 4 * 1024 * 1024;
-const GLOBAL_SEARCH_RESULT_LIMIT: usize = 10_000;
-
 /// Every match of `query` in `buffer`, in buffer order, as selection ranges
 /// whose head sits on the match's last character.
 ///
@@ -3835,70 +3840,6 @@ fn buffer_matches(
         });
     }
     Ok(ranges)
-}
-
-fn workspace_matches(
-    root: &Path,
-    matcher: &Regex,
-    show_hidden: bool,
-) -> Result<(Vec<WorkspaceMatch>, bool)> {
-    let mut pending = vec![root.to_path_buf()];
-    let mut matches = Vec::new();
-    while let Some(directory) = pending.pop() {
-        let mut entries: Vec<_> =
-            std::fs::read_dir(&directory)?.collect::<std::io::Result<Vec<_>>>()?;
-        entries.sort_by_key(std::fs::DirEntry::file_name);
-        for entry in entries.into_iter().rev() {
-            let name = entry.file_name();
-            let name = name.to_string_lossy();
-            let file_type = entry.file_type()?;
-            if file_type.is_symlink() {
-                continue;
-            }
-            if file_type.is_dir() {
-                if matches!(name.as_ref(), ".git" | ".runyte" | "target")
-                    || (!show_hidden && name.starts_with('.'))
-                {
-                    continue;
-                }
-                pending.push(entry.path());
-                continue;
-            }
-            if !file_type.is_file()
-                || (!show_hidden && name.starts_with('.'))
-                || entry.metadata()?.len() > GLOBAL_SEARCH_FILE_LIMIT
-            {
-                continue;
-            }
-            let Ok(text) = std::fs::read_to_string(entry.path()) else {
-                continue;
-            };
-            matches.extend(matches_in_text(&entry.path(), &text, matcher));
-            if matches.len() >= GLOBAL_SEARCH_RESULT_LIMIT {
-                matches.truncate(GLOBAL_SEARCH_RESULT_LIMIT);
-                return Ok((matches, true));
-            }
-        }
-    }
-    Ok((matches, false))
-}
-
-/// Workspace results stay line-scoped: a picker row names one line, so a match
-/// that spanned several of them would have no row to be reported on.
-fn matches_in_text(path: &Path, text: &str, matcher: &Regex) -> Vec<WorkspaceMatch> {
-    let mut matches = Vec::new();
-    for (row, line) in text.lines().enumerate() {
-        for found in matcher.find_iter(line) {
-            matches.push(WorkspaceMatch {
-                path: path.to_path_buf(),
-                row,
-                column: line[..found.start()].chars().count(),
-                length: found.as_str().chars().count(),
-                preview: line.trim().chars().take(240).collect(),
-            });
-        }
-    }
-    matches
 }
 
 const fn syntax_object_label(object: SyntaxObject) -> &'static str {

@@ -1508,7 +1508,10 @@ The directory-scoped pickers have no key. `:file-picker-directory` and
 The two workspace searches walk the project themselves and consult no ignore
 file: a gitignored path the finder omits is still searched by `Space / s` and
 `Space / S`. They skip `.git`, `.runyte`, and `target` by name, skip symlinks,
-apply `editor.show_hidden_files`, and read no file larger than 4 MiB.
+apply `editor.show_hidden_files`, and read no file larger than 4 MiB. Accepting
+the prompt queues this traversal in the background and returns to input; the
+result buffer opens when the request completes. A newer workspace search
+supersedes an older one, so a late result cannot replace the newer query.
 
 The two fixed workspace searches replace and open one read-only
 `[workspace search]` buffer. Its `path:line:column` rows are a query-time
