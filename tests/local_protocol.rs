@@ -901,11 +901,9 @@ async fn standalone_event_loop_drains_integrated_terminal_output_before_quitting
     wait_for_terminal_screen(&output, "terminal-ready").await;
     std::io::Write::write_all(&mut terminal, b"\r").unwrap();
     std::io::Write::flush(&mut terminal).unwrap();
-    let deadline = Instant::now() + ASYNC_STATE_TIMEOUT;
-    while output.screen_text().contains("terminal-ready") {
-        assert!(Instant::now() < deadline, "exited terminal stayed visible");
-        tokio::time::sleep(ASYNC_STATE_POLL_INTERVAL).await;
-    }
+    wait_for_terminal_screen(&output, "note.txt").await;
+    wait_for_terminal_screen(&output, " NOR ").await;
+    assert!(!output.screen_text().contains("terminal-ready"));
     type_colon_command(&mut terminal, "quit-all!");
 
     assert!(wait_child(child.0.as_mut().unwrap()).await.success());
