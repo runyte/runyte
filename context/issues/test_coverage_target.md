@@ -52,7 +52,8 @@ verifying the runner target. It covered 90,481 of 100,380 lines (90.14%), 8,450
 of 9,253 functions (91.32%), and 140,408 of 156,605 regions (89.66%). Both
 first-class targets now exceed 90% line coverage.
 
-A continuation pass on Linux began from a fresh same-tree measurement of
+Commit `f363b02` (`Expand coverage of failure and lifecycle behavior`) records
+a continuation pass on Linux that began from a fresh same-tree measurement of
 90,308 of 100,134 lines (90.19%), 8,438 of 9,234 functions (91.38%), and
 140,184 of 156,240 regions (89.72%). The clean canonical result after the pass
 is 90,593 of 100,194 lines (90.42%), 8,449 of 9,238 functions (91.46%), and
@@ -77,13 +78,14 @@ assertions, and removed an existing Git test that only enumerated outcome
 variants. Unreachable UI code discovered during review was retained because
 removing production code was not necessary to establish the added behavior.
 
-The following Linux continuation began from a clean same-tree measurement of
-90,579 of 100,194 lines (90.40%), 8,449 of 9,238 functions (91.46%), and
-140,616 of 156,351 regions (89.94%). The clean canonical result after the pass
-is 90,688 of 100,194 lines (90.51%), 8,456 of 9,238 functions (91.53%), and
-140,743 of 156,351 regions (90.02%). The unchanged denominator and 109 newly
-covered lines produce a 0.11 percentage-point line gain; covered functions rose
-by seven and covered regions by 127.
+Commit `e960ad8` (`Expand async and refusal coverage`) records the following
+Linux continuation. It began from a clean same-tree measurement of 90,579 of
+100,194 lines (90.40%), 8,449 of 9,238 functions (91.46%), and 140,616 of
+156,351 regions (89.94%). The clean canonical result after the pass is 90,688
+of 100,194 lines (90.51%), 8,456 of 9,238 functions (91.53%), and 140,743 of
+156,351 regions (90.02%). The unchanged denominator and 109 newly covered lines
+produce a 0.11 percentage-point line gain; covered functions rose by seven and
+covered regions by 127.
 
 The retained tests exercise asynchronous Git log paging, file-diff creation,
 and one-shot stash-list creation through the service boundary; retirement and
@@ -142,7 +144,7 @@ summary as `rust-coverage-macos-arm64`. It did not enforce a new floor. Run
 successful measurement rather than doubling the full macOS suite on every CI
 run; this recipe remains the way to refresh the baseline when needed.
 
-## What the number has to mean first
+## What the number means
 
 The recorded baseline counts some inline `#[cfg(test)]` modules in both the
 covered count and the total, because stable Rust cannot mark every one of them
@@ -150,10 +152,11 @@ as excluded. The reported percentage therefore moves when the ratio of inline
 test code to production code moves, without any behavior becoming better tested.
 Standalone files under `tests/` are already excluded.
 
-Before the target is pursued, decide and record whether it applies to the
-reported figure or to a production-only figure, and if the latter, how that
-figure is produced and whether it can be enforced in CI. A 95% floor on a
-measure that inline test code inflates is weaker than the number suggests.
+Commit `26deb27` settled the measure: the target applies to the total **Lines**
+percentage printed by the canonical `cargo llvm-cov` command, not to a custom
+production-only figure. The inline-test caveat remains important when reading
+the result because a 95% floor on a measure that test code inflates is weaker
+than the number suggests.
 
 Platform-conditional code is the second reason the measure needs stating. A run
 on one target cannot execute the other platform's branches, while both remain in
@@ -173,8 +176,10 @@ enforced floor must be one that holds on whichever target CI measures.
 - Prefer the paths that are currently least exercised: error and refusal
   branches, cancellation and timeout, malformed external output, and the
   platform-specific arms of `cfg` blocks.
-- Where code is genuinely unreachable, reduce it rather than exempt it where
-  that is possible, and record the remainder as a known share of the denominator.
+- Do not change production code solely to shrink the coverage denominator. If
+  separately justified product work removes genuinely unreachable code, record
+  the remaining platform or instrumentation limitations rather than exempting
+  them from the measure.
 
 ## Constraints
 
@@ -189,8 +194,8 @@ enforced floor must be one that holds on whichever target CI measures.
   must skip cleanly when it is absent rather than fail.
 - Total suite runtime has to stay tolerable under instrumentation, which is
   slower than an ordinary run.
-- `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, and
-  `cargo test` must pass.
+- `cargo fmt --check`, `cargo clippy --all-targets --locked -- -D warnings`, and
+  `cargo test --locked` must pass.
 
 ## Recording
 
