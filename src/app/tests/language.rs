@@ -1204,6 +1204,59 @@ fn a_method_not_found_from_an_advertised_capability_is_still_a_retained_error() 
 }
 
 #[test]
+fn a_mismatched_language_response_is_retired_and_a_later_request_still_works() {
+    let (mut app, _path, mut queue) = rust_app("fn main() {}\n");
+    ready(&mut app, Encoding::Utf8);
+    drain(&mut queue);
+
+    app.lsp_hover();
+    let first = drain(&mut queue)
+        .into_iter()
+        .find_map(|command| match command {
+            LspCommand::Request { token, kind, .. } if matches!(*kind, RequestKind::Hover(_)) => {
+                Some(token)
+            }
+            _ => None,
+        })
+        .expect("hover request");
+    app.apply_lsp_event(LspEvent::Response {
+        token: first,
+        response: Response::Completions(Vec::new()),
+    });
+
+    assert!(app.status_error);
+    assert!(
+        app.status
+            .contains("unexpected completion response for documentation")
+    );
+    assert!(!app.lsp_requests.contains_key(&first));
+    assert!(app.hover.is_none());
+    assert!(app.completion.is_none());
+
+    app.lsp_hover();
+    let second = drain(&mut queue)
+        .into_iter()
+        .find_map(|command| match command {
+            LspCommand::Request { token, kind, .. } if matches!(*kind, RequestKind::Hover(_)) => {
+                Some(token)
+            }
+            _ => None,
+        })
+        .expect("later hover request");
+    assert_ne!(second, first);
+    app.apply_lsp_event(LspEvent::Response {
+        token: second,
+        response: Response::Hover("usable documentation".to_owned()),
+    });
+
+    assert_eq!(
+        app.hover.as_ref().map(|hover| hover.lines.clone()),
+        Some(vec!["usable documentation".to_owned()])
+    );
+    assert!(!app.lsp_requests.contains_key(&second));
+}
+
+#[test]
 fn a_single_goto_result_moves_the_caret_and_several_open_a_picker() {
     let (mut app, path, _queue) = rust_app("one\ntwo\nthree\n");
     ready(&mut app, Encoding::Utf8);

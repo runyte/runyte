@@ -3194,6 +3194,33 @@ fn history_pages_continue_by_object_identity_and_details_are_bounded_values() {
     ));
 }
 
+#[cfg(unix)]
+#[test]
+fn a_non_numeric_history_count_is_a_malformed_git_response() {
+    let repository = TempRepository::new("malformed-history-count");
+    repository.write("history.txt", "base\n");
+    repository.commit("base");
+    let head = git_output(&repository, &["rev-parse", "HEAD"]);
+    let program = repository.path().join("git-malformed-history-count");
+    install_stand_in(
+        &program,
+        "case \" $* \" in\n  *\" rev-list \"*) printf 'not-a-count\\n'; exit 0 ;;\n  *) printf 'unexpected command: %s\\n' \"$*\" >&2; exit 71 ;;\nesac\n",
+    );
+
+    let error = GitCliProvider::new(program)
+        .log_page(&repository.repository(), &LogRequest::default())
+        .unwrap_err();
+
+    assert!(matches!(
+        error,
+        GitError::Malformed {
+            ref command,
+            ref detail,
+        } if command == "git rev-list" && detail.contains("not an integer")
+    ));
+    assert_eq!(git_output(&repository, &["rev-parse", "HEAD"]), head);
+}
+
 #[test]
 fn commit_detail_reads_a_patch_past_the_default_output_bound() {
     let repository = TempRepository::new("large-commit-detail");

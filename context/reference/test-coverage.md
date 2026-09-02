@@ -70,9 +70,9 @@ under instrumentation.
 
 | Measure | Covered | Total | Coverage |
 | --- | ---: | ---: | ---: |
-| Lines | 90,593 | 100,194 | 90.42% |
-| Functions | 8,449 | 9,238 | 91.46% |
-| Regions | 140,633 | 156,351 | 89.95% |
+| Lines | 90,688 | 100,194 | 90.51% |
+| Functions | 8,456 | 9,238 | 91.53% |
+| Regions | 140,743 | 156,351 | 90.02% |
 
 The fresh same-tree baseline before the continuation pass was 90,308 of
 100,134 lines (90.19%), 8,438 of 9,234 functions (91.38%), and 140,184 of
@@ -92,6 +92,26 @@ made the failed-launch test incapable of executing a stale temporary file,
 strengthened file-versus-directory UI assertions, and removed a Git outcome
 matrix that enumerated variants without establishing distinct behavior.
 
+The next continuation pass began from a fresh same-tree result of 90,579 of
+100,194 lines (90.40%), 8,449 of 9,238 functions (91.46%), and 140,616 of
+156,351 regions (89.94%). The clean canonical result above adds 109 covered
+lines without changing the denominator, adds seven covered functions and 127
+covered regions, and raises line coverage by 0.11 percentage points.
+
+The retained tests cover asynchronous Git log paging, file-diff creation, and
+one-shot stash-list creation through service responses; recovery after an LSP
+response with the wrong semantic shape; starting-server and relative-document
+request refusals before the wire; a reload confirmation overtaken by a host
+buffer close; a malformed non-numeric Git history count; and cross-request
+wait-buffer isolation without losing either pending request. Review removed a
+synthetic repeat-attachment Git test that added no production coverage, routed
+the reload race through the host-close boundary, added deterministic LSP wire
+barriers and response-token assertions, strengthened the expected Git service
+operation checks, and narrowed test names that claimed more than they proved.
+The wait-ownership test is retained despite no line-count gain because the
+already-covered `ensure!` line hides its newly exercised false condition; its
+end-to-end state-integrity assertion is distinct from ordinary wait completion.
+
 The preceding behavior-focused pass had raised its own fresh same-tree Linux
 baseline from 89,267 of 99,906 lines (89.35%) to the recorded 90,301 of
 100,134 lines (90.18%), a gain of 0.83 percentage points. Its tests exercised
@@ -99,11 +119,11 @@ observable refusal, recovery, lifecycle, protocol, picker, Git, LSP, terminal,
 and persistent-workspace behavior; coverage-only command and provider sweeps
 were removed during review rather than retained for their reported gain.
 
-The enforced floor is 86%. The 95% target has not been reached. The
-latest macOS measurement above reached 90.14%, leaving too little headroom for
-a 90% cross-platform floor. No post-change macOS measurement exists yet, so the
-lower measured platform still provides 4.14 percentage points of headroom
-above the floor; neither the floor nor the README badge changes.
+The enforced floor is 86%. The 95% target has not been reached. The latest
+macOS measurement above reached 90.14%, leaving too little headroom for a 90%
+cross-platform floor. No post-change macOS measurement exists yet, so the lower
+measured platform still provides 4.14 percentage points of headroom above the
+floor; neither the floor nor the README badge changes.
 
 ## 2026-09-01
 

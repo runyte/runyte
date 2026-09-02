@@ -633,6 +633,72 @@ async fn pre_handshake_document_updates_are_bounded_and_stop_a_wedged_server() {
 }
 
 #[tokio::test]
+async fn a_request_while_the_server_is_starting_fails_without_reaching_the_wire() {
+    let mut harness = harness(Script::default().ignore_initialize());
+    assert!(harness.handle.send(LspCommand::Ensure {
+        language: "rust".to_owned()
+    }));
+    harness
+        .wait_for_sent(|message| message.get("method") == Some(&json!("initialize")))
+        .await;
+
+    assert!(harness.handle.send(LspCommand::Request {
+        token: 701,
+        language: "rust".to_owned(),
+        path: PathBuf::from("/tmp/runyte-lsp/a.rs"),
+        kind: Box::new(RequestKind::Hover(runyte::lsp::LspPosition::new(0, 0))),
+    }));
+    let (token, response) = harness
+        .next_matching(|event| match event {
+            LspEvent::Response { token, response } => Some((*token, response.clone())),
+            _ => None,
+        })
+        .await;
+    assert_eq!(token, 701);
+    let Response::Failed(reason) = response else {
+        panic!("a request to a starting server was not refused");
+    };
+    assert!(reason.contains("still starting"), "{reason}");
+    assert!(harness.handle.send(LspCommand::Shutdown));
+    harness
+        .wait_for_sent(|message| message.get("method") == Some(&json!("shutdown")))
+        .await;
+    assert!(harness.sent_with("textDocument/hover").is_empty());
+}
+
+#[tokio::test]
+async fn a_relative_document_path_is_refused_before_a_server_request_is_sent() {
+    let mut harness = harness(Script::default());
+    assert!(harness.handle.send(LspCommand::Ensure {
+        language: "rust".to_owned()
+    }));
+    harness.ready().await;
+
+    assert!(harness.handle.send(LspCommand::Request {
+        token: 702,
+        language: "rust".to_owned(),
+        path: PathBuf::from("relative.rs"),
+        kind: Box::new(RequestKind::Hover(runyte::lsp::LspPosition::new(0, 0))),
+    }));
+    let (token, response) = harness
+        .next_matching(|event| match event {
+            LspEvent::Response { token, response } => Some((*token, response.clone())),
+            _ => None,
+        })
+        .await;
+    assert_eq!(token, 702);
+    let Response::Failed(reason) = response else {
+        panic!("a relative document path was not refused");
+    };
+    assert!(reason.contains("not a path"), "{reason}");
+    open(&harness.handle);
+    harness
+        .wait_for_sent(|message| message.get("method") == Some(&json!("textDocument/didOpen")))
+        .await;
+    assert!(harness.sent_with("textDocument/hover").is_empty());
+}
+
+#[tokio::test]
 async fn cancelling_releases_protocol_correlation_and_notifies_the_server() {
     let mut harness = harness(Script::default().ignore("textDocument/hover"));
     assert!(harness.handle.send(LspCommand::Ensure {

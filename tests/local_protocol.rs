@@ -1875,6 +1875,110 @@ async fn completing_wait_buffers_transitions_from_partial_to_completed() {
 }
 
 #[tokio::test]
+async fn a_wait_rejects_another_waits_buffer_without_losing_either_request() {
+    let root = project();
+    let endpoint = LocalEndpoint::discover_with_runtime(
+        &root.join(".runyte"),
+        &root,
+        Some(test_runtime_dir()),
+    )
+    .unwrap();
+    let Some(mut host) = start_host(&root, &endpoint).await else {
+        fs::remove_dir_all(root).unwrap();
+        return;
+    };
+    let mut client = connect_control(&endpoint).await;
+
+    let mut waits = Vec::new();
+    for path in ["first.txt", "second.txt"] {
+        client
+            .send(&ClientRequest::CreateWait {
+                paths: vec![encode_path(&root.join(path))],
+            })
+            .await
+            .unwrap();
+        match semantic_response(&mut client).await {
+            HostResponse::WaitCreated {
+                token,
+                buffers,
+                interactive_attached: false,
+            } => waits.push((token, buffers[0])),
+            response => panic!("expected a wait request, got {response:?}"),
+        }
+    }
+
+    client
+        .send(&ClientRequest::CompleteWaitBuffer {
+            token: waits[0].0,
+            buffer: waits[1].1,
+        })
+        .await
+        .unwrap();
+    let refusal = semantic_response(&mut client).await;
+    assert!(
+        matches!(refusal, HostResponse::Error { ref message } if message.contains("not part of this wait request")),
+        "{refusal:?}"
+    );
+
+    client
+        .send(&ClientRequest::WaitStatus { token: waits[0].0 })
+        .await
+        .unwrap();
+    assert!(matches!(
+        semantic_response(&mut client).await,
+        HostResponse::WaitState {
+            token,
+            status: WaitStatus::Pending { ref remaining, .. },
+            ..
+        } if token == waits[0].0 && remaining == &[waits[0].1]
+    ));
+    client.send(&ClientRequest::Health).await.unwrap();
+    assert!(matches!(
+        semantic_response(&mut client).await,
+        HostResponse::Health {
+            pending_wait_requests: 2,
+            ..
+        }
+    ));
+
+    client
+        .send(&ClientRequest::CompleteWaitBuffer {
+            token: waits[0].0,
+            buffer: waits[0].1,
+        })
+        .await
+        .unwrap();
+    assert!(matches!(
+        semantic_response(&mut client).await,
+        HostResponse::WaitState {
+            token,
+            status: WaitStatus::Completed,
+            ..
+        } if token == waits[0].0
+    ));
+    client
+        .send(&ClientRequest::CancelWait { token: waits[1].0 })
+        .await
+        .unwrap();
+    assert!(matches!(
+        semantic_response(&mut client).await,
+        HostResponse::WaitState {
+            token,
+            status: WaitStatus::Cancelled { .. },
+            ..
+        } if token == waits[1].0
+    ));
+
+    shutdown(&mut client).await;
+    let status = tokio::task::spawn_blocking(move || host.0.take().unwrap().wait())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(status.success());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
 async fn an_edited_scratchpad_leaves_a_workspace_clean_enough_to_stop() {
     let root = project();
     let endpoint = LocalEndpoint::discover_with_runtime(

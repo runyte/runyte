@@ -70,6 +70,47 @@ fn dirty_file_reload_is_confirmed_and_installs_only_the_reviewed_revision() {
 }
 
 #[test]
+fn a_reload_confirmation_cannot_land_on_a_buffer_closed_after_review() {
+    let directory = temporary("closed-file-reload-confirmation");
+    fs::create_dir_all(&directory).unwrap();
+    let reviewed = directory.join("reviewed.txt");
+    let other = directory.join("other.txt");
+    fs::write(&reviewed, "reviewed on disk\n").unwrap();
+    fs::write(&other, "other on disk\n").unwrap();
+    let mut app = App::new(Config::default(), Some(reviewed.clone())).unwrap();
+    let reviewed_buffer = app.active().buffer;
+    app.apply_to_buffer(reviewed_buffer, &Transaction::insert(0, "unsaved "));
+    fs::write(&reviewed, "new disk revision\n").unwrap();
+    app.reload_file().unwrap();
+    assert!(app.file_reload_confirmation.is_some());
+
+    // A host-side close can overtake an attached client's confirmation and
+    // explicitly discard the dirty buffer before the delayed Enter arrives.
+    app.open_file(other.clone()).unwrap();
+    let other_buffer = app.active().buffer;
+    app.host_close_buffer(reviewed_buffer, true).unwrap();
+    assert!(app.closed_buffers.contains(&reviewed_buffer));
+
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+
+    assert!(app.file_reload_confirmation.is_none());
+    assert!(app.status_error);
+    assert!(
+        app.status.contains("file buffer was closed"),
+        "{}",
+        app.status
+    );
+    assert_eq!(app.active().buffer, other_buffer);
+    assert_eq!(app.buffers[other_buffer].to_string(), "other on disk\n");
+    assert_eq!(
+        fs::read_to_string(&reviewed).unwrap(),
+        "new disk revision\n"
+    );
+    assert_eq!(fs::read_to_string(&other).unwrap(), "other on disk\n");
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
 fn stale_state_is_shared_by_panes_and_transported_snapshots() {
     let directory = temporary("stale-shared-snapshot");
     fs::create_dir_all(&directory).unwrap();

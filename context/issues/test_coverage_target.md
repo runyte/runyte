@@ -4,8 +4,8 @@ Linux and macOS are Runyte's first-class platforms, and the test suite is the
 main evidence that both stay correct as the editor changes.
 
 `context/reference/test-coverage.md` records the current baselines. On
-`x86_64-unknown-linux-gnu`, `cargo-llvm-cov` 0.9.0 and Rust 1.97.1 cover 90,593
-of 100,194 lines, 8,449 of 9,238 functions, and 140,633 of 156,351 regions. The
+`x86_64-unknown-linux-gnu`, `cargo-llvm-cov` 0.9.0 and Rust 1.97.1 cover 90,688
+of 100,194 lines, 8,456 of 9,238 functions, and 140,743 of 156,351 regions. The
 latest `aarch64-apple-darwin` measurement covers 90,481 of 100,380 lines, 8,450
 of 9,253 functions, and 140,408 of 156,605 regions. CI publishes the per-file
 summary, retains an HTML report, and fails below an enforced 86% line floor.
@@ -77,13 +77,38 @@ assertions, and removed an existing Git test that only enumerated outcome
 variants. Unreachable UI code discovered during review was retained because
 removing production code was not necessary to establish the added behavior.
 
-The largest remaining Linux gaps by uncovered lines are
-`app/git_workflows.rs` (892), `app/input.rs` (763), `main.rs` (713),
-`git/cli.rs` (416), `app/language_workflows.rs` (407), `ui.rs` (341),
-`workspace/transport.rs` (341), `lsp/mod.rs` (330), `workspace/catalog.rs`
-(312), and `syntax/mod.rs` (310).
+The following Linux continuation began from a clean same-tree measurement of
+90,579 of 100,194 lines (90.40%), 8,449 of 9,238 functions (91.46%), and
+140,616 of 156,351 regions (89.94%). The clean canonical result after the pass
+is 90,688 of 100,194 lines (90.51%), 8,456 of 9,238 functions (91.53%), and
+140,743 of 156,351 regions (90.02%). The unchanged denominator and 109 newly
+covered lines produce a 0.11 percentage-point line gain; covered functions rose
+by seven and covered regions by 127.
 
-The issue remains open. Linux still has 9,601 uncovered lines and the latest
+The retained tests exercise asynchronous Git log paging, file-diff creation,
+and one-shot stash-list creation through the service boundary; retirement and
+recovery after a mismatched LSP response; starting-server and relative-path LSP
+refusals before a request reaches the wire; stale reload confirmation after a
+host-side buffer close; malformed non-numeric Git history counts; and
+cross-request wait-buffer isolation with both waits preserved after refusal.
+
+Quality and coverage reviews removed a synthetic repeated Git-service
+attachment test that added no production coverage, routed the reload race
+through the reachable host-close boundary, synchronized negative LSP wire
+assertions with later wire messages, checked their response tokens, asserted
+the expected initial Git discovery operation, and narrowed overbroad test
+names. The end-to-end wait-ownership test remains even though it adds no line
+coverage: LLVM already credits the shared `ensure!` line through its successful
+condition, while the new test uniquely proves the false condition preserves
+both requests and leaves the connection usable.
+
+The largest remaining Linux gaps by uncovered lines are
+`app/git_workflows.rs` (843), `app/input.rs` (761), `main.rs` (716),
+`git/cli.rs` (412), `app/language_workflows.rs` (389), `ui.rs` (341),
+`workspace/transport.rs` (341), `syntax/mod.rs` (310), `workspace/catalog.rs`
+(309), and `lsp/mod.rs` (309).
+
+The issue remains open. Linux still has 9,506 uncovered lines and the latest
 macOS measurement has 9,899. The CI floor and README badge remain at 86%,
 leaving 4.14 percentage points of headroom below the lower measured platform.
 There is no post-change macOS result to justify a higher cross-platform floor,

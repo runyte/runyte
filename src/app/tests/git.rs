@@ -903,6 +903,154 @@ fn log_pages_step_forward_and_back_without_taking_a_motion_key() {
 }
 
 #[test]
+fn asynchronous_log_paging_applies_the_page_correlated_with_the_request() {
+    let root = temporary("async-git-log-paging");
+    fs::create_dir_all(&root).unwrap();
+    let root = root.canonicalize().unwrap();
+    let repository = Repository::new(&root);
+    let mut app = App::new_in_isolated_project(
+        &root,
+        HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+            String::new(),
+        ))))),
+    )
+    .unwrap();
+    let (service, operations) = GitServiceHandle::recording_for_test();
+    app.attach_git_service(service);
+    assert!(matches!(
+        operations.recv_timeout(Duration::from_secs(1)).unwrap(),
+        GitOperation::Discover { .. }
+    ));
+    app.git.attach(Some(repository.clone()));
+    let commit = |digit: char| CommitSummary {
+        abbreviated: digit.to_string().repeat(7),
+        oid: digit.to_string().repeat(40),
+        parents: Vec::new(),
+        author: "Author".to_owned(),
+        author_time: 1,
+        author_date: "2026-09-02".to_owned(),
+        subject: format!("commit {digit}"),
+        decorations: Vec::new(),
+    };
+    let boundary = "1".repeat(40);
+    app.open_git_log_result(
+        LogRequest::default(),
+        LogPage {
+            commits: vec![commit('1')],
+            next: Some(LogCursor {
+                boundary: boundary.clone(),
+            }),
+            total_pages: 2,
+        },
+        0,
+        true,
+    );
+
+    app.next_git_log_page();
+    let next = operations.recv_timeout(Duration::from_secs(1)).unwrap();
+    assert!(matches!(
+        &next,
+        GitOperation::Log {
+            repository: requested,
+            request: LogRequest {
+                cursor: Some(LogCursor { boundary: cursor }),
+                ..
+            },
+        } if requested == &repository && cursor == &boundary
+    ));
+    let second_request = match &next {
+        GitOperation::Log { request, .. } => request.clone(),
+        _ => unreachable!(),
+    };
+    app.apply_git_service_event(GitServiceEvent::Completed {
+        id: GitRequestId::from_raw(2),
+        operation: next,
+        result: Box::new(Ok(GitResponse::Log {
+            request: second_request,
+            page: LogPage {
+                commits: vec![commit('2')],
+                next: None,
+                total_pages: 2,
+            },
+        })),
+        state: GitServiceState::Completed,
+        coalesced: false,
+    });
+    assert_eq!(app.git_state.log_page(), 1);
+    assert_eq!(app.git_state.log_rows()[0].oid, "2".repeat(40));
+
+    app.previous_git_log_page();
+    let previous = operations.recv_timeout(Duration::from_secs(1)).unwrap();
+    assert!(matches!(
+        previous,
+        GitOperation::Log {
+            repository: requested,
+            request: LogRequest { cursor: None, .. },
+        } if requested == repository
+    ));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn an_asynchronous_file_diff_opens_from_its_service_result() {
+    let root = temporary("async-git-diff");
+    fs::create_dir_all(&root).unwrap();
+    let root = root.canonicalize().unwrap();
+    let path = root.join("source.txt");
+    fs::write(&path, "new\n").unwrap();
+    let repository = Repository::new(&root);
+    let mut app = App::new_in_isolated_project(
+        &root,
+        HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+            String::new(),
+        ))))),
+    )
+    .unwrap();
+    let (service, operations) = GitServiceHandle::recording_for_test();
+    app.attach_git_service(service);
+    assert!(matches!(
+        operations.recv_timeout(Duration::from_secs(1)).unwrap(),
+        GitOperation::Discover { .. }
+    ));
+    app.git.attach(Some(repository.clone()));
+    app.open_file(path.clone()).unwrap();
+    assert!(matches!(
+        operations.recv_timeout(Duration::from_secs(1)).unwrap(),
+        GitOperation::StagedContent { .. }
+    ));
+
+    app.open_git_diff();
+    let request = operations.recv_timeout(Duration::from_secs(1)).unwrap();
+    assert!(matches!(
+        &request,
+        GitOperation::Diff {
+            repository: requested,
+            scope: DiffScope::Unstaged,
+            path: Some(requested_path),
+        } if requested == &repository && requested_path == &path
+    ));
+    assert_eq!(app.active_buffer().path.as_deref(), Some(path.as_path()));
+
+    let patch = "@@ -1 +1 @@\n-old\n+new\n";
+    app.apply_git_service_event(GitServiceEvent::Completed {
+        id: GitRequestId::from_raw(3),
+        operation: request,
+        result: Box::new(Ok(GitResponse::Diff {
+            scope: DiffScope::Unstaged,
+            path: Some(path),
+            text: patch.to_owned(),
+        })),
+        state: GitServiceState::Completed,
+        coalesced: false,
+    });
+
+    assert_eq!(app.active_buffer().display_name(), "[git diff source.txt]");
+    assert!(app.active_buffer().is_read_only());
+    assert!(app.active_buffer().to_string().contains(patch));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn git_log_shows_branch_and_tag_refs_as_a_row_hint_not_text() {
     let root = temporary("git-log-decorations");
     fs::create_dir_all(&root).unwrap();
@@ -4638,7 +4786,10 @@ fn a_failed_filesystem_barrier_retains_its_spec_for_a_bounded_retry() {
     app.git.attach(Some(repository));
     let (service, operations) = GitServiceHandle::recording_for_test();
     app.attach_git_service(service);
-    operations.recv_timeout(Duration::from_secs(1)).unwrap();
+    assert!(matches!(
+        operations.recv_timeout(Duration::from_secs(1)).unwrap(),
+        GitOperation::Discover { .. }
+    ));
     app.reconcile_git_after_filesystem(vec![path.clone()]);
     let failed = operations.recv_timeout(Duration::from_secs(1)).unwrap();
 
@@ -6265,6 +6416,55 @@ fn stash_actions_outside_the_list_name_the_way_to_open_it() {
         assert!(app.status.contains(&opening), "{command}: {}", app.status);
         assert!(app.git_stash_confirmation.is_none());
     }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn opening_stashes_uses_one_shot_service_results_when_no_view_is_visible() {
+    let root = temporary("async-stash-open");
+    fs::create_dir_all(&root).unwrap();
+    let root = root.canonicalize().unwrap();
+    let repository = Repository::new(&root);
+    let mut app = App::new_in_isolated_project(
+        &root,
+        HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+            String::new(),
+        ))))),
+    )
+    .unwrap();
+    let (service, operations) = GitServiceHandle::recording_for_test();
+    app.attach_git_service(service);
+    operations.recv_timeout(Duration::from_secs(1)).unwrap();
+    app.git.attach(Some(repository.clone()));
+
+    app.open_git_stashes();
+    let request = operations.recv_timeout(Duration::from_secs(1)).unwrap();
+    assert!(matches!(
+        &request,
+        GitOperation::Stashes {
+            repository: requested,
+        } if requested == &repository
+    ));
+    let entry = StashEntry {
+        oid: "a".repeat(40),
+        selector: "stash@{0}".to_owned(),
+        subject: "recover parser work".to_owned(),
+    };
+    app.apply_git_service_event(GitServiceEvent::Completed {
+        id: GitRequestId::from_raw(2),
+        operation: request,
+        result: Box::new(Ok(GitResponse::Stashes(vec![entry.clone()]))),
+        state: GitServiceState::Completed,
+        coalesced: false,
+    });
+
+    assert!(app.active_buffer().is_git_stash());
+    assert_eq!(app.git_state.stash_rows(), &[entry]);
+    assert!(
+        app.active_buffer()
+            .to_string()
+            .contains("recover parser work")
+    );
     fs::remove_dir_all(root).unwrap();
 }
 
