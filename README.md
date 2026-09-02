@@ -3,23 +3,23 @@
 [![CI](https://github.com/runyte/runyte/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/runyte/runyte/actions/workflows/ci.yml)
 [![Coverage](https://img.shields.io/badge/coverage-%E2%89%A583%25-brightgreen)](context/reference/test-coverage.md)
 
-Runyte is a terminal workspace for software development, built around a modal
-text editor. It brings together an editable file explorer, terminal
-multiplexing, persistent detachable sessions, fuzzy search across files,
-buffers, and terminals, and integrated Git workflows in one coherent interface.
+What Runyte is depends on how you use it. It can be any or all of the following:
 
-Runyte aims to provide a consistent environment—with a unified theme and
-keybindings—for people who regularly move between terminals and Git worktrees,
-search and edit files, and copy text between editor buffers and CLI
-applications. It is especially well suited to running multiple coding agents in
-parallel, but it does not depend on them. If your current setup combines
-separate tools or plugins for text editing, terminal multiplexing, file
-management, and Git, Runyte may be for you.
+- a **fast modal text editor** with batteries included and no configuration
+  required
+- a **terminal multiplexer** with fuzzy search across files, buffers, and
+  terminals
+- a **Git interface** with first-class worktree support
 
-At its core is a fast terminal editor written in Rust. Common motion
-keybindings will feel familiar to users of both Vim and Helix. Its
-multiple-selection model and selection-first editing are closer to Helix than
-Vim, while some commands and workflows are distinctly Runyte's own.
+Runyte brings these tools together in a consistent terminal environment, with
+one theme and one set of keybindings for editing files, managing terminals, and
+working with Git.
+
+Editing is selection-first, with multiple selections inspired by Helix and
+motions familiar to both Helix and Vim users.
+
+Runyte’s immediate focus is performance, reliability, and a rock-solid
+experience on macOS and Linux.
 
 Website: [runyte.com](https://runyte.com) ·
 Documentation: [user guide](docs/user-guide.md) ·
@@ -314,23 +314,6 @@ and join broader discussions on [r/runyte](https://www.reddit.com/r/runyte/).
 - **byte**, a small unit of machine-readable information
 - **Rust**, the language Runyte is written in
 - **unite**, because Runyte brings several terminal tools into one interface
-
-## Project philosophy
-
-Runyte is free and open source, built around a clear vision: a fast, coherent,
-dependable environment for working with code in the terminal.
-
-Feedback from people using Runyte is always welcome—whether about reliability,
-ergonomics, missing capabilities, or workflows the current design does not
-serve well. Real-world use is essential to making the editor better.
-
-Runyte’s features are designed and optimized as one system. The project favors
-consistency, performance, and maintainability over supporting every possible
-configuration or workflow.
-
-Different tools suit different ways of working. If Runyte fits yours, I hope
-you enjoy using it. If it does not, your perspective is still valuable, and
-its open-source license leaves you free to adapt and build on its ideas.
 
 ## Acknowledgements
 
