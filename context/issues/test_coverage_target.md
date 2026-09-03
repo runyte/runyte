@@ -4,11 +4,11 @@ Linux and macOS are Runyte's first-class platforms, and the test suite is the
 main evidence that both stay correct as the editor changes.
 
 `context/reference/test-coverage.md` records the current baselines. On
-`x86_64-unknown-linux-gnu`, `cargo-llvm-cov` 0.9.0 and Rust 1.97.1 cover 92,357
-of 101,629 lines, 8,606 of 9,378 functions, and 143,119 of 158,476 regions. The
-latest `aarch64-apple-darwin` measurement covers 90,481 of 100,380 lines, 8,450
-of 9,253 functions, and 140,408 of 156,605 regions. CI publishes the per-file
-summary, retains an HTML report, and fails below an enforced 86% line floor.
+`x86_64-unknown-linux-gnu`, `cargo-llvm-cov` 0.9.0 and Rust 1.97.1 cover 92,757
+of 101,629 lines, 8,635 of 9,378 functions, and 143,837 of 158,476 regions. The
+latest `aarch64-apple-darwin` measurement covers 92,918 of 101,875 lines, 8,647
+of 9,397 functions, and 144,039 of 158,841 regions. CI publishes the per-file
+summary, retains an HTML report, and fails below an enforced 89% line floor.
 
 The target is above 95% line coverage, with the CI floor and the README badge
 raised to match.
@@ -128,42 +128,124 @@ confirmation. Review corrected the refused-clipboard test, which had asserted
 on the transient action feedback a refusal does not set rather than on the
 status and retained notification it does.
 
+A further pass on Linux began from a fresh same-tree measurement of that tree:
+92,359 of 101,629 lines (90.88%), 8,603 of 9,378 functions (91.74%), and
+143,125 of 158,476 regions (90.31%). The clean canonical result after the pass
+is 92,621 of 101,629 lines (91.14%), 8,625 of 9,378 functions (91.97%), and
+143,582 of 158,476 regions (90.60%). Every added test lives in a directory
+named `tests`, so the instrumented total again did not move: 262 newly covered
+lines, 22 functions and 457 regions produce a 0.26 percentage-point line gain.
+Six files ended one or two uncovered lines worse than the baseline run, which
+is the run-to-run variation in concurrent paths that earlier passes also
+recorded; the figures above are the net.
+
+Most of that pass is a standalone `tests/terminal_sequences.rs`. The integrated
+terminal's escape-sequence vocabulary was proven only through a real child on a
+real pseudoterminal, which left the sequences no fixed program in the
+compatibility matrix happens to send unexercised. The new file feeds them
+straight to the emulator: cursor addressing and its screen and scroll-region
+bounds, origin-mode addressing and the cursor report, tab stops and their
+clearing, character and line insertion, deletion, erasure and downward
+scrolling, the saved cursor in both its escape and CSI forms, insert and
+autowrap modes, each graphic rendition and its own reset, and the device
+attribute and status answers. `context/reference/terminal-compatibility-v1.md`
+lists it as part of the reproducible boundary.
+
+The rest of that pass covers the word each LSP symbol kind is displayed with,
+including a kind Runyte has no word for; a flat workspace-symbol response,
+whose container is kept and whose non-file URI is dropped; one ambient Git
+snapshot refreshing an open branch list, the staged index view and a per-file
+diff in place, with the index heading counting the staged files the snapshot
+reported and naming both sides of a rename; the release of a selected-line
+partial-stage guard down each of its three endings, since a failed preparation
+and a stale answer have to invalidate it while a stage that lands must release
+it still valid; and a paste reaching an open finder's query and a filterable
+list's filter rather than the buffer behind them.
+
+The experimental Vim grammar was deliberately left alone. `VimGrammar` and its
+`InputGrammar` implementation are `#[cfg(test)]`, so covering them would move
+the reported number through inline test code rather than through production
+behavior.
+
+A third pass began from that result and reached 92,757 of 101,629 lines
+(91.27%), 8,635 of 9,378 functions (92.08%), and 143,837 of 158,476 regions
+(90.76%): 136 newly covered lines, 10 functions and 255 regions on an unchanged
+denominator, a further 0.13 percentage points.
+
+It covers the page and window motions, which are the one family measured in
+screen rows rather than in document lines and were unexercised in both the
+plain and the soft-wrapped projection; every prompt's own prefix, so that no
+two surfaces sharing the interaction line read alike; `:diff-disk`'s refusals
+for a scratch buffer, a buffer already being compared, a file that has gone,
+and a disk version that is no longer text; a current-line blame's status
+answer and its refusal of an unattributed line; a commit search's refusal
+outside a repository, its asynchronous request, and the title a page that hit
+its own ceiling carries; the finder preview pane drawn for a text file, a
+directory, a binary file and a file that vanished between the listing and the
+read, in both renderers; the buffer-action menu's title and rows; and terminal
+review's painting of its matches, its active match, and a selection, asserted
+on drawn cell colours because none of that reaches the plain text the other
+terminal tests read.
+
+Two findings from that pass are worth keeping. `ui::draw_buffer_actions` is
+unreachable: it runs only when a file picker and a buffer-action menu are open
+together, and the input layer never produces that pair, because the buffer
+picker is a filterable list whose action menu is drawn through the shared
+overlay snapshot instead. Its 32 lines are retained rather than removed. And
+a surface's coverage has to be traced to the function that actually draws it
+before a test is written for it: the standalone frontend draws the file picker
+through `ui::draw_picker` and only an attached client reaches
+`ui::draw_snapshot_overlay`, so a render test aimed at the wrong one of those
+passes while covering nothing.
+
 The largest remaining Linux gaps by uncovered lines are
-`app/git_workflows.rs` (815), `main.rs` (727), `app/input.rs` (691),
-`git/cli.rs` (412), `ui.rs` (352), `app/language_workflows.rs` (347),
-`workspace/transport.rs` (340), `workspace/catalog.rs` (317),
-`syntax/mod.rs` (294), and `lsp/mod.rs` (289).
+`app/git_workflows.rs` (712), `main.rs` (711), `app/input.rs` (662),
+`git/cli.rs` (417), `app/language_workflows.rs` (347),
+`workspace/transport.rs` (341), `ui.rs` (325), `workspace/catalog.rs` (316),
+`syntax/mod.rs` (294), and `input_grammar.rs` (269).
 
-Two shapes recur across the two largest. Twenty-eight of the thirty-two
-`git_service.is_some()` guards in `app/git_workflows.rs` have an uncovered
-branch, because the application tests mostly drive Git through the synchronous
-provider; those guards account for roughly 170 of that file's 815 uncovered
-lines rather than most of them. In `main.rs` the mass is concentrated in `run`
-(140 uncovered lines), `run_host_server` (118) and `run_attached` (91), with
-the attachment and wait-recovery helpers around them. Those are process entry
-points and event loops that need a spawned binary or a live attachment; the
-file already has its own inline test module, so the gap is not that nothing
-tests it.
+Two shapes recur across the two largest. The counts below were taken on the
+tree as it stood before the pass above, so they describe the shape rather than
+the current line totals. Twenty-eight of the thirty-two `git_service.is_some()`
+guards in `app/git_workflows.rs` had an uncovered branch, because the
+application tests mostly drive Git through the synchronous provider; those
+guards accounted for roughly 170 of that file's 815 uncovered lines rather than
+most of them. In `main.rs` the mass is concentrated in `run` (140 uncovered
+lines), `run_host_server` (118) and `run_attached` (91), with the attachment
+and wait-recovery helpers around them. Those are process entry points and
+event loops that need a spawned binary or a live attachment; the file already
+has its own inline test module, so the gap is not that nothing tests it.
 
-The issue remains open. Linux still has 9,272 uncovered lines and the latest
-macOS measurement has 9,899. The CI floor and README badge remain at 86%,
-leaving 4.14 percentage points of headroom below the lower measured platform.
-There is no post-change macOS result to justify a higher cross-platform floor,
-and a 90% floor would leave only 0.14 percentage points of headroom on the
-current macOS measurement. The above-95% target remains open.
+GitHub Actions run 173 refreshed the macOS baseline on the same tree, at
+commit `d2948d9`. It covered 92,918 of 101,875 lines (91.21%), 8,647 of 9,397
+functions (92.02%), and 144,039 of 158,841 regions (90.68%), with the host
+target verified before measuring. macOS instruments more lines than Linux and
+covers more of them, but its total percentage is the lower of the two, so it
+is the target the floor's headroom is measured against. The two now differ by
+0.06 percentage points.
+
+On that basis the CI floor and the README badge move from 86% to 89%, leaving
+2.21 percentage points below the lower measured platform. A 91% floor was not
+taken: 0.21 percentage points is less than one ordinary feature landing with
+an untested platform-conditional arm.
+
+The issue remains open. Linux still has 8,872 uncovered lines and macOS 8,957.
+The above-95% target remains open.
 
 ## Current macOS baseline
 
-The standard GitHub-hosted `macos-latest` runner used by run 153 was Apple
-Silicon, so CI produced the required `aarch64-apple-darwin` baseline without a
-larger or self-hosted runner. The existing macOS test job still runs the
-ordinary suite without instrumentation.
+The standard GitHub-hosted `macos-latest` runner is Apple Silicon, so CI
+produces the required `aarch64-apple-darwin` baseline without a larger or
+self-hosted runner. The existing macOS test job still runs the ordinary suite
+without instrumentation. Runs 153 and 173 both used this recipe.
 
-The baseline was collected by a temporary, non-gating `coverage-macos` job
+Each baseline was collected by a temporary, non-gating `coverage-macos` job
 that used `macos-latest`, set `TMPDIR=/private/tmp`, and followed the pinned
 Linux coverage recipe. The job verified the target before measuring so a
 change to GitHub's moving runner alias could not silently record an Intel
-baseline:
+baseline. The verification is a block scalar rather than a one-line `run:`,
+because the `sed` script contains a colon followed by a space and would
+otherwise be read as a YAML mapping:
 
 ```sh
 test "$(rustc -vV | sed -n 's/^host: //p')" = aarch64-apple-darwin
@@ -173,9 +255,9 @@ cargo llvm-cov report | tee coverage-summary-macos.txt
 
 It installed `cargo-llvm-cov` 0.9.0, used a distinct macOS coverage cache key,
 published the summary in the job summary, and retained the HTML report and text
-summary as `rust-coverage-macos-arm64`. It did not enforce a new floor. Run
-153's toolchain, target, and covered and total counts are recorded in
-`context/reference/test-coverage.md`. The temporary job was removed after that
+summary as `rust-coverage-macos-arm64`. It did not enforce a new floor. Each
+run's toolchain, target, and covered and total counts are recorded in
+`context/reference/test-coverage.md`. The temporary job is removed after a
 successful measurement rather than doubling the full macOS suite on every CI
 run; this recipe remains the way to refresh the baseline when needed.
 

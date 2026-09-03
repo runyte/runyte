@@ -1743,3 +1743,141 @@ async fn completion_kinds_arrive_as_the_words_the_popup_shows() {
         );
     }
 }
+
+/// A symbol's kind reaches the editor as the word its picker row is labelled
+/// with, so the picker never has to interpret a protocol number. A kind this
+/// version of the protocol did not have when Runyte was written still arrives
+/// as a word rather than as a gap.
+#[tokio::test]
+async fn symbol_kinds_arrive_as_the_words_the_picker_shows() {
+    let named = [
+        (1, "file"),
+        (2, "module"),
+        (3, "namespace"),
+        (4, "package"),
+        (5, "class"),
+        (6, "method"),
+        (7, "property"),
+        (8, "field"),
+        (9, "constructor"),
+        (10, "enum"),
+        (11, "interface"),
+        (12, "function"),
+        (13, "variable"),
+        (14, "constant"),
+        (15, "string"),
+        (16, "number"),
+        (17, "boolean"),
+        (18, "array"),
+        (19, "object"),
+        (20, "key"),
+        (21, "null"),
+        (22, "enum member"),
+        (23, "struct"),
+        (24, "event"),
+        (25, "operator"),
+        (26, "type parameter"),
+        (99, "symbol"),
+    ];
+    let items = named
+        .iter()
+        .map(|(kind, _)| {
+            json!({
+                "name": format!("symbol-{kind}"),
+                "kind": kind,
+                "location": {
+                    "uri": "file:///tmp/runyte-lsp/a.rs",
+                    "range": {
+                        "start": {"line": 0, "character": 0},
+                        "end": {"line": 0, "character": 1}
+                    }
+                }
+            })
+        })
+        .collect::<Vec<_>>();
+    let script = Script::default()
+        .initialize_result(json!({
+            "capabilities": {"textDocumentSync": 2, "documentSymbolProvider": true}
+        }))
+        .result("textDocument/documentSymbol", json!(items));
+    let mut harness = harness(script);
+    assert!(harness.handle.send(LspCommand::Ensure {
+        language: "rust".to_owned()
+    }));
+    harness.ready().await;
+
+    harness.request(RequestKind::DocumentSymbols);
+    let Response::Symbols(symbols) = harness.response().await else {
+        panic!("expected symbols");
+    };
+    let shown = symbols
+        .iter()
+        .map(|symbol| (symbol.name.as_str(), symbol.kind))
+        .collect::<HashMap<_, _>>();
+    for (kind, word) in named {
+        assert_eq!(
+            shown.get(format!("symbol-{kind}").as_str()).copied(),
+            Some(word),
+            "symbol kind {kind}"
+        );
+    }
+}
+
+/// A workspace symbol whose location is a resolved range arrives with its
+/// container, which is what tells two identically named rows apart. One whose
+/// URI is not a local file is dropped rather than offered as a jump that
+/// cannot be taken.
+#[tokio::test]
+async fn flat_workspace_symbols_keep_their_container_and_drop_unopenable_uris() {
+    let script = Script::default()
+        .initialize_result(json!({
+            "capabilities": {"textDocumentSync": 2, "workspaceSymbolProvider": true}
+        }))
+        .result(
+            "workspace/symbol",
+            json!([
+                {
+                    "name": "render",
+                    "kind": 6,
+                    "containerName": "Pane",
+                    "location": {
+                        "uri": "file:///tmp/runyte-lsp/a.rs",
+                        "range": {
+                            "start": {"line": 4, "character": 2},
+                            "end": {"line": 4, "character": 8}
+                        }
+                    }
+                },
+                {
+                    "name": "render",
+                    "kind": 6,
+                    "location": {
+                        "uri": "https://example.invalid/a.rs",
+                        "range": {
+                            "start": {"line": 0, "character": 0},
+                            "end": {"line": 0, "character": 6}
+                        }
+                    }
+                }
+            ]),
+        );
+    let mut harness = harness(script);
+    assert!(harness.handle.send(LspCommand::Ensure {
+        language: "rust".to_owned()
+    }));
+    harness.ready().await;
+
+    harness.request(RequestKind::WorkspaceSymbols("render".to_owned()));
+    let Response::Symbols(symbols) = harness.response().await else {
+        panic!("expected symbols");
+    };
+    assert_eq!(symbols.len(), 1, "only the local file is offered");
+    assert_eq!(symbols[0].name, "render");
+    assert_eq!(symbols[0].container, "Pane");
+    assert_eq!(symbols[0].kind, "method");
+    assert_eq!(
+        symbols[0].location.path,
+        PathBuf::from("/tmp/runyte-lsp/a.rs")
+    );
+    assert_eq!(symbols[0].location.range.start.line, 4);
+}

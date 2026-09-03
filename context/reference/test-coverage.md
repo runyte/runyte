@@ -37,7 +37,7 @@ recorded separately.
 
 CI uses `cargo-llvm-cov` 0.9.0, publishes the full per-file summary in the job
 summary, retains an HTML report as the `rust-coverage-html` artifact for 14
-days, and fails below 86% total line coverage. The floor is deliberately below
+days, and fails below 89% total line coverage. The floor is deliberately below
 the observed baseline because conditional Linux and macOS code changes both the
 instrumented denominator and the paths available to a run on one platform.
 
@@ -49,20 +49,26 @@ under instrumentation.
 
 | Measure | Covered | Total | Coverage |
 | --- | ---: | ---: | ---: |
-| Lines | 92,357 | 101,629 | 90.88% |
-| Functions | 8,606 | 9,378 | 91.77% |
-| Regions | 143,119 | 158,476 | 90.31% |
+| Lines | 92,757 | 101,629 | 91.27% |
+| Functions | 8,635 | 9,378 | 92.08% |
+| Regions | 143,837 | 158,476 | 90.76% |
 
-The fresh same-tree baseline before this pass was 92,124 of 101,629 lines
+The table above is the result after the third pass recorded below. The first
+pass of the day reached 92,357 of 101,629 lines (90.88%), 8,606 of 9,378
+functions (91.77%), and 143,119 of 158,476 regions (90.31%); the second
+reached 92,621 of 101,629 lines (91.14%), 8,625 of 9,378 functions (91.97%),
+and 143,582 of 158,476 regions (90.60%).
+
+The fresh same-tree baseline before that first pass was 92,124 of 101,629 lines
 (90.65%), 8,589 of 9,378 functions (91.59%), and 142,834 of 158,476 regions
 (90.13%). It is higher than the 2026-09-02 Linux record below because the tree
 has moved on since that measurement, so the comparison here is against the
-fresh run rather than the recorded one. Every test added by this pass lives in
+fresh run rather than the recorded one. Every test added by that pass lives in
 a directory named `tests`, so the instrumented total did not move at all:
 covered lines rose by 233, covered functions by 17, and covered regions by 285,
 raising total line coverage by 0.23 percentage points.
 
-The retained tests cover Markdown's lexical delimiter fallback for pairs that
+Its retained tests cover Markdown's lexical delimiter fallback for pairs that
 open and close with the same character, including escaped delimiters and an
 escaped backslash before one; the insert-mode `delete-to-line-end` command
 across several carets; the path popup's overlay snapshots, its Ctrl-c
@@ -78,16 +84,111 @@ and the editing of a typed branch-switch confirmation before it matches.
 
 Review corrected the refused-clipboard test, which had asserted on the
 transient action feedback a refusal does not set rather than on the status and
-retained notification it does. The largest remaining Linux gaps by uncovered
-lines are `app/git_workflows.rs` (815), `main.rs` (727), `app/input.rs` (691),
-`git/cli.rs` (412), `ui.rs` (352), `app/language_workflows.rs` (347),
-`workspace/transport.rs` (340), `workspace/catalog.rs` (317),
-`syntax/mod.rs` (294), and `lsp/mod.rs` (289).
+retained notification it does.
 
-The enforced floor remains 86%. The 95% target has not been reached, and the
-latest macOS measurement is still the 90.14% recorded below, so the lower
-measured platform continues to set the headroom and neither the floor nor the
-README badge changes.
+The continuation pass began from a fresh same-tree run of that tree: 92,359 of
+101,629 lines (90.88%), 8,603 of 9,378 functions (91.74%), and 143,125 of
+158,476 regions (90.31%). Its tests also live only in directories named
+`tests`, so the instrumented total again did not move: covered lines rose by
+262, covered functions by 22, and covered regions by 457, raising total line
+coverage by 0.26 percentage points to the table above.
+
+That pass added a standalone `tests/terminal_sequences.rs` that feeds fixed
+control sequences straight to the emulator: cursor addressing and its screen
+and scroll-region bounds, origin-mode addressing and the cursor report, tab
+stops and their clearing, character and line insertion, deletion, erasure and
+downward scrolling, the saved cursor in both its escape and CSI forms, insert
+and autowrap modes, each graphic rendition and its own reset, and the device
+attribute and status answers. It is listed in
+`terminal-compatibility-v1.md` as part of the reproducible boundary. The
+remaining tests cover the word each LSP symbol kind is displayed with,
+including a kind Runyte has no word for; a flat workspace-symbol response,
+whose container is kept and whose non-file URI is dropped; one ambient Git
+snapshot refreshing an open branch list, the staged index view and a per-file
+diff in place, with the index heading counting the staged files the snapshot
+reported and naming both sides of a rename; the release of a selected-line
+partial-stage guard down each of its three endings — a failed preparation and
+a stale answer invalidate it, a stage that lands releases it still valid; and
+a paste reaching an open finder's query and a filterable list's filter rather
+than the buffer behind them.
+
+Six files ended with one or two more uncovered lines than the baseline run
+(`file_picker.rs`, `git/service.rs`, `git_monitor.rs`, `main.rs`,
+`terminal/pty.rs`, `workspace/lifecycle.rs`); that is the same run-to-run
+variation in concurrent paths recorded for earlier passes, and the totals above
+are the net.
+
+The third pass began from the second's clean result and reached the table
+above: covered lines rose by 136, covered functions by 10, and covered regions
+by 255, for a further 0.13 percentage points on an unchanged denominator.
+
+It covers the page and window motions, which are the family measured in screen
+rows rather than in document lines and were unexercised in both projections;
+every prompt's own prefix, so no two surfaces that share the interaction line
+read alike; `:diff-disk`'s refusals for a scratch buffer, a buffer already
+being compared, a file that has gone, and a disk version that is no longer
+text; a current-line blame's status answer and its refusal of an unattributed
+line; a commit search's refusal outside a repository, its asynchronous request,
+and the title a page that hit its own ceiling carries; the finder preview pane
+drawn for a text file, a directory, a binary file and a file that vanished
+between the listing and the read, in both renderers; the buffer-action menu's
+title and rows; and terminal review's painting of its matches, its active
+match, and a selection, asserted on drawn cell colours because none of it
+reaches the plain text the other terminal tests read.
+
+`ui::draw_buffer_actions` was left uncovered deliberately. It runs only when a
+file picker and a buffer-action menu are open at once, and the input layer
+never produces that pair: the buffer picker is a filterable list, so its action
+menu is drawn through the shared overlay snapshot instead. The 32 lines are
+retained rather than removed, in line with the rule against changing production
+code to shrink the denominator.
+
+Three files ended one to five uncovered lines worse than the pass's own
+baseline (`git/cli.rs`, `workspace/host.rs`, `workspace/transport.rs`): the
+same run-to-run variation in concurrent paths recorded above.
+
+The largest remaining Linux gaps by uncovered lines are
+`app/git_workflows.rs` (712), `main.rs` (711), `app/input.rs` (662),
+`git/cli.rs` (417), `app/language_workflows.rs` (347),
+`workspace/transport.rs` (341), `ui.rs` (325), `workspace/catalog.rs` (316),
+`syntax/mod.rs` (294), and `input_grammar.rs` (269).
+
+The macOS baseline was refreshed after this pass and is recorded below; the
+enforced floor and the README badge move from 86% to 89% with it. The 95%
+target has not been reached.
+
+## 2026-09-03 — macOS
+
+Measured with `cargo-llvm-cov` 0.9.0 and Rust 1.97.1 on
+`aarch64-apple-darwin` in GitHub Actions run 173, at commit `d2948d9`. The job
+verified the host target before measuring, and the ordinary non-ignored
+workspace tests passed under instrumentation.
+
+| Measure | Covered | Total | Coverage |
+| --- | ---: | ---: | ---: |
+| Lines | 92,918 | 101,875 | 91.21% |
+| Functions | 8,647 | 9,397 | 92.02% |
+| Regions | 144,039 | 158,841 | 90.68% |
+
+This supersedes the 2026-09-02 macOS baseline below, which predated the three
+test-only passes recorded in the Linux section above and was the number the
+86% floor's headroom had been justified against.
+
+macOS covers more lines than Linux and instruments more of them: 92,918 of
+101,875 against 92,757 of 101,629. Its total line percentage is nevertheless
+the lower of the two, 91.21% against 91.27%, so it is the target that sets the
+headroom. The two now differ by 0.06 percentage points, against 0.37 when both
+were last measured on one tree.
+
+The enforced floor is raised from 86% to 89%. That leaves 2.21 percentage
+points below the lower measured platform — still several times the observed
+divergence between the two targets and the run-to-run variation within one of
+them — while turning a material regression red far sooner than 86% did. The
+README badge states the floor and changes with it.
+
+The above-95% target has not been reached on either target. A 91% floor is not
+taken: it would leave 0.21 percentage points on macOS, less than one ordinary
+feature landing with its own untested platform-conditional arm.
 
 ## 2026-09-02 — macOS
 

@@ -80,7 +80,7 @@ jobs:
             cat coverage-summary.txt
             echo '```'
             echo
-            echo 'The enforced line-coverage floor is **86%**.'
+            echo 'The enforced line-coverage floor is **89%**.'
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload HTML coverage report
@@ -93,11 +93,12 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      # The 86% floor leaves more than four percentage points of
-      # supported-platform headroom below the current 90.14% macOS baseline
-      # while still turning a material coverage regression red.
+      # The 89% floor leaves 2.21 percentage points of supported-platform
+      # headroom below the current 91.21% macOS baseline, which is the lower
+      # of the two measured targets, while turning a material coverage
+      # regression red much sooner than the 86% it replaces.
       - name: Enforce line coverage baseline
-        run: cargo llvm-cov report --fail-under-lines 86
+        run: cargo llvm-cov report --fail-under-lines 89
 
   macos:
     name: Tests (macos-latest)

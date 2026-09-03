@@ -254,6 +254,82 @@ fn soft_wrap_vertical_motion_stops_at_document_edges() {
     assert_eq!(cursor(&app), Position::new(0, 4));
 }
 
+/// Page and window motions are the family measured in screen rows rather than
+/// in document lines, so they are resolved against the projection the pane is
+/// showing. Unwrapped, a screen row is a line; the window motions are then
+/// answered from where the pane is scrolled to rather than from the document's
+/// own top and bottom.
+#[test]
+fn page_and_window_motions_count_screen_rows_from_where_the_pane_is_scrolled() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    let document = (0..60).fold(String::new(), |mut text, line| {
+        text.push_str(&format!("line {line}\n"));
+        text
+    });
+    seed(&mut app, &document);
+    let viewport = app.viewport_height();
+    assert_eq!(viewport, 20, "the default viewport this test counts in");
+
+    key(&mut app, KeyCode::PageDown, Modifiers::NONE);
+    assert_eq!(cursor(&app).row, viewport);
+    key(&mut app, KeyCode::Char('d'), Modifiers::CONTROL);
+    assert_eq!(cursor(&app).row, viewport + viewport / 2);
+    key(&mut app, KeyCode::PageUp, Modifiers::NONE);
+    assert_eq!(cursor(&app).row, viewport / 2);
+    key(&mut app, KeyCode::Char('u'), Modifiers::CONTROL);
+    assert_eq!(cursor(&app).row, 0);
+
+    for (motion, row) in [('H', 0), ('M', (viewport - 1) / 2), ('L', viewport - 1)] {
+        press(&mut app, motion);
+        assert_eq!(cursor(&app).row, row, "{motion} at the document's top");
+    }
+
+    // Scrolled down, the same three motions name three different lines: the
+    // window is what they are relative to, not the file.
+    app.active_mut().scroll_row = 30;
+    for (motion, row) in [
+        ('H', 30),
+        ('M', 30 + (viewport - 1) / 2),
+        ('L', 30 + viewport - 1),
+    ] {
+        press(&mut app, motion);
+        assert_eq!(cursor(&app).row, row, "{motion} after scrolling");
+    }
+}
+
+/// Under soft wrap the same motions count wrapped segments, so a page ends on
+/// a column part-way through a line rather than at the start of one.
+#[test]
+fn page_and_window_motions_count_wrapped_segments_under_soft_wrap() {
+    let mut config = Config::default();
+    config.editor.soft_wrap = true;
+    let mut app = App::new(config, None).unwrap();
+    seed(&mut app, "aaaaaa\nbbbbbb\ncccccc");
+    app.active_mut().wrap_width = 3;
+
+    // Three lines of two segments each: six screen rows inside a viewport that
+    // could hold twenty, so a page ends at the last of them.
+    key(&mut app, KeyCode::PageDown, Modifiers::NONE);
+    assert_eq!(cursor(&app), Position::new(2, 3));
+
+    set_cursor(&mut app, 0, 0);
+    press(&mut app, 'L');
+    assert_eq!(cursor(&app), Position::new(2, 3));
+    press(&mut app, 'M');
+    assert_eq!(cursor(&app), Position::new(1, 0));
+    press(&mut app, 'H');
+    assert_eq!(cursor(&app), Position::new(0, 0));
+
+    key(&mut app, KeyCode::Char('d'), Modifiers::CONTROL);
+    assert_eq!(
+        cursor(&app),
+        Position::new(2, 3),
+        "half a viewport is still more rows than the document has"
+    );
+    key(&mut app, KeyCode::Char('u'), Modifiers::CONTROL);
+    assert_eq!(cursor(&app), Position::new(0, 0));
+}
+
 #[test]
 fn wrapping_namespace_wraps_and_toggles_soft_wrap_and_whitespace_markers() {
     let mut config = Config::default();
@@ -821,6 +897,44 @@ fn literal_text_edits_prompts_but_is_safe_in_modal_and_jump_contexts() {
     app.handle_input(InputEvent::Text("xy".to_owned())).unwrap();
     assert!(app.jump.is_none());
     assert_eq!(app.status, "jump cancelled");
+}
+
+/// A paste arrives as one input event rather than a run of keystrokes, so
+/// every overlay that accepts typing has to accept it that way too. The
+/// finder's query and a filterable list's filter each take the whole pasted
+/// run, and the buffer waiting behind them takes none of it.
+#[test]
+fn pasted_text_reaches_an_open_picker_and_list_rather_than_the_buffer() {
+    let root = temporary("paste-into-overlays");
+    fs::create_dir_all(&root).unwrap();
+    let path = root.join("alpha.rs");
+    fs::write(&path, "mod alpha {\n    fn beta() {}\n}\n").unwrap();
+    let ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    app.open_file(path).unwrap();
+    let before = text(&app);
+
+    app.open_project_picker().unwrap();
+    app.handle_input(InputEvent::Text("alpha".to_owned()))
+        .unwrap();
+    assert_eq!(app.picker.as_ref().unwrap().query, "alpha");
+    key(&mut app, KeyCode::Escape, Modifiers::NONE);
+    assert!(app.picker.is_none(), "the picker stayed open");
+
+    app.execute_command("document-outline").unwrap();
+    app.handle_input(InputEvent::Text("bet".to_owned()))
+        .unwrap();
+    assert_eq!(app.list.as_ref().unwrap().filter, "bet");
+    assert_eq!(
+        app.list.as_ref().unwrap().visible_indices().len(),
+        1,
+        "the pasted filter narrowed the outline"
+    );
+
+    assert_eq!(text(&app), before, "the buffer took the pasted text");
+    fs::remove_dir_all(root).unwrap();
 }
 
 pub(super) struct MemoryClipboard(pub(super) Arc<Mutex<String>>);

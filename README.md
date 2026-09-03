@@ -1,7 +1,7 @@
 # Runyte
 
 [![CI](https://github.com/runyte/runyte/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/runyte/runyte/actions/workflows/ci.yml)
-[![Coverage](https://img.shields.io/badge/coverage-%E2%89%A586%25-brightgreen)](context/reference/test-coverage.md)
+[![Coverage](https://img.shields.io/badge/coverage-%E2%89%A589%25-brightgreen)](context/reference/test-coverage.md)
 
 What Runyte is depends on how you use it. It can be any or all of the following:
 

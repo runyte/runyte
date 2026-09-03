@@ -169,6 +169,66 @@ fn render(app: &mut App, width: u16, height: u16) -> String {
         .join("\n")
 }
 
+/// The same frame as `render`, as the background colour of every drawn cell.
+///
+/// Terminal review paints its answer rather than writing it, so the plain
+/// text the other helpers read says nothing about it.
+fn render_backgrounds(
+    app: &mut App,
+    width: u16,
+    height: u16,
+) -> Vec<(String, Vec<ratatui::style::Color>)> {
+    let backend = TestBackend::new(width, height);
+    let mut terminal = Terminal::new(backend).unwrap();
+    let hints = KeyHintState::default();
+    terminal
+        .draw(|frame| {
+            let prepared = app.prepare_view(ui::frame_geometry(frame.area()));
+            let snapshot = app.snapshot(&prepared);
+            ui::render_exact_colors_for_test(frame, app, &snapshot, &hints);
+        })
+        .unwrap();
+    let buffer = terminal.backend().buffer().clone();
+    (0..height)
+        .map(|row| {
+            (
+                (0..width)
+                    .map(|column| buffer[(column, row)].symbol())
+                    .collect::<String>(),
+                (0..width)
+                    .map(|column| buffer[(column, row)].bg)
+                    .collect::<Vec<_>>(),
+            )
+        })
+        .collect()
+}
+
+/// The distinct background colours drawn on the first row holding `needle`.
+fn row_grounds(
+    rows: &[(String, Vec<ratatui::style::Color>)],
+    needle: &str,
+) -> Vec<ratatui::style::Color> {
+    let (_, grounds) = rows
+        .iter()
+        .find(|(text, _)| text.contains(needle))
+        .unwrap_or_else(|| {
+            panic!(
+                "missing {needle:?} in\n{}",
+                rows.iter()
+                    .map(|(text, _)| text.as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            )
+        });
+    let mut distinct = Vec::new();
+    for ground in grounds {
+        if !distinct.contains(ground) {
+            distinct.push(*ground);
+        }
+    }
+    distinct
+}
+
 /// The panes of a frame the size `render` draws, without drawing it.
 fn panes(app: &mut App, width: u16, height: u16) -> Vec<runyte::snapshot::PaneSnapshot> {
     let prepared = app.prepare_view(ui::frame_geometry(ratatui::layout::Rect::new(
@@ -2070,4 +2130,55 @@ fn persistent_detach_leaves_a_terminal_running() {
 
     assert!(session.app.should_quit);
     assert!(session.app.terminals.get(terminal).unwrap().live());
+}
+
+/// Terminal review answers a search in colour rather than in text: the match
+/// the reader is standing on is painted apart from the others, and a review
+/// selection is painted differently again. None of that reaches the plain
+/// text the rest of this file reads, so it is asserted on the drawn cells.
+#[test]
+fn terminal_review_paints_its_matches_its_active_match_and_its_selection() {
+    let mut session = Session::start(r#"/bin/sh -c 'printf "axb and axb\r\n"; sleep 30'"#);
+    assert!(session.settle(|app| terminal_text(app).contains("axb and axb")));
+    session.leave_input();
+
+    // The pane's own ground and the review caret standing on it.
+    let plain = row_grounds(&render_backgrounds(&mut session.app, 60, 12), "axb and axb");
+    assert_eq!(plain.len(), 2, "before a search: {plain:?}");
+
+    session.press(KeyCode::Char('/'));
+    session.type_text("axb");
+    session.press(KeyCode::Enter);
+    assert!(!session.app.status_error, "{}", session.app.status);
+
+    let searched = row_grounds(&render_backgrounds(&mut session.app, 60, 12), "axb and axb");
+    assert!(
+        plain.iter().all(|ground| searched.contains(ground)),
+        "the row keeps its ground and its caret: {searched:?} against {plain:?}"
+    );
+    let matches = searched
+        .iter()
+        .filter(|ground| !plain.contains(ground))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        matches.len(),
+        2,
+        "the match the reader is on is painted apart from the other: {searched:?}"
+    );
+
+    // Escape ends the search, so what is painted next is the review's own
+    // selection rather than a match.
+    session.press(KeyCode::Escape);
+    session.press(KeyCode::Char('v'));
+    for _ in 0..4 {
+        session.press(KeyCode::Char('l'));
+    }
+
+    let selected = row_grounds(&render_backgrounds(&mut session.app, 60, 12), "axb and axb");
+    assert!(
+        selected
+            .iter()
+            .any(|ground| !plain.contains(ground) && !searched.contains(ground)),
+        "a selection has a colour of its own: {selected:?} against {searched:?}"
+    );
 }

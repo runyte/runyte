@@ -371,3 +371,63 @@ fn comparing_from_a_terminal_pane_still_opens_the_view() {
 
     fs::remove_dir_all(directory).unwrap();
 }
+
+/// `:diff-disk` compares a buffer against the bytes now on disk, so each way
+/// that comparison cannot be made has to be said rather than left to produce
+/// an empty or misleading view. Each refusal names its own reason.
+#[test]
+fn diff_disk_refuses_a_comparison_it_cannot_make_and_says_why() {
+    let directory = temporary("diff-disk-refusals");
+    fs::create_dir_all(&directory).unwrap();
+    let path = directory.join("notes.txt");
+    fs::write(&path, "one\ntwo\n").unwrap();
+
+    // A scratch buffer has no disk version to compare against.
+    let mut app = App::new(Config::default(), None).unwrap();
+    prepare(&mut app);
+    app.execute_command("diff-disk").unwrap();
+    assert!(
+        app.status_error && app.status.contains("ordinary file buffer"),
+        "{}",
+        app.status
+    );
+    assert!(app.diffs.is_empty());
+
+    // A buffer already being compared against another buffer is refused
+    // rather than silently retargeted.
+    let (mut app, one, _) = compared("a\n", "b\n");
+    app.open_file(one).unwrap();
+    app.execute_command("diff-disk").unwrap();
+    assert!(
+        app.status_error && app.status.contains(":diff-off closes it"),
+        "{}",
+        app.status
+    );
+    assert_eq!(app.diffs.len(), 1);
+
+    // A file that has gone, and one that is no longer text, each say so.
+    for (mutate, expected) in [
+        (
+            Box::new(|path: &PathBuf| fs::remove_file(path).unwrap()) as Box<dyn Fn(&PathBuf)>,
+            "the file was deleted",
+        ),
+        (
+            Box::new(|path: &PathBuf| fs::write(path, [0u8, 1, 2, b'x']).unwrap()),
+            "binary and cannot be compared",
+        ),
+    ] {
+        fs::write(&path, "one\ntwo\n").unwrap();
+        let mut app = App::new(Config::default(), Some(path.clone())).unwrap();
+        prepare(&mut app);
+        mutate(&path);
+        app.execute_command("diff-disk").unwrap();
+        assert!(
+            app.status_error && app.status.contains(expected),
+            "expected {expected:?}, got {:?}",
+            app.status
+        );
+        assert!(app.diffs.is_empty());
+    }
+
+    fs::remove_dir_all(directory).unwrap();
+}
