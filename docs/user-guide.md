@@ -681,7 +681,7 @@ directories are rejected.
 In **Insert mode keys go to the program except for Runyte's terminal exit and
 window prefix**. `Ctrl-\` leaves input in live Normal mode. `Ctrl-w` instead
 begins the registered window namespace: `Ctrl-w h/j/k/l` and their
-control/arrow aliases move to another pane immediately. Every focus route,
+control-key aliases move to another pane immediately. Every focus route,
 including these keys, pane cycling, and a mouse click, activates a live Normal
 terminal destination in Insert mode. A terminal that already owns a captured
 review stays in Normal/review mode until `i`, `a`, `o`, or another terminal
@@ -1983,7 +1983,7 @@ message without affecting the internal registers.
 | `Space t y` | Copy this terminal's output into a read-only buffer (`:terminal-output`) |
 | `Space t s` | Send the selection — or the whole buffer — to a terminal as one bracketed paste (`:terminal-send [id\|name]`) |
 | `Tab`, then Close in `Space t t` | Explicitly end and forget the selected terminal |
-| `Ctrl-w h/j/k/l` or arrows in Terminal Insert | Move directly without capturing or discarding review; a live terminal destination starts Insert, a reviewed terminal stays in review, and a document destination starts Normal |
+| `Ctrl-w h/j/k/l` or `Ctrl-w Ctrl-h/j/k/l` in Terminal Insert | Move directly without capturing or discarding review; a live terminal destination starts Insert, a reviewed terminal stays in review, and a document destination starts Normal |
 | `Ctrl-h/j/k/l` in Terminal Insert | The exact same destination behavior without the prefix, when `editor.fast_pane_keys` is on; the child stops receiving those four keys |
 | `Ctrl-w w` in Terminal Insert | Cycle panes with the same live-terminal/reviewed-terminal/document destination behavior |
 | `Ctrl-w v/s` in Terminal Insert | Create a vertical/horizontal document split while leaving the terminal child live without review |

@@ -402,6 +402,40 @@ fn popup_keeps_alt_scroll_fallback_when_arrows_are_bindings() {
     assert_eq!(hints.scroll_offset(), 1);
 }
 
+#[test]
+fn ctrl_w_popup_scrolls_with_arrows_and_advertises_them() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    let mut hints = KeyHintState::default();
+    hints.observe(KeyStroke::ctrl('w'), Mode::Normal, default_keymap());
+
+    let first = render(40, 10, &mut app, &hints);
+    assert!(first.contains("Ctrl-n/p"));
+    assert!(first.contains("↑/↓"));
+    assert!(!first.contains("Alt-j/k"));
+
+    assert_eq!(
+        hints.observe(
+            KeyStroke::plain(KeyCode::Down),
+            Mode::Normal,
+            default_keymap(),
+        ),
+        HintEventResult::Consumed
+    );
+    assert_eq!(hints.scroll_offset(), 1);
+    assert_eq!(hints.pending().to_string(), "Ctrl-w");
+
+    assert_eq!(
+        hints.observe(
+            KeyStroke::plain(KeyCode::Up),
+            Mode::Normal,
+            default_keymap(),
+        ),
+        HintEventResult::Consumed
+    );
+    assert_eq!(hints.scroll_offset(), 0);
+    assert_eq!(hints.pending().to_string(), "Ctrl-w");
+}
+
 #[cfg(unix)]
 #[test]
 fn terminal_ctrl_w_hint_scrolls_with_control_n_and_p_without_dispatching() {

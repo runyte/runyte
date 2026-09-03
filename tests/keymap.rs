@@ -648,6 +648,30 @@ fn control_backslash_exits_insert_and_control_w_moves_between_panes() {
 }
 
 #[test]
+fn ctrl_w_arrow_suffixes_stay_unbound_in_every_mode_and_terminal_insert() {
+    let keymap = default_keymap();
+    for arrow in [KeyCode::Left, KeyCode::Down, KeyCode::Up, KeyCode::Right] {
+        let sequence = KeySequence::from([Key::ctrl('w'), Key::plain(arrow)]);
+        for mode in [Mode::Normal, Mode::Select, Mode::Insert, Mode::Replace] {
+            assert!(
+                matches!(keymap.lookup(mode, &sequence), Lookup::NoMatch),
+                "Ctrl-w {} must stay unbound in {}",
+                Key::plain(arrow).label(),
+                mode.label()
+            );
+        }
+        assert!(
+            matches!(
+                keymap.lookup_in(Mode::Insert, BindingScope::Terminal, &sequence),
+                Lookup::NoMatch
+            ),
+            "Ctrl-w {} must stay unbound in Terminal Insert",
+            Key::plain(arrow).label()
+        );
+    }
+}
+
+#[test]
 fn removed_duplicate_bindings_stay_unbound() {
     for keys in [
         " :", " Fe", " FE", " Ff", " Fb", " F/", " Fs", " Fr", " h", " S", " d", " a", " y", " P",
