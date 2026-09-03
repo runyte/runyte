@@ -6,9 +6,9 @@ main evidence that both stay correct as the editor changes.
 `context/reference/test-coverage.md` records the current baselines. On
 `x86_64-unknown-linux-gnu`, `cargo-llvm-cov` 0.9.0 and Rust 1.97.1 cover 92,757
 of 101,629 lines, 8,635 of 9,378 functions, and 143,837 of 158,476 regions. The
-latest `aarch64-apple-darwin` measurement covers 90,481 of 100,380 lines, 8,450
-of 9,253 functions, and 140,408 of 156,605 regions. CI publishes the per-file
-summary, retains an HTML report, and fails below an enforced 86% line floor.
+latest `aarch64-apple-darwin` measurement covers 92,918 of 101,875 lines, 8,647
+of 9,397 functions, and 144,039 of 158,841 regions. CI publishes the per-file
+summary, retains an HTML report, and fails below an enforced 89% line floor.
 
 The target is above 95% line coverage, with the CI floor and the README badge
 raised to match.
@@ -216,25 +216,36 @@ and wait-recovery helpers around them. Those are process entry points and
 event loops that need a spawned binary or a live attachment; the file already
 has its own inline test module, so the gap is not that nothing tests it.
 
-The issue remains open. Linux still has 8,872 uncovered lines and the latest
-macOS measurement has 9,899. The CI floor and README badge remain at 86%,
-leaving 4.14 percentage points of headroom below the lower measured platform.
-There is no post-change macOS result to justify a higher cross-platform floor,
-and a 90% floor would leave only 0.14 percentage points of headroom on the
-current macOS measurement. The above-95% target remains open.
+GitHub Actions run 173 refreshed the macOS baseline on the same tree, at
+commit `d2948d9`. It covered 92,918 of 101,875 lines (91.21%), 8,647 of 9,397
+functions (92.02%), and 144,039 of 158,841 regions (90.68%), with the host
+target verified before measuring. macOS instruments more lines than Linux and
+covers more of them, but its total percentage is the lower of the two, so it
+is the target the floor's headroom is measured against. The two now differ by
+0.06 percentage points.
+
+On that basis the CI floor and the README badge move from 86% to 89%, leaving
+2.21 percentage points below the lower measured platform. A 91% floor was not
+taken: 0.21 percentage points is less than one ordinary feature landing with
+an untested platform-conditional arm.
+
+The issue remains open. Linux still has 8,872 uncovered lines and macOS 8,957.
+The above-95% target remains open.
 
 ## Current macOS baseline
 
-The standard GitHub-hosted `macos-latest` runner used by run 153 was Apple
-Silicon, so CI produced the required `aarch64-apple-darwin` baseline without a
-larger or self-hosted runner. The existing macOS test job still runs the
-ordinary suite without instrumentation.
+The standard GitHub-hosted `macos-latest` runner is Apple Silicon, so CI
+produces the required `aarch64-apple-darwin` baseline without a larger or
+self-hosted runner. The existing macOS test job still runs the ordinary suite
+without instrumentation. Runs 153 and 173 both used this recipe.
 
-The baseline was collected by a temporary, non-gating `coverage-macos` job
+Each baseline was collected by a temporary, non-gating `coverage-macos` job
 that used `macos-latest`, set `TMPDIR=/private/tmp`, and followed the pinned
 Linux coverage recipe. The job verified the target before measuring so a
 change to GitHub's moving runner alias could not silently record an Intel
-baseline:
+baseline. The verification is a block scalar rather than a one-line `run:`,
+because the `sed` script contains a colon followed by a space and would
+otherwise be read as a YAML mapping:
 
 ```sh
 test "$(rustc -vV | sed -n 's/^host: //p')" = aarch64-apple-darwin
@@ -244,9 +255,9 @@ cargo llvm-cov report | tee coverage-summary-macos.txt
 
 It installed `cargo-llvm-cov` 0.9.0, used a distinct macOS coverage cache key,
 published the summary in the job summary, and retained the HTML report and text
-summary as `rust-coverage-macos-arm64`. It did not enforce a new floor. Run
-153's toolchain, target, and covered and total counts are recorded in
-`context/reference/test-coverage.md`. The temporary job was removed after that
+summary as `rust-coverage-macos-arm64`. It did not enforce a new floor. Each
+run's toolchain, target, and covered and total counts are recorded in
+`context/reference/test-coverage.md`. The temporary job is removed after a
 successful measurement rather than doubling the full macOS suite on every CI
 run; this recipe remains the way to refresh the baseline when needed.
 
