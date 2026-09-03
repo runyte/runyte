@@ -1303,7 +1303,21 @@ fn path_completion_area(editor_area: Rect, overlay: &OverlaySnapshot) -> Rect {
     // its two corners, so the box is at least wide enough to say what it is
     // without clipping them.
     let hints = overlay_action_hints(overlay);
+    // A list longer than the box writes its position between the title and
+    // the keys, and that segment is charged for here too: a width measured
+    // without it is exactly as wide as the title it does not carry, so the
+    // border clips the tail of the keys instead. The count is budgeted at its
+    // widest — every number in it is at most the total — so scrolling the
+    // list moves no border.
+    let counter = if overlay.total_rows > overlay.rows.len().min(MAX_ROWS) {
+        UnicodeWidthStr::width(
+            format!(" · {total}–{total}/{total}", total = overlay.total_rows).as_str(),
+        )
+    } else {
+        0
+    };
     let title_width = UnicodeWidthStr::width(overlay.title.as_str())
+        + counter
         + if hints.is_empty() {
             0
         } else {

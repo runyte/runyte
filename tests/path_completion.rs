@@ -763,3 +763,34 @@ fn the_assistance_stays_bounded_when_a_directory_holds_far_more_than_it_can_show
 
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn the_assistance_title_keeps_its_keys_when_it_also_counts_the_rows() {
+    let root = temporary("path-assistance-title-count");
+    fs::create_dir_all(&root).unwrap();
+    for index in 0..22 {
+        fs::create_dir_all(root.join(format!("d{index:02}"))).unwrap();
+    }
+
+    let mut app = editor(&root);
+    press(&mut app, ':');
+    type_text(&mut app, &format!("cd {}/", root.display()));
+    let drawn = standalone_screen(&mut app, 120, 24);
+    let (_, _, _, rows) = hint_box(&drawn);
+
+    // The rows are short, so the border is sized from its own title. A list
+    // longer than the box adds its position to that title, and the keys are
+    // what the border cuts when the count is not paid for.
+    assert!(
+        rows[0].contains("/23"),
+        "a list longer than the box says where in it the rows are: {}",
+        rows[0]
+    );
+    assert!(
+        rows[0].contains("Tab complete"),
+        "and the keys that operate it survive alongside that count: {}",
+        rows[0]
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
