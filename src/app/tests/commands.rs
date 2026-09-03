@@ -591,6 +591,70 @@ pub(super) fn type_command(app: &mut App, command: &str) {
     key(app, KeyCode::Enter, Modifiers::NONE);
 }
 
+/// The palette's line is edited like any other line of text: the caret moves a
+/// character at a time and a word at a time, and Backspace removes what is
+/// behind it rather than the last character typed. Home and End belong to the
+/// suggestion list rather than the caret, because a palette this short is
+/// crossed with Left and Right and the list is what needs an end to jump to.
+#[test]
+fn the_command_palette_edits_its_line_and_moves_between_its_suggestions() {
+    let mut app = App::new(Config::default(), None).unwrap();
+
+    press(&mut app, ':');
+    type_text(&mut app, "write quit");
+    assert_eq!(app.command_cursor, "write quit".chars().count());
+
+    key(&mut app, KeyCode::Left, Modifiers::NONE);
+    key(&mut app, KeyCode::Left, Modifiers::NONE);
+    assert_eq!(app.command_cursor, 8);
+    key(&mut app, KeyCode::Backspace, Modifiers::NONE);
+    assert_eq!(app.command, "write qit");
+    assert_eq!(app.command_cursor, 7);
+    press(&mut app, 'u');
+    assert_eq!(app.command, "write quit");
+    assert_eq!(app.command_cursor, 8);
+    key(&mut app, KeyCode::Right, Modifiers::NONE);
+    key(&mut app, KeyCode::Right, Modifiers::NONE);
+    key(&mut app, KeyCode::Right, Modifiers::NONE);
+    assert_eq!(app.command_cursor, 10, "the caret stops at the end");
+
+    key(&mut app, KeyCode::Char('b'), Modifiers::ALT);
+    assert_eq!(app.command_cursor, 6, "Alt-b steps back one word");
+    key(&mut app, KeyCode::Char('f'), Modifiers::ALT);
+    assert_eq!(app.command_cursor, 10, "Alt-f steps forward one word");
+    key(&mut app, KeyCode::Char('z'), Modifiers::ALT);
+    assert_eq!(app.command_cursor, 10, "an unbound Alt key changes nothing");
+    assert_eq!(app.command, "write quit");
+
+    app.command.clear();
+    app.command_cursor = 0;
+    type_text(&mut app, "se");
+    let suggestions = app.matching_commands().len();
+    assert!(suggestions > 1, "the fixture needs several suggestions");
+    assert_eq!(app.command_selection, 0);
+    key(&mut app, KeyCode::End, Modifiers::NONE);
+    assert_eq!(app.command_selection, suggestions - 1);
+    assert_eq!(
+        app.command_cursor, 2,
+        "End moves the suggestion, not the caret"
+    );
+    key(&mut app, KeyCode::Home, Modifiers::NONE);
+    assert_eq!(app.command_selection, 0);
+    key(&mut app, KeyCode::Down, Modifiers::NONE);
+    assert_eq!(app.command_selection, 1);
+    key(&mut app, KeyCode::Up, Modifiers::NONE);
+    assert_eq!(app.command_selection, 0);
+    key(&mut app, KeyCode::BackTab, Modifiers::NONE);
+    assert_eq!(
+        app.command_selection,
+        suggestions - 1,
+        "Shift-Tab wraps backwards through the suggestions"
+    );
+
+    key(&mut app, KeyCode::Escape, Modifiers::NONE);
+    assert_eq!(app.mode, Mode::Normal);
+}
+
 #[test]
 fn startup_status_reports_only_lazy_configs_that_were_actually_used() {
     let registry = Registry::new_with_broken_config_for_test("rust", false);

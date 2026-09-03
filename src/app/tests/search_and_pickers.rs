@@ -783,6 +783,70 @@ fn space_closes_a_new_result_list_but_remains_a_filter_separator_after_text() {
     assert!(app.list.is_none(), "Space still closes a report");
 }
 
+/// A report is read rather than chosen from, so its keys move the window over
+/// the rows instead of moving a selection: a row, a page, or all the way to
+/// either end, and neither end wraps round to the other.
+#[test]
+fn a_report_scrolls_by_row_page_and_end_without_wrapping() {
+    let items = (0..25)
+        .map(|index| PickerItem::new(format!("service-{index}"), "healthy", index))
+        .collect::<Vec<_>>();
+    let mut app = App::new(Config::default(), None).unwrap();
+    app.list = Some(ListPicker::new("Service health", items).as_report());
+
+    let offset = |app: &App| app.list.as_ref().unwrap().report_offset;
+
+    key(&mut app, KeyCode::Down, Modifiers::NONE);
+    key(&mut app, KeyCode::Down, Modifiers::NONE);
+    assert_eq!(offset(&app), 2);
+    key(&mut app, KeyCode::Up, Modifiers::NONE);
+    assert_eq!(offset(&app), 1);
+    key(&mut app, KeyCode::PageDown, Modifiers::NONE);
+    assert_eq!(offset(&app), 11);
+    key(&mut app, KeyCode::PageUp, Modifiers::NONE);
+    assert_eq!(offset(&app), 1);
+    key(&mut app, KeyCode::Home, Modifiers::NONE);
+    assert_eq!(offset(&app), 0);
+    key(&mut app, KeyCode::Up, Modifiers::NONE);
+    assert_eq!(offset(&app), 0, "the first row is as far up as it goes");
+    key(&mut app, KeyCode::End, Modifiers::NONE);
+    assert_eq!(offset(&app), 24);
+    key(&mut app, KeyCode::PageDown, Modifiers::NONE);
+    assert_eq!(offset(&app), 24, "the last row is as far down as it goes");
+    assert!(app.list.is_some(), "scrolling a report never dismisses it");
+}
+
+/// A result list is chosen from, so the same keys move its selection. Paging
+/// stops at either end rather than wrapping, which is what separates it from
+/// the single-step Up and Down that do wrap.
+#[test]
+fn a_result_list_pages_and_jumps_to_its_ends_without_wrapping() {
+    let items = (0..25)
+        .map(|index| PickerItem::new(format!("item-{index}"), "", index))
+        .collect::<Vec<_>>();
+    let mut app = App::new(Config::default(), None).unwrap();
+    app.list = Some(ListPicker::fuzzy("Git commits", items));
+
+    let selected = |app: &App| app.list.as_ref().unwrap().selected;
+
+    key(&mut app, KeyCode::PageDown, Modifiers::NONE);
+    assert_eq!(selected(&app), 10);
+    key(&mut app, KeyCode::Char('d'), Modifiers::CONTROL);
+    assert_eq!(selected(&app), 20);
+    key(&mut app, KeyCode::PageDown, Modifiers::NONE);
+    assert_eq!(selected(&app), 24, "paging stops at the last row");
+    key(&mut app, KeyCode::Char('u'), Modifiers::CONTROL);
+    assert_eq!(selected(&app), 14);
+    key(&mut app, KeyCode::PageUp, Modifiers::NONE);
+    assert_eq!(selected(&app), 4);
+    key(&mut app, KeyCode::PageUp, Modifiers::NONE);
+    assert_eq!(selected(&app), 0, "paging stops at the first row");
+    key(&mut app, KeyCode::End, Modifiers::NONE);
+    assert_eq!(selected(&app), 24);
+    key(&mut app, KeyCode::Home, Modifiers::NONE);
+    assert_eq!(selected(&app), 0);
+}
+
 #[test]
 fn project_finder_switches_name_and_content_modes_without_losing_its_query() {
     let root = temporary("project-finder-modes");

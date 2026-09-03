@@ -15,9 +15,9 @@ use std::{
 use runyte::{
     selection::Range as SelectionRange,
     syntax::{
-        DocumentSyntax, LanguageId, Outline, OutlineIssue, OutlineKind, Registry, RegistryError,
-        Span, SyntaxCapture, SyntaxError, SyntaxKind, SyntaxObject, SyntaxObjectPart, SyntaxRange,
-        SyntaxRelation, SyntaxRevision, SyntaxSelectionTransform,
+        DelimiterPair, DocumentSyntax, LanguageId, Outline, OutlineIssue, OutlineKind, Registry,
+        RegistryError, Span, SyntaxCapture, SyntaxError, SyntaxKind, SyntaxObject,
+        SyntaxObjectPart, SyntaxRange, SyntaxRelation, SyntaxRevision, SyntaxSelectionTransform,
     },
     text::{Text, Transaction},
 };
@@ -3565,4 +3565,89 @@ fn match_bracket_ignores_brackets_inside_strings() {
 fn match_bracket_returns_none_off_a_bracket() {
     let (_, text, syntax) = parse("fn main() {}", "rust");
     assert_eq!(syntax.matching_bracket(&text, 0), None);
+}
+
+/// Markdown leaves ordinary prose punctuation as text, so a quoted phrase has
+/// no delimiter-shaped node for the structural path to find. The lexical
+/// fallback pairs a delimiter that opens and closes with the same character by
+/// alternating over the ones it meets, which is why a third quote in the same
+/// paragraph opens a pair rather than closing the one before it.
+#[test]
+fn markdown_prose_pairs_identical_delimiters_by_alternating_over_them() {
+    let source = "A \"quoted\" phrase and one \"more.\n";
+    let (registry, text, syntax) = parse(source, "markdown");
+    let inside_quotes = char_offset(source, "quoted");
+
+    let selected = syntax
+        .enclosing_delimiter(
+            &text,
+            &registry,
+            SyntaxRange::point(inside_quotes),
+            Some(DelimiterPair::DoubleQuotes),
+            SyntaxObjectPart::Inside,
+        )
+        .expect("markdown prose resolves without a syntax error")
+        .expect("the quoted phrase is selectable");
+    assert_eq!(text.slice_string(selected.from, selected.to), "quoted");
+
+    let around = syntax
+        .enclosing_delimiter(
+            &text,
+            &registry,
+            SyntaxRange::point(inside_quotes),
+            Some(DelimiterPair::DoubleQuotes),
+            SyntaxObjectPart::Around,
+        )
+        .expect("markdown prose resolves without a syntax error")
+        .expect("the quoted phrase is selectable");
+    assert_eq!(text.slice_string(around.from, around.to), "\"quoted\"");
+
+    assert_eq!(
+        syntax
+            .enclosing_delimiter(
+                &text,
+                &registry,
+                SyntaxRange::point(char_offset(source, "more")),
+                Some(DelimiterPair::DoubleQuotes),
+                SyntaxObjectPart::Inside,
+            )
+            .expect("markdown prose resolves without a syntax error"),
+        None,
+        "the unmatched trailing quote opens a pair that never closes"
+    );
+}
+
+/// A backslash-escaped delimiter is prose, not punctuation, so the lexical
+/// fallback must step over it. An escaped backslash is not an escape itself,
+/// so the delimiter after it still counts.
+#[test]
+fn markdown_prose_ignores_escaped_delimiters_but_not_escaped_backslashes() {
+    let source = "Say \\\"not a quote\\\" but \"this one\" instead.\n";
+    let (registry, text, syntax) = parse(source, "markdown");
+
+    let selected = syntax
+        .enclosing_delimiter(
+            &text,
+            &registry,
+            SyntaxRange::point(char_offset(source, "this one")),
+            Some(DelimiterPair::DoubleQuotes),
+            SyntaxObjectPart::Inside,
+        )
+        .expect("markdown prose resolves without a syntax error")
+        .expect("the unescaped pair is selectable");
+    assert_eq!(text.slice_string(selected.from, selected.to), "this one");
+
+    let doubled = "A \\\\\"pair\" after an escaped backslash.\n";
+    let (registry, text, syntax) = parse(doubled, "markdown");
+    let selected = syntax
+        .enclosing_delimiter(
+            &text,
+            &registry,
+            SyntaxRange::point(char_offset(doubled, "pair")),
+            Some(DelimiterPair::DoubleQuotes),
+            SyntaxObjectPart::Inside,
+        )
+        .expect("markdown prose resolves without a syntax error")
+        .expect("a quote after an escaped backslash still opens a pair");
+    assert_eq!(text.slice_string(selected.from, selected.to), "pair");
 }

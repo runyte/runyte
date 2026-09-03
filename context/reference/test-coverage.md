@@ -41,6 +41,54 @@ days, and fails below 86% total line coverage. The floor is deliberately below
 the observed baseline because conditional Linux and macOS code changes both the
 instrumented denominator and the paths available to a run on one platform.
 
+## 2026-09-03 — Linux
+
+Measured with `cargo-llvm-cov` 0.9.0 and Rust 1.97.1 on
+`x86_64-unknown-linux-gnu`. The ordinary non-ignored workspace tests passed
+under instrumentation.
+
+| Measure | Covered | Total | Coverage |
+| --- | ---: | ---: | ---: |
+| Lines | 92,357 | 101,629 | 90.88% |
+| Functions | 8,606 | 9,378 | 91.77% |
+| Regions | 143,119 | 158,476 | 90.31% |
+
+The fresh same-tree baseline before this pass was 92,124 of 101,629 lines
+(90.65%), 8,589 of 9,378 functions (91.59%), and 142,834 of 158,476 regions
+(90.13%). It is higher than the 2026-09-02 Linux record below because the tree
+has moved on since that measurement, so the comparison here is against the
+fresh run rather than the recorded one. Every test added by this pass lives in
+a directory named `tests`, so the instrumented total did not move at all:
+covered lines rose by 233, covered functions by 17, and covered regions by 285,
+raising total line coverage by 0.23 percentage points.
+
+The retained tests cover Markdown's lexical delimiter fallback for pairs that
+open and close with the same character, including escaped delimiters and an
+escaped backslash before one; the insert-mode `delete-to-line-end` command
+across several carets; the path popup's overlay snapshots, its Ctrl-c
+dismissal, a system clipboard that refuses the copy, and a copy into a named
+register; report scrolling and result-list paging at both ends; the word each
+completion kind is displayed with, including the kinds Runyte has no word for;
+an asynchronous Git discard that stops at a refused path and reports what it
+had already restored; a worktree started from a remote branch that several
+local branches track; every named delimiter pair's own inside and around
+commands, with backticks pinned in JavaScript because Rust has no syntax for
+them; the command palette's line editing and movement between its suggestions;
+and the editing of a typed branch-switch confirmation before it matches.
+
+Review corrected the refused-clipboard test, which had asserted on the
+transient action feedback a refusal does not set rather than on the status and
+retained notification it does. The largest remaining Linux gaps by uncovered
+lines are `app/git_workflows.rs` (815), `main.rs` (727), `app/input.rs` (691),
+`git/cli.rs` (412), `ui.rs` (352), `app/language_workflows.rs` (347),
+`workspace/transport.rs` (340), `workspace/catalog.rs` (317),
+`syntax/mod.rs` (294), and `lsp/mod.rs` (289).
+
+The enforced floor remains 86%. The 95% target has not been reached, and the
+latest macOS measurement is still the 90.14% recorded below, so the lower
+measured platform continues to set the headroom and neither the floor nor the
+README badge changes.
+
 ## 2026-09-02 — macOS
 
 Measured with `cargo-llvm-cov` 0.9.0 and Rust 1.97.1 on

@@ -107,6 +107,38 @@ fn replace_line_restoration_uses_the_primary_carets_line() {
     );
 }
 
+/// Ctrl-k clears the rest of each caret's line without joining it to the next
+/// one, and a caret already sitting at the line end has nothing to remove.
+#[test]
+fn delete_to_line_end_clears_each_carets_line_tail_without_joining_lines() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    seed(
+        &mut app,
+        "keep this
+second line
+third",
+    );
+    app.active_mut().selection = Selection::new(
+        vec![Range::point(4), Range::point(10 + 6), Range::point(22 + 5)],
+        0,
+    );
+
+    press(&mut app, 'i');
+    key(&mut app, KeyCode::Char('k'), Modifiers::CONTROL);
+
+    assert_eq!(
+        text(&app),
+        "keep
+second
+third"
+    );
+    assert_eq!(
+        app.active().selection.ranges(),
+        &[Range::point(4), Range::point(11), Range::point(17)],
+        "each caret stays where the removed tail began"
+    );
+}
+
 #[test]
 fn no_op_pane_navigation_preserves_replace_mode_and_its_trail() {
     let mut app = App::new(Config::default(), None).unwrap();
@@ -1050,6 +1082,150 @@ fn path_action_menu_down_then_enter_copies_to_the_register_target() {
     );
     assert!(app.path_action_menu.is_none());
     assert!(app.path_popup.is_none());
+
+    std::fs::remove_file(path).unwrap();
+}
+
+/// A clipboard whose helper is unavailable, so the editor has to report the
+/// failure rather than claim the path was copied.
+struct RefusingClipboard;
+
+impl SystemClipboard for RefusingClipboard {
+    fn read(&mut self) -> Result<String> {
+        anyhow::bail!("no clipboard helper")
+    }
+
+    fn write(&mut self, _text: &str) -> Result<()> {
+        anyhow::bail!("no clipboard helper")
+    }
+}
+
+/// The popup and its action menu are one overlay at a time: the bare popup
+/// offers the way into the actions, and the menu replaces it with the copy
+/// targets and their mnemonics rather than stacking a second overlay on top.
+#[test]
+fn the_path_popup_and_its_action_menu_publish_one_overlay_each() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    let path =
+        temporary_directory().join(format!("runyte-path-overlay-{}.txt", std::process::id()));
+    std::fs::write(&path, "contents\n").unwrap();
+    app.open_file(path.clone()).unwrap();
+
+    app.execute_command("path").unwrap();
+    let overlays = app.overlay_snapshots();
+    assert_eq!(overlays.len(), 1);
+    let popup = &overlays[0];
+    assert_eq!(popup.kind, crate::snapshot::OverlayKind::Path);
+    assert_eq!(popup.title, "Path");
+    assert_eq!(popup.message, Some(path.display().to_string()));
+    assert!(popup.rows.is_empty(), "the bare popup lists no actions");
+    assert_eq!(popup.selected, None);
+    assert_eq!(
+        popup
+            .actions
+            .iter()
+            .map(|action| action.key_hint.as_str())
+            .collect::<Vec<_>>(),
+        ["Tab", "Esc"]
+    );
+
+    key(&mut app, KeyCode::Tab, Modifiers::NONE);
+    let overlays = app.overlay_snapshots();
+    assert_eq!(overlays.len(), 1, "the menu replaces the popup overlay");
+    let menu = &overlays[0];
+    assert_eq!(menu.kind, crate::snapshot::OverlayKind::PathActions);
+    assert_eq!(menu.selected, Some(0));
+    assert_eq!(
+        menu.rows
+            .iter()
+            .map(|row| (row.label.as_str(), row.detail.as_str()))
+            .collect::<Vec<_>>(),
+        [
+            ("s", "copy to system clipboard"),
+            ("r", "copy to Runyte register"),
+        ]
+    );
+    assert_eq!(
+        menu.message,
+        Some(path.display().to_string()),
+        "the menu still names the path it will copy"
+    );
+
+    std::fs::remove_file(path).unwrap();
+}
+
+/// Ctrl-c closes the popup the way Escape does, and a key that means nothing
+/// here leaves it standing rather than dismissing it by accident.
+#[test]
+fn control_c_closes_the_path_popup_and_an_unbound_key_leaves_it_open() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    let path = temporary_directory().join(format!("runyte-path-ctrlc-{}.txt", std::process::id()));
+    std::fs::write(&path, "contents\n").unwrap();
+    app.open_file(path.clone()).unwrap();
+
+    app.execute_command("path").unwrap();
+    press(&mut app, 'q');
+    assert!(app.path_popup.is_some(), "an unbound key is ignored here");
+
+    key(&mut app, KeyCode::Char('c'), Modifiers::CONTROL);
+    assert!(app.path_popup.is_none());
+    assert!(app.path_action_menu.is_none());
+
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn a_refused_system_clipboard_reports_the_failure_instead_of_a_copy() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    app.set_system_clipboard(Box::new(RefusingClipboard));
+    let path = temporary_directory().join(format!("runyte-path-refuse-{}.txt", std::process::id()));
+    std::fs::write(&path, "contents\n").unwrap();
+    app.open_file(path.clone()).unwrap();
+
+    app.execute_command("path").unwrap();
+    key(&mut app, KeyCode::Tab, Modifiers::NONE);
+    press(&mut app, 's');
+
+    assert!(app.status_error, "a refused copy is an error, not a status");
+    assert!(
+        app.status.contains("no clipboard helper"),
+        "the helper's own reason reaches the person: {:?}",
+        app.status
+    );
+    assert_eq!(
+        app.notifications
+            .entries()
+            .last()
+            .map(|notification| notification.title.as_str()),
+        Some("Clipboard operation failed"),
+        "the refusal is retained rather than only flashed"
+    );
+    assert!(app.path_popup.is_none(), "the popup still closes");
+
+    std::fs::remove_file(path).unwrap();
+}
+
+/// A register selected before the popup opens is the one the path lands in,
+/// and the confirmation names it so the person knows where to paste from.
+#[test]
+fn copying_the_path_to_a_selected_register_names_that_register() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    let path = temporary_directory().join(format!("runyte-path-named-{}.txt", std::process::id()));
+    std::fs::write(&path, "contents\n").unwrap();
+    app.open_file(path.clone()).unwrap();
+
+    press(&mut app, '"');
+    press(&mut app, 'a');
+    app.execute_command("path").unwrap();
+    key(&mut app, KeyCode::Tab, Modifiers::NONE);
+    press(&mut app, 'r');
+
+    assert_eq!(
+        app.registers.get(&'a').unwrap().text,
+        path.display().to_string()
+    );
+    assert_eq!(app.status, "copied path to register a");
+    assert!(!app.status_error);
 
     std::fs::remove_file(path).unwrap();
 }

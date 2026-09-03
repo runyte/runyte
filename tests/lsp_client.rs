@@ -1673,3 +1673,73 @@ async fn rust_analyzer_answers_a_real_goto_definition() {
     );
     handle.send(LspCommand::Shutdown);
 }
+
+/// A completion's kind reaches the editor as the word it will be shown with,
+/// so the popup never has to interpret a protocol number. A kind Runyte has no
+/// word for arrives blank rather than as a number a reader would have to look
+/// up.
+#[tokio::test]
+async fn completion_kinds_arrive_as_the_words_the_popup_shows() {
+    let named = [
+        (1, "text"),
+        (2, "method"),
+        (3, "function"),
+        (4, "constructor"),
+        (5, "field"),
+        (6, "variable"),
+        (7, "class"),
+        (8, "interface"),
+        (9, "module"),
+        (10, "property"),
+        (11, "unit"),
+        (12, "value"),
+        (13, "enum"),
+        (14, "keyword"),
+        (15, "snippet"),
+        (17, "file"),
+        (19, "folder"),
+        (21, "constant"),
+        (22, "struct"),
+        (25, "type parameter"),
+        // Colour, reference, enum member, event and operator have no Runyte
+        // vocabulary of their own.
+        (16, ""),
+        (18, ""),
+        (20, ""),
+        (23, ""),
+        (24, ""),
+    ];
+    let items = named
+        .iter()
+        .map(|(kind, _)| json!({"label": format!("item-{kind}"), "kind": kind}))
+        .collect::<Vec<_>>();
+    let script = Script::default()
+        .initialize_result(json!({
+            "capabilities": {"textDocumentSync": 2, "completionProvider": {}}
+        }))
+        .result(
+            "textDocument/completion",
+            json!({"isIncomplete": false, "items": items}),
+        );
+    let mut harness = harness(script);
+    assert!(harness.handle.send(LspCommand::Ensure {
+        language: "rust".to_owned()
+    }));
+    harness.ready().await;
+
+    harness.request(RequestKind::Completion(runyte::lsp::LspPosition::new(0, 0)));
+    let Response::Completions(items) = harness.response().await else {
+        panic!("expected completions");
+    };
+    let shown = items
+        .iter()
+        .map(|item| (item.label.as_str(), item.kind))
+        .collect::<HashMap<_, _>>();
+    for (kind, word) in named {
+        assert_eq!(
+            shown.get(format!("item-{kind}").as_str()).copied(),
+            Some(word),
+            "completion kind {kind}"
+        );
+    }
+}

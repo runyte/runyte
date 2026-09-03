@@ -1012,3 +1012,101 @@ fn syntax_object_navigation_supports_modes_counts_and_each_object_kind() {
         "select-object commands must reject counts"
     );
 }
+
+/// Every delimiter pair the keymap names has its own inside and around
+/// command, and each one selects the same span the shared closest-delimiter
+/// object would have chosen for that pair. A person who learns one pair has
+/// learnt them all, so a pair that quietly resolved to a different one would
+/// be a defect the parenthesis tests could not see.
+#[test]
+fn each_named_delimiter_pair_selects_its_own_inside_and_around_span() {
+    let root = IsolatedRoot::new("delimiter-pairs");
+    let source = "fn demo<T>() { let list = [1, 2]; let text = \"hello\"; let ch = 'x'; }\n";
+    fs::write(root.path().join("pairs.rs"), source).unwrap();
+    let mut editor = HeadlessEditor::new_in(root.path()).unwrap();
+    editor
+        .execute(CommandInvocation::open(PathBuf::from("pairs.rs")).unwrap())
+        .unwrap();
+
+    let braced = " let list = [1, 2]; let text = \"hello\"; let ch = 'x'; ";
+    for (needle, inside_command, inside, around_command, around) in [
+        (
+            "1",
+            EditorCommand::SelectInsideSquareBrackets,
+            "1, 2",
+            EditorCommand::SelectAroundSquareBrackets,
+            "[1, 2]",
+        ),
+        (
+            "T>",
+            EditorCommand::SelectInsideAngleBrackets,
+            "T",
+            EditorCommand::SelectAroundAngleBrackets,
+            "<T>",
+        ),
+        (
+            "list",
+            EditorCommand::SelectInsideBraces,
+            braced,
+            EditorCommand::SelectAroundBraces,
+            &format!("{{{braced}}}"),
+        ),
+        (
+            "hello",
+            EditorCommand::SelectInsideDoubleQuotes,
+            "hello",
+            EditorCommand::SelectAroundDoubleQuotes,
+            "\"hello\"",
+        ),
+        (
+            "x'",
+            EditorCommand::SelectInsideSingleQuotes,
+            "x",
+            EditorCommand::SelectAroundSingleQuotes,
+            "'x'",
+        ),
+    ] {
+        let point = char_offset(source, needle);
+        editor.set_active_selection(Selection::point(point));
+        editor.execute(editor_invocation(inside_command)).unwrap();
+        assert_eq!(
+            inclusive_selected_text(&editor),
+            inside,
+            "inside {inside_command:?}"
+        );
+
+        editor.set_active_selection(Selection::point(point));
+        editor.execute(editor_invocation(around_command)).unwrap();
+        assert_eq!(
+            inclusive_selected_text(&editor),
+            around,
+            "around {around_command:?}"
+        );
+    }
+}
+
+/// Backticks are the one pair Rust has no syntax for, so they are pinned in a
+/// language that does.
+#[test]
+fn backtick_delimiters_select_a_template_literal_inside_and_around() {
+    let root = IsolatedRoot::new("delimiter-backticks");
+    let source = "const greeting = `hello`;\n";
+    fs::write(root.path().join("literal.js"), source).unwrap();
+    let mut editor = HeadlessEditor::new_in(root.path()).unwrap();
+    editor
+        .execute(CommandInvocation::open(PathBuf::from("literal.js")).unwrap())
+        .unwrap();
+
+    let point = char_offset(source, "hello");
+    editor.set_active_selection(Selection::point(point));
+    editor
+        .execute(editor_invocation(EditorCommand::SelectInsideBackticks))
+        .unwrap();
+    assert_eq!(inclusive_selected_text(&editor), "hello");
+
+    editor.set_active_selection(Selection::point(point));
+    editor
+        .execute(editor_invocation(EditorCommand::SelectAroundBackticks))
+        .unwrap();
+    assert_eq!(inclusive_selected_text(&editor), "`hello`");
+}

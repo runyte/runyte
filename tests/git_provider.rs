@@ -4070,3 +4070,106 @@ fn no_newline_addition_is_exact_and_deletion_conflict_and_binary_are_refused() {
         .to_string();
     assert!(conflict.contains("conflicts"), "{conflict}");
 }
+
+/// A discard names several paths at once, and the service applies them one at
+/// a time. It stops at the first path Git refuses and reports both the reason
+/// and the paths it had already restored, because the editor reloads exactly
+/// those buffers and leaves the rest alone.
+#[test]
+fn an_async_discard_reports_the_paths_it_restored_before_it_stopped() {
+    let repository = TempRepository::new("discard-async");
+    repository.write("first.rs", "committed\n");
+    repository.write("second.rs", "committed\n");
+    repository.commit("base");
+    repository.write("first.rs", "edited\n");
+    repository.write("second.rs", "edited\n");
+
+    let (service, mut events) = GitService::spawn(provider());
+    let (applied, failure) = submit_discard(
+        &service,
+        &mut events,
+        &repository,
+        vec![
+            repository.path().join("first.rs"),
+            repository.path().join("second.rs"),
+        ],
+    );
+    assert!(failure.is_none(), "{failure:?}");
+    assert_eq!(
+        applied,
+        vec![
+            repository.path().join("first.rs"),
+            repository.path().join("second.rs"),
+        ]
+    );
+    assert_eq!(
+        fs::read_to_string(repository.path().join("first.rs")).unwrap(),
+        "committed\n"
+    );
+    assert_eq!(
+        fs::read_to_string(repository.path().join("second.rs")).unwrap(),
+        "committed\n"
+    );
+
+    repository.write("first.rs", "edited again\n");
+    repository.write("second.rs", "edited again\n");
+    let outside = repository.path().parent().unwrap().join("elsewhere.rs");
+    let (applied, failure) = submit_discard(
+        &service,
+        &mut events,
+        &repository,
+        vec![repository.path().join("first.rs"), outside.clone()],
+    );
+    assert!(
+        matches!(failure, Some(GitError::NotARepository { ref path }) if *path == outside),
+        "{failure:?}"
+    );
+    assert_eq!(
+        applied,
+        vec![repository.path().join("first.rs")],
+        "the paths restored before the refusal are still reported"
+    );
+    assert_eq!(
+        fs::read_to_string(repository.path().join("first.rs")).unwrap(),
+        "committed\n"
+    );
+    assert_eq!(
+        fs::read_to_string(repository.path().join("second.rs")).unwrap(),
+        "edited again\n",
+        "a path after the refusal is left as it was"
+    );
+}
+
+/// Runs one discard through the service and waits for its own completion,
+/// returning the paths it applied and the failure that stopped it.
+fn submit_discard(
+    service: &GitServiceHandle,
+    events: &mut tokio::sync::mpsc::Receiver<GitServiceEvent>,
+    repository: &TempRepository,
+    paths: Vec<PathBuf>,
+) -> (Vec<PathBuf>, Option<GitError>) {
+    let id = service
+        .try_submit(GitOperation::Mutate {
+            repository: repository.repository(),
+            mutation: GitMutation::Discard(paths),
+            refresh: RefreshSpec::default(),
+        })
+        .unwrap();
+    loop {
+        match events.blocking_recv().expect("Git service stopped") {
+            GitServiceEvent::Completed {
+                id: completed,
+                result,
+                ..
+            } if completed == id => match *result {
+                Ok(GitResponse::Mutation {
+                    applied_paths,
+                    failure,
+                    ..
+                }) => return (applied_paths, failure),
+                result => panic!("unexpected mutation result: {result:?}"),
+            },
+            _ => {}
+        }
+    }
+}

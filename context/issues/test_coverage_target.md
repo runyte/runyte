@@ -4,8 +4,8 @@ Linux and macOS are Runyte's first-class platforms, and the test suite is the
 main evidence that both stay correct as the editor changes.
 
 `context/reference/test-coverage.md` records the current baselines. On
-`x86_64-unknown-linux-gnu`, `cargo-llvm-cov` 0.9.0 and Rust 1.97.1 cover 90,688
-of 100,194 lines, 8,456 of 9,238 functions, and 140,743 of 156,351 regions. The
+`x86_64-unknown-linux-gnu`, `cargo-llvm-cov` 0.9.0 and Rust 1.97.1 cover 92,357
+of 101,629 lines, 8,606 of 9,378 functions, and 143,119 of 158,476 regions. The
 latest `aarch64-apple-darwin` measurement covers 90,481 of 100,380 lines, 8,450
 of 9,253 functions, and 140,408 of 156,605 regions. CI publishes the per-file
 summary, retains an HTML report, and fails below an enforced 86% line floor.
@@ -104,13 +104,48 @@ coverage: LLVM already credits the shared `ensure!` line through its successful
 condition, while the new test uniquely proves the false condition preserves
 both requests and leaves the connection usable.
 
-The largest remaining Linux gaps by uncovered lines are
-`app/git_workflows.rs` (843), `app/input.rs` (761), `main.rs` (716),
-`git/cli.rs` (412), `app/language_workflows.rs` (389), `ui.rs` (341),
-`workspace/transport.rs` (341), `syntax/mod.rs` (310), `workspace/catalog.rs`
-(309), and `lsp/mod.rs` (309).
+A further pass on Linux began from a fresh same-tree measurement of 92,124 of
+101,629 lines (90.65%), 8,589 of 9,378 functions (91.59%), and 142,834 of
+158,476 regions (90.13%); the tree had moved on since the recorded 2026-09-02
+Linux result, so that fresh run is the comparison. The clean canonical result
+after the pass is 92,357 of 101,629 lines (90.88%), 8,606 of 9,378 functions
+(91.77%), and 143,119 of 158,476 regions (90.31%). Every added test lives in a
+directory named `tests`, so the instrumented total did not move: 233 newly
+covered lines, 17 functions and 285 regions produce a 0.23 percentage-point
+line gain.
 
-The issue remains open. Linux still has 9,506 uncovered lines and the latest
+The retained tests cover Markdown's lexical delimiter fallback for pairs that
+open and close with the same character, escaped delimiters included; the
+insert-mode `delete-to-line-end` command across several carets; the path
+popup's overlay snapshots, its Ctrl-c dismissal, a refusing system clipboard,
+and a copy into a named register; report scrolling and result-list paging at
+both ends; the word each completion kind is displayed with; an asynchronous Git
+discard that stops at a refused path and reports what it had already restored;
+a worktree started from a remote branch several local branches track; every
+named delimiter pair's own inside and around commands; the command palette's
+line editing and suggestion movement; and the editing of a typed branch-switch
+confirmation. Review corrected the refused-clipboard test, which had asserted
+on the transient action feedback a refusal does not set rather than on the
+status and retained notification it does.
+
+The largest remaining Linux gaps by uncovered lines are
+`app/git_workflows.rs` (815), `main.rs` (727), `app/input.rs` (691),
+`git/cli.rs` (412), `ui.rs` (352), `app/language_workflows.rs` (347),
+`workspace/transport.rs` (340), `workspace/catalog.rs` (317),
+`syntax/mod.rs` (294), and `lsp/mod.rs` (289).
+
+Two shapes recur across the two largest. Twenty-eight of the thirty-two
+`git_service.is_some()` guards in `app/git_workflows.rs` have an uncovered
+branch, because the application tests mostly drive Git through the synchronous
+provider; those guards account for roughly 170 of that file's 815 uncovered
+lines rather than most of them. In `main.rs` the mass is concentrated in `run`
+(140 uncovered lines), `run_host_server` (118) and `run_attached` (91), with
+the attachment and wait-recovery helpers around them. Those are process entry
+points and event loops that need a spawned binary or a live attachment; the
+file already has its own inline test module, so the gap is not that nothing
+tests it.
+
+The issue remains open. Linux still has 9,272 uncovered lines and the latest
 macOS measurement has 9,899. The CI floor and README badge remain at 86%,
 leaving 4.14 percentage points of headroom below the lower measured platform.
 There is no post-change macOS result to justify a higher cross-platform floor,

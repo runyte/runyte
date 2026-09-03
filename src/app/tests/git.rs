@@ -2463,6 +2463,58 @@ fn a_remote_row_with_several_trackers_asks_which_local_branch_to_use() {
     fs::remove_dir_all(root).unwrap();
 }
 
+/// A worktree started from a remote row still needs one local branch to check
+/// out there. When several local branches track the same remote ref the editor
+/// asks which, the same way checkout does, and the answer becomes what the
+/// destination prompt starts the new worktree from.
+#[test]
+fn a_worktree_from_a_remote_row_with_several_trackers_asks_which_local_branch() {
+    use crate::git::{MemoryGitProvider, Repository, Upstream};
+
+    let root = temporary("git-remote-worktree-trackers");
+    fs::create_dir_all(&root).unwrap();
+    let root = root.canonicalize().unwrap();
+    let mut ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    let upstream = Some(Upstream::origin("topic", Some(Default::default())));
+    ports.replace_git(Box::new(
+        MemoryGitProvider::new(Repository::new(&root))
+            .with_branches(&["feature", "main", "release"], "main")
+            .with_branch_detail("feature", upstream.clone(), false)
+            .with_branch_detail("release", upstream, false)
+            .with_remote_branches(&["origin/topic"]),
+    ));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    app.execute_command("git-branches").unwrap();
+    select_remote_branch(&mut app, "origin/topic");
+
+    context_action(&mut app, 'w');
+
+    let list = app.list.as_ref().expect("a local branch choice");
+    assert_eq!(list.title, "Local branches tracking origin/topic");
+    assert_eq!(
+        list.items
+            .iter()
+            .map(|item| item.label.as_str())
+            .collect::<Vec<_>>(),
+        ["feature", "release"]
+    );
+    assert!(
+        app.prompt_kind != PromptKind::WorktreeDestination,
+        "nothing is started until the branch is chosen"
+    );
+
+    key(&mut app, KeyCode::Down, Modifiers::NONE);
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+
+    assert!(app.list.is_none());
+    assert_eq!(app.prompt_kind, PromptKind::WorktreeDestination);
+    assert_eq!(app.git_worktree_start.as_deref(), Some("release"));
+    assert_eq!(app.git_worktree_upstream, None);
+    fs::remove_dir_all(root).unwrap();
+}
+
 #[test]
 fn a_conflicting_default_remote_branch_name_opens_an_editable_name_prompt() {
     use crate::git::{MemoryGitProvider, Repository};
@@ -2703,6 +2755,66 @@ fn a_hidden_live_terminal_requires_exact_branch_name_before_checkout() {
     assert_eq!(app.status, "checked out main");
     assert!(app.git_branch_switch.is_none());
 
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// The line a typed confirmation is answered on is edited like any other one.
+/// A confirmation that only accepted appended characters would make a typo
+/// mean starting again, and the exact-match rule makes that costly.
+#[cfg(unix)]
+#[test]
+fn a_typed_branch_confirmation_edits_its_line_before_it_matches() {
+    use crate::git::{MemoryGitProvider, Repository};
+
+    let root = temporary("git-branch-typed-editing");
+    fs::create_dir_all(&root).unwrap();
+    let root = root.canonicalize().unwrap();
+    let mut ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    let provider = Rc::new(
+        MemoryGitProvider::new(Repository::new(&root)).with_branches(&["feature", "main"], "main"),
+    );
+    ports.replace_git(Box::new(Rc::clone(&provider)));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    app.execute_command("git-branches").unwrap();
+    press(&mut app, 'k');
+    app.open_terminal_at(Some("/bin/cat".to_owned()), root.clone());
+    app.leave_terminal();
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+
+    let typed = |app: &App| app.git_branch_switch.as_ref().unwrap().input.clone();
+    type_text(&mut app, "feeture");
+    assert_eq!(typed(&app), "feeture");
+
+    key(&mut app, KeyCode::Home, Modifiers::NONE);
+    key(&mut app, KeyCode::Right, Modifiers::NONE);
+    key(&mut app, KeyCode::Right, Modifiers::NONE);
+    key(&mut app, KeyCode::Delete, Modifiers::NONE);
+    assert_eq!(typed(&app), "feture");
+    press(&mut app, 'a');
+    assert_eq!(typed(&app), "feature");
+
+    key(&mut app, KeyCode::End, Modifiers::NONE);
+    key(&mut app, KeyCode::Backspace, Modifiers::NONE);
+    assert_eq!(typed(&app), "featur");
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert!(
+        provider.checkouts().is_empty(),
+        "an edited line still has to match exactly"
+    );
+
+    key(&mut app, KeyCode::Left, Modifiers::NONE);
+    press(&mut app, 'e');
+    assert_eq!(typed(&app), "featuer", "the caret is where it was left");
+    key(&mut app, KeyCode::Backspace, Modifiers::NONE);
+    key(&mut app, KeyCode::End, Modifiers::NONE);
+    press(&mut app, 'e');
+    assert_eq!(typed(&app), "feature");
+
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert_eq!(provider.checkouts(), vec!["feature"]);
+    assert!(app.git_branch_switch.is_none());
     fs::remove_dir_all(root).unwrap();
 }
 
