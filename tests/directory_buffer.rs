@@ -734,7 +734,12 @@ fn question_mark_toggles_aligned_file_details_without_editing_the_listing() {
     assert_eq!(columns.len(), 7, "{file_prefix:?}");
     assert_eq!(columns[3], "14K");
     assert!(columns[6].contains(':'), "{file_prefix:?}");
-    assert!(hints.prefix(1).unwrap().starts_with("lrwxrwxrwx "));
+    // A symlink's own mode bits are not portable — Linux reports 0o777 and
+    // macOS 0o755 — so the row asserts the type character and that the details
+    // still line up with the other rows.
+    let link_prefix = hints.prefix(1).expect("the symlink has a details prefix");
+    assert!(link_prefix.starts_with('l'), "{link_prefix:?}");
+    assert_eq!(link_prefix.len(), file_prefix.len(), "{link_prefix:?}");
     assert_eq!(hints.text(1), Some("→ AGENTS.md"));
 
     for key in [KeyStroke::char(' '), KeyStroke::char('r')] {
