@@ -69,6 +69,18 @@ picker has since rebuilt resolves to nothing instead of silently naming an
 unrelated line. That is a guard rather than a second fix: with the
 restatement above in place, no path is expected to reach it.
 
+A second preview path still discarded that scan identity after using the
+guard. `refresh_finder_preview` first proved that the selected finder row was
+readable through `ResourceFinder::file_entry`, but then searched for the same
+bare entry index in the new picker's match list and delegated previewing to
+that row. During rapid query edits or `Tab` mode switches, a content re-scan
+legitimately leaves the displayed row in the retained corpus while the new
+corpus has no match at that index. The row could therefore be drawn from its
+original scan while its preview stayed empty; a reused index could also have
+selected an unrelated new row. Finder previews now derive the path, row, and
+match emphasis directly from the scan-aware entry view and pass that complete
+selection to the shared file-preview loader.
+
 Tests: `truncated_content_rescan_reranks_under_the_query_it_restarts_for` in
 `src/app/tests/search_and_pickers.rs` is the regression test, with
 `a_restarted_scan_retires_the_file_matches_ranked_against_its_entries` in
@@ -79,7 +91,10 @@ real background scanner, types a query the initial scan did not run under,
 injects the truncated `Finished` that triggers the restart, and requires the
 restarted scan to be ranked, every finder row to resolve against the rebuilt
 entry table, and the selection to be previewable. Without the fix it never
-settles.
+settles. `a_retained_content_row_keeps_its_preview_while_the_new_scan_ranks`
+and `rapid_finder_mode_switches_and_retyped_query_restore_the_file_preview`,
+also in `src/app/tests/search_and_pickers.rs`, cover the retained-corpus
+preview boundary and the reported background-scanner interaction sequence.
 
 ## Report
 

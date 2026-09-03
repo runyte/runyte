@@ -17,12 +17,14 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use crate::file_picker::{
-    FileHits, FilePreviewRequest, ScanScope, line_hit, line_hit_from_trimmed,
+    FileHits, FilePreviewRequest, PickerTarget, ScanScope, line_hit, line_hit_from_trimmed,
 };
 use crate::terminal::TerminalId;
 
 const RESOURCE_CONTENT_SLICE_ROWS: usize = 128;
 const RESOURCE_CONTENT_LINE_CHARACTERS: usize = 1_024;
+
+type FilePreviewSelection = (PickerTarget, PathBuf, bool, Option<(usize, Vec<usize>)>);
 
 /// Whether a ranked answer names the finder's current live matches, and
 /// whether it is the complete answer for them.
@@ -441,6 +443,10 @@ impl App {
                 }),
             ))
         });
+        self.refresh_file_preview(selected);
+    }
+
+    fn refresh_file_preview(&mut self, selected: Option<FilePreviewSelection>) {
         let Some((target, path, is_dir, content_match)) = selected else {
             if let Some(picker) = self.picker.as_mut() {
                 picker.preview = None;
@@ -1457,16 +1463,45 @@ impl App {
                 .as_ref()
                 .zip(self.picker.as_ref())
                 .and_then(|(finder, picker)| {
-                    let entry = match finder.selected_match()?.source {
-                        FinderMatchSource::File(entry) => entry,
-                        FinderMatchSource::Resource(_) => return None,
+                    let found = finder.selected_match()?;
+                    let FinderMatchSource::File(entry) = found.source else {
+                        return None;
                     };
-                    finder.file_entry(picker, entry)?;
-                    picker.matches.iter().position(|found| found.entry == entry)
+                    Some(finder.file_entry(picker, entry).map(|entry| {
+                        let content_match = entry.row.map(|row| {
+                            (
+                                row,
+                                found
+                                    .emphasis
+                                    .iter()
+                                    .map(|position| entry.column + position)
+                                    .collect::<Vec<_>>(),
+                            )
+                        });
+                        let target = PickerTarget {
+                            path: entry.path.to_path_buf(),
+                            row: entry.row,
+                            column: entry.column
+                                + entry
+                                    .row
+                                    .and_then(|_| found.emphasis.first().copied())
+                                    .unwrap_or(0),
+                        };
+                        (
+                            target,
+                            entry.path.to_path_buf(),
+                            entry.is_dir,
+                            content_match,
+                        )
+                    }))
                 });
         if let Some(selected) = selected_file {
-            self.picker.as_mut().unwrap().selected = selected;
-            self.refresh_file_picker_preview();
+            // A content re-scan keeps one old corpus specifically so the
+            // rows already on screen remain readable while their replacement
+            // ranks. Preview that same scan-aware row; looking its bare entry
+            // index up in the new picker's matches either finds nothing or,
+            // worse, finds an unrelated row at the reused index.
+            self.refresh_file_preview(selected);
         }
     }
 

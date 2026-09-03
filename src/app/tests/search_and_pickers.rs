@@ -3652,6 +3652,126 @@ fn truncated_content_rescan_reranks_under_the_query_it_restarts_for() {
     fs::remove_dir_all(root).unwrap();
 }
 
+#[test]
+fn a_retained_content_row_keeps_its_preview_while_the_new_scan_ranks() {
+    let root = temporary("retained-content-preview");
+    fs::create_dir_all(&root).unwrap();
+    let path = root.join("note.txt");
+    fs::write(&path, "before\nneedle preview\nafter\n").unwrap();
+    let mut app = App::new_in_isolated_project(
+        &root,
+        HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+            String::new(),
+        ))))),
+    )
+    .unwrap();
+    let mut picker = FilePicker::grep(
+        9,
+        root.clone(),
+        crate::file_picker::ScanScope::ignoring(&root),
+    );
+    picker.add_content(vec![crate::file_picker::FileHits {
+        path: path.clone(),
+        lines: vec![crate::file_picker::LineHit {
+            row: 1,
+            column: 0,
+            text: "needle preview".to_owned(),
+        }],
+    }]);
+    picker.insert_query_text("needle");
+    let mut finder = ResourceFinder::new(FinderMode::Contents);
+    finder.merge_files(&picker, "needle");
+
+    // A new content walk keeps the old corpus for exactly the rows still on
+    // screen. The picker has no matches in its new table yet, but the finder
+    // row remains fully resolvable through its recorded scan identity.
+    let _discarded = picker.restart_content_scan(10);
+    assert!(picker.matches.is_empty());
+    assert!(finder.file_entry(&picker, 0).is_some());
+    app.picker = Some(picker);
+    app.finder = Some(finder);
+
+    app.refresh_finder_preview();
+
+    let preview = app
+        .picker
+        .as_ref()
+        .unwrap()
+        .preview
+        .as_ref()
+        .expect("the retained row should keep a preview while its replacement ranks");
+    assert_eq!(previewed_match(preview), "needle");
+    app.close_file_picker();
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn rapid_finder_mode_switches_and_retyped_query_restore_the_file_preview() {
+    let root = temporary("rapid-finder-mode-preview");
+    fs::create_dir_all(&root).unwrap();
+    for index in 0..512 {
+        fs::write(
+            root.join(format!("note-{index:04}.txt")),
+            format!("heading {index}\nneedle preview {index}\ntrailing\n"),
+        )
+        .unwrap();
+    }
+    let ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    let (scanner, mut events) = crate::file_picker::scanner();
+    app.attach_file_scanner(scanner);
+    app.open_project_picker().unwrap();
+
+    type_text(&mut app, "needle");
+    key(&mut app, KeyCode::Tab, Modifiers::NONE);
+    key(&mut app, KeyCode::Tab, Modifiers::NONE);
+    for _ in 0.."needle".len() {
+        key(&mut app, KeyCode::Backspace, Modifiers::NONE);
+    }
+    type_text(&mut app, "needle");
+    key(&mut app, KeyCode::Tab, Modifiers::NONE);
+    key(&mut app, KeyCode::Tab, Modifiers::NONE);
+    key(&mut app, KeyCode::Tab, Modifiers::NONE);
+
+    tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .build()
+        .unwrap()
+        .block_on(async {
+            tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                loop {
+                    while app.resource_finder_scan_pending() {
+                        app.advance_resource_finder_scan();
+                    }
+                    pacing_tick(&mut app);
+                    let settled = app.finder.as_ref().zip(app.picker.as_ref()).is_some_and(
+                        |(finder, picker)| {
+                            finder.mode == FinderMode::Contents
+                                && !finder.loading
+                                && !picker.loading
+                                && !picker.ranking
+                                && !picker.content_rescan_needed()
+                                && !finder.matches.is_empty()
+                                && picker.preview.is_some()
+                        },
+                    );
+                    if settled {
+                        break;
+                    }
+                    deliver(&mut app, events.recv().await.unwrap());
+                }
+            })
+            .await
+            .expect("the final content mode and its preview should settle");
+        });
+
+    assert!(app.picker.as_ref().unwrap().preview.is_some());
+    app.close_file_picker();
+    fs::remove_dir_all(root).unwrap();
+}
+
 #[cfg(unix)]
 #[test]
 fn output_that_leaves_a_terminal_item_unchanged_does_not_move_the_name_list() {
