@@ -89,18 +89,25 @@ pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
             // pane border; `command` takes the palette's command names off it
             // so the two can differ, and does, in blue.
             command: Some("#6cb6ff".into()),
-            // Normal is green, Insert is the brand red, and Command is the
-            // blue the palette lists commands in, so the mode label answers
-            // the same colour question the reader just asked of the palette.
-            // Normal therefore names its colour instead of tracking `accent`.
+            // Normal is green, Insert is the brand red, Select is pink, and
+            // Command is the blue the palette lists commands in, so the mode
+            // label answers the same colour question the reader just asked of
+            // the palette. Normal therefore names its colour instead of
+            // tracking `accent`.
             cursor_normal: Some("#8ddb8c".into()),
             cursor_insert: Some("#c96870".into()),
             cursor_replace: Some("#d2a8ff".into()),
-            cursor_select: Some("#f0a868".into()),
+            cursor_select: Some("#f07ab4".into()),
             cursor_command: Some("#6cb6ff".into()),
             directory: None,
-            selection: "#30475f".into(),
-            selection_primary: Some("#593d2d".into()),
+            // The branded pair separates its two selection grounds by hue
+            // alone rather than by the cool-against-warm every other
+            // Runyte-original theme uses: the primary range answers Select
+            // mode's own pink, and the secondary ground is saturated far
+            // enough off the surface to be found at a glance while ordinary
+            // text still clears 5:1 on it.
+            selection: "#0b3f8c".into(),
+            selection_primary: Some("#5e2e4d".into()),
             fuzzy_match_secondary: None,
             fuzzy_match_primary: None,
             status_background: "#111318".into(),
@@ -163,11 +170,14 @@ pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
             cursor_normal: Some("#23733a".into()),
             cursor_insert: Some("#a33d49".into()),
             cursor_replace: Some("#754b97".into()),
-            cursor_select: Some("#9a5518".into()),
+            cursor_select: Some("#a4276f".into()),
             cursor_command: Some("#1f65a6".into()),
             directory: None,
-            selection: "#bfd6ea".into(),
-            selection_primary: Some("#e9cdb2".into()),
+            // See `default-dark`: the same pink primary and vivid blue
+            // secondary, carried down to hold their contrast against a light
+            // ground instead of a dark one.
+            selection: "#8fc6fb".into(),
+            selection_primary: Some("#f2b8da".into()),
             fuzzy_match_secondary: None,
             fuzzy_match_primary: None,
             status_background: "#d9dade".into(),
