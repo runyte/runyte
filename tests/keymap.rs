@@ -447,6 +447,12 @@ fn pane_swap_bindings_have_primary_and_compatibility_roles_in_every_window_mode(
                 && binding.role == BindingRole::Compatibility
     ));
     assert!(matches!(
+        keymap.lookup(Mode::Replace, &compatibility),
+        Lookup::Exact(binding)
+            if binding.target == BindingTarget::Editor(EditorCommand::SwapWindow)
+                && binding.role == BindingRole::Compatibility
+    ));
+    assert!(matches!(
         keymap.lookup_in(Mode::Insert, BindingScope::Terminal, &compatibility),
         Lookup::Exact(binding)
             if binding.target == BindingTarget::Editor(EditorCommand::SwapWindow)

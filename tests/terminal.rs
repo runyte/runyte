@@ -23,7 +23,9 @@ use runyte::{
     clipboard::SystemClipboard,
     command::Mode,
     config::Config,
-    input::{KeyCode, KeyStroke, Modifiers, PointerButton, PointerEvent, PointerEventKind},
+    input::{
+        InputEvent, KeyCode, KeyStroke, Modifiers, PointerButton, PointerEvent, PointerEventKind,
+    },
     key_hints::KeyHintState,
     snapshot::OverlayKind,
     terminal::{self, OUTPUT_QUEUE, TerminalEvents, TerminalOutput},
@@ -672,6 +674,46 @@ fn pane_swap_moves_a_terminal_session_and_preserves_its_review() {
     assert_eq!(session.app.active_terminal(), Some(terminal));
     assert_eq!(session.app.terminal_of_pane(document_pane), None);
     assert!(session.app.terminals.get(terminal).unwrap().reviewing());
+}
+
+#[test]
+fn terminal_insert_swap_keeps_the_live_child_and_resizes_at_its_new_geometry() {
+    let mut session = Session::start("/bin/sh -c 'stty raw -echo; printf ready; cat -v'");
+    assert!(session.settle(|app| terminal_text(app).contains("ready")));
+    let terminal = session.app.active_terminal().unwrap();
+    let terminal_pane = session.app.active_pane;
+    session.app.handle_key(KeyStroke::ctrl('w')).unwrap();
+    session.type_text("v");
+    let document_pane = session.app.active_pane;
+    render(&mut session.app, 80, 16);
+    type_colon(&mut session.app, "resize-left + 10");
+    render(&mut session.app, 80, 16);
+
+    session.app.handle_key(KeyStroke::ctrl('w')).unwrap();
+    session.type_text("h");
+    assert_eq!(session.app.active_terminal(), Some(terminal));
+    assert_eq!(session.app.mode, Mode::Insert);
+    let narrow_columns = session.app.terminals.get(terminal).unwrap().columns();
+
+    session.app.handle_key(KeyStroke::ctrl('w')).unwrap();
+    session.type_text("x");
+    assert_eq!(session.app.active_pane, document_pane);
+    assert_eq!(session.app.active_terminal(), Some(terminal));
+    assert_eq!(session.app.terminal_of_pane(terminal_pane), None);
+    assert_eq!(session.app.mode, Mode::Insert);
+    assert!(!session.app.terminals.get(terminal).unwrap().reviewing());
+
+    render(&mut session.app, 80, 16);
+    let wide_columns = session.app.terminals.get(terminal).unwrap().columns();
+    assert!(
+        wide_columns > narrow_columns,
+        "{narrow_columns} -> {wide_columns}"
+    );
+    session
+        .app
+        .handle_input(InputEvent::Text("still alive".to_owned()))
+        .unwrap();
+    assert!(session.settle(|app| terminal_text_by_id(app, terminal).contains("still alive")));
 }
 
 #[test]

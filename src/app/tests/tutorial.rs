@@ -35,6 +35,27 @@ fn tutorial_opens_two_native_panes_and_advances_from_editor_state() {
 }
 
 #[test]
+fn pane_swap_moves_tutorial_roles_with_their_buffers() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    app.execute_command("tutorial").unwrap();
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    let before = app.tutorial_state().unwrap().clone();
+    assert_eq!(app.active_pane, before.exercise_pane);
+
+    app.swap_window();
+
+    let after = app.tutorial_state().unwrap();
+    assert_eq!(after.instruction_pane, before.exercise_pane);
+    assert_eq!(after.exercise_pane, before.instruction_pane);
+    assert_eq!(
+        app.panes[&after.instruction_pane].buffer,
+        after.instruction_buffer
+    );
+    assert_eq!(app.panes[&after.exercise_pane].buffer, after.scratch_buffer);
+    assert_eq!(app.active_pane, after.exercise_pane);
+}
+
+#[test]
 fn every_tutorial_lesson_has_at_least_ten_lines_and_ends_with_next_steps() {
     let mut app = App::new(Config::default(), None).unwrap();
     app.execute_command("tutorial").unwrap();

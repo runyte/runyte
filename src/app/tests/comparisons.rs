@@ -139,6 +139,27 @@ fn each_side_is_coloured_by_what_it_has() {
     assert_eq!(compared_at(left, 0), None);
 }
 
+#[test]
+fn pane_swap_moves_both_diff_sides_with_their_buffers() {
+    let (mut app, _, _) = compared("a\nc\n", "a\nb\nc\n");
+    let (left_before, right_before) = sides(&app);
+    let layout = format!("{:?}", app.layout);
+
+    app.swap_window();
+    let view = prepare(&mut app);
+
+    assert_eq!(app.diffs.len(), 1);
+    let (left_after, right_after) = sides(&app);
+    assert_eq!((left_after, right_after), (right_before, left_before));
+    for side in [Side::Left, Side::Right] {
+        let side = app.diffs[0].side(side);
+        assert_eq!(app.panes[&side.pane].buffer, side.buffer);
+    }
+    assert_eq!(format!("{:?}", app.layout), layout);
+    assert!(view.pane(left_after).is_some());
+    assert!(view.pane(right_after).is_some());
+}
+
 /// Scrolling one side moves the other to the line facing it, which is not
 /// the same row number once the two files have drifted apart.
 #[test]

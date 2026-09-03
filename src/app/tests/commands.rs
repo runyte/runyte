@@ -1254,6 +1254,26 @@ fn ambiguous_directional_focus_falls_back_to_most_recently_opened_pane() {
 }
 
 #[test]
+fn pane_swap_refuses_when_the_immediately_previous_pane_was_closed() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    app.split(Axis::Horizontal, None).unwrap();
+    let middle = app.active_pane;
+    app.split(Axis::Horizontal, None).unwrap();
+    let closed_previous = app.active_pane;
+    app.activate_pane(middle);
+    assert_eq!(app.previously_focused_pane, Some(closed_previous));
+    assert!(app.remove_pane(closed_previous));
+    assert_eq!(app.panes.len(), 2, "an older pane still survives");
+
+    app.swap_window();
+
+    assert_eq!(app.active_pane, middle);
+    assert_eq!(app.previously_focused_pane, None);
+    assert_eq!(app.status, "no previously focused pane to swap with");
+    assert!(app.status_error);
+}
+
+#[test]
 fn closing_the_last_pane_explains_how_to_quit() {
     let mut app = App::new(Config::default(), None).unwrap();
     let pane = app.active_pane;

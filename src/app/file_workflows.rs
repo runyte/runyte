@@ -1698,7 +1698,7 @@ impl App {
     /// Unlike the user-facing close command, lifecycle callers may name an
     /// inactive pane and may run while a maximized view is showing the pane
     /// whose process just ended. The last pane remains an invariant of the editor.
-    fn remove_pane(&mut self, closing: usize) -> bool {
+    pub(super) fn remove_pane(&mut self, closing: usize) -> bool {
         if self.panes.len() == 1 || !self.panes.contains_key(&closing) {
             return false;
         }
@@ -1715,6 +1715,9 @@ impl App {
         self.areas.remove(&closing);
         self.pane_opened_at.remove(&closing);
         self.pane_activated_at.remove(&closing);
+        if self.previously_focused_pane == Some(closing) {
+            self.previously_focused_pane = None;
+        }
         if self
             .maximized
             .is_some_and(|maximized| maximized.pane == closing)
@@ -1754,13 +1757,10 @@ impl App {
             return;
         }
         let active = self.active_pane;
-        let previous = self
-            .panes
-            .keys()
-            .copied()
-            .filter(|pane| *pane != active && self.pane_activated_at.contains_key(pane))
-            .max_by_key(|pane| self.pane_focus_rank(*pane));
-        let Some(previous) = previous else {
+        let Some(previous) = self
+            .previously_focused_pane
+            .filter(|pane| *pane != active && self.panes.contains_key(pane))
+        else {
             self.action_failed("no previously focused pane to swap with");
             return;
         };
@@ -1816,6 +1816,7 @@ impl App {
         self.areas.retain(|pane, _| *pane == active);
         self.pane_opened_at.retain(|pane, _| *pane == active);
         self.pane_activated_at.retain(|pane, _| *pane == active);
+        self.previously_focused_pane = None;
         self.status("only window");
     }
 
@@ -1888,6 +1889,9 @@ impl App {
     pub(super) fn activate_pane(&mut self, pane: usize) {
         let order = self.advance_pane_history();
         self.pane_activated_at.insert(pane, order);
+        if pane != self.active_pane {
+            self.previously_focused_pane = Some(self.active_pane);
+        }
         self.active_pane = pane;
     }
 

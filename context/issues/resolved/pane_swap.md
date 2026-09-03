@@ -9,13 +9,16 @@ commit: 2b1719e
 ## Resolution
 
 Commit 2b1719e (`Add pane content swapping`) added the `swap-window` command.
-`App::swap_window` was added beside the existing pane-focus workflows and
-selects the highest-ranked live pane with a recorded activation other than the
-active pane. It exchanges the complete `Pane` values while leaving the split
-tree and pane geometry untouched, then activates the position holding the
-original content. Activating that destination makes the former position the
-most recently focused alternative, so invoking the command again is its
-inverse.
+`App::swap_window` was added beside the existing pane-focus workflows. Its
+first implementation selected the highest-ranked surviving pane, which meant
+closing the immediate predecessor silently exposed an older pane as the swap
+target. Pane activation now retains the immediately preceding pane identity
+separately from the ranked activation history used by directional focus. The
+command uses that exact identity and refuses if it has been closed. It
+exchanges the complete `Pane` values while leaving the split tree and pane
+geometry untouched, then activates the position holding the original content.
+Activating that destination makes the former position the immediate
+predecessor, so invoking the command again is its inverse.
 
 Content-owned state kept outside `Pane` moves with it: pristine search
 selection presentation, side-by-side diff ownership, and tutorial pane roles
@@ -24,12 +27,13 @@ the exchanged `Pane`; focus settlement therefore preserves the same terminal
 session and its live or review state while normal frame preparation resizes it
 only if its destination geometry differs.
 
-The command refuses with an interaction-line error when no other live pane has
-a recorded activation, and it uses the existing maximized-view reason for both
-Zen and full-screen refusal. `Space w x` is the Primary binding in Normal and
-Select modes. Vim's `Ctrl-w x` spelling is retained as a Compatibility binding
-and joins `Ctrl-w w` in Insert, Replace, and Terminal Insert. Unlike Vim, the
-command exchanges pane contents rather than pane positions.
+The command refuses with an interaction-line error when there is no immediate
+predecessor or that pane has closed, and it uses the existing maximized-view
+reason for both Zen and full-screen refusal. `Space w x` is the Primary binding
+in Normal and Select modes. Vim's `Ctrl-w x` spelling is retained as a
+Compatibility binding and joins `Ctrl-w w` in Insert, Replace, and Terminal
+Insert. Unlike Vim, the command exchanges pane contents rather than pane
+positions.
 
 Regression coverage:
 
@@ -41,7 +45,13 @@ Regression coverage:
 - `pane_swap_moves_a_terminal_session_and_preserves_its_review` in
   `tests/terminal.rs`;
 - `swapping_pane_ownership_keeps_each_side_attached_to_its_buffer` in
-  `src/diff_view.rs`.
+  `src/diff_view.rs`;
+- `pane_swap_refuses_when_the_immediately_previous_pane_was_closed`,
+  `pane_swap_moves_both_diff_sides_with_their_buffers`,
+  `pane_swap_moves_pristine_search_presentation_with_its_content`, and
+  `pane_swap_moves_tutorial_roles_with_their_buffers` in `src/app/tests/`;
+- `terminal_insert_swap_keeps_the_live_child_and_resizes_at_its_new_geometry`
+  in `tests/terminal.rs`.
 
 ## Report
 
@@ -62,10 +72,10 @@ in the split tree. The layout and its boundaries were to remain fixed, while
 the caret followed its original content to the other position. A second
 invocation needed to undo the first instead of selecting a third pane.
 
-With one pane, no recorded previous pane, or no surviving eligible previous
-pane, the command needed to report a refusal on the interaction line. Zen and
-full-screen presentations needed to refuse for the same reason as focus and
-next-window: the maximized pane is the only pane reachable by keys.
+With one pane, no recorded previous pane, or when the previous pane had since
+been closed, the command needed to report a refusal on the interaction line.
+Zen and full-screen presentations needed to refuse for the same reason as
+focus and next-window: the maximized pane is the only pane reachable by keys.
 
 A terminal needed to move as pane content without restarting its child. Its
 ownership and review state needed to survive, destination focus needed the
