@@ -627,7 +627,7 @@ fn ctrl_w_popup_advertises_terminal_creation_from_the_registry() {
         terminal.target,
         Some(BindingTarget::Editor(EditorCommand::OpenTerminal))
     );
-    assert_eq!(terminal.description, "Run a shell or command in this pane");
+    assert_eq!(terminal.description, "Start a terminal in this pane");
     assert_eq!(terminal.role, BindingRole::Compatibility);
 }
 

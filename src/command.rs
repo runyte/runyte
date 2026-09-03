@@ -716,7 +716,7 @@ editor_commands! {
         "Equalize pane widths, then pane heights within each column"
     ),
 
-    OpenTerminal => ("open-terminal", "Run a shell or command in this pane"),
+    OpenTerminal => ("open-terminal", "Start a terminal in this pane"),
     OpenTerminalFileDirectory => (
         "open-terminal-file-directory",
         "Run a terminal in the active file's directory"
