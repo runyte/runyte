@@ -1356,6 +1356,9 @@ impl App {
             bail!("leave {} before creating a split", maximized.view.label());
         }
         let old = self.active_pane;
+        // Read before the clone: what the source pane is showing right now is
+        // the question, not which buffer the pane kept behind a terminal.
+        let from_terminal = self.terminal_of_pane(old).is_some();
         let new = self.next_pane;
         self.next_pane += 1;
         let mut pane = self.panes[&old].clone();
@@ -1368,10 +1371,10 @@ impl App {
         // it navigates it shares the view it was split from, which is what
         // makes a split of an explorer show the same directory twice.
         pane.directory_buffer = None;
-        // A split of a terminal pane shows that pane's buffer, not a second
-        // view of the same child. One pty has one size, and two panes sizing
-        // it would fight over every resize; the terminal list is how a session
-        // is put in front of another pane deliberately.
+        // The new pane never shows the child the source pane is showing.
+        // One pty has one size, and two panes sizing it would fight over
+        // every resize; the terminal list is how a session is put in front of
+        // another pane deliberately.
         pane.terminal = None;
         // A covered terminal is owed a return by the one pane that gave it
         // up, for the same reason. Two panes holding the claim would race to
@@ -1383,6 +1386,12 @@ impl App {
         self.activate_pane(new);
         if let Some(path) = path {
             self.open_file(path)?;
+        } else if from_terminal {
+            // The buffer the terminal's pane retained is that pane's history,
+            // not a document the person asked for a second view of. Splitting
+            // a terminal is a request for somewhere to work, so the new pane
+            // starts where `Space E` would put it.
+            self.open_explorer(None)?;
         }
         self.status(match axis {
             Axis::Horizontal => "vertical split",

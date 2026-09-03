@@ -668,12 +668,21 @@ fn control_w_splits_an_only_terminal_without_starting_review() {
         let mut session = Session::start("/bin/sh -c 'stty raw -echo; printf ready; cat -v'");
         assert!(session.settle(|app| terminal_text(app).contains("ready")));
         let terminal = session.app.active_terminal().unwrap();
+        let source = session.app.active_pane;
 
         session.app.handle_key(KeyStroke::ctrl('w')).unwrap();
         session.type_text(&suffix.to_string());
 
         assert_eq!(session.app.panes.len(), 2);
+        assert_ne!(session.app.active_pane, source);
+        // The child stays where it was; the split is a new place to work.
+        assert_eq!(session.app.terminal_of_pane(source), Some(terminal));
         assert_eq!(session.app.active_terminal(), None);
+        assert!(session.app.active_buffer().is_directory());
+        assert_eq!(
+            session.app.active_buffer().path.as_deref(),
+            Some(session.app.working_directory.as_path())
+        );
         assert_eq!(session.app.mode, Mode::Normal);
         assert_eq!(session.app.status, status);
         let child = session.app.terminals.get(terminal).unwrap();

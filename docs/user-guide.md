@@ -687,7 +687,8 @@ terminal destination in Insert mode. A terminal that already owns a captured
 review stays in Normal/review mode until `i`, `a`, `o`, or another terminal
 insert key returns it to the live screen; a document reached from Terminal
 Insert starts in Normal. `Ctrl-w v/s` and their control-key aliases split the
-only pane while leaving the child live in the original pane. `Ctrl-w f/z`
+only pane while leaving the child live in the original pane; the new pane
+opens the working-directory explorer, as `Space E` does. `Ctrl-w f/z`
 toggle full-screen and zen presentation from terminal Insert, live Normal,
 Normal/review, and Select without changing that mode. Bare `Ctrl-w` likewise
 keeps the current mode. Window actions never capture or discard a terminal
@@ -1699,7 +1700,7 @@ cancellation keys.
 | `.` in a directory | Show or hide dotfiles in the explorer |
 | `x y` / `x d`, then `p` in a directory | Copy / cut selected entries, then paste in the destination explorer |
 | `:w` or `:write` in a directory | Review a filesystem plan before applying edits |
-| `Space w v/s` or compatibility `Ctrl-w v/s` | Vertical/horizontal splits |
+| `Space w v/s` or compatibility `Ctrl-w v/s` | Vertical/horizontal splits; from a terminal, the new pane opens the working-directory explorer |
 | `Space w…` or compatibility `Ctrl-w…` | Window focus, close, next, and only-window operations |
 | `Space w =` | Equalize pane widths, then pane heights within each column |
 | `Space w f` / `Space w z`, or compatibility `Ctrl-w f` / `Ctrl-w z` | Toggle the full-screen pane / the centred Zen viewport |
@@ -1808,6 +1809,13 @@ shows the same listing, on the same row, and no key opens the entry under the
 caret in a split. What the new pane becomes is then your choice — navigate it
 to the destination directory and it takes an explorer of its own, which is
 what makes a copy or a cut across two explorers possible.
+
+Splitting a terminal is the one exception. A terminal is pane content rather
+than a buffer, so its pane still holds the buffer it was showing before the
+terminal opened — that buffer is the pane's history, not something you asked
+for a second view of. The terminal stays where it is, in its live or reviewed
+state, and the new pane opens the working directory as an explorer, exactly as
+`Space E` would.
 
 In the buffer picker, Enter opens the selected buffer, `Ctrl-t` toggles its
 bounded preview of authoritative in-memory text, and Tab opens contextual
@@ -1986,7 +1994,7 @@ message without affecting the internal registers.
 | `Ctrl-w h/j/k/l` or arrows in Terminal Insert | Move directly without capturing or discarding review; a live terminal destination starts Insert, a reviewed terminal stays in review, and a document destination starts Normal |
 | `Ctrl-h/j/k/l` in Terminal Insert | The exact same destination behavior without the prefix, when `editor.fast_pane_keys` is on; the child stops receiving those four keys |
 | `Ctrl-w w` in Terminal Insert | Cycle panes with the same live-terminal/reviewed-terminal/document destination behavior |
-| `Ctrl-w v/s` in Terminal Insert | Create a vertical/horizontal document split while leaving the terminal child live without review |
+| `Ctrl-w v/s` in Terminal Insert | Create a vertical/horizontal split showing the working-directory explorer, while leaving the terminal child live without review |
 | `Ctrl-\` in a terminal | First leave INSERT for live NORMAL, then enter review on the second press. Reported as `Ctrl-4` by terminals without the enhanced keyboard protocol, and both work |
 | `i` / `a` in a terminal | Type again, returning to the live screen first |
 | `h` / `j` / `k` / `l`, word, line, paragraph, and character-find motions | Move the terminal review caret; after `v`, extend an inclusive character selection in either direction |
