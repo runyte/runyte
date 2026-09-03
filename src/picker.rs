@@ -246,6 +246,16 @@ impl ListPicker {
         self.purpose != ListPurpose::Report
     }
 
+    /// What a filterable list's query line reads before anything is typed.
+    /// A report takes no filter, so it has nothing to invite.
+    pub fn query_placeholder(&self) -> &'static str {
+        if self.accepts_filter_input() {
+            "type to filter"
+        } else {
+            ""
+        }
+    }
+
     pub fn has_tags(&self) -> bool {
         !self.tags.is_empty()
     }

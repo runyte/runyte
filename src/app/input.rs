@@ -334,6 +334,7 @@ impl App {
         {
             return vec![PathHint {
                 value: format!("~{separator}"),
+                name: format!("~{separator}"),
                 detail: display_path(home),
                 is_directory: true,
             }];
@@ -394,6 +395,7 @@ impl App {
                 (!is_directory, folded, row.clone()),
                 PathHint {
                     value: format!("{display_base}{row}"),
+                    name: row.clone(),
                     detail: detail_base.join(name).display().to_string(),
                     is_directory,
                 },

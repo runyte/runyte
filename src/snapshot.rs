@@ -58,6 +58,11 @@ pub struct OverlaySnapshot {
     pub actions: Vec<OverlayAction>,
     pub title: String,
     pub query: String,
+    /// What the query line reads while the query is empty. Frontends draw it
+    /// muted in place of the query, so a surface that owns its input keeps
+    /// the same shape before and after its first character. Empty for a
+    /// surface that has nothing to suggest.
+    pub query_placeholder: String,
     /// Optional non-selectable labels for the row columns.
     pub column_header: Option<OverlayColumnHeader>,
     pub rows: Vec<OverlayRow>,
@@ -148,6 +153,10 @@ pub enum OverlayKind {
     ProgramActions,
     Path,
     PathActions,
+    /// Bounded path assistance attached to a completing prompt. The
+    /// interaction line below it owns the typed value, so this overlay
+    /// carries no query of its own and is anchored rather than centred.
+    PathCompletion,
     Prompt,
     Completion,
     Signature,
@@ -167,6 +176,9 @@ impl OverlayKind {
         Self::CommandPalette,
         Self::ProgramHints,
         Self::ProgramActions,
+        Self::Path,
+        Self::PathActions,
+        Self::PathCompletion,
         Self::Prompt,
         Self::Completion,
         Self::Signature,
@@ -1576,7 +1588,7 @@ mod tests {
 
     #[test]
     fn overlay_kind_inventory_is_exhaustive_and_semantically_typed() {
-        assert_eq!(OverlayKind::ALL.len(), 13);
+        assert_eq!(OverlayKind::ALL.len(), 16);
         let mut app = App::new(Config::default(), None).unwrap();
         app.execute(crate::command::CommandInvocation::service_health())
             .unwrap();

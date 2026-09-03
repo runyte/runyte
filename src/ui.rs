@@ -574,6 +574,12 @@ fn render_editor_frame(
         .iter()
         .rev()
         .find(|overlay| overlay.kind == OverlayKind::BufferActions);
+    // A completing prompt's assistance is drawn from its snapshot, so the
+    // list an attached client sees and the one a standalone editor draws are
+    // the same list in the same corner rather than two readings of it.
+    let path_completion_overlay = overlays
+        .iter()
+        .find(|overlay| overlay.kind == OverlayKind::PathCompletion);
     let path_overlay = if app.path_action_menu_open() {
         overlays
             .iter()
@@ -611,18 +617,10 @@ fn render_editor_frame(
     } else if app.list.is_some() {
         draw_list(frame, &app, editor_area);
     } else {
-        if app.mode == Mode::Command && app.prompt_kind == PromptKind::Command {
+        if let Some(overlay) = path_completion_overlay {
+            draw_snapshot_overlay(frame, &app.theme, overlay, snapshot);
+        } else if app.mode == Mode::Command && app.prompt_kind == PromptKind::Command {
             draw_command_palette(frame, &app, editor_area);
-        } else if app.mode == Mode::Command && app.prompt_kind == PromptKind::FinderPath {
-            if let Some(hints) = app.finder_path_hints() {
-                draw_command_path_hints(
-                    frame,
-                    &app,
-                    editor_area,
-                    &hints,
-                    " Paths · the finder is rooted here · ↑/↓ select · Tab complete ",
-                );
-            }
         } else if app.mode == Mode::Command && app.prompt_kind == PromptKind::ExternalProgram {
             draw_program_hints(frame, &app, editor_area);
             if app.program_action_menu.is_some() {
@@ -802,9 +800,13 @@ fn draw_snapshot_overlay(
     if editor_area.width < 3 || editor_area.height < 3 {
         return;
     }
-    let shows_query = !overlay.query.is_empty()
-        || (overlay.kind == OverlayKind::Confirmation
-            && overlay.input == crate::snapshot::OverlayInput::Text);
+    // A surface that owns its input keeps its query line whether or not
+    // anything has been typed into it, so its rows never move under the
+    // reader as the first character arrives. A surface that owns no input —
+    // key hints showing a pending stroke, a completion showing its filter —
+    // still shows the text it has, and shows nothing when it has none.
+    let shows_query =
+        overlay.input != crate::snapshot::OverlayInput::None || !overlay.query.is_empty();
     let query_height = usize::from(shows_query);
     let header_height = usize::from(overlay.column_header.is_some());
     let message_height = usize::from(overlay.message.is_some());
@@ -830,6 +832,10 @@ fn draw_snapshot_overlay(
                     height,
                 })
             }
+            // Assistance attached to the interaction line: bottom left,
+            // sized to the rows it holds and to the width they need, so the
+            // same hints occupy the same corner in both renderers.
+            OverlayKind::PathCompletion => to_tui_rect(path_completion_area(editor_area, overlay)),
             OverlayKind::Completion | OverlayKind::Signature | OverlayKind::Hover => {
                 let rows = overlay.rows.len().clamp(1, 12);
                 // The shared snapshot renderer shows a completion's filter
@@ -901,10 +907,11 @@ fn draw_snapshot_overlay(
     if shows_query {
         query_height = 1;
         frame.render_widget(
-            Paragraph::new(Line::from(vec![
-                Span::styled("> ", Style::default().fg(theme.accent)),
-                Span::raw(overlay.query.clone()),
-            ])),
+            Paragraph::new(query_line(
+                &overlay.query,
+                &overlay.query_placeholder,
+                theme,
+            )),
             TuiRect::new(inner.x, inner.y, inner.width, 1),
         );
     }
@@ -1060,6 +1067,9 @@ fn draw_snapshot_overlay(
         let style = Style::default().fg(match overlay.purpose {
             crate::snapshot::OverlayPurpose::Confirmation => theme.warning,
             crate::snapshot::OverlayPurpose::Info => theme.info,
+            // Assistance that has nothing to offer is saying so, not
+            // reporting a failure.
+            crate::snapshot::OverlayPurpose::Context => theme.muted,
             _ => theme.error,
         });
         lines.extend(
@@ -1121,6 +1131,87 @@ fn draw_snapshot_overlay(
             .saturating_add(cells.min(u16::MAX as usize) as u16)
             .min(inner.right().saturating_sub(1));
         frame.set_cursor_position(ScreenPosition::new(x, inner.y));
+    }
+}
+
+/// The one query line every surface that owns its input draws.
+///
+/// An empty query keeps the line and reads its placeholder muted, so the rows
+/// below it stand at the same screen row before and after the first
+/// character. Both renderers build the line here, because they had drifted
+/// into showing the same query two different ways.
+fn query_line(query: &str, placeholder: &str, theme: &TuiTheme) -> Line<'static> {
+    if query.is_empty() && !placeholder.is_empty() {
+        return Line::from(Span::styled(
+            format!("> {placeholder}"),
+            Style::default().fg(theme.muted),
+        ));
+    }
+    Line::from(vec![
+        Span::styled("> ", Style::default().fg(theme.accent)),
+        Span::styled(query.to_owned(), Style::default().fg(theme.foreground)),
+    ])
+}
+
+/// Where a completing prompt's path assistance sits.
+///
+/// At the bottom left of the editor area, immediately above the lines that
+/// carry the value being completed, and no larger than the rows it holds: the
+/// interaction line is the query, so this is a hint list rather than a
+/// surface to look into.
+fn path_completion_area(editor_area: Rect, overlay: &OverlaySnapshot) -> Rect {
+    /// Rows of assistance worth showing at once. More than this and the list
+    /// stops being a glance and starts covering the text it completes over.
+    const MAX_ROWS: usize = 12;
+    // The border writes the title and the keys that operate the list between
+    // its two corners, so the box is at least wide enough to say what it is
+    // without clipping them.
+    let hints = overlay_action_hints(overlay);
+    let title_width = UnicodeWidthStr::width(overlay.title.as_str())
+        + if hints.is_empty() {
+            0
+        } else {
+            3 + UnicodeWidthStr::width(hints.as_str())
+        }
+        + 4;
+    let message_width = overlay
+        .message
+        .as_deref()
+        .map_or(0, |message| UnicodeWidthStr::width(message) + 2);
+    let row_width = overlay
+        .rows
+        .iter()
+        .map(|row| {
+            UnicodeWidthStr::width(SELECTION_GUTTER)
+                + UnicodeWidthStr::width(row.label.as_str())
+                + if row.detail.is_empty() {
+                    0
+                } else {
+                    2 + UnicodeWidthStr::width(row.detail.as_str())
+                }
+        })
+        .max()
+        .unwrap_or_default()
+        .saturating_add(2);
+    let width = u16::try_from(title_width.max(row_width).max(message_width))
+        .unwrap_or(u16::MAX)
+        .clamp(1, editor_area.width);
+    // No query row is charged for: this kind carries none, because the
+    // interaction line under it is the query.
+    let content_rows = overlay
+        .rows
+        .len()
+        .min(MAX_ROWS)
+        .saturating_add(usize::from(overlay.message.is_some()))
+        .max(1);
+    let height = u16::try_from(content_rows.saturating_add(2))
+        .unwrap_or(u16::MAX)
+        .clamp(1, editor_area.height);
+    Rect {
+        x: editor_area.x,
+        y: editor_area.y + editor_area.height.saturating_sub(height),
+        width,
+        height,
     }
 }
 
@@ -2255,25 +2346,14 @@ fn draw_picker(frame: &mut Frame<'_>, app: &TuiApp<'_>, editor_area: Rect) {
         .direction(Direction::Vertical)
         .constraints([Constraint::Length(1), Constraint::Min(1)])
         .split(inner);
-    let query = if picker.query.is_empty() {
-        Line::from(Span::styled(
-            if picker.kind == crate::file_picker::FilePickerKind::Contents {
-                "> type to fuzzy-search contents"
-            } else {
-                "> type to fuzzy-find"
-            },
-            Style::default().fg(app.theme.muted),
-        ))
-    } else {
-        Line::from(vec![
-            Span::styled("> ", Style::default().fg(app.theme.accent)),
-            Span::styled(
-                picker.query.clone(),
-                Style::default().fg(app.theme.foreground),
-            ),
-        ])
-    };
-    frame.render_widget(Paragraph::new(query), rows[0]);
+    frame.render_widget(
+        Paragraph::new(query_line(
+            &picker.query,
+            picker.kind.query_placeholder(),
+            &app.theme,
+        )),
+        rows[0],
+    );
     let query_cells = picker
         .query
         .chars()
@@ -2450,25 +2530,14 @@ fn draw_resource_finder(
         .direction(Direction::Vertical)
         .constraints([Constraint::Length(1), Constraint::Min(1)])
         .split(inner);
-    let query = if picker.query.is_empty() {
-        Line::from(Span::styled(
-            if finder.mode == crate::finder::FinderMode::Names {
-                "> type to find anything by name"
-            } else {
-                "> type to find anything by content"
-            },
-            Style::default().fg(app.theme.muted),
-        ))
-    } else {
-        Line::from(vec![
-            Span::styled("> ", Style::default().fg(app.theme.accent)),
-            Span::styled(
-                picker.query.clone(),
-                Style::default().fg(app.theme.foreground),
-            ),
-        ])
-    };
-    frame.render_widget(Paragraph::new(query), rows[0]);
+    frame.render_widget(
+        Paragraph::new(query_line(
+            &picker.query,
+            finder.mode.query_placeholder(),
+            &app.theme,
+        )),
+        rows[0],
+    );
     let query_cells = picker
         .query
         .chars()
@@ -2771,27 +2840,24 @@ fn draw_list(frame: &mut Frame<'_>, app: &TuiApp<'_>, editor_area: Rect) {
     };
     let setting = app.setting_choices_open();
     let preview_layout = picker.has_preview();
+    // The same rectangle the shared snapshot renderer gives an attached
+    // client for this list. The two had drifted a few percent apart, so the
+    // same rows sat on different screen rows depending on which renderer was
+    // in front of them.
     let area = to_tui_rect(if setting {
         setting_choice_popup_area(editor_area)
     } else if preview_layout {
         centered(editor_area, 90, 85, 28, 8)
     } else {
-        centered(editor_area, 86, 80, 24, 6)
+        centered(editor_area, 80, 75, 28, 7)
     });
     if area.width < 3 || area.height < 3 {
         return;
     }
-    let filter = if !picker.accepts_filter_input() {
-        String::new()
-    } else if picker.filter.is_empty() {
-        "type to filter".to_owned()
-    } else {
-        format!("filter: {}", picker.filter)
-    };
+    // The filter reads on the query line under the title, where every other
+    // surface that owns a typed query keeps it. The title stays the surface's
+    // name, its counts, and the keys that act on it.
     let mut hints = Vec::new();
-    if !filter.is_empty() {
-        hints.push(filter);
-    }
     if picker.has_tags() {
         hints.push(format!("Tab {}", picker.tag_label()));
     }
@@ -2823,20 +2889,40 @@ fn draw_list(frame: &mut Frame<'_>, app: &TuiApp<'_>, editor_area: Rect) {
                 .bg(app.theme.overlay_background),
         );
     let inner = block.inner(area);
-    let show_preview = preview_layout && picker.show_preview && inner.width >= 72;
+    frame.render_widget(Clear, area);
+    frame.render_widget(block, area);
+    // The line is reserved whether or not anything has been typed, so the
+    // rows keep their screen row as the filter gains its first character.
+    let content = if picker.accepts_filter_input() {
+        frame.render_widget(
+            Paragraph::new(query_line(
+                &picker.filter,
+                picker.query_placeholder(),
+                &app.theme,
+            )),
+            TuiRect::new(inner.x, inner.y, inner.width, 1),
+        );
+        TuiRect::new(
+            inner.x,
+            inner.y.saturating_add(1),
+            inner.width,
+            inner.height.saturating_sub(1),
+        )
+    } else {
+        inner
+    };
+    let show_preview = preview_layout && picker.show_preview && content.width >= 72;
     let columns = if show_preview {
         TuiLayout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(44), Constraint::Percentage(56)])
-            .split(inner)
+            .split(content)
     } else {
         TuiLayout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(100)])
-            .split(inner)
+            .split(content)
     };
-    frame.render_widget(Clear, area);
-    frame.render_widget(block, area);
     let marker = true;
     let list_area = if let Some(header) = &picker.column_header {
         frame.render_widget(
@@ -3283,16 +3369,6 @@ fn draw_command_palette(frame: &mut Frame<'_>, app: &TuiApp<'_>, editor_area: Re
     if editor_area.width < 3 || editor_area.height < 3 {
         return;
     }
-    if let Some(hints) = app.matching_path_hints() {
-        draw_command_path_hints(
-            frame,
-            app,
-            editor_area,
-            &hints,
-            " Paths · directories open as explorers · ↑/↓ select · Tab complete ",
-        );
-        return;
-    }
     let matches = app.matching_commands();
     let content_height = matches.len().max(1) as u16;
     let height = content_height
@@ -3371,73 +3447,6 @@ fn draw_command_palette(frame: &mut Frame<'_>, app: &TuiApp<'_>, editor_area: Re
         .highlight_spacing(HighlightSpacing::Always);
     let selected =
         (!matches.is_empty()).then_some(app.command_selection.min(matches.len().saturating_sub(1)));
-    let mut state = ListState::default().with_selected(selected);
-    frame.render_widget(Clear, area);
-    StatefulWidget::render(list, area, frame.buffer_mut(), &mut state);
-}
-
-fn draw_command_path_hints(
-    frame: &mut Frame<'_>,
-    app: &TuiApp<'_>,
-    editor_area: Rect,
-    hints: &[crate::app::PathHint],
-    title: &str,
-) {
-    let height = (hints.len().max(1) as u16)
-        .saturating_add(2)
-        .min(editor_area.height)
-        .min(24);
-    let width = editor_area.width.min(100);
-    let area = TuiRect::new(
-        editor_area.x,
-        editor_area.y + editor_area.height.saturating_sub(height),
-        width,
-        height,
-    );
-    let items = if hints.is_empty() {
-        vec![ListItem::new("No matching paths").style(Style::default().fg(app.theme.muted))]
-    } else {
-        hints
-            .iter()
-            .map(|hint| {
-                ListItem::new(Line::from(vec![
-                    Span::styled(
-                        format!(
-                            "{:<10} ",
-                            if hint.is_directory {
-                                "directory"
-                            } else {
-                                "file"
-                            }
-                        ),
-                        Style::default().fg(app.theme.muted),
-                    ),
-                    Span::styled(hint.value.clone(), Style::default().fg(app.theme.accent)),
-                    Span::styled(
-                        format!("  {}", hint.detail),
-                        Style::default().fg(app.theme.muted),
-                    ),
-                ]))
-            })
-            .collect()
-    };
-    let list = List::new(items)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(app.theme.accent))
-                .title(title),
-        )
-        .style(
-            Style::default()
-                .fg(app.theme.foreground)
-                .bg(app.theme.overlay_background),
-        )
-        .highlight_style(selection_style(&app.theme))
-        .highlight_symbol(selection_marker(&app.theme))
-        .highlight_spacing(HighlightSpacing::Always);
-    let selected =
-        (!hints.is_empty()).then_some(app.command_selection.min(hints.len().saturating_sub(1)));
     let mut state = ListState::default().with_selected(selected);
     frame.render_widget(Clear, area);
     StatefulWidget::render(list, area, frame.buffer_mut(), &mut state);
@@ -4638,7 +4647,7 @@ mod tests {
             width: 200,
             height: 60,
         };
-        let title = " theme · type to filter · Tab light · Enter to save · Esc cancel ";
+        let title = " theme · Tab light · Enter to save · Esc cancel ";
         assert!(
             title.width() <= usize::from(setting_choice_popup_area(editor).width - 2),
             "the setting choice popup cannot show its own key hints"
@@ -5743,18 +5752,25 @@ mod tests {
 
         let screen = rendered(&mut app, 120, 24);
 
-        assert!(screen.contains("Paths"), "{screen}");
-        assert!(screen.contains("directories open as explorers"), "{screen}");
-        let file = screen
-            .lines()
-            .find(|line| line.contains("file.txt"))
-            .expect("the file hint should be rendered");
-        assert!(file.contains("file       "), "{file}");
-        let directory = screen
-            .lines()
-            .find(|line| line.contains("folder/"))
-            .expect("the directory hint should be rendered");
-        assert!(directory.contains("directory  "), "{directory}");
+        // One title for every path-argument command, naming the one being
+        // completed rather than saying "Paths" and leaving the reader to
+        // guess what the rows would answer.
+        assert!(screen.contains("Choose path for :open"), "{screen}");
+        // The row shows the entry's own name and what the name does not say.
+        // The base it sits under is on the interaction line one row below,
+        // so no row repeats it.
+        assert!(
+            screen.contains("\u{25b8} folder/  directory"),
+            "the directory hint should be rendered: {screen}"
+        );
+        assert!(
+            screen.contains("file.txt  file"),
+            "the file hint should be rendered: {screen}"
+        );
+        assert!(
+            !screen.contains(&format!("{}/folder", root.display())),
+            "the typed base is not repeated on the row: {screen}"
+        );
         std::fs::remove_dir_all(root).unwrap();
     }
 

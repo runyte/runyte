@@ -18,10 +18,14 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use ratatui::{Terminal, backend::TestBackend, buffer::Buffer};
 use runyte::{
     app::{App, CompletionSource},
     config::Config,
     input::{KeyCode, KeyStroke, Modifiers},
+    key_hints::KeyHintState,
+    ui,
+    workspace::WorkspaceHost,
 };
 
 /// Entries per directory in the wide trees below.
@@ -497,6 +501,265 @@ fn a_wide_directory_offers_every_name_typed_into_the_finder_path_prompt() {
         app.command,
         format!("{base}/dir_05990{}", std::path::MAIN_SEPARATOR)
     );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+// The assistance a completing prompt draws is one surface with two
+// renderings. A standalone editor draws it from live state and an attached
+// client draws it from the published snapshot, and the two used to disagree
+// about everything but the rows: one anchored a bordered list to the bottom
+// left, the other centred a box over most of the editor. These tests hold the
+// two readings against each other.
+
+/// A directory with two entries whose names are short enough to read in a
+/// rendered frame and distinct enough to tell apart.
+fn small_directory(path: &Path) -> PathBuf {
+    fs::create_dir_all(path.join("folder")).unwrap();
+    fs::write(path.join("file.txt"), "").unwrap();
+    path.to_path_buf()
+}
+
+fn screen(buffer: &Buffer) -> Vec<String> {
+    (0..buffer.area.height)
+        .map(|row| {
+            (0..buffer.area.width)
+                .map(|column| buffer[(column, row)].symbol())
+                .collect::<String>()
+        })
+        .collect()
+}
+
+fn standalone_screen(app: &mut App, width: u16, height: u16) -> Vec<String> {
+    let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+    terminal
+        .draw(|frame| {
+            let prepared = app.prepare_view(ui::frame_geometry(frame.area()));
+            let snapshot = app.snapshot(&prepared);
+            ui::render_exact_colors_for_test(frame, app, &snapshot, &KeyHintState::default());
+        })
+        .unwrap();
+    screen(terminal.backend().buffer())
+}
+
+fn attached_screen(app: App, width: u16, height: u16) -> Vec<String> {
+    let mut host = WorkspaceHost::new(app);
+    let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+    terminal
+        .draw(|frame| {
+            let published = host.prepare_frame(ui::frame_geometry(frame.area()));
+            ui::render_host_frame_exact_colors_for_test(frame, &published);
+        })
+        .unwrap();
+    screen(terminal.backend().buffer())
+}
+
+/// Where the bordered assistance sits and what it holds: the row it starts
+/// on, the column its left border is in, its width, and its rows including
+/// both borders.
+fn hint_box(screen: &[String]) -> (usize, usize, usize, Vec<String>) {
+    let top = screen
+        .iter()
+        .position(|line| line.contains("Choose path for"))
+        .expect("the assistance names itself");
+    let left = screen[top]
+        .chars()
+        .position(|character| character == '┌')
+        .expect("a left border");
+    let width = screen[top]
+        .chars()
+        .skip(left)
+        .position(|character| character == '┐')
+        .map(|index| index + 1)
+        .expect("a right border");
+    let rows = screen[top..]
+        .iter()
+        .map(|line| line.chars().skip(left).take(width).collect::<String>())
+        .take_while(|row| row.starts_with('┌') || row.starts_with('│') || row.starts_with('└'))
+        .collect::<Vec<_>>();
+    (top, left, width, rows)
+}
+
+/// Opens the finder-path prompt over `root` with `typed` in it.
+fn finder_path_prompt(root: &Path, typed: &str) -> App {
+    let mut app = editor(root);
+    app.working_directory = root.to_path_buf();
+    press(&mut app, ' ');
+    press(&mut app, '/');
+    press(&mut app, 'p');
+    type_text(&mut app, typed);
+    app
+}
+
+#[test]
+fn the_finder_path_assistance_is_the_same_list_in_the_same_corner_in_both_renderers() {
+    let root = small_directory(&temporary("path-assistance-agreement"));
+
+    let mut standalone = finder_path_prompt(&root, &format!("{}/f", root.display()));
+    let drawn = standalone_screen(&mut standalone, 120, 24);
+    let published = attached_screen(
+        finder_path_prompt(&root, &format!("{}/f", root.display())),
+        120,
+        24,
+    );
+
+    let (drawn_top, drawn_left, drawn_width, drawn_rows) = hint_box(&drawn);
+    let (published_top, published_left, published_width, published_rows) = hint_box(&published);
+    assert_eq!(
+        (drawn_top, drawn_left, drawn_width),
+        (published_top, published_left, published_width),
+        "the two renderers place the same hints in the same corner at the same size\n\
+         standalone:\n{}\nattached:\n{}",
+        drawn.join("\n"),
+        published.join("\n")
+    );
+    assert_eq!(drawn_rows, published_rows, "and draw the same rows in it");
+
+    // Bottom left of the editor area, which is the two rows above the status
+    // and interaction lines, and no bigger than the two hints need.
+    assert_eq!(drawn_left, 0, "at the left edge");
+    assert_eq!(
+        drawn_top + drawn_rows.len(),
+        22,
+        "resting on the bottom of the editor area"
+    );
+    assert_eq!(drawn_rows.len(), 4, "two hints and two borders");
+    assert!(
+        drawn_width < 120,
+        "sized to the entries rather than to the editor: {drawn_width}"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn the_finder_path_assistance_is_titled_for_the_finder_and_carries_no_query_of_its_own() {
+    let root = small_directory(&temporary("path-assistance-title"));
+    let typed = format!("{}/f", root.display());
+
+    let mut app = finder_path_prompt(&root, &typed);
+    let drawn = standalone_screen(&mut app, 120, 24);
+    let (_, _, _, rows) = hint_box(&drawn);
+
+    assert!(
+        rows[0].contains("Choose path for finder"),
+        "the prompt names what its rows would answer: {}",
+        rows[0]
+    );
+    assert!(
+        !rows.iter().any(|row| row.contains("> ")),
+        "the interaction line is the query, so the box has no second one: {rows:?}"
+    );
+    // The typed path stands once, on the interaction line the prompt owns.
+    assert_eq!(
+        drawn
+            .iter()
+            .filter(|line| line.contains(&format!("find under path: {typed}")))
+            .count(),
+        1
+    );
+    assert!(
+        !rows.iter().any(|row| row.contains(&typed)),
+        "no row repeats the base already typed: {rows:?}"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn a_hint_row_shows_the_entry_name_while_tab_still_completes_the_whole_spelling() {
+    let root = small_directory(&temporary("path-assistance-rows"));
+    let typed = format!("{}/f", root.display());
+
+    let mut app = finder_path_prompt(&root, &typed);
+    let drawn = standalone_screen(&mut app, 120, 24);
+    let (_, _, _, rows) = hint_box(&drawn);
+
+    let folder = rows
+        .iter()
+        .find(|row| row.contains("folder/"))
+        .expect("the directory is offered");
+    assert!(
+        folder.contains("▸ folder/  directory"),
+        "the row is the name completion would add: {folder}"
+    );
+    assert!(
+        !folder.contains(&typed),
+        "and not the base it sits under, which the resolved path would put back: {folder}"
+    );
+
+    // Where the typed spelling is relative, the resolved path does say
+    // something the name does not, and the detail column keeps it.
+    let mut relative = finder_path_prompt(&root, "f");
+    let relative = standalone_screen(&mut relative, 120, 24);
+    let (_, _, _, relative_rows) = hint_box(&relative);
+    let folder = relative_rows
+        .iter()
+        .find(|row| row.contains("folder/"))
+        .expect("the directory is offered");
+    assert!(
+        folder.contains("directory · ")
+            && folder.contains(&format!("{}", root.join("folder").display())),
+        "a relative spelling resolves to somewhere worth naming: {folder}"
+    );
+
+    // What the row shows is a rendering decision; what Tab inserts is not.
+    app.handle_key(KeyStroke::new(KeyCode::Tab, Modifiers::NONE))
+        .unwrap();
+    assert_eq!(
+        app.command,
+        format!("{}/folder{}", root.display(), std::path::MAIN_SEPARATOR)
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn a_palette_path_argument_is_titled_for_the_command_it_completes() {
+    let root = small_directory(&temporary("path-assistance-palette"));
+
+    let mut app = editor(&root);
+    press(&mut app, ':');
+    type_text(&mut app, &format!("open {}/f", root.display()));
+    let drawn = standalone_screen(&mut app, 120, 24);
+    let (top, left, _, rows) = hint_box(&drawn);
+
+    assert!(
+        rows[0].contains("Choose path for :open"),
+        "one title serves every path-argument command by naming this one: {}",
+        rows[0]
+    );
+    assert_eq!(left, 0);
+    assert_eq!(
+        top + rows.len(),
+        22,
+        "the same corner the finder prompt uses"
+    );
+    assert!(
+        !rows.iter().any(|row| row.contains("> ")),
+        "and no query line, because `:open …` is on the interaction line: {rows:?}"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn the_assistance_stays_bounded_when_a_directory_holds_far_more_than_it_can_show() {
+    let root = temporary("path-assistance-bounded");
+    let wide = root.join("wide");
+    wide_directory(&wide);
+
+    let mut app = finder_path_prompt(&root, &format!("{}/", wide.display()));
+    let drawn = standalone_screen(&mut app, 120, 24);
+    let (top, _, width, rows) = hint_box(&drawn);
+
+    assert!(
+        rows.len() <= 14,
+        "a few rows of assistance, not a wall: {}",
+        rows.len()
+    );
+    assert!(width <= 120, "never wider than the editor: {width}");
+    assert_eq!(top + rows.len(), 22, "still resting on the same edge");
 
     fs::remove_dir_all(root).unwrap();
 }

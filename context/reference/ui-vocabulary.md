@@ -85,7 +85,18 @@ them, regardless of which extensibility direction is chosen.
   printable input.
 - **Picker overlay** — a transient choose-one overlay. Printable input filters
   candidates, Enter accepts the selected candidate, and Escape, `Ctrl-c`, or
-  an initial bare Space cancels the request. The counts in a picker's header
+  an initial bare Space cancels the request. Every overlay that owns its own
+  typed query — the project finder in all three scopes and the filterable
+  result lists alike — draws that query on the first line under its title,
+  and draws it whether or not anything has been typed: an empty query line
+  reads a muted invitation such as `> type to filter`, so accepting rows
+  stand on the same screen row before and after the first character. The
+  query is never also carried in the title, which keeps the surface name, the
+  counts, and the action hints. Whether the line is drawn is a property of
+  the surface rather than of the text it happens to hold, so the snapshot
+  states it as the overlay's input: a surface that owns no input, such as a
+  completion showing its filter or the key-hint menu showing a pending
+  stroke, draws only the text it has. The counts in a picker's header
   — how many candidates matched, out of how many are on hand, written
   `140/570 matched` — are paced rather than live: they change at most once a
   second, whether a background scan or the reader's own typing moved them,
@@ -180,7 +191,21 @@ them, regardless of which extensibility direction is chosen.
   line and Enter still accepts what was typed rather than what is selected.
   The palette's path arguments and the finder-path prompt behind `Space / p`
   are the two of these; both spell `~`, a relative path, and a trailing
-  separator the same way, and both take `Tab` as accept.
+  separator the same way, and both take `Tab` as accept. The hint list is
+  assistance attached to the line it completes rather than a surface to look
+  into: it is anchored to the bottom left of the editor area, sized to the
+  rows it holds and to the width they need rather than to a share of the
+  editor, and it carries no query line of its own, because the interaction
+  line one row below it is the query. A row shows the entry's own name — the
+  part completion would add — with the base already typed implied rather than
+  repeated, and its detail column says only what the name does not: the
+  resolved path appears where `~` or a relative prefix was expanded, and not
+  where the typed spelling was already absolute. What the row shows is a
+  rendering decision; the spelling `Tab` inserts does not change with it. The
+  finder-path prompt is titled `Choose path for finder`, and the palette's
+  variant serves every path-argument command by naming the one it is
+  completing. A frontend tells this assistance from a choose-one overlay out
+  of the snapshot alone, because it is published as its own overlay kind.
 
 Runyte selects among these surfaces by task lifetime and interaction, not by
 the renderer that is most convenient or by whether the content looks like

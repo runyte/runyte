@@ -78,6 +78,16 @@ impl FilePickerKind {
             Self::Contents => "Fuzzy grep",
         }
     }
+
+    /// What this picker's query line reads before anything is typed. Both
+    /// renderers ask for it here so an attached client and a standalone
+    /// editor cannot invite the reader to do two different things.
+    pub const fn query_placeholder(self) -> &'static str {
+        match self {
+            Self::Files => "type to fuzzy-find",
+            Self::Contents => "type to fuzzy-search contents",
+        }
+    }
 }
 
 /// Which ignore files, if any, a scan under a picker root obeys.
