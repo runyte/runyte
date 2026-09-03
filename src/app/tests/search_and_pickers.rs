@@ -517,9 +517,9 @@ fn yank_paste_and_prompt_editing_use_unicode_character_positions() {
     press(&mut app, 'v');
     press(&mut app, 'l');
     press(&mut app, 'y');
-    press(&mut app, 'P');
-    // Yank keeps the selection, so paste-before lands at its start rather
-    // than at the caret. The V1 model cleared the anchor on yank.
+    press(&mut app, 'p');
+    // The yank leaves a caret on the last character it copied, so `p` pastes
+    // past that character rather than over the two-byte one under it.
     assert_eq!(text(&app), "αβαβc");
     assert_eq!(app.mode, Mode::Normal, "buffer paste stays in Normal mode");
 

@@ -810,6 +810,80 @@ fn p_replaces_a_selection_while_capital_p_still_pastes_beside_it() {
 }
 
 #[test]
+fn a_yank_collapses_its_selection_so_the_paste_after_it_duplicates() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    seed(&mut app, "alpha bravo");
+    press(&mut app, 'v');
+    for _ in 0..4 {
+        press(&mut app, 'l');
+    }
+    press(&mut app, 'y');
+    assert_eq!(app.mode, Mode::Normal);
+    assert_eq!(
+        app.active().selection.primary(),
+        Range::point(4),
+        "the yank leaves a caret on the last character it copied"
+    );
+
+    let history = app.buffers[app.active().buffer].history_len();
+    press(&mut app, 'p');
+    assert_eq!(
+        text(&app),
+        "alphaalpha bravo",
+        "`p` pastes past the caret rather than replacing the range that was yanked"
+    );
+    assert_eq!(
+        app.buffers[app.active().buffer].history_len(),
+        history + 1,
+        "the paste is one edit"
+    );
+    press(&mut app, 'u');
+    assert_eq!(text(&app), "alpha bravo", "one undo reverts it");
+}
+
+#[test]
+fn capital_p_after_a_yank_pastes_before_the_last_character_yanked() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    seed(&mut app, "alpha bravo");
+    press(&mut app, 'v');
+    for _ in 0..4 {
+        press(&mut app, 'l');
+    }
+    press(&mut app, 'y');
+    press(&mut app, 'P');
+    assert_eq!(
+        text(&app),
+        "alphalphaa bravo",
+        "`P` pastes at the caret, which is no longer the start of the yanked range"
+    );
+}
+
+#[test]
+fn a_yank_leaves_one_caret_per_range() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    seed(&mut app, "one two one");
+    app.panes.get_mut(&0).unwrap().selection =
+        Selection::new(vec![Range::new(0, 2), Range::new(8, 10)], 0);
+    press(&mut app, 'y');
+    assert_eq!(
+        app.active().selection.ranges(),
+        [Range::point(2), Range::point(10)],
+        "every range collapses; the cursors the yank was taken from survive"
+    );
+}
+
+#[test]
+fn a_transient_line_yank_leaves_a_caret_and_pastes_the_line_below() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    seed(&mut app, "alpha\nbravo\n");
+    press(&mut app, 'x');
+    press(&mut app, 'y');
+    assert!(app.registers[&'"'].linewise);
+    press(&mut app, 'p');
+    assert_eq!(text(&app), "alpha\nalpha\nbravo\n");
+}
+
+#[test]
 fn a_linewise_paste_over_a_line_selection_replaces_whole_lines() {
     let mut app = App::new(Config::default(), None).unwrap();
     seed(&mut app, "alpha\nbravo\ncharlie");

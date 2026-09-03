@@ -1339,8 +1339,8 @@ context; scoped explorer keys are documented under
 | `Alt-_` | Shrink every selection past the whitespace at its ends, without changing the text |
 | `Space p .` | Toggle dim `·`, `→`, and `↵` markers for spaces, tabs, and line endings |
 | `d` / `c` | Delete / change selection or cursor character; `d` after transient `x`/`X` cuts whole lines |
-| `y` / `p` / `P` | Yank selection or cursor character / replace the selection, or paste after a bare caret / paste before |
-| `Y` | Yank every line the selection touches, as whole lines |
+| `y` / `p` / `P` | Yank selection or cursor character, leaving a caret / replace the selection, or paste after a bare caret / paste before |
+| `Y` | Yank every line the selection touches, as whole lines, leaving a caret |
 | `>` / `<` | Indent / unindent |
 | `Ctrl-c` | Comment or uncomment every line the selection touches, using the buffer language's line comment; also bound in Insert mode |
 | `u` / `U` | Undo / redo |
@@ -1371,6 +1371,14 @@ same content can be pasted over one range after another, and a multi-selection
 from a search replaces every match at once. `P` never replaces: it stays the
 way to reach the start of a selection without giving up what is selected.
 `Space c p` and `Space c P` follow the same rule from the system clipboard.
+
+A yank ends the gesture that chose the text. `y` and `Y` return Normal mode and
+collapse every range to a caret on the last character copied, keeping one caret
+per selection. That is what makes `y` then `p` a duplicate: the caret pastes
+past the text just yanked. A range that outlived the yank would be invisible in
+Normal mode and would make `p` replace the yanked text with itself.
+`Space c y` is the exception, because it is also what a right click does: it
+copies without disturbing the selection.
 
 <a id="insert-mode"></a>
 

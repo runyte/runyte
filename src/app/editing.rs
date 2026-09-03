@@ -2380,8 +2380,8 @@ impl App {
 
     /// `Y` takes the whole lines rather than the characters, so that the one
     /// key covers what `x y` covers without walking the selection through
-    /// line mode first. The selection is left where it was: unlike `x`, this
-    /// is a copy, not a way of choosing what to operate on next.
+    /// line mode first. Like `y` it leaves a caret rather than the range it
+    /// copied, so the two spell the end of a gesture the same way.
     pub(super) fn yank_line(&mut self) {
         let register = self.line_register();
         self.write_yanked_register(register);
@@ -2396,9 +2396,26 @@ impl App {
             }
         };
         // Yanking ends the gesture that chose the text, so Select mode hands
-        // back to Normal whether the range spanned characters or only the
-        // caret. The selection itself stays, which is what lets `P` paste at
-        // its start.
+        // back to Normal and every range collapses to a caret at its head. A
+        // range that outlived the yank was invisible in Normal mode, where a
+        // lone Runyte range is not drawn as selected, and `p` reads a range
+        // that holds text as something to replace: `y` then `p` put the
+        // register back over the characters it had just been taken from and
+        // looked like a dead key. On the caret left behind, `p` pastes past
+        // the last character yanked, which is the duplicate the pair reads as.
+        // A half-open range ends one past the last character it copied, so it
+        // becomes inclusive before collapsing; otherwise `y y` in the Vim
+        // grammar would leave the caret on the row below the yanked line and
+        // the linewise `p` after it would insert there.
+        let selection = if matches!(
+            self.active().selection_semantics(),
+            SelectionSemantics::HalfOpen | SelectionSemantics::VimLinewise
+        ) {
+            self.vim_half_open_to_inclusive(self.active().selection.clone())
+        } else {
+            self.active().selection.clone()
+        };
+        self.active_mut().replace_selection(selection.collapse());
         self.mode = Mode::Normal;
         self.write_selected_register(register);
         self.status("yanked");
