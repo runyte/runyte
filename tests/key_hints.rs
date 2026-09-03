@@ -377,7 +377,7 @@ fn narrow_popup_is_bounded_and_scrollable() {
 }
 
 #[test]
-fn popup_keeps_alt_scroll_fallback_when_arrows_are_bindings() {
+fn popup_with_bound_arrows_advertises_only_control_scroll() {
     let mut app = App::new(Config::default(), None).unwrap();
     let mut hints = KeyHintState::default();
     hints.observe(
@@ -388,18 +388,15 @@ fn popup_keeps_alt_scroll_fallback_when_arrows_are_bindings() {
 
     let first = render(36, 10, &mut app, &hints);
     assert!(first.contains("Ctrl-n/p"));
-    assert!(first.contains("Alt-j/k"));
+    assert!(!first.contains("Alt-j/k"));
     assert!(!first.contains("↑/↓"));
 
     assert_eq!(
-        hints.observe(
-            stroke(KeyCode::Char('j'), Modifiers::ALT),
-            Mode::Normal,
-            default_keymap(),
-        ),
+        hints.observe(KeyStroke::ctrl('n'), Mode::Normal, default_keymap(),),
         HintEventResult::Consumed
     );
     assert_eq!(hints.scroll_offset(), 1);
+    assert_eq!(hints.pending().to_string(), "z");
 }
 
 #[test]
@@ -434,6 +431,29 @@ fn ctrl_w_popup_scrolls_with_arrows_and_advertises_them() {
     );
     assert_eq!(hints.scroll_offset(), 0);
     assert_eq!(hints.pending().to_string(), "Ctrl-w");
+}
+
+#[test]
+fn alt_j_and_k_cancel_insert_ctrl_w_instead_of_scrolling() {
+    for character in ['j', 'k'] {
+        let mut app = App::new(Config::default(), None).unwrap();
+        let mut hints = KeyHintState::default();
+        app.handle_key(KeyStroke::char('i')).unwrap();
+
+        dispatch_with_hints(&mut app, &mut hints, KeyStroke::ctrl('w'));
+        assert_eq!(app.pending_sequence().to_string(), "Ctrl-w");
+        assert_eq!(hints.pending().to_string(), "Ctrl-w");
+
+        dispatch_with_hints(
+            &mut app,
+            &mut hints,
+            KeyStroke::new(KeyCode::Char(character), Modifiers::ALT),
+        );
+        assert_eq!(app.mode, Mode::Insert);
+        assert!(app.pending_sequence().is_empty());
+        assert!(!hints.is_pending());
+        assert!(app.buffers[0].text().is_empty());
+    }
 }
 
 #[cfg(unix)]

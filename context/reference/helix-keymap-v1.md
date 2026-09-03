@@ -98,7 +98,7 @@ is open. Help's scoped `q` is also globally unbound.
 | `C`, `Alt-C` | `copy_selection_on_next_line` / previous | `copy-selection-down` / `-up` | Implemented | Adds the caret on the nearest row that holds a character at the caret's column, skipping the rows too short for it. A row ending exactly at the column does not hold it and is skipped too: landing there would slide the caret onto the row's last character, and that shifted column would then seed the next `C`. The column is therefore never approximated — `V` is the command that widens short rows instead. |
 | `V`, `Alt-V` | not Helix default bindings | `copy-selection-down-padded` / `-up-padded` | Added | Adds a cursor on the immediately following or preceding row, padding short or empty rows with spaces so it reaches the same display column. `Alt-V` mirrors `V` upward exactly as `Alt-C` mirrors `C`; padding for several cursors landing on one short row is collected before any edit, so the row widens once and the whole gesture is a single undo step. |
 | `)`, `(` | `rotate_selections_forward` / backward | `rotate-selection-forward` / `-backward` | Implemented | Moves the primary designation only. |
-| `Alt-k`, `Alt-j` | `keep_selections` / `remove_selections` | `keep-matching-selections` / `remove-matching-selections` | Deviation | On `Space s k` and `Space s r`; the Alt keys are unbound. Each opens its own `keep (regex):` or `remove (regex):` prompt, as Helix does. They do not borrow the search pattern: `s` escapes its input as a literal, while `S` accepts a regular expression but owns a separate search history rather than an implicit selection-filter pattern. `Alt-j`/`Alt-k` were also the key-hint popup's scroll keys, so leaving them bound kept the popup and the keymap fighting over them. |
+| `Alt-k`, `Alt-j` | `keep_selections` / `remove_selections` | `keep-matching-selections` / `remove-matching-selections` | Deviation | On `Space s k` and `Space s r`; the Alt keys are unbound. Each opens its own `keep (regex):` or `remove (regex):` prompt, as Helix does. They do not borrow the search pattern: `s` escapes its input as a literal, while `S` accepts a regular expression but owns a separate search history rather than an implicit selection-filter pattern. A short-lived use of `Alt-j`/`Alt-k` for key-hint popup scrolling was retired in favour of the `Ctrl-n`/`Ctrl-p` convention shared with completion and list overlays. |
 | `&` | `align_selections` | `align-selections` | Implemented | Pads to the rightmost selection display column, so a column of multicursors lines up across tabs and wide characters. Also on `Space s a`. Padding only inserts spaces, so the rightmost caret is necessarily the target; aligning to the leftmost would mean deleting text. |
 | `Alt-_` | `trim_selections` | `trim-selections` | Deviation | On `Alt-_`; Helix binds it to `_`, which Runyte gives to `trim-trailing-whitespace` instead. The pairing follows `;`/`Alt-;` and `,`/`Alt-,`, where the plain key is the common gesture and the Alt key the neighbouring one. A range holding nothing but whitespace collapses to a caret at its start rather than staying as it was, so splitting on lines and trimming leaves a usable cursor on blank rows instead of a range Helix would have left untouched. |
 | `_` | no Helix equivalent | `trim-trailing-whitespace` | Added | Deletes trailing spaces and tabs from every line the selection touches, so `%` then `_` strips the whole buffer. Selection-scoped by line rather than by range: what the ranges pick out is which lines to trim, not which characters to remove. Leading whitespace is left alone so indentation survives, which means a line holding only whitespace is emptied outright. Shares its trimmer with the `editor.trim_trailing_whitespace` save hook, so an on-demand trim and a save cannot disagree. |
@@ -209,11 +209,13 @@ same registry and are not executable exact bindings.
 An overflowing key-hint popup scrolls unconditionally with `Ctrl-n` and
 `Ctrl-p`, without adding either key to the pending sequence. In Normal and
 Select, Up and Down also scroll when the pending prefix does not claim that
-arrow as a continuation; `Alt-j` and `Alt-k` remain alternatives for `z` and
-`Z`, whose arrow continuations must still reach the registry. The arrows are
-deliberately unbound under `Ctrl-w`, so its Normal and Select hint popups
-scroll with Up and Down too. In Insert and Replace, including Terminal Insert,
-an arrow cancels the prefix and `Alt-j`/`Alt-k` remain the popup scroll keys.
+arrow as a continuation. For `z` and `Z`, whose arrow continuations must still
+reach the registry, `Ctrl-n` and `Ctrl-p` are the popup scroll keys. The arrows
+are deliberately unbound under `Ctrl-w`, so its Normal and Select hint popups
+scroll with Up and Down too. Insert and Replace, including Terminal Insert,
+show a pending `Ctrl-w` on the interaction line rather than opening this
+popup; an unbound continuation such as an arrow or `Alt-j`/`Alt-k` cancels the
+prefix.
 
 The `Space l` namespace is labelled **Language (LSP)** and `Space x` is
 labelled **Syntax (Tree-sitter)**. Key hints dim either namespace with its

@@ -19,18 +19,23 @@ Directional pane focus retains `Ctrl-w h/j/k/l` and
 `Ctrl-w Ctrl-h/j/k/l`. The removed arrow sequences are absent from the
 registry rather than represented by unsupported bindings, which lets the
 existing Normal and Select key-hint path consume Up and Down and advertise
-`↑/↓`. Insert and Replace, including Terminal Insert, still use `Alt-j` and
-`Alt-k` for popup scrolling; an arrow cancels the pending prefix. This
-deliberately retires four compatibility spellings; `z` and `Z` keep their arrow
-continuations because those arrows are view-scroll commands.
+`↑/↓`. Insert and Replace, including Terminal Insert, show the pending prefix
+on the interaction line rather than drawing the popup; an unbound continuation
+cancels it. The former `Alt-j`/`Alt-k` popup fallback was retired so visible
+completion, list, and key-hint controls share the conventional `Ctrl-n` and
+`Ctrl-p` pair. This deliberately retires four compatibility spellings; `z`
+and `Z` keep their arrow continuations because those arrows are view-scroll
+commands.
 
 Tests covering the behavior are
 `ctrl_w_arrow_suffixes_stay_unbound_in_every_mode_and_terminal_insert` in
 `tests/keymap.rs` and
 `ctrl_w_popup_scrolls_with_arrows_and_advertises_them` in
-`tests/key_hints.rs`. The existing
-`popup_keeps_alt_scroll_fallback_when_arrows_are_bindings` test in
-`tests/key_hints.rs` continues to cover the retained `z` behavior.
+`tests/key_hints.rs`. The
+`alt_j_and_k_cancel_insert_ctrl_w_instead_of_scrolling` test in that file
+covers the retired fallback in Insert, while
+`popup_with_bound_arrows_advertises_only_control_scroll` in the same file
+continues to cover the retained `z` behavior.
 
 ## Report
 

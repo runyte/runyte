@@ -690,8 +690,8 @@ fn removed_duplicate_bindings_stay_unbound() {
         );
     }
     // Every selection command that had an Alt shortcut now lives under
-    // `Space s`. `Alt-j`/`Alt-k` in particular were also the key-hint popup's
-    // scroll keys, so the popup and the keymap were fighting over them.
+    // `Space s`. The temporary use of `Alt-j`/`Alt-k` for key-hint scrolling
+    // was retired too, so these keys remain wholly unbound.
     for removed in [Key::alt('s'), Key::alt('*'), Key::alt('k'), Key::alt('j')] {
         assert!(
             matches!(

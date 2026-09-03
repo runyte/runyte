@@ -1098,10 +1098,10 @@ preferred and restart Runyte. Passive pointer motion never clears key hints or
 status and does not schedule a redraw.
 
 Pending compound bindings open a key-hint popup. `Ctrl-n` and `Ctrl-p` scroll
-its commands without participating in the pending binding. Up and Down also
-scroll unless that arrow completes a binding under the pending prefix;
-`Alt-j` and `Alt-k` remain alternatives. Scroll controls appear in the title
-when the entries exceed the available space.
+its commands without participating in the pending binding. In Normal and
+Select, Up and Down also scroll unless that arrow completes a binding under
+the pending prefix. Scroll controls appear in the title when the entries
+exceed the available space.
 
 `build.sh` wraps `cargo build --bins` and forwards any extra arguments. A local
 Cargo installation installs the editor:

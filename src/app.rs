@@ -1066,7 +1066,7 @@ pub enum PromptKind {
     SearchBackward,
     GlobalSearch(SearchMode),
     /// Keeps or drops selections by regular expression. `keep` distinguishes
-    /// `Alt-k` from `Alt-j`; the editing model is otherwise identical.
+    /// `Space s k` from `Space s r`; the editing model is otherwise identical.
     FilterSelections {
         keep: bool,
     },
