@@ -476,7 +476,9 @@ history entry written by an older Runyte has no timestamp and reads `-` until
 that workspace is visited again.
 
 The selected session's preview, shown in the picker's right column and toggled
-with `Ctrl-t`, states the session as a fixed set of fields:
+with `Ctrl-t`, states the session as a fixed set of fields. That visibility
+choice remains in effect while the selection moves and while session rows or
+their previews refresh; closing and reopening the manager starts a new choice.
 
 ```text
 Active: 0min ago
