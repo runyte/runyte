@@ -13,14 +13,16 @@ arrow-suffix entries that `built_in_bindings` registered for the modal and
 Insert/Replace `Ctrl-w` namespaces. `KeyHintState::scrolls_with_arrow_in` was
 correctly reserving an arrow whenever appending it to the pending sequence
 found a binding, so those compatibility aliases made the `Ctrl-w` popup the
-only namespace popup that could not use Up and Down for scrolling.
+only modal namespace popup that could not use Up and Down for scrolling.
 
 Directional pane focus retains `Ctrl-w h/j/k/l` and
 `Ctrl-w Ctrl-h/j/k/l`. The removed arrow sequences are absent from the
 registry rather than represented by unsupported bindings, which lets the
-existing key-hint path consume Up and Down and advertise `↑/↓`. This
-deliberately retires four compatibility spellings; `z` and `Z` keep their
-arrow continuations because those arrows are view-scroll commands.
+existing Normal and Select key-hint path consume Up and Down and advertise
+`↑/↓`. Insert and Replace, including Terminal Insert, still use `Alt-j` and
+`Alt-k` for popup scrolling; an arrow cancels the pending prefix. This
+deliberately retires four compatibility spellings; `z` and `Z` keep their arrow
+continuations because those arrows are view-scroll commands.
 
 Tests covering the behavior are
 `ctrl_w_arrow_suffixes_stay_unbound_in_every_mode_and_terminal_insert` in

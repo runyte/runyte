@@ -207,11 +207,13 @@ semantic command inventory. Labelled namespace rows are generated from that
 same registry and are not executable exact bindings.
 
 An overflowing key-hint popup scrolls unconditionally with `Ctrl-n` and
-`Ctrl-p`, without adding either key to the pending sequence. Up and Down also
-scroll when the pending prefix does not claim that arrow as a continuation;
-`Alt-j` and `Alt-k` remain alternatives for `z` and `Z`, whose arrow
-continuations must still reach the registry. The arrows are deliberately
-unbound under `Ctrl-w`, so its hint popup scrolls with Up and Down too.
+`Ctrl-p`, without adding either key to the pending sequence. In Normal and
+Select, Up and Down also scroll when the pending prefix does not claim that
+arrow as a continuation; `Alt-j` and `Alt-k` remain alternatives for `z` and
+`Z`, whose arrow continuations must still reach the registry. The arrows are
+deliberately unbound under `Ctrl-w`, so its Normal and Select hint popups
+scroll with Up and Down too. In Insert and Replace, including Terminal Insert,
+an arrow cancels the prefix and `Alt-j`/`Alt-k` remain the popup scroll keys.
 
 The `Space l` namespace is labelled **Language (LSP)** and `Space x` is
 labelled **Syntax (Tree-sitter)**. Key hints dim either namespace with its
@@ -270,7 +272,7 @@ projection; keyboard overlays retain input ownership while open.
 | `Ctrl-w w`, `Ctrl-w Ctrl-w` | rotate view | `next-window` | Implemented · Compatibility | Cycles layout order. |
 | `Ctrl-w v`, `Ctrl-w Ctrl-v` | vertical split | `split-vertical` | Implemented · Compatibility | Side-by-side panes. |
 | `Ctrl-w s`, `Ctrl-w Ctrl-s` | horizontal split | `split-horizontal` | Implemented · Compatibility | Stacked panes. |
-| `Ctrl-w h/j/k/l` | directional focus | matching focus commands | Implemented · Compatibility | Ctrl-key suffix aliases are also registered. Arrow suffixes remain unbound so Up and Down can scroll the `Ctrl-w` hint popup. Refused while a pane is maximized by `:zen` or `:fullscreen`, as `next-window` already was: the maximized pane is the only pane keys can reach, so the refusal is stated rather than left to fall out of the frame's geometry. |
+| `Ctrl-w h/j/k/l` | directional focus | matching focus commands | Implemented · Compatibility | Ctrl-key suffix aliases are also registered. Arrow suffixes remain unbound so Up and Down can scroll the modal `Ctrl-w` hint popup in Normal and Select. Refused while a pane is maximized by `:zen` or `:fullscreen`, as `next-window` already was: the maximized pane is the only pane keys can reach, so the refusal is stated rather than left to fall out of the frame's geometry. |
 | `Ctrl-w c` | close window | `close-window` | Implemented · Compatibility | Quit-shaped `Ctrl-w q`, `Ctrl-w Ctrl-q`, and `Space w q` aliases were removed; `Space w c` remains canonical and `:window-close` / `:wc` is its typed spelling. |
 | `Ctrl-w o` | only window | `only-window` | Implemented · Compatibility | Keeps buffers but removes other panes. |
 | `Space w =` | not a Helix binding | `equalize-windows` | Added · Primary | Levels the split tree without rearranging it: every pane is given the same width, and then every pane sharing a column the same height. Each boundary is placed by how many pane-wide slots lie on either side of it along its own axis, so one pane beside a stack of two lands a third of the way along. A pane spanning the full width of the editor keeps spanning it, because equalizing moves boundaries rather than panes. Vim's `Ctrl-w =` is the spelling it borrows; no `Ctrl-w` compatibility alias is registered. Normal and Select only, and not a typed command. |
