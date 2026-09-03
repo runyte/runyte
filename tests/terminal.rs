@@ -641,6 +641,40 @@ fn control_w_focus_preserves_review_until_an_insert_key() {
 }
 
 #[test]
+fn pane_swap_moves_a_terminal_session_and_preserves_its_review() {
+    let mut session = Session::start("/bin/cat");
+    let terminal = session.app.active_terminal().unwrap();
+    let original_pane = session.app.active_pane;
+    session.leave_input();
+    assert!(session.app.terminals.get(terminal).unwrap().reviewing());
+
+    session.app.handle_key(KeyStroke::ctrl('w')).unwrap();
+    session.type_text("v");
+    let document_pane = session.app.active_pane;
+    assert_ne!(document_pane, original_pane);
+
+    session.app.handle_key(KeyStroke::ctrl('w')).unwrap();
+    session.type_text("x");
+    assert_eq!(session.app.active_pane, original_pane);
+    assert_eq!(session.app.active_terminal(), None);
+    assert_eq!(session.app.terminal_of_pane(document_pane), Some(terminal));
+    assert!(session.app.terminals.get(terminal).unwrap().reviewing());
+
+    render(&mut session.app, 60, 12);
+    session.app.handle_key(KeyStroke::ctrl('w')).unwrap();
+    session.type_text("l");
+    assert_eq!(session.app.active_terminal(), Some(terminal));
+    assert_eq!(session.app.mode, Mode::Normal);
+
+    session.app.handle_key(KeyStroke::ctrl('w')).unwrap();
+    session.type_text("x");
+    assert_eq!(session.app.active_pane, original_pane);
+    assert_eq!(session.app.active_terminal(), Some(terminal));
+    assert_eq!(session.app.terminal_of_pane(document_pane), None);
+    assert!(session.app.terminals.get(terminal).unwrap().reviewing());
+}
+
+#[test]
 fn control_w_from_document_insert_preserves_terminal_review() {
     let mut session = Session::start("/bin/cat");
     let terminal = session.app.active_terminal().unwrap();

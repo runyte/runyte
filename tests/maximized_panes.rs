@@ -312,6 +312,42 @@ fn a_maximized_pane_refuses_directional_focus_in_every_spelling() {
 }
 
 #[test]
+fn a_maximized_pane_refuses_content_swapping_in_both_views() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    run(&mut app, EditorCommand::SplitVertical);
+    let active = app.active_pane;
+    let buffers = app
+        .panes
+        .iter()
+        .map(|(pane, state)| (*pane, state.buffer))
+        .collect::<std::collections::HashMap<_, _>>();
+
+    for view in ["zen", "fullscreen"] {
+        app.execute(parse_colon_command(view).unwrap()).unwrap();
+        let outcome = app
+            .execute(
+                CommandInvocation::editor(
+                    EditorCommand::SwapWindow,
+                    CommandExecutionContext::default(),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        assert!(matches!(
+            outcome,
+            CommandOutcome::UserError(message) if message.contains("keeps the current pane maximized")
+        ));
+        assert_eq!(app.active_pane, active);
+        assert!(
+            app.panes
+                .iter()
+                .all(|(pane, state)| buffers.get(pane) == Some(&state.buffer))
+        );
+        app.execute(parse_colon_command(view).unwrap()).unwrap();
+    }
+}
+
+#[test]
 fn a_macro_cannot_focus_a_hidden_pane_by_maximizing_before_the_next_frame() {
     let mut app = App::new(Config::default(), None).unwrap();
     run(&mut app, EditorCommand::SplitVertical);

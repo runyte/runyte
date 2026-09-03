@@ -1742,6 +1742,66 @@ impl App {
         }
     }
 
+    /// Exchanges the complete contents of the active pane with the most
+    /// recently focused surviving pane, then follows the active content to its
+    /// new position. The split tree and its pane geometry remain untouched.
+    pub(super) fn swap_window(&mut self) {
+        if let Some(maximized) = self.maximized {
+            self.action_failed(format!(
+                "{} keeps the current pane maximized",
+                maximized.view.label()
+            ));
+            return;
+        }
+        let active = self.active_pane;
+        let previous = self
+            .panes
+            .keys()
+            .copied()
+            .filter(|pane| *pane != active && self.pane_activated_at.contains_key(pane))
+            .max_by_key(|pane| self.pane_focus_rank(*pane));
+        let Some(previous) = previous else {
+            self.action_failed("no previously focused pane to swap with");
+            return;
+        };
+
+        let active_content = self
+            .panes
+            .remove(&active)
+            .expect("the active pane must exist");
+        let previous_content = self
+            .panes
+            .remove(&previous)
+            .expect("pane history must name a live pane");
+        self.panes.insert(active, previous_content);
+        self.panes.insert(previous, active_content);
+
+        if let Some(presentation) = self.search_selection.as_mut() {
+            if presentation.pane == active {
+                presentation.pane = previous;
+            } else if presentation.pane == previous {
+                presentation.pane = active;
+            }
+        }
+        for diff in &mut self.diffs {
+            diff.swap_panes(active, previous);
+        }
+        if let Some(tutorial) = self.tutorial.as_mut() {
+            for pane in [&mut tutorial.instruction_pane, &mut tutorial.exercise_pane] {
+                if *pane == active {
+                    *pane = previous;
+                } else if *pane == previous {
+                    *pane = active;
+                }
+            }
+        }
+
+        let terminal_input = self.mode == Mode::Insert && self.terminal_of_pane(previous).is_some();
+        self.activate_pane(previous);
+        self.finish_pane_focus(active, terminal_input);
+        self.status("swapped pane contents");
+    }
+
     pub(super) fn only_window(&mut self) {
         if let Some(maximized) = self.maximized {
             self.status(format!(

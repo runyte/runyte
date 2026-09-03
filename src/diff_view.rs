@@ -103,6 +103,19 @@ impl DiffSession {
         [self.left.pane, self.right.pane]
     }
 
+    /// Moves a comparison's pane ownership with the pane contents being
+    /// exchanged. The side remains attached to its buffer, even when that
+    /// buffer lands on the other side of the split.
+    pub(crate) fn swap_panes(&mut self, first: usize, second: usize) {
+        for side in [&mut self.left, &mut self.right] {
+            if side.pane == first {
+                side.pane = second;
+            } else if side.pane == second {
+                side.pane = first;
+            }
+        }
+    }
+
     /// Whether either side's text has moved on since the alignment was built.
     ///
     /// Asked separately from [`Self::update`] so a caller does not have to
@@ -205,5 +218,14 @@ mod tests {
         assert_eq!(session.change(Side::Left, 1), Some(Change::Removed));
         assert!(!session.needs_update((1, 1)));
         assert!(session.needs_update((1, 2)));
+    }
+
+    #[test]
+    fn swapping_pane_ownership_keeps_each_side_attached_to_its_buffer() {
+        let mut session = session("left\n", "right\n");
+        session.swap_panes(0, 1);
+
+        assert_eq!(session.side(Side::Left), DiffSide { pane: 1, buffer: 0 });
+        assert_eq!(session.side(Side::Right), DiffSide { pane: 0, buffer: 1 });
     }
 }

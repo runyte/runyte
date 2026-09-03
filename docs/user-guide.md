@@ -1701,6 +1701,7 @@ cancellation keys.
 | `:w` or `:write` in a directory | Review a filesystem plan before applying edits |
 | `Space w v/s` or compatibility `Ctrl-w v/s` | Vertical/horizontal splits |
 | `Space w…` or compatibility `Ctrl-w…` | Window focus, close, next, and only-window operations |
+| `Space w x` or compatibility `Ctrl-w x` | Exchange the active pane's complete content with the previously focused pane, following the content to its new position |
 | `Space w =` | Equalize pane widths, then pane heights within each column |
 | `Space w f` / `Space w z`, or compatibility `Ctrl-w f` / `Ctrl-w z` | Toggle the full-screen pane / the centred Zen viewport |
 | `Ctrl-h/j/k/l` | Move between panes without a prefix, when `editor.fast_pane_keys` is on |
