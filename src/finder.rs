@@ -34,6 +34,15 @@ impl FinderMode {
             Self::Contents => "Contents",
         }
     }
+
+    /// What the finder's query line reads before anything is typed, shared by
+    /// both renderers so neither invents its own invitation.
+    pub const fn query_placeholder(self) -> &'static str {
+        match self {
+            Self::Names => "type to find anything by name",
+            Self::Contents => "type to find anything by content",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

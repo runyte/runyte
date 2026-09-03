@@ -12,8 +12,8 @@ use super::{
     PICKER_LIST_INTERVAL, PICKER_PROGRESS_INTERVAL, Pane, Path, PickerProgress, Position,
     PreparedPane, PreparedRow, PreparedView, PromptKind, Rect, ResourceKind, Selection,
     SettingType, Side, StashMutation, adjust_scroll, adjust_scroll_wrapped, diff_projection,
-    fold_hiding_row, move_projected_start_backward, project_aligned_rows, project_visible_rows,
-    selection_for_launch_position,
+    fold_hiding_row, is_path_separator, move_projected_start_backward, project_aligned_rows,
+    project_visible_rows, selection_for_launch_position,
 };
 use crate::keymap::{ActionContext, ContextAction};
 use std::time::{Duration, Instant};
@@ -943,18 +943,31 @@ impl App {
                         OverlayAction::new("Esc", "cancel"),
                     ],
                 ),
+                // A completing prompt keeps the interaction line, so the
+                // palette and the program hints publish no input of their
+                // own. Saying `Text` here drew the typed value a second time
+                // inside the box an attached client renders.
                 OverlayKind::CommandPalette => (
                     OverlayPurpose::CommandPalette,
-                    OverlayInput::Text,
+                    OverlayInput::None,
                     OverlayLayout::Standard,
                     vec![
                         OverlayAction::new("Enter", "accept"),
                         OverlayAction::new("Esc", "cancel"),
                     ],
                 ),
+                OverlayKind::PathCompletion => (
+                    OverlayPurpose::Context,
+                    OverlayInput::None,
+                    OverlayLayout::Bottom,
+                    vec![
+                        OverlayAction::new("↑/↓", "select"),
+                        OverlayAction::new("Tab", "complete"),
+                    ],
+                ),
                 OverlayKind::ProgramHints => (
                     OverlayPurpose::Picker,
-                    OverlayInput::Text,
+                    OverlayInput::None,
                     OverlayLayout::Standard,
                     vec![
                         OverlayAction::new("Enter", "open"),
@@ -1020,6 +1033,7 @@ impl App {
                 actions,
                 title: title.into(),
                 query: query.into(),
+                query_placeholder: String::new(),
                 column_header: None,
                 selected: selected
                     .filter(|selected| *selected < total_rows)
@@ -1052,6 +1066,43 @@ impl App {
                 emphasis: Vec::new(),
                 detail_emphasis: Vec::new(),
             }
+        }
+        /// Rows for a completing prompt's path assistance.
+        ///
+        /// A row shows the entry's own name, because the base it sits under
+        /// is already on the interaction line one row below; repeating that
+        /// base on every row said the same thing as many times as there were
+        /// entries. The identity keeps the complete spelling, so what Tab
+        /// inserts does not change with what the row shows.
+        fn path_hint_rows(hints: &[crate::app::PathHint]) -> Vec<OverlayRow> {
+            hints
+                .iter()
+                .map(|hint| {
+                    // The resolved path is worth a column only where it says
+                    // something the typed spelling does not: where `~` or a
+                    // relative prefix was expanded. Against an absolute
+                    // spelling it is the row's own name with the base back in
+                    // front of it, which is what the row stopped showing.
+                    let resolved = if hint.detail == hint.value.trim_end_matches(is_path_separator)
+                    {
+                        String::new()
+                    } else {
+                        format!(" · {}", hint.detail)
+                    };
+                    row(
+                        hint.value.clone(),
+                        hint.name.clone(),
+                        format!(
+                            "{}{resolved}",
+                            if hint.is_directory {
+                                "directory"
+                            } else {
+                                "file"
+                            }
+                        ),
+                    )
+                })
+                .collect()
         }
 
         let mut overlays = Vec::new();
@@ -1140,6 +1191,7 @@ impl App {
                 snapshot.omitted_rows = total_rows.saturating_sub(ROW_LIMIT);
                 snapshot.scroll_anchor = (!finder.matches.is_empty()).then_some(finder.selected);
                 snapshot.query_cursor = Some(picker.query_cursor);
+                snapshot.query_placeholder = finder.mode.query_placeholder().to_owned();
                 snapshot.layout = OverlayLayout::Preview;
                 snapshot.actions = if picker.ranking && !self.held_rank_releases_rows() {
                     Vec::new()
@@ -1226,6 +1278,7 @@ impl App {
                 snapshot.omitted_rows = total_rows.saturating_sub(ROW_LIMIT);
                 snapshot.scroll_anchor = (!picker.matches.is_empty()).then_some(picker.selected);
                 snapshot.query_cursor = Some(picker.query_cursor);
+                snapshot.query_placeholder = picker.kind.query_placeholder().to_owned();
                 snapshot.show_preview = picker.show_preview;
                 snapshot.preview_title = Some("Preview".to_owned());
                 snapshot.preview = Some(file_overlay_preview(picker.preview.as_ref()));
@@ -1297,6 +1350,7 @@ impl App {
             } else {
                 OverlayInput::None
             };
+            snapshot.query_placeholder = picker.query_placeholder().to_owned();
             snapshot.column_header =
                 picker
                     .column_header
@@ -1485,37 +1539,28 @@ impl App {
         if self.mode == Mode::Command {
             if self.prompt_kind == PromptKind::Command {
                 if let Some(hints) = self.matching_path_hints() {
+                    // One title serves every path-argument command by naming
+                    // the one being completed, rather than a title per
+                    // command or a bare "Paths" that says nothing about what
+                    // the rows would answer.
+                    let command = self
+                        .command
+                        .split_once(char::is_whitespace)
+                        .map_or("", |(name, _)| name);
                     overlays.push(bounded(
-                        OverlayKind::CommandPalette,
-                        "Paths",
-                        self.command.clone(),
-                        hints
-                            .iter()
-                            .map(|hint| {
-                                row(
-                                    hint.value.clone(),
-                                    hint.value.clone(),
-                                    format!(
-                                        "{} · {}",
-                                        if hint.is_directory {
-                                            "directory"
-                                        } else {
-                                            "file"
-                                        },
-                                        hint.detail
-                                    ),
-                                )
-                            })
-                            .collect(),
+                        OverlayKind::PathCompletion,
+                        format!("Choose path for :{command}"),
+                        "",
+                        path_hint_rows(&hints),
                         (!hints.is_empty()).then_some(self.command_selection),
-                        None,
+                        hints.is_empty().then(|| "No matching paths".to_owned()),
                     ));
                 } else {
                     let matches = self.matching_commands();
                     overlays.push(bounded(
                         OverlayKind::CommandPalette,
                         "Commands",
-                        self.command.clone(),
+                        "",
                         matches
                             .iter()
                             .map(|matched| {
@@ -1560,30 +1605,13 @@ impl App {
             } else if self.prompt_kind == PromptKind::FinderPath {
                 if let Some(hints) = self.finder_path_hints() {
                     overlays.push(bounded(
-                        OverlayKind::CommandPalette,
-                        "Paths",
-                        self.command.clone(),
-                        hints
-                            .iter()
-                            .map(|hint| {
-                                row(
-                                    hint.value.clone(),
-                                    hint.value.clone(),
-                                    format!(
-                                        "{} · {}",
-                                        if hint.is_directory {
-                                            "directory"
-                                        } else {
-                                            "file"
-                                        },
-                                        hint.detail
-                                    ),
-                                )
-                            })
-                            .collect(),
+                        OverlayKind::PathCompletion,
+                        "Choose path for finder",
+                        "",
+                        path_hint_rows(&hints),
                         (!hints.is_empty())
                             .then_some(self.command_selection.min(hints.len().saturating_sub(1))),
-                        None,
+                        hints.is_empty().then(|| "No matching paths".to_owned()),
                     ));
                 }
             } else if self.prompt_kind == PromptKind::ExternalProgram {
@@ -1591,7 +1619,7 @@ impl App {
                 overlays.push(bounded(
                     OverlayKind::ProgramHints,
                     "Open with · Enter open · Tab actions",
-                    self.command.clone(),
+                    "",
                     choices
                         .iter()
                         .map(|choice| {

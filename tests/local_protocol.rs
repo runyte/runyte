@@ -1393,10 +1393,15 @@ async fn wait_for_git_command(
     // that event instead of repeatedly forcing the large command palette to
     // render while the Git worker is trying to finish on a loaded runner.
     loop {
+        // The palette is a completing prompt, so the typed command stands on
+        // the interaction line rather than in a query of the overlay's own.
+        // That line is what says the frame in hand is the one for this
+        // command.
+        let current = frame.editor.status.interaction_line == format!(":{command}");
         let row = frame
             .overlays
             .iter()
-            .find(|overlay| overlay.title == "Commands" && overlay.query == command)
+            .find(|overlay| overlay.title == "Commands" && current)
             .and_then(|overlay| {
                 overlay
                     .rows

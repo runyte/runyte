@@ -2184,6 +2184,10 @@ pub struct PathHint {
     /// The path spelling that will replace the argument, retaining `~` and
     /// relative prefixes so completion does not unexpectedly rewrite intent.
     pub value: String,
+    /// The entry's own name, which is the part completion would add. The base
+    /// already typed is implied by the prompt, so a row shows this rather
+    /// than repeating the whole spelling `value` carries.
+    pub name: String,
     pub detail: String,
     pub is_directory: bool,
 }

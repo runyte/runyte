@@ -940,7 +940,7 @@ impl WorkspaceHost {
             let scroll_keys = if arrows_are_free {
                 "Ctrl-n/p ↑/↓"
             } else {
-                "Ctrl-n/p Alt-j/k"
+                "Ctrl-n/p"
             };
             let sequence = if key_hints.is_pending() {
                 format!("{} …", key_hints.display_pending())
@@ -958,6 +958,7 @@ impl WorkspaceHost {
                 ],
                 title: format!("Keys: {sequence}"),
                 query: String::new(),
+                query_placeholder: String::new(),
                 column_header: None,
                 rows,
                 selected: None,

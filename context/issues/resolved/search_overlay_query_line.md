@@ -1,11 +1,116 @@
-# Search, finder, and path overlays do not share one query line
+---
+title: "Search, finder, and path overlays do not share one query line"
+status: resolved
+reported: 2026-09-03
+resolved: 2026-09-03
+commit: b163d50
+---
+
+## Resolution
+
+Fixed in commit `b163d50`, "Give every query-owning overlay one query line".
+
+`draw_snapshot_overlay` in `src/ui.rs` decided whether to reserve a query row
+by asking whether `overlay.query` happened to hold text. That is a question
+about the moment rather than about the surface, so an overlay opened empty had
+no query line and every row under it moved down one as the first character
+arrived. The decision now belongs to `OverlayInput`: a surface whose input is
+`Filter` or `Text` keeps its line whether or not anything has been typed, and
+a surface that owns no input — a completion showing its filter, the key-hint
+menu showing a pending stroke — still draws only the text it has, and nothing
+when it has none. `query_height` was already subtracted from the row capacity
+and from the anchored overlays' height, so that accounting carried over
+unchanged.
+
+What the line reads while it is empty had to be published rather than guessed,
+because the standalone renderers and the snapshot renderer would otherwise
+invent their own invitations. `OverlaySnapshot` gained `query_placeholder`,
+filled from `FilePickerKind::query_placeholder`, `FinderMode::query_placeholder`,
+and `ListPicker::query_placeholder`, which are the single source both
+renderers read. `query_line` in `src/ui.rs` builds the line once for
+`draw_picker`, `draw_resource_finder`, `draw_list`, and
+`draw_snapshot_overlay`.
+
+`draw_list` dropped `type to filter` and `filter: <text>` from its title and
+draws that line under it instead, so the title keeps the surface name, the
+counts, and the action hints. Its rectangle also moved to the one the snapshot
+renderer uses — `centered(editor_area, 80, 75, 28, 7)` rather than
+`centered(editor_area, 86, 80, 24, 6)` — because the same rows sat on
+different screen rows depending on which renderer was in front of them.
+
+The completing prompts keep the interaction line, so they now publish no query
+at all. `OverlayKind::CommandPalette` and `OverlayKind::ProgramHints` had
+`OverlayInput::Text` and published the whole command line, which an attached
+client drew inside the box while the same text stood on the interaction line
+below it; both are `OverlayInput::None` with an empty query. Their path
+assistance is a new kind, `OverlayKind::PathCompletion`, with
+`OverlayPurpose::Context`, `OverlayInput::None`, and `OverlayLayout::Bottom`,
+which is what lets a frontend tell assistance attached to the interaction line
+from a choose-one overlay out of the snapshot alone.
+
+`path_completion_area` anchors that kind to the bottom left of the editor
+area and sizes it to the rows it holds, to the width they need, and to the
+title and keys the border has to say, bounded by the editor and by twelve
+rows. `draw_command_path_hints` is gone: `render_editor_frame` draws the
+`PathCompletion` overlay from its snapshot, so the standalone list and the
+attached one are the same list in the same corner by construction rather than
+by two functions agreeing. An empty result keeps its `No matching paths` note,
+which reaches the reader as the overlay's message; `OverlayPurpose::Context`
+was added to the message colour mapping as muted, because assistance saying it
+has nothing to offer is not reporting a failure.
+
+`Space / p` is titled `Choose path for finder`. The palette's variant serves
+every path-argument command, so one title names the one being completed —
+`Choose path for :cd` — rather than a title per command. A row shows the
+entry's own name, which `PathHint` now carries as `name`, and its detail
+column keeps the resolved path only where it says something the name does not:
+where `~` or a relative prefix was expanded, and not where the typed spelling
+was already absolute and the resolved path would simply put the base back in
+front of the row. `PathHint::value` is untouched, so what Tab inserts does not
+change with what the row shows.
+
+Protocol `VERSION` moved to 46. The new overlay kind and the placeholder are
+both new on the wire: an older client has no case for the kind and would fail
+to deserialize the frame, and an older host publishes the assistance as a
+centred command palette whose query repeats the interaction line.
+`OverlayKind::ALL` was also completed — `Path` and `PathActions` had been
+missing from an inventory documented as exhaustive — alongside the new kind.
+
+Tests:
+
+- `the_finder_path_assistance_is_the_same_list_in_the_same_corner_in_both_renderers`,
+  `the_finder_path_assistance_is_titled_for_the_finder_and_carries_no_query_of_its_own`,
+  `a_hint_row_shows_the_entry_name_while_tab_still_completes_the_whole_spelling`,
+  `a_palette_path_argument_is_titled_for_the_command_it_completes`, and
+  `the_assistance_stays_bounded_when_a_directory_holds_far_more_than_it_can_show`
+  in `tests/path_completion.rs`.
+- `a_filterable_result_list_keeps_its_filter_on_a_query_line_that_is_always_there`,
+  `the_two_renderers_agree_about_a_result_list_query_line`,
+  `the_finder_keeps_its_query_line_before_and_after_its_first_character`, and
+  `a_completing_prompt_publishes_no_query_of_its_own` in
+  `tests/snapshot_boundary.rs`.
+- `command_path_hints_distinguish_files_from_directories` and
+  `the_choice_popup_is_wide_enough_for_its_longest_title` in `src/ui.rs`.
+
+Known limitation: the command palette's own list of commands and the "open
+with" program hints are still drawn by `draw_command_palette` and
+`draw_program_hints` in a standalone editor, anchored to the bottom at up to
+100 and 60 columns, while an attached client draws the same snapshots centred
+at 80% by 75%. The report names the palette divergence but the scope it states
+covers the finder, the filterable result lists, and the two path-completion
+surfaces; only the duplicated query line was removed from those two here. The
+plain result list likewise still pads its identifier column to forty cells in
+the standalone renderer and not in the snapshot renderer, which is a column
+layout rather than an arrangement of the surface.
+
+## Report
 
 The overlays that take a typed query show that query in three different
 places, and one of them only shows it once it has text. A reader who moves
 between the finder, a commit search, and a path prompt has to relearn where to
 look, and rows move under the cursor as soon as the first character is typed.
 
-## Observed behavior
+### Observed behavior
 
 - The finder (`draw_picker` in `src/ui.rs`) draws the query on the first line
   inside the border, and draws a muted placeholder — `> type to fuzzy-find` or
@@ -62,7 +167,7 @@ look, and rows move under the cursor as soon as the first character is typed.
   snapshot publishes the whole command line rather than the argument, so the
   box reads `> cd` while `:cd ` stands on the interaction line below it.
 
-## Expected behavior
+### Expected behavior
 
 Every overlay that owns its own query — the finder in all three scopes and the
 filterable result lists — has the same shape:
@@ -80,7 +185,7 @@ Both renderers must agree: the standalone `draw_*` functions and
 `draw_snapshot_overlay` are two readings of one surface, and an attached
 client must not see a different arrangement from a standalone editor.
 
-## Scope
+### Scope
 
 In scope are the surfaces that draw an overlay above a typed query: the finder
 in all three scopes, the filterable result lists including `Space g f`, and the
@@ -93,7 +198,7 @@ prompts under `Space /`. Those are labelled prompts on the interaction line
 (`search: `, `search (regex): `, `workspace search…`) and are not changed
 here.
 
-## The path surfaces
+### The path surfaces
 
 `context/reference/ui-vocabulary.md` defines a **completing prompt** as an
 interaction-line prompt whose rows are a completion of the value being typed
@@ -142,7 +247,7 @@ renderer grows a bottom-anchored case for them, is the fix's decision, but a
 frontend must be able to tell "assistance attached to the interaction line"
 from "a choose-one overlay" out of the snapshot alone.
 
-## Constraints
+### Constraints
 
 - Reserving a query row costs a row of results. `draw_snapshot_overlay`
   already subtracts `query_height` from its row capacity; the same accounting
@@ -160,7 +265,7 @@ from "a choose-one overlay" out of the snapshot alone.
 - `context/reference/ui-vocabulary.md` describes the picker header counts and
   their pacing; the counts stay in the title.
 
-## Regression coverage
+### Regression coverage
 
 Assert at the snapshot and rendered-frame boundary that each affected overlay
 shows a query line while its query is empty and that its rows keep their

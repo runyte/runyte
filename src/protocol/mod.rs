@@ -149,7 +149,13 @@ use crate::workspace::{
 /// wire. Version 45 adds the `finder-path` prompt used to change the finder
 /// scope. An older client has no case for that prompt, while an older host
 /// cannot dispatch the action that opens it.
-pub const VERSION: u32 = 45;
+/// Version 46 publishes a completing prompt's path assistance as its own
+/// overlay kind, anchored above the interaction line that owns the typed
+/// value, and carries the placeholder a query line reads while it is empty.
+/// An older client has no case for the kind and would fail to deserialize the
+/// frame; an older host publishes the assistance as a centred command palette
+/// whose query repeats the interaction line.
+pub const VERSION: u32 = 46;
 pub const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const MAX_PATHS: usize = 32;
 pub const MAX_PATH_BYTES: usize = 32 * 1024;
@@ -923,7 +929,7 @@ mod tests {
 
     #[test]
     fn protocol_version_and_request_bounds_are_explicit() {
-        assert_eq!(VERSION, 45);
+        assert_eq!(VERSION, 46);
         let oversized_command = ClientRequest::Invoke {
             command: CommandRequest {
                 name: "open".to_owned(),

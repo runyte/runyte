@@ -84,6 +84,7 @@ unit_enum!(
         ProgramActions,
         Path,
         PathActions,
+        PathCompletion,
         Prompt,
         Completion,
         Signature,
@@ -390,6 +391,8 @@ pub struct OverlaySnapshot {
     pub title: String,
     pub query: String,
     #[serde(default)]
+    pub query_placeholder: String,
+    #[serde(default)]
     pub column_header: Option<OverlayColumnHeader>,
     pub rows: Vec<OverlayRow>,
     pub selected: Option<usize>,
@@ -465,6 +468,7 @@ impl From<core::OverlaySnapshot> for OverlaySnapshot {
             actions: value.actions.into_iter().map(Into::into).collect(),
             title: value.title,
             query: value.query,
+            query_placeholder: value.query_placeholder,
             column_header: value.column_header.map(Into::into),
             rows: value.rows.into_iter().map(Into::into).collect(),
             selected: value.selected,
@@ -492,6 +496,7 @@ impl TryFrom<OverlaySnapshot> for core::OverlaySnapshot {
             actions: value.actions.into_iter().map(Into::into).collect(),
             title: value.title,
             query: value.query,
+            query_placeholder: value.query_placeholder,
             column_header: value.column_header.map(Into::into),
             rows: value.rows.into_iter().map(Into::into).collect(),
             selected: value.selected,
