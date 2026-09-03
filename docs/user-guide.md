@@ -32,7 +32,7 @@ For the project overview and quick start, see the [main README](../README.md).
   completed-command descriptions and results on the interaction line
 - Arbitrarily nested vertical and horizontal splits with recency-aware directional focus
 - Shared buffers between split panes
-- Oil-style editable directory explorer plus a unified project finder
+- Oil-style editable directory explorer plus a unified Finder
 - Multicursor search over the buffer or a selection, with literal and regular-expression flavours
 - Filterable open-buffer picker and workspace-wide text search
 - Editable directory buffers with explicit filesystem plan confirmation
@@ -619,7 +619,7 @@ immediate manual reconciliation.
 
 A refresh rewrites a Git view's text and moves the cursor to the nearest row
 that survived, so it waits while you are working. It is skipped until you have
-paused briefly, while a prompt is open — including the `s` and `S` search
+paused briefly, while a prompt is open — including the `s` and `/` search
 queries — and while a Git view holds a deliberate selection
 such as the matches `s` leaves behind. Nothing is dropped: the refresh runs as
 soon as you stop, the prompt closes, or the selection collapses back to a
@@ -722,7 +722,7 @@ the character where it began and the character they land on, in either
 direction. `Escape` cancels a selection made either way. `f`/`F`/`t`/`T` find
 characters in the snapshot, and `gw` labels its visible words and jumps to the
 chosen one. `%` selects all retained review text. `s` searches it
-case-insensitively, `S` searches it with a regular
+case-insensitively, `/` searches it with a regular
 expression, and `n`/`N` or `)`/`(` move through stable highlighted matches. `y` copies the caret
 character or review selection to the unnamed Runyte register and `Space c y`
 copies it to the system clipboard. `p` or `P` discards review, sends text from
@@ -960,7 +960,7 @@ input uses an **input overlay**. The shape of a box does not determine its
 role.
 
 For example, `Space g l` opens a Git-log buffer for ordinary browsing, while
-`Space g /` opens a fuzzy commit picker that disappears after one choice. Both
+`Space g f` opens a fuzzy commit picker that disappears after one choice. Both
 open the same retained special commit-detail buffer when a commit is selected.
 
 The canonical definitions live in
@@ -1344,8 +1344,7 @@ context; scoped explorer keys are documented under
 | `>` / `<` | Indent / unindent |
 | `Ctrl-c` | Comment or uncomment every line the selection touches, using the buffer language's line comment; also bound in Insert mode |
 | `u` / `U` | Undo / redo |
-| `s` / `S` | Search with an escaped literal, ignoring case / with a regular expression |
-| `/` | Open the project finder (`Space / /`) |
+| `s` / `/` | Search with an escaped literal, ignoring case / with a regular expression |
 | `n` / `N` | Step to the next / previous match |
 | `*` | Select every occurrence of the word or selection under the caret |
 | `Ctrl-o` / `Ctrl-i`; `Alt-o` / `Alt-i` | Jump backward / forward through every navigation point; jump backward / forward to another buffer |
@@ -1439,12 +1438,12 @@ chosen in Normal or Select mode.
 ### Search
 
 Search has two flavours and one behaviour. `s` matches text ignoring case, and
-`S` interprets the pattern as a regular expression. The literal flavour escapes
+`/` interprets the pattern as a regular expression. The literal flavour escapes
 the pattern, so `foo(` and `a.b` find themselves rather than being read as
-syntax; there are no wildcards. Reach for `S` when you want them — including
+syntax; there are no wildcards. Reach for `/` when you want them — including
 when a search has to match case, which `(?-i)` asks for.
 
-Runyte passes `S` queries directly to Rust's `regex` engine. The opening `S` is
+Runyte passes `/` queries directly to Rust's `regex` engine. The opening `/` is
 the key that opens the prompt, not a delimiter around a JavaScript-style
 `/pattern/flags` expression: use `(?i)hello`, not `/hello/i`, for a
 case-insensitive regex. Inline flags include `i` (case-insensitive), `m`
@@ -1459,7 +1458,7 @@ the complete match. Use `:help regex` for examples and a compact syntax table.
 
 Buffer regex search runs over the complete buffer text, so `(?s)foo.*bar` or
 an explicit `\n` can span lines. Workspace regex search remains line-scoped
-because each result names one source row, so `Space / S` cannot return a
+because each result names one source row, so `Space / /` cannot return a
 multiline match.
 
 Every flavour selects *all* of its matches at once, so the edit that follows
@@ -1480,14 +1479,15 @@ two characters are selected — from `v` and a motion, from `x`, from `%`, or fr
 a previous search — the search looks only inside that text, and `n` and `N` wrap
 within it rather than escaping into the rest of the file. Successive searches
 therefore narrow: select a few lines with `x`, find the calls in them with `s`,
-then pick out one argument with `S`. Press `;` to collapse back to a caret when
+then pick out one argument with `/`. Press `;` to collapse back to a caret when
 you want the whole buffer again.
 
-Searching this buffer uses the two bare letters `s` and `S`. `Space /` widens
-them to the whole project as `Space / s` and `Space / S`. Bare `/` instead
-opens the project finder, whose canonical namespace spelling is `Space / /`;
-`Space / a` and `Space / p` open that same finder over a wider scope, and
-neither in-buffer flavour takes another namespace row. Neither flavour has a
+Searching this buffer uses the two bare keys `s` and `/`. `Space /` widens
+them to the whole project without respelling either: `Space / s` mirrors `s`
+and `Space / /` mirrors `/`. The Finder is `f` rather than a sigil — `Space f`,
+its namespace spelling `Space / f`, and `Space g f` over commits — and
+`Space / a` and `Space / p` open that same Finder over a wider scope, so no
+in-buffer flavour takes another namespace row. Neither flavour has a
 case-sensitive counterpart; write `(?-i)` in a regular expression when a
 search has to match case.
 
@@ -1496,15 +1496,15 @@ search has to match case.
 | Key | Action |
 | --- | --- |
 | `s` | Search the buffer, ignoring case |
-| `S` | Search the buffer with a regular expression |
+| `/` | Search the buffer with a regular expression |
 | `n` / `N` | Select only the next / previous match |
 | `*` | Select every occurrence of the word or selection under the caret |
 | `f` | Find the next typed character in the buffer |
 | `Space / s` | Search the workspace, ignoring case |
-| `Space / S` | Search the workspace with a regular expression |
-| `Space / /` or `/` | Find files, buffers, and terminals by name or content; `Tab` switches modes and `Ctrl-t` toggles preview |
-| `Space / a` | The same finder over every file, ignore files not consulted |
-| `Space / p` | The same unfiltered finder rooted at a typed path, inside the workspace or outside it |
+| `Space / /` | Search the workspace with a regular expression |
+| `Space f` or `Space / f` | Open the Finder over files, buffers, and terminals by name or content; `Tab` switches modes and `Ctrl-t` toggles preview |
+| `Space / a` | The same Finder over every file, ignore files not consulted |
+| `Space / p` | The same unfiltered Finder rooted at a typed path, inside the workspace or outside it |
 | `Space s c` | Keep only the primary selection in any multi-selection |
 | `Space s e` / `Space s b` | Put a cursor at the end / start of every selected line |
 | `Space s a` or `&` | Pad with spaces until every cursor shares the rightmost display column |
@@ -1514,8 +1514,8 @@ The directory-scoped pickers have no key. `:file-picker-directory` and
 `:fuzzy-grep-directory` search below the active file or explorer directory.
 
 The two workspace searches walk the project themselves and consult no ignore
-file: a gitignored path the finder omits is still searched by `Space / s` and
-`Space / S`. They skip `.git`, `.runyte`, and `target` by name, skip symlinks,
+file: a gitignored path the Finder omits is still searched by `Space / s` and
+`Space / /`. They skip `.git`, `.runyte`, and `target` by name, skip symlinks,
 apply `editor.show_hidden_files`, and read no file larger than 4 MiB. Accepting
 the prompt queues this traversal in the background and returns to input; the
 result buffer opens when the request completes. A newer workspace search
@@ -1527,12 +1527,12 @@ and the query.
 The two fixed workspace searches replace and open one read-only
 `[workspace search]` buffer. Its `path:line:column` rows are a query-time
 snapshot with typed destinations: Enter opens the result under the cursor,
-and normal movement, selection, copying, `S`, `s`, splits, help, buffer
+and normal movement, selection, copying, `s`, `/`, splits, help, buffer
 switching, and jump history keep their ordinary meanings. Visit as many
 results as needed without rerunning the query; rerun a workspace search to
 refresh and replace the singleton result view. This is deliberately different
-from the finder's content mode, whose fuzzy query remains live and therefore stays a
-choose-one picker.
+from the Finder's content mode, whose fuzzy query remains live and therefore
+stays a choose-one picker.
 
 ### Layout and whitespace display
 
@@ -1683,16 +1683,16 @@ cancellation keys.
 | `Space e` | Open the active buffer's directory as an editable explorer; from a file, select that file |
 | `Space E` | Open the working directory (controlled by `:cd`) as an editable explorer |
 | `Space Space` | Open the persistent-session manager (`:session-list`, `:sl`); another `Space` closes it while the filter is empty, `1`-`9` attach to a numbered session then too, and `Tab` shows the selected row's actions |
-| `Space / /` or `/` | Find files, buffers, and terminals by name or content; `Tab` switches modes and `Ctrl-t` toggles preview |
-| `Space / a` | The same finder over every file, ignore files not consulted |
-| `Space / p` | The same unfiltered finder rooted at a typed path, inside the workspace or outside it |
+| `Space f` or `Space / f` | Open the Finder over files, buffers, and terminals by name or content; `Tab` switches modes and `Ctrl-t` toggles preview |
+| `Space / a` | The same Finder over every file, ignore files not consulted |
+| `Space / p` | The same unfiltered Finder rooted at a typed path, inside the workspace or outside it |
 | `:file-picker-directory` | Fuzzy-find a file or directory below the active file/explorer directory |
 | `:fuzzy-grep-directory` | Fuzzy-search contents below the active file/explorer directory |
 | `Space b b` | Open the filterable buffer picker; `Ctrl-t` toggles preview and `Tab` shows valid actions |
 | `Space b c` | Close the active buffer safely (`:close`, `:c`) without changing the pane layout |
 | `Space b d` | Compare a fresh immutable disk revision with the active file buffer (`:diff-disk`) |
 | `Space b n` | Open a new scratch buffer in the current pane (`:buffer-new`, `:new`) |
-| `Space / S` | Search the workspace with a regular expression; see [Search](#search) |
+| `Space / /` | Search the workspace with a regular expression; see [Search](#search) |
 | `Space r` | Reload the active text file or refresh the active explorer or supported Git list |
 | `Enter` in a directory | Open the selected file or directory |
 | `-` or Backspace in a directory | Open the parent directory and select the child just left |
@@ -1826,8 +1826,8 @@ Runyte retains the eight most recently active clean generated and special
 buffers, including explorers, after their last pane moves elsewhere. Activating
 a ninth retires the least recently used detached one, which keeps immediate
 `Ctrl-o`/`Ctrl-i` and `Alt-o`/`Alt-i` navigation useful without letting
-`Space b b` or the file picker's buffer mode accumulate stale views. A dirty
-special buffer remains open and discoverable until it is saved or explicitly
+`Space b b` or the Finder's buffer mode accumulate stale views. A dirty special
+buffer remains open and discoverable until it is saved or explicitly
 discarded. An empty, clean scratch buffer still retires as soon as its final
 pane leaves; written scratch text remains an ordinary buffer.
 
@@ -1843,8 +1843,8 @@ Preparing a plan records the complete trees of directories it will move, copy,
 or delete. A change anywhere below one of those directories before confirmation
 is applied rejects the whole plan before any operation begins.
 
-The project finder opens in name mode. Files below the project root, open
-buffers, and terminal sessions share one ranked list. `Tab` switches to content
+The Finder opens in name mode. Files below the project root, open buffers, and
+terminal sessions share one ranked list. `Tab` switches to content
 mode without clearing the query; file lines, authoritative in-memory buffer
 lines including pathless buffers, and decoded terminal scrollback plus the
 current screen share that list. Both modes preview the selected item, with
@@ -1866,21 +1866,22 @@ without hiding other candidates that match the remaining terms. A file-backed
 open buffer appears once, under its live buffer identity, so unsaved text and
 structural naming win over stale disk state.
 
-The native fuzzy file picker recursively discovers regular files and
-directories without invoking `git`, `find`, `fd`, or an external fuzzy finder.
+The Finder's native fuzzy file scan recursively discovers regular files and
+directories without invoking `git`, `find`, `fd`, or an external fuzzy
+finder.
 It honors nested `.gitignore` and `.ignore` rules, including ancestor rules
 when `:file-picker-directory` starts below the project root. It never follows symlinks,
 refuses to scan `.git`, `.runyte`, or the configured workspace state
 directory, and applies `editor.show_hidden_files`.
 
-`Space / a` and `Space / p` open the same finder with the ignore rules alone
+`Space / a` and `Space / p` open the same Finder with the ignore rules alone
 switched off, so build output, vendored trees, and generated code are
 reachable. Every other exclusion still holds: `.git`, `.runyte`, the workspace
 state directory, symlinks, and `editor.show_hidden_files` apply exactly as
 before. `Space / p` asks for a path first, completing entries as they are
 typed; `~` expands, a relative path resolves against the working directory,
 and `Tab` accepts the selected row. The path need not be inside the workspace,
-and the finder's title names the root it was given. Both scopes survive the
+and the Finder's title names the root it was given. Both scopes survive the
 `Tab` into content mode, so an ignored file's lines are searchable too.
 Type an ordered subsequence to rank paths; exact basenames, basename prefixes,
 consecutive characters, and path-component boundaries rank highest. Ending the
@@ -1891,22 +1892,22 @@ directory as a one-level listing of its files and subdirectories; `Ctrl-t`
 toggles that preview. Enter opens a file for editing and a directory in the
 editable explorer.
 
-Use Up/Down, `Ctrl-p`/`Ctrl-n`, paging, and Home/End to move. In the project
-finder `Tab` switches name/content modes; `Shift-Tab` selects the previous row, as it does
-in directory-scoped and fuzzy-content pickers. In those other pickers, `Tab`
+Use Up/Down, `Ctrl-p`/`Ctrl-n`, paging, and Home/End to move. In the Finder
+`Tab` switches name/content modes; `Shift-Tab` selects the previous row, as it
+does in directory-scoped and fuzzy-content pickers. In those other pickers, `Tab`
 retains its previous next-row navigation.
 Enter opens any selected result. For a selected file result, `Ctrl-s` opens it
 horizontally and `Ctrl-v` opens it vertically; those split actions do not apply
 to buffer or terminal results. Escape or `Ctrl-c` closes. A bare `Space` also
 closes a newly opened overlay;
-after a project or content finder query has begun, it retains its term-separator
+after a Finder name or content query has begun, it retains its term-separator
 role. Every filterable result list follows the same rule: a `Space` typed into
 an empty filter closes the list, and one typed after any text separates fuzzy
 terms. A report, which has no filter, always closes on `Space`. Backspace/Delete and the ordinary prompt control keys edit the query.
 Printable letters such as `q`, `j`, and `k` are query text rather than
 navigation commands.
 
-In the project finder, query editing does not wait for filesystem discovery,
+In the Finder, query editing does not wait for filesystem discovery,
 ranking, sorting, live-resource matching, or a file preview. The prompt and
 caret update in the next frame while those jobs continue in the background;
 the progress label remains visible until the ranked rows answer the displayed
@@ -1925,7 +1926,7 @@ letters in order. Because the terms are wanted in order, `picker src` does not
 find `src/picker.rs`. Smart case reads the whole query: one capital anywhere
 makes every term case-sensitive. Both pickers and fuzzy grep share this rule.
 
-The project finder's content mode uses the same interaction to search contents
+The Finder's content mode uses the same interaction to search contents
 rather than names. `:fuzzy-grep` opens that mode directly;
 `:fuzzy-grep-directory` remains a files-only search rooted at the active file's
 or explorer's directory. File scanning streams non-empty UTF-8 lines from
@@ -1996,7 +1997,7 @@ message without affecting the internal registers.
 | `Ctrl-u` / `Ctrl-d`, `Ctrl-b` / `Ctrl-f` | Move the review caret by half / full pages, keeping it visible |
 | `gg` / `ge` in a terminal | Move to the oldest / newest rows in the captured review snapshot |
 | `gw` in terminal review | Label visible terminal words and jump to the chosen one |
-| `s` / `S`, then `n` / `N` | Search an immutable terminal review snapshot by literal / regular expression and move among matches |
+| `s` / `/`, then `n` / `N` | Search an immutable terminal review snapshot by literal / regular expression and move among matches |
 | `y` / `Space c y` in terminal review | Copy the caret character or every selection, joined by newlines, to the unnamed register / system clipboard |
 | `p` / `P` in a terminal | Leave review and send Runyte's selected register to the live program |
 | `Space c p` / `Space c P` in a terminal | Leave review and send the system clipboard to the live program |
@@ -2019,7 +2020,7 @@ emulator supports and what it does not.
 | `Space g d` | Open the active file's unstaged diff |
 | `Space g D` | Compare the active file's complete Git versions side by side |
 | `Space g l` | Open paged commit history |
-| `Space g /` | Fuzzy-search commits in a hash/title list with author, date, and full-message preview |
+| `Space g f` | Fuzzy-search commits in a hash/title list with author, date, and full-message preview |
 | `Space g B` | Open live-buffer attribution for the whole file |
 | `Space g t` | Open the bounded stash list |
 | `Space g r` | Re-read branch, changed files, and changed lines from Git |
@@ -2204,7 +2205,7 @@ page, even if a new commit appeared above it, and otherwise falls back to the
 nearest row. Only the first page is refreshed automatically: every later page
 sits behind a commit boundary, so its history cannot change underneath you.
 
-`Space g /` opens a native fuzzy picker over commits reachable from `HEAD`,
+`Space g f` opens a native fuzzy picker over commits reachable from `HEAD`,
 newest first. Matching covers everything a row stands for rather than only what
 its author wrote: subject lines, message bodies, the object ID, the author, and
 the author date. A prefix of an object ID matches, so the abbreviated ID a row
@@ -2598,9 +2599,9 @@ are enabled.
 :diff-this              mark this buffer, or compare it with the one marked before it (aliases: difft, dt)
 :diff-off               close the comparison this buffer is part of (alias: do)
 :explorer [path]        open an editable directory explorer (alias: files)
-:file-picker            find files, buffers, and terminals by name or content
+:file-picker            open the Finder over files, buffers, and terminals
 :file-picker-directory  fuzzy-find below the active file/explorer directory
-:fuzzy-grep             open the project finder in content mode
+:fuzzy-grep             open the Finder in content mode
 :fuzzy-grep-directory   fuzzy-search contents below the active file/explorer directory
 :format                 format the active buffer (alias: fmt)
 :git-blame              show live-buffer attribution for the primary line
@@ -2696,8 +2697,8 @@ directory. When an explorer is active, `:cd` also retargets that explorer.
 From a normal file buffer it leaves the file open. `Space e` opens the active
 buffer's directory and selects that file, so Enter returns to its buffer;
 `Space E` opens the working directory. A pathless buffer falls back to the
-working directory. `Space / /` (or `/`) always opens the stable-project finder
-in name mode, while `:fuzzy-grep` opens its content mode.
+working directory. `Space f` (or `Space / f`) always opens the stable-project
+Finder in name mode, while `:fuzzy-grep` opens its content mode.
 `:file-picker-directory` and
 `:fuzzy-grep-directory` search the active file's parent, the active explorer's
 current root, or the working directory for a pathless/generated buffer.
@@ -2944,7 +2945,7 @@ editor:
   smart_newline: true # add syntax indentation and align list continuations
   scroll_offset: 3
   motion_repeat_multiplier: 2 # held cursor motions; 1 retains terminal/Helix speed
-  show_hidden_files: false # explorer, file picker, and workspace search; . toggles it in an explorer
+  show_hidden_files: false # explorer, finder, and workspace search; . toggles it in an explorer
   soft_wrap: false
   render_whitespace: false # show · for spaces, → for tabs, and ↵ for line endings
   zen_width: 100 # maximum text width while :zen is active; editable in :config's popup

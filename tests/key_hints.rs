@@ -291,24 +291,24 @@ fn the_search_namespaces_and_their_prompts_are_discoverable_on_screen() {
     for entry in [
         "Search the workspace with a regular expression",
         "Search the workspace, ignoring case",
-        "Find files, buffers, and terminals by name or content",
-        "Find every file, buffer, and terminal, including ignored files",
-        "Find every file under a path, including ignored files",
+        "Open the finder over the project's files, buffers, and terminals",
+        "Open the finder over the project, including files Git ignores",
+        "Open the finder in a chosen path, including files Git ignores",
     ] {
         assert!(project.contains(entry), "missing {entry:?}: {project}");
     }
     assert!(
-        project.contains("Space / /, /"),
-        "the file picker row does not name its short spelling: {project}"
+        project.contains("Space / f, Space f"),
+        "the finder row does not name its short spelling: {project}"
     );
     // Only the flavour that has one; the rest carry no alias.
     assert!(
-        project.contains("Space / s    Search the workspace, ignoring case"),
+        project.contains("Space / s          Search the workspace, ignoring case"),
         "unaliased project rows changed shape: {project}"
     );
 
     // Each flavour names itself at the prompt rather than sharing one label.
-    for (opener, label) in [('s', "search: "), ('S', "search (regex): ")] {
+    for (opener, label) in [('s', "search: "), ('/', "search (regex): ")] {
         let mut app = App::new(Config::default(), None).unwrap();
         app.handle_key(stroke(KeyCode::Char(opener), Modifiers::NONE))
             .unwrap();
@@ -434,7 +434,7 @@ fn repeated_arrow_scroll_saturates_at_the_rendered_end() {
         Mode::Normal,
         default_keymap(),
     );
-    assert!(render(40, 10, &mut app, &hints).contains("1-6/17"));
+    assert!(render(40, 10, &mut app, &hints).contains("1-6/18"));
 
     for _ in 0..30 {
         assert_eq!(
@@ -446,8 +446,8 @@ fn repeated_arrow_scroll_saturates_at_the_rendered_end() {
             HintEventResult::Consumed
         );
     }
-    assert_eq!(hints.scroll_offset(), 11);
-    assert!(render(40, 10, &mut app, &hints).contains("12-17/17"));
+    assert_eq!(hints.scroll_offset(), 12);
+    assert!(render(40, 10, &mut app, &hints).contains("13-18/18"));
 
     assert_eq!(
         hints.observe(
@@ -457,8 +457,8 @@ fn repeated_arrow_scroll_saturates_at_the_rendered_end() {
         ),
         HintEventResult::Consumed
     );
-    assert_eq!(hints.scroll_offset(), 10);
-    assert!(render(40, 10, &mut app, &hints).contains("11-16/17"));
+    assert_eq!(hints.scroll_offset(), 11);
+    assert!(render(40, 10, &mut app, &hints).contains("12-17/18"));
 }
 
 #[test]

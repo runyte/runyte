@@ -861,12 +861,12 @@ async fn standalone_terminal_input_edits_and_quits_through_the_real_event_loop()
     std::io::Write::write_all(&mut terminal, b"\x03").unwrap();
     std::io::Write::flush(&mut terminal).unwrap();
     let deadline = Instant::now() + ASYNC_STATE_TIMEOUT;
-    while output.screen_text().contains("Find · Names") {
+    while output.screen_text().contains("Finder · Names") {
         assert!(Instant::now() < deadline, "file picker did not close");
         tokio::time::sleep(ASYNC_STATE_POLL_INTERVAL).await;
     }
     tokio::time::sleep(ASYNC_STATE_POLL_INTERVAL).await;
-    assert!(!output.screen_text().contains("Find · Names"));
+    assert!(!output.screen_text().contains("Finder · Names"));
     type_colon_command(&mut terminal, "buffer-new");
     wait_for_terminal_screen(&output, "[scratch]").await;
     std::io::Write::write_all(&mut terminal, b"ihello\x1b").unwrap();

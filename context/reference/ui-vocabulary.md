@@ -189,9 +189,9 @@ choose-one requests belong in pickers; source-tied assistance belongs in
 context overlays; pending operations belong in confirmations; and only short
 scalar input belongs solely on the interaction line.
 
-`Space g l` and `Space g /` are the reference pair. `Space g l` opens a
+`Space g l` and `Space g f` are the reference pair. `Space g l` opens a
 retained Git-log special buffer because commit history benefits from ordinary
-browsing, search, and splits. `Space g /` opens a picker because fuzzy typing
+browsing, search, and splits. `Space g f` opens a picker because fuzzy typing
 resolves one immediate commit choice. Enter from either surface opens the same
 retained commit-detail special buffer.
 

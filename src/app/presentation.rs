@@ -1097,7 +1097,7 @@ impl App {
                 let mut snapshot = bounded(
                     OverlayKind::FilePicker,
                     format!(
-                        "Find · {}{} · {found}/{candidates} matched",
+                        "Finder · {}{} · {found}/{candidates} matched",
                         finder.mode.title(),
                         picker
                             .scope_label(&self.project_root)
@@ -1189,7 +1189,7 @@ impl App {
                     OverlayKind::FilePicker,
                     if self.finder.is_some() {
                         format!(
-                            "Find · Files · {} · {found}/{candidates} matched",
+                            "Finder · Files · {} · {found}/{candidates} matched",
                             picker.root.display()
                         )
                     } else {

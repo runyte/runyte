@@ -246,11 +246,11 @@ Key execution, help, hints, and command descriptions all come from the same
 registry, so the documentation shown inside the editor cannot silently drift
 from what the keys do.
 
-Bare `/` (or `Space / /`) opens the project finder in name mode across files,
-open buffers, and terminals; Tab switches to content mode over file lines,
-authoritative buffer text, and decoded terminal output. Buffer search remains
-on `s` for escaped literals and `S` for regular expressions, with `Space / s`
-and `Space / S` providing the retained workspace-wide forms. Finder query
+`Space f` (or `Space / f`) opens the Finder in name mode across files, open
+buffers, and terminals; Tab switches to content mode over file lines,
+authoritative buffer text, and decoded terminal output. Buffer search stays on
+`s` for escaped literals and `/` for regular expressions, with `Space / s` and
+`Space / /` widening the same two flavours to the whole workspace. Finder query
 editing stays interactive while filesystem discovery, ranking, and previews
 continue in the background. Retained workspace searches also traverse and
 match in the background; accepting their prompt returns immediately, and the

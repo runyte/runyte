@@ -1389,7 +1389,7 @@ fn global_search_opens_a_reusable_result_buffer_and_jumps_to_a_match() {
 
     let mut app = App::new(Config::default(), None).unwrap();
     app.project_root = directory.clone();
-    type_text(&mut app, " /S");
+    type_text(&mut app, " //");
     type_text(&mut app, "needle");
     key(&mut app, KeyCode::Enter, Modifiers::NONE);
 
@@ -1668,15 +1668,15 @@ fn workspace_search_offers_the_same_flavours_as_the_buffer() {
     assert_eq!(matches(&app), 1);
     key(&mut app, KeyCode::Escape, Modifiers::NONE);
 
-    type_text(&mut app, " /S");
+    type_text(&mut app, " //");
     type_text(&mut app, "nee(dle");
     key(&mut app, KeyCode::Enter, Modifiers::NONE);
     assert!(app.status_error, "an unclosed group is reported, not found");
 
-    type_text(&mut app, " /S");
+    type_text(&mut app, " //");
     type_text(&mut app, "nee.dle");
     key(&mut app, KeyCode::Enter, Modifiers::NONE);
-    assert_eq!(matches(&app), 1, "Space / S is the regex workspace search");
+    assert_eq!(matches(&app), 1, "Space / / is the regex workspace search");
 
     fs::remove_dir_all(directory).unwrap();
 }
@@ -1686,7 +1686,7 @@ fn remaining_multi_selection_bindings_use_regex_and_rotate_contents() {
     let mut app = App::new(Config::default(), None).unwrap();
     seed(&mut app, "a1 a2 b");
     press(&mut app, '%');
-    press(&mut app, 'S');
+    press(&mut app, '/');
     type_text(&mut app, r"a\d");
     key(&mut app, KeyCode::Enter, Modifiers::NONE);
     assert_eq!(app.active().selection.len(), 2);

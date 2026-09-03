@@ -3251,7 +3251,7 @@ fn delayed_hover_does_not_take_enter_from_completion_or_a_prompt() {
 
     let mut prompt = App::new(Config::default(), None).unwrap();
     seed(&mut prompt, "needle");
-    press(&mut prompt, 'S');
+    press(&mut prompt, '/');
     type_text(&mut prompt, "needle");
     prompt.hover = Some(HoverState {
         lines: (0..20).map(|row| format!("hover {row}")).collect(),

@@ -15,7 +15,7 @@ look, and rows move under the cursor as soon as the first character is typed.
 - Filterable result lists (`draw_list` in `src/ui.rs`, backed by
   `ListPicker`) put the filter **in the title**, as `type to filter` or
   `filter: <text>`, among the action hints. There is no query line under the
-  title. `Space g /` (`:git-search-commits`) opens one of these, as do the
+  title. `Space g f` (`:git-search-commits`) opens one of these, as do the
   buffer, terminal, stash, branch, and worktree lists.
 - The shared snapshot renderer (`draw_snapshot_overlay` in `src/ui.rs`), which
   draws overlays for an attached client and for the snapshot-backed surfaces,
@@ -83,7 +83,7 @@ client must not see a different arrangement from a standalone editor.
 ## Scope
 
 In scope are the surfaces that draw an overlay above a typed query: the finder
-in all three scopes, the filterable result lists including `Space g /`, and the
+in all three scopes, the filterable result lists including `Space g f`, and the
 two path-completion surfaces, which are treated differently for the reason
 given below.
 

@@ -545,7 +545,7 @@ fn commit_picker_also_matches_object_ids_authors_and_dates() {
 fn filtering_a_git_commit_popup_keeps_the_command_that_opened_it() {
     let mut app = App::new(Config::default(), None).unwrap();
     app.report_completed_action(
-        "Space g /",
+        "Space g f",
         "Fuzzy-search commits reachable from HEAD by message, object ID, author, or date",
         CommandOutcome::AsynchronousRequest(None),
     );
@@ -573,7 +573,7 @@ fn filtering_a_git_commit_popup_keeps_the_command_that_opened_it() {
     assert_eq!(app.list.as_ref().unwrap().filter, "keep");
     assert_eq!(
         app.displayed_status_message(),
-        "Space g / (Fuzzy-search commits reachable from HEAD by message, object ID, author, or date)"
+        "Space g f (Fuzzy-search commits reachable from HEAD by message, object ID, author, or date)"
     );
 
     key(&mut app, KeyCode::Escape, Modifiers::NONE);
@@ -626,8 +626,8 @@ fn periodic_refresh_defers_to_an_open_prompt_and_to_search_matches() {
     app.active_mut().replace_selection(Selection::point(caret));
     assert!(!app.interaction_defers_git_refresh());
 
-    // An unfinished command line, which is also how `/`, `s`, and `S`
-    // take their query, must survive the timer.
+    // An unfinished command line, which is also how the `s` and `/`
+    // searches take their query, must survive the timer.
     app.open_prompt(PromptKind::Search(SearchMode::Insensitive));
     assert!(app.interaction_defers_git_refresh());
     app.close_prompt();
