@@ -18,6 +18,7 @@ The automated boundary is reproducible with:
 
 ```sh
 cargo test --test terminal
+cargo test --test terminal_sequences
 cargo test --test persistent_host terminal_pid_output_and_input_survive_detach_disconnect_and_reattach
 cargo test terminal::tests --lib
 cargo test --test local_protocol queued_wait_client_exits_and_cancels_when_its_terminal_is_lost
@@ -29,6 +30,14 @@ control input, alternate and primary screens, wide and combining characters,
 top-anchored inline scroll regions, review stability, SGR mouse encoding,
 simultaneous noisy/quiet sessions, process-group close, resize, frame damage,
 default foreground/background queries, client loss, and detach/reattach.
+
+`terminal_sequences` needs no child. It feeds fixed sequences straight to the
+emulator and checks the screen they produce: cursor addressing and its screen
+and scroll-region bounds, origin mode and the cursor report, tab stops and
+their clearing, character and line insertion, deletion, erasure and scrolling,
+the saved cursor in both its escape and CSI forms, insert and autowrap modes,
+the graphic renditions and their individual resets, and the device attribute
+and status answers.
 
 The persistent-session manager's `QUIET` observation is defined at this same
 semantic boundary. A host keeps only the latest creation/completed-line

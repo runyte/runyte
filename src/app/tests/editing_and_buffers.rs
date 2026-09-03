@@ -823,6 +823,44 @@ fn literal_text_edits_prompts_but_is_safe_in_modal_and_jump_contexts() {
     assert_eq!(app.status, "jump cancelled");
 }
 
+/// A paste arrives as one input event rather than a run of keystrokes, so
+/// every overlay that accepts typing has to accept it that way too. The
+/// finder's query and a filterable list's filter each take the whole pasted
+/// run, and the buffer waiting behind them takes none of it.
+#[test]
+fn pasted_text_reaches_an_open_picker_and_list_rather_than_the_buffer() {
+    let root = temporary("paste-into-overlays");
+    fs::create_dir_all(&root).unwrap();
+    let path = root.join("alpha.rs");
+    fs::write(&path, "mod alpha {\n    fn beta() {}\n}\n").unwrap();
+    let ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    app.open_file(path).unwrap();
+    let before = text(&app);
+
+    app.open_project_picker().unwrap();
+    app.handle_input(InputEvent::Text("alpha".to_owned()))
+        .unwrap();
+    assert_eq!(app.picker.as_ref().unwrap().query, "alpha");
+    key(&mut app, KeyCode::Escape, Modifiers::NONE);
+    assert!(app.picker.is_none(), "the picker stayed open");
+
+    app.execute_command("document-outline").unwrap();
+    app.handle_input(InputEvent::Text("bet".to_owned()))
+        .unwrap();
+    assert_eq!(app.list.as_ref().unwrap().filter, "bet");
+    assert_eq!(
+        app.list.as_ref().unwrap().visible_indices().len(),
+        1,
+        "the pasted filter narrowed the outline"
+    );
+
+    assert_eq!(text(&app), before, "the buffer took the pasted text");
+    fs::remove_dir_all(root).unwrap();
+}
+
 pub(super) struct MemoryClipboard(pub(super) Arc<Mutex<String>>);
 
 impl SystemClipboard for MemoryClipboard {

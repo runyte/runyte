@@ -7217,3 +7217,365 @@ fn mutation_failures_preserve_partial_and_uncertain_outcomes() {
         );
     }
 }
+
+/// One ambient snapshot is the read that keeps every open Git view current.
+/// The branch list, the staged index and a per-file diff each already have a
+/// projection on screen, so the snapshot replaces their contents in place
+/// rather than opening a second copy of any of them.
+#[test]
+fn one_snapshot_refreshes_the_branch_list_the_index_and_an_open_file_diff() {
+    use crate::git::{
+        BranchList, GitOperation, GitRequestId, GitServiceEvent, GitServiceHandle, GitServiceState,
+        RefreshSpec, RepositoryGeneration,
+    };
+
+    let root = temporary("git-snapshot-view-refresh");
+    fs::create_dir_all(&root).unwrap();
+    let root = root.canonicalize().unwrap();
+    let path = root.join("source.txt");
+    fs::write(&path, "new\n").unwrap();
+    let repository = Repository::new(&root);
+    let mut app = App::new_in_isolated_project(
+        &root,
+        HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+            String::new(),
+        ))))),
+    )
+    .unwrap();
+    let (service, operations) = GitServiceHandle::recording_for_test();
+    app.attach_git_service(service);
+    app.git.attach(Some(repository.clone()));
+    app.open_file(path.clone()).unwrap();
+
+    app.apply_git_response(
+        GitOperation::Branches {
+            repository: repository.clone(),
+        },
+        GitResponse::Branches(BranchList {
+            local: vec![Branch::new("main", true)],
+            remote: Vec::new(),
+        }),
+        (None, GitServiceState::Completed),
+        RequestedGitViews::default(),
+        None,
+        None,
+    );
+    let branches = app.active().buffer;
+
+    let first_patch = "diff --git a/source.txt b/source.txt\n\
+        --- a/source.txt\n+++ b/source.txt\n@@ -1 +1 @@\n-old\n+new\n";
+    app.open_git_diff_result(
+        DiffScope::Unstaged,
+        Some(path.clone()),
+        first_patch.to_owned(),
+    );
+    let diff = app.active().buffer;
+    assert!(app.buffers[diff].to_string().contains("+new"));
+
+    app.open_git_index();
+    // Every submitted operation takes the next identifier, so counting what
+    // the service was handed is what correlates the answer with the request.
+    let mut id = 0;
+    let refresh = loop {
+        let operation = operations.recv_timeout(Duration::from_secs(1)).unwrap();
+        id += 1;
+        if matches!(&operation, GitOperation::Refresh { spec, .. } if spec.staged_diff) {
+            break operation;
+        }
+    };
+
+    let second_patch = "diff --git a/source.txt b/source.txt\n\
+        --- a/source.txt\n+++ b/source.txt\n@@ -1 +1 @@\n-old\n+newer\n";
+    let mut snapshot = empty_repository_snapshot(
+        repository.clone(),
+        RepositoryGeneration::default(),
+        RefreshSpec::default(),
+    );
+    snapshot.branches = Some(BranchList {
+        local: vec![Branch::new("main", true), Branch::new("topic", false)],
+        remote: Vec::new(),
+    });
+    snapshot.status.files = vec![
+        crate::git::FileStatus {
+            path: PathBuf::from("source.txt"),
+            original_path: None,
+            index: crate::git::FileState::Modified,
+            worktree: crate::git::FileState::Unmodified,
+        },
+        crate::git::FileStatus {
+            path: PathBuf::from("moved.txt"),
+            original_path: Some(PathBuf::from("was.txt")),
+            index: crate::git::FileState::Renamed,
+            worktree: crate::git::FileState::Unmodified,
+        },
+    ];
+    snapshot.staged_diff = Some("staged patch one\n".to_owned());
+    snapshot.file_diffs = vec![(path.clone(), DiffScope::Unstaged, second_patch.to_owned())];
+    app.apply_git_service_event(GitServiceEvent::Completed {
+        id: GitRequestId::from_raw(id),
+        operation: refresh,
+        result: Box::new(Ok(GitResponse::Snapshot(Box::new(snapshot)))),
+        state: GitServiceState::Completed,
+        coalesced: false,
+    });
+
+    assert!(
+        app.buffers[branches].to_string().contains("topic"),
+        "the open branch list was not refreshed: {}",
+        app.buffers[branches]
+    );
+    let index = app
+        .git_state
+        .index_buffer()
+        .expect("the requested index view opened from the snapshot");
+    assert_eq!(app.buffers[index].display_name(), "[git index]");
+    let staged = app.buffers[index].to_string();
+    assert!(staged.contains("staged patch one"), "{staged}");
+    assert!(
+        staged.starts_with("# staged for commit \u{b7} 2 files"),
+        "the index heading counts what the snapshot said is staged: {staged}"
+    );
+    assert!(staged.contains("  M source.txt"), "{staged}");
+    assert!(
+        staged.contains("  R was.txt \u{2192} moved.txt"),
+        "a rename names both sides: {staged}"
+    );
+    let refreshed = app.buffers[diff].to_string();
+    assert!(refreshed.contains("+newer"), "{refreshed}");
+    assert!(!refreshed.contains("+new\n"), "{refreshed}");
+
+    // An ambient refresh nobody asked to open a view from still brings the
+    // projection already on screen up to date, in place.
+    let mut later = empty_repository_snapshot(
+        repository.clone(),
+        RepositoryGeneration::default(),
+        RefreshSpec::default(),
+    );
+    later.staged_diff = Some("staged patch two\n".to_owned());
+    app.apply_git_service_event(GitServiceEvent::Completed {
+        id: GitRequestId::from_raw(id + 1),
+        operation: GitOperation::Refresh {
+            repository,
+            spec: RefreshSpec::default(),
+        },
+        result: Box::new(Ok(GitResponse::Snapshot(Box::new(later)))),
+        state: GitServiceState::Completed,
+        coalesced: false,
+    });
+    assert_eq!(
+        app.git_state.index_buffer(),
+        Some(index),
+        "a second index projection was opened"
+    );
+    assert!(
+        app.buffers[index].to_string().contains("staged patch two"),
+        "{}",
+        app.buffers[index]
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// A selected-line stage registers a guard against the buffer it measured, so
+/// that an edit arriving while the patch is being prepared can refuse the
+/// stage rather than apply it to lines that have moved. The guard is editor
+/// state, so every way the request can end has to release it: a failure and a
+/// stale answer invalidate it, and a stage that lands releases it still valid,
+/// because the buffer it guarded was never wrong.
+#[test]
+fn a_failed_partial_stage_preparation_releases_and_invalidates_its_guard() {
+    use crate::git::{
+        GitOperation, GitRequestId, GitServiceEvent, GitServiceHandle, GitServiceState,
+    };
+
+    let root = temporary("partial-stage-guard-failure");
+    fs::create_dir_all(&root).unwrap();
+    let root = root.canonicalize().unwrap();
+    let path = root.join("source.txt");
+    fs::write(&path, "new\n").unwrap();
+    let repository = Repository::new(&root);
+    let mut app = App::new_in_isolated_project(
+        &root,
+        HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+            String::new(),
+        ))))),
+    )
+    .unwrap();
+    let (service, operations) = GitServiceHandle::recording_for_test();
+    app.attach_git_service(service);
+    app.git.attach(Some(repository));
+    app.open_file(path).unwrap();
+    let buffer = app.active().buffer;
+
+    app.execute_command("git-stage-lines").unwrap();
+    let guard = app.git_state.partial_guards()[&buffer][0].clone();
+    assert!(guard.is_valid());
+
+    let mut id = 0;
+    let prepare = loop {
+        let operation = operations.recv_timeout(Duration::from_secs(1)).unwrap();
+        id += 1;
+        if matches!(&operation, GitOperation::PreparePartial { .. }) {
+            break operation;
+        }
+    };
+    app.apply_git_service_event(GitServiceEvent::Completed {
+        id: GitRequestId::from_raw(id),
+        operation: prepare,
+        result: Box::new(Err(crate::git::GitError::Failed {
+            command: "git diff".to_owned(),
+            code: Some(1),
+            signal: None,
+            stderr: "could not read the index".to_owned(),
+        })),
+        state: GitServiceState::Failed,
+        coalesced: false,
+    });
+
+    assert!(app.status_error && app.status.contains("could not read the index"));
+    assert!(
+        !app.git_state.partial_guards().contains_key(&buffer),
+        "the failed request left its guard behind"
+    );
+    assert!(
+        !guard.is_valid(),
+        "a guard released by a failure must not certify a later patch"
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn a_partial_stage_releases_its_guard_when_it_lands_and_invalidates_a_stale_one() {
+    use crate::git::{
+        GitOperation, GitServiceHandle, GitServiceState, PartialStageRequest, RepositoryFingerprint,
+    };
+
+    let root = temporary("partial-stage-guard-outcomes");
+    fs::create_dir_all(&root).unwrap();
+    let root = root.canonicalize().unwrap();
+    let path = root.join("source.txt");
+    fs::write(&path, "new\n").unwrap();
+    let repository = Repository::new(&root);
+
+    let prepared = |selection: &crate::git::PartialStageSelection| {
+        GitResponse::PreparedPartial(Box::new(PartialStageRequest {
+            repository: root.join(".git"),
+            fingerprint: RepositoryFingerprint {
+                head: Some("a".repeat(40)),
+                index: "0".repeat(64),
+            },
+            path: path.clone(),
+            disk_sha256: "0".repeat(64),
+            buffer: selection.buffer,
+            guard: selection.guard.clone(),
+            scope: DiffScope::Unstaged,
+            hunk: "hunk".to_owned(),
+            patch: b"patch".to_vec(),
+        }))
+    };
+
+    for stale in [false, true] {
+        let mut app = App::new_in_isolated_project(
+            &root,
+            HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+                String::new(),
+            ))))),
+        )
+        .unwrap();
+        let (service, operations) = GitServiceHandle::recording_for_test();
+        app.attach_git_service(service);
+        app.git.attach(Some(repository.clone()));
+        app.open_file(path.clone()).unwrap();
+        let buffer = app.active().buffer;
+
+        app.execute_command("git-stage-lines").unwrap();
+        let guard = app.git_state.partial_guards()[&buffer][0].clone();
+        let prepare = loop {
+            let operation = operations.recv_timeout(Duration::from_secs(1)).unwrap();
+            if matches!(&operation, GitOperation::PreparePartial { .. }) {
+                break operation;
+            }
+        };
+        let GitOperation::PreparePartial { selection, .. } = &prepare else {
+            unreachable!("the loop only breaks on a preparation");
+        };
+        let response = prepared(selection);
+
+        if stale {
+            // The buffer the guard was taken against moves on while the patch
+            // is being prepared, so its line numbers no longer describe it.
+            app.buffers[buffer].apply(&Transaction::insert(0, "late edit\n"));
+        }
+        app.apply_git_response(
+            prepare.clone(),
+            response,
+            (None, GitServiceState::Completed),
+            RequestedGitViews::default(),
+            None,
+            None,
+        );
+
+        if stale {
+            assert!(app.status_error && app.status.contains("stale partial-stage request"));
+            assert!(
+                !app.git_state.partial_guards().contains_key(&buffer),
+                "a refused request left its guard behind"
+            );
+            assert!(
+                !guard.is_valid(),
+                "a stale request must invalidate its guard"
+            );
+            continue;
+        }
+        assert!(
+            app.git_state.partial_guards().contains_key(&buffer),
+            "the guard has to outlive the preparation it certifies"
+        );
+
+        let submitted = loop {
+            if let GitOperation::Mutate {
+                mutation: GitMutation::PartialStage(request),
+                ..
+            } = operations.recv_timeout(Duration::from_secs(1)).unwrap()
+            {
+                break request;
+            }
+        };
+        assert!(
+            guard.is_valid(),
+            "the guard has to certify the patch the service is applying"
+        );
+        app.apply_git_response(
+            GitOperation::Mutate {
+                repository: repository.clone(),
+                mutation: GitMutation::PartialStage(submitted.clone()),
+                refresh: RefreshSpec::default(),
+            },
+            GitResponse::Mutation {
+                mutation: GitMutation::PartialStage(submitted),
+                applied_paths: vec![path.clone()],
+                summary: None,
+                failure: None,
+                snapshot: Box::new(Ok(empty_repository_snapshot(
+                    repository.clone(),
+                    crate::git::RepositoryGeneration::default(),
+                    RefreshSpec::default(),
+                ))),
+            },
+            (None, GitServiceState::Completed),
+            RequestedGitViews::default(),
+            None,
+            None,
+        );
+        assert!(
+            !app.git_state.partial_guards().contains_key(&buffer),
+            "a landed stage left its guard behind"
+        );
+        assert!(
+            guard.is_valid(),
+            "a stage that landed must not invalidate the buffer it measured"
+        );
+    }
+
+    fs::remove_dir_all(root).unwrap();
+}

@@ -49,20 +49,24 @@ under instrumentation.
 
 | Measure | Covered | Total | Coverage |
 | --- | ---: | ---: | ---: |
-| Lines | 92,357 | 101,629 | 90.88% |
-| Functions | 8,606 | 9,378 | 91.77% |
-| Regions | 143,119 | 158,476 | 90.31% |
+| Lines | 92,621 | 101,629 | 91.14% |
+| Functions | 8,625 | 9,378 | 91.97% |
+| Regions | 143,582 | 158,476 | 90.60% |
 
-The fresh same-tree baseline before this pass was 92,124 of 101,629 lines
+The table above is the result after the second pass recorded below. The first
+pass of the day reached 92,357 of 101,629 lines (90.88%), 8,606 of 9,378
+functions (91.77%), and 143,119 of 158,476 regions (90.31%).
+
+The fresh same-tree baseline before that first pass was 92,124 of 101,629 lines
 (90.65%), 8,589 of 9,378 functions (91.59%), and 142,834 of 158,476 regions
 (90.13%). It is higher than the 2026-09-02 Linux record below because the tree
 has moved on since that measurement, so the comparison here is against the
-fresh run rather than the recorded one. Every test added by this pass lives in
+fresh run rather than the recorded one. Every test added by that pass lives in
 a directory named `tests`, so the instrumented total did not move at all:
 covered lines rose by 233, covered functions by 17, and covered regions by 285,
 raising total line coverage by 0.23 percentage points.
 
-The retained tests cover Markdown's lexical delimiter fallback for pairs that
+Its retained tests cover Markdown's lexical delimiter fallback for pairs that
 open and close with the same character, including escaped delimiters and an
 escaped backslash before one; the insert-mode `delete-to-line-end` command
 across several carets; the path popup's overlay snapshots, its Ctrl-c
@@ -78,11 +82,45 @@ and the editing of a typed branch-switch confirmation before it matches.
 
 Review corrected the refused-clipboard test, which had asserted on the
 transient action feedback a refusal does not set rather than on the status and
-retained notification it does. The largest remaining Linux gaps by uncovered
-lines are `app/git_workflows.rs` (815), `main.rs` (727), `app/input.rs` (691),
-`git/cli.rs` (412), `ui.rs` (352), `app/language_workflows.rs` (347),
-`workspace/transport.rs` (340), `workspace/catalog.rs` (317),
-`syntax/mod.rs` (294), and `lsp/mod.rs` (289).
+retained notification it does.
+
+The continuation pass began from a fresh same-tree run of that tree: 92,359 of
+101,629 lines (90.88%), 8,603 of 9,378 functions (91.74%), and 143,125 of
+158,476 regions (90.31%). Its tests also live only in directories named
+`tests`, so the instrumented total again did not move: covered lines rose by
+262, covered functions by 22, and covered regions by 457, raising total line
+coverage by 0.26 percentage points to the table above.
+
+That pass added a standalone `tests/terminal_sequences.rs` that feeds fixed
+control sequences straight to the emulator: cursor addressing and its screen
+and scroll-region bounds, origin-mode addressing and the cursor report, tab
+stops and their clearing, character and line insertion, deletion, erasure and
+downward scrolling, the saved cursor in both its escape and CSI forms, insert
+and autowrap modes, each graphic rendition and its own reset, and the device
+attribute and status answers. It is listed in
+`terminal-compatibility-v1.md` as part of the reproducible boundary. The
+remaining tests cover the word each LSP symbol kind is displayed with,
+including a kind Runyte has no word for; a flat workspace-symbol response,
+whose container is kept and whose non-file URI is dropped; one ambient Git
+snapshot refreshing an open branch list, the staged index view and a per-file
+diff in place, with the index heading counting the staged files the snapshot
+reported and naming both sides of a rename; the release of a selected-line
+partial-stage guard down each of its three endings — a failed preparation and
+a stale answer invalidate it, a stage that lands releases it still valid; and
+a paste reaching an open finder's query and a filterable list's filter rather
+than the buffer behind them.
+
+Six files ended with one or two more uncovered lines than the baseline run
+(`file_picker.rs`, `git/service.rs`, `git_monitor.rs`, `main.rs`,
+`terminal/pty.rs`, `workspace/lifecycle.rs`); that is the same run-to-run
+variation in concurrent paths recorded for earlier passes, and the totals above
+are the net.
+
+The largest remaining Linux gaps by uncovered lines are
+`app/git_workflows.rs` (734), `main.rs` (725), `app/input.rs` (671),
+`git/cli.rs` (412), `ui.rs` (351), `app/language_workflows.rs` (347),
+`workspace/transport.rs` (340), `workspace/catalog.rs` (316),
+`syntax/mod.rs` (294), and `input_grammar.rs` (269).
 
 The enforced floor remains 86%. The 95% target has not been reached, and the
 latest macOS measurement is still the 90.14% recorded below, so the lower

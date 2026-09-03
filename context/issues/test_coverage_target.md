@@ -4,8 +4,8 @@ Linux and macOS are Runyte's first-class platforms, and the test suite is the
 main evidence that both stay correct as the editor changes.
 
 `context/reference/test-coverage.md` records the current baselines. On
-`x86_64-unknown-linux-gnu`, `cargo-llvm-cov` 0.9.0 and Rust 1.97.1 cover 92,357
-of 101,629 lines, 8,606 of 9,378 functions, and 143,119 of 158,476 regions. The
+`x86_64-unknown-linux-gnu`, `cargo-llvm-cov` 0.9.0 and Rust 1.97.1 cover 92,621
+of 101,629 lines, 8,625 of 9,378 functions, and 143,582 of 158,476 regions. The
 latest `aarch64-apple-darwin` measurement covers 90,481 of 100,380 lines, 8,450
 of 9,253 functions, and 140,408 of 156,605 regions. CI publishes the per-file
 summary, retains an HTML report, and fails below an enforced 86% line floor.
@@ -128,24 +128,64 @@ confirmation. Review corrected the refused-clipboard test, which had asserted
 on the transient action feedback a refusal does not set rather than on the
 status and retained notification it does.
 
+A further pass on Linux began from a fresh same-tree measurement of that tree:
+92,359 of 101,629 lines (90.88%), 8,603 of 9,378 functions (91.74%), and
+143,125 of 158,476 regions (90.31%). The clean canonical result after the pass
+is 92,621 of 101,629 lines (91.14%), 8,625 of 9,378 functions (91.97%), and
+143,582 of 158,476 regions (90.60%). Every added test lives in a directory
+named `tests`, so the instrumented total again did not move: 262 newly covered
+lines, 22 functions and 457 regions produce a 0.26 percentage-point line gain.
+Six files ended one or two uncovered lines worse than the baseline run, which
+is the run-to-run variation in concurrent paths that earlier passes also
+recorded; the figures above are the net.
+
+Most of that pass is a standalone `tests/terminal_sequences.rs`. The integrated
+terminal's escape-sequence vocabulary was proven only through a real child on a
+real pseudoterminal, which left the sequences no fixed program in the
+compatibility matrix happens to send unexercised. The new file feeds them
+straight to the emulator: cursor addressing and its screen and scroll-region
+bounds, origin-mode addressing and the cursor report, tab stops and their
+clearing, character and line insertion, deletion, erasure and downward
+scrolling, the saved cursor in both its escape and CSI forms, insert and
+autowrap modes, each graphic rendition and its own reset, and the device
+attribute and status answers. `context/reference/terminal-compatibility-v1.md`
+lists it as part of the reproducible boundary.
+
+The rest of that pass covers the word each LSP symbol kind is displayed with,
+including a kind Runyte has no word for; a flat workspace-symbol response,
+whose container is kept and whose non-file URI is dropped; one ambient Git
+snapshot refreshing an open branch list, the staged index view and a per-file
+diff in place, with the index heading counting the staged files the snapshot
+reported and naming both sides of a rename; the release of a selected-line
+partial-stage guard down each of its three endings, since a failed preparation
+and a stale answer have to invalidate it while a stage that lands must release
+it still valid; and a paste reaching an open finder's query and a filterable
+list's filter rather than the buffer behind them.
+
+The experimental Vim grammar was deliberately left alone. `VimGrammar` and its
+`InputGrammar` implementation are `#[cfg(test)]`, so covering them would move
+the reported number through inline test code rather than through production
+behavior.
+
 The largest remaining Linux gaps by uncovered lines are
-`app/git_workflows.rs` (815), `main.rs` (727), `app/input.rs` (691),
-`git/cli.rs` (412), `ui.rs` (352), `app/language_workflows.rs` (347),
-`workspace/transport.rs` (340), `workspace/catalog.rs` (317),
-`syntax/mod.rs` (294), and `lsp/mod.rs` (289).
+`app/git_workflows.rs` (734), `main.rs` (725), `app/input.rs` (671),
+`git/cli.rs` (412), `ui.rs` (351), `app/language_workflows.rs` (347),
+`workspace/transport.rs` (340), `workspace/catalog.rs` (316),
+`syntax/mod.rs` (294), and `input_grammar.rs` (269).
 
-Two shapes recur across the two largest. Twenty-eight of the thirty-two
-`git_service.is_some()` guards in `app/git_workflows.rs` have an uncovered
-branch, because the application tests mostly drive Git through the synchronous
-provider; those guards account for roughly 170 of that file's 815 uncovered
-lines rather than most of them. In `main.rs` the mass is concentrated in `run`
-(140 uncovered lines), `run_host_server` (118) and `run_attached` (91), with
-the attachment and wait-recovery helpers around them. Those are process entry
-points and event loops that need a spawned binary or a live attachment; the
-file already has its own inline test module, so the gap is not that nothing
-tests it.
+Two shapes recur across the two largest. The counts below were taken on the
+tree as it stood before the pass above, so they describe the shape rather than
+the current line totals. Twenty-eight of the thirty-two `git_service.is_some()`
+guards in `app/git_workflows.rs` had an uncovered branch, because the
+application tests mostly drive Git through the synchronous provider; those
+guards accounted for roughly 170 of that file's 815 uncovered lines rather than
+most of them. In `main.rs` the mass is concentrated in `run` (140 uncovered
+lines), `run_host_server` (118) and `run_attached` (91), with the attachment
+and wait-recovery helpers around them. Those are process entry points and
+event loops that need a spawned binary or a live attachment; the file already
+has its own inline test module, so the gap is not that nothing tests it.
 
-The issue remains open. Linux still has 9,272 uncovered lines and the latest
+The issue remains open. Linux still has 9,008 uncovered lines and the latest
 macOS measurement has 9,899. The CI floor and README badge remain at 86%,
 leaving 4.14 percentage points of headroom below the lower measured platform.
 There is no post-change macOS result to justify a higher cross-platform floor,
