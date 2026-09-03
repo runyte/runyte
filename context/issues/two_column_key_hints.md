@@ -1,106 +1,135 @@
-# Key hints stay in one column on a wide terminal
+# Key-hint columns differ between standalone and persistent modes
 
-The key-hint popup lists one binding per line whatever the terminal width, so
-a namespace with many continuations scrolls even when there is room on screen
-for two columns of rows.
+The key-hint popup uses the terminal width in standalone mode, but an attached
+client renders the same hints in one column at every width. A wide standalone
+terminal can therefore show two or three columns while a persistent session at
+the same geometry scrolls through a single column.
 
 ## Observed behavior
 
-`draw_key_hints` in `src/ui.rs` already lays rows out in columns:
+`draw_key_hints` in `src/ui.rs` already lays standalone rows out in columns:
 
 ```rust
 let columns = (inner_width / widest).max(1).min(rows.len());
 ```
 
-`widest` is the key column plus a space plus the **longest** description among
-the visible rows, clamped to `MIN_COLUMN_WIDTH` 36 and `MAX_COLUMN_WIDTH` 72,
-plus a two-cell gap. Every `Space` and `Ctrl-w` menu contains at least one
-description long enough to reach that clamp, so `widest` is 74 in practice and
-a second column requires an inner width of 148 — a terminal 150 columns wide.
-Below that the popup is one column, which is what is seen at ordinary widths.
+The standalone renderer measures the widest key field and rendered
+description. It clamps their combined width to `MIN_COLUMN_WIDTH` 36 and
+`MAX_COLUMN_WIDTH` 72, adds a two-cell column gap, and divides the popup's
+inner width by that stride. Every `Space` and `Ctrl-w` menu contains a row wide
+enough to reach the upper clamp, so their effective stride is 74 cells. They
+reach two columns at a 150-cell editor width and three at 224 cells. The same
+arithmetic can produce still more columns on an unusually wide terminal.
 
 The shared snapshot renderer used by an attached client
-(`draw_snapshot_overlay`, `OverlayKind::KeyHints`) draws one row per line
-unconditionally, so it is single-column at any width.
+(`draw_snapshot_overlay`, `OverlayKind::KeyHints`) instead draws one overlay
+row per screen row unconditionally. The persistent-session host publishes the
+same semantic key-hint rows, but its attached TUI never applies the standalone
+column layout to them.
+
+The upper width clamp can also make a standalone column narrower than its
+longest rendered row. Ratatui then clips the description at the cell boundary.
+The grid appears to fit because the text, rather than the requested number of
+columns, pays for the mismatch.
 
 ## Expected behavior
 
-The popup uses two columns whenever the terminal is wide enough to render both
-legibly, and falls back to one column when it is not. `Space` and `Ctrl-w`
-menus are the cases that matter most, because they are the longest. Reaching
-that width is partly a rendering decision and partly a writing one: the column
-is as wide as the longest description in it, so a maximum description length
-has to be chosen and the descriptions that exceed it rewritten.
+Standalone and attached frontends use one shared key-hint layout calculation.
+At the same editor geometry and with the same rows, they choose the same column
+count, popup height, visible rows, scroll range, and column-major row order.
 
-Both renderers behave the same way. A reader attached to a persistent session
-must not see a different layout from a standalone editor at the same width.
+The responsive layout has at most three columns:
 
-## The width budget, and what it costs
+- use three when three complete hint rows and their gaps fit;
+- otherwise use two when two complete rows and their gap fit;
+- otherwise use one.
 
-One hint column is the key column, a space, the description, and a two-cell
-gap. The key column is `KEY_COLUMN_WIDTH` 12 unless a row's key text is wider,
-in which case it grows to at most 20. Two columns therefore need
+The renderer never clips a description merely to gain another column. If all
+of a candidate column's content does not fit, it chooses one fewer column. A
+terminal too narrow for one complete capped row is the unavoidable emergency
+case; it remains one-column and may clip at the terminal edge rather than
+changing the ordinary width budget.
 
+The complete visible description field has a maximum width of 44 terminal
+cells. The limit applies after adding the namespace marker, the exact-binding
+marker, and any planned, unsupported, or capability-unavailable suffix. Text
+that exceeds it is rewritten at its source or given compact hint-specific
+wording; it is not silently truncated by the renderer. Measure terminal cells,
+not bytes or Unicode scalar values.
+
+Enforce the 44-cell maximum with a test over every hint row and every suffix
+variant that can be produced from registry and capability metadata. This is a
+source invariant, not only a clamp in `draw_key_hints`, so a newly added
+description cannot silently make the popup wider or become clipped.
+
+## Width calculation
+
+For a uniform grid, define:
+
+- `K` as the widest rendered key field in the current rows, clamped from
+  `KEY_COLUMN_WIDTH` 12 through the existing maximum 20;
+- `D` as the maximum complete visible description width, 44;
+- one cell between the key and description;
+- `G` as the two-cell gap reserved per column by the current equal-width
+  layout;
+- two cells for the popup borders.
+
+For `N` columns, the required terminal width is therefore:
+
+```text
+required_width(N) = 2 + N * (K + 1 + D + G)
+                  = 2 + N * (K + 47)
 ```
-terminal width >= 2 * (key column + 1 + description + 2) + 2 borders
-```
 
-which, with a 12-cell key column, gives:
+The selected count is the largest `N` from three down to one whose required
+width fits, also bounded by the number of rows. Using the common 12-cell key
+field and the longest allowed 20-cell field gives:
 
-| Longest description | Terminal width needed for two columns |
-| --- | --- |
-| 72 (today's clamp) | 152 |
-| 56 | 120 |
-| 44 | 96 |
-| 34 | 76 |
+| Columns | `K = 12` | `K = 20` |
+| --- | ---: | ---: |
+| 1 | 61 | 69 |
+| 2 | 120 | 136 |
+| 3 | 179 | 203 |
 
-The decision is a maximum description length, and descriptions longer than it
-are rewritten to fit rather than being allowed to force one column. Measured
-over the 289 descriptions in `src/command.rs` that reach a hint row — 231
-editor-command descriptions, mean 31 characters, and 58 colon-command
-descriptions, mean 47 — the cost of each candidate is:
+This makes a conventional 120-cell terminal reach two columns and a roughly
+180-cell terminal reach three without trimming any capped description. The
+actual threshold remains content-aware when the current menu needs a wider
+key field or all of its rendered descriptions are shorter than the cap.
 
-| Maximum | Descriptions that must be rewritten |
-| --- | --- |
-| 50 | 41 |
-| 44 | 62 |
-| 40 | 78 |
-| 34 | 129 |
-
-The suffixes `key_hint_description` appends — ` ›` for a namespace,
-`  (exact)`, and `  unavailable: <reason>` or `  planned: <reason>` — cannot be
-shortened by rewriting a description, so they are outside the budget and are
-clipped when a row runs out of room.
-
-## Points the fix has to settle
-
-- **The maximum, and therefore the terminal width two columns start at.**
-- **Whether the maximum is enforced.** A test that fails when a description
-  exceeds it keeps the layout from silently regressing to one column the next
-  time a command is added; without one the rewrite is a single-commit
-  improvement that decays.
-- **More than two columns.** The existing arithmetic already allows three or
-  more on a very wide terminal. Keeping that is preferable to hard-coding two;
-  the request is that two become reachable, not that more become impossible.
-- **Row order.** Rows currently fill column-major — down the first column,
-  then down the second. That should not change.
+The current inventory contains 289 command descriptions that can reach a hint
+row: 231 editor-command descriptions and 58 colon-command descriptions. The
+previous source-only measurement found 62 longer than 44 characters. That is
+only a lower bound for the rewrite because the enforced limit applies to the
+complete rendered description, including markers and availability text; the
+implementation must remeasure terminal-cell widths after composing those
+forms.
 
 ## Constraints
 
-- Scrolling capacity already multiplies rows by columns
-  (`KeyHintState::note_scroll_limit`), and the popup's height and the
-  `1-N/total` range in its title are derived from the same numbers. They have
-  to stay consistent with the column count actually drawn.
+- Scrolling capacity multiplies content rows by the selected column count.
+  `KeyHintState::note_scroll_limit`, popup height, the visible slice, and the
+  `1-N/total` title range must all use the same result.
+- Rows fill column-major: down the first column, then down the second, then the
+  third. Responsive layout must not change that order.
 - The snapshot path publishes at most `ROW_LIMIT` (512) rows with an
-  `omitted_rows` count, which is ample for a multi-column hint popup; the
-  column layout is a rendering decision and stays in the frontend rather than
-  becoming part of `OverlaySnapshot`.
+  `omitted_rows` count, which is ample for this popup. Column count remains a
+  frontend decision and does not become part of `OverlaySnapshot`.
 - `context/reference/ui-vocabulary.md` describes overlays as
-  presentation-neutral snapshots that frontends lay out; the register should
-  say that the hint popup's column count is one of those frontend decisions.
+  presentation-neutral snapshots that frontends lay out. It must record that
+  key-hint column count is one of those frontend decisions.
+- Key dispatch, help, and hints continue to read descriptions from the shared
+  command and keymap registries. Compact hint wording must not introduce a
+  second binding inventory.
 
 ## Regression coverage
 
-Render the popup at a narrow and a wide width and assert the column count that
-results, in both the standalone and the snapshot renderer. `tests/key_hints.rs`
-and the rendering tests in `src/ui.rs` are the existing homes.
+Render representative `Space` and `Ctrl-w` menus on both the standalone and
+snapshot paths. Cover a width immediately below and at each two- and
+three-column threshold, and assert equal column counts, column-major order,
+visible capacity, title range, and absence of clipped descriptions. Exercise a
+menu whose key field is 12 cells and one that makes it wider.
+
+Add an inventory test for the 44-cell complete-description limit, including
+namespace, exact, planned, unsupported, and capability-unavailable variants.
+`tests/key_hints.rs` and the rendering tests in `src/ui.rs` are the existing
+homes.

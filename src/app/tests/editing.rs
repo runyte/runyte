@@ -884,6 +884,28 @@ fn a_transient_line_yank_leaves_a_caret_and_pastes_the_line_below() {
 }
 
 #[test]
+fn a_transient_line_yank_pastes_above_the_caret_it_left_with_capital_p() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    seed(&mut app, "alpha\nbravo\ncharlie\n");
+    press(&mut app, 'j');
+    press(&mut app, 'x');
+    press(&mut app, 'y');
+    assert_eq!(
+        app.active().selection.primary(),
+        Range::point(10),
+        "the caret sits on the last character of the yanked line"
+    );
+
+    press(&mut app, 'P');
+    assert_eq!(text(&app), "alpha\nbravo\nbravo\ncharlie\n");
+    assert_eq!(
+        app.active().selection.primary(),
+        Range::point(16),
+        "the copy lands above, so the caret rides the original down a row"
+    );
+}
+
+#[test]
 fn a_linewise_paste_over_a_line_selection_replaces_whole_lines() {
     let mut app = App::new(Config::default(), None).unwrap();
     seed(&mut app, "alpha\nbravo\ncharlie");

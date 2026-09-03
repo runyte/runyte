@@ -55,8 +55,9 @@ observation.
 Coverage lives in `src/app/tests/editing.rs` as
 `a_yank_collapses_its_selection_so_the_paste_after_it_duplicates`,
 `capital_p_after_a_yank_pastes_before_the_last_character_yanked`,
-`a_yank_leaves_one_caret_per_range`, and
-`a_transient_line_yank_leaves_a_caret_and_pastes_the_line_below`; the Vim
+`a_yank_leaves_one_caret_per_range`,
+`a_transient_line_yank_leaves_a_caret_and_pastes_the_line_below`, and
+`a_transient_line_yank_pastes_above_the_caret_it_left_with_capital_p`; the Vim
 grammar's `y y` then `p` is covered by
 `vim_operator_counts_linewise_registers_change_and_cw_are_shared_edits` in
 `src/app/tests/commands.rs`, and the character-position case by
