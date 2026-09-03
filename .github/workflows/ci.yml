@@ -154,7 +154,8 @@ jobs:
       # keeps a silent move to an Intel runner from being recorded as the
       # Apple Silicon baseline.
       - name: Verify the measured target
-        run: test "$(rustc -vV | sed -n 's/^host: //p')" = aarch64-apple-darwin
+        run: |
+          test "$(rustc -vV | sed -n 's/^host: //p')" = aarch64-apple-darwin
 
       - name: Measure coverage
         run: cargo llvm-cov --locked --workspace --no-report
