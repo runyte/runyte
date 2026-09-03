@@ -7,7 +7,9 @@ use runyte::{
     config::Config,
     external_open::ProgramCache,
     input::{KeyCode, KeyStroke, Modifiers},
-    key_hints::{HintEventResult, KeyHintState},
+    key_hints::{
+        HintEventResult, KeyHintState, key_hint_description, key_hint_keys, key_hint_layout,
+    },
     keymap::{
         Binding, BindingAvailability, BindingRole, BindingScope, BindingTarget, Key, Keymap,
         default_keymap,
@@ -16,7 +18,9 @@ use runyte::{
     selection::Selection,
     text::Transaction,
     ui,
+    workspace::WorkspaceHost,
 };
+use unicode_width::UnicodeWidthStr as _;
 
 fn render_buffer(width: u16, height: u16, app: &mut App, hints: &KeyHintState) -> Buffer {
     let backend = TestBackend::new(width, height);
@@ -41,6 +45,61 @@ fn render(width: u16, height: u16, app: &mut App, hints: &KeyHintState) -> Strin
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+fn render_attached(width: u16, height: u16, app: App, hints: &KeyHintState) -> Buffer {
+    let backend = TestBackend::new(width, height);
+    let mut terminal = Terminal::new(backend).unwrap();
+    let mut host = WorkspaceHost::new(app);
+    terminal
+        .draw(|frame| {
+            let snapshot =
+                host.prepare_frame_with_hints(ui::frame_geometry(frame.area()), Some(hints));
+            ui::render_host_frame_exact_colors_for_test(frame, &snapshot);
+        })
+        .unwrap();
+    terminal.backend().buffer().clone()
+}
+
+fn key_hint_surface(buffer: &Buffer) -> Vec<String> {
+    let rows = (0..buffer.area.height)
+        .map(|row| {
+            (0..buffer.area.width)
+                .map(|column| buffer[(column, row)].symbol())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>();
+    let top = rows
+        .iter()
+        .position(|row| row.starts_with("┌ Keys:"))
+        .expect("key-hint top border");
+    let bottom = rows[top..]
+        .iter()
+        .position(|row| row.starts_with('└'))
+        .map(|row| top + row)
+        .expect("key-hint bottom border");
+    rows[top..=bottom].to_vec()
+}
+
+fn hint_metrics(app: &App, hints: &KeyHintState) -> (usize, usize, Vec<String>) {
+    let mode = app.key_hint_mode().unwrap_or(app.mode);
+    let mut rows = hints.rows_in(app.keymap(), mode, app.key_binding_scope());
+    let capabilities = app.command_capabilities();
+    for row in &mut rows {
+        row.apply_capabilities(&capabilities);
+    }
+    let widest_key = rows
+        .iter()
+        .map(|row| key_hint_keys(row).width())
+        .max()
+        .unwrap_or_default();
+    let descriptions = rows.iter().map(key_hint_description).collect::<Vec<_>>();
+    let widest_description = descriptions
+        .iter()
+        .map(|description| description.width())
+        .max()
+        .unwrap_or_default();
+    (widest_key, widest_description, descriptions)
 }
 
 fn first_cell_of(buffer: &Buffer, needle: &str) -> (u16, u16) {
@@ -139,6 +198,128 @@ fn prefix_popup_is_readable_at_standard_and_wide_sizes() {
     }
 }
 
+#[test]
+fn standalone_and_attached_hints_share_responsive_grid_boundaries() {
+    for prefix in [KeyStroke::char(' '), KeyStroke::ctrl('w')] {
+        let mut hints = KeyHintState::default();
+        hints.observe(prefix, Mode::Normal, default_keymap());
+        let metrics_app = App::new(Config::default(), None).unwrap();
+        let (widest_key, widest_description, descriptions) = hint_metrics(&metrics_app, &hints);
+        let key_width = widest_key.clamp(12, 20);
+        let stride = key_width + 1 + widest_description + 2;
+
+        for (expected_columns, width) in [
+            (1, 2 * stride + 1),
+            (2, 2 * stride + 2),
+            (2, 3 * stride + 1),
+            (3, 3 * stride + 2),
+        ] {
+            let width = width as u16;
+            let height = 20;
+            let layout = key_hint_layout(
+                width,
+                height,
+                descriptions.len(),
+                widest_key,
+                widest_description,
+                0,
+            );
+            assert_eq!(layout.columns, expected_columns, "prefix {prefix}");
+
+            let standalone = render_buffer(
+                width,
+                height,
+                &mut App::new(Config::default(), None).unwrap(),
+                &hints,
+            );
+            let attached = render_attached(
+                width,
+                height,
+                App::new(Config::default(), None).unwrap(),
+                &hints,
+            );
+            let standalone_surface = key_hint_surface(&standalone);
+            let attached_surface = key_hint_surface(&attached);
+            assert_eq!(
+                attached_surface, standalone_surface,
+                "prefix {prefix} at width {width}"
+            );
+
+            let visible = standalone_surface.join("\n");
+            for description in descriptions.iter().take(layout.visible_rows) {
+                assert!(
+                    visible.contains(description),
+                    "clipped {description:?} for prefix {prefix} at width {width}:\n{visible}"
+                );
+            }
+            if expected_columns == 3 {
+                let positions = [0, layout.content_rows, layout.content_rows * 2]
+                    .map(|index| first_cell_of(&standalone, &descriptions[index]));
+                assert_eq!(positions[0].1, positions[1].1, "prefix {prefix}");
+                assert_eq!(positions[1].1, positions[2].1, "prefix {prefix}");
+                assert!(
+                    positions[0].0 < positions[1].0 && positions[1].0 < positions[2].0,
+                    "rows did not fill down each column for prefix {prefix}: {positions:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn attached_hint_scrolling_uses_the_shared_multicolumn_capacity() {
+    let mut hints = KeyHintState::default();
+    hints.observe(KeyStroke::char(' '), Mode::Normal, default_keymap());
+    let metrics_app = App::new(Config::default(), None).unwrap();
+    let (widest_key, widest_description, descriptions) = hint_metrics(&metrics_app, &hints);
+    let width = (2 + 2 * (widest_key.clamp(12, 20) + 1 + widest_description + 2)) as u16;
+    let height = 10;
+
+    let _ = render_buffer(
+        width,
+        height,
+        &mut App::new(Config::default(), None).unwrap(),
+        &hints,
+    );
+    for _ in 0..descriptions.len() {
+        hints.observe(KeyStroke::ctrl('n'), Mode::Normal, default_keymap());
+    }
+    let layout = key_hint_layout(
+        width,
+        height - 2,
+        descriptions.len(),
+        widest_key,
+        widest_description,
+        hints.scroll_offset(),
+    );
+    assert_eq!(layout.columns, 2);
+    assert_eq!(hints.scroll_offset(), descriptions.len() - layout.capacity);
+
+    let standalone = render_buffer(
+        width,
+        height,
+        &mut App::new(Config::default(), None).unwrap(),
+        &hints,
+    );
+    let attached = render_attached(
+        width,
+        height,
+        App::new(Config::default(), None).unwrap(),
+        &hints,
+    );
+    assert_eq!(key_hint_surface(&attached), key_hint_surface(&standalone));
+    let title = key_hint_surface(&attached)[0].clone();
+    assert!(
+        title.contains(&format!(
+            "{}-{}/{}",
+            layout.offset + 1,
+            layout.offset + layout.visible_rows,
+            descriptions.len()
+        )),
+        "{title}"
+    );
+}
+
 /// The `Space` namespace is longer than the smallest supported terminal, so
 /// the last rows are reached by scrolling rather than by being on screen. The
 /// popup says so in its own header, and the assertion here is that the row is
@@ -190,11 +371,8 @@ fn unavailable_language_and_syntax_namespaces_are_dimmed_but_navigable() {
     );
     let language = render(160, 30, &mut app, &hints);
     assert!(language.contains("Keys: Space l"), "{language}");
-    assert!(
-        language.contains("Report language server state"),
-        "{language}"
-    );
-    assert!(language.contains("unavailable:"), "{language}");
+    assert!(language.contains("lsp status"), "{language}");
+    assert!(language.contains("no LSP"), "{language}");
 }
 
 #[test]
@@ -218,8 +396,8 @@ fn unavailable_git_namespace_is_dimmed_but_navigable() {
     );
     let git = render(160, 30, &mut app, &hints);
     assert!(git.contains("Keys: Space g"), "{git}");
-    assert!(git.contains("Open the changed-file list"), "{git}");
-    assert!(git.contains("unavailable: no"), "{git}");
+    assert!(git.contains("git status"), "{git}");
+    assert!(git.contains("no Git"), "{git}");
 }
 
 #[test]
@@ -243,12 +421,12 @@ fn the_search_namespaces_and_their_prompts_are_discoverable_on_screen() {
     );
     let selections = render(100, 40, &mut app, &hints);
     for entry in [
-        "Place a cursor at the end of every selected line",
-        "Place a cursor at the start of every selected line",
+        "split selection at line ends",
+        "split selection at line starts",
         "Drop every selection except the primary",
-        "Keep selections matching a regular expression",
-        "Remove selections matching a regular expression",
-        "Pad with spaces so every cursor shares the rightmost column",
+        "keep matching selections",
+        "remove matching selections",
+        "align selections",
     ] {
         assert!(
             selections.contains(entry),
@@ -289,7 +467,7 @@ fn the_search_namespaces_and_their_prompts_are_discoverable_on_screen() {
     );
     let project = render(100, 40, &mut app, &hints);
     for entry in [
-        "Search the workspace with a regular expression",
+        "global search regex",
         "Search the workspace, ignoring case",
         "Open the finder over the project's files, buffers, and terminals",
         "Open the finder over the project, including files Git ignores",
@@ -344,7 +522,7 @@ fn a_key_column_separates_the_sequence_from_its_description() {
     );
 
     let screen = render(160, 50, &mut app, &hints);
-    assert!(screen.contains("Space e      Open file explorer in the active buffer's directory"));
+    assert!(screen.contains("Space e      open explorer"));
     assert!(!screen.contains("Space eOpen"));
 }
 

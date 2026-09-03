@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 use std::{error::Error, fmt};
 
 use anyhow::Result;
+use unicode_width::UnicodeWidthStr;
 
 use crate::{
     app::{App, CommandOutcome, FrameGeometry, PointerOutcome, PreparedView},
@@ -19,8 +20,7 @@ use crate::{
     },
     git_monitor::GitInvalidation,
     input::{InputEvent, PointerEvent},
-    key_hints::KeyHintState,
-    keymap::BindingAvailability,
+    key_hints::{KeyHintState, key_hint_description, key_hint_keys, key_hint_layout},
     lsp::{LspEvent, LspHandle},
     snapshot::{EditorSnapshot, OverlayIdentity, OverlayKind, OverlayRow, OverlaySnapshot},
     syntax::{SyntaxEvent, SyntaxHandle},
@@ -886,47 +886,37 @@ impl WorkspaceHost {
             for row in &mut hint_rows {
                 row.apply_capabilities(&capabilities);
             }
-            let all_rows = hint_rows
+            let widest_key = hint_rows
+                .iter()
+                .map(|hint| UnicodeWidthStr::width(key_hint_keys(hint).as_str()))
+                .max()
+                .unwrap_or_default();
+            let widest_description = hint_rows
+                .iter()
+                .map(|hint| UnicodeWidthStr::width(key_hint_description(hint).as_str()))
+                .max()
+                .unwrap_or_default();
+            let layout = key_hint_layout(
+                geometry.editor.width,
+                geometry.editor.height,
+                hint_rows.len(),
+                widest_key,
+                widest_description,
+                key_hints.scroll_offset(),
+            );
+            key_hints.note_scroll_limit(hint_rows.len().saturating_sub(layout.capacity));
+            let total_rows = hint_rows.len();
+            const ROW_LIMIT: usize = 512;
+            let rows = hint_rows
                 .into_iter()
+                .take(ROW_LIMIT)
                 .map(|hint| {
-                    let alias = hint.alias.map(|alias| match hint.alias_modes {
-                        Some(modes) => format!(
-                            "{} {}",
-                            modes
-                                .iter()
-                                .map(|mode| mode.label())
-                                .collect::<Vec<_>>()
-                                .join("/"),
-                            alias
-                        ),
-                        None => alias.to_string(),
-                    });
-                    let availability = match (&hint.unavailable_reason, hint.availability) {
-                        (Some(reason), BindingAvailability::Implemented) => {
-                            format!(" · unavailable: {reason}")
-                        }
-                        (None, BindingAvailability::Implemented) => String::new(),
-                        (_, BindingAvailability::Planned(reason)) => {
-                            format!(" · planned: {reason}")
-                        }
-                        (_, BindingAvailability::Unsupported(reason)) => {
-                            format!(" · unsupported: {reason}")
-                        }
-                    };
                     let available =
                         hint.availability.is_implemented() && hint.unavailable_reason.is_none();
-                    let markers = format!(
-                        "{}{}",
-                        if hint.namespace { " · namespace" } else { "" },
-                        if hint.exact { " · exact" } else { "" }
-                    );
                     OverlayRow {
                         identity: OverlayIdentity::Text(hint.sequence.to_string()),
-                        label: match alias {
-                            Some(alias) => format!("{}, {alias}", hint.sequence),
-                            None => hint.sequence.to_string(),
-                        },
-                        detail: format!("{}{markers}{availability}", hint.description),
+                        label: key_hint_keys(&hint),
+                        detail: key_hint_description(&hint),
                         trailing_detail: String::new(),
                         available,
                         dimmed: false,
@@ -936,24 +926,45 @@ impl WorkspaceHost {
                     }
                 })
                 .collect::<Vec<_>>();
-            let row_offset = key_hints.scroll_offset().min(all_rows.len());
-            let rows: Vec<_> = all_rows.into_iter().skip(row_offset).collect();
-            let total_rows = row_offset + rows.len();
+            let arrows_are_free = key_hints.scrolls_with_arrow_in(
+                crate::input::KeyCode::Up,
+                mode,
+                self.app.key_binding_scope(),
+                self.app.keymap(),
+            ) && key_hints.scrolls_with_arrow_in(
+                crate::input::KeyCode::Down,
+                mode,
+                self.app.key_binding_scope(),
+                self.app.keymap(),
+            );
+            let scroll_keys = if arrows_are_free {
+                "Ctrl-n/p ↑/↓"
+            } else {
+                "Ctrl-n/p Alt-j/k"
+            };
+            let sequence = if key_hints.is_pending() {
+                format!("{} …", key_hints.display_pending())
+            } else {
+                String::new()
+            };
             overlays.push(OverlaySnapshot {
                 kind: OverlayKind::KeyHints,
                 purpose: crate::snapshot::OverlayPurpose::Context,
                 input: crate::snapshot::OverlayInput::None,
                 layout: crate::snapshot::OverlayLayout::Bottom,
-                actions: vec![crate::snapshot::OverlayAction::new("Esc", "dismiss")],
-                title: "Key hints".to_owned(),
-                query: key_hints.display_pending(),
+                actions: vec![
+                    crate::snapshot::OverlayAction::new(scroll_keys, "scroll"),
+                    crate::snapshot::OverlayAction::new("Esc", "dismiss"),
+                ],
+                title: format!("Keys: {sequence}"),
+                query: String::new(),
                 column_header: None,
                 rows,
                 selected: None,
-                scroll_anchor: None,
-                row_offset,
+                scroll_anchor: Some(layout.offset),
+                row_offset: 0,
                 message: key_hints.message().map(str::to_owned),
-                omitted_rows: row_offset,
+                omitted_rows: total_rows.saturating_sub(ROW_LIMIT),
                 total_rows,
                 query_cursor: None,
                 show_preview: false,
@@ -1917,7 +1928,10 @@ mod tests {
             .iter()
             .find(|overlay| overlay.kind == crate::snapshot::OverlayKind::KeyHints)
             .expect("the pending prefix has an immutable overlay");
-        assert_eq!(overlay.query, "g");
+        assert_eq!(overlay.title, "Keys: g …");
+        assert_eq!(overlay.query, "");
+        assert_eq!(overlay.row_offset, 0);
+        assert_eq!(overlay.scroll_anchor, Some(0));
         assert!(!overlay.rows.is_empty());
     }
 
@@ -1940,7 +1954,11 @@ mod tests {
                 .find(|row| row.detail.starts_with(label))
                 .unwrap_or_else(|| panic!("the Space menu lists {label}"));
             assert!(!row.available, "{label}");
-            assert!(row.detail.contains("unavailable:"), "{}", row.detail);
+            assert!(
+                row.detail.contains("no LSP") || row.detail.contains("no syntax"),
+                "{}",
+                row.detail
+            );
         }
     }
 

@@ -219,6 +219,13 @@ scroll when the pending prefix does not claim that arrow as a continuation;
 `Alt-j` and `Alt-k` remain alternatives, including for `z`, `Z`, and `Ctrl-w`,
 whose arrow continuations must still reach the registry.
 
+Key-hint rows use the command inventory's explanatory description when its
+complete visible form fits 44 terminal cells. Longer rows use the same
+command's semantic name as compact hint-specific wording; this remains a
+projection of the registry rather than a second binding inventory. Namespace,
+exact-binding, planned, unsupported, and active-capability markers all count
+toward the same limit.
+
 The `Space l` namespace is labelled **Language (LSP)** and `Space x` is
 labelled **Syntax (Tree-sitter)**. Key hints dim either namespace with its
 active-buffer unavailability reason when the corresponding service is not

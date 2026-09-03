@@ -1,4 +1,50 @@
-# Key-hint columns differ between standalone and persistent modes
+---
+title: "Key-hint columns differ between standalone and persistent modes"
+status: resolved
+reported: 2026-09-03
+resolved: 2026-09-03
+commit: b25e96b
+---
+
+## Resolution
+
+Commit `b25e96b` (`Share responsive key hint layout`) fixed the mismatch. The
+standalone `draw_key_hints` function had owned its column arithmetic while
+`draw_snapshot_overlay` treated every transported hint as a separate screen
+row. `WorkspaceHost::prepare_frame_with_hints` also removed the rows before
+the current scroll offset, which left an attached frontend without the full
+menu needed to measure a stable grid.
+
+`key_hints::key_hint_layout` now resolves the key and complete-description
+widths, one-to-three-column count, capacity, bounded offset, visible row count,
+column-major height, and popup height for both frontend paths. The host keeps
+the bounded full hint inventory in the presentation-neutral snapshot and uses
+the existing scroll anchor to carry the requested first row; the attached TUI
+then applies the shared calculation without serializing a column count.
+
+`key_hints::key_hint_description` composes namespace, exact-binding, static
+availability, and live capability markers before measuring terminal cells.
+Explanatory descriptions that would exceed 44 cells use the semantic command
+name already held by the command registry as compact hint-specific wording;
+long live reasons use a short capability-specific reason. This deliberately
+keeps full prose in help and command-palette surfaces and does not create a
+second binding inventory. The exact-binding marker is `=` in the compact hint
+surface rather than the longer `(exact)` spelling.
+
+Regression coverage is in `src/key_hints.rs`:
+`responsive_layout_uses_only_complete_columns`,
+`responsive_layout_shares_capacity_offset_and_column_major_height`, and
+`every_complete_hint_description_fits_forty_four_terminal_cells`. The last
+test covers all 289 editor and colon command descriptions; registry and
+synthetic rows additionally exercise namespace, exact, planned, unsupported,
+and capability-unavailable forms. Rendering coverage is in `tests/key_hints.rs`:
+`standalone_and_attached_hints_share_responsive_grid_boundaries` and
+`attached_hint_scrolling_uses_the_shared_multicolumn_capacity`.
+
+Known limitation: a terminal narrower than one complete capped row remains a
+one-column emergency case and can clip at the terminal edge.
+
+## Report
 
 The key-hint popup uses the terminal width in standalone mode, but an attached
 client renders the same hints in one column at every width. A wide standalone

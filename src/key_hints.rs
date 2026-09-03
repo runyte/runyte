@@ -5,6 +5,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+use unicode_width::UnicodeWidthStr;
+
 use crate::{
     command::{CommandCapability, Mode},
     input::{KeyCode, KeyStroke, Modifiers},
@@ -16,6 +18,11 @@ use crate::{
 };
 
 pub const DEFAULT_MESSAGE_TIMEOUT: Duration = Duration::from_millis(1_200);
+pub const KEY_HINT_KEY_WIDTH: usize = 12;
+pub const KEY_HINT_MAX_KEY_WIDTH: usize = 20;
+pub const KEY_HINT_MAX_DESCRIPTION_WIDTH: usize = 44;
+pub const KEY_HINT_COLUMN_GAP: usize = 2;
+pub const KEY_HINT_MAX_POPUP_HEIGHT: usize = 16;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct KeyHintRow {
@@ -83,6 +90,140 @@ impl KeyHintRow {
         } else {
             None
         };
+    }
+}
+
+/// The complete key field shown for one hint, including its advertised alias.
+pub fn key_hint_keys(row: &KeyHintRow) -> String {
+    match row.alias.as_ref() {
+        Some(alias) => match row.alias_modes {
+            Some(modes) => {
+                let modes = modes
+                    .iter()
+                    .map(|mode| mode.label())
+                    .collect::<Vec<_>>()
+                    .join("/");
+                format!("{}, {modes} {alias}", row.sequence)
+            }
+            None => format!("{}, {alias}", row.sequence),
+        },
+        None => row.sequence.to_string(),
+    }
+}
+
+/// The complete visible description of one hint row.
+///
+/// Command descriptions remain authoritative. When their explanatory form is
+/// too wide for discovery, the semantic command name supplies compact
+/// hint-specific wording; availability then falls back to a short reason only
+/// if the full active-buffer reason would still exceed the invariant.
+pub fn key_hint_description(row: &KeyHintRow) -> String {
+    let marker = format!(
+        "{}{}",
+        if row.namespace { " ›" } else { "" },
+        if row.exact { "=" } else { "" }
+    );
+    let full_availability = match (&row.unavailable_reason, row.availability) {
+        (Some(reason), BindingAvailability::Implemented) => {
+            format!("  unavailable: {reason}")
+        }
+        (_, BindingAvailability::Implemented) => String::new(),
+        (_, BindingAvailability::Planned(reason)) => format!("  planned: {reason}"),
+        (_, BindingAvailability::Unsupported(reason)) => {
+            format!("  unsupported: {reason}")
+        }
+    };
+    let compose =
+        |description: &str, availability: &str| format!("{description}{marker}{availability}");
+    let full = compose(row.description, &full_availability);
+    if UnicodeWidthStr::width(full.as_str()) <= KEY_HINT_MAX_DESCRIPTION_WIDTH {
+        return full;
+    }
+
+    let compact = row.target.map_or_else(
+        || row.description.to_owned(),
+        |target| target.name().replace('-', " "),
+    );
+    let with_compact_command = compose(&compact, &full_availability);
+    if UnicodeWidthStr::width(with_compact_command.as_str()) <= KEY_HINT_MAX_DESCRIPTION_WIDTH {
+        return with_compact_command;
+    }
+
+    let compact_availability = match (&row.unavailable_reason, row.availability) {
+        (Some(_), BindingAvailability::Implemented) => match row.capability {
+            Some(crate::command::CommandCapability::Syntax) => " no syntax",
+            Some(
+                crate::command::CommandCapability::LspDocument
+                | crate::command::CommandCapability::LspManager,
+            ) => " no LSP",
+            Some(crate::command::CommandCapability::GitProject) => " no Git",
+            Some(crate::command::CommandCapability::PersistentSession) => " persistent only",
+            None => " unavailable",
+        },
+        (_, BindingAvailability::Implemented) => "",
+        (_, BindingAvailability::Planned(_)) => " planned",
+        (_, BindingAvailability::Unsupported(_)) => " unsupported",
+    };
+    let compact = compose(&compact, compact_availability);
+    debug_assert!(
+        UnicodeWidthStr::width(compact.as_str()) <= KEY_HINT_MAX_DESCRIPTION_WIDTH,
+        "key-hint description exceeds {KEY_HINT_MAX_DESCRIPTION_WIDTH} cells: {compact}"
+    );
+    compact
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct KeyHintLayout {
+    pub columns: usize,
+    pub key_width: usize,
+    pub description_width: usize,
+    pub capacity: usize,
+    pub offset: usize,
+    pub visible_rows: usize,
+    pub content_rows: usize,
+    pub height: u16,
+}
+
+/// Resolves the responsive grid shared by standalone and attached frontends.
+pub fn key_hint_layout(
+    editor_width: u16,
+    editor_height: u16,
+    row_count: usize,
+    widest_key: usize,
+    widest_description: usize,
+    requested_offset: usize,
+) -> KeyHintLayout {
+    let key_width = widest_key.clamp(KEY_HINT_KEY_WIDTH, KEY_HINT_MAX_KEY_WIDTH);
+    // The source invariant keeps this at or below 44 for built-in rows. Do
+    // not clamp here: an unexpected wider row must cost a column rather than
+    // letting the renderer clip it to preserve a denser grid.
+    let description_width = widest_description;
+    let stride = key_width + 1 + description_width + KEY_HINT_COLUMN_GAP;
+    let columns = (1..=3)
+        .rev()
+        .find(|columns| {
+            *columns <= row_count
+                && 2usize.saturating_add(*columns * stride) <= usize::from(editor_width)
+        })
+        .unwrap_or(1);
+    let maximum_content_rows = usize::from(editor_height)
+        .saturating_sub(2)
+        .min(KEY_HINT_MAX_POPUP_HEIGHT.saturating_sub(2))
+        .max(1);
+    let capacity = maximum_content_rows * columns;
+    let offset = requested_offset.min(row_count.saturating_sub(capacity));
+    let visible_rows = row_count.saturating_sub(offset).min(capacity);
+    let content_rows = visible_rows.div_ceil(columns).max(1);
+    let height = (content_rows + 2).min(usize::from(editor_height)) as u16;
+    KeyHintLayout {
+        columns,
+        key_width,
+        description_width,
+        capacity,
+        offset,
+        visible_rows,
+        content_rows,
+        height,
     }
 }
 
@@ -431,7 +572,7 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use crate::{
-        command::{ColonCommand, EditorCommand, Mode},
+        command::{COMMANDS, ColonCommand, CommandId, EditorCommand, Mode},
         input::{KeyCode, KeyStroke, Modifiers},
         keymap::{
             Binding, BindingAvailability, BindingRole, BindingScope, BindingTarget, Key,
@@ -442,7 +583,133 @@ mod tests {
 
     use super::KeyHintRow;
 
-    use super::{HintEventResult, KeyHintState};
+    use super::{
+        HintEventResult, KEY_HINT_MAX_DESCRIPTION_WIDTH, KeyHintState, key_hint_description,
+        key_hint_layout,
+    };
+
+    #[test]
+    fn responsive_layout_uses_only_complete_columns() {
+        for (key_width, two_columns, three_columns) in [(12, 120, 179), (20, 136, 203)] {
+            assert_eq!(
+                key_hint_layout(two_columns - 1, 20, 20, key_width, 44, 0).columns,
+                1
+            );
+            assert_eq!(
+                key_hint_layout(two_columns, 20, 20, key_width, 44, 0).columns,
+                2
+            );
+            assert_eq!(
+                key_hint_layout(three_columns - 1, 20, 20, key_width, 44, 0).columns,
+                2
+            );
+            assert_eq!(
+                key_hint_layout(three_columns, 20, 20, key_width, 44, 0).columns,
+                3
+            );
+        }
+        assert_eq!(key_hint_layout(u16::MAX, 20, 2, 12, 10, 0).columns, 2);
+    }
+
+    #[test]
+    fn responsive_layout_shares_capacity_offset_and_column_major_height() {
+        let layout = key_hint_layout(120, 10, 20, 12, 44, usize::MAX);
+
+        assert_eq!(layout.columns, 2);
+        assert_eq!(layout.capacity, 16);
+        assert_eq!(layout.offset, 4);
+        assert_eq!(layout.visible_rows, 16);
+        assert_eq!(layout.content_rows, 8);
+        assert_eq!(layout.height, 10);
+    }
+
+    #[test]
+    fn every_complete_hint_description_fits_forty_four_terminal_cells() {
+        use unicode_width::UnicodeWidthStr as _;
+
+        let unavailable = AppCapabilitySnapshot {
+            syntax: CommandAvailability::Unavailable(
+                "syntax is unavailable for this buffer".to_owned(),
+            ),
+            lsp_manager: CommandAvailability::Unavailable(
+                "language-server manager is not attached".to_owned(),
+            ),
+            lsp_document: CommandAvailability::Unavailable(
+                "language servers are disabled in settings".to_owned(),
+            ),
+            git_project: CommandAvailability::Unavailable(
+                "Git repository discovery failed".to_owned(),
+            ),
+            persistent_session: CommandAvailability::Unavailable(
+                "needs workspace.mode: persistent".to_owned(),
+            ),
+        };
+        let assert_fits = |row: &KeyHintRow| {
+            let description = key_hint_description(row);
+            assert!(
+                description.width() <= KEY_HINT_MAX_DESCRIPTION_WIDTH,
+                "{} cells: {description}",
+                description.width()
+            );
+        };
+
+        for binding in default_keymap().bindings() {
+            for exact in [false, true] {
+                let mut row = KeyHintRow::from_binding(binding, exact);
+                assert_fits(&row);
+                row.apply_capabilities(&unavailable);
+                assert_fits(&row);
+            }
+        }
+        let targets = EditorCommand::ALL
+            .iter()
+            .copied()
+            .map(BindingTarget::Editor)
+            .chain(COMMANDS.iter().filter_map(|spec| match spec.id {
+                CommandId::Colon(command) => Some(BindingTarget::Colon(command)),
+                CommandId::Editor(_) => None,
+            }))
+            .collect::<Vec<_>>();
+        assert_eq!(targets.len(), 289, "the command inventory changed");
+        for target in targets {
+            let mut row = KeyHintRow {
+                sequence: KeySequence::default(),
+                alias: None,
+                alias_modes: None,
+                target: Some(target),
+                description: target.description(),
+                availability: BindingAvailability::Implemented,
+                capability: target.id().capability(),
+                unavailable_reason: None,
+                role: BindingRole::Primary,
+                exact: true,
+                namespace: false,
+            };
+            assert_fits(&row);
+            if row.capability.is_some() {
+                row.unavailable_reason =
+                    Some("a dynamically reported capability failure".to_owned());
+                assert_fits(&row);
+            }
+        }
+        for namespace in default_keymap().namespaces() {
+            let mut row = KeyHintRow::from_namespace(namespace);
+            assert_fits(&row);
+            row.apply_capabilities(&unavailable);
+            assert_fits(&row);
+        }
+
+        let mut variants = KeyHintRow::from_binding(&default_keymap().bindings()[0], false);
+        variants.description = "A deliberately expansive registry description";
+        variants.availability = BindingAvailability::Planned("requires a parser");
+        assert_fits(&variants);
+        variants.availability = BindingAvailability::Unsupported("not on this platform");
+        assert_fits(&variants);
+        variants.availability = BindingAvailability::Implemented;
+        variants.capability = None;
+        variants.unavailable_reason = Some("a dynamically reported capability failure".to_owned());
+        assert_fits(&variants);
+    }
 
     fn event(character: char) -> KeyStroke {
         KeyStroke::char(character)

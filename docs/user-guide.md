@@ -1101,7 +1101,9 @@ Pending compound bindings open a key-hint popup. `Ctrl-n` and `Ctrl-p` scroll
 its commands without participating in the pending binding. Up and Down also
 scroll unless that arrow completes a binding under the pending prefix;
 `Alt-j` and `Alt-k` remain alternatives. Scroll controls appear in the title
-when the entries exceed the available space.
+when the entries exceed the available space. The popup uses up to three
+columns when complete key-and-description rows fit; standalone and attached
+persistent-session clients apply the same responsive layout.
 
 `build.sh` wraps `cargo build --bins` and forwards any extra arguments. A local
 Cargo installation installs the editor:
