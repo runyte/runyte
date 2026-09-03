@@ -78,6 +78,12 @@ fn a_centered_page_is_drawn_at_the_middle_of_its_pane() {
     let mut app = about(120, 40);
     let pane = prepare(&mut app, 120, 40).pane(0).unwrap().clone();
     let drawn = body(&mut app, 120, 40);
+    let page = app.active_buffer().text().to_string();
+    let block_width = page.lines().map(|line| line.chars().count()).max().unwrap();
+    let source_description = page
+        .lines()
+        .find(|line| line.trim_start() == DESCRIPTION)
+        .expect("the description is a line of its own");
     let description = drawn
         .iter()
         .find(|row| row.contains("fast modal"))
@@ -86,21 +92,18 @@ fn a_centered_page_is_drawn_at_the_middle_of_its_pane() {
     assert!(pane.content_indent > 0);
     assert_eq!(
         pane.content_indent,
-        (pane.content_indent + pane.text_width - DESCRIPTION.chars().count()) / 2,
+        (pane.content_indent + pane.text_width - block_width) / 2,
         "half the space the block leaves in the text column"
     );
     assert_eq!(
         description.trim_end(),
-        format!("{}{DESCRIPTION}", " ".repeat(pane.content_indent)),
+        format!("{}{source_description}", " ".repeat(pane.content_indent)),
         "the sentence is drawn after the margin"
     );
     assert!(
-        app.active_buffer()
-            .text()
-            .to_string()
-            .lines()
-            .any(|line| line == DESCRIPTION),
-        "and carries no margin in the buffer"
+        page.lines()
+            .any(|line| line.chars().count() == block_width && !line.starts_with(' ')),
+        "the widest line carries no pane margin in the buffer"
     );
 }
 
@@ -284,7 +287,7 @@ fn alignment_never_moves_anything_in_the_buffer() {
         let text = app.active_buffer().text().to_string();
         let row = text
             .lines()
-            .position(|line| line == DESCRIPTION)
+            .position(|line| line.trim_start() == DESCRIPTION)
             .expect("the description is a line of its own");
         (row, app.active_buffer().line_string(row))
     };
@@ -298,6 +301,15 @@ fn clicking_centred_text_lands_on_the_character_under_the_pointer() {
     let mut app = about(120, 40);
     let prepared = prepare(&mut app, 120, 40);
     let pane = prepared.pane(0).unwrap().clone();
+    let source_description = app
+        .active_buffer()
+        .text()
+        .to_string()
+        .lines()
+        .find(|line| line.trim_start() == DESCRIPTION)
+        .unwrap()
+        .to_owned();
+    let description_indent = source_description.len() - DESCRIPTION.len();
     let screen_row = app
         .snapshot(&prepared)
         .pane(0)
@@ -313,7 +325,9 @@ fn clicking_centred_text_lands_on_the_character_under_the_pointer() {
     app.handle_pointer(
         PointerEvent {
             kind: PointerEventKind::Down(PointerButton::Left),
-            column: pane.body.x + (pane.gutter_width + pane.content_indent) as u16 + 7,
+            column: pane.body.x
+                + (pane.gutter_width + pane.content_indent + description_indent) as u16
+                + 7,
             row: pane.body.y + screen_row as u16,
             modifiers: Modifiers::NONE,
         },
@@ -322,8 +336,15 @@ fn clicking_centred_text_lands_on_the_character_under_the_pointer() {
     .unwrap();
 
     let position = app.cursor_position();
-    assert_eq!(position.col, 7, "the eighth character of the sentence");
-    assert_eq!(app.active_buffer().line_string(position.row), DESCRIPTION);
+    assert_eq!(
+        position.col,
+        description_indent + 7,
+        "the eighth character of the sentence"
+    );
+    assert_eq!(
+        app.active_buffer().line_string(position.row),
+        source_description
+    );
 }
 
 /// A click in the margin names the first column of the row, the way a click on

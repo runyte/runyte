@@ -14,7 +14,10 @@ const FIRST_STEPS: &[(&str, &str)] = &[
     (":tutorial", "learn Runyte interactively"),
     ("Space ?", "help for the current view"),
     (":help", "open the general manual"),
-    ("/ (try Tab inside)", "find anything by name or content"),
+    (
+        "Space f",
+        "find anything (Tab to switch between files/content)",
+    ),
     ("Space e", "explore the active directory"),
     ("Space b b", "list open buffers"),
     ("Alt-o | Alt-i", "move back and forth between buffers"),
@@ -123,7 +126,7 @@ mod tests {
     #[test]
     fn about_contains_the_source_logo_version_and_first_steps() {
         let rendered = render();
-        let width = DESCRIPTION.width();
+        let width = rendered.lines().map(UnicodeWidthStr::width).max().unwrap();
         let logo_width = LOGO.lines().map(UnicodeWidthStr::width).max().unwrap();
         let prefix = " ".repeat((width - logo_width) / 2);
         for (rendered_line, source_line) in rendered.lines().zip(LOGO.lines()) {
@@ -137,14 +140,14 @@ mod tests {
         assert!(rendered.contains(&format!("Runyte {}", env!("CARGO_PKG_VERSION"))));
         assert!(rendered.contains("Getting around"));
         for row in [
-            "Space ?            · help for the current view",
-            ":help              · open the general manual",
-            "/ (try Tab inside) · find anything by name or content",
-            "Space e            · explore the active directory",
-            "Space b b          · list open buffers",
-            "Alt-o | Alt-i      · move back and forth between buffers",
-            ":                  · open the command palette",
-            ":q                 · quit",
+            "Space ?       · help for the current view",
+            ":help         · open the general manual",
+            "Space f       · find anything (Tab to switch between files/content)",
+            "Space e       · explore the active directory",
+            "Space b b     · list open buffers",
+            "Alt-o | Alt-i · move back and forth between buffers",
+            ":             · open the command palette",
+            ":q            · quit",
         ] {
             assert!(rendered.lines().any(|line| line.trim_start() == row));
         }
@@ -161,10 +164,12 @@ mod tests {
             .lines()
             .find(|line| line.contains("fast modal"))
             .unwrap();
-        assert_eq!(description, DESCRIPTION);
-
         let width = rendered.lines().map(UnicodeWidthStr::width).max().unwrap();
-        assert_eq!(width, DESCRIPTION.width());
+        assert_eq!(description.trim_start(), DESCRIPTION);
+        assert_eq!(
+            description.width() - DESCRIPTION.width(),
+            (width - DESCRIPTION.width()) / 2
+        );
         let quit = rendered
             .lines()
             .find(|line| line.ends_with("quit"))
@@ -194,6 +199,6 @@ mod tests {
         assert_eq!(scopes("Getting around"), Some("markup.heading"));
         assert_eq!(scopes(":tutorial"), Some("function"));
         assert_eq!(scopes("Space ?"), Some("keyword"));
-        assert_eq!(scopes("Tab inside"), Some("keyword"));
+        assert_eq!(scopes("Space f"), Some("keyword"));
     }
 }
