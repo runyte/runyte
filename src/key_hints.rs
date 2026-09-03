@@ -8,7 +8,7 @@ use std::{
 use unicode_width::UnicodeWidthStr;
 
 use crate::{
-    command::{CommandCapability, Mode},
+    command::{CommandCapability, EditorCommand, Mode},
     input::{KeyCode, KeyStroke, Modifiers},
     keymap::{
         Binding, BindingAvailability, BindingNamespace, BindingRole, BindingScope, BindingTarget,
@@ -142,7 +142,10 @@ pub fn key_hint_description(row: &KeyHintRow) -> String {
 
     let compact = row.target.map_or_else(
         || row.description.to_owned(),
-        |target| target.name().replace('-', " "),
+        |target| match target {
+            BindingTarget::Editor(EditorCommand::OpenFilePicker) => "open finder".to_owned(),
+            _ => target.name().replace('-', " "),
+        },
     );
     let with_compact_command = compose(&compact, &full_availability);
     if UnicodeWidthStr::width(with_compact_command.as_str()) <= KEY_HINT_MAX_DESCRIPTION_WIDTH {

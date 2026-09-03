@@ -410,9 +410,10 @@ fn the_search_namespaces_and_their_prompts_are_discoverable_on_screen() {
         default_keymap(),
     );
     // Searching and selecting are two namespaces now, and the Space row says so.
-    let space = render(100, 40, &mut app, &hints);
+    let space = render(160, 40, &mut app, &hints);
     assert!(space.contains("Look past this buffer \u{203a}"), "{space}");
     assert!(space.contains("Selections \u{203a}"), "{space}");
+    assert!(space.contains("open finder"), "{space}");
 
     hints.observe(
         stroke(KeyCode::Char('s'), Modifiers::NONE),
@@ -469,7 +470,7 @@ fn the_search_namespaces_and_their_prompts_are_discoverable_on_screen() {
     for entry in [
         "global search regex",
         "Search the workspace, ignoring case",
-        "open file picker",
+        "open finder",
         "open all files picker",
         "open path file picker",
     ] {
