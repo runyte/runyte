@@ -30,6 +30,18 @@ top-anchored inline scroll regions, review stability, SGR mouse encoding,
 simultaneous noisy/quiet sessions, process-group close, resize, frame damage,
 default foreground/background queries, client loss, and detach/reattach.
 
+The persistent-session manager's `QUIET` observation is defined at this same
+semantic boundary. A host keeps only the latest creation/completed-line
+baseline across its live terminal sessions and answers it as one bounded
+health scalar. Line feed, index/new-line controls, automatic wrapping, and
+top-anchored primary-screen scroll commits advance it; partial rows,
+carriage-return rewrites, cursor-only movement, application-internal scroll
+regions, alternate-screen/full-screen repainting, and resize do not. The
+manager polls that host-owned scalar at most once every five seconds while
+open and labels the workspace `QUIET` only after every live terminal has
+crossed five minutes without a completed line. Exited terminals and
+workspaces without live terminals make no quietness claim.
+
 Wait-client PTY loss is exercised on both Linux and macOS CI. Linux observes
 exceptional poll states without requesting readable input. Darwin's poll
 adapter does not register a descriptor whose event mask is zero, so macOS uses

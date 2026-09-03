@@ -450,7 +450,7 @@ fn fit_row(spans: Vec<Span<'static>>, width: usize, ground: Option<Style>) -> Li
 ///
 /// Session identity may be much wider than the list beside a preview. Clipping
 /// the middle keeps the final activity value visible without changing the
-/// semantic five-column order or making every picker adopt session-specific
+/// semantic six-column order or making every picker adopt session-specific
 /// width rules.
 fn fit_row_with_trailing(
     spans: Vec<Span<'static>>,
@@ -6722,6 +6722,7 @@ mod tests {
                 pending_wait_requests: None,
                 live_terminals: None,
                 terminal_sessions: None,
+                terminal_line_activity_unix_seconds: None,
                 interactive_attached: None,
                 open_buffers: None,
                 git: None,
@@ -6788,6 +6789,7 @@ mod tests {
                 pending_wait_requests: None,
                 live_terminals: None,
                 terminal_sessions: None,
+                terminal_line_activity_unix_seconds: None,
                 interactive_attached: None,
                 open_buffers: None,
                 git: Some(crate::git::WorkspaceGitFacts {
@@ -6800,7 +6802,7 @@ mod tests {
         });
 
         let assert_headings = |screen: &str| {
-            for heading in ["No. Name", "Branch  Path", "Last active"] {
+            for heading in ["No. Name", "Branch  Path", "Last active", "Status"] {
                 assert!(
                     screen.contains(heading),
                     "{heading:?} missing from {screen}"
@@ -6868,8 +6870,11 @@ mod tests {
                     incompatible_protocol: None,
                     unsaved_buffers: None,
                     pending_wait_requests: None,
-                    live_terminals: None,
-                    terminal_sessions: None,
+                    live_terminals: Some(1),
+                    terminal_sessions: Some(1),
+                    terminal_line_activity_unix_seconds: Some(
+                        now - crate::workspace::TERMINAL_OUTPUT_QUIET_INTERVAL.as_secs(),
+                    ),
                     interactive_attached: None,
                     open_buffers: None,
                     git: Some(crate::git::WorkspaceGitFacts {
@@ -6891,6 +6896,7 @@ mod tests {
                     pending_wait_requests: None,
                     live_terminals: None,
                     terminal_sessions: None,
+                    terminal_line_activity_unix_seconds: None,
                     interactive_attached: None,
                     open_buffers: None,
                     git: Some(crate::git::WorkspaceGitFacts {
@@ -6905,6 +6911,7 @@ mod tests {
 
         let screen = rendered(&mut app, 120, 24);
         assert!(screen.contains("5days ago"), "{screen}");
+        assert!(screen.contains("QUIET"), "{screen}");
         std::fs::remove_dir_all(root).unwrap();
     }
 
@@ -6949,6 +6956,7 @@ mod tests {
                     pending_wait_requests: None,
                     live_terminals: None,
                     terminal_sessions: None,
+                    terminal_line_activity_unix_seconds: None,
                     interactive_attached: None,
                     open_buffers: None,
                     git: None,
@@ -6966,6 +6974,7 @@ mod tests {
                     pending_wait_requests: None,
                     live_terminals: None,
                     terminal_sessions: None,
+                    terminal_line_activity_unix_seconds: None,
                     interactive_attached: None,
                     open_buffers: None,
                     git: None,

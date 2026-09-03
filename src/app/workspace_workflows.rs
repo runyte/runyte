@@ -7,8 +7,11 @@ use super::{App, PathBuf, WorkspaceSwitchRequest};
 #[cfg(unix)]
 use super::{
     ListAction, ListPicker, PickerItem, WorkspaceEvent, WorkspaceServiceHandle,
-    compact_session_elapsed, session_picker_preview,
+    compact_session_elapsed, session_picker_preview, terminal_output_status,
 };
+
+#[cfg(unix)]
+const SESSION_STATUS_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
 
 impl App {
     #[cfg(unix)]
@@ -53,6 +56,50 @@ impl App {
                         }
                     }
                     Err(error) => self.error_from("Host", "Host operation failed", error),
+                }
+            }
+            WorkspaceEvent::Polled { result } => {
+                let manager_open = self
+                    .list
+                    .as_ref()
+                    .is_some_and(|picker| picker.title.starts_with("Sessions"));
+                if !manager_open {
+                    return;
+                }
+                // Routine observation stays silent on failure. The last
+                // complete rows remain visible and the next bounded poll may
+                // recover without turning a transient host into an error.
+                if let Ok(rows) = result {
+                    let selected_path = match self.selected_list_action() {
+                        Some(ListAction::Workspace(index)) => self
+                            .workspace_rows
+                            .get(index)
+                            .map(|row| row.project_root.clone()),
+                        _ => None,
+                    };
+                    self.workspace_rows = rows;
+                    if let Some(row) = self
+                        .workspace_rows
+                        .iter()
+                        .find(|row| row.project_root == self.project_root)
+                    {
+                        self.note_workspace_number(row.number);
+                    }
+                    self.rebuild_workspace_picker();
+                    if let Some(path) = selected_path
+                        && let Some(row_index) = self
+                            .workspace_rows
+                            .iter()
+                            .position(|row| row.project_root == path)
+                        && let Some(picker) = self.list.as_mut()
+                        && let Some(visible_index) = picker
+                            .visible_indices()
+                            .iter()
+                            .position(|index| *index == row_index)
+                    {
+                        picker.selected = visible_index;
+                    }
+                    self.request_selected_workspace_preview();
                 }
             }
             WorkspaceEvent::Previewed {
@@ -263,7 +310,11 @@ impl App {
             return;
         };
         match service.try_refresh(generation) {
-            Ok(()) => self.status("refreshing sessions…"),
+            Ok(()) => {
+                self.next_workspace_status_poll =
+                    std::time::Instant::now() + SESSION_STATUS_POLL_INTERVAL;
+                self.status("refreshing sessions…");
+            }
             Err(error) => self.error_from("Host", "Host operation failed", error),
         }
     }
@@ -298,8 +349,8 @@ impl App {
         self.list_actions = (0..self.workspace_rows.len())
             .map(ListAction::Workspace)
             .collect();
-        // The manager reads as five columns — number, name, branch, directory,
-        // activity —
+        // The manager reads as six columns — number, name, branch, directory,
+        // activity, and terminal-output status —
         // padded to the widest value in the list so they line up down it, the
         // way the contextual action menu already lines its own columns up. A
         // row that is not in a Git repository still pays for its branch column
@@ -319,82 +370,91 @@ impl App {
                     Self::session_branch_cell(row),
                     self.session_directory_cell(row),
                     compact_session_elapsed(last_active, now),
+                    terminal_output_status(row, now),
                 )
             })
             .collect::<Vec<_>>();
         let name_width = columns
             .iter()
-            .map(|(name, _, _, _)| name.width())
+            .map(|(name, _, _, _, _)| name.width())
             .max()
             .unwrap_or(0)
             .max("Name".width());
         let branch_width = columns
             .iter()
-            .map(|(_, branch, _, _)| branch.width())
+            .map(|(_, branch, _, _, _)| branch.width())
             .max()
             .unwrap_or(0)
             .max("Branch".width());
         let directory_width = columns
             .iter()
-            .map(|(_, _, directory, _)| directory.width())
+            .map(|(_, _, directory, _, _)| directory.width())
             .max()
             .unwrap_or(0)
             .max("Path".width());
+        let activity_width = columns
+            .iter()
+            .map(|(_, _, _, active, _)| active.width())
+            .max()
+            .unwrap_or(0)
+            .max("Last active".width());
         let items = self
             .workspace_rows
             .iter()
             .zip(columns.iter())
             .enumerate()
-            .map(|(index, (row, (name, branch, directory, active)))| {
-                let marker = if row.project_root == self.project_root {
-                    "* "
-                } else {
-                    "  "
-                };
-                // Two display cells whether or not the row has a number, so
-                // the names stay in one column and a numbered row is found by
-                // where the digit is rather than by reading every line.
-                let number = row
-                    .number
-                    .map_or_else(|| "  ".to_owned(), |number| format!("{number} "));
-                let label = format!(
-                    "{number}{marker}{name}{}",
-                    " ".repeat(name_width.saturating_sub(name.width()))
-                );
-                let detail = format!(
-                    "{branch}{}  {directory}{}",
-                    " ".repeat(branch_width.saturating_sub(branch.width())),
-                    " ".repeat(directory_width.saturating_sub(directory.width()))
-                );
-                // The padding is presentation, so it is kept out of the
-                // haystack: filtering answers to what the row says, not to how
-                // wide the widest other row happened to be.
-                // Keep the absolute identity searchable even when the visible
-                // directory is shortened through the configured home path.
-                let search = format!(
-                    "{name} {} {branch} {directory}",
-                    crate::git::display_path(&row.project_root)
-                );
-                PickerItem::searchable(label, detail, search, index)
-                    .with_trailing_detail(active)
-                    .with_preview(session_picker_preview(
-                        row,
-                        self.workspace_previews.get(&row.project_root),
-                        self.workspace_preview_target.as_ref() == Some(&row.project_root),
-                        active,
-                    ))
-                    // A stopped session is still worth listing and still starts
-                    // on Enter, so it stays in place rather than being hidden or
-                    // sorted away; dimming is what separates it from the hosts
-                    // that are actually up.
-                    .dimmed(!row.running)
-            })
+            .map(
+                |(index, (row, (name, branch, directory, active, status)))| {
+                    let marker = if row.project_root == self.project_root {
+                        "* "
+                    } else {
+                        "  "
+                    };
+                    // Two display cells whether or not the row has a number, so
+                    // the names stay in one column and a numbered row is found by
+                    // where the digit is rather than by reading every line.
+                    let number = row
+                        .number
+                        .map_or_else(|| "  ".to_owned(), |number| format!("{number} "));
+                    let label = format!(
+                        "{number}{marker}{name}{}",
+                        " ".repeat(name_width.saturating_sub(name.width()))
+                    );
+                    let detail = format!(
+                        "{branch}{}  {directory}{}",
+                        " ".repeat(branch_width.saturating_sub(branch.width())),
+                        " ".repeat(directory_width.saturating_sub(directory.width()))
+                    );
+                    // The padding is presentation, so it is kept out of the
+                    // haystack: filtering answers to what the row says, not to how
+                    // wide the widest other row happened to be.
+                    // Keep the absolute identity searchable even when the visible
+                    // directory is shortened through the configured home path.
+                    let search = format!(
+                        "{name} {} {branch} {directory}",
+                        crate::git::display_path(&row.project_root)
+                    );
+                    PickerItem::searchable(label, detail, search, index)
+                        .with_trailing_detail(format!("{active:<activity_width$}  {status:<6}"))
+                        .with_preview(session_picker_preview(
+                            row,
+                            self.workspace_previews.get(&row.project_root),
+                            self.workspace_preview_target.as_ref() == Some(&row.project_root),
+                            active,
+                        ))
+                        // A stopped session is still worth listing and still starts
+                        // on Enter, so it stays in place rather than being hidden or
+                        // sorted away; dimming is what separates it from the hosts
+                        // that are actually up.
+                        .dimmed(!row.running)
+                },
+            )
             .collect();
         let mut picker = ListPicker::new("Sessions · 1-9 attach · Tab actions", items)
             .with_column_header(
                 format!("No. {:<name_width$}", "Name"),
                 format!("{:<branch_width$}  {:<directory_width$}", "Branch", "Path"),
-                "Last active",
+                format!("{:<activity_width$}  Status", "Last active"),
             )
             .with_preview("Session");
         picker.primary_action = Some("attach".to_owned());
@@ -408,7 +468,25 @@ impl App {
     /// every host tick. Returns whether the snapshot changed.
     #[cfg(unix)]
     pub(crate) fn refresh_workspace_activity(&mut self) -> bool {
-        self.refresh_workspace_activity_at(session_activity_now())
+        let changed = self.refresh_workspace_activity_at(session_activity_now());
+        self.poll_workspace_statuses_at(std::time::Instant::now());
+        changed
+    }
+
+    #[cfg(unix)]
+    fn poll_workspace_statuses_at(&mut self, now: std::time::Instant) {
+        if now < self.next_workspace_status_poll
+            || !self
+                .list
+                .as_ref()
+                .is_some_and(|picker| picker.title.starts_with("Sessions"))
+        {
+            return;
+        }
+        self.next_workspace_status_poll = now + SESSION_STATUS_POLL_INTERVAL;
+        if let Some(service) = self.ports.workspace_service.as_ref() {
+            let _ = service.try_poll();
+        }
     }
 
     #[cfg(unix)]
@@ -420,6 +498,22 @@ impl App {
         else {
             return false;
         };
+        let activity_width = self
+            .workspace_rows
+            .iter()
+            .map(|row| {
+                let last_active = if row.project_root == self.project_root {
+                    Some(now)
+                } else {
+                    row.last_active_unix_seconds
+                };
+                unicode_width::UnicodeWidthStr::width(
+                    compact_session_elapsed(last_active, now).as_str(),
+                )
+            })
+            .max()
+            .unwrap_or(0)
+            .max(unicode_width::UnicodeWidthStr::width("Last active"));
         let changed = picker.items.len() != self.workspace_rows.len()
             || picker
                 .items
@@ -431,7 +525,13 @@ impl App {
                     } else {
                         row.last_active_unix_seconds
                     };
-                    item.trailing_detail != compact_session_elapsed(last_active, now)
+                    item.trailing_detail
+                        != format!(
+                            "{:<activity_width$}  {:<6}",
+                            compact_session_elapsed(last_active, now),
+                            terminal_output_status(row, now),
+                            activity_width = activity_width,
+                        )
                 });
         if changed {
             self.rebuild_workspace_picker_at(now);

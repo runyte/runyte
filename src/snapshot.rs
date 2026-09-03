@@ -86,7 +86,7 @@ pub struct OverlaySnapshot {
 pub struct OverlayColumnHeader {
     pub label: String,
     pub detail: String,
-    /// A short final label preserved under the same clipping rules as the
+    /// A short final label run preserved under the same clipping rules as the
     /// rows' trailing detail.
     pub trailing_detail: String,
 }
@@ -192,7 +192,7 @@ pub struct OverlayRow {
     pub identity: OverlayIdentity,
     pub label: String,
     pub detail: String,
-    /// A short final column frontends preserve when clipping an overlong row.
+    /// A short final run frontends preserve when clipping an overlong row.
     pub trailing_detail: String,
     /// Whether this row's contextual capability is currently available.
     /// Frontends retain unavailable rows for discovery but render them with

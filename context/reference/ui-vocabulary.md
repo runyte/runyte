@@ -249,7 +249,9 @@ signals, and each one answers a different question.
   wrapped, so the ground always squares off a single rectangle. A row may
   declare one short trailing-detail column that stays pinned to the visible
   right edge while overlong identity text in its middle is clipped; the
-  session manager's last-active age is the reference use.
+  session manager's paired last-active age and terminal-output status are the
+  reference use: both final semantic columns occupy the pinned run, so clipping
+  identity columns cannot separate or hide either one.
 - **Row emphasis** — the colours a row assigns to its own parts: the matched
   characters of a fuzzy query, the active parameter of a signature, an
   available command's name in the theme's `command` colour against its muted

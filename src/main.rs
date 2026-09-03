@@ -2809,6 +2809,7 @@ fn handle_workspace_request(
             pending_wait_requests: host.protected_state().pending_wait_requests,
             live_terminals: host.protected_state().live_terminals,
             terminal_sessions: host.app().terminals.len(),
+            terminal_line_activity_unix_seconds: host.terminal_line_activity_unix_seconds(),
         }),
         ClientRequest::SessionPreview => Ok(HostResponse::SessionPreview {
             preview: host.session_preview().into(),

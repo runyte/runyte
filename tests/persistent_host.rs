@@ -1038,6 +1038,21 @@ async fn terminal_pid_output_and_input_survive_detach_disconnect_and_reattach() 
         .unwrap()
         .trim()
         .to_owned();
+    client.send(&ClientRequest::Health).await.unwrap();
+    let initial_line_activity = match semantic_response_after(
+        &mut client,
+        None,
+        "reading terminal line activity through the attached client",
+    )
+    .await
+    {
+        HostResponse::Health {
+            terminal_line_activity_unix_seconds: Some(activity),
+            live_terminals: 1,
+            ..
+        } => activity,
+        response => panic!("expected attached terminal activity health, got {response:?}"),
+    };
 
     assert_eq!(
         detach(&mut client, "detaching the terminal client").await,
@@ -1082,6 +1097,26 @@ async fn terminal_pid_output_and_input_survive_detach_disconnect_and_reattach() 
     let detached_text = terminal_wire_frame_text(&detached);
     assert!(detached_text.contains(&token));
 
+    reattached.send(&ClientRequest::Health).await.unwrap();
+    let before_reply = match semantic_response_after(
+        &mut reattached,
+        None,
+        "reading detached line activity after reattachment",
+    )
+    .await
+    {
+        HostResponse::Health {
+            terminal_line_activity_unix_seconds: Some(activity),
+            live_terminals: 1,
+            ..
+        } => activity,
+        response => panic!("expected reattached terminal activity health, got {response:?}"),
+    };
+    assert!(before_reply >= initial_line_activity);
+    // Health uses whole Unix seconds. Put the reply in a later second so the
+    // assertion proves the completed input/output line advanced host state.
+    tokio::time::sleep(Duration::from_millis(1_100)).await;
+
     reattached
         .send(&ClientRequest::Input {
             event: InputEvent::Text("hello\n".to_owned()).into(),
@@ -1097,6 +1132,22 @@ async fn terminal_pid_output_and_input_survive_detach_disconnect_and_reattach() 
     )
     .await;
     assert!(terminal_wire_frame_text(&replied).contains(&token));
+    reattached.send(&ClientRequest::Health).await.unwrap();
+    let after_reply = match semantic_response_after(
+        &mut reattached,
+        None,
+        "reading completed reply line activity through the attached client",
+    )
+    .await
+    {
+        HostResponse::Health {
+            terminal_line_activity_unix_seconds: Some(activity),
+            live_terminals: 1,
+            ..
+        } => activity,
+        response => panic!("expected advanced terminal activity health, got {response:?}"),
+    };
+    assert!(after_reply > before_reply);
 
     // Losing the socket is a detach too. The same terminal remains protected.
     drop(reattached);
@@ -1108,15 +1159,15 @@ async fn terminal_pid_output_and_input_survive_detach_disconnect_and_reattach() 
     loop {
         control.send(&ClientRequest::Health).await.unwrap();
         let health = response(&mut control).await;
-        if matches!(
-            health,
-            HostResponse::Health {
-                interactive_attached: false,
-                live_terminals: 1,
-                terminal_sessions: 1,
-                ..
-            }
-        ) {
+        if let HostResponse::Health {
+            interactive_attached: false,
+            live_terminals: 1,
+            terminal_sessions: 1,
+            terminal_line_activity_unix_seconds: Some(activity),
+            ..
+        } = health
+            && activity == after_reply
+        {
             break;
         }
         assert!(

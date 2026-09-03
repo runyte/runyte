@@ -4072,6 +4072,7 @@ mod tests {
                 pending_wait_requests: 0,
                 live_terminals: 0,
                 terminal_sessions: 0,
+                terminal_line_activity_unix_seconds: None,
             })
             .await
             .unwrap();

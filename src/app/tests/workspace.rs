@@ -77,6 +77,7 @@ fn worktree_removal_refuses_unsaved_or_uninspectable_persistent_sessions() {
         pending_wait_requests: Some(0),
         live_terminals: Some(0),
         terminal_sessions: Some(0),
+        terminal_line_activity_unix_seconds: None,
         interactive_attached: Some(false),
         open_buffers: None,
         git: None,
@@ -178,6 +179,7 @@ fn worktree_removal_names_its_session_and_takes_it_down_before_the_directory() {
             pending_wait_requests: Some(0),
             live_terminals: Some(0),
             terminal_sessions: Some(0),
+            terminal_line_activity_unix_seconds: None,
             interactive_attached: Some(false),
             open_buffers: Some(3),
             git: None,
@@ -1422,6 +1424,126 @@ fn session_activity_uses_one_rounded_up_compact_unit() {
 
 #[cfg(unix)]
 #[test]
+fn session_terminal_output_status_requires_every_live_terminal_to_be_quiet() {
+    const NOW: u64 = 10 * 24 * 60 * 60;
+    let quiet = crate::workspace::TERMINAL_OUTPUT_QUIET_INTERVAL.as_secs();
+    let row = |running,
+               incompatible_protocol,
+               live_terminals,
+               terminal_sessions,
+               terminal_line_activity_unix_seconds| WorkspaceRow {
+        id: "aaaaaaaaaaaaaaaa".to_owned(),
+        name: Some("session".to_owned()),
+        number: None,
+        last_active_unix_seconds: Some(NOW),
+        project_root: PathBuf::from("/tmp/session"),
+        running,
+        incompatible_protocol,
+        unsaved_buffers: Some(0),
+        pending_wait_requests: Some(0),
+        live_terminals,
+        terminal_sessions,
+        terminal_line_activity_unix_seconds,
+        interactive_attached: Some(false),
+        open_buffers: Some(1),
+        git: None,
+        missing_directory: false,
+    };
+
+    let active = row(true, None, Some(1), Some(1), Some(NOW - quiet + 1));
+    assert_eq!(terminal_output_status(&active, NOW), "");
+
+    // The host publishes the newest baseline, so this is also the case where
+    // one of several live terminals continues to append completed lines.
+    let one_of_many_active = row(true, None, Some(3), Some(3), Some(NOW - 1));
+    assert_eq!(terminal_output_status(&one_of_many_active, NOW), "");
+
+    let all_quiet = row(true, None, Some(3), Some(3), Some(NOW - quiet));
+    assert_eq!(terminal_output_status(&all_quiet, NOW), "QUIET");
+    assert_eq!(terminal_output_status(&all_quiet, NOW - 1), "");
+
+    for silent in [
+        row(true, None, Some(0), Some(0), None),
+        row(true, None, Some(0), Some(2), None),
+        row(false, None, None, None, None),
+        row(true, Some(46), None, None, None),
+    ] {
+        assert_eq!(terminal_output_status(&silent, NOW), "");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn an_open_session_manager_transitions_into_and_out_of_quiet() {
+    let root = temporary("session-output-status-transition");
+    fs::create_dir_all(&root).unwrap();
+    let root = root.canonicalize().unwrap();
+    let mut app = App::new_in_isolated_project(
+        &root,
+        HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+            String::new(),
+        ))))),
+    )
+    .unwrap();
+    app.enable_persistent_session();
+    app.workspace_generation = 1;
+    open_session_manager_for_refresh(&mut app);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let row = |line_activity| WorkspaceRow {
+        id: "aaaaaaaaaaaaaaaa".to_owned(),
+        name: Some("current".to_owned()),
+        number: Some(1),
+        last_active_unix_seconds: Some(now),
+        project_root: root.clone(),
+        running: true,
+        incompatible_protocol: None,
+        unsaved_buffers: Some(0),
+        pending_wait_requests: Some(0),
+        live_terminals: Some(1),
+        terminal_sessions: Some(1),
+        terminal_line_activity_unix_seconds: Some(line_activity),
+        interactive_attached: Some(true),
+        open_buffers: Some(1),
+        git: None,
+        missing_directory: false,
+    };
+    let quiet = crate::workspace::TERMINAL_OUTPUT_QUIET_INTERVAL.as_secs();
+
+    app.apply_workspace_event(WorkspaceEvent::Refreshed {
+        generation: 1,
+        result: Ok(vec![row(now - quiet)]),
+    });
+    assert!(
+        app.list.as_ref().unwrap().items[0]
+            .trailing_detail
+            .contains("QUIET")
+    );
+
+    app.apply_workspace_event(WorkspaceEvent::Polled {
+        result: Ok(vec![row(now)]),
+    });
+    assert!(
+        !app.list.as_ref().unwrap().items[0]
+            .trailing_detail
+            .contains("QUIET")
+    );
+
+    app.apply_workspace_event(WorkspaceEvent::Polled {
+        result: Ok(vec![row(now - quiet)]),
+    });
+    assert!(
+        app.list.as_ref().unwrap().items[0]
+            .trailing_detail
+            .contains("QUIET")
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
 fn session_picker_keeps_filter_and_routes_enter_and_tab_by_workspace_identity() {
     let root = temporary("session-picker");
     let current = root.join("current");
@@ -1458,6 +1580,7 @@ fn session_picker_keeps_filter_and_routes_enter_and_tab_by_workspace_identity() 
             pending_wait_requests: Some(0),
             live_terminals: Some(1),
             terminal_sessions: Some(1),
+            terminal_line_activity_unix_seconds: None,
             interactive_attached: Some(true),
             open_buffers: None,
             git: None,
@@ -1477,6 +1600,7 @@ fn session_picker_keeps_filter_and_routes_enter_and_tab_by_workspace_identity() 
             pending_wait_requests: None,
             live_terminals: None,
             terminal_sessions: None,
+            terminal_line_activity_unix_seconds: None,
             interactive_attached: Some(false),
             open_buffers: None,
             git: Some(crate::git::WorkspaceGitFacts {
@@ -1491,7 +1615,7 @@ fn session_picker_keeps_filter_and_routes_enter_and_tab_by_workspace_identity() 
         generation: 4,
         result: Ok(rows.clone()),
     });
-    // Five labelled columns: number, name, branch, directory, activity. Both
+    // Six labelled columns: number, name, branch, directory, activity, status. Both
     // rows pay for the widest value or heading so the columns stay aligned,
     // and a row with nothing to say in the branch column says `-` rather than
     // going blank and letting the directory slide left.
@@ -1499,13 +1623,13 @@ fn session_picker_keeps_filter_and_routes_enter_and_tab_by_workspace_identity() 
     let header = picker.column_header.as_ref().unwrap();
     assert_eq!(header.label, "No. Name   ");
     assert_eq!(header.detail, "Branch  Path     ");
-    assert_eq!(header.trailing_detail, "Last active");
+    assert_eq!(header.trailing_detail, "Last active  Status");
     assert_eq!(picker.items[0].label, "  * current");
     assert_eq!(picker.items[1].label, "    archive");
     assert_eq!(picker.items[0].detail, "-       ~/current");
-    assert_eq!(picker.items[0].trailing_detail, "0min ago");
+    assert_eq!(picker.items[0].trailing_detail.trim_end(), "0min ago");
     assert_eq!(picker.items[1].detail, "main    ~/stopped");
-    assert_eq!(picker.items[1].trailing_detail, "5days ago");
+    assert_eq!(picker.items[1].trailing_detail.trim_end(), "5days ago");
     assert!(
         picker.items[1]
             .preview()
@@ -1521,11 +1645,13 @@ fn session_picker_keeps_filter_and_routes_enter_and_tab_by_workspace_identity() 
     let header = overlay.column_header.unwrap();
     assert_eq!(header.label, "No. Name   ");
     assert_eq!(header.detail, "Branch  Path     ");
-    assert_eq!(header.trailing_detail, "Last active");
+    assert_eq!(header.trailing_detail, "Last active  Status");
     assert!(!app.refresh_workspace_activity_at(now));
     assert!(app.refresh_workspace_activity_at(now + 31));
     assert_eq!(
-        app.list.as_ref().unwrap().items[1].trailing_detail,
+        app.list.as_ref().unwrap().items[1]
+            .trailing_detail
+            .trim_end(),
         "6days ago"
     );
     // Shortening belongs only to presentation: the absolute directory remains
@@ -1560,6 +1686,7 @@ fn session_picker_keeps_filter_and_routes_enter_and_tab_by_workspace_identity() 
             pending_wait_requests: Some(0),
             live_terminals: Some(0),
             terminal_sessions: Some(0),
+            terminal_line_activity_unix_seconds: None,
             interactive_attached: Some(true),
             open_buffers: None,
             git: None,
@@ -1750,6 +1877,7 @@ fn session_picker_omits_counts_a_running_host_answers_with_zero() {
                 pending_wait_requests: Some(0),
                 live_terminals: Some(0),
                 terminal_sessions: Some(0),
+                terminal_line_activity_unix_seconds: None,
                 interactive_attached: Some(true),
                 open_buffers: None,
                 git: None,
@@ -1767,6 +1895,7 @@ fn session_picker_omits_counts_a_running_host_answers_with_zero() {
                 pending_wait_requests: Some(0),
                 live_terminals: Some(0),
                 terminal_sessions: Some(2),
+                terminal_line_activity_unix_seconds: None,
                 interactive_attached: Some(true),
                 open_buffers: None,
                 git: None,
@@ -1830,6 +1959,7 @@ fn session_picker_marks_a_running_hosts_unanswered_health_as_unavailable() {
             pending_wait_requests: None,
             live_terminals: None,
             terminal_sessions: None,
+            terminal_line_activity_unix_seconds: None,
             interactive_attached: None,
             open_buffers: None,
             git: None,
@@ -1889,6 +2019,7 @@ fn session_picker_states_the_session_as_fields_rather_than_pane_contents() {
             pending_wait_requests: Some(0),
             live_terminals: Some(2),
             terminal_sessions: Some(3),
+            terminal_line_activity_unix_seconds: None,
             interactive_attached: Some(false),
             open_buffers: Some(9),
             git: Some(crate::git::WorkspaceGitFacts {
@@ -1972,7 +2103,7 @@ fn session_picker_states_the_session_as_fields_rather_than_pane_contents() {
 }
 
 /// Workspace paths are operating-system identities and may contain control
-/// characters on Unix. The five-column manager must keep one workspace per
+/// characters on Unix. The six-column manager must keep one workspace per
 /// visual row just like the branch and worktree buffers do.
 #[cfg(unix)]
 #[test]
@@ -2004,6 +2135,7 @@ fn session_directory_paths_cannot_manufacture_manager_rows() {
             pending_wait_requests: None,
             live_terminals: None,
             terminal_sessions: None,
+            terminal_line_activity_unix_seconds: None,
             interactive_attached: None,
             open_buffers: None,
             git: Some(crate::git::WorkspaceGitFacts {
@@ -2017,7 +2149,12 @@ fn session_directory_paths_cannot_manufacture_manager_rows() {
 
     let detail = &app.list.as_ref().unwrap().items[0].detail;
     assert_eq!(detail, "feature  /tmp/project\\nforged\\rroot\\tcell");
-    assert_eq!(app.list.as_ref().unwrap().items[0].trailing_detail, "-");
+    assert_eq!(
+        app.list.as_ref().unwrap().items[0]
+            .trailing_detail
+            .trim_end(),
+        "-"
+    );
     assert!(!detail.contains('\n'));
     assert!(!detail.contains('\t'));
     let preview = app.list.as_ref().unwrap().items[0].preview().unwrap();
@@ -2063,6 +2200,7 @@ fn the_session_list_marks_stopped_rows_dormant_without_hiding_or_reordering_them
                 pending_wait_requests: None,
                 live_terminals: None,
                 terminal_sessions: None,
+                terminal_line_activity_unix_seconds: None,
                 interactive_attached: Some(true),
                 open_buffers: None,
                 git: None,
@@ -2080,6 +2218,7 @@ fn the_session_list_marks_stopped_rows_dormant_without_hiding_or_reordering_them
                 pending_wait_requests: None,
                 live_terminals: None,
                 terminal_sessions: None,
+                terminal_line_activity_unix_seconds: None,
                 interactive_attached: None,
                 open_buffers: None,
                 git: None,
@@ -2147,6 +2286,7 @@ fn numbered_sessions(label: &str) -> (App, PathBuf, Vec<PathBuf>) {
                 pending_wait_requests: None,
                 live_terminals: None,
                 terminal_sessions: None,
+                terminal_line_activity_unix_seconds: None,
                 interactive_attached: Some(false),
                 open_buffers: None,
                 git: None,
@@ -2361,6 +2501,7 @@ fn workspace_actions_match_the_selected_session_state() {
                 pending_wait_requests: None,
                 live_terminals: None,
                 terminal_sessions: None,
+                terminal_line_activity_unix_seconds: None,
                 interactive_attached: Some(true),
                 open_buffers: None,
                 git: None,
@@ -2378,6 +2519,7 @@ fn workspace_actions_match_the_selected_session_state() {
                 pending_wait_requests: None,
                 live_terminals: None,
                 terminal_sessions: None,
+                terminal_line_activity_unix_seconds: None,
                 interactive_attached: Some(false),
                 open_buffers: None,
                 git: None,
@@ -2496,6 +2638,7 @@ fn session_actions_confirm_force_close_and_recheck_state_at_enter() {
                 pending_wait_requests: None,
                 live_terminals: None,
                 terminal_sessions: None,
+                terminal_line_activity_unix_seconds: None,
                 interactive_attached: Some(true),
                 open_buffers: None,
                 git: None,
@@ -2513,6 +2656,7 @@ fn session_actions_confirm_force_close_and_recheck_state_at_enter() {
                 pending_wait_requests: None,
                 live_terminals: None,
                 terminal_sessions: None,
+                terminal_line_activity_unix_seconds: None,
                 interactive_attached: Some(false),
                 open_buffers: None,
                 git: None,

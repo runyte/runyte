@@ -22,8 +22,9 @@ pub enum ListPurpose {
 pub struct PickerItem {
     pub label: String,
     pub detail: String,
-    /// A short final column that remains visible when the middle of an
-    /// overlong row must be clipped. Empty for ordinary picker rows.
+    /// A short final run that remains visible when the middle of an overlong
+    /// row must be clipped. It may contain several padded semantic columns;
+    /// empty for ordinary picker rows.
     pub trailing_detail: String,
     /// What the row stands for, resolved by whoever opened the picker.
     ///
@@ -48,8 +49,8 @@ pub struct PickerItem {
 /// Non-selectable column labels drawn above a list's rows.
 ///
 /// The three runs mirror [`PickerItem`]'s presentation regions. A producer
-/// may pad several semantic columns within `label` or `detail`, while the
-/// trailing run keeps the final column visible when a row is clipped.
+/// may pad several semantic columns within any run, while the trailing run
+/// keeps its final columns visible when a row is clipped.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ListColumnHeader {
     pub label: String,

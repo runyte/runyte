@@ -443,37 +443,53 @@ Rename, and Forget. Open is identical to Enter. Close stops the host
 and leaves the workspace listed as a stopped row; nothing below the session is
 touched, because a session is the only level that means nothing on its own.
 
-Each row reads as five columns, padded to the widest value or heading in the
+Each row reads as six columns, padded to the widest value or heading in the
 list so they line up down it:
 
 ```text
-  No. Name                    Branch            Path                             Last active
+  No. Name                    Branch            Path                             Last active  Status
   1   main                    main              ~/code/runyte                   3h ago
   2 * runyte-dev              dev               ~/code/runyte-dev               0min ago
   3   Brain                   -                 ~/Brain                         12days ago
-  4   runyte.github.io        main              ~/code/runyte.github.io         5days ago
+  4   runyte.github.io        main              ~/code/runyte.github.io         5days ago     QUIET
   5   runyte-enh-render-space enh/render-space  ~/code/runyte-enh-render-space  1min ago
 ```
 
-The `No.`, `Name`, `Branch`, `Path`, and `Last active` headings stay above the
-rows and do not participate in filtering or selection. The number is the digit
-that attaches to the row, then the session name, then the checked-out branch,
-the workspace directory, and the last-active age. The directory is the widest
-identity column, so a path under your home directory is written with `~`; the
-preview keeps the full path. A workspace that is not a Git working tree has no
-branch, so that column holds `-`. The branch is read from the workspace
-directory itself rather than answered by a host, so a stopped session states
-its branch exactly as a running one does.
+The `No.`, `Name`, `Branch`, `Path`, `Last active`, and `Status` headings stay
+above the rows and do not participate in filtering or selection. The number is
+the digit that attaches to the row, then the session name, then the checked-out
+branch, the workspace directory, the last-active age, and terminal-output
+status. The directory is the widest identity column, so a path under your home
+directory is written with `~`; the preview keeps the full path. A workspace
+that is not a Git working tree has no branch, so that column holds `-`. The
+branch is read from the workspace directory itself rather than answered by a
+host, so a stopped session states its branch exactly as a running one does.
 
 Activity uses one short unit at a time: minutes below an hour, hours below a
 day, then days, written as `5min ago`, `3h ago`, or `5days ago`. Partial units
 round up, including across a boundary, so 59 minutes and one second reads
 `1h ago`. The current session reads `0min ago`; leaving or switching away
 records the end of that visit, and elapsed values continue advancing while the
-manager remains open. When a row is too wide beside the preview, Runyte clips
-its middle identity columns while preserving the final activity column. A
-history entry written by an older Runyte has no timestamp and reads `-` until
-that workspace is visited again.
+manager remains open. `Status` reads `QUIET` when a running host owns at least
+one live terminal session and none of those terminals has completed a new
+presentation line for five minutes. A newly created terminal begins that
+five-minute clock without treating its initial empty row as output. Line-feed,
+index/new-line controls, an automatic wrap, and a top-anchored primary-screen
+scroll commit complete lines. Unterminated partial text, carriage-return
+rewrites such as a spinner, cursor-only movement, application-internal scroll
+regions, alternate-screen/full-screen repainting, and resize do not.
+Exited terminal sessions are retained for review but are not relevant to this
+live-output observation; a session with no live terminals, a stopped session,
+and a host from another protocol version leave the value empty. `QUIET` does
+not claim that a process is idle, blocked, finished, or unhealthy.
+
+While the manager remains open, it asks each compatible running host for this
+bounded scalar at most once every five seconds. It never fetches terminal
+contents or derives activity from the selected row's preview. When a row is too
+wide beside the preview, Runyte clips its middle identity columns while
+preserving `Last active` and `Status` together. A history entry written by an
+older Runyte has no timestamp and reads `-` until that workspace is visited
+again.
 
 The selected session's preview, shown in the picker's right column and toggled
 with `Ctrl-t`, states the session as a fixed set of fields. That visibility

@@ -155,7 +155,10 @@ use crate::workspace::{
 /// An older client has no case for the kind and would fail to deserialize the
 /// frame; an older host publishes the assistance as a centred command palette
 /// whose query repeats the interaction line.
-pub const VERSION: u32 = 46;
+/// Version 47 adds the host's bounded completed-terminal-line activity scalar
+/// to health. An older host cannot answer the session manager's Status column,
+/// so accepting it would silently present unknown activity as current.
+pub const VERSION: u32 = 47;
 pub const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const MAX_PATHS: usize = 32;
 pub const MAX_PATH_BYTES: usize = 32 * 1024;
@@ -831,6 +834,9 @@ pub enum HostResponse {
         live_terminals: usize,
         /// All retained terminal sessions, including exited screens.
         terminal_sessions: usize,
+        /// Latest creation/completed-line baseline among live terminals, in
+        /// whole Unix seconds. `None` means this host has no live terminal.
+        terminal_line_activity_unix_seconds: Option<u64>,
     },
     SessionPreview {
         preview: SessionPreview,
@@ -929,7 +935,7 @@ mod tests {
 
     #[test]
     fn protocol_version_and_request_bounds_are_explicit() {
-        assert_eq!(VERSION, 46);
+        assert_eq!(VERSION, 47);
         let oversized_command = ClientRequest::Invoke {
             command: CommandRequest {
                 name: "open".to_owned(),

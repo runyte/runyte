@@ -32,7 +32,7 @@ pub use catalog::{
 pub use host::{
     BufferRequestError, FrameId, HostCommand, HostEvent, HostFrame, HostInputOutcome,
     HostServiceSubmitError, SessionPreview, SessionPreviewPane, SessionPreviewPaneKind,
-    WorkspaceHost,
+    TERMINAL_OUTPUT_QUIET_INTERVAL, WorkspaceHost,
 };
 pub use identity::{WORKSPACE_ID_LENGTH, WorkspaceIdentity, workspace_id};
 pub use service::{

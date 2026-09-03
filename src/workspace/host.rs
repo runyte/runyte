@@ -42,6 +42,9 @@ const SESSION_PREVIEW_LINES: usize = 8;
 const SESSION_PREVIEW_COLUMNS: usize = 240;
 const SESSION_PREVIEW_OTHER_RESOURCES: usize = 8;
 const AUTOMATIC_GIT_RETRY_DELAY: Duration = Duration::from_secs(1);
+/// A live terminal must complete no presentation line for this long before
+/// the persistent-session manager calls its workspace quiet.
+pub const TERMINAL_OUTPUT_QUIET_INTERVAL: Duration = Duration::from_secs(5 * 60);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum BufferRequestError {
@@ -509,6 +512,22 @@ impl WorkspaceHost {
             .enumerate()
             .filter(|(index, _)| !self.app.host_buffer_is_closed(*index))
             .count()
+    }
+
+    /// Latest completed-line baseline across the live terminal sessions this
+    /// host owns, as a bounded scalar suitable for a control response.
+    ///
+    /// Creation establishes a baseline so a new terminal does not start as
+    /// quiet. The timestamp moves only for semantic completed-line activity;
+    /// arbitrary PTY bytes and rendered previews are deliberately outside the
+    /// answer.
+    pub fn terminal_line_activity_unix_seconds(&self) -> Option<u64> {
+        self.app
+            .terminals
+            .latest_live_completed_line_activity()?
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()
+            .map(|elapsed| elapsed.as_secs())
     }
 
     /// The single lifecycle summary used by retirement, inspection and stop.
