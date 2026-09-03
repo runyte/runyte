@@ -3,7 +3,9 @@
 //! Catppuccin palette data and its shared mapping to Runyte theme roles.
 
 use super::{
-    DIFF_ADDED_DARK, DIFF_ADDED_LIGHT, DIFF_REMOVED_DARK, DIFF_REMOVED_LIGHT,
+    CHANGE_ADDED_DARK, CHANGE_ADDED_LIGHT, CHANGE_MODIFIED_DARK, CHANGE_MODIFIED_LIGHT,
+    CHANGE_REMOVED_DARK, CHANGE_REMOVED_LIGHT, DIFF_ADDED_DARK, DIFF_ADDED_LIGHT,
+    DIFF_CHANGED_DARK, DIFF_CHANGED_LIGHT, DIFF_REMOVED_DARK, DIFF_REMOVED_LIGHT,
     JUMP_LABEL_DARK_PRIMARY, JUMP_LABEL_DARK_SECONDARY, JUMP_LABEL_LIGHT_PRIMARY,
     JUMP_LABEL_LIGHT_SECONDARY, ThemeDefinition, syntax_theme,
 };
@@ -11,10 +13,11 @@ use super::{
 /// Catppuccin's shared palette roles, adapted to Runyte's presentation roles.
 ///
 /// The four flavours intentionally share this mapping so a syntax or editor
-/// role does not change meaning when someone moves between them. Selection and
-/// diff backgrounds are palette-local tints because Runyte fills whole cells
-/// for those roles, while Catppuccin's accent colours are designed as text.
+/// role does not change meaning when someone moves between them. Git marks and
+/// diff backgrounds use Runyte's shared semantic palette because those
+/// meanings must stay recognizable across theme changes.
 struct CatppuccinPalette {
+    light: bool,
     base: &'static str,
     mantle: &'static str,
     text: &'static str,
@@ -35,12 +38,29 @@ struct CatppuccinPalette {
     cursor_select: &'static str,
     selection: &'static str,
     selection_primary: &'static str,
-    diff_added: &'static str,
-    diff_removed: &'static str,
-    diff_changed: &'static str,
 }
 
 fn catppuccin_theme(palette: CatppuccinPalette) -> ThemeDefinition {
+    let (change_added, change_modified, change_removed, diff_added, diff_changed, diff_removed) =
+        if palette.light {
+            (
+                CHANGE_ADDED_LIGHT,
+                CHANGE_MODIFIED_LIGHT,
+                CHANGE_REMOVED_LIGHT,
+                DIFF_ADDED_LIGHT,
+                DIFF_CHANGED_LIGHT,
+                DIFF_REMOVED_LIGHT,
+            )
+        } else {
+            (
+                CHANGE_ADDED_DARK,
+                CHANGE_MODIFIED_DARK,
+                CHANGE_REMOVED_DARK,
+                DIFF_ADDED_DARK,
+                DIFF_CHANGED_DARK,
+                DIFF_REMOVED_DARK,
+            )
+        };
     ThemeDefinition {
         background: palette.base.into(),
         foreground: palette.text.into(),
@@ -69,12 +89,12 @@ fn catppuccin_theme(palette: CatppuccinPalette) -> ThemeDefinition {
         jump_label_immediate: Some(palette.red.into()),
         jump_label_primary: palette.jump_label_primary.into(),
         jump_label_secondary: palette.jump_label_secondary.into(),
-        change_added: Some(palette.green.into()),
-        change_modified: Some(palette.yellow.into()),
-        change_removed: Some(palette.red.into()),
-        diff_added: Some(palette.diff_added.into()),
-        diff_removed: Some(palette.diff_removed.into()),
-        diff_changed: Some(palette.diff_changed.into()),
+        change_added: Some(change_added.into()),
+        change_modified: Some(change_modified.into()),
+        change_removed: Some(change_removed.into()),
+        diff_added: Some(diff_added.into()),
+        diff_removed: Some(diff_removed.into()),
+        diff_changed: Some(diff_changed.into()),
         syntax: syntax_theme(&[
             ("attribute", palette.yellow),
             ("comment", palette.overlay0),
@@ -101,6 +121,7 @@ pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
         (
             "latte",
             CatppuccinPalette {
+                light: true,
                 base: "#eff1f5",
                 mantle: "#e6e9ef",
                 text: "#4c4f69",
@@ -121,14 +142,12 @@ pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
                 cursor_select: "#c45500",
                 selection: "#c3d4f3",
                 selection_primary: "#f6d3bd",
-                diff_added: DIFF_ADDED_LIGHT,
-                diff_removed: DIFF_REMOVED_LIGHT,
-                diff_changed: "#f5e3cf",
             },
         ),
         (
             "frappe",
             CatppuccinPalette {
+                light: false,
                 base: "#303446",
                 mantle: "#292c3c",
                 text: "#c6d0f5",
@@ -149,14 +168,12 @@ pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
                 cursor_select: "#ef9f76",
                 selection: "#414c66",
                 selection_primary: "#59473e",
-                diff_added: DIFF_ADDED_DARK,
-                diff_removed: DIFF_REMOVED_DARK,
-                diff_changed: "#4a4038",
             },
         ),
         (
             "macchiato",
             CatppuccinPalette {
+                light: false,
                 base: "#24273a",
                 mantle: "#1e2030",
                 text: "#cad3f5",
@@ -177,14 +194,12 @@ pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
                 cursor_select: "#f5a97f",
                 selection: "#35405b",
                 selection_primary: "#504036",
-                diff_added: DIFF_ADDED_DARK,
-                diff_removed: DIFF_REMOVED_DARK,
-                diff_changed: "#40372f",
             },
         ),
         (
             "mocha",
             CatppuccinPalette {
+                light: false,
                 base: "#1e1e2e",
                 mantle: "#181825",
                 text: "#cdd6f4",
@@ -205,9 +220,6 @@ pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
                 cursor_select: "#fab387",
                 selection: "#2e3d59",
                 selection_primary: "#49392f",
-                diff_added: DIFF_ADDED_DARK,
-                diff_removed: DIFF_REMOVED_DARK,
-                diff_changed: "#382f28",
             },
         ),
     ]

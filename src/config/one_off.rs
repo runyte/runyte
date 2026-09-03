@@ -3,7 +3,8 @@
 //! Standalone imported palettes that do not share a family adapter.
 
 use super::{
-    DIFF_ADDED_LIGHT, DIFF_REMOVED_LIGHT, JUMP_LABEL_LIGHT_PRIMARY, JUMP_LABEL_LIGHT_SECONDARY,
+    CHANGE_ADDED_LIGHT, CHANGE_MODIFIED_LIGHT, CHANGE_REMOVED_LIGHT, DIFF_ADDED_LIGHT,
+    DIFF_CHANGED_LIGHT, DIFF_REMOVED_LIGHT, JUMP_LABEL_LIGHT_PRIMARY, JUMP_LABEL_LIGHT_SECONDARY,
     ThemeDefinition, syntax_theme,
 };
 
@@ -40,12 +41,12 @@ fn github_light_theme() -> ThemeDefinition {
         jump_label_immediate: Some("#d1242f".into()),
         jump_label_primary: JUMP_LABEL_LIGHT_PRIMARY.into(),
         jump_label_secondary: JUMP_LABEL_LIGHT_SECONDARY.into(),
-        change_added: Some("#1a7f37".into()),
-        change_modified: Some("#9a6700".into()),
-        change_removed: Some("#d1242f".into()),
+        change_added: Some(CHANGE_ADDED_LIGHT.into()),
+        change_modified: Some(CHANGE_MODIFIED_LIGHT.into()),
+        change_removed: Some(CHANGE_REMOVED_LIGHT.into()),
         diff_added: Some(DIFF_ADDED_LIGHT.into()),
         diff_removed: Some(DIFF_REMOVED_LIGHT.into()),
-        diff_changed: Some("#d8cab3".into()),
+        diff_changed: Some(DIFF_CHANGED_LIGHT.into()),
         syntax: syntax_theme(&[
             ("attribute", "#0550ae"),
             ("comment", "#57606a"),
@@ -137,12 +138,12 @@ fn atom_one_light_theme() -> ThemeDefinition {
         jump_label_immediate: Some("#ca1243".into()),
         jump_label_primary: JUMP_LABEL_LIGHT_PRIMARY.into(),
         jump_label_secondary: JUMP_LABEL_LIGHT_SECONDARY.into(),
-        change_added: Some("#2db448".into()),
-        change_modified: Some("#f2a60d".into()),
-        change_removed: Some("#ff1414".into()),
+        change_added: Some(CHANGE_ADDED_LIGHT.into()),
+        change_modified: Some(CHANGE_MODIFIED_LIGHT.into()),
+        change_removed: Some(CHANGE_REMOVED_LIGHT.into()),
         diff_added: Some(DIFF_ADDED_LIGHT.into()),
         diff_removed: Some(DIFF_REMOVED_LIGHT.into()),
-        diff_changed: Some("#f8eed8".into()),
+        diff_changed: Some(DIFF_CHANGED_LIGHT.into()),
         syntax,
     }
 }

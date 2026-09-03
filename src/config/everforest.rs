@@ -3,7 +3,9 @@
 //! Everforest background variants and their shared Runyte role mapping.
 
 use super::{
-    DIFF_ADDED_DARK, DIFF_ADDED_LIGHT, DIFF_REMOVED_DARK, DIFF_REMOVED_LIGHT,
+    CHANGE_ADDED_DARK, CHANGE_ADDED_LIGHT, CHANGE_MODIFIED_DARK, CHANGE_MODIFIED_LIGHT,
+    CHANGE_REMOVED_DARK, CHANGE_REMOVED_LIGHT, DIFF_ADDED_DARK, DIFF_ADDED_LIGHT,
+    DIFF_CHANGED_DARK, DIFF_CHANGED_LIGHT, DIFF_REMOVED_DARK, DIFF_REMOVED_LIGHT,
     JUMP_LABEL_DARK_PRIMARY, JUMP_LABEL_DARK_SECONDARY, JUMP_LABEL_LIGHT_PRIMARY,
     JUMP_LABEL_LIGHT_SECONDARY, ThemeDefinition, syntax_theme,
 };
@@ -22,9 +24,6 @@ struct EverforestBackground {
     dimmed_text: Option<&'static str>,
     selection: &'static str,
     selection_primary: &'static str,
-    diff_added: &'static str,
-    diff_removed: &'static str,
-    diff_changed: &'static str,
 }
 
 fn everforest_dark(background: EverforestBackground) -> ThemeDefinition {
@@ -45,6 +44,7 @@ fn everforest_dark(background: EverforestBackground) -> ThemeDefinition {
             jump_label_primary: JUMP_LABEL_DARK_PRIMARY,
             jump_label_secondary: JUMP_LABEL_DARK_SECONDARY,
         },
+        false,
     )
 }
 
@@ -66,6 +66,7 @@ fn everforest_light(background: EverforestBackground) -> ThemeDefinition {
             jump_label_primary: JUMP_LABEL_LIGHT_PRIMARY,
             jump_label_secondary: JUMP_LABEL_LIGHT_SECONDARY,
         },
+        true,
     )
 }
 
@@ -93,7 +94,28 @@ struct EverforestForeground {
 fn everforest_theme(
     background: EverforestBackground,
     foreground: EverforestForeground,
+    light: bool,
 ) -> ThemeDefinition {
+    let (change_added, change_modified, change_removed, diff_added, diff_changed, diff_removed) =
+        if light {
+            (
+                CHANGE_ADDED_LIGHT,
+                CHANGE_MODIFIED_LIGHT,
+                CHANGE_REMOVED_LIGHT,
+                DIFF_ADDED_LIGHT,
+                DIFF_CHANGED_LIGHT,
+                DIFF_REMOVED_LIGHT,
+            )
+        } else {
+            (
+                CHANGE_ADDED_DARK,
+                CHANGE_MODIFIED_DARK,
+                CHANGE_REMOVED_DARK,
+                DIFF_ADDED_DARK,
+                DIFF_CHANGED_DARK,
+                DIFF_REMOVED_DARK,
+            )
+        };
     ThemeDefinition {
         background: background.background.into(),
         foreground: foreground.foreground.into(),
@@ -122,12 +144,12 @@ fn everforest_theme(
         jump_label_immediate: Some(foreground.jump_label_immediate.into()),
         jump_label_primary: foreground.jump_label_primary.into(),
         jump_label_secondary: foreground.jump_label_secondary.into(),
-        change_added: Some(foreground.green.into()),
-        change_modified: Some(foreground.yellow.into()),
-        change_removed: Some(foreground.red.into()),
-        diff_added: Some(background.diff_added.into()),
-        diff_removed: Some(background.diff_removed.into()),
-        diff_changed: Some(background.diff_changed.into()),
+        change_added: Some(change_added.into()),
+        change_modified: Some(change_modified.into()),
+        change_removed: Some(change_removed.into()),
+        diff_added: Some(diff_added.into()),
+        diff_removed: Some(diff_removed.into()),
+        diff_changed: Some(diff_changed.into()),
         syntax: syntax_theme(&[
             ("attribute", foreground.purple),
             ("comment", foreground.muted),
@@ -159,9 +181,6 @@ pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
                 dimmed_text: Some("#909c94"),
                 selection: "#2a4f66",
                 selection_primary: "#5a3e22",
-                diff_added: DIFF_ADDED_DARK,
-                diff_removed: DIFF_REMOVED_DARK,
-                diff_changed: "#45443c",
             },
             true,
         ),
@@ -173,9 +192,6 @@ pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
                 dimmed_text: Some("#99a49d"),
                 selection: "#30566e",
                 selection_primary: "#60432a",
-                diff_added: DIFF_ADDED_DARK,
-                diff_removed: DIFF_REMOVED_DARK,
-                diff_changed: "#4d4c43",
             },
             true,
         ),
@@ -187,9 +203,6 @@ pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
                 dimmed_text: Some("#9da8a0"),
                 selection: "#265a70",
                 selection_primary: "#563a1e",
-                diff_added: DIFF_ADDED_DARK,
-                diff_removed: DIFF_REMOVED_DARK,
-                diff_changed: "#55544a",
             },
             true,
         ),
@@ -201,9 +214,6 @@ pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
                 dimmed_text: None,
                 selection: "#b4eedc",
                 selection_primary: "#ffe7a8",
-                diff_added: DIFF_ADDED_LIGHT,
-                diff_removed: DIFF_REMOVED_LIGHT,
-                diff_changed: "#fef2d5",
             },
             false,
         ),
@@ -215,9 +225,6 @@ pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
                 dimmed_text: None,
                 selection: "#b0ead8",
                 selection_primary: "#fde3a4",
-                diff_added: DIFF_ADDED_LIGHT,
-                diff_removed: DIFF_REMOVED_LIGHT,
-                diff_changed: "#faedcd",
             },
             false,
         ),
@@ -229,9 +236,6 @@ pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
                 dimmed_text: None,
                 selection: "#b7e6d5",
                 selection_primary: "#f9dfa6",
-                diff_added: DIFF_ADDED_LIGHT,
-                diff_removed: DIFF_REMOVED_LIGHT,
-                diff_changed: "#f1e4c5",
             },
             false,
         ),

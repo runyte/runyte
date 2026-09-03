@@ -3,7 +3,8 @@
 //! Nightfox-derived palettes and Runyte's explicit variants of them.
 
 use super::{
-    DIFF_ADDED_DARK, DIFF_REMOVED_DARK, JUMP_LABEL_DARK_PRIMARY, JUMP_LABEL_DARK_SECONDARY,
+    CHANGE_ADDED_DARK, CHANGE_MODIFIED_DARK, CHANGE_REMOVED_DARK, DIFF_ADDED_DARK,
+    DIFF_CHANGED_DARK, DIFF_REMOVED_DARK, JUMP_LABEL_DARK_PRIMARY, JUMP_LABEL_DARK_SECONDARY,
     ThemeDefinition, syntax_theme,
 };
 
@@ -39,12 +40,12 @@ fn nordfox_theme() -> ThemeDefinition {
         jump_label_immediate: Some("#f08a92".into()),
         jump_label_primary: JUMP_LABEL_DARK_PRIMARY.into(),
         jump_label_secondary: JUMP_LABEL_DARK_SECONDARY.into(),
-        change_added: Some("#a3be8c".into()),
-        change_modified: Some("#ebcb8b".into()),
-        change_removed: Some("#bf616a".into()),
+        change_added: Some(CHANGE_ADDED_DARK.into()),
+        change_modified: Some(CHANGE_MODIFIED_DARK.into()),
+        change_removed: Some(CHANGE_REMOVED_DARK.into()),
         diff_added: Some(DIFF_ADDED_DARK.into()),
         diff_removed: Some(DIFF_REMOVED_DARK.into()),
-        diff_changed: Some("#364150".into()),
+        diff_changed: Some(DIFF_CHANGED_DARK.into()),
         syntax: syntax_theme(&[
             ("attribute", "#d092ce"),
             ("comment", "#60728a"),
@@ -131,12 +132,12 @@ fn terafox_theme() -> ThemeDefinition {
         jump_label_immediate: Some("#e85c51".into()),
         jump_label_primary: JUMP_LABEL_DARK_PRIMARY.into(),
         jump_label_secondary: JUMP_LABEL_DARK_SECONDARY.into(),
-        change_added: Some("#7aa4a1".into()),
-        change_modified: Some("#fda47f".into()),
-        change_removed: Some("#e85c51".into()),
+        change_added: Some(CHANGE_ADDED_DARK.into()),
+        change_modified: Some(CHANGE_MODIFIED_DARK.into()),
+        change_removed: Some(CHANGE_REMOVED_DARK.into()),
         diff_added: Some(DIFF_ADDED_DARK.into()),
         diff_removed: Some(DIFF_REMOVED_DARK.into()),
-        diff_changed: Some("#31474b".into()),
+        diff_changed: Some(DIFF_CHANGED_DARK.into()),
         syntax: syntax_theme(&[
             ("attribute", "#d38d97"),
             ("comment", "#6d7f8b"),
@@ -166,8 +167,8 @@ fn terafox_theme() -> ThemeDefinition {
 /// the theme draws with sits between 3.5 and 10.0. Long stretches of ordinary
 /// text are therefore near-white on a dark teal ground. This variant brings
 /// that band down and changes nothing else — the background, the hued syntax
-/// colours, the accents, the selection grounds and the diff rows are all
-/// Terafox's.
+/// colours, the accents, and the selection grounds are all Terafox's. Both
+/// variants use Runyte's shared Git colours.
 ///
 /// The step is the one `nordbones-dark-soft` takes: 15 points of CIELAB
 /// lightness off each of the three neutral text values, which puts ordinary

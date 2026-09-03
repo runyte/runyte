@@ -2282,8 +2282,9 @@ where it sits.
 Each text-file row carries what its change costs in lines, added then removed,
 in one column aligned across the whole list, and the first row totals them. The
 two counts are drawn in the theme's `change_added` and `change_removed` — the
-same colours as the Git gutter and as added and removed lines in a diff — so a
-theme decides what they look like and nothing here is red and green by fiat.
+same colours as the Git gutter and as added and removed lines in a diff. The
+built-in themes consistently use green for additions and red for removals;
+custom themes can replace either role.
 The numbers are Git's own `--numstat` counts of the same two trees the row
 itself comes from, so a file that is staged and then edited again is counted
 once on each of its rows and the total is the sum of what is shown. An
@@ -3037,9 +3038,8 @@ uses deep blue-green backgrounds and warm accents. `terafox-soft` is Runyte's
 own variant rather than an upstream palette: it is `terafox` with the ordinary
 text brought down from 13.1:1 against the background to 8.6:1, for reading at
 length without the glare. Its identifiers, operators and punctuation move by the
-same amount so Terafox's own ordering survives, and everything else — the
-background, the hued syntax colours, the accents, the selections, and the diff
-rows — is Terafox unchanged. `atom-one-light` follows
+same amount so Terafox's own ordering survives, and its background, hued syntax
+colours, accents, and selections stay unchanged. `atom-one-light` follows
 Atom's official
 [One Light UI](https://github.com/atom/one-light-ui) and companion
 [One Light syntax](https://github.com/atom/one-light-syntax) palettes.
@@ -3054,9 +3054,8 @@ and generated highlight colors from
 `randombones` selector is intentionally not a Runyte theme.
 `nordbones-dark-soft` is Runyte's own variant rather than an upstream palette:
 it is `nordbones-dark` with the ordinary text brought down from 10.6:1 against
-the background to 7:1, for reading at length without the glare. Everything
-else — the background, the accents, the selections, and the diff rows — is
-Nordbones unchanged.
+the background to 7:1, for reading at length without the glare. Its background,
+accents, and selections stay unchanged.
 `default-dark` and `default-light` are Runyte's branded pair. They share red
 accents and a green Normal, red Insert, orange Select, purple Replace, and
 blue Command mode vocabulary — inverted from most other built-in themes'
@@ -3102,12 +3101,12 @@ themes:
     jump_label_immediate: "#ff5555"
     jump_label_primary: "#5fd7e7"
     jump_label_secondary: "#4ab7c6"
-    change_added: "#a3be8c"
-    change_modified: "#ebcb8b"
-    change_removed: "#bf616a"
-    diff_added: "#174b2c"
-    diff_removed: "#54252b"
-    diff_changed: "#2b2519"
+    change_added: "#8ddb8c"
+    change_modified: "#d2a8ff"
+    change_removed: "#ff7b72"
+    diff_added: "#185435"
+    diff_removed: "#642830"
+    diff_changed: "#51316f"
     syntax:
       comment: "#65737e"
       keyword: "#b48ead"
@@ -3157,19 +3156,21 @@ implementation and viewport projection are independent.
 
 `change_added`, `change_modified`, and `change_removed` colour the Git gutter,
 and the first and last also colour added and removed lines in a diff buffer and
-the two count columns in the changed-file list, so added text is the same green
-wherever you meet it. A theme that omits them uses
-the terminal's own green, yellow, and red, which are legible against whatever
+the two count columns in the changed-file list. Every built-in theme uses
+high-contrast green, purple, and red for these three roles, so a meaning keeps
+the same hue wherever it appears. A custom theme that omits them uses the
+terminal's own green, magenta, and red, which are legible against whatever
 palette the terminal already has.
 
 `diff_added`, `diff_removed`, and `diff_changed` fill whole lines in a
 side-by-side comparison. Unlike the three roles above they are background
 colours, deep enough on dark themes and light enough on light themes to keep
-the text readable. The built-in themes deliberately give added and removed
-rows crisp green and red grounds instead of blending them quietly into each
-palette; custom themes can still choose their own. A theme that omits them
-leaves those lines unfilled and lets the gutter marks carry the comparison on
-their own, so the feature still works on a theme written before it existed.
+the text readable. The built-in themes deliberately give added, removed, and
+changed rows distinct green, red, and purple grounds instead of blending them
+quietly into each palette; custom themes can still choose their own. A theme
+that omits them leaves those lines unfilled and lets the gutter marks carry the
+comparison on their own, so the feature still works on a theme written before
+it existed.
 
 `error`, `warning`, and `info` colour notification headings and unread status
 counts. Custom themes that omit `warning` use `change_modified` (then terminal

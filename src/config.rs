@@ -62,15 +62,24 @@ pub(crate) const MAX_IDLE_RETIREMENT_MINUTES: usize = 43_200;
 /// The theme Runyte starts in when nothing else has been chosen.
 pub const DEFAULT_THEME: &str = "default-dark";
 
-// Diff rows are deliberately shared by appearance rather than softened into
-// each palette's background. They occupy a whole row, but additions and
-// removals still need to read immediately at a glance: the light pair is the
-// crisp mint and pink used by Runyte's reference diff presentation, and the
-// dark pair carries the same saturation on grounds that preserve light text.
-const DIFF_ADDED_DARK: &str = "#174b2c";
-const DIFF_REMOVED_DARK: &str = "#54252b";
-const DIFF_ADDED_LIGHT: &str = "#dafbe1";
-const DIFF_REMOVED_LIGHT: &str = "#ffebe9";
+// Git colours are deliberately shared by appearance rather than softened into
+// each palette. A Git meaning must be recognizable before the reader decodes
+// its mark: green is added, red is removed, and purple is changed. The strong
+// colours are used for one-cell marks and patch text; the grounds carry the
+// same hues while preserving ordinary text contrast across every built-in
+// background.
+const CHANGE_ADDED_DARK: &str = "#8ddb8c";
+const CHANGE_MODIFIED_DARK: &str = "#d2a8ff";
+const CHANGE_REMOVED_DARK: &str = "#ff7b72";
+const CHANGE_ADDED_LIGHT: &str = "#0a6b26";
+const CHANGE_MODIFIED_LIGHT: &str = "#6639ba";
+const CHANGE_REMOVED_LIGHT: &str = "#b3261e";
+const DIFF_ADDED_DARK: &str = "#185435";
+const DIFF_CHANGED_DARK: &str = "#51316f";
+const DIFF_REMOVED_DARK: &str = "#642830";
+const DIFF_ADDED_LIGHT: &str = "#c9f1d3";
+const DIFF_CHANGED_LIGHT: &str = "#f8dfff";
+const DIFF_REMOVED_LIGHT: &str = "#ffe0ee";
 
 // Two-key jump labels use one neon-cyan hue. The second key recedes on dark
 // backgrounds and advances on light backgrounds without changing hue.
@@ -776,12 +785,12 @@ impl Default for ThemeDefinition {
             jump_label_immediate: None,
             jump_label_primary: JUMP_LABEL_DARK_PRIMARY.into(),
             jump_label_secondary: JUMP_LABEL_DARK_SECONDARY.into(),
-            change_added: Some("#a1b56c".into()),
-            change_modified: Some("#f7ca88".into()),
-            change_removed: Some("#ab4642".into()),
-            diff_added: Some("#1e2a1a".into()),
-            diff_removed: Some("#2e1c1c".into()),
-            diff_changed: Some("#2c2618".into()),
+            change_added: Some(CHANGE_ADDED_DARK.into()),
+            change_modified: Some(CHANGE_MODIFIED_DARK.into()),
+            change_removed: Some(CHANGE_REMOVED_DARK.into()),
+            diff_added: Some(DIFF_ADDED_DARK.into()),
+            diff_removed: Some(DIFF_REMOVED_DARK.into()),
+            diff_changed: Some(DIFF_CHANGED_DARK.into()),
             syntax: syntax_theme(&[
                 ("attribute", "#f7ca88"),
                 ("comment", "#585858"),
@@ -1077,7 +1086,7 @@ impl TryFrom<&ThemeDefinition> for Theme {
             jump_label_primary: parse_color(&value.jump_label_primary)?,
             jump_label_secondary: parse_color(&value.jump_label_secondary)?,
             change_added: optional_color(value.change_added.as_deref(), Color::Green)?,
-            change_modified: optional_color(value.change_modified.as_deref(), Color::Yellow)?,
+            change_modified: optional_color(value.change_modified.as_deref(), Color::Magenta)?,
             change_removed: optional_color(value.change_removed.as_deref(), Color::Red)?,
             diff_added: value.diff_added.as_deref().map(parse_color).transpose()?,
             diff_removed: value.diff_removed.as_deref().map(parse_color).transpose()?,
@@ -2010,24 +2019,127 @@ mod tests {
     }
 
     #[test]
-    fn every_built_in_theme_uses_crisp_diff_grounds_for_its_appearance() {
+    fn every_built_in_theme_has_visible_semantic_git_colors() {
+        fn contrast(left: Color, right: Color) -> f64 {
+            let left = left.relative_luminance().unwrap();
+            let right = right.relative_luminance().unwrap();
+            (left.max(right) + 0.05) / (left.min(right) + 0.05)
+        }
+
+        fn perceptual_distance(left: Color, right: Color) -> f64 {
+            fn lab(color: Color) -> [f64; 3] {
+                let (r, g, b) = color.channels().unwrap();
+                let channel = |value: u8| {
+                    let value = f64::from(value) / 255.0;
+                    if value <= 0.03928 {
+                        value / 12.92
+                    } else {
+                        ((value + 0.055) / 1.055).powf(2.4)
+                    }
+                };
+                let (r, g, b) = (channel(r), channel(g), channel(b));
+                let transfer = |value: f64| {
+                    if value > 0.008_856 {
+                        value.cbrt()
+                    } else {
+                        7.787 * value + 16.0 / 116.0
+                    }
+                };
+                let x = transfer((0.4124 * r + 0.3576 * g + 0.1805 * b) / 0.95047);
+                let y = transfer(0.2126 * r + 0.7152 * g + 0.0722 * b);
+                let z = transfer((0.0193 * r + 0.1192 * g + 0.9505 * b) / 1.08883);
+                [116.0 * y - 16.0, 500.0 * (x - y), 200.0 * (y - z)]
+            }
+
+            let (left, right) = (lab(left), lab(right));
+            left.iter()
+                .zip(right)
+                .map(|(left, right)| (left - right).powi(2))
+                .sum::<f64>()
+                .sqrt()
+        }
+
+        fn assert_hue(name: &str, role: &str, color: Color, dominant: usize) {
+            let channels = color.channels().unwrap();
+            let channels = [channels.0, channels.1, channels.2];
+            assert!(
+                channels[dominant] > channels[(dominant + 1) % 3]
+                    && channels[dominant] > channels[(dominant + 2) % 3],
+                "{name} {role} does not have the expected hue: {color:?}"
+            );
+        }
+
         let config = Config::default();
         for name in config.theme_names() {
             let theme = config.resolve_theme(name).unwrap();
-            let (added, removed) = match theme.appearance().unwrap() {
-                ThemeAppearance::Dark => {
-                    (Color::Rgb(0x17, 0x4b, 0x2c), Color::Rgb(0x54, 0x25, 0x2b))
-                }
-                ThemeAppearance::Light => {
-                    (Color::Rgb(0xda, 0xfb, 0xe1), Color::Rgb(0xff, 0xeb, 0xe9))
-                }
+            let expected = match theme.appearance().unwrap() {
+                ThemeAppearance::Dark => [
+                    Color::Rgb(0x8d, 0xdb, 0x8c),
+                    Color::Rgb(0xd2, 0xa8, 0xff),
+                    Color::Rgb(0xff, 0x7b, 0x72),
+                    Color::Rgb(0x18, 0x54, 0x35),
+                    Color::Rgb(0x51, 0x31, 0x6f),
+                    Color::Rgb(0x64, 0x28, 0x30),
+                ],
+                ThemeAppearance::Light => [
+                    Color::Rgb(0x0a, 0x6b, 0x26),
+                    Color::Rgb(0x66, 0x39, 0xba),
+                    Color::Rgb(0xb3, 0x26, 0x1e),
+                    Color::Rgb(0xc9, 0xf1, 0xd3),
+                    Color::Rgb(0xf8, 0xdf, 0xff),
+                    Color::Rgb(0xff, 0xe0, 0xee),
+                ],
             };
-            assert_eq!(theme.diff_added, Some(added), "wrong {name} added ground");
-            assert_eq!(
-                theme.diff_removed,
-                Some(removed),
-                "wrong {name} removed ground"
-            );
+            let actual = [
+                theme.change_added,
+                theme.change_modified,
+                theme.change_removed,
+                theme.diff_added.unwrap(),
+                theme.diff_changed.unwrap(),
+                theme.diff_removed.unwrap(),
+            ];
+            assert_eq!(actual, expected, "wrong Git palette for {name}");
+
+            for (role, color, dominant) in [
+                ("added mark", theme.change_added, 1),
+                ("changed mark", theme.change_modified, 2),
+                ("removed mark", theme.change_removed, 0),
+                ("added row", theme.diff_added.unwrap(), 1),
+                ("changed row", theme.diff_changed.unwrap(), 2),
+                ("removed row", theme.diff_removed.unwrap(), 0),
+            ] {
+                assert_hue(name, role, color, dominant);
+            }
+
+            for (role, color) in [
+                ("added mark", theme.change_added),
+                ("changed mark", theme.change_modified),
+                ("removed mark", theme.change_removed),
+            ] {
+                assert!(
+                    contrast(color, theme.background) >= 3.0,
+                    "{name} {role} is unreadable on its pane background"
+                );
+            }
+            for (role, ground) in [
+                ("added row", theme.diff_added.unwrap()),
+                ("changed row", theme.diff_changed.unwrap()),
+                ("removed row", theme.diff_removed.unwrap()),
+            ] {
+                assert!(
+                    contrast(theme.foreground, ground) >= 4.5,
+                    "{name} ordinary text is unreadable on its {role}"
+                );
+                let distance = perceptual_distance(theme.background, ground);
+                // A full-width row has much more area than a selection cell.
+                // Twelve CIE76 points is visibly tinted without spending the
+                // foreground contrast needed by the lightest built-in themes;
+                // the grounds this replaced fell below ten in practice.
+                assert!(
+                    distance >= 12.0,
+                    "{name} {role} disappears into its pane background: {distance}"
+                );
+            }
         }
     }
 
@@ -2075,12 +2187,6 @@ mod tests {
         assert_eq!(tokyo.cursor_normal, rgb(0x7ba2f7));
         assert_eq!(tokyo.cursor_insert, rgb(0xf77890));
         assert_eq!(tokyo.cursor_select, rgb(0xe1b068));
-        assert_eq!(tokyo.change_added, rgb(0x74dbcb));
-        assert_eq!(tokyo.change_modified, rgb(0x7ba2f7));
-        assert_eq!(tokyo.change_removed, rgb(0xf77890));
-        assert_eq!(tokyo.diff_added, Some(rgb(0x174b2c)));
-        assert_eq!(tokyo.diff_changed, Some(rgb(0x212c44)));
-        assert_eq!(tokyo.diff_removed, Some(rgb(0x54252b)));
         assert_eq!(
             tokyo.syntax_color(crate::syntax::Scope::named("keyword").unwrap()),
             Some(rgb(0xbb9bf7))
@@ -2110,12 +2216,6 @@ mod tests {
         assert_eq!(theme.cursor_insert, Color::Rgb(0xd1, 0x24, 0x2f));
         assert_eq!(theme.cursor_select, Color::Rgb(0xbc, 0x4c, 0x00));
         assert_eq!(theme.directory, Color::Rgb(0x66, 0x39, 0xba));
-        assert_eq!(theme.change_added, Color::Rgb(0x1a, 0x7f, 0x37));
-        assert_eq!(theme.change_modified, Color::Rgb(0x9a, 0x67, 0x00));
-        assert_eq!(theme.change_removed, Color::Rgb(0xd1, 0x24, 0x2f));
-        assert_eq!(theme.diff_added, Some(Color::Rgb(0xda, 0xfb, 0xe1)));
-        assert_eq!(theme.diff_removed, Some(Color::Rgb(0xff, 0xeb, 0xe9)));
-        assert_eq!(theme.diff_changed, Some(Color::Rgb(0xd8, 0xca, 0xb3)));
 
         for (scope, color) in [
             ("comment", (0x57, 0x60, 0x6a)),
@@ -2144,9 +2244,6 @@ mod tests {
         assert_eq!(theme.cursor_insert, Color::Rgb(0xe4, 0x56, 0x49));
         assert_eq!(theme.cursor_select, Color::Rgb(0x98, 0x68, 0x01));
         assert_eq!(theme.directory, Color::Rgb(0x40, 0x78, 0xf2));
-        assert_eq!(theme.change_added, Color::Rgb(0x2d, 0xb4, 0x48));
-        assert_eq!(theme.change_modified, Color::Rgb(0xf2, 0xa6, 0x0d));
-        assert_eq!(theme.change_removed, Color::Rgb(0xff, 0x14, 0x14));
 
         for (scope, color) in [
             ("comment", (0xa0, 0xa1, 0xa7)),
@@ -2333,8 +2430,6 @@ mod tests {
         assert_eq!(nordfox.background, Color::Rgb(0x2e, 0x34, 0x40));
         assert_eq!(nordfox.foreground, Color::Rgb(0xcd, 0xce, 0xcf));
         assert_eq!(nordfox.selection, Color::Rgb(0x3e, 0x4a, 0x5b));
-        assert_eq!(nordfox.change_added, Color::Rgb(0xa3, 0xbe, 0x8c));
-        assert_eq!(nordfox.diff_removed, Some(Color::Rgb(0x54, 0x25, 0x2b)));
         assert_eq!(
             nordfox.syntax_color(crate::syntax::Scope::named("function").unwrap()),
             Some(Color::Rgb(0x8c, 0xaf, 0xd2))
@@ -2344,8 +2439,6 @@ mod tests {
         assert_eq!(terafox.background, Color::Rgb(0x15, 0x25, 0x28));
         assert_eq!(terafox.foreground, Color::Rgb(0xe6, 0xea, 0xea));
         assert_eq!(terafox.selection, Color::Rgb(0x26, 0x4e, 0x59));
-        assert_eq!(terafox.change_removed, Color::Rgb(0xe8, 0x5c, 0x51));
-        assert_eq!(terafox.diff_changed, Some(Color::Rgb(0x31, 0x47, 0x4b)));
         assert_eq!(
             terafox.syntax_color(crate::syntax::Scope::named("string").unwrap()),
             Some(Color::Rgb(0x7a, 0xa4, 0xa1))
@@ -3215,5 +3308,19 @@ mod tests {
         let theme = Theme::try_from(&definition).unwrap();
         assert_eq!(theme.warning, Color::Rgb(0xd0, 0x80, 0x20));
         assert_eq!(theme.info, Color::Rgb(0x20, 0x80, 0x40));
+    }
+
+    #[test]
+    fn a_theme_without_git_colors_uses_semantic_terminal_colors() {
+        let definition = ThemeDefinition {
+            change_added: None,
+            change_modified: None,
+            change_removed: None,
+            ..ThemeDefinition::default()
+        };
+        let theme = Theme::try_from(&definition).unwrap();
+        assert_eq!(theme.change_added, Color::Green);
+        assert_eq!(theme.change_modified, Color::Magenta);
+        assert_eq!(theme.change_removed, Color::Red);
     }
 }
