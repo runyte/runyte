@@ -310,3 +310,43 @@ fn what_cannot_be_compared_says_so() {
     );
     assert_eq!(app.diffs.len(), 1);
 }
+
+/// `:diff-this` splits to make room for the buffer it was marked against,
+/// and then retargets both panes itself. The pane it gets has to be the copy
+/// `split` makes, so the terminal question the window-split commands answer
+/// must not be answered inside `split`.
+#[cfg(unix)]
+#[test]
+fn comparing_from_a_terminal_pane_still_opens_the_view() {
+    let directory = temporary("diff-from-terminal");
+    fs::create_dir_all(&directory).unwrap();
+    let one = directory.join("one.txt");
+    let two = directory.join("two.txt");
+    fs::write(&one, "a\nb\n").unwrap();
+    fs::write(&two, "a\nc\n").unwrap();
+
+    let mut app = App::new(Config::default(), Some(one)).unwrap();
+    prepare(&mut app);
+    app.execute_command("diff-this").unwrap();
+    app.open_file(two).unwrap();
+    let compared_buffer = app.active().buffer;
+    // The pane keeps that buffer behind the terminal, which is the buffer
+    // `:diff-this` names.
+    app.open_terminal_at(Some("/bin/cat".to_owned()), directory.clone());
+    key(&mut app, KeyCode::Char('\\'), Modifiers::CONTROL);
+
+    app.execute_command("diff-this").unwrap();
+    prepare(&mut app);
+
+    assert_eq!(app.diffs.len(), 1, "{}", app.status);
+    assert_eq!(app.panes.len(), 2);
+    let (left, right) = sides(&app);
+    assert_eq!(app.panes[&right].buffer, compared_buffer);
+    assert!(app.panes[&left].buffer != compared_buffer);
+    // Retargeting a pane is asking it to stop showing a terminal, so neither
+    // side is still on one.
+    assert_eq!(app.terminal_of_pane(left), None);
+    assert_eq!(app.terminal_of_pane(right), None);
+
+    fs::remove_dir_all(directory).unwrap();
+}

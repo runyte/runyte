@@ -2505,14 +2505,15 @@ fn splitting_a_terminal_opens_a_working_directory_explorer() {
         let source = app.active_pane;
         // Leaving the child's input puts the terminal in review, which is
         // the state a `Space w v` split is made from.
+        // A live terminal takes two presses to reach review: the first
+        // leaves the child's input for live Normal, the second captures.
         key(&mut app, KeyCode::Char('\\'), Modifiers::CONTROL);
-        if !app.terminals.get(terminal).unwrap().reviewing() {
-            key(&mut app, KeyCode::Char('\\'), Modifiers::CONTROL);
-        }
         assert_eq!(app.mode, Mode::Normal);
+        assert!(!app.terminals.get(terminal).unwrap().reviewing());
+        key(&mut app, KeyCode::Char('\\'), Modifiers::CONTROL);
         assert!(app.terminals.get(terminal).unwrap().reviewing());
 
-        app.split(axis, None).unwrap();
+        app.split_window(axis).unwrap();
 
         assert_eq!(app.panes.len(), 2);
         assert_ne!(app.active_pane, source);

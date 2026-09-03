@@ -9,35 +9,49 @@ commit: 66a7acf
 ## Resolution
 
 Commit `66a7acf` (`Open an explorer when a split comes from a terminal`)
-changed `App::split` in `src/app/file_workflows.rs`.
+changed `src/app/file_workflows.rs`.
 
-`split` builds the new pane by cloning the source pane and then clearing the
-few fields that must not be shared: the syntax history, the directory buffer,
-`terminal`, and `covered_terminal`. Clearing `terminal` is what keeps one
-pseudoterminal in one pane, but it left the clone's `buffer` untouched, and a
-pane showing a terminal still points at whatever buffer it was showing before
+`App::split` builds the new pane by cloning the source pane and then clearing
+the few fields that must not be shared: the syntax history, the directory
+buffer, `terminal`, and `covered_terminal`. Clearing `terminal` is what keeps
+one pseudoterminal in one pane, but it left the clone's `buffer` untouched, and
+a pane showing a terminal still points at whatever buffer it was showing before
 the terminal opened. That buffer is the pane's history rather than a document
 anyone asked for a second view of, so the new pane came up on it.
 
-The fix reads `self.terminal_of_pane(old).is_some()` before the clone and, when
-no path was given, calls `open_explorer(None)` after `activate_pane(new)`. The
-question is asked of the source pane's live content, not of `covered_terminal`,
-so a pane whose terminal is currently covered by a host-opened wait document
-still splits that document as it did before. `open_explorer(None)` is the same
-entry point `Space E` uses, so the new pane is rooted at the working directory
-controlled by `:cd` and owns an explorer of its own through the existing
-`pane.directory_buffer = None` rule. The call sits before the `self.status(...)`
-line so the split still reports `vertical split` or `horizontal split`; a split
-given an explicit path keeps opening that path instead.
+The decision is made in `App::split_window`, the entry point the split commands
+reach, not in `split` itself. It reads `self.active_terminal().is_some()`
+before splitting and, when the source pane was showing a terminal, calls
+`open_explorer(None)` in the new pane afterwards. `split` stays the pane
+primitive that clones and nothing more, because `diff_sides`, the tutorial's
+`create_tutorial_view`, and `open_git_file_comparison_result` all split in
+order to retarget both resulting panes themselves and need the plain copy.
+Putting the explorer inside `split` broke `:diff-this` from a terminal pane:
+`diff_sides` records `DiffSide { pane: opened, buffer: active }` on the
+assumption that the new pane still shows the source pane's buffer, and
+`prepare_diffs` drops any session whose recorded buffer no longer matches its
+pane, so the comparison was reported on the status line and then silently
+discarded on the next frame.
 
-Every command route funnels into this one function. Normal-mode `Space w v/s`
-and `Ctrl-w v/s` and Terminal Insert `Ctrl-w v/s` all reach
-`split_from_terminal_insert` from the single `EditorCommand::SplitVertical` /
-`SplitHorizontal` arm in `App::execute_editor_command`, so no route needed a
-separate change. `open_explorer` opens through `open_file`, which leaves the
-new pane in Normal mode; `finish_insert_window_command` then finds no terminal
-in the active pane and its `enter_normal_mode` call is a no-op, so the Terminal
-Insert route neither captures a review snapshot nor disturbs the live child.
+The question is asked of the source pane's live terminal, not of
+`covered_terminal`, so a pane whose terminal is currently covered by a
+host-opened wait document still splits that document as it did before.
+`open_explorer(None)` is the same entry point `Space E` uses, so the new pane
+is rooted at the working directory controlled by `:cd` and owns an explorer of
+its own through the existing `pane.directory_buffer = None` rule. `open_file`
+reports `opened <path>`, so `split_window` restates the split's own status
+afterwards; the shared wording moved into the free function `split_status`. A
+split given an explicit path still opens that path, through `split` directly.
+
+Every split command route funnels into `split_window`. Normal-mode
+`Space w v/s` and `Ctrl-w v/s` and Terminal Insert `Ctrl-w v/s` all reach it
+from the single `EditorCommand::SplitVertical` / `SplitHorizontal` arm in
+`App::execute_editor_command`, and `:vsplit`/`:hsplit` without a path fall back
+to that same arm. `open_explorer` opens through `open_file`, which does not
+change the mode; the one `enter_normal_mode` comes from
+`finish_insert_window_command` after `split_window` returns, by which point the
+active pane is the new explorer and holds no terminal, so the Terminal Insert
+route neither captures a review snapshot nor disturbs the live child.
 
 Tests:
 
@@ -50,6 +64,9 @@ Tests:
   `tests/terminal.rs` covers both axes from Terminal Insert over a real
   pseudoterminal, and now also asserts the retained terminal in the source pane
   and the working-directory explorer in the new one.
+- `comparing_from_a_terminal_pane_still_opens_the_view` in
+  `src/app/tests/comparisons.rs` covers `:diff-this` from a terminal pane,
+  which is the caller that needs `split` to hand back the plain pane copy.
 - `a_split_does_not_inherit_the_claim_on_a_covered_terminal` in
   `src/app/tests/navigation_and_files.rs` retains coverage that a pane whose
   terminal is covered splits its document.
@@ -61,7 +78,9 @@ Known limitation: `open_explorer` canonicalizes the working directory and fails
 if it is gone. A split made from a terminal whose editor working directory has
 been deleted therefore reports that failure and leaves the new pane on the
 retained buffer, which is the pre-existing behavior of `:vsplit <path>` when the
-path cannot be opened.
+path cannot be opened. Because the call is in `split_window` rather than in
+`split`, that failure cannot reach the tutorial or the Git comparison, which
+split without a path for reasons of their own.
 
 ## Report
 
