@@ -164,18 +164,7 @@ fn finder_and_workspace_search_are_global_in_every_buffer_scope() {
 /// row, but only the registry decides what either sequence runs.
 #[test]
 fn the_finders_short_spelling_matches_its_namespace_spelling_in_every_scope() {
-    for scope in [
-        BindingScope::Global,
-        BindingScope::Directory,
-        BindingScope::Settings,
-        BindingScope::GitStatus,
-        BindingScope::GitBranches,
-        BindingScope::Help,
-        BindingScope::CommitMessage,
-        BindingScope::Diff,
-        BindingScope::Terminal,
-        BindingScope::WorkspaceSearch,
-    ] {
+    for &scope in BindingScope::ALL {
         for mode in [Mode::Normal, Mode::Select] {
             let short = default_keymap().lookup_in(mode, scope, &sequence(" f"));
             let namespaced = default_keymap().lookup_in(mode, scope, &sequence(" /f"));

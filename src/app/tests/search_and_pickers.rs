@@ -174,7 +174,7 @@ fn search_flavours_fold_case_and_take_literals_literally() {
 
     app.active_mut().selection = Selection::point(0);
     search_for(&mut app, '/', "foo");
-    assert_eq!(app.active().selection.len(), 1, "`S` respects case");
+    assert_eq!(app.active().selection.len(), 1, "`/` respects case");
 
     let mut app = App::new(Config::default(), None).unwrap();
     seed(&mut app, "a(b) and axb");
@@ -186,7 +186,7 @@ fn search_flavours_fold_case_and_take_literals_literally() {
     );
     assert_eq!(app.active().selection.len(), 1);
 
-    // The same text through `S` is a regular expression, and an invalid one.
+    // The same text through `/` is a regular expression, and an invalid one.
     app.active_mut().selection = Selection::point(0);
     search_for(&mut app, '/', "a(b");
     assert!(app.status_error);

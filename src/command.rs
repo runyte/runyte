@@ -656,7 +656,7 @@ editor_commands! {
     ),
     OpenFuzzyGrep => (
         "open-fuzzy-grep",
-        "Find file, buffer, and terminal contents"
+        "Open the finder in content mode over files, buffers, and terminals"
     ),
     OpenDirectoryFuzzyGrep => (
         "open-directory-fuzzy-grep",

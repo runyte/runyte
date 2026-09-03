@@ -171,8 +171,8 @@ and the order of the push. Do not infer any of those from the commit history.
 - `src/finder.rs`: the in-memory half of the project finder. Open buffers and
   terminals are already editor state, so this module ranks them and merges
   their scores into the file scanner's list rather than walking the
-  filesystem for them. Bare `/` opens the result; buffer search lives on `s`
-  and `S`.
+  filesystem for them. `Space f` opens the result; buffer search lives on
+  `s` and `/`.
 - `src/command.rs`: editor command identities and metadata.
 - `src/content_alignment.rs`: where a generated read-only page's content sits
   in the pane showing it, as an indent and a row offset recomputed from live

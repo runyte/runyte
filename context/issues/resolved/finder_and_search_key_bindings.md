@@ -37,32 +37,43 @@ word — "Open the finder over the project's files, buffers, and terminals",
 "… over the project, including files Git ignores", and "… in a chosen path,
 including files Git ignores" — and the overlay title built in
 `src/app/presentation.rs` and drawn in `src/ui.rs` reads `Finder · …` rather
-than `Find · …`. The `editor.show_hidden_files` description in
-`src/settings.rs` says finder rather than file picker. Colon spellings
-(`:file-picker`, `:file-picker-all`, `:file-picker-path`) are command
-identities and were left alone.
+than `Find · …`. `open-fuzzy-grep` is the fourth entry point to the same
+surface and takes the same word, so the palette cannot name it a finder in
+three places and something else in the fourth. The
+`editor.show_hidden_files` description in `src/settings.rs` says finder rather
+than file picker. Colon spellings (`:file-picker`, `:file-picker-all`,
+`:file-picker-path`) are command identities and were left alone.
 
-`context/reference/helix-keymap-v1.md` was updated in the same commit: the
-`s`, `S`, `?`, `Space /`, and `Space g` rows, the Search section's two
-explanatory paragraphs, the single-letter binding audit, and the terminal
-review search row. The paragraph justifying `Space g /` was rewritten rather
-than left standing, since this change inverts its reasoning.
-`context/reference/ui-vocabulary.md`, `README.md`, and the Search, Key
-bindings, Terminals, Git, and Files sections of `docs/user-guide.md` moved with
-the keys. `src/manual.rs` (the `:help` search, regex, files, and workspace
-topics, plus its key-token list) and the deliberate `Space g /` mention in the
-open `search_overlay_query_line.md` were updated too.
+`context/reference/helix-keymap-v1.md` moved with the keys in the same commit.
+Two passages needed argument rather than substitution. The paragraph justifying
+`Space g /` reasoned that `/` means search in any namespace, which this change
+inverts, so it was rewritten around `f` meaning the finder in any namespace
+instead of left standing. The single-letter binding audit listed `S` among the
+deviations that take a standard letter and change its meaning; it now records
+`S` as unbound and dates the audit to this change, because an unbound letter
+and a redefined one are different claims about the surface. `README.md`,
+`docs/user-guide.md`, `context/reference/ui-vocabulary.md`, `src/manual.rs`,
+and the `Space g /` mention in the open `search_overlay_query_line.md` follow
+the registry.
 
 Help prose in `src/help.rs` already described `s` and `/` as the two search
 keys in both the text-buffer and terminal overviews. That prose was wrong while
 `/` was the finder and is correct now, so it was left as written.
 
+A follow-up commit finished two surfaces the first pass missed, both of which
+still told a reader to reach for the retired `/`: the `:help` getting-started
+topic in `src/manual.rs`, which is the first prose the general manual shows,
+and the `src/finder.rs` entry in `AGENTS.md`, which is what the next agent
+reads before touching this code. Neither is reachable from the registry, which
+is why the keymap's own consistency tests could not catch them.
+
 Tests, all in `tests/keymap.rs` unless noted:
 
 - `the_finders_short_spelling_matches_its_namespace_spelling_in_every_scope`
   is new. It pins `Space f` and `Space / f` to one command identity in both
-  modal modes across every buffer scope, with the Fast/Primary roles and the
-  advertised alias.
+  modal modes, with the Fast/Primary roles and the advertised alias. It
+  iterates `BindingScope::ALL` rather than a hand-listed subset, so a scope
+  added later cannot shadow the finder unnoticed.
 - `the_search_sigil_means_the_same_flavour_in_the_buffer_and_the_workspace` is
   new. It pins `s`/`/` and `Space / s`/`Space / /` to the four search
   identities, so the sigil cannot come to mean two things again.
@@ -80,9 +91,9 @@ Tests, all in `tests/keymap.rs` unless noted:
   `repeated_arrow_scroll_saturates_at_the_rendered_end` in `tests/key_hints.rs`
   pin the rendered `Space / f, Space f` alias row and the widened `Space`
   namespace.
-- `binding_tables_match_the_user_guide` in `src/keymap.rs` now requires the
-  guide to document `s` and `/` together and forbids the retired `/` finder
-  row.
+- `user_guide_covers_every_direct_editing_binding` in `src/keymap.rs` now
+  requires the guide to document `s` and `/` together and forbids the retired
+  `/` finder row.
 
 ## Report
 

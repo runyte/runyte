@@ -585,7 +585,7 @@ impl App {
     /// the timer does not record the skipped tick, so the refresh runs as
     /// soon as the interaction ends, and `:git-refresh` stays available.
     pub(super) fn interaction_defers_git_refresh(&self) -> bool {
-        // Every prompt, including `/`, `s`, and `S`, opens in command mode.
+        // Every prompt, including the `s` and `/` searches, opens in command mode.
         if self.mode == Mode::Command || self.has_input_overlay() {
             return true;
         }

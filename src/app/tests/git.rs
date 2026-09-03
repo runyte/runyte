@@ -626,8 +626,8 @@ fn periodic_refresh_defers_to_an_open_prompt_and_to_search_matches() {
     app.active_mut().replace_selection(Selection::point(caret));
     assert!(!app.interaction_defers_git_refresh());
 
-    // An unfinished command line, which is also how `/`, `s`, and `S`
-    // take their query, must survive the timer.
+    // An unfinished command line, which is also how the `s` and `/`
+    // searches take their query, must survive the timer.
     app.open_prompt(PromptKind::Search(SearchMode::Insensitive));
     assert!(app.interaction_defers_git_refresh());
     app.close_prompt();
