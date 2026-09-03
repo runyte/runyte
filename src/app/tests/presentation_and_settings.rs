@@ -2238,3 +2238,93 @@ fn missing_config_path_refuses_the_save_and_rolls_back_its_live_preview() {
     assert!(app.config.editor.line_numbers);
     assert!(app.list.is_some());
 }
+
+/// Every prompt says what it is asking for before the reader types into it.
+/// They share one editing model and one line at the foot of the screen, so a
+/// missing or duplicated prefix is the only thing that would leave someone
+/// unable to tell a workspace search from a rename.
+#[test]
+fn every_prompt_names_what_it_collects_and_no_two_name_the_same_thing() {
+    use crate::app::{PromptKind, SearchMode};
+
+    let kinds = [
+        PromptKind::Command,
+        PromptKind::Search(SearchMode::Insensitive),
+        PromptKind::Search(SearchMode::Sensitive),
+        PromptKind::Search(SearchMode::Regex),
+        PromptKind::TerminalSearch(SearchMode::Insensitive),
+        PromptKind::TerminalSearch(SearchMode::Sensitive),
+        PromptKind::TerminalSearch(SearchMode::Regex),
+        PromptKind::SearchForward,
+        PromptKind::SearchBackward,
+        PromptKind::GlobalSearch(SearchMode::Insensitive),
+        PromptKind::GlobalSearch(SearchMode::Sensitive),
+        PromptKind::GlobalSearch(SearchMode::Regex),
+        PromptKind::FilterSelections { keep: true },
+        PromptKind::FilterSelections { keep: false },
+        PromptKind::Rename,
+        PromptKind::SessionRename,
+        PromptKind::SessionNumber,
+        PromptKind::TerminalRename,
+        PromptKind::ExternalProgram,
+        PromptKind::NewBranch,
+        PromptKind::NewWorktreeBranch,
+        PromptKind::WorktreeDestination,
+        PromptKind::JoinDelimiter,
+        PromptKind::FinderPath,
+    ];
+
+    let mut app = App::new(Config::default(), None).unwrap();
+    let mut seen: Vec<(String, PromptKind)> = Vec::new();
+    for kind in kinds {
+        app.open_prompt(kind);
+        let prepared = app.prepare_view(prompt_test_geometry());
+        let prefix = app.snapshot(&prepared).status.interaction_line;
+        assert!(
+            !prefix.is_empty(),
+            "{kind:?} asks for something without saying what"
+        );
+        if let Some((_, other)) = seen.iter().find(|(seen, _)| *seen == prefix) {
+            panic!("{kind:?} and {other:?} both read {prefix:?}");
+        }
+        seen.push((prefix, kind));
+    }
+
+    // The prompt line is the prefix and what has been typed so far, and the
+    // caret sits past both.
+    app.open_prompt_with_value(PromptKind::Rename, "renamed".to_owned());
+    let prepared = app.prepare_view(prompt_test_geometry());
+    let snapshot = app.snapshot(&prepared);
+    assert_eq!(snapshot.status.interaction_line, "rename to: renamed");
+    assert_eq!(
+        snapshot.status.prompt_cursor_column,
+        Some("rename to: renamed".chars().count())
+    );
+}
+
+fn prompt_test_geometry() -> FrameGeometry {
+    FrameGeometry {
+        screen: Rect {
+            width: 80,
+            height: 24,
+            ..Rect::default()
+        },
+        editor: Rect {
+            width: 80,
+            height: 22,
+            ..Rect::default()
+        },
+        status: Rect {
+            y: 22,
+            width: 80,
+            height: 1,
+            ..Rect::default()
+        },
+        message: Rect {
+            y: 23,
+            width: 80,
+            height: 1,
+            ..Rect::default()
+        },
+    }
+}

@@ -7579,3 +7579,161 @@ fn a_partial_stage_releases_its_guard_when_it_lands_and_invalidates_a_stale_one(
 
     fs::remove_dir_all(root).unwrap();
 }
+
+/// A current-line blame has no view of its own: it answers in the status line,
+/// naming the commit, who wrote it, and what they said. A line Git attributes
+/// to nothing at all is a refusal rather than a blank sentence, because the
+/// reader asked a question that has no answer yet.
+#[test]
+fn a_current_line_blame_reports_its_commit_and_refuses_an_unattributed_line() {
+    use crate::git::{BlameLine, GitOperation, GitServiceHandle, GitServiceState};
+
+    let root = temporary("git-blame-current-line-result");
+    fs::create_dir_all(&root).unwrap();
+    let root = root.canonicalize().unwrap();
+    let path = root.join("source.txt");
+    fs::write(&path, "one\ntwo\nthree\n").unwrap();
+    let repository = Repository::new(&root);
+    let mut app = App::new_in_isolated_project(
+        &root,
+        HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+            String::new(),
+        ))))),
+    )
+    .unwrap();
+    app.open_file(path).unwrap();
+    app.git.attach(Some(repository.clone()));
+    let (service, operations) = GitServiceHandle::recording_for_test();
+    app.attach_git_service(service);
+    assert!(matches!(
+        operations.recv_timeout(Duration::from_secs(1)).unwrap(),
+        GitOperation::Discover { .. }
+    ));
+
+    set_cursor(&mut app, 1, 1);
+    app.request_git_blame(false);
+    let blame = operations.recv_timeout(Duration::from_secs(1)).unwrap();
+    let GitOperation::Blame { source, .. } = &blame else {
+        panic!("current-line blame submitted the wrong Git operation");
+    };
+    let source = source.clone();
+    let buffer = app.active().buffer;
+
+    let answered = |app: &mut App, lines: Vec<BlameLine>| {
+        app.apply_git_response(
+            blame.clone(),
+            GitResponse::Blame {
+                source: source.clone(),
+                lines,
+            },
+            (None, GitServiceState::Completed),
+            RequestedGitViews::default(),
+            None,
+            None,
+        );
+    };
+
+    answered(
+        &mut app,
+        vec![BlameLine {
+            oid: Some("abcdef0123456789abcdef0123456789abcdef01".to_owned()),
+            author: "A Writer".to_owned(),
+            author_time: Some(1),
+            author_date: Some("2026-09-03".to_owned()),
+            summary: "the line as it stands".to_owned(),
+            source_line: 2,
+            text: "two\n".to_owned(),
+        }],
+    );
+    assert!(!app.status_error, "{}", app.status);
+    assert_eq!(
+        app.status, "abcdef012345 · A Writer · the line as it stands",
+        "the reply names the commit, its author, and its subject"
+    );
+    assert_eq!(
+        app.active().buffer,
+        buffer,
+        "a current-line blame opens no view of its own"
+    );
+
+    answered(&mut app, Vec::new());
+    assert!(
+        app.status_error && app.status.contains("no attribution"),
+        "{}",
+        app.status
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// `:git-search-commits` loads one bounded page of history for the fuzzy
+/// commit picker. Outside a repository there is nothing to load and it says
+/// so; with the asynchronous service it is a request rather than a wait; and a
+/// page that hit its own ceiling says that in the title, because a query that
+/// finds nothing there may still have an answer further back.
+#[test]
+fn a_commit_search_refuses_outside_a_repository_and_reports_a_capped_page() {
+    use crate::git::{CommitSearchResult, GitOperation, GitServiceHandle};
+
+    let root = temporary("git-commit-search-request");
+    fs::create_dir_all(&root).unwrap();
+    let root = root.canonicalize().unwrap();
+    let repository = Repository::new(&root);
+    let mut app = App::new_in_isolated_project(
+        &root,
+        HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+            String::new(),
+        ))))),
+    )
+    .unwrap();
+
+    app.execute_command("git-search-commits").unwrap();
+    assert!(
+        app.status_error && app.status.contains("not in a Git repository"),
+        "{}",
+        app.status
+    );
+    assert!(app.list.is_none());
+
+    let (service, operations) = GitServiceHandle::recording_for_test();
+    app.attach_git_service(service);
+    app.git.attach(Some(repository.clone()));
+    app.execute_command("git-search-commits").unwrap();
+    let submitted = loop {
+        let operation = operations.recv_timeout(Duration::from_secs(1)).unwrap();
+        if let GitOperation::SearchCommits { repository } = operation {
+            break repository;
+        }
+    };
+    assert_eq!(submitted, repository);
+    assert!(
+        app.list.is_none(),
+        "the picker waits for the service rather than opening empty"
+    );
+
+    let oid = "c".repeat(40);
+    app.open_git_commit_search_result(CommitSearchResult {
+        commits: vec![crate::git::CommitSearchEntry {
+            summary: CommitSummary {
+                abbreviated: oid[..12].to_owned(),
+                oid,
+                parents: Vec::new(),
+                author: "Ada".to_owned(),
+                author_time: 1,
+                author_date: "2026-08-12".to_owned(),
+                subject: "The only loaded commit".to_owned(),
+                decorations: Vec::new(),
+            },
+            message: "The only loaded commit\n".to_owned(),
+        }],
+        limited: true,
+    });
+    let list = app.list.as_ref().expect("the commit picker opened");
+    assert!(
+        list.title.contains("limit reached"),
+        "a capped page says so in its title: {}",
+        list.title
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}

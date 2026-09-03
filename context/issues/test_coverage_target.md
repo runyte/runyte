@@ -4,8 +4,8 @@ Linux and macOS are Runyte's first-class platforms, and the test suite is the
 main evidence that both stay correct as the editor changes.
 
 `context/reference/test-coverage.md` records the current baselines. On
-`x86_64-unknown-linux-gnu`, `cargo-llvm-cov` 0.9.0 and Rust 1.97.1 cover 92,621
-of 101,629 lines, 8,625 of 9,378 functions, and 143,582 of 158,476 regions. The
+`x86_64-unknown-linux-gnu`, `cargo-llvm-cov` 0.9.0 and Rust 1.97.1 cover 92,757
+of 101,629 lines, 8,635 of 9,378 functions, and 143,837 of 158,476 regions. The
 latest `aarch64-apple-darwin` measurement covers 90,481 of 100,380 lines, 8,450
 of 9,253 functions, and 140,408 of 156,605 regions. CI publishes the per-file
 summary, retains an HTML report, and fails below an enforced 86% line floor.
@@ -167,10 +167,41 @@ The experimental Vim grammar was deliberately left alone. `VimGrammar` and its
 the reported number through inline test code rather than through production
 behavior.
 
+A third pass began from that result and reached 92,757 of 101,629 lines
+(91.27%), 8,635 of 9,378 functions (92.08%), and 143,837 of 158,476 regions
+(90.76%): 136 newly covered lines, 10 functions and 255 regions on an unchanged
+denominator, a further 0.13 percentage points.
+
+It covers the page and window motions, which are the one family measured in
+screen rows rather than in document lines and were unexercised in both the
+plain and the soft-wrapped projection; every prompt's own prefix, so that no
+two surfaces sharing the interaction line read alike; `:diff-disk`'s refusals
+for a scratch buffer, a buffer already being compared, a file that has gone,
+and a disk version that is no longer text; a current-line blame's status
+answer and its refusal of an unattributed line; a commit search's refusal
+outside a repository, its asynchronous request, and the title a page that hit
+its own ceiling carries; the finder preview pane drawn for a text file, a
+directory, a binary file and a file that vanished between the listing and the
+read, in both renderers; the buffer-action menu's title and rows; and terminal
+review's painting of its matches, its active match, and a selection, asserted
+on drawn cell colours because none of that reaches the plain text the other
+terminal tests read.
+
+Two findings from that pass are worth keeping. `ui::draw_buffer_actions` is
+unreachable: it runs only when a file picker and a buffer-action menu are open
+together, and the input layer never produces that pair, because the buffer
+picker is a filterable list whose action menu is drawn through the shared
+overlay snapshot instead. Its 32 lines are retained rather than removed. And
+a surface's coverage has to be traced to the function that actually draws it
+before a test is written for it: the standalone frontend draws the file picker
+through `ui::draw_picker` and only an attached client reaches
+`ui::draw_snapshot_overlay`, so a render test aimed at the wrong one of those
+passes while covering nothing.
+
 The largest remaining Linux gaps by uncovered lines are
-`app/git_workflows.rs` (734), `main.rs` (725), `app/input.rs` (671),
-`git/cli.rs` (412), `ui.rs` (351), `app/language_workflows.rs` (347),
-`workspace/transport.rs` (340), `workspace/catalog.rs` (316),
+`app/git_workflows.rs` (712), `main.rs` (711), `app/input.rs` (662),
+`git/cli.rs` (417), `app/language_workflows.rs` (347),
+`workspace/transport.rs` (341), `ui.rs` (325), `workspace/catalog.rs` (316),
 `syntax/mod.rs` (294), and `input_grammar.rs` (269).
 
 Two shapes recur across the two largest. The counts below were taken on the
@@ -185,7 +216,7 @@ and wait-recovery helpers around them. Those are process entry points and
 event loops that need a spawned binary or a live attachment; the file already
 has its own inline test module, so the gap is not that nothing tests it.
 
-The issue remains open. Linux still has 9,008 uncovered lines and the latest
+The issue remains open. Linux still has 8,872 uncovered lines and the latest
 macOS measurement has 9,899. The CI floor and README badge remain at 86%,
 leaving 4.14 percentage points of headroom below the lower measured platform.
 There is no post-change macOS result to justify a higher cross-platform floor,
