@@ -62,6 +62,16 @@ pub(crate) const MAX_IDLE_RETIREMENT_MINUTES: usize = 43_200;
 /// The theme Runyte starts in when nothing else has been chosen.
 pub const DEFAULT_THEME: &str = "default-dark";
 
+// Diff rows are deliberately shared by appearance rather than softened into
+// each palette's background. They occupy a whole row, but additions and
+// removals still need to read immediately at a glance: the light pair is the
+// crisp mint and pink used by Runyte's reference diff presentation, and the
+// dark pair carries the same saturation on grounds that preserve light text.
+const DIFF_ADDED_DARK: &str = "#174b2c";
+const DIFF_REMOVED_DARK: &str = "#54252b";
+const DIFF_ADDED_LIGHT: &str = "#dafbe1";
+const DIFF_REMOVED_LIGHT: &str = "#ffebe9";
+
 // Two-key jump labels use one neon-cyan hue. The second key recedes on dark
 // backgrounds and advances on light backgrounds without changing hue.
 const JUMP_LABEL_DARK_PRIMARY: &str = "#5fd7e7";
@@ -2000,6 +2010,28 @@ mod tests {
     }
 
     #[test]
+    fn every_built_in_theme_uses_crisp_diff_grounds_for_its_appearance() {
+        let config = Config::default();
+        for name in config.theme_names() {
+            let theme = config.resolve_theme(name).unwrap();
+            let (added, removed) = match theme.appearance().unwrap() {
+                ThemeAppearance::Dark => {
+                    (Color::Rgb(0x17, 0x4b, 0x2c), Color::Rgb(0x54, 0x25, 0x2b))
+                }
+                ThemeAppearance::Light => {
+                    (Color::Rgb(0xda, 0xfb, 0xe1), Color::Rgb(0xff, 0xeb, 0xe9))
+                }
+            };
+            assert_eq!(theme.diff_added, Some(added), "wrong {name} added ground");
+            assert_eq!(
+                theme.diff_removed,
+                Some(removed),
+                "wrong {name} removed ground"
+            );
+        }
+    }
+
+    #[test]
     fn zenbones_variants_follow_the_pinned_upstream_generated_palettes() {
         fn rgb(value: u32) -> Color {
             Color::Rgb(
@@ -2046,9 +2078,9 @@ mod tests {
         assert_eq!(tokyo.change_added, rgb(0x74dbcb));
         assert_eq!(tokyo.change_modified, rgb(0x7ba2f7));
         assert_eq!(tokyo.change_removed, rgb(0xf77890));
-        assert_eq!(tokyo.diff_added, Some(rgb(0x1d2f2c)));
+        assert_eq!(tokyo.diff_added, Some(rgb(0x174b2c)));
         assert_eq!(tokyo.diff_changed, Some(rgb(0x212c44)));
-        assert_eq!(tokyo.diff_removed, Some(rgb(0x412428)));
+        assert_eq!(tokyo.diff_removed, Some(rgb(0x54252b)));
         assert_eq!(
             tokyo.syntax_color(crate::syntax::Scope::named("keyword").unwrap()),
             Some(rgb(0xbb9bf7))
@@ -2081,8 +2113,8 @@ mod tests {
         assert_eq!(theme.change_added, Color::Rgb(0x1a, 0x7f, 0x37));
         assert_eq!(theme.change_modified, Color::Rgb(0x9a, 0x67, 0x00));
         assert_eq!(theme.change_removed, Color::Rgb(0xd1, 0x24, 0x2f));
-        assert_eq!(theme.diff_added, Some(Color::Rgb(0xb8, 0xd0, 0xbb)));
-        assert_eq!(theme.diff_removed, Some(Color::Rgb(0xe4, 0xb7, 0xbe)));
+        assert_eq!(theme.diff_added, Some(Color::Rgb(0xda, 0xfb, 0xe1)));
+        assert_eq!(theme.diff_removed, Some(Color::Rgb(0xff, 0xeb, 0xe9)));
         assert_eq!(theme.diff_changed, Some(Color::Rgb(0xd8, 0xca, 0xb3)));
 
         for (scope, color) in [
@@ -2302,7 +2334,7 @@ mod tests {
         assert_eq!(nordfox.foreground, Color::Rgb(0xcd, 0xce, 0xcf));
         assert_eq!(nordfox.selection, Color::Rgb(0x3e, 0x4a, 0x5b));
         assert_eq!(nordfox.change_added, Color::Rgb(0xa3, 0xbe, 0x8c));
-        assert_eq!(nordfox.diff_removed, Some(Color::Rgb(0x40, 0x38, 0x43)));
+        assert_eq!(nordfox.diff_removed, Some(Color::Rgb(0x54, 0x25, 0x2b)));
         assert_eq!(
             nordfox.syntax_color(crate::syntax::Scope::named("function").unwrap()),
             Some(Color::Rgb(0x8c, 0xaf, 0xd2))

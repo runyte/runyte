@@ -5,6 +5,7 @@
 use std::collections::HashMap;
 
 use super::{
+    DIFF_ADDED_DARK, DIFF_ADDED_LIGHT, DIFF_REMOVED_DARK, DIFF_REMOVED_LIGHT,
     JUMP_LABEL_DARK_PRIMARY, JUMP_LABEL_DARK_SECONDARY, JUMP_LABEL_LIGHT_PRIMARY,
     JUMP_LABEL_LIGHT_SECONDARY, ThemeDefinition, syntax_theme,
 };
@@ -25,6 +26,8 @@ pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
         selection: "#365864".into(),
         selection_primary: Some("#5a3b2a".into()),
         jump_label_immediate: Some("#e65c57".into()),
+        diff_added: Some(DIFF_ADDED_DARK.into()),
+        diff_removed: Some(DIFF_REMOVED_DARK.into()),
         ..ThemeDefinition::default()
     };
     base16
@@ -111,8 +114,8 @@ pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
             change_added: Some("#8ddb8c".into()),
             change_modified: Some("#f0a868".into()),
             change_removed: Some("#d06a73".into()),
-            diff_added: Some("#18271d".into()),
-            diff_removed: Some("#2d1b20".into()),
+            diff_added: Some(DIFF_ADDED_DARK.into()),
+            diff_removed: Some(DIFF_REMOVED_DARK.into()),
             diff_changed: Some("#2d251b".into()),
             syntax: default_dark_syntax,
         },
@@ -178,8 +181,8 @@ pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
             change_added: Some("#23733a".into()),
             change_modified: Some("#9a5518".into()),
             change_removed: Some("#a33d49".into()),
-            diff_added: Some("#d9e8dc".into()),
-            diff_removed: Some("#efd8da".into()),
+            diff_added: Some(DIFF_ADDED_LIGHT.into()),
+            diff_removed: Some(DIFF_REMOVED_LIGHT.into()),
             diff_changed: Some("#ecdfce".into()),
             syntax: default_light_syntax,
         },
@@ -220,8 +223,8 @@ pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
             change_added: Some("#8ddb8c".into()),
             change_modified: Some("#f0a868".into()),
             change_removed: Some("#f87171".into()),
-            diff_added: Some("#16281c".into()),
-            diff_removed: Some("#2b1a1e".into()),
+            diff_added: Some(DIFF_ADDED_DARK.into()),
+            diff_removed: Some(DIFF_REMOVED_DARK.into()),
             diff_changed: Some("#2a2318".into()),
             syntax: syntax_theme(&[
                 ("attribute", "#d2a8ff"),
@@ -276,8 +279,8 @@ pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
             change_added: Some("#0a6b26".into()),
             change_modified: Some("#953800".into()),
             change_removed: Some("#b3261e".into()),
-            diff_added: Some("#e3f5e6".into()),
-            diff_removed: Some("#fce4e4".into()),
+            diff_added: Some(DIFF_ADDED_LIGHT.into()),
+            diff_removed: Some(DIFF_REMOVED_LIGHT.into()),
             diff_changed: Some("#fdf0dc".into()),
             syntax: syntax_theme(&[
                 ("attribute", "#8250df"),
@@ -332,8 +335,8 @@ pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
             change_added: Some("#005f00".into()),
             change_modified: Some("#d75f00".into()),
             change_removed: Some("#af0000".into()),
-            diff_added: Some("#dcecdc".into()),
-            diff_removed: Some("#f2dcdc".into()),
+            diff_added: Some(DIFF_ADDED_LIGHT.into()),
+            diff_removed: Some(DIFF_REMOVED_LIGHT.into()),
             diff_changed: Some("#f0e6d2".into()),
             syntax: syntax_theme(&[
                 ("attribute", "#8700af"),
@@ -388,8 +391,8 @@ pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
             change_added: Some("#b8bb26".into()),
             change_modified: Some("#fabd2f".into()),
             change_removed: Some("#fb4934".into()),
-            diff_added: Some("#26301f".into()),
-            diff_removed: Some("#3a2424".into()),
+            diff_added: Some(DIFF_ADDED_DARK.into()),
+            diff_removed: Some(DIFF_REMOVED_DARK.into()),
             diff_changed: Some("#38301c".into()),
             syntax: syntax_theme(&[
                 ("attribute", "#fabd2f"),

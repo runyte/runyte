@@ -2,7 +2,10 @@
 
 //! Nightfox-derived palettes and Runyte's explicit variants of them.
 
-use super::{JUMP_LABEL_DARK_PRIMARY, JUMP_LABEL_DARK_SECONDARY, ThemeDefinition, syntax_theme};
+use super::{
+    DIFF_ADDED_DARK, DIFF_REMOVED_DARK, JUMP_LABEL_DARK_PRIMARY, JUMP_LABEL_DARK_SECONDARY,
+    ThemeDefinition, syntax_theme,
+};
 
 /// Runyte roles mapped onto Nightfox's canonical Nordfox palette and spec.
 ///
@@ -39,8 +42,8 @@ fn nordfox_theme() -> ThemeDefinition {
         change_added: Some("#a3be8c".into()),
         change_modified: Some("#ebcb8b".into()),
         change_removed: Some("#bf616a".into()),
-        diff_added: Some("#3c4548".into()),
-        diff_removed: Some("#403843".into()),
+        diff_added: Some(DIFF_ADDED_DARK.into()),
+        diff_removed: Some(DIFF_REMOVED_DARK.into()),
         diff_changed: Some("#364150".into()),
         syntax: syntax_theme(&[
             ("attribute", "#d092ce"),
@@ -131,8 +134,8 @@ fn terafox_theme() -> ThemeDefinition {
         change_added: Some("#7aa4a1".into()),
         change_modified: Some("#fda47f".into()),
         change_removed: Some("#e85c51".into()),
-        diff_added: Some("#293e40".into()),
-        diff_removed: Some("#4a3332".into()),
+        diff_added: Some(DIFF_ADDED_DARK.into()),
+        diff_removed: Some(DIFF_REMOVED_DARK.into()),
         diff_changed: Some("#31474b".into()),
         syntax: syntax_theme(&[
             ("attribute", "#d38d97"),

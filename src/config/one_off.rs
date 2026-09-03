@@ -2,7 +2,10 @@
 
 //! Standalone imported palettes that do not share a family adapter.
 
-use super::{JUMP_LABEL_LIGHT_PRIMARY, JUMP_LABEL_LIGHT_SECONDARY, ThemeDefinition, syntax_theme};
+use super::{
+    DIFF_ADDED_LIGHT, DIFF_REMOVED_LIGHT, JUMP_LABEL_LIGHT_PRIMARY, JUMP_LABEL_LIGHT_SECONDARY,
+    ThemeDefinition, syntax_theme,
+};
 
 /// Runyte roles mapped onto projekt0n's GitHub Light palettes and syntax spec.
 ///
@@ -40,8 +43,8 @@ fn github_light_theme() -> ThemeDefinition {
         change_added: Some("#1a7f37".into()),
         change_modified: Some("#9a6700".into()),
         change_removed: Some("#d1242f".into()),
-        diff_added: Some("#b8d0bb".into()),
-        diff_removed: Some("#e4b7be".into()),
+        diff_added: Some(DIFF_ADDED_LIGHT.into()),
+        diff_removed: Some(DIFF_REMOVED_LIGHT.into()),
         diff_changed: Some("#d8cab3".into()),
         syntax: syntax_theme(&[
             ("attribute", "#0550ae"),
@@ -137,8 +140,8 @@ fn atom_one_light_theme() -> ThemeDefinition {
         change_added: Some("#2db448".into()),
         change_modified: Some("#f2a60d".into()),
         change_removed: Some("#ff1414".into()),
-        diff_added: Some("#e5f5e8".into()),
-        diff_removed: Some("#fde6e6".into()),
+        diff_added: Some(DIFF_ADDED_LIGHT.into()),
+        diff_removed: Some(DIFF_REMOVED_LIGHT.into()),
         diff_changed: Some("#f8eed8".into()),
         syntax,
     }

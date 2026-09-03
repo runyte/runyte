@@ -3093,8 +3093,8 @@ themes:
     change_added: "#a3be8c"
     change_modified: "#ebcb8b"
     change_removed: "#bf616a"
-    diff_added: "#1d2a20"
-    diff_removed: "#2c1c1f"
+    diff_added: "#174b2c"
+    diff_removed: "#54252b"
     diff_changed: "#2b2519"
     syntax:
       comment: "#65737e"
@@ -3151,11 +3151,13 @@ the terminal's own green, yellow, and red, which are legible against whatever
 palette the terminal already has.
 
 `diff_added`, `diff_removed`, and `diff_changed` fill whole lines in a
-side-by-side comparison, so unlike the three above they have to be tints of the
-background rather than the strong colours a one-cell mark can use. A theme that
-omits them leaves those lines unfilled and lets the gutter marks carry the
-comparison on their own, so the feature still works on a theme written before
-it existed.
+side-by-side comparison. Unlike the three roles above they are background
+colours, deep enough on dark themes and light enough on light themes to keep
+the text readable. The built-in themes deliberately give added and removed
+rows crisp green and red grounds instead of blending them quietly into each
+palette; custom themes can still choose their own. A theme that omits them
+leaves those lines unfilled and lets the gutter marks carry the comparison on
+their own, so the feature still works on a theme written before it existed.
 
 `error`, `warning`, and `info` colour notification headings and unread status
 counts. Custom themes that omit `warning` use `change_modified` (then terminal
