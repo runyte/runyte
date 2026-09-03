@@ -1577,6 +1577,146 @@ fn session_picker_keeps_filter_and_routes_enter_and_tab_by_workspace_identity() 
 
 #[cfg(unix)]
 #[test]
+fn session_picker_keeps_preview_visibility_through_every_row_rebuild() {
+    for show_preview in [true, false] {
+        let root = temporary(if show_preview {
+            "session-preview-visible"
+        } else {
+            "session-preview-hidden"
+        });
+        let current = root.join("current");
+        let live = root.join("live");
+        let stopped = root.join("stopped");
+        for path in [&current, &live, &stopped] {
+            fs::create_dir_all(path).unwrap();
+        }
+        let current = current.canonicalize().unwrap();
+        let live = live.canonicalize().unwrap();
+        let stopped = stopped.canonicalize().unwrap();
+        let mut app = App::new_in_isolated_project(
+            &current,
+            HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+                String::new(),
+            ))))),
+        )
+        .unwrap();
+        app.enable_persistent_session();
+        app.workspace_generation = 4;
+        open_session_manager_for_refresh(&mut app);
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let rows = vec![
+            WorkspaceRow {
+                id: "aaaaaaaaaaaaaaaa".to_owned(),
+                name: Some("current".to_owned()),
+                number: Some(1),
+                last_active_unix_seconds: None,
+                project_root: current.clone(),
+                running: true,
+                incompatible_protocol: None,
+                unsaved_buffers: Some(0),
+                pending_wait_requests: Some(0),
+                live_terminals: Some(0),
+                terminal_sessions: Some(0),
+                interactive_attached: Some(true),
+                open_buffers: Some(1),
+                git: None,
+                missing_directory: false,
+            },
+            WorkspaceRow {
+                id: "bbbbbbbbbbbbbbbb".to_owned(),
+                name: Some("live".to_owned()),
+                number: Some(2),
+                last_active_unix_seconds: Some(now - 60),
+                project_root: live.clone(),
+                running: true,
+                incompatible_protocol: None,
+                unsaved_buffers: Some(0),
+                pending_wait_requests: Some(0),
+                live_terminals: Some(0),
+                terminal_sessions: Some(0),
+                interactive_attached: Some(false),
+                open_buffers: Some(1),
+                git: None,
+                missing_directory: false,
+            },
+            WorkspaceRow {
+                id: "cccccccccccccccc".to_owned(),
+                name: Some("stopped".to_owned()),
+                number: None,
+                last_active_unix_seconds: Some(now - 59),
+                project_root: stopped,
+                running: false,
+                incompatible_protocol: None,
+                unsaved_buffers: Some(0),
+                pending_wait_requests: None,
+                live_terminals: None,
+                terminal_sessions: None,
+                interactive_attached: Some(false),
+                open_buffers: None,
+                git: None,
+                missing_directory: false,
+            },
+        ];
+        app.apply_workspace_event(WorkspaceEvent::Refreshed {
+            generation: 4,
+            result: Ok(rows.clone()),
+        });
+        app.workspace_previews.clear();
+        if !show_preview {
+            key(&mut app, KeyCode::Char('t'), Modifiers::CONTROL);
+        }
+        assert_eq!(app.list.as_ref().unwrap().show_preview, show_preview);
+
+        // Moving to an uncached live row requests its preview. The isolated
+        // app has no service, so that request fails synchronously and rebuilds
+        // the manager through the same path as a queued request.
+        key(&mut app, KeyCode::Down, Modifiers::NONE);
+        assert_eq!(app.list.as_ref().unwrap().selected, 1);
+        assert_eq!(app.list.as_ref().unwrap().show_preview, show_preview);
+
+        // Model the queued form of the request and its later response. Both
+        // the loading and completed preview rebuilds retain the one preference
+        // owned by this open manager.
+        app.workspace_previews.remove(&live);
+        app.workspace_preview_generation = 7;
+        app.workspace_preview_target = Some(live.clone());
+        app.rebuild_workspace_picker();
+        assert_eq!(app.list.as_ref().unwrap().show_preview, show_preview);
+        app.apply_workspace_event(WorkspaceEvent::Previewed {
+            generation: 7,
+            path: live,
+            result: Ok(SessionPreview {
+                layout_panes: 2,
+                panes: Vec::new(),
+                omitted_panes: 0,
+                other_resources: Vec::new(),
+                omitted_resources: 0,
+            }),
+        });
+        assert_eq!(app.list.as_ref().unwrap().show_preview, show_preview);
+
+        key(&mut app, KeyCode::Down, Modifiers::NONE);
+        assert_eq!(app.list.as_ref().unwrap().selected, 2);
+        assert_eq!(app.list.as_ref().unwrap().show_preview, show_preview);
+        key(&mut app, KeyCode::Up, Modifiers::NONE);
+        assert_eq!(app.list.as_ref().unwrap().selected, 1);
+
+        app.apply_workspace_event(WorkspaceEvent::Refreshed {
+            generation: 4,
+            result: Ok(rows),
+        });
+        assert_eq!(app.list.as_ref().unwrap().show_preview, show_preview);
+        assert!(app.refresh_workspace_activity_at(now + 61));
+        assert_eq!(app.list.as_ref().unwrap().show_preview, show_preview);
+        fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[cfg(unix)]
+#[test]
 fn session_picker_omits_counts_a_running_host_answers_with_zero() {
     let root = temporary("session-picker-zero-counts");
     let quiet = root.join("quiet");

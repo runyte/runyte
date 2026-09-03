@@ -277,12 +277,12 @@ impl App {
     fn rebuild_workspace_picker_at(&mut self, now: u64) {
         use unicode_width::UnicodeWidthStr as _;
 
-        let (filter, selected) = self
+        let (filter, selected, show_preview) = self
             .list
             .as_ref()
             .filter(|picker| picker.title.starts_with("Sessions"))
             .map_or_else(
-                || (String::new(), 0),
+                || (String::new(), 0, true),
                 |picker| {
                     let selected = if picker.title == "Sessions · loading…" {
                         self.workspace_rows
@@ -292,7 +292,7 @@ impl App {
                     } else {
                         picker.selected
                     };
-                    (picker.filter.clone(), selected)
+                    (picker.filter.clone(), selected, picker.show_preview)
                 },
             );
         self.list_actions = (0..self.workspace_rows.len())
@@ -400,6 +400,7 @@ impl App {
         picker.primary_action = Some("attach".to_owned());
         picker.filter = filter;
         picker.selected = selected.min(self.workspace_rows.len().saturating_sub(1));
+        picker.show_preview = show_preview;
         self.list = Some(picker);
     }
 
