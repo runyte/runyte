@@ -2711,6 +2711,8 @@ pub struct App {
     #[cfg(unix)]
     workspace_generation: u64,
     #[cfg(unix)]
+    next_workspace_status_poll: Instant,
+    #[cfg(unix)]
     workspace_preview_generation: u64,
     #[cfg(unix)]
     workspace_preview_target: Option<PathBuf>,
@@ -3112,6 +3114,8 @@ impl App {
             #[cfg(unix)]
             workspace_generation: 0,
             #[cfg(unix)]
+            next_workspace_status_poll: Instant::now(),
+            #[cfg(unix)]
             workspace_preview_generation: 0,
             #[cfg(unix)]
             workspace_preview_target: None,
@@ -3451,6 +3455,29 @@ fn compact_session_elapsed(last_active_unix_seconds: Option<u64>, now: u64) -> S
     let days = hours.div_ceil(24);
     let unit = if days == 1 { "day" } else { "days" };
     format!("{days}{unit} ago")
+}
+
+#[cfg(unix)]
+/// Whole-session terminal-output status shown after the last-active age.
+///
+/// The latest live-terminal baseline is sufficient because `QUIET` requires
+/// every live terminal to have crossed the interval. Missing host health, no
+/// live terminals, stopped rows, and incompatible hosts deliberately make no
+/// claim.
+fn terminal_output_status(row: &WorkspaceRow, now: u64) -> &'static str {
+    let Some(last_line) = row.terminal_line_activity_unix_seconds else {
+        return "";
+    };
+    if row.running
+        && row.incompatible_protocol.is_none()
+        && row.live_terminals.is_some_and(|count| count > 0)
+        && now.saturating_sub(last_line)
+            >= crate::workspace::TERMINAL_OUTPUT_QUIET_INTERVAL.as_secs()
+    {
+        "QUIET"
+    } else {
+        ""
+    }
 }
 
 /// A bounded view of authoritative buffer text for picker previews.

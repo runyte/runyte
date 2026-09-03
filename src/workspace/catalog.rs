@@ -108,6 +108,9 @@ pub struct WorkspaceRow {
     pub pending_wait_requests: Option<usize>,
     pub live_terminals: Option<usize>,
     pub terminal_sessions: Option<usize>,
+    /// Latest creation/completed-line baseline among the host's live terminal
+    /// sessions. Host-owned and never persisted in recent history.
+    pub terminal_line_activity_unix_seconds: Option<u64>,
     pub interactive_attached: Option<bool>,
     /// What this workspace's own directory says about its Git checkout, when
     /// it is one. Read from files rather than answered by the host, because a
@@ -146,6 +149,7 @@ enum WorkspaceRequest {
     Refresh {
         generation: u64,
     },
+    Poll,
     Inspect {
         generation: u64,
         path: PathBuf,
@@ -178,6 +182,11 @@ enum WorkspaceRequest {
 pub enum WorkspaceEvent {
     Refreshed {
         generation: u64,
+        result: Result<Vec<WorkspaceRow>, String>,
+    },
+    /// A silent manager-owned refresh used only while the overlay remains
+    /// open, so host terminal activity can cross its display threshold.
+    Polled {
         result: Result<Vec<WorkspaceRow>, String>,
     },
     Inspected {
@@ -236,6 +245,15 @@ impl WorkspaceServiceHandle {
     pub fn try_refresh(&self, generation: u64) -> Result<(), &'static str> {
         self.requests
             .try_send(WorkspaceRequest::Refresh { generation })
+            .map_err(|error| match error {
+                mpsc::error::TrySendError::Full(_) => "session service queue is full",
+                mpsc::error::TrySendError::Closed(_) => "session service is unavailable",
+            })
+    }
+
+    pub fn try_poll(&self) -> Result<(), &'static str> {
+        self.requests
+            .try_send(WorkspaceRequest::Poll)
             .map_err(|error| match error {
                 mpsc::error::TrySendError::Full(_) => "session service queue is full",
                 mpsc::error::TrySendError::Closed(_) => "session service is unavailable",
@@ -380,6 +398,11 @@ impl WorkspaceService {
                 let event = match request {
                     WorkspaceRequest::Refresh { generation } => WorkspaceEvent::Refreshed {
                         generation,
+                        result: refresh(&roots, recents.as_deref(), &state, runtime.as_deref())
+                            .await
+                            .map_err(|error| format!("{error:#}")),
+                    },
+                    WorkspaceRequest::Poll => WorkspaceEvent::Polled {
                         result: refresh(&roots, recents.as_deref(), &state, runtime.as_deref())
                             .await
                             .map_err(|error| format!("{error:#}")),
@@ -708,6 +731,7 @@ async fn refresh_with_name_persistence(
             pending_wait_requests: None,
             live_terminals: None,
             terminal_sessions: None,
+            terminal_line_activity_unix_seconds: None,
             interactive_attached: None,
             open_buffers: None,
             git: None,
@@ -895,6 +919,7 @@ async fn published_row(
             pending_wait_requests: None,
             live_terminals: None,
             terminal_sessions: None,
+            terminal_line_activity_unix_seconds: None,
             interactive_attached: None,
             open_buffers: None,
             git: None,
@@ -914,6 +939,7 @@ async fn published_row(
         pending_wait_requests: inspection.pending_wait_requests,
         live_terminals: inspection.live_terminals,
         terminal_sessions: inspection.terminal_sessions,
+        terminal_line_activity_unix_seconds: inspection.terminal_line_activity_unix_seconds,
         interactive_attached: inspection.interactive_attached,
         open_buffers: inspection.open_buffers,
         git: None,
@@ -973,6 +999,7 @@ async fn inspect_workspace_target(
             pending_wait_requests: None,
             live_terminals: None,
             terminal_sessions: None,
+            terminal_line_activity_unix_seconds: None,
             interactive_attached: None,
             open_buffers: None,
             git: None,
@@ -992,6 +1019,7 @@ async fn inspect_workspace_target(
         pending_wait_requests: Some(inspection.pending_wait_requests),
         live_terminals: Some(inspection.live_terminals),
         terminal_sessions: Some(inspection.terminal_sessions),
+        terminal_line_activity_unix_seconds: inspection.terminal_line_activity_unix_seconds,
         interactive_attached: Some(inspection.interactive_attached),
         open_buffers: Some(inspection.open_buffers),
         git: None,
@@ -1029,6 +1057,7 @@ async fn inspect_host(host: RegisteredHost) -> WorkspaceRow {
             pending_wait_requests: None,
             live_terminals: None,
             terminal_sessions: None,
+            terminal_line_activity_unix_seconds: None,
             interactive_attached: None,
             open_buffers: None,
             git: None,
@@ -1048,6 +1077,7 @@ async fn inspect_host(host: RegisteredHost) -> WorkspaceRow {
         pending_wait_requests: inspection.pending_wait_requests,
         live_terminals: inspection.live_terminals,
         terminal_sessions: inspection.terminal_sessions,
+        terminal_line_activity_unix_seconds: inspection.terminal_line_activity_unix_seconds,
         interactive_attached: inspection.interactive_attached,
         open_buffers: inspection.open_buffers,
         git: None,
@@ -1068,6 +1098,7 @@ struct HostInspection {
     pending_wait_requests: Option<usize>,
     live_terminals: Option<usize>,
     terminal_sessions: Option<usize>,
+    terminal_line_activity_unix_seconds: Option<u64>,
     interactive_attached: Option<bool>,
 }
 
@@ -1077,6 +1108,7 @@ struct StrictHostInspection {
     pending_wait_requests: usize,
     live_terminals: usize,
     terminal_sessions: usize,
+    terminal_line_activity_unix_seconds: Option<u64>,
     interactive_attached: bool,
 }
 
@@ -1092,6 +1124,7 @@ async fn inspect_endpoint_strict(endpoint: &LocalEndpoint) -> Result<StrictHostI
                 pending_wait_requests,
                 live_terminals,
                 terminal_sessions,
+                terminal_line_activity_unix_seconds,
                 ..
             }) => Ok(StrictHostInspection {
                 unsaved_buffers,
@@ -1099,6 +1132,7 @@ async fn inspect_endpoint_strict(endpoint: &LocalEndpoint) -> Result<StrictHostI
                 pending_wait_requests,
                 live_terminals,
                 terminal_sessions,
+                terminal_line_activity_unix_seconds,
                 interactive_attached,
             }),
             Some(HostResponse::Refused { message } | HostResponse::Error { message }) => {
@@ -1124,6 +1158,7 @@ async fn inspect_endpoint(endpoint: &LocalEndpoint) -> HostInspection {
             pending_wait_requests,
             live_terminals,
             terminal_sessions,
+            terminal_line_activity_unix_seconds,
             ..
         }) = client.recv().await?
         {
@@ -1133,6 +1168,7 @@ async fn inspect_endpoint(endpoint: &LocalEndpoint) -> HostInspection {
             result.pending_wait_requests = Some(pending_wait_requests);
             result.live_terminals = Some(live_terminals);
             result.terminal_sessions = Some(terminal_sessions);
+            result.terminal_line_activity_unix_seconds = terminal_line_activity_unix_seconds;
         }
         Ok::<_, anyhow::Error>(())
     })
@@ -1354,6 +1390,7 @@ mod tests {
         let invoke_all = |handle: &WorkspaceServiceHandle| {
             [
                 handle.try_refresh(1),
+                handle.try_poll(),
                 handle.try_inspect(2, path.clone()),
                 handle.try_stop(3, path.clone(), path.clone(), false),
                 handle.try_forget(4, path.clone()),
@@ -1446,6 +1483,7 @@ mod tests {
                 pending_wait_requests: None,
                 live_terminals: None,
                 terminal_sessions: None,
+                terminal_line_activity_unix_seconds: None,
                 interactive_attached: None,
                 open_buffers: None,
                 git: None,
@@ -1557,6 +1595,7 @@ mod tests {
                                     pending_wait_requests: 0,
                                     live_terminals: 0,
                                     terminal_sessions: 0,
+                                    terminal_line_activity_unix_seconds: None,
                                 })
                                 .await;
                         }
@@ -1715,6 +1754,7 @@ mod tests {
                                     pending_wait_requests: 0,
                                     live_terminals: 0,
                                     terminal_sessions: 0,
+                                    terminal_line_activity_unix_seconds: None,
                                 })
                                 .await;
                         }
@@ -2477,6 +2517,7 @@ mod tests {
                 pending_wait_requests: None,
                 live_terminals: None,
                 terminal_sessions: None,
+                terminal_line_activity_unix_seconds: None,
                 interactive_attached: Some(false),
                 open_buffers: None,
                 git: None,
@@ -2494,6 +2535,7 @@ mod tests {
                 pending_wait_requests: None,
                 live_terminals: None,
                 terminal_sessions: None,
+                terminal_line_activity_unix_seconds: None,
                 interactive_attached: Some(false),
                 open_buffers: None,
                 git: None,
@@ -2577,6 +2619,7 @@ mod tests {
                 pending_wait_requests: None,
                 live_terminals: None,
                 terminal_sessions: None,
+                terminal_line_activity_unix_seconds: None,
                 interactive_attached: None,
                 open_buffers: None,
                 git: None,
@@ -2594,6 +2637,7 @@ mod tests {
                 pending_wait_requests: None,
                 live_terminals: None,
                 terminal_sessions: None,
+                terminal_line_activity_unix_seconds: None,
                 interactive_attached: None,
                 open_buffers: None,
                 git: None,
@@ -2611,6 +2655,7 @@ mod tests {
                 pending_wait_requests: None,
                 live_terminals: None,
                 terminal_sessions: None,
+                terminal_line_activity_unix_seconds: None,
                 interactive_attached: None,
                 open_buffers: None,
                 git: None,
@@ -2673,6 +2718,7 @@ mod tests {
             pending_wait_requests: None,
             live_terminals: None,
             terminal_sessions: None,
+            terminal_line_activity_unix_seconds: None,
             interactive_attached: Some(false),
             open_buffers: None,
             git: None,
@@ -2718,6 +2764,7 @@ mod tests {
             pending_wait_requests: None,
             live_terminals: None,
             terminal_sessions: None,
+            terminal_line_activity_unix_seconds: None,
             interactive_attached: Some(false),
             open_buffers: None,
             git: None,
@@ -2995,6 +3042,7 @@ mod tests {
             pending_wait_requests: None,
             live_terminals: None,
             terminal_sessions: None,
+            terminal_line_activity_unix_seconds: None,
             interactive_attached: None,
             git: None,
             missing_directory: true,
@@ -3058,6 +3106,7 @@ mod tests {
             pending_wait_requests: None,
             live_terminals: None,
             terminal_sessions: None,
+            terminal_line_activity_unix_seconds: None,
             interactive_attached: None,
             git: None,
             missing_directory: false,

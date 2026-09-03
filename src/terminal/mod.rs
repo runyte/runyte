@@ -427,6 +427,10 @@ pub struct TerminalSession {
     initial_directory: PathBuf,
     created_at: SystemTime,
     last_activity: SystemTime,
+    /// Creation or the latest semantic completed-line activity, whichever is
+    /// newer. Unlike `last_activity`, partial text and screen rewrites do not
+    /// move this baseline.
+    last_completed_line_activity: SystemTime,
     unread_activity: bool,
     bell: bool,
     history_truncated: bool,
@@ -494,6 +498,10 @@ impl TerminalSession {
 
     pub fn last_activity(&self) -> SystemTime {
         self.last_activity
+    }
+
+    pub fn last_completed_line_activity(&self) -> SystemTime {
+        self.last_completed_line_activity
     }
 
     pub fn unread_activity(&self) -> bool {
@@ -1311,7 +1319,7 @@ impl TerminalSession {
     /// Applies bytes the child wrote, answering any query they contained.
     fn feed(&mut self, bytes: &[u8]) {
         let retired = self.emulator.grid().retired();
-        self.emulator.feed(bytes);
+        let completed_lines = self.emulator.feed(bytes);
         if let Some(report) = self.emulator.take_directory_report()
             && let Some(directory) = validated_osc7_directory(&report)
         {
@@ -1319,6 +1327,9 @@ impl TerminalSession {
         }
         self.bell |= self.emulator.take_bell();
         self.last_activity = SystemTime::now();
+        if completed_lines > 0 {
+            self.last_completed_line_activity = self.last_activity;
+        }
         self.unread_activity = true;
         self.content_revision = self.content_revision.wrapping_add(1);
         // A reader scrolled back into history is holding a position in the
@@ -2281,6 +2292,18 @@ impl TerminalSessions {
         self.sessions.values().any(TerminalSession::live)
     }
 
+    /// Latest completed-line baseline among live terminal sessions.
+    ///
+    /// `None` means there is no relevant terminal. Exited retained screens do
+    /// not make a workspace quiet merely because they can no longer advance.
+    pub fn latest_live_completed_line_activity(&self) -> Option<SystemTime> {
+        self.sessions
+            .values()
+            .filter(|session| session.live())
+            .map(TerminalSession::last_completed_line_activity)
+            .max()
+    }
+
     /// Starts a child on a new pseudoterminal.
     #[cfg(unix)]
     pub fn open(
@@ -2330,6 +2353,7 @@ impl TerminalSessions {
                 initial_directory: request.directory,
                 created_at: SystemTime::now(),
                 last_activity: SystemTime::now(),
+                last_completed_line_activity: SystemTime::now(),
                 unread_activity: false,
                 bell: false,
                 history_truncated: false,
@@ -2518,6 +2542,7 @@ fn local_hostname_is(_value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     fn session(columns: usize, rows: usize) -> TerminalSession {
         TerminalSession {
@@ -2528,6 +2553,7 @@ mod tests {
             initial_directory: PathBuf::from("/"),
             created_at: SystemTime::now(),
             last_activity: SystemTime::now(),
+            last_completed_line_activity: SystemTime::now(),
             unread_activity: false,
             bell: false,
             history_truncated: false,
@@ -2565,6 +2591,62 @@ mod tests {
         assert_eq!(view_text(&view), vec!["two", "three"]);
         assert_eq!(view.cursor, Some((1, 5)));
         assert_eq!(view.scrollback, 0);
+    }
+
+    #[test]
+    fn completed_line_activity_aggregates_only_live_terminals() {
+        let mut sessions = TerminalSessions::new();
+        let first = TerminalId(1);
+        let second = TerminalId(2);
+        let exited = TerminalId(3);
+        let mut first_session = session(8, 2);
+        first_session.id = first;
+        first_session.last_completed_line_activity =
+            SystemTime::UNIX_EPOCH + Duration::from_secs(10);
+        let mut second_session = session(8, 2);
+        second_session.id = second;
+        second_session.last_completed_line_activity =
+            SystemTime::UNIX_EPOCH + Duration::from_secs(20);
+        let mut exited_session = session(8, 2);
+        exited_session.id = exited;
+        exited_session.last_completed_line_activity =
+            SystemTime::UNIX_EPOCH + Duration::from_secs(30);
+        exited_session.exit = Some(Some(0));
+        sessions.sessions.insert(first, first_session);
+        sessions.sessions.insert(second, second_session);
+        sessions.sessions.insert(exited, exited_session);
+
+        assert_eq!(
+            sessions.latest_live_completed_line_activity(),
+            Some(SystemTime::UNIX_EPOCH + Duration::from_secs(20))
+        );
+        sessions.sessions.get_mut(&second).unwrap().exit = Some(Some(0));
+        assert_eq!(
+            sessions.latest_live_completed_line_activity(),
+            Some(SystemTime::UNIX_EPOCH + Duration::from_secs(10))
+        );
+        sessions.sessions.get_mut(&first).unwrap().exit = Some(Some(0));
+        assert_eq!(sessions.latest_live_completed_line_activity(), None);
+    }
+
+    #[test]
+    fn only_completed_lines_advance_the_session_activity_baseline() {
+        let mut session = session(8, 2);
+        session.last_completed_line_activity = SystemTime::UNIX_EPOCH;
+
+        session.feed(b"partial\rspinner");
+        assert_eq!(
+            session.last_completed_line_activity(),
+            SystemTime::UNIX_EPOCH
+        );
+        assert!(session.resize(4, 4));
+        assert_eq!(
+            session.last_completed_line_activity(),
+            SystemTime::UNIX_EPOCH
+        );
+
+        session.feed(b"\r\n");
+        assert!(session.last_completed_line_activity() > SystemTime::UNIX_EPOCH);
     }
 
     #[test]

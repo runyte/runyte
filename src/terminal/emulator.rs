@@ -13,6 +13,7 @@ use super::{
     grid::{Attributes, Color, Grid, Pen},
     parser::{Action, Parser, parameter, raw_parameter},
 };
+use unicode_width::UnicodeWidthChar as _;
 /// Modes a child switches on and off, and that key encoding has to honour.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Modes {
@@ -176,11 +177,56 @@ impl Emulator {
         self.grid().plain_text()
     }
 
-    pub fn feed(&mut self, bytes: &[u8]) {
+    /// Applies one PTY chunk and reports how many presentation lines it
+    /// completed.
+    ///
+    /// This is semantic terminal activity rather than a byte or damage count:
+    /// carriage-return rewrites, cursor motion, and screen repainting do not
+    /// complete a line, while explicit line advances, scroll commits, and
+    /// automatic wraps do.
+    pub fn feed(&mut self, bytes: &[u8]) -> usize {
         let mut actions = Vec::new();
         self.parser.advance(bytes, |action| actions.push(action));
+        let mut completed_lines = 0usize;
         for action in actions {
+            completed_lines = completed_lines.saturating_add(self.completed_lines(&action));
             self.apply(action);
+        }
+        completed_lines
+    }
+
+    fn completed_lines(&self, action: &Action) -> usize {
+        // Alternate-screen applications redraw a private viewport; none of
+        // those presentation changes append durable output for the manager to
+        // supervise.
+        if self.alternate_active {
+            return 0;
+        }
+        match action {
+            Action::Print(character) => {
+                let width = character.width().unwrap_or(0).min(self.grid().columns());
+                usize::from(
+                    width > 0
+                        && self.modes.autowrap
+                        && (self.grid().cursor.pending_wrap
+                            || self.grid().cursor.column.saturating_add(width)
+                                > self.grid().columns()),
+                )
+            }
+            Action::Execute(0x0a..=0x0c) => 1,
+            Action::Escape {
+                intermediates,
+                final_byte: b'D' | b'E',
+            } if intermediates.is_empty() => 1,
+            Action::Csi {
+                private: None,
+                parameters,
+                intermediates,
+                final_byte: b'S',
+            } if intermediates.is_empty() && self.grid().scroll_region().0 == 0 => {
+                usize::from(parameter(parameters, 0, 1))
+            }
+            _ => 0,
         }
     }
 
@@ -676,6 +722,41 @@ mod tests {
             .filter(|cell| cell.width != 0)
             .flat_map(|cell| cell.text().chars().collect::<Vec<_>>())
             .collect()
+    }
+
+    #[test]
+    fn completed_line_activity_excludes_partial_rows_rewrites_and_resize() {
+        let mut emulator = Emulator::new(32, 3);
+
+        assert_eq!(emulator.feed(b"partial"), 0);
+        assert_eq!(emulator.feed(b"\rspinner 1\rspinner 2"), 0);
+        emulator.resize(4, 2);
+        assert_eq!(emulator.feed(b"\x1b[2;1Hr"), 0);
+        assert_eq!(emulator.feed(b"\r\n"), 1);
+    }
+
+    #[test]
+    fn completed_line_activity_counts_wrap_index_and_scroll_commits() {
+        let mut emulator = Emulator::new(4, 3);
+
+        // Filling the last cell only arms delayed wrap. The next printable
+        // character is the point at which that presentation row completes.
+        assert_eq!(emulator.feed(b"abcd"), 0);
+        assert_eq!(emulator.feed(b"e"), 1);
+        assert_eq!(emulator.feed(b"\x1bD\x1bE"), 2);
+        assert_eq!(emulator.feed(b"\x1b[3S"), 3);
+    }
+
+    #[test]
+    fn completed_line_activity_excludes_private_scrolls_and_alternate_screen_repaints() {
+        let mut emulator = Emulator::new(4, 3);
+
+        emulator.feed(b"\x1b[2;3r");
+        assert_eq!(emulator.feed(b"\x1b[S"), 0);
+        emulator.feed(b"\x1b[r\x1b[?1049h");
+        assert_eq!(emulator.feed(b"abcd\ne\x1b[S"), 0);
+        emulator.feed(b"\x1b[?1049l");
+        assert_eq!(emulator.feed(b"line\n"), 1);
     }
 
     #[test]
