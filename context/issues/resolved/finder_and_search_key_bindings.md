@@ -91,6 +91,13 @@ Tests, all in `tests/keymap.rs` unless noted:
   `repeated_arrow_scroll_saturates_at_the_rendered_end` in `tests/key_hints.rs`
   pin the rendered `Space / f, Space f` alias row and the widened `Space`
   namespace.
+- `terminal_review_repeats_regex_matches_with_n_uppercase_n_and_parentheses`
+  and `terminal_review_search_keys_keep_their_literal_and_regex_flavours` in
+  `tests/terminal.rs` press `s` and `/` over a live terminal pane. Terminal
+  review reaches both flavours by command identity in
+  `src/app/terminal_workflows.rs`, so the registry is the only thing deciding
+  which key arrives; the second test is new and separates the flavours by
+  behavior, taking `a(b` as text under `s` and as an unclosed group under `/`.
 - `user_guide_covers_every_direct_editing_binding` in `src/keymap.rs` now
   requires the guide to document `s` and `/` together and forbids the retired
   `/` finder row.

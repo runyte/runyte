@@ -1711,6 +1711,51 @@ fn terminal_review_repeats_regex_matches_with_n_uppercase_n_and_parentheses() {
     assert!(!session.app.status.contains("needs a buffer"));
 }
 
+/// The two buffer-search keys reach terminal review by command identity
+/// rather than by anything this module spells, so only a real press proves
+/// the registry still routes them here. `s` escapes its pattern and folds
+/// case; `/` compiles one, which is what makes an unclosed group an error
+/// here and a findable string there.
+#[test]
+fn terminal_review_search_keys_keep_their_literal_and_regex_flavours() {
+    let mut session = Session::start(r#"/bin/sh -c 'printf "a(b) and AXB and axb"; cat'"#);
+    assert!(session.settle(|app| terminal_text(app).contains("a(b) and AXB and axb")));
+    session.leave_input();
+    let id = session.app.active_terminal().unwrap();
+
+    // The literal flavour escapes the pattern, so the parenthesis is a
+    // character to find rather than the start of a group.
+    session.press(KeyCode::Char('s'));
+    session.type_text("A(B");
+    session.press(KeyCode::Enter);
+    assert!(!session.app.status_error, "{}", session.app.status);
+    assert_eq!(
+        review_selection(&mut session.app, id),
+        "a(b",
+        "`s` escapes its pattern and ignores case"
+    );
+
+    // The same text through `/` is a regular expression, and an invalid one.
+    session.press(KeyCode::Char('/'));
+    session.type_text("A(B");
+    session.press(KeyCode::Enter);
+    assert!(
+        session.app.status_error,
+        "an unclosed group is reported, not found: {}",
+        session.app.status
+    );
+
+    // `(?-i)` is the whole of what a case-sensitive flavour would have
+    // offered, and it reaches the same retained snapshot the literal did.
+    session.press(KeyCode::Char('/'));
+    session.type_text("(?-i)AXB|axb");
+    session.press(KeyCode::Enter);
+    assert!(!session.app.status_error, "{}", session.app.status);
+    assert_eq!(review_selection(&mut session.app, id), "AXB");
+    session.press(KeyCode::Char('n'));
+    assert_eq!(review_selection(&mut session.app, id), "axb");
+}
+
 #[test]
 fn terminal_output_remains_jumpable_after_its_pane_returns_to_the_terminal() {
     let mut session = Session::start(r#"/bin/sh -c 'printf "jumpable\r\n"; cat'"#);
