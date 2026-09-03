@@ -302,8 +302,8 @@ impl KeyHintState {
     /// Whether a plain vertical arrow is free to scroll the open hint popup.
     ///
     /// Registered continuations win so bindings such as `z Down` still reach
-    /// the grammar. `Alt-j`/`Alt-k` remain the fallback when an arrow is
-    /// claimed by the pending sequence.
+    /// the grammar. `Ctrl-n`/`Ctrl-p` remain available when an arrow is claimed
+    /// by the pending sequence.
     pub fn scrolls_with_arrow_in(
         &self,
         code: KeyCode,
@@ -407,11 +407,6 @@ impl KeyHintState {
             && matches!(key.code, KeyCode::Char('n') | KeyCode::Char('p'))
         {
             Some(key.code == KeyCode::Char('n'))
-        } else if self.is_pending()
-            && key.modifiers.contains(Modifiers::ALT)
-            && matches!(key.code, KeyCode::Char('j') | KeyCode::Char('k'))
-        {
-            Some(key.code == KeyCode::Char('j'))
         } else if key.modifiers.is_empty()
             && self.scrolls_with_arrow_in(key.code, mode, scope, keymap)
         {
@@ -1061,23 +1056,22 @@ mod tests {
     }
 
     #[test]
-    fn alt_j_and_k_scroll_without_forwarding_a_pending_sequence() {
-        let mut hints = KeyHintState::default();
-        hints.observe(event(' '), Mode::Normal, default_keymap());
-        let down = KeyStroke::new(KeyCode::Char('j'), Modifiers::ALT);
-        let up = KeyStroke::new(KeyCode::Char('k'), Modifiers::ALT);
+    fn alt_j_and_k_do_not_scroll_or_hold_a_pending_sequence() {
+        for character in ['j', 'k'] {
+            let mut hints = KeyHintState::default();
+            hints.observe(event(' '), Mode::Normal, default_keymap());
 
-        assert_eq!(
-            hints.observe(down, Mode::Normal, default_keymap()),
-            HintEventResult::Consumed
-        );
-        assert_eq!(hints.scroll_offset(), 1);
-        assert_eq!(
-            hints.observe(up, Mode::Normal, default_keymap()),
-            HintEventResult::Consumed
-        );
-        assert_eq!(hints.scroll_offset(), 0);
-        assert_eq!(hints.pending().to_string(), "Space");
+            assert_eq!(
+                hints.observe(
+                    KeyStroke::new(KeyCode::Char(character), Modifiers::ALT),
+                    Mode::Normal,
+                    default_keymap(),
+                ),
+                HintEventResult::Forward
+            );
+            assert_eq!(hints.scroll_offset(), 0);
+            assert!(!hints.is_pending());
+        }
     }
 
     #[test]

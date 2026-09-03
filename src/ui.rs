@@ -3766,13 +3766,9 @@ fn draw_key_hints(
         let arrows_are_free =
             key_hints.scrolls_with_arrow_in(KeyCode::Up, mode, scope, app.keymap())
                 && key_hints.scrolls_with_arrow_in(KeyCode::Down, mode, scope, app.keymap());
-        let alternatives = if arrows_are_free {
-            " ↑/↓"
-        } else {
-            " Alt-j/k"
-        };
+        let arrows = if arrows_are_free { " ↑/↓" } else { "" };
         format!(
-            " {}-{}/{} Ctrl-n/p{alternatives}",
+            " {}-{}/{} Ctrl-n/p{arrows}",
             layout.offset + 1,
             layout.offset + visible.len(),
             rows.len()

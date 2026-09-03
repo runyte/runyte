@@ -816,6 +816,30 @@ fn control_backslash_exits_insert_and_control_w_moves_between_panes() {
 }
 
 #[test]
+fn ctrl_w_arrow_suffixes_stay_unbound_in_every_mode_and_terminal_insert() {
+    let keymap = default_keymap();
+    for arrow in [KeyCode::Left, KeyCode::Down, KeyCode::Up, KeyCode::Right] {
+        let sequence = KeySequence::from([Key::ctrl('w'), Key::plain(arrow)]);
+        for mode in [Mode::Normal, Mode::Select, Mode::Insert, Mode::Replace] {
+            assert!(
+                matches!(keymap.lookup(mode, &sequence), Lookup::NoMatch),
+                "Ctrl-w {} must stay unbound in {}",
+                Key::plain(arrow).label(),
+                mode.label()
+            );
+        }
+        assert!(
+            matches!(
+                keymap.lookup_in(Mode::Insert, BindingScope::Terminal, &sequence),
+                Lookup::NoMatch
+            ),
+            "Ctrl-w {} must stay unbound in Terminal Insert",
+            Key::plain(arrow).label()
+        );
+    }
+}
+
+#[test]
 fn removed_duplicate_bindings_stay_unbound() {
     for keys in [
         " :", " Fe", " FE", " Ff", " Fb", " F/", " Fs", " Fr", " h", " S", " d", " a", " y", " P",
@@ -839,8 +863,8 @@ fn removed_duplicate_bindings_stay_unbound() {
         );
     }
     // Every selection command that had an Alt shortcut now lives under
-    // `Space s`. `Alt-j`/`Alt-k` in particular were also the key-hint popup's
-    // scroll keys, so the popup and the keymap were fighting over them.
+    // `Space s`. The temporary use of `Alt-j`/`Alt-k` for key-hint scrolling
+    // was retired too, so these keys remain wholly unbound.
     for removed in [Key::alt('s'), Key::alt('*'), Key::alt('k'), Key::alt('j')] {
         assert!(
             matches!(
