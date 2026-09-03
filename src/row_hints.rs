@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Read-only annotations shown after the text of a row.
+//! Read-only annotations shown around the editable text of a row.
 //!
 //! A hint is not part of the buffer. It cannot be selected, edited, saved, or
 //! parsed back out of a line, so a producer can say something about a row —
@@ -15,9 +15,11 @@
 //! [`RowHints::trailing`] instead sits a row's hint one space past that row's
 //! own text with no shared column, which keeps every hint reachable even
 //! when one row (an overlong commit subject, say) is far longer than the
-//! rest. Either way a frontend paints every hint in one muted style.
+//! rest. Prefixes support table-like context before editable text, such as an
+//! explorer's file details. Either way a frontend paints every hint in one
+//! muted style.
 
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 use unicode_width::UnicodeWidthChar;
 
@@ -27,7 +29,9 @@ pub const GAP: usize = 2;
 /// The hints one buffer carries, and the column they share.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct RowHints {
-    texts: HashMap<usize, String>,
+    prefixes: Arc<HashMap<usize, String>>,
+    prefix_width: usize,
+    texts: Arc<HashMap<usize, String>>,
     column: usize,
 }
 
@@ -59,7 +63,12 @@ impl RowHints {
             column = column.max(cells + gap.max(1));
             texts.insert(row, text);
         }
-        Self { texts, column }
+        Self {
+            prefixes: Arc::new(HashMap::new()),
+            prefix_width: 0,
+            texts: Arc::new(texts),
+            column,
+        }
     }
 
     /// Collects hints that sit one space past each row's own text, with no
@@ -74,11 +83,33 @@ impl RowHints {
             .into_iter()
             .filter(|(_, text)| !text.is_empty())
             .collect();
-        Self { texts, column: 0 }
+        Self {
+            prefixes: Arc::new(HashMap::new()),
+            prefix_width: 0,
+            texts: Arc::new(texts),
+            column: 0,
+        }
+    }
+
+    /// Adds annotations drawn before the row's editable text.
+    pub fn with_prefixes(mut self, prefixes: impl IntoIterator<Item = (usize, String)>) -> Self {
+        self.prefixes = Arc::new(
+            prefixes
+                .into_iter()
+                .filter(|(_, text)| !text.is_empty())
+                .collect(),
+        );
+        self.prefix_width = self
+            .prefixes
+            .values()
+            .map(|text| display_cells(text))
+            .max()
+            .unwrap_or(0);
+        self
     }
 
     pub fn is_empty(&self) -> bool {
-        self.texts.is_empty()
+        self.prefixes.is_empty() && self.texts.is_empty()
     }
 
     /// The column, in cells from the start of the row's text, where every hint
@@ -89,6 +120,14 @@ impl RowHints {
 
     pub fn text(&self, row: usize) -> Option<&str> {
         self.texts.get(&row).map(String::as_str)
+    }
+
+    pub fn prefix(&self, row: usize) -> Option<&str> {
+        self.prefixes.get(&row).map(String::as_str)
+    }
+
+    pub fn prefix_width(&self) -> usize {
+        self.prefix_width
     }
 
     /// The padding and hint to draw after `used_cells` of already-drawn text,
@@ -196,6 +235,35 @@ mod tests {
 
         assert_eq!(hints.text(0), None);
         assert_eq!(hints.text(1), Some("(main)"));
+    }
+
+    #[test]
+    fn prefixes_are_independent_read_only_columns_before_row_text() {
+        let hints = RowHints::aligned([(0, 4, "→ a".to_owned())]).with_prefixes([
+            (0, "-rw-r--r-- owner group 1K Jan  1 12:00 ".to_owned()),
+            (1, "drwxr-xr-x owner group 12 Jan  1 12:00 ".to_owned()),
+        ]);
+
+        assert_eq!(
+            hints.prefix(0),
+            Some("-rw-r--r-- owner group 1K Jan  1 12:00 ")
+        );
+        assert_eq!(hints.prefix(2), None);
+        assert_eq!(
+            hints.prefix_width(),
+            display_cells("drwxr-xr-x owner group 12 Jan  1 12:00 ")
+        );
+        assert_eq!(hints.rendered(0, 4, 20).as_deref(), Some("  → a"));
+    }
+
+    #[test]
+    fn cloning_cached_hints_shares_the_allocated_row_maps() {
+        let hints = RowHints::aligned([(0, 4, "→ target".to_owned())])
+            .with_prefixes([(0, "-rw-r--r-- owner group 1K Jan  1 12:00 ".to_owned())]);
+        let clone = hints.clone();
+
+        assert!(Arc::ptr_eq(&hints.prefixes, &clone.prefixes));
+        assert!(Arc::ptr_eq(&hints.texts, &clone.texts));
     }
 
     #[test]

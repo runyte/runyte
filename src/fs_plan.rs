@@ -38,6 +38,14 @@ pub enum EntryKind {
     Other,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct EntryDetailFields {
+    pub kind: EntryKind,
+    pub len: u64,
+    pub modified_nanos: Option<u128>,
+    pub unix: Option<(u32, u32, u32)>,
+}
+
 impl EntryKind {
     pub fn marker(self) -> &'static str {
         match self {
@@ -99,6 +107,10 @@ impl SourceFingerprint {
     pub fn symlink_target(&self) -> Option<&Path> {
         self.entry.symlink_target.as_deref()
     }
+
+    pub(crate) fn detail_fields(&self) -> EntryDetailFields {
+        self.entry.detail_fields()
+    }
 }
 
 impl EntryFingerprint {
@@ -132,6 +144,18 @@ impl EntryFingerprint {
             readonly: metadata.permissions().readonly(),
             unix: unix_fingerprint(&metadata),
         })
+    }
+
+    fn detail_fields(&self) -> EntryDetailFields {
+        EntryDetailFields {
+            kind: self.kind,
+            len: self.len,
+            modified_nanos: self.modified_nanos,
+            unix: self
+                .unix
+                .as_ref()
+                .map(|unix| (unix.mode, unix.uid, unix.gid)),
+        }
     }
 }
 
@@ -220,6 +244,10 @@ impl SnapshotEntry {
             entry: self.fingerprint.clone(),
             descendants: Vec::new(),
         }
+    }
+
+    pub(crate) fn detail_fields(&self) -> EntryDetailFields {
+        self.fingerprint.detail_fields()
     }
 }
 

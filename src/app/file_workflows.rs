@@ -270,6 +270,24 @@ impl App {
         Ok(())
     }
 
+    pub(super) fn toggle_directory_details(&mut self) -> Result<()> {
+        let buffer = self.active().buffer;
+        anyhow::ensure!(
+            self.buffers[buffer].is_directory(),
+            "file details can only be shown or hidden in an explorer"
+        );
+        let shown = self.buffers[buffer].toggle_directory_details()?;
+        for pane in self.panes.values_mut().filter(|pane| pane.buffer == buffer) {
+            pane.row_prefix_scroll = 0;
+        }
+        self.status(if shown {
+            "showing file details"
+        } else {
+            "hiding file details"
+        });
+        Ok(())
+    }
+
     pub(super) fn reload_directory_buffer(&mut self, buffer: usize) -> Result<()> {
         let show_hidden = self.config.editor.show_hidden_files;
         self.buffers
@@ -565,11 +583,13 @@ impl App {
             pane.scroll_row = view.scroll_row;
             pane.scroll_wrap = view.scroll_wrap;
             pane.scroll_col = view.scroll_col;
+            pane.row_prefix_scroll = view.row_prefix_scroll;
         } else {
             pane.replace_selection(launch_selection.unwrap_or_else(|| Selection::point(0)));
             pane.scroll_row = 0;
             pane.scroll_wrap = 0;
             pane.scroll_col = 0;
+            pane.row_prefix_scroll = 0;
         }
         pane.preserve_scroll = false;
         self.lsp_touch(buffer_id);

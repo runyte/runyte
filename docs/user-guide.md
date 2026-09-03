@@ -944,6 +944,15 @@ child directory does not stale the explorer. If an operation fails midway, an
 ERROR notification names the failed operation and every operation already
 applied.
 
+Press `?` in an explorer to toggle file details before every existing entry:
+permissions, owner, group, human-readable size, and modification time. These
+columns are presentation-only; the filename remains the row's only editable
+text. A symlink keeps its read-only `→ target` hint after the filename. The
+toggle follows that explorer through refreshes and directory navigation.
+In a narrow pane, horizontal scrolling moves through the details first and
+then through the filename, so no column is permanently clipped. Entries from
+other years show the year in place of the time.
+
 ### UI vocabulary
 
 The complete terminal surface is the **Runyte screen**. Its upper **editor
@@ -1718,6 +1727,7 @@ cancellation keys.
 | `Space / /` | Search the workspace with a regular expression; see [Search](#search) |
 | `Space r` | Reload the active text file or refresh the active explorer or supported Git list |
 | `Enter` in a directory | Open the selected file or directory |
+| `?` in a directory | Toggle read-only permissions, owner, group, size, and modification-time columns |
 | `-` or Backspace in a directory | Open the parent directory and select the child just left |
 | `.` in a directory | Show or hide dotfiles in the explorer |
 | `x y` / `x d`, then `p` in a directory | Copy / cut selected entries, then paste in the destination explorer |

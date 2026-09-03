@@ -6043,6 +6043,28 @@ mod tests {
             .unwrap();
         assert_eq!(arrow.style().fg, Some(muted));
 
+        app.handle_key(crate::input::KeyStroke::char('?')).unwrap();
+        let backend = TestBackend::new(120, 12);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| render_test_frame(frame, &mut app, &KeyHintState::default()))
+            .unwrap();
+        let rendered: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol().chars().next().unwrap_or(' '))
+            .collect();
+        let permissions = rendered
+            .find("lrwx")
+            .expect("symlink permissions are shown");
+        let filename = rendered
+            .find("file.txt")
+            .expect("the editable name is shown");
+        assert!(permissions < filename, "{rendered}");
+        assert!(rendered.contains("file.txt  → true_file.txt"), "{rendered}");
+
         std::fs::remove_dir_all(&directory).unwrap();
     }
 

@@ -313,6 +313,88 @@ fn pointer_click_drag_wheel_and_resize_use_the_prepared_projection() {
     assert_eq!(after.pane(0).unwrap().area.width, left.width + 4);
 }
 
+#[cfg(unix)]
+#[test]
+fn horizontal_wheel_scrolls_read_only_directory_details_before_buffer_text() {
+    let directory = std::env::temp_dir().join(format!(
+        "runyte-details-scroll-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    fs::create_dir(&directory).unwrap();
+    fs::write(directory.join("filename.txt"), "text").unwrap();
+    let mut config = Config::default();
+    config.editor.line_numbers = false;
+    config.editor.soft_wrap = true;
+    let mut app = App::new(config, Some(directory.clone())).unwrap();
+    press(&mut app, '?');
+    let prefix_width = app.active_buffer().row_prefix_width();
+    let geometry = FrameGeometry {
+        screen: Rect {
+            width: 28,
+            height: 8,
+            ..Rect::default()
+        },
+        editor: Rect {
+            width: 28,
+            height: 6,
+            ..Rect::default()
+        },
+        status: Rect::default(),
+        message: Rect::default(),
+    };
+    let view = app.prepare_view(geometry);
+    let body = view.pane(0).unwrap().body;
+
+    app.handle_pointer_repeated(
+        PointerEvent {
+            kind: PointerEventKind::ScrollRight,
+            column: body.x,
+            row: body.y,
+            modifiers: Modifiers::NONE,
+        },
+        &view,
+        u16::try_from(prefix_width.div_ceil(3)).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(app.active().row_prefix_scroll, prefix_width);
+    assert_eq!(app.active().scroll_col, 0, "wrapped text does not scroll");
+
+    let filename_view = app.prepare_view(geometry);
+    let pane = filename_view.pane(0).unwrap();
+    assert_eq!(pane.row_prefix_width, 0);
+    app.handle_pointer(
+        PointerEvent {
+            kind: PointerEventKind::ScrollLeft,
+            column: body.x,
+            row: body.y,
+            modifiers: Modifiers::NONE,
+        },
+        &filename_view,
+    )
+    .unwrap();
+    assert_eq!(app.active().row_prefix_scroll, prefix_width - 3);
+
+    let partial = app.prepare_view(geometry);
+    let pane = partial.pane(0).unwrap();
+    assert_eq!(pane.row_prefix_width, 3);
+    assert_eq!(
+        app.pointer_text_offset(&partial, 0, pane.body.x + 1, pane.body.y),
+        None,
+        "a read-only prefix cell is not selectable text"
+    );
+    assert_eq!(
+        app.pointer_text_offset(&partial, 0, pane.body.x + 3 + 2, pane.body.y),
+        Some(2),
+        "text coordinates begin after the currently visible prefix"
+    );
+
+    fs::remove_dir_all(directory).unwrap();
+}
+
 /// Presses at `from` and drags to `to`, both as cell columns on the first row
 /// of the pane body, and releases there.
 fn drag_across(app: &mut App, view: &PreparedView, from: u16, to: u16) {

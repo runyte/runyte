@@ -803,13 +803,27 @@ impl App {
                 if !self.panes.contains_key(&pane) {
                     return Ok(PointerOutcome::Changed);
                 }
-                if !self.pane_soft_wrap(pane) {
+                let soft_wrap = self.pane_soft_wrap(pane);
+                let buffer = self.panes[&pane].buffer;
+                let prefix_width = self.buffers[buffer].row_prefix_width();
+                if prefix_width > 0 || !soft_wrap {
                     let candidate = self.panes.get_mut(&pane).unwrap();
                     let columns = 3usize.saturating_mul(usize::from(repetitions));
                     if event.kind == PointerEventKind::ScrollLeft {
-                        candidate.scroll_col = candidate.scroll_col.saturating_sub(columns);
+                        let text_columns = columns.min(candidate.scroll_col);
+                        candidate.scroll_col -= text_columns;
+                        candidate.row_prefix_scroll = candidate
+                            .row_prefix_scroll
+                            .saturating_sub(columns - text_columns);
                     } else {
-                        candidate.scroll_col = candidate.scroll_col.saturating_add(columns);
+                        let prefix_columns =
+                            columns.min(prefix_width.saturating_sub(candidate.row_prefix_scroll));
+                        candidate.row_prefix_scroll += prefix_columns;
+                        if !soft_wrap {
+                            candidate.scroll_col = candidate
+                                .scroll_col
+                                .saturating_add(columns - prefix_columns);
+                        }
                     }
                     candidate.preserve_scroll = true;
                 }
@@ -911,7 +925,7 @@ impl App {
     /// blank cells after a row onto the nearest character. Selection hit
     /// testing must not: those cells carry no selection highlight and a
     /// secondary press on them is not a press on selected text.
-    fn pointer_text_offset(
+    pub(super) fn pointer_text_offset(
         &self,
         view: &PreparedView,
         pane_id: usize,
@@ -930,10 +944,9 @@ impl App {
         let document_row = projected.document_row?;
         let buffer = self.buffers.get(pane.buffer_id)?;
         let line = buffer.line_string(document_row);
-        let text_x = pane
-            .body
-            .x
-            .saturating_add((pane.gutter_width + pane.content_indent) as u16);
+        let text_x = pane.body.x.saturating_add(
+            (pane.gutter_width + pane.content_indent + pane.row_prefix_width) as u16,
+        );
         let screen_cell = usize::from(column.checked_sub(text_x)?);
         let segment = projected.segment;
         let (start, end, cells) = segment.map_or_else(
@@ -958,7 +971,7 @@ impl App {
                 segment.is_none_or(|segment| segment.end == buffer.line_len(document_row));
             let caret_drawn = pane_id == self.active_pane
                 && final_segment
-                && cells < pane.text_width
+                && cells < pane.text_width.saturating_sub(pane.row_prefix_width)
                 && live_pane
                     .selection
                     .ranges()
@@ -1103,10 +1116,9 @@ impl App {
         // translated back through the same indent before it names a column.
         // Anything landing in the margin names the first column of the row,
         // exactly as a click on the gutter does.
-        let text_x = pane
-            .body
-            .x
-            .saturating_add((pane.gutter_width + pane.content_indent) as u16);
+        let text_x = pane.body.x.saturating_add(
+            (pane.gutter_width + pane.content_indent + pane.row_prefix_width) as u16,
+        );
         let screen_cell = usize::from(column.saturating_sub(text_x));
         let start = projected
             .segment
@@ -3739,6 +3751,7 @@ impl App {
             Command::OpenParentDirectory => self.open_parent_directory()?,
             Command::RefreshDirectory => self.refresh_directory()?,
             Command::ToggleHiddenFiles => self.toggle_hidden_files()?,
+            Command::ToggleDirectoryDetails => self.toggle_directory_details()?,
             Command::SplitVertical => self.split_window(Axis::Horizontal)?,
             Command::SplitHorizontal => self.split_window(Axis::Vertical)?,
             Command::Save => self.save(None, false)?,

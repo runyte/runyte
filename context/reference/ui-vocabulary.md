@@ -33,7 +33,12 @@ them, regardless of which extensibility direction is chosen.
   coordinates.
 - **Buffer viewport** — the part of the pane body in which visible buffer rows
   are projected. Editable buffers accept changes there; read-only buffers use
-  the same viewport without accepting mutations.
+  the same viewport without accepting mutations. A row may carry muted,
+  presentation-only hints before or after its text. Explorer file details are
+  a prefix and symlink targets are a suffix; neither changes buffer coordinates
+  or becomes editable text. A pane scrolls within an overwide explorer prefix
+  independently before scrolling buffer text, keeping every metadata field
+  reachable without assigning the prefix document coordinates.
 - **Global status line** — the first global row below the editor area. It owns
   mode, workspace directory, active-buffer state, cursor/progress, selection
   count, Git/LSP summaries, long-running action progress, and unread

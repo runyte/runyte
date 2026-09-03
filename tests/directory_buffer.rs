@@ -708,6 +708,65 @@ fn a_symlink_is_annotated_with_its_target_without_that_hint_entering_the_text() 
 
 #[cfg(unix)]
 #[test]
+fn question_mark_toggles_aligned_file_details_without_editing_the_listing() {
+    use std::os::unix::fs::{PermissionsExt, symlink};
+
+    let directory = TempDir::new("details-toggle");
+    let file = directory.path().join("AGENTS.md");
+    fs::write(&file, vec![b'x'; 14 * 1024]).unwrap();
+    fs::set_permissions(&file, fs::Permissions::from_mode(0o640)).unwrap();
+    symlink("AGENTS.md", directory.path().join("CLAUDE.md")).unwrap();
+    fs::create_dir(directory.path().join("nested")).unwrap();
+    let mut app = App::new(Config::default(), Some(directory.path().to_path_buf())).unwrap();
+    let editable = app.active_buffer().to_string();
+
+    app.handle_key(KeyStroke::char('?')).unwrap();
+
+    assert_eq!(app.status, "showing file details");
+    assert_eq!(app.active_buffer().to_string(), editable);
+    assert!(!app.active_buffer().dirty);
+    assert!(app.active_buffer().directory_plan().unwrap().is_empty());
+    let hints = app.active_buffer().row_hints();
+    let file_prefix = hints.prefix(0).expect("the file has a details prefix");
+    assert!(file_prefix.starts_with("-rw-r----- "), "{file_prefix:?}");
+    assert!(file_prefix.contains(" 14K "), "{file_prefix:?}");
+    let columns = file_prefix.split_whitespace().collect::<Vec<_>>();
+    assert_eq!(columns.len(), 7, "{file_prefix:?}");
+    assert_eq!(columns[3], "14K");
+    assert!(columns[6].contains(':'), "{file_prefix:?}");
+    assert!(hints.prefix(1).unwrap().starts_with("lrwxrwxrwx "));
+    assert_eq!(hints.text(1), Some("→ AGENTS.md"));
+
+    for key in [KeyStroke::char(' '), KeyStroke::char('r')] {
+        app.handle_key(key).unwrap();
+    }
+    assert!(app.active_buffer().directory_details_shown());
+    assert!(app.active_buffer().row_hints().prefix(0).is_some());
+
+    app.handle_key(KeyStroke::char('j')).unwrap();
+    app.handle_key(KeyStroke::char('j')).unwrap();
+    app.handle_key(KeyStroke::new(KeyCode::Enter, Modifiers::NONE))
+        .unwrap();
+    assert_eq!(
+        app.active_buffer().directory_root(),
+        Some(directory.path().join("nested").as_path())
+    );
+    assert!(app.active_buffer().directory_details_shown());
+    app.handle_key(KeyStroke::new(KeyCode::Backspace, Modifiers::NONE))
+        .unwrap();
+    assert_eq!(app.active_buffer().directory_root(), Some(directory.path()));
+    assert!(app.active_buffer().directory_details_shown());
+
+    app.handle_key(KeyStroke::char('?')).unwrap();
+
+    assert_eq!(app.status, "hiding file details");
+    assert_eq!(app.active_buffer().to_string(), editable);
+    assert_eq!(app.active_buffer().row_hints().prefix(0), None);
+    assert_eq!(app.active_buffer().row_hints().text(1), Some("→ AGENTS.md"));
+}
+
+#[cfg(unix)]
+#[test]
 fn opening_a_symlink_resolves_it_to_the_file_it_points_at() {
     use std::os::unix::fs::symlink;
 

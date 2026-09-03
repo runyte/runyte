@@ -313,6 +313,10 @@ pub struct PreparedPane {
     pub gutter_width: usize,
     /// Cells left for text after the gutter and any content indent.
     pub text_width: usize,
+    /// Cells reserved for a presentation-only prefix before buffer text.
+    pub row_prefix_width: usize,
+    /// Display cells skipped from the start of that presentation-only prefix.
+    pub row_prefix_scroll: usize,
     /// Blank cells between the gutter and the text of every row, held open by
     /// this buffer's [content alignment](crate::content_alignment).
     ///
@@ -458,6 +462,9 @@ pub struct Pane {
     /// Wrapped sub-row within `scroll_row`; always zero when wrapping is off.
     pub scroll_wrap: usize,
     pub scroll_col: usize,
+    /// Horizontal scroll within a presentation-only row prefix. Buffer text
+    /// keeps using `scroll_col`, so this never changes document coordinates.
+    pub row_prefix_scroll: usize,
     /// Last rendered text width, used so visual-line motions and rendering
     /// share the same wrapping boundary.
     pub wrap_width: usize,
@@ -495,6 +502,7 @@ impl Pane {
             scroll_row: 0,
             scroll_wrap: 0,
             scroll_col: 0,
+            row_prefix_scroll: 0,
             wrap_width: 1,
             preserve_scroll: false,
             jumps: JumpList::default(),
@@ -515,6 +523,7 @@ impl Pane {
             self.buffer = buffer;
             self.selection_semantics = SelectionSemantics::Runyte;
             self.selection_revision = self.selection_revision.wrapping_add(1);
+            self.row_prefix_scroll = 0;
             self.syntax_history.clear();
             self.folds.clear();
         }
@@ -887,6 +896,7 @@ struct DirectoryView {
     scroll_row: usize,
     scroll_wrap: usize,
     scroll_col: usize,
+    row_prefix_scroll: usize,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -943,6 +953,7 @@ impl DirectoryView {
             scroll_row: pane.scroll_row,
             scroll_wrap: pane.scroll_wrap,
             scroll_col: pane.scroll_col,
+            row_prefix_scroll: pane.row_prefix_scroll,
         }
     }
 }

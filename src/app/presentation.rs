@@ -311,6 +311,8 @@ impl App {
                     changes: false,
                     gutter_width: 0,
                     text_width: 0,
+                    row_prefix_width: 0,
+                    row_prefix_scroll: 0,
                     content_indent: 0,
                     scroll_row: pane.scroll_row,
                     scroll_wrap: pane.scroll_wrap,
@@ -362,6 +364,8 @@ impl App {
                     changes: false,
                     gutter_width: 0,
                     text_width: body_width,
+                    row_prefix_width: 0,
+                    row_prefix_scroll: 0,
                     content_indent: 0,
                     scroll_row: 0,
                     scroll_wrap: 0,
@@ -412,6 +416,16 @@ impl App {
             };
             let content_indent = layout.indent(body_width.saturating_sub(gutter_width));
             let text_width = layout.width(body_width.saturating_sub(gutter_width));
+            let row_prefix_total_width = self.buffers[buffer_id].row_prefix_width();
+            let row_prefix_scroll = {
+                let pane = self.panes.get_mut(&pane_id).unwrap();
+                pane.row_prefix_scroll = pane.row_prefix_scroll.min(row_prefix_total_width);
+                pane.row_prefix_scroll
+            };
+            let row_prefix_width = row_prefix_total_width
+                .saturating_sub(row_prefix_scroll)
+                .min(text_width.saturating_sub(1));
+            let document_text_width = text_width.saturating_sub(row_prefix_width).max(1);
             let cursor = self.panes[&pane_id].cursor(&self.buffers[buffer_id]);
             let soft_wrap = self.pane_soft_wrap(pane_id);
             let scroll_offset = self.config.editor.scroll_offset;
@@ -421,14 +435,14 @@ impl App {
             let diff = diff_projection(&self.diffs, pane_id);
             let buffer = &self.buffers[buffer_id];
             let pane = self.panes.get_mut(&pane_id).unwrap();
-            pane.wrap_width = text_width.max(1);
+            pane.wrap_width = document_text_width;
             if soft_wrap && folds.is_empty() {
                 adjust_scroll_wrapped(
                     pane,
                     buffer,
                     cursor,
                     body_height,
-                    text_width,
+                    document_text_width,
                     scroll_offset,
                     tab_width,
                 );
@@ -440,7 +454,7 @@ impl App {
                 pane.scroll_row = pane.scroll_row.min(buffer.last_row());
                 let start_count = crate::wrap::segments(
                     &buffer.line_string(pane.scroll_row),
-                    text_width.max(1),
+                    document_text_width,
                     tab_width,
                 )
                 .len();
@@ -448,7 +462,13 @@ impl App {
                 pane.scroll_col = 0;
             } else {
                 pane.scroll_wrap = 0;
-                adjust_scroll(pane, cursor, body_height, text_width, scroll_offset);
+                adjust_scroll(
+                    pane,
+                    cursor,
+                    body_height,
+                    document_text_width,
+                    scroll_offset,
+                );
             }
             if let Some(fold) = fold_hiding_row(&folds, pane.scroll_row) {
                 pane.scroll_row = fold.anchor_row;
@@ -458,7 +478,7 @@ impl App {
                 crate::wrap::segment_index(
                     &buffer.line_string(cursor.row),
                     cursor.col,
-                    text_width.max(1),
+                    document_text_width,
                     tab_width,
                 )
             } else {
@@ -471,7 +491,7 @@ impl App {
                     pane.scroll_row,
                     pane.scroll_wrap,
                     body_height,
-                    text_width.max(1),
+                    document_text_width,
                     tab_width,
                     soft_wrap,
                     diff,
@@ -501,7 +521,7 @@ impl App {
                         cursor.row,
                         cursor_segment,
                         amount,
-                        text_width.max(1),
+                        document_text_width,
                         tab_width,
                         soft_wrap,
                     );
@@ -513,7 +533,7 @@ impl App {
                 pane.scroll_row,
                 pane.scroll_wrap,
                 body_height,
-                text_width.max(1),
+                document_text_width,
                 tab_width,
                 soft_wrap,
                 diff,
@@ -531,7 +551,7 @@ impl App {
                     0,
                     0,
                     body_height + 1,
-                    text_width.max(1),
+                    document_text_width,
                     tab_width,
                     soft_wrap,
                     diff,
@@ -563,6 +583,8 @@ impl App {
                 changes,
                 gutter_width,
                 text_width,
+                row_prefix_width,
+                row_prefix_scroll,
                 content_indent,
                 scroll_row: pane.scroll_row,
                 scroll_wrap: pane.scroll_wrap,

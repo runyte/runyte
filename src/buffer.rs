@@ -2918,7 +2918,8 @@ impl Buffer {
 
     /// The read-only annotations this buffer's rows carry.
     ///
-    /// An explorer annotates each symlink with what it points at, and every
+    /// An explorer can prefix every existing entry with read-only file
+    /// details, annotates each symlink with what it points at, and every
     /// annotated row shares one column since filenames stay close enough in
     /// length for that to read as a table. A Git log instead trails its
     /// paging keys and each commit's branch and tag refs one space past that
@@ -2950,18 +2951,29 @@ impl Buffer {
         let Some(directory) = self.directory.as_ref() else {
             return RowHints::default();
         };
-        RowHints::aligned(
-            directory
-                .symlink_targets()
-                .into_iter()
-                .map(|(row, target)| {
-                    (
-                        row,
-                        display_cells(&self.line_string(row)),
-                        format!("→ {}", target.display()),
-                    )
-                }),
-        )
+        directory.row_hints()
+    }
+
+    /// Width of the explorer's cached read-only details column.
+    pub fn row_prefix_width(&self) -> usize {
+        self.directory
+            .as_ref()
+            .map_or(0, DirectoryBuffer::detail_prefix_width)
+    }
+
+    pub fn toggle_directory_details(&mut self) -> Result<bool> {
+        let text = self.text.to_string();
+        Ok(self
+            .directory
+            .as_mut()
+            .context("buffer is not a directory")?
+            .toggle_details(&text))
+    }
+
+    pub fn directory_details_shown(&self) -> bool {
+        self.directory
+            .as_ref()
+            .is_some_and(DirectoryBuffer::details_shown)
     }
 
     pub fn directory_transfer_at(&self, row: usize) -> Result<Option<DirectoryTransfer>> {
@@ -2977,10 +2989,11 @@ impl Buffer {
         transfers: &[DirectoryTransfer],
         mode: TransferMode,
     ) -> Result<()> {
+        let text = self.text.to_string();
         self.directory
             .as_mut()
             .context("buffer is not a directory")?
-            .assign_transfers(start_row, transfers, mode)
+            .assign_transfers(&text, start_row, transfers, mode)
     }
 
     pub fn pending_directory_move_sources(&self) -> std::collections::HashSet<PathBuf> {
@@ -3026,10 +3039,11 @@ impl Buffer {
         &mut self,
         removed: &std::collections::HashSet<PathBuf>,
     ) -> Result<bool> {
+        let text = self.text.to_string();
         self.directory
             .as_mut()
             .context("buffer is not a directory")?
-            .rebase_after_external_removals(removed)
+            .rebase_after_external_removals(&text, removed)
     }
 
     pub fn retarget_path(&mut self, path: PathBuf) {
@@ -3059,7 +3073,11 @@ impl Buffer {
     /// the boundary would restore entries that were never in this one.
     pub fn retarget_directory(&mut self, path: &Path, show_hidden: bool) -> Result<()> {
         ensure!(self.is_directory(), "buffer is not a directory");
-        let (directory, contents) = DirectoryBuffer::open(path.to_path_buf(), show_hidden)?;
+        let details_shown = self.directory_details_shown();
+        let (mut directory, contents) = DirectoryBuffer::open(path.to_path_buf(), show_hidden)?;
+        if details_shown {
+            directory.toggle_details(&contents);
+        }
         self.directory = Some(directory);
         self.path = Some(path.to_path_buf());
         self.text = Text::from_str(&contents);

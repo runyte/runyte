@@ -11,13 +11,21 @@ use std::{
     collections::{HashMap, HashSet},
     fs,
     path::{Component, Path, PathBuf},
+    time::{Duration, UNIX_EPOCH},
 };
 
-use anyhow::{Context, Result, ensure};
+#[cfg(unix)]
+use std::ffi::CStr;
 
-use crate::fs_plan::{
-    DesiredEntry, DirectorySnapshot, EntryId, EntryKind, FsPlan, SnapshotEntry, SourceFingerprint,
-    TransferMode,
+use anyhow::{Context, Result, ensure};
+use chrono::{DateTime, Datelike, Local};
+
+use crate::{
+    fs_plan::{
+        DesiredEntry, DirectorySnapshot, EntryDetailFields, EntryId, EntryKind, FsPlan,
+        SnapshotEntry, SourceFingerprint, TransferMode,
+    },
+    row_hints::{RowHints, display_cells},
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -45,6 +53,24 @@ pub struct DirectoryBuffer {
     baseline: DirectorySnapshot,
     row_origins: Vec<Option<RowOrigin>>,
     detached_origins: HashMap<String, Vec<RowOrigin>>,
+    details: Option<DirectoryDetails>,
+    hints: RowHints,
+}
+
+#[derive(Clone, Debug, Default)]
+struct DirectoryDetails {
+    snapshots: HashMap<EntryId, String>,
+    transfers: HashMap<PathBuf, String>,
+}
+
+#[derive(Clone, Debug)]
+struct RawDetails {
+    kind: EntryKind,
+    len: u64,
+    modified_nanos: Option<u128>,
+    mode: Option<u32>,
+    owner: String,
+    group: String,
 }
 
 impl DirectoryBuffer {
@@ -66,15 +92,16 @@ impl DirectoryBuffer {
         if !row_origins.is_empty() {
             row_origins.push(None);
         }
-        Ok((
-            Self {
-                root,
-                baseline,
-                row_origins,
-                detached_origins: HashMap::new(),
-            },
-            text,
-        ))
+        let mut directory = Self {
+            root,
+            baseline,
+            row_origins,
+            detached_origins: HashMap::new(),
+            details: None,
+            hints: RowHints::default(),
+        };
+        directory.refresh_hints(&text);
+        Ok((directory, text))
     }
 
     pub fn root(&self) -> &Path {
@@ -160,6 +187,7 @@ impl DirectoryBuffer {
 
     pub fn assign_transfers(
         &mut self,
+        text: &str,
         start_row: usize,
         transfers: &[DirectoryTransfer],
         mode: TransferMode,
@@ -190,6 +218,8 @@ impl DirectoryBuffer {
                 })
             });
         }
+        self.refresh_details();
+        self.refresh_hints(text);
         Ok(())
     }
 
@@ -273,6 +303,148 @@ impl DirectoryBuffer {
                 Some((row, target.to_path_buf()))
             })
             .collect()
+    }
+
+    /// Toggles presentation-only `ls -l` style fields before each filename.
+    pub fn toggle_details(&mut self, text: &str) -> bool {
+        if self.details.take().is_some() {
+            self.refresh_hints(text);
+            return false;
+        }
+        self.details = Some(self.build_details());
+        self.refresh_hints(text);
+        true
+    }
+
+    pub fn details_shown(&self) -> bool {
+        self.details.is_some()
+    }
+
+    /// The metadata prefixes carried by the rows' hidden identities.
+    ///
+    /// Edited names therefore remain the only editable part of the listing,
+    /// while moved and renamed rows keep describing the same filesystem entry.
+    pub fn detail_prefixes(&self) -> Vec<(usize, String)> {
+        let Some(details) = self.details.as_ref() else {
+            return Vec::new();
+        };
+        self.row_origins
+            .iter()
+            .enumerate()
+            .filter_map(|(row, origin)| {
+                let prefix = match origin.as_ref()? {
+                    RowOrigin::Snapshot(id) => details.snapshots.get(id),
+                    RowOrigin::Transfer { source, .. } => details.transfers.get(source),
+                }?;
+                Some((row, prefix.clone()))
+            })
+            .collect()
+    }
+
+    /// Cached annotations for this projection.
+    ///
+    /// They are rebuilt when identities, text, or metadata change. Cloning
+    /// the value for a frame only clones shared map handles, so redraw cost is
+    /// independent of the number of entries outside the viewport.
+    pub fn row_hints(&self) -> RowHints {
+        self.hints.clone()
+    }
+
+    pub fn detail_prefix_width(&self) -> usize {
+        self.hints.prefix_width()
+    }
+
+    fn refresh_hints(&mut self, text: &str) {
+        let lines = split_lines(text);
+        let suffixes = self
+            .row_origins
+            .iter()
+            .enumerate()
+            .filter_map(|(row, origin)| {
+                let target = match origin.as_ref()? {
+                    RowOrigin::Snapshot(id) => self.baseline.entry(*id)?.symlink_target()?,
+                    RowOrigin::Transfer { expected, .. } => expected.symlink_target()?,
+                };
+                Some((
+                    row,
+                    lines.get(row).map_or(0, |line| display_cells(line)),
+                    format!("→ {}", target.display()),
+                ))
+            });
+        self.hints = RowHints::aligned(suffixes).with_prefixes(self.detail_prefixes());
+    }
+
+    fn build_details(&self) -> DirectoryDetails {
+        let mut users = HashMap::new();
+        let mut groups = HashMap::new();
+        let snapshots = self
+            .baseline
+            .entries()
+            .iter()
+            .map(|entry| {
+                (
+                    entry.id,
+                    RawDetails::from_fields(entry.detail_fields(), &mut users, &mut groups),
+                )
+            })
+            .collect::<Vec<_>>();
+        let mut transfers = HashMap::new();
+        for origin in self.row_origins.iter().flatten() {
+            if let RowOrigin::Transfer {
+                source, expected, ..
+            } = origin
+            {
+                transfers.entry(source.clone()).or_insert_with(|| {
+                    RawDetails::from_fields(expected.detail_fields(), &mut users, &mut groups)
+                });
+            }
+        }
+        let owner_width = snapshots
+            .iter()
+            .map(|(_, details)| display_cells(&details.owner))
+            .chain(
+                transfers
+                    .values()
+                    .map(|details| display_cells(&details.owner)),
+            )
+            .max()
+            .unwrap_or(1);
+        let group_width = snapshots
+            .iter()
+            .map(|(_, details)| display_cells(&details.group))
+            .chain(
+                transfers
+                    .values()
+                    .map(|details| display_cells(&details.group)),
+            )
+            .max()
+            .unwrap_or(1);
+        let size_width = snapshots
+            .iter()
+            .map(|(_, details)| human_size(details.len).len())
+            .chain(
+                transfers
+                    .values()
+                    .map(|details| human_size(details.len).len()),
+            )
+            .max()
+            .unwrap_or(1);
+        DirectoryDetails {
+            snapshots: snapshots
+                .into_iter()
+                .map(|(id, details)| (id, details.format(owner_width, group_width, size_width)))
+                .collect(),
+            transfers: transfers
+                .into_iter()
+                .map(|(path, details)| (path, details.format(owner_width, group_width, size_width)))
+                .collect(),
+        }
+    }
+
+    fn refresh_details(&mut self) {
+        if self.details.is_some() {
+            self.details = Some(self.build_details());
+        }
     }
 
     /// Resolves the semantic kind carried by one editable projection row.
@@ -410,10 +582,15 @@ impl DirectoryBuffer {
             }
         }
         self.row_origins = assigned;
+        self.refresh_hints(after);
     }
 
     pub fn reload(&mut self, show_hidden: bool) -> Result<String> {
-        let (fresh, text) = Self::open(self.root.clone(), show_hidden)?;
+        let details_shown = self.details_shown();
+        let (mut fresh, text) = Self::open(self.root.clone(), show_hidden)?;
+        if details_shown {
+            fresh.toggle_details(&text);
+        }
         *self = fresh;
         Ok(text)
     }
@@ -475,6 +652,8 @@ impl DirectoryBuffer {
         self.baseline = fresh;
         self.row_origins = row_origins;
         self.detached_origins.clear();
+        self.refresh_details();
+        self.refresh_hints(&projection);
         Ok(projection)
     }
 
@@ -485,7 +664,11 @@ impl DirectoryBuffer {
     /// `removed`, and no surviving row may still carry the removed identity.
     /// Additions and renames need a textual merge and therefore keep the old
     /// conflict behavior.
-    pub fn rebase_after_external_removals(&mut self, removed: &HashSet<PathBuf>) -> Result<bool> {
+    pub fn rebase_after_external_removals(
+        &mut self,
+        text: &str,
+        removed: &HashSet<PathBuf>,
+    ) -> Result<bool> {
         let removed = self
             .baseline
             .entries()
@@ -545,12 +728,198 @@ impl DirectoryBuffer {
                 .context("surviving directory entry disappeared")?;
         }
         self.baseline = fresh;
+        self.refresh_details();
+        self.refresh_hints(text);
         Ok(true)
     }
 
     pub fn baseline(&self) -> &DirectorySnapshot {
         &self.baseline
     }
+}
+
+impl RawDetails {
+    fn from_fields(
+        fields: EntryDetailFields,
+        users: &mut HashMap<u32, String>,
+        groups: &mut HashMap<u32, String>,
+    ) -> Self {
+        let EntryDetailFields {
+            kind,
+            len,
+            modified_nanos,
+            unix,
+        } = fields;
+        let (mode, owner, group) = unix.map_or_else(
+            || (None, "-".to_owned(), "-".to_owned()),
+            |(mode, uid, gid)| {
+                (
+                    Some(mode),
+                    users
+                        .entry(uid)
+                        .or_insert_with(|| user_name(uid).unwrap_or_else(|| uid.to_string()))
+                        .clone(),
+                    groups
+                        .entry(gid)
+                        .or_insert_with(|| group_name(gid).unwrap_or_else(|| gid.to_string()))
+                        .clone(),
+                )
+            },
+        );
+        Self {
+            kind,
+            len,
+            modified_nanos,
+            mode,
+            owner,
+            group,
+        }
+    }
+
+    fn format(&self, owner_width: usize, group_width: usize, size_width: usize) -> String {
+        let owner = pad_right(&self.owner, owner_width);
+        let group = pad_right(&self.group, group_width);
+        let size = pad_left(&human_size(self.len), size_width);
+        format!(
+            "{} {owner} {group} {size} {} ",
+            permissions(self.kind, self.mode),
+            modified_time(self.modified_nanos),
+        )
+    }
+}
+
+fn pad_right(text: &str, width: usize) -> String {
+    format!(
+        "{text}{}",
+        " ".repeat(width.saturating_sub(display_cells(text)))
+    )
+}
+
+fn pad_left(text: &str, width: usize) -> String {
+    format!(
+        "{}{text}",
+        " ".repeat(width.saturating_sub(display_cells(text)))
+    )
+}
+
+fn permissions(kind: EntryKind, mode: Option<u32>) -> String {
+    let kind = match kind {
+        EntryKind::File => '-',
+        EntryKind::Directory => 'd',
+        EntryKind::Symlink => 'l',
+        EntryKind::Other => '?',
+    };
+    let Some(mode) = mode else {
+        return format!("{kind}---------");
+    };
+    let mut text = String::with_capacity(10);
+    text.push(kind);
+    for (read, write, execute, special, special_execute, special_no_execute) in [
+        (0o400, 0o200, 0o100, 0o4000, 's', 'S'),
+        (0o040, 0o020, 0o010, 0o2000, 's', 'S'),
+        (0o004, 0o002, 0o001, 0o1000, 't', 'T'),
+    ] {
+        text.push(if mode & read != 0 { 'r' } else { '-' });
+        text.push(if mode & write != 0 { 'w' } else { '-' });
+        text.push(match (mode & execute != 0, mode & special != 0) {
+            (true, true) => special_execute,
+            (false, true) => special_no_execute,
+            (true, false) => 'x',
+            (false, false) => '-',
+        });
+    }
+    text
+}
+
+fn human_size(bytes: u64) -> String {
+    const UNITS: &[char] = &['B', 'K', 'M', 'G', 'T', 'P', 'E'];
+    if bytes < 1024 {
+        return bytes.to_string();
+    }
+    let mut value = bytes as f64;
+    let mut unit = 0;
+    while value >= 1024.0 && unit + 1 < UNITS.len() {
+        value /= 1024.0;
+        unit += 1;
+    }
+    if value < 10.0 {
+        format!("{value:.1}{}", UNITS[unit])
+    } else {
+        format!("{value:.0}{}", UNITS[unit])
+    }
+}
+
+fn modified_time(nanos: Option<u128>) -> String {
+    modified_time_for_year(nanos, Local::now().year())
+}
+
+fn modified_time_for_year(nanos: Option<u128>, current_year: i32) -> String {
+    let Some(nanos) = nanos else {
+        return "--- -- -----".to_owned();
+    };
+    let seconds = u64::try_from(nanos / 1_000_000_000).unwrap_or(u64::MAX);
+    let subsecond = u32::try_from(nanos % 1_000_000_000).unwrap_or(0);
+    let time = UNIX_EPOCH
+        .checked_add(Duration::new(seconds, subsecond))
+        .unwrap_or(UNIX_EPOCH);
+    let local: DateTime<Local> = time.into();
+    if local.year() == current_year {
+        local.format("%b %e %H:%M").to_string()
+    } else {
+        local.format("%b %e  %Y").to_string()
+    }
+}
+
+#[cfg(unix)]
+fn user_name(uid: u32) -> Option<String> {
+    unsafe {
+        let mut record = std::mem::zeroed();
+        let mut result = std::ptr::null_mut();
+        let mut buffer = vec![0_u8; 16 * 1024];
+        let status = libc::getpwuid_r(
+            uid,
+            &mut record,
+            buffer.as_mut_ptr().cast(),
+            buffer.len(),
+            &mut result,
+        );
+        (status == 0 && !result.is_null() && !record.pw_name.is_null()).then(|| {
+            CStr::from_ptr(record.pw_name)
+                .to_string_lossy()
+                .into_owned()
+        })
+    }
+}
+
+#[cfg(not(unix))]
+fn user_name(_uid: u32) -> Option<String> {
+    None
+}
+
+#[cfg(unix)]
+fn group_name(gid: u32) -> Option<String> {
+    unsafe {
+        let mut record = std::mem::zeroed();
+        let mut result = std::ptr::null_mut();
+        let mut buffer = vec![0_u8; 16 * 1024];
+        let status = libc::getgrgid_r(
+            gid,
+            &mut record,
+            buffer.as_mut_ptr().cast(),
+            buffer.len(),
+            &mut result,
+        );
+        (status == 0 && !result.is_null() && !record.gr_name.is_null()).then(|| {
+            CStr::from_ptr(record.gr_name)
+                .to_string_lossy()
+                .into_owned()
+        })
+    }
+}
+
+#[cfg(not(unix))]
+fn group_name(_gid: u32) -> Option<String> {
+    None
 }
 
 fn render_snapshot(snapshot: &DirectorySnapshot) -> Result<String> {
@@ -595,4 +964,40 @@ fn parse_line(line: &str) -> Result<(PathBuf, EntryKind)> {
         "directory entries cannot contain newlines"
     );
     Ok((path, kind))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detail_columns_pad_unicode_names_by_terminal_cells() {
+        let details = RawDetails {
+            kind: EntryKind::Other,
+            len: 9,
+            modified_nanos: None,
+            mode: None,
+            owner: "用".to_owned(),
+            group: "e\u{301}".to_owned(),
+        };
+
+        assert_eq!(
+            details.format(4, 3, 2),
+            "?--------- 用   e\u{301}    9 --- -- ----- "
+        );
+    }
+
+    #[test]
+    fn details_use_a_year_for_modification_times_outside_the_current_year() {
+        let july_2020 = 1_593_561_600_u128 * 1_000_000_000;
+
+        assert!(modified_time_for_year(Some(july_2020), 2026).ends_with("2020"));
+        assert!(!modified_time_for_year(Some(july_2020), 2020).ends_with("2020"));
+        assert!(modified_time_for_year(Some(july_2020), 2020).contains(':'));
+    }
+
+    #[test]
+    fn permission_details_include_special_execute_bits() {
+        assert_eq!(permissions(EntryKind::File, Some(0o7744)), "-rwsr-Sr-T");
+    }
 }

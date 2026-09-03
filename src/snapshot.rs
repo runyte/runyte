@@ -779,7 +779,10 @@ impl App {
                             segment: row.segment,
                             continuation: row.continuation,
                             folded: row.folded,
-                            text_width: prepared.text_width,
+                            text_width: prepared
+                                .text_width
+                                .saturating_sub(prepared.row_prefix_width)
+                                .max(1),
                             folded_lines: row.folded_lines,
                         },
                     ),
@@ -856,6 +859,27 @@ impl App {
                     kind: TextRunKind::InlineDiagnostic(severity),
                 });
             }
+        }
+        if prepared.row_prefix_width > 0 {
+            let prefix = if context.continuation {
+                String::new()
+            } else {
+                clip_fragment_cell_range(
+                    hints.prefix(context.row).unwrap_or(""),
+                    prepared.row_prefix_scroll,
+                    prepared.row_prefix_width,
+                )
+            };
+            let padding = prepared
+                .row_prefix_width
+                .saturating_sub(display_cells(&prefix));
+            runs.insert(
+                0,
+                TextRun {
+                    text: format!("{prefix}{}", " ".repeat(padding)),
+                    kind: TextRunKind::Hint,
+                },
+            );
         }
         SnapshotRow::Text(VisibleRow {
             document_row: context.row,
@@ -1354,6 +1378,35 @@ fn clip_fragments_to_cells<'a>(
             width = next;
             clipped.push(character);
         }
+    }
+    clipped
+}
+
+/// A display-cell window into one presentation fragment.
+///
+/// If the left edge lands inside a wide glyph, the remainder of that glyph is
+/// blank. This preserves every following column instead of shifting it left.
+fn clip_fragment_cell_range(fragment: &str, start: usize, limit: usize) -> String {
+    let end = start.saturating_add(limit);
+    let mut position = 0usize;
+    let mut clipped = String::with_capacity(limit);
+    for character in fragment.chars() {
+        let width = character_cells(character);
+        let next = position.saturating_add(width);
+        if next <= start {
+            position = next;
+            continue;
+        }
+        if position < start {
+            clipped.push_str(&" ".repeat(next.min(end).saturating_sub(start)));
+            position = next;
+            continue;
+        }
+        if next > end {
+            break;
+        }
+        clipped.push(character);
+        position = next;
     }
     clipped
 }
@@ -2341,6 +2394,35 @@ mod tests {
             }
         )));
 
+        app.handle_key(crate::input::KeyStroke::char('?')).unwrap();
+        let snapshot = prepared_snapshot(&mut app, 100, 12);
+        let pane = snapshot.pane(0).unwrap();
+        let SnapshotRow::Text(file) = &pane.rows[0] else {
+            panic!("file row is text");
+        };
+        assert!(matches!(
+            file.runs.first(),
+            Some(TextRun {
+                text,
+                kind: TextRunKind::Hint,
+            }) if text.starts_with("-rw")
+        ));
+        assert_eq!(
+            file.runs
+                .iter()
+                .filter(|run| matches!(run.kind, TextRunKind::Text { .. }))
+                .map(|run| run.text.as_str())
+                .collect::<String>(),
+            "file.txt"
+        );
+        assert!(
+            file.runs
+                .iter()
+                .map(|run| display_cells(&run.text))
+                .sum::<usize>()
+                <= pane.text_width
+        );
+
         std::fs::remove_dir_all(directory).unwrap();
     }
 
@@ -2543,6 +2625,58 @@ mod tests {
             }),
             "{row:?}"
         );
+    }
+
+    #[test]
+    fn a_cell_range_preserves_columns_when_it_starts_inside_a_wide_glyph() {
+        assert_eq!(clip_fragment_cell_range("ab界cd", 3, 3), " cd");
+        assert_eq!(display_cells(&clip_fragment_cell_range("ab界cd", 3, 3)), 3);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_narrow_explorer_can_scroll_from_permissions_to_the_filename() {
+        let directory = std::env::temp_dir().join(format!(
+            "runyte-snapshot-details-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir(&directory).unwrap();
+        std::fs::write(directory.join("metadata.txt"), "text").unwrap();
+        let mut app = App::new(Config::default(), Some(directory.clone())).unwrap();
+        app.handle_key(KeyStroke::char('?')).unwrap();
+        let full_prefix_width = app.active_buffer().row_prefix_width();
+
+        let first = prepared_snapshot(&mut app, 30, 8);
+        let SnapshotRow::Text(first_row) = &first.pane(0).unwrap().rows[0] else {
+            panic!("first row is text");
+        };
+        assert!(
+            first_row.runs[0].text.starts_with("-rw"),
+            "left edge begins at permissions: {first_row:?}"
+        );
+
+        app.panes.get_mut(&0).unwrap().row_prefix_scroll = full_prefix_width.saturating_sub(8);
+        let last = prepared_snapshot(&mut app, 30, 8);
+        let SnapshotRow::Text(last_row) = &last.pane(0).unwrap().rows[0] else {
+            panic!("first row is text");
+        };
+        assert_eq!(display_cells(&last_row.runs[0].text), 8);
+        let text = last_row
+            .runs
+            .iter()
+            .filter(|run| run.kind != TextRunKind::Hint)
+            .map(|run| run.text.as_str())
+            .collect::<String>();
+        assert_eq!(
+            text, "metadata.txt",
+            "the editable filename receives the recovered width: {last_row:?}"
+        );
+
+        std::fs::remove_dir_all(&directory).unwrap();
     }
 
     #[cfg(unix)]

@@ -1877,6 +1877,7 @@ fn built_in_bindings() -> Vec<Binding> {
         // The global dot now toggles visible whitespace. Keep dotfile
         // discovery on the same mnemonic behind Space in explorer buffers.
         directory(Key::char('.'), Command::ToggleHiddenFiles),
+        directory(Key::char('?'), Command::ToggleDirectoryDetails),
         // A directory buffer deliberately leaves the split sequences to the
         // global bindings: splitting an explorer shows the same listing twice,
         // exactly as splitting a file shows the same text twice.
@@ -2927,6 +2928,21 @@ mod tests {
         assert!(matches!(
             default_keymap().lookup_in(Mode::Normal, BindingScope::Directory, &sequence),
             Lookup::Exact(binding) if binding.target == BindingTarget::Editor(EditorCommand::MoveWordEnd)
+        ));
+    }
+
+    #[test]
+    fn question_mark_toggles_details_only_inside_directory_buffers() {
+        let sequence = KeySequence::from(Key::char('?'));
+        assert!(matches!(
+            default_keymap().lookup_in(Mode::Normal, BindingScope::Directory, &sequence),
+            Lookup::Exact(binding)
+                if binding.target
+                    == BindingTarget::Editor(EditorCommand::ToggleDirectoryDetails)
+        ));
+        assert!(matches!(
+            default_keymap().lookup(Mode::Normal, &sequence),
+            Lookup::NoMatch
         ));
     }
 
