@@ -2485,6 +2485,62 @@ fn a_host_open_over_a_terminal_is_also_a_detour() {
     fs::remove_dir_all(directory).unwrap();
 }
 
+/// A terminal's pane still holds the buffer it was showing before the
+/// terminal opened, but that buffer is the pane's history rather than
+/// something a split was asked for. Splitting a terminal asks for somewhere
+/// to work, so the new pane opens the working-directory explorer.
+#[cfg(unix)]
+#[test]
+fn splitting_a_terminal_opens_a_working_directory_explorer() {
+    for axis in [Axis::Vertical, Axis::Horizontal] {
+        let root = temporary("terminal-split-explorer");
+        let work = root.join("work");
+        fs::create_dir_all(&work).unwrap();
+        let note = root.join("note.txt");
+        fs::write(&note, "alpha\n").unwrap();
+
+        let mut app = App::new(Config::default(), Some(note)).unwrap();
+        app.working_directory = work.clone();
+        let covered = app.active().buffer;
+        app.open_terminal_at(Some("/bin/cat".to_owned()), root.clone());
+        let terminal = app.active_terminal().unwrap();
+        let source = app.active_pane;
+        // Leaving the child's input puts the terminal in review, which is
+        // the state a `Space w v` split is made from.
+        // A live terminal takes two presses to reach review: the first
+        // leaves the child's input for live Normal, the second captures.
+        key(&mut app, KeyCode::Char('\\'), Modifiers::CONTROL);
+        assert_eq!(app.mode, Mode::Normal);
+        assert!(!app.terminals.get(terminal).unwrap().reviewing());
+        key(&mut app, KeyCode::Char('\\'), Modifiers::CONTROL);
+        assert!(app.terminals.get(terminal).unwrap().reviewing());
+
+        app.split_window(axis).unwrap();
+
+        assert_eq!(app.panes.len(), 2);
+        assert_ne!(app.active_pane, source);
+        assert_eq!(
+            app.terminal_of_pane(source),
+            Some(terminal),
+            "the terminal left its original pane"
+        );
+        assert_eq!(app.active_terminal(), None);
+        assert_ne!(
+            app.active().buffer,
+            covered,
+            "the split reopened the buffer the terminal covered"
+        );
+        assert!(app.active_buffer().is_directory());
+        assert_eq!(app.active_buffer().path.as_deref(), Some(work.as_path()));
+        assert_eq!(app.mode, Mode::Normal);
+        let child = app.terminals.get(terminal).unwrap();
+        assert!(child.live());
+        assert!(child.reviewing(), "the split ended the terminal's review");
+
+        fs::remove_dir_all(root).unwrap();
+    }
+}
+
 /// A split copies the pane it came from, and one terminal has one size, so
 /// the copy must not also inherit the claim on it. Two panes racing to reveal
 /// the same session is the failure the split's own terminal rule avoids.

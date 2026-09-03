@@ -25,6 +25,15 @@ pub(super) enum ReloadDispatch {
     File,
 }
 
+/// What a split reports, named for the border it draws rather than for the
+/// axis it splits along.
+fn split_status(axis: Axis) -> &'static str {
+    match axis {
+        Axis::Horizontal => "vertical split",
+        Axis::Vertical => "horizontal split",
+    }
+}
+
 pub(super) fn reload_dispatch(kind: &BufferKind) -> ReloadDispatch {
     match kind {
         BufferKind::Directory => ReloadDispatch::Directory,
@@ -1384,22 +1393,40 @@ impl App {
         if let Some(path) = path {
             self.open_file(path)?;
         }
-        self.status(match axis {
-            Axis::Horizontal => "vertical split",
-            Axis::Vertical => "horizontal split",
-        });
+        self.status(split_status(axis));
         Ok(())
     }
 
-    /// Splits through the ordinary pane path while preserving Terminal
-    /// Insert's explicit review boundary. The child stays live in its original
-    /// pane; the newly active document pane uses Normal mode without asking
-    /// the terminal session to capture a review snapshot.
-    pub(super) fn split_from_terminal_insert(&mut self, axis: Axis) -> Result<()> {
+    /// The split the `Space w v/s` and `Ctrl-w v/s` commands make.
+    ///
+    /// The terminal question is answered here rather than in `split` because
+    /// `split` is the pane primitive: `:diff-this`, the tutorial, and the Git
+    /// comparison all split in order to retarget both panes themselves, and
+    /// they need the plain copy. Only a person asking for a window gets an
+    /// explorer instead.
+    ///
+    /// Terminal Insert's explicit review boundary is preserved either way.
+    /// The child stays live in its original pane, and the newly active pane
+    /// uses Normal mode without asking the terminal session to capture a
+    /// review snapshot.
+    pub(super) fn split_window(&mut self, axis: Axis) -> Result<()> {
         let insert_mode = self.mode == Mode::Insert;
-        let terminal_input = self.mode == Mode::Insert && self.active_terminal().is_some();
+        // What the source pane is showing right now is the question, not
+        // which buffer the pane kept behind a terminal.
+        let from_terminal = self.active_terminal().is_some();
+        let terminal_input = insert_mode && from_terminal;
         self.split(axis, None)?;
         debug_assert!(!terminal_input || self.active_terminal().is_none());
+        if from_terminal {
+            // The buffer the terminal's pane retained is that pane's history,
+            // not a document the person asked for a second view of. Splitting
+            // a terminal is a request for somewhere to work, so the new pane
+            // starts where `Space E` would put it.
+            self.open_explorer(None)?;
+            // `open_file` reports what it opened, and the split is what was
+            // asked for.
+            self.status(split_status(axis));
+        }
         self.finish_insert_window_command(insert_mode, terminal_input);
         Ok(())
     }
