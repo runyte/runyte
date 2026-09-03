@@ -1950,7 +1950,7 @@ mod tests {
                 (0x8d, 0xdb, 0x8c),
                 (0xc9, 0x68, 0x70),
                 (0xd2, 0xa8, 0xff),
-                (0xf0, 0xa8, 0x68),
+                (0xf0, 0x7a, 0xb4),
                 (0x6c, 0xb6, 0xff),
             ),
             (
@@ -1961,7 +1961,7 @@ mod tests {
                 (0x23, 0x73, 0x3a),
                 (0xa3, 0x3d, 0x49),
                 (0x75, 0x4b, 0x97),
-                (0x9a, 0x55, 0x18),
+                (0xa4, 0x27, 0x6f),
                 (0x1f, 0x65, 0xa6),
             ),
         ] {
@@ -3039,6 +3039,133 @@ mod tests {
             assert!(
                 command_red > command_green && command_blue > command_green,
                 "{name} Command cursor should read as purple"
+            );
+        }
+    }
+
+    #[test]
+    fn default_themes_use_a_pink_primary_selection_and_a_vivid_blue_secondary() {
+        // `built_in_search_selection_palettes_are_legible_and_role_distinct`
+        // covers the bundled themes that answer Select mode in orange, and its
+        // hue rule is why the branded pair is not in that list: `default-dark`
+        // and `default-light` answer it in pink instead. The same legibility
+        // and role questions still have to be asked of them, so they are asked
+        // here against the pink grammar.
+        fn channels(color: Color) -> (u8, u8, u8) {
+            match color {
+                Color::Rgb(red, green, blue) => (red, green, blue),
+                other => panic!("built-in theme color should be RGB, got {other:?}"),
+            }
+        }
+
+        fn contrast(left: Color, right: Color) -> f64 {
+            let left = left.relative_luminance().unwrap();
+            let right = right.relative_luminance().unwrap();
+            (left.max(right) + 0.05) / (left.min(right) + 0.05)
+        }
+
+        // CIE76 over CIELAB, for the same reason
+        // `adjusted_dark_themes_carry_dimmed_text_on_their_selections` needs
+        // it: two grounds told apart by hue can be plainly different and still
+        // score almost 1:1 on contrast.
+        fn perceptual_distance(left: Color, right: Color) -> f64 {
+            fn lab(color: Color) -> [f64; 3] {
+                let (red, green, blue) = channels(color);
+                let channel = |value: u8| {
+                    let value = f64::from(value) / 255.0;
+                    if value <= 0.03928 {
+                        value / 12.92
+                    } else {
+                        ((value + 0.055) / 1.055).powf(2.4)
+                    }
+                };
+                let (r, g, b) = (channel(red), channel(green), channel(blue));
+                let f = |t: f64| {
+                    if t > 0.008_856 {
+                        t.cbrt()
+                    } else {
+                        7.787 * t + 16.0 / 116.0
+                    }
+                };
+                let x = f((0.4124 * r + 0.3576 * g + 0.1805 * b) / 0.95047);
+                let y = f(0.2126 * r + 0.7152 * g + 0.0722 * b);
+                let z = f((0.0193 * r + 0.1192 * g + 0.9505 * b) / 1.08883);
+                [116.0 * y - 16.0, 500.0 * (x - y), 200.0 * (y - z)]
+            }
+            let (left, right) = (lab(left), lab(right));
+            left.iter()
+                .zip(right)
+                .map(|(l, r)| (l - r).powi(2))
+                .sum::<f64>()
+                .sqrt()
+        }
+
+        let config = Config::default();
+        for (name, secondary, primary, select) in [
+            ("default-dark", 0x0b3f8c, 0x5e2e4d, 0xf07ab4),
+            ("default-light", 0x8fc6fb, 0xf2b8da, 0xa4276f),
+        ] {
+            let theme = config.resolve_theme(name).unwrap();
+            let rgb = |value: u32| {
+                Color::Rgb(
+                    ((value >> 16) & 0xff) as u8,
+                    ((value >> 8) & 0xff) as u8,
+                    (value & 0xff) as u8,
+                )
+            };
+            assert_eq!(theme.selection, rgb(secondary), "wrong {name} selection");
+            assert_eq!(
+                theme.selection_primary,
+                rgb(primary),
+                "wrong {name} primary selection"
+            );
+            assert_eq!(
+                theme.cursor_select,
+                rgb(select),
+                "wrong {name} Select cursor"
+            );
+
+            // Pink is red first, then blue, then green; a warm orange orders
+            // the last two the other way round, so this is the assertion that
+            // would catch a quiet return to the old palette.
+            for (role, color) in [
+                ("primary selection", theme.selection_primary),
+                ("Select cursor", theme.cursor_select),
+            ] {
+                let (red, green, blue) = channels(color);
+                assert!(
+                    red > blue && blue > green,
+                    "{name} {role} should read as pink"
+                );
+            }
+            let (secondary_red, _, secondary_blue) = channels(theme.selection);
+            assert!(
+                secondary_blue > secondary_red,
+                "{name} secondary selection should read as cool blue"
+            );
+
+            for (role, ground) in [
+                ("secondary selection", theme.selection),
+                ("primary selection", theme.selection_primary),
+            ] {
+                assert!(
+                    contrast(theme.foreground, ground) >= 4.5,
+                    "{name} ordinary text is unreadable on its {role}"
+                );
+                assert!(
+                    perceptual_distance(ground, theme.background) >= 18.0,
+                    "{name} {role} disappears into its background"
+                );
+            }
+            // The Select badge paints its label in the theme background, so
+            // the colour behind it has to stand off that ground.
+            assert!(
+                contrast(theme.background, theme.cursor_select) >= 3.0,
+                "{name} Select cursor obscures its glyph"
+            );
+            assert!(
+                perceptual_distance(theme.selection, theme.selection_primary) >= 26.0,
+                "{name} cannot tell its primary selection from the rest"
             );
         }
     }

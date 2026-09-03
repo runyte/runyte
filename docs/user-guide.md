@@ -974,8 +974,8 @@ caret colour, which each theme names for itself. Most built-in themes use blue
 for Normal, red for Insert, neon green for Replace (neon magenta when another
 mode already uses green), orange for Select, and purple for Command;
 `default-dark` and `default-light` instead use green for Normal, red for
-Insert, purple for Replace, and blue for Command. The rest of the
-row keeps the theme's ordinary background. Its left side
+Insert, purple for Replace, pink for Select, and blue for Command. The rest of
+the row keeps the theme's ordinary background. Its left side
 then names the workspace mode and current workspace directory, marking the
 active buffer `[+]` when it has unsaved changes, `[STALE]` when its file path
 disagrees with the accepted disk baseline, and `[RO]` when it is read-only.
@@ -1467,15 +1467,17 @@ multiline match.
 Every flavour selects *all* of its matches at once, so the edit that follows
 applies to all of them. Each match is selected in full with the cursor on its
 last character, which is where an append or a motion continues from. The whole
-primary match has a light-orange selection and an orange cursor, while the
-other matches stay blue without cursor blocks. The status line identifies the
-primary's position among the results. Pressing `n` or `N` selects only the next
+primary match carries the theme's primary-selection ground and one cursor in
+its Select colour — pink in `default-dark` and `default-light`, orange in most
+other built-in themes — while the other matches keep the secondary selection
+colour without cursor blocks. The status line identifies the primary's position
+among the results. Pressing `n` or `N` selects only the next
 or previous match; later presses keep cycling that single selection through the
 remembered results. An immediate edit therefore changes every match, while an
 edit after search navigation changes only the match you reached. A selection
 motion such as `e` turns the results into ordinary selections, restores their
-orange endpoint cursors, and replaces the search status with the current
-selection count.
+Select-coloured endpoint cursors, and replaces the search status with the
+current selection count.
 
 A search runs over the whole buffer unless something is selected. When at least
 two characters are selected — from `v` and a motion, from `x`, from `%`, or from
@@ -3057,7 +3059,7 @@ it is `nordbones-dark` with the ordinary text brought down from 10.6:1 against
 the background to 7:1, for reading at length without the glare. Its background,
 accents, and selections stay unchanged.
 `default-dark` and `default-light` are Runyte's branded pair. They share red
-accents and a green Normal, red Insert, orange Select, purple Replace, and
+accents and a green Normal, red Insert, pink Select, purple Replace, and
 blue Command mode vocabulary — inverted from most other built-in themes'
 purple Command and green Replace. They are also the only bundled themes that
 set `command`, so the command palette lists command names in Command mode's
@@ -3186,20 +3188,23 @@ is green. Command and Replace are otherwise a Runyte colour rather than an
 upstream one: most built-in themes use blue for Normal, red for Insert, neon
 green for Replace, orange for Select, and purple for Command, but each theme
 is free to choose its own. `default-dark` and `default-light` do: green for
-Normal, red for Insert, purple for Replace, and blue for Command, the same
-blue their `command` role lists palette commands in.
+Normal, red for Insert, purple for Replace, pink for Select, and blue for
+Command, the same blue their `command` role lists palette commands in.
 
 `selection` colours secondary ranges in a multi-selection.
 `selection_primary` colours the primary range and ordinary Select-mode ranges;
-it falls back to `selection` when omitted. Runyte's original built-in themes
-pair a cool secondary selection with a warm primary selection; imported themes
-may instead preserve their upstream Visual and Search backgrounds, as the
-Zenbones variants do.
+it falls back to `selection` when omitted. Most of Runyte's original built-in
+themes pair a cool secondary selection with a warm primary selection.
+`default-dark` and `default-light` separate the two by hue alone instead: a
+vivid blue secondary against a pink primary that answers their Select cursor.
+Imported themes may preserve their upstream Visual and Search backgrounds
+rather than either, as the Zenbones variants do.
 
 `fuzzy_match_secondary` colours the individual characters of a non-contiguous
 fuzzy-grep match, while `fuzzy_match_primary` colours a direct, contiguous
 substring. They fall back to `selection` and `selection_primary` respectively,
-so existing and built-in themes use the same blue/orange grammar as `Space s`.
+so existing and built-in themes highlight matches in the same two colours their
+selections already use for `Space s`.
 
 `command` colours the command names the command palette lists. It falls back
 to `accent`, which is also what pane and overlay borders use, so a theme

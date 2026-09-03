@@ -149,13 +149,13 @@ states, and `p` drops the project as the root as well. Because the namespace
 reaches outside the workspace, its label is "Look past this buffer" rather
 than "Search the whole project".
 
-Pristine results render the primary range light orange with one orange cursor;
-secondary ranges retain the theme's secondary selection colour and hide their
-cursor blocks. A selection motion
-ends that search-specific presentation and restores the ordinary endpoint
-cursors because subsequent extension depends on them. `i`, `a`, and `c` then
-show red Insert-mode cursors at their resulting insertion points; `r` shows all
-heads in red while it waits for the replacement character.
+Pristine results render the primary range in the theme's primary selection
+colour with one cursor in its Select colour; secondary ranges retain the
+theme's secondary selection colour and hide their cursor blocks. A selection
+motion ends that search-specific presentation and restores the ordinary
+endpoint cursors because subsequent extension depends on them. `i`, `a`, and
+`c` then show red Insert-mode cursors at their resulting insertion points; `r`
+shows all heads in red while it waits for the replacement character.
 
 A search is confined to the current selection when at least one range covers two
 or more characters. A bare caret is a one-character range in this grammar, so
