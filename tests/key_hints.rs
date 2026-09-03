@@ -613,6 +613,25 @@ fn ctrl_w_popup_scrolls_with_arrows_and_advertises_them() {
 }
 
 #[test]
+fn ctrl_w_popup_advertises_terminal_creation_from_the_registry() {
+    let mut hints = KeyHintState::default();
+    hints.observe(KeyStroke::ctrl('w'), Mode::Normal, default_keymap());
+
+    let terminal = hints
+        .rows(default_keymap(), Mode::Normal)
+        .into_iter()
+        .find(|row| row.sequence == [Key::ctrl('w'), Key::char('t')].into())
+        .expect("Ctrl-w hints include terminal creation");
+
+    assert_eq!(
+        terminal.target,
+        Some(BindingTarget::Editor(EditorCommand::OpenTerminal))
+    );
+    assert_eq!(terminal.description, "Run a shell or command in this pane");
+    assert_eq!(terminal.role, BindingRole::Compatibility);
+}
+
+#[test]
 fn alt_j_and_k_cancel_insert_ctrl_w_instead_of_scrolling() {
     for character in ['j', 'k'] {
         let mut app = App::new(Config::default(), None).unwrap();
