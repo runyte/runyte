@@ -37,7 +37,7 @@ fn every_mode_sequence_is_unique_and_described() {
 #[test]
 fn git_namespace_keeps_only_navigation_and_refresh_commands() {
     let retained = [
-        " gg", " gd", " gD", " gr", " gt", " g/", " gl", " gb", " gB", " gw",
+        " gg", " gd", " gD", " gr", " gt", " gf", " gl", " gb", " gB", " gw",
     ];
     for keys in retained {
         assert!(
@@ -117,9 +117,10 @@ fn equalizing_is_reached_from_the_window_namespace_alone() {
 #[test]
 fn finder_and_workspace_search_are_global_in_every_buffer_scope() {
     let cases = [
-        (" //", EditorCommand::OpenFilePicker),
+        (" /f", EditorCommand::OpenFilePicker),
+        (" f", EditorCommand::OpenFilePicker),
         (" /s", EditorCommand::GlobalSearch),
-        (" /S", EditorCommand::GlobalSearchRegex),
+        (" //", EditorCommand::GlobalSearchRegex),
         (" /a", EditorCommand::OpenAllFilesPicker),
         (" /p", EditorCommand::OpenPathFilePicker),
     ];
@@ -143,10 +144,10 @@ fn finder_and_workspace_search_are_global_in_every_buffer_scope() {
     }
 
     {
-        let (canonical, alias, command) = (" //", "/", EditorCommand::OpenFilePicker);
+        let (canonical, alias, command) = (" /f", " f", EditorCommand::OpenFilePicker);
         let Lookup::Exact(binding) = default_keymap().lookup(Mode::Normal, &sequence(canonical))
         else {
-            panic!("missing canonical picker binding {canonical:?}");
+            panic!("missing canonical finder binding {canonical:?}");
         };
         assert_eq!(binding.alias.as_ref(), Some(&sequence(alias)));
         assert!(matches!(
@@ -154,6 +155,66 @@ fn finder_and_workspace_search_are_global_in_every_buffer_scope() {
             Lookup::Exact(binding)
                 if binding.target == BindingTarget::Editor(command)
         ));
+    }
+}
+
+/// `f` is the finder in every namespace it appears in, so the short spelling
+/// and the namespace spelling have to be the same command identity wherever a
+/// buffer scope can shadow a binding. The alias is advertised on the namespace
+/// row, but only the registry decides what either sequence runs.
+#[test]
+fn the_finders_short_spelling_matches_its_namespace_spelling_in_every_scope() {
+    for scope in [
+        BindingScope::Global,
+        BindingScope::Directory,
+        BindingScope::Settings,
+        BindingScope::GitStatus,
+        BindingScope::GitBranches,
+        BindingScope::Help,
+        BindingScope::CommitMessage,
+        BindingScope::Diff,
+        BindingScope::Terminal,
+        BindingScope::WorkspaceSearch,
+    ] {
+        for mode in [Mode::Normal, Mode::Select] {
+            let short = default_keymap().lookup_in(mode, scope, &sequence(" f"));
+            let namespaced = default_keymap().lookup_in(mode, scope, &sequence(" /f"));
+            let (Lookup::Exact(short), Lookup::Exact(namespaced)) = (short, namespaced) else {
+                panic!("the finder is unreachable in {scope:?} {mode:?}");
+            };
+            assert_eq!(
+                short.target,
+                BindingTarget::Editor(EditorCommand::OpenFilePicker)
+            );
+            assert_eq!(short.target, namespaced.target);
+            assert_eq!(short.role, BindingRole::Fast);
+            assert_eq!(namespaced.role, BindingRole::Primary);
+            assert_eq!(namespaced.alias.as_ref(), Some(&sequence(" f")));
+        }
+    }
+}
+
+/// The sigil is one rule rather than a set of independent choices: `/` is the
+/// in-buffer regular-expression search and the same key under `Space /`
+/// widens that flavour to the workspace, exactly as `Space / s` widens `s`.
+#[test]
+fn the_search_sigil_means_the_same_flavour_in_the_buffer_and_the_workspace() {
+    for (keys, command) in [
+        ("s", EditorCommand::Search),
+        ("/", EditorCommand::SearchRegex),
+        (" /s", EditorCommand::GlobalSearch),
+        (" //", EditorCommand::GlobalSearchRegex),
+    ] {
+        for mode in [Mode::Normal, Mode::Select] {
+            assert!(
+                matches!(
+                    default_keymap().lookup(mode, &sequence(keys)),
+                    Lookup::Exact(binding)
+                        if binding.target == BindingTarget::Editor(command)
+                ),
+                "{keys:?} does not reach {command:?} in {mode:?}"
+            );
+        }
     }
 }
 
@@ -447,13 +508,13 @@ fn nested_space_tree_is_exact_primary_and_keeps_fast_compatibility_paths() {
         (" lgy", Editor(EditorCommand::GotoTypeDefinition)),
         (" lgr", Editor(EditorCommand::GotoReferences)),
         (" lgi", Editor(EditorCommand::GotoImplementation)),
-        (" //", Editor(EditorCommand::OpenFilePicker)),
+        (" /f", Editor(EditorCommand::OpenFilePicker)),
         (" /s", Editor(EditorCommand::GlobalSearch)),
-        (" /S", Editor(EditorCommand::GlobalSearchRegex)),
+        (" //", Editor(EditorCommand::GlobalSearchRegex)),
         (" /a", Editor(EditorCommand::OpenAllFilesPicker)),
         (" /p", Editor(EditorCommand::OpenPathFilePicker)),
         (" p.", Editor(EditorCommand::ToggleWhitespace)),
-        (" g/", Colon(ColonCommand::GitSearchCommits)),
+        (" gf", Colon(ColonCommand::GitSearchCommits)),
         (" gw", Colon(ColonCommand::GitWorktrees)),
         (" xe", Editor(EditorCommand::ExpandSyntaxSelection)),
         (" xs", Editor(EditorCommand::ShrinkSyntaxSelection)),
@@ -506,7 +567,7 @@ fn nested_space_tree_is_exact_primary_and_keeps_fast_compatibility_paths() {
 
     // `Space b` became the Buffers namespace, so the picker it used to reach
     // directly now lives at `Space b b` as a Primary binding.
-    for keys in [" e", " E"] {
+    for keys in [" e", " E", " f"] {
         assert!(
             matches!(
                 default_keymap().lookup(Mode::Normal, &sequence(keys)),
@@ -523,7 +584,7 @@ fn nested_space_tree_is_exact_primary_and_keeps_fast_compatibility_paths() {
         .collect::<HashSet<_>>();
     assert_eq!(
         fast,
-        ["Space e", "Space E"]
+        ["Space e", "Space E", "Space f"]
             .into_iter()
             .map(str::to_owned)
             .collect()
@@ -565,14 +626,17 @@ fn character_find_and_project_find_keep_distinct_direct_bindings() {
             Lookup::Exact(binding)
                 if binding.target == BindingTarget::Editor(EditorCommand::FindNextChar)
         ));
+        // The finder took `f` under a prefix, never as the bare key: `f` alone
+        // remains the character motion Vim and Helix both spell that way.
         assert!(matches!(
-            default_keymap().lookup(mode, &sequence(" /f")),
-            Lookup::NoMatch
+            default_keymap().lookup(mode, &sequence(" f")),
+            Lookup::Exact(binding)
+                if binding.target == BindingTarget::Editor(EditorCommand::OpenFilePicker)
         ));
         assert!(matches!(
             default_keymap().lookup(mode, &sequence("/")),
             Lookup::Exact(binding)
-                if binding.target == BindingTarget::Editor(EditorCommand::OpenFilePicker)
+                if binding.target == BindingTarget::Editor(EditorCommand::SearchRegex)
         ));
     }
 }
@@ -656,6 +720,11 @@ fn removed_duplicate_bindings_stay_unbound() {
         // to choose at the prompt, and `Space ?` still opens help.
         "?", // Removing a selection is `Space s r`, so the key matches the word.
         " sj",
+        // The finder settled on `f` in every namespace, so the sigil is search
+        // everywhere and the spellings it used to hold reach nothing: `S` was
+        // the buffer regular-expression search, `Space / S` the workspace one,
+        // and `Space g /` the commit finder.
+        "S", " /S", " g/",
     ] {
         assert!(
             matches!(

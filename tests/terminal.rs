@@ -1654,7 +1654,7 @@ fn terminal_review_repeats_regex_matches_with_n_uppercase_n_and_parentheses() {
     let mut session = Session::start(r#"/bin/sh -c 'printf "one two one"; cat'"#);
     assert!(session.settle(|app| terminal_text(app).contains("one two one")));
     session.leave_input();
-    session.press(KeyCode::Char('S'));
+    session.press(KeyCode::Char('/'));
     session.type_text("one|two");
     session.press(KeyCode::Enter);
     let id = session.app.active_terminal().unwrap();

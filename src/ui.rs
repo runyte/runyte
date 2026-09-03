@@ -2221,7 +2221,7 @@ fn draw_picker(frame: &mut Frame<'_>, app: &TuiApp<'_>, editor_area: Rect) {
     let (found, candidates) = app.picker_progress_counts();
     let title = if app.finder.is_some() {
         format!(
-            " Find · Files · {} · {found}/{candidates} matched{}{} · Tab buffers + terminals · Ctrl-t preview ",
+            " Finder · Files · {} · {found}/{candidates} matched{}{} · Tab buffers + terminals · Ctrl-t preview ",
             picker.root.display(),
             skipped,
             if picker.limited {
@@ -2430,7 +2430,7 @@ fn draw_resource_finder(
         .borders(Borders::ALL)
         .border_style(Style::default().fg(app.theme.accent))
         .title(format!(
-            " Find · {}{} · {found}/{candidates} matched{}{}{} · Tab {} · Ctrl-t preview ",
+            " Finder · {}{} · {found}/{candidates} matched{}{}{} · Tab {} · Ctrl-t preview ",
             finder.mode.title(),
             scope,
             skipped,
@@ -7188,7 +7188,7 @@ mod tests {
         let mut terminal = Terminal::new(backend).unwrap();
         let mut app = App::new(Config::default(), None).unwrap();
         app.handle_key(crate::input::KeyStroke::new(
-            crate::input::KeyCode::Char('S'),
+            crate::input::KeyCode::Char('/'),
             crate::input::Modifiers::NONE,
         ))
         .unwrap();

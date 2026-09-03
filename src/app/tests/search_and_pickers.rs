@@ -81,7 +81,7 @@ fn search_prompt_repeats_and_wraps_unicode_matches() {
     let mut app = App::new(Config::default(), None).unwrap();
     seed(&mut app, "α one\ntwo α");
 
-    press(&mut app, 'S');
+    press(&mut app, '/');
     assert_eq!(app.prompt_kind, PromptKind::Search(SearchMode::Regex));
     press(&mut app, 'α');
     key(&mut app, KeyCode::Enter, Modifiers::NONE);
@@ -173,7 +173,7 @@ fn search_flavours_fold_case_and_take_literals_literally() {
     assert_eq!(app.active().selection.len(), 3, "`s` ignores case");
 
     app.active_mut().selection = Selection::point(0);
-    search_for(&mut app, 'S', "foo");
+    search_for(&mut app, '/', "foo");
     assert_eq!(app.active().selection.len(), 1, "`S` respects case");
 
     let mut app = App::new(Config::default(), None).unwrap();
@@ -188,7 +188,7 @@ fn search_flavours_fold_case_and_take_literals_literally() {
 
     // The same text through `S` is a regular expression, and an invalid one.
     app.active_mut().selection = Selection::point(0);
-    search_for(&mut app, 'S', "a(b");
+    search_for(&mut app, '/', "a(b");
     assert!(app.status_error);
 }
 
@@ -263,7 +263,7 @@ fn successive_searches_narrow_into_the_previous_matches() {
 
     // The matches are themselves a selection, so the next search narrows
     // again: four `a`s inside two `alpha`s, not every `a` in the buffer.
-    search_for(&mut app, 'S', "a");
+    search_for(&mut app, '/', "a");
     assert_eq!(app.active().selection.len(), 4);
     assert!(
         app.active().selection.ranges().iter().all(|range| app
@@ -294,7 +294,7 @@ fn filtering_selections_prompts_for_its_own_pattern() {
 
     // No search has run, so the old shared-pattern coupling would have
     // refused this outright.
-    search_for(&mut app, 'S', "(?m)^.+$");
+    search_for(&mut app, '/', "(?m)^.+$");
     assert_eq!(app.active().selection.len(), 3);
 
     type_text(&mut app, " sk");
@@ -344,7 +344,7 @@ fn an_invalid_regex_from_the_search_prompt_echoes_as_an_error() {
     let mut app = App::new(Config::default(), None).unwrap();
     seed(&mut app, "a(b) and axb");
 
-    search_for(&mut app, 'S', "a(b");
+    search_for(&mut app, '/', "a(b");
     assert!(app.status_error);
     assert!(app.displayed_status_message_is_error());
     assert!(
@@ -523,7 +523,7 @@ fn yank_paste_and_prompt_editing_use_unicode_character_positions() {
     assert_eq!(text(&app), "αβαβc");
     assert_eq!(app.mode, Mode::Normal, "buffer paste stays in Normal mode");
 
-    press(&mut app, 'S');
+    press(&mut app, '/');
     type_text(&mut app, "α beta");
     key(&mut app, KeyCode::Char('w'), Modifiers::CONTROL);
     assert_eq!(app.command, "α ");
@@ -798,7 +798,7 @@ fn project_finder_switches_name_and_content_modes_without_losing_its_query() {
         .find(|overlay| overlay.kind == crate::snapshot::OverlayKind::FilePicker)
         .unwrap();
     assert!(
-        overlay.title.starts_with("Find · Contents · ") && overlay.title.ends_with(" matched"),
+        overlay.title.starts_with("Finder · Contents · ") && overlay.title.ends_with(" matched"),
         "the header names the mode and says what its counts count: {}",
         overlay.title
     );
@@ -4319,13 +4319,13 @@ fn every_surface_names_the_finder_scope_in_front_of_the_reader() {
     app.open_project_picker().unwrap();
     let project = scope_of(&app);
     assert!(
-        project.starts_with("Find · Names · ") && !project.contains("all files"),
+        project.starts_with("Finder · Names · ") && !project.contains("all files"),
         "the ordinary project finder says nothing about its scope: {project}"
     );
 
     app.open_all_files_picker().unwrap();
     assert!(
-        scope_of(&app).starts_with("Find · Names · all files · "),
+        scope_of(&app).starts_with("Finder · Names · all files · "),
         "{}",
         scope_of(&app)
     );

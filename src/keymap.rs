@@ -1005,12 +1005,11 @@ fn built_in_bindings() -> Vec<Binding> {
             [Key::char(' '), Key::char('p'), Key::char('t')],
             Command::FormatTable,
         ),
-        // Searching this buffer is two keys and no namespace: they are the
-        // spellings someone who searches all day wants, and `Space /` widens
-        // the same two letters to the whole project.
+        // Searching this buffer is one key and no namespace: `s` and `/` are
+        // the spellings someone who searches all day wants, and `Space /`
+        // widens each of them to the whole project without respelling it.
         modal(Key::char('s'), Command::Search),
-        modal(Key::char('S'), Command::SearchRegex),
-        modal(Key::char('/'), Command::OpenFilePicker),
+        modal(Key::char('/'), Command::SearchRegex),
         modal(Key::char('n'), Command::SearchNext),
         modal(Key::char('N'), Command::SearchPrevious),
         modal(Key::char('*'), Command::SearchSelection),
@@ -1175,23 +1174,25 @@ fn built_in_bindings() -> Vec<Binding> {
         ),
         // Looking past this buffer lives under `Space /`. The sigil says search,
         // the prefix says the whole project rather than the file in front of
-        // you, and the letter after it is the one the bare key already spells.
-        // `Space / /` repeats the namespace letter for the finder reached for
-        // most, the way `Space b b` and `Space m m` do. Bare `/` is its alias;
-        // the in-buffer regular-expression search moved to the free `S` key.
-        primary_modal(
-            [Key::char(' '), Key::char('/'), Key::char('/')],
-            Command::OpenFilePicker,
-        )
-        .with_alias(Key::char('/')),
+        // you, and the key after it is the one the bare key already spells:
+        // `Space / s` mirrors `s` and `Space / /` mirrors `/`, so a flavour is
+        // spelled once and widened by the prefix rather than respelled.
         primary_modal(
             [Key::char(' '), Key::char('/'), Key::char('s')],
             Command::GlobalSearch,
         ),
         primary_modal(
-            [Key::char(' '), Key::char('/'), Key::char('S')],
+            [Key::char(' '), Key::char('/'), Key::char('/')],
             Command::GlobalSearchRegex,
         ),
+        // The finder is `f` in every namespace it appears in, so it does not
+        // compete with the sigil for a spelling. `Space f` is its short one.
+        primary_modal(
+            [Key::char(' '), Key::char('/'), Key::char('f')],
+            Command::OpenFilePicker,
+        )
+        .with_alias([Key::char(' '), Key::char('f')]),
+        modal([Key::char(' '), Key::char('f')], Command::OpenFilePicker),
         // The same finder over a wider scope: `a` drops the ignore files the
         // project states, `p` drops the project as the root as well.
         primary_modal(
@@ -1249,12 +1250,12 @@ fn built_in_bindings() -> Vec<Binding> {
             [Key::char(' '), Key::char('g'), Key::char('l')],
             ColonCommand::GitLog,
         ),
-        // `/` reads as search wherever it appears, so commit search spells
-        // itself the way `Space / /` does rather than taking `f` for "fuzzy".
-        // Commits are the only Git corpus large enough to need searching;
-        // branches and stashes are lists you read.
+        // `f` reads as the finder wherever it appears, and this is a finder
+        // over commits rather than the buffer search `/` now spells. Commits
+        // are the only Git corpus large enough to need one; branches and
+        // stashes are lists you read.
         primary_modal(
-            [Key::char(' '), Key::char('g'), Key::char('/')],
+            [Key::char(' '), Key::char('g'), Key::char('f')],
             ColonCommand::GitSearchCommits,
         ),
         primary_modal(
@@ -2370,12 +2371,12 @@ mod tests {
         );
 
         assert!(
-            editing.contains("| `/` | Open the project finder"),
-            "the direct `/` binding must be documented as the project finder"
+            editing.contains("| `s` / `/` | Search with an escaped literal"),
+            "the two buffer-search flavours must be documented on `s` and `/`"
         );
         assert!(
-            !editing.contains("| `/` | Search with a regular expression"),
-            "the retired direct `/` regex binding is still documented"
+            !editing.contains("| `/` | Open the project finder"),
+            "the retired direct `/` finder binding is still documented"
         );
     }
 

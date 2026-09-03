@@ -656,7 +656,7 @@ mod tests {
         let project = rows_under('/');
         assert_eq!(
             alias_of(&project, EditorCommand::OpenFilePicker),
-            Some(KeySequence::from(Key::char('/')))
+            Some(KeySequence::from([Key::char(' '), Key::char('f')]))
         );
         assert_eq!(alias_of(&project, EditorCommand::GlobalSearchRegex), None);
         assert_eq!(

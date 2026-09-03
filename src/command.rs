@@ -640,15 +640,15 @@ editor_commands! {
     ),
     OpenFilePicker => (
         "open-file-picker",
-        "Find files, buffers, and terminals by name or content"
+        "Open the finder over the project's files, buffers, and terminals"
     ),
     OpenAllFilesPicker => (
         "open-all-files-picker",
-        "Find every file, buffer, and terminal, including ignored files"
+        "Open the finder over the project, including files Git ignores"
     ),
     OpenPathFilePicker => (
         "open-path-file-picker",
-        "Find every file under a path, including ignored files"
+        "Open the finder in a chosen path, including files Git ignores"
     ),
     OpenDirectoryFilePicker => (
         "open-directory-file-picker",

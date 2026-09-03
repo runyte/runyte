@@ -415,7 +415,7 @@ fn splitting_selected_lines_leaves_one_cursor_per_line_edge() {
 fn searching_inside_a_selection_selects_every_match_within_it() {
     let mut app = app_with("foo bar foo baz foo");
     press(&mut app, '%');
-    press(&mut app, 'S');
+    press(&mut app, '/');
     submit(&mut app, "foo");
     assert_eq!(selection(&app).len(), 3);
 
@@ -430,7 +430,7 @@ fn matching_filters_keep_or_drop_ranges() {
     let mut app = app_with("keep\ndrop\nkeep");
     // One range per line, taken from a search rather than a separate splitting
     // command: `(?m)^.+$` is the whole-line match on every row.
-    press(&mut app, 'S');
+    press(&mut app, '/');
     submit(&mut app, "(?m)^.+$");
     assert_eq!(selection(&app).len(), 3);
 

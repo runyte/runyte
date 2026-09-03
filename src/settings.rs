@@ -176,7 +176,7 @@ const DESCRIPTORS: &[SettingDescriptor] = &[
         id: SettingId::EditorShowHiddenFiles,
         key: "editor.show_hidden_files",
         title: "Hidden files",
-        description: "Show dotfiles in the explorer, file picker, and search",
+        description: "Show dotfiles in the explorer, finder, and search",
         value_type: SettingType::Boolean,
         preview: PreviewPolicy::Immediate,
         persistence: PersistencePolicy::ConfigFile,
