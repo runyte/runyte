@@ -284,6 +284,36 @@ fn space_r_reuses_the_reload_command_identity() {
 }
 
 #[test]
+fn ctrl_w_t_reuses_the_open_terminal_command_identity() {
+    let primary = sequence(" tn");
+    let compatibility = KeySequence::from([Key::ctrl('w'), Key::char('t')]);
+
+    for mode in [Mode::Normal, Mode::Select] {
+        let Lookup::Exact(primary) = default_keymap().lookup(mode, &primary) else {
+            panic!("missing Space t n in {} mode", mode.label());
+        };
+        let Lookup::Exact(compatibility) = default_keymap().lookup(mode, &compatibility) else {
+            panic!("missing Ctrl-w t in {} mode", mode.label());
+        };
+
+        assert_eq!(
+            primary.target,
+            BindingTarget::Editor(EditorCommand::OpenTerminal)
+        );
+        assert_eq!(compatibility.target, primary.target);
+        assert_eq!(primary.role, BindingRole::Primary);
+        assert_eq!(compatibility.role, BindingRole::Compatibility);
+    }
+
+    for mode in [Mode::Insert, Mode::Replace] {
+        assert!(matches!(
+            default_keymap().lookup(mode, &compatibility),
+            Lookup::NoMatch
+        ));
+    }
+}
+
+#[test]
 fn space_p_r_exposes_reflow_in_normal_and_select_modes() {
     let sequence = KeySequence::from([Key::char(' '), Key::char('p'), Key::char('r')]);
     for mode in [Mode::Normal, Mode::Select] {

@@ -683,9 +683,9 @@ no gutter and no branch in the status line.
 
 `:terminal` runs a program in the active pane. With no argument it runs
 `$SHELL`; `:terminal htop` runs a command line, split the way a shell splits
-it. `:term` and `:t` are the same command. `Space t n` is the same command on
-a key, and the pane's own buffer stays where it is — leaving the terminal
-shows it again.
+it. `:term` and `:t` are the same command. `Space t n` and `Ctrl-w t` are the
+same command on a key, and the pane's own buffer stays where it is — leaving
+the terminal shows it again.
 
 Bare `:terminal` keeps using the editor working directory. The explicit
 variants are `:terminal-file-directory [command]`,
@@ -2008,7 +2008,7 @@ message without affecting the internal registers.
 
 | Key | Action |
 | --- | --- |
-| `Space t n` | Run `$SHELL` in this pane (`:terminal`, `:term`, `:t`; `:terminal <command>` runs something else) |
+| `Space t n` or `Ctrl-w t` | Run `$SHELL` in this pane (`:terminal`, `:term`, `:t`; `:terminal <command>` runs something else) |
 | `Space t t` | List the running terminals and show the chosen one here (`:terminals`) |
 | `Space t r` | Rename this pane's terminal (`:terminal-rename <name>`) |
 | `Space t q` | Show this pane's buffer again, leaving the program running |
