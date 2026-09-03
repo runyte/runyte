@@ -111,6 +111,30 @@ fn search_prompt_repeats_and_wraps_unicode_matches() {
 }
 
 #[test]
+fn pane_swap_moves_pristine_search_presentation_with_its_content() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    seed(&mut app, "cat dog cat");
+    press(&mut app, 's');
+    type_text(&mut app, "cat");
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    let searched = app.active_pane;
+    assert!(app.pristine_search_selection(searched));
+
+    app.split(Axis::Horizontal, None).unwrap();
+    let clone = app.active_pane;
+    app.panes
+        .get_mut(&clone)
+        .unwrap()
+        .replace_selection(Selection::point(4));
+    app.swap_window();
+
+    assert_eq!(app.active_pane, searched);
+    assert_eq!(app.search_selection.unwrap().pane, clone);
+    assert!(app.pristine_search_selection(clone));
+    assert!(!app.pristine_search_selection(searched));
+}
+
+#[test]
 fn scalar_prompt_editing_supports_character_word_and_line_controls() {
     let mut app = App::new(Config::default(), None).unwrap();
     seed(&mut app, "search target");

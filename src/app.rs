@@ -2768,6 +2768,12 @@ pub struct App {
     /// active still needs a deterministic recency rank.
     pane_opened_at: HashMap<usize, u64>,
     pane_activated_at: HashMap<usize, u64>,
+    /// The pane focus occupied immediately before `active_pane`.
+    ///
+    /// Activation ranks answer spatial tie-breaks, but cannot distinguish a
+    /// closed immediate predecessor from an older surviving pane. Pane swap
+    /// needs that distinction so it can refuse rather than silently fall back.
+    previously_focused_pane: Option<usize>,
     lsp_servers: HashMap<String, ServerState>,
     lsp_documents: HashMap<usize, DocumentState>,
     lsp_requests: HashMap<u64, TrackedRequest>,
@@ -3135,6 +3141,7 @@ impl App {
             pane_history_clock: 1,
             pane_opened_at: HashMap::from([(0, 1)]),
             pane_activated_at: HashMap::from([(0, 1)]),
+            previously_focused_pane: None,
             lsp_servers: HashMap::new(),
             lsp_documents: HashMap::new(),
             lsp_requests: HashMap::new(),

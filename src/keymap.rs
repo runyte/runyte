@@ -1754,6 +1754,7 @@ fn built_in_bindings() -> Vec<Binding> {
         ),
         modal([Key::ctrl('w'), Key::char('w')], Command::NextWindow),
         modal([Key::ctrl('w'), Key::ctrl('w')], Command::NextWindow),
+        modal([Key::ctrl('w'), Key::char('x')], Command::SwapWindow),
         modal([Key::ctrl('w'), Key::char('v')], Command::SplitVertical),
         modal([Key::ctrl('w'), Key::ctrl('v')], Command::SplitVertical),
         modal([Key::ctrl('w'), Key::char('s')], Command::SplitHorizontal),
@@ -1789,6 +1790,7 @@ fn built_in_bindings() -> Vec<Binding> {
         ),
         insert([Key::ctrl('w'), Key::char('w')], Command::NextWindow),
         insert([Key::ctrl('w'), Key::ctrl('w')], Command::NextWindow),
+        insert([Key::ctrl('w'), Key::char('x')], Command::SwapWindow),
         insert([Key::ctrl('w'), Key::char('h')], Command::FocusWindowLeft),
         insert([Key::ctrl('w'), Key::ctrl('h')], Command::FocusWindowLeft),
         insert(
@@ -1822,6 +1824,10 @@ fn built_in_bindings() -> Vec<Binding> {
         modal(
             [Key::char(' '), Key::char('w'), Key::char('w')],
             Command::NextWindow,
+        ),
+        primary_modal(
+            [Key::char(' '), Key::char('w'), Key::char('x')],
+            Command::SwapWindow,
         ),
         modal(
             [Key::char(' '), Key::char('w'), Key::char('v')],

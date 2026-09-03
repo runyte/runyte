@@ -707,6 +707,7 @@ editor_commands! {
     FocusWindowUp => ("focus-window-up", "Focus the pane above"),
     FocusWindowRight => ("focus-window-right", "Focus the pane to the right"),
     NextWindow => ("next-window", "Focus the next pane"),
+    SwapWindow => ("swap-window", "Swap this pane's content with the previously focused pane"),
     CloseWindow => ("close-window", "Close the active pane"),
     OnlyWindow => ("only-window", "Close every pane except the active pane"),
     EqualizeWindows => (
@@ -1080,6 +1081,7 @@ impl EditorCommand {
             | Self::FocusWindowUp
             | Self::FocusWindowRight
             | Self::NextWindow
+            | Self::SwapWindow
             | Self::CloseWindow
             | Self::OnlyWindow
             | Self::EqualizeWindows => CommandCategory::Window,

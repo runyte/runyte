@@ -8,7 +8,7 @@ use runyte::{
         ColonCommand, CommandId, CommandInvocation, EditorCommand, InvocationParameters, Mode,
     },
     config::Config,
-    input::{KeyCode, KeyStroke, Modifiers},
+    input::{InputEvent, KeyCode, KeyStroke, Modifiers},
     keymap::{
         BindingAvailability, BindingRole, BindingScope, BindingTarget, Key, KeySequence, Lookup,
         default_keymap, is_fast_pane_key, keymap_for,
@@ -468,6 +468,121 @@ fn app_executes_three_key_space_window_sequences() {
 
     assert_eq!(app.panes.len(), 2);
     assert!(app.pending_sequence().is_empty());
+}
+
+#[test]
+fn pane_swap_bindings_have_primary_and_compatibility_roles_in_every_window_mode() {
+    let keymap = default_keymap();
+    let primary = sequence(" wx");
+    let compatibility = KeySequence::from([Key::ctrl('w'), Key::char('x')]);
+
+    for mode in [Mode::Normal, Mode::Select] {
+        assert!(matches!(
+            keymap.lookup(mode, &primary),
+            Lookup::Exact(binding)
+                if binding.target == BindingTarget::Editor(EditorCommand::SwapWindow)
+                    && binding.role == BindingRole::Primary
+        ));
+        assert!(matches!(
+            keymap.lookup(mode, &compatibility),
+            Lookup::Exact(binding)
+                if binding.target == BindingTarget::Editor(EditorCommand::SwapWindow)
+                    && binding.role == BindingRole::Compatibility
+        ));
+    }
+    assert!(matches!(
+        keymap.lookup(Mode::Insert, &compatibility),
+        Lookup::Exact(binding)
+            if binding.target == BindingTarget::Editor(EditorCommand::SwapWindow)
+                && binding.role == BindingRole::Compatibility
+    ));
+    assert!(matches!(
+        keymap.lookup(Mode::Replace, &compatibility),
+        Lookup::Exact(binding)
+            if binding.target == BindingTarget::Editor(EditorCommand::SwapWindow)
+                && binding.role == BindingRole::Compatibility
+    ));
+    assert!(matches!(
+        keymap.lookup_in(Mode::Insert, BindingScope::Terminal, &compatibility),
+        Lookup::Exact(binding)
+            if binding.target == BindingTarget::Editor(EditorCommand::SwapWindow)
+    ));
+}
+
+#[test]
+fn pane_swap_exchanges_complete_contents_follows_the_caret_and_is_its_own_inverse() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    app.execute(
+        CommandInvocation::editor(EditorCommand::SplitVertical, Default::default()).unwrap(),
+    )
+    .unwrap();
+    let edited_pane = app.active_pane;
+    app.execute(CommandInvocation::editor(EditorCommand::NewBuffer, Default::default()).unwrap())
+        .unwrap();
+    app.execute(
+        CommandInvocation::editor(EditorCommand::EnterInsertMode, Default::default()).unwrap(),
+    )
+    .unwrap();
+    app.handle_input(InputEvent::Text("second pane".to_owned()))
+        .unwrap();
+    app.execute(
+        CommandInvocation::editor(EditorCommand::EnterNormalMode, Default::default()).unwrap(),
+    )
+    .unwrap();
+    app.panes.get_mut(&edited_pane).unwrap().scroll_row = 7;
+    let edited_buffer = app.panes[&edited_pane].buffer;
+    let edited_head = app.panes[&edited_pane].selection.primary().head;
+    let previous_pane = app
+        .panes
+        .keys()
+        .copied()
+        .find(|pane| *pane != edited_pane)
+        .unwrap();
+    let previous_buffer = app.panes[&previous_pane].buffer;
+
+    for key in [' ', 'w', 'x'] {
+        app.handle_key(KeyStroke::new(KeyCode::Char(key), Modifiers::NONE))
+            .unwrap();
+    }
+    assert_eq!(app.active_pane, previous_pane);
+    assert_eq!(app.panes[&previous_pane].buffer, edited_buffer);
+    assert_eq!(
+        app.panes[&previous_pane].selection.primary().head,
+        edited_head
+    );
+    assert_eq!(app.panes[&previous_pane].scroll_row, 7);
+    assert_eq!(app.panes[&edited_pane].buffer, previous_buffer);
+
+    app.handle_key(KeyStroke::ctrl('w')).unwrap();
+    app.handle_key(KeyStroke::new(KeyCode::Char('x'), Modifiers::NONE))
+        .unwrap();
+    assert_eq!(app.active_pane, edited_pane);
+    assert_eq!(app.panes[&edited_pane].buffer, edited_buffer);
+    assert_eq!(
+        app.panes[&edited_pane].selection.primary().head,
+        edited_head
+    );
+    assert_eq!(app.panes[&edited_pane].scroll_row, 7);
+    assert_eq!(app.panes[&previous_pane].buffer, previous_buffer);
+}
+
+#[test]
+fn pane_swap_refuses_when_there_is_no_previous_pane() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    let pane = app.active_pane;
+    let buffer = app.panes[&pane].buffer;
+
+    let outcome = app
+        .execute(CommandInvocation::editor(EditorCommand::SwapWindow, Default::default()).unwrap())
+        .unwrap();
+
+    assert!(matches!(
+        outcome,
+        runyte::app::CommandOutcome::UserError(message)
+            if message == "no previously focused pane to swap with"
+    ));
+    assert_eq!(app.active_pane, pane);
+    assert_eq!(app.panes[&pane].buffer, buffer);
 }
 
 fn sequence(keys: &str) -> KeySequence {

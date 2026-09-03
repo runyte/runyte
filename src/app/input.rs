@@ -3750,6 +3750,7 @@ impl App {
             Command::FocusWindowUp => self.focus_from_terminal_insert(0, -1),
             Command::FocusWindowRight => self.focus_from_terminal_insert(1, 0),
             Command::NextWindow => self.next_window_from_terminal_insert(),
+            Command::SwapWindow => self.swap_window(),
             Command::CloseWindow => self.close_pane(),
             Command::OnlyWindow => self.only_window(),
             Command::EqualizeWindows => self.equalize_panes(),

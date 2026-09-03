@@ -1254,6 +1254,26 @@ fn ambiguous_directional_focus_falls_back_to_most_recently_opened_pane() {
 }
 
 #[test]
+fn pane_swap_refuses_when_the_immediately_previous_pane_was_closed() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    app.split(Axis::Horizontal, None).unwrap();
+    let middle = app.active_pane;
+    app.split(Axis::Horizontal, None).unwrap();
+    let closed_previous = app.active_pane;
+    app.activate_pane(middle);
+    assert_eq!(app.previously_focused_pane, Some(closed_previous));
+    assert!(app.remove_pane(closed_previous));
+    assert_eq!(app.panes.len(), 2, "an older pane still survives");
+
+    app.swap_window();
+
+    assert_eq!(app.active_pane, middle);
+    assert_eq!(app.previously_focused_pane, None);
+    assert_eq!(app.status, "no previously focused pane to swap with");
+    assert!(app.status_error);
+}
+
+#[test]
 fn closing_the_last_pane_explains_how_to_quit() {
     let mut app = App::new(Config::default(), None).unwrap();
     let pane = app.active_pane;
@@ -1307,7 +1327,7 @@ fn typed_colon_paths_preserve_spaces_and_remove_balanced_quotes() {
 #[test]
 fn command_inventory_classifies_every_command_and_current_binding() {
     let bindings = crate::keymap::default_keymap().bindings();
-    assert_eq!(bindings.len(), 345, "current binding inventory changed");
+    assert_eq!(bindings.len(), 348, "current binding inventory changed");
 
     let mut rows = HashSet::new();
     for binding in bindings {
@@ -1329,7 +1349,7 @@ fn command_inventory_classifies_every_command_and_current_binding() {
             );
         }
     }
-    assert_eq!(rows.len(), 690, "mode-expanded binding inventory changed");
+    assert_eq!(rows.len(), 696, "mode-expanded binding inventory changed");
 
     let shared_colon = COMMANDS
         .iter()

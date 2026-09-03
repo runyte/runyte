@@ -1698,7 +1698,7 @@ impl App {
     /// Unlike the user-facing close command, lifecycle callers may name an
     /// inactive pane and may run while a maximized view is showing the pane
     /// whose process just ended. The last pane remains an invariant of the editor.
-    fn remove_pane(&mut self, closing: usize) -> bool {
+    pub(super) fn remove_pane(&mut self, closing: usize) -> bool {
         if self.panes.len() == 1 || !self.panes.contains_key(&closing) {
             return false;
         }
@@ -1715,6 +1715,9 @@ impl App {
         self.areas.remove(&closing);
         self.pane_opened_at.remove(&closing);
         self.pane_activated_at.remove(&closing);
+        if self.previously_focused_pane == Some(closing) {
+            self.previously_focused_pane = None;
+        }
         if self
             .maximized
             .is_some_and(|maximized| maximized.pane == closing)
@@ -1742,6 +1745,63 @@ impl App {
         }
     }
 
+    /// Exchanges the complete contents of the active pane with the most
+    /// recently focused surviving pane, then follows the active content to its
+    /// new position. The split tree and its pane geometry remain untouched.
+    pub(super) fn swap_window(&mut self) {
+        if let Some(maximized) = self.maximized {
+            self.action_failed(format!(
+                "{} keeps the current pane maximized",
+                maximized.view.label()
+            ));
+            return;
+        }
+        let active = self.active_pane;
+        let Some(previous) = self
+            .previously_focused_pane
+            .filter(|pane| *pane != active && self.panes.contains_key(pane))
+        else {
+            self.action_failed("no previously focused pane to swap with");
+            return;
+        };
+
+        let active_content = self
+            .panes
+            .remove(&active)
+            .expect("the active pane must exist");
+        let previous_content = self
+            .panes
+            .remove(&previous)
+            .expect("pane history must name a live pane");
+        self.panes.insert(active, previous_content);
+        self.panes.insert(previous, active_content);
+
+        if let Some(presentation) = self.search_selection.as_mut() {
+            if presentation.pane == active {
+                presentation.pane = previous;
+            } else if presentation.pane == previous {
+                presentation.pane = active;
+            }
+        }
+        for diff in &mut self.diffs {
+            diff.swap_panes(active, previous);
+        }
+        if let Some(tutorial) = self.tutorial.as_mut() {
+            for pane in [&mut tutorial.instruction_pane, &mut tutorial.exercise_pane] {
+                if *pane == active {
+                    *pane = previous;
+                } else if *pane == previous {
+                    *pane = active;
+                }
+            }
+        }
+
+        let terminal_input = self.mode == Mode::Insert && self.terminal_of_pane(previous).is_some();
+        self.activate_pane(previous);
+        self.finish_pane_focus(active, terminal_input);
+        self.status("swapped pane contents");
+    }
+
     pub(super) fn only_window(&mut self) {
         if let Some(maximized) = self.maximized {
             self.status(format!(
@@ -1756,6 +1816,7 @@ impl App {
         self.areas.retain(|pane, _| *pane == active);
         self.pane_opened_at.retain(|pane, _| *pane == active);
         self.pane_activated_at.retain(|pane, _| *pane == active);
+        self.previously_focused_pane = None;
         self.status("only window");
     }
 
@@ -1828,6 +1889,9 @@ impl App {
     pub(super) fn activate_pane(&mut self, pane: usize) {
         let order = self.advance_pane_history();
         self.pane_activated_at.insert(pane, order);
+        if pane != self.active_pane {
+            self.previously_focused_pane = Some(self.active_pane);
+        }
         self.active_pane = pane;
     }
 
