@@ -52,7 +52,10 @@ them, regardless of which extensibility direction is chosen.
   prompt or the last action echo. Notifications never replace it.
 - **Overlay** — a temporary surface drawn over the editor area, such as a
   picker, key hints, completion, or a confirmation. An overlay is not a pane
-  and does not retarget a buffer.
+  and does not retarget a buffer. Overlay snapshots carry semantic rows rather
+  than resolved terminal layout. In particular, a key-hint snapshot does not
+  carry a column count: each frontend chooses one, two, or three columns from
+  its live geometry with the shared key-hint layout rule.
 - **Buffer** — an editor object that participates in normal movement,
   selection, search, splits, copying, jump history, help, and buffer management
   even when its contents are generated or read-only. Ordinary buffers remain

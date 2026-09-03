@@ -8,8 +8,7 @@ use crate::{
     diff::Change,
     git::{CountKind, DiffLine, LineChange},
     input::KeyCode,
-    key_hints::{KeyHintRow, KeyHintState},
-    keymap::BindingAvailability,
+    key_hints::{KeyHintRow, KeyHintState, key_hint_description, key_hint_keys, key_hint_layout},
     layout::Rect,
     snapshot::{
         EditorSnapshot, OverlayKind, OverlayLayout, OverlayPreview, OverlaySnapshot, PaneSnapshot,
@@ -802,6 +801,10 @@ fn draw_snapshot_overlay(
     if editor_area.width < 3 || editor_area.height < 3 {
         return;
     }
+    if overlay.kind == OverlayKind::KeyHints {
+        draw_snapshot_key_hints(frame, theme, overlay, editor_area);
+        return;
+    }
     let shows_query = !overlay.query.is_empty()
         || (overlay.kind == OverlayKind::Confirmation
             && overlay.input == crate::snapshot::OverlayInput::Text);
@@ -1121,6 +1124,139 @@ fn draw_snapshot_overlay(
             .saturating_add(cells.min(u16::MAX as usize) as u16)
             .min(inner.right().saturating_sub(1));
         frame.set_cursor_position(ScreenPosition::new(x, inner.y));
+    }
+}
+
+/// Draws the presentation-neutral hint rows carried by an attached frame with
+/// the same responsive grid as the standalone frontend.
+fn draw_snapshot_key_hints(
+    frame: &mut Frame<'_>,
+    theme: &TuiTheme,
+    overlay: &OverlaySnapshot,
+    editor_area: Rect,
+) {
+    if let Some(message) = &overlay.message {
+        let area = TuiRect::new(
+            editor_area.x,
+            editor_area.y + editor_area.height.saturating_sub(3),
+            editor_area.width,
+            3.min(editor_area.height),
+        );
+        let popup = Paragraph::new(message.clone())
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(theme.error))
+                    .title(" Key hints "),
+            )
+            .style(
+                Style::default()
+                    .fg(theme.error)
+                    .bg(theme.overlay_background),
+            );
+        frame.render_widget(Clear, area);
+        frame.render_widget(popup, area);
+        return;
+    }
+    if overlay.rows.is_empty() {
+        return;
+    }
+
+    let widest_key = overlay
+        .rows
+        .iter()
+        .map(|row| UnicodeWidthStr::width(row.label.as_str()))
+        .max()
+        .unwrap_or_default();
+    let widest_description = overlay
+        .rows
+        .iter()
+        .map(|row| UnicodeWidthStr::width(row.detail.as_str()))
+        .max()
+        .unwrap_or_default();
+    let layout = key_hint_layout(
+        editor_area.width,
+        editor_area.height,
+        overlay.total_rows,
+        widest_key,
+        widest_description,
+        overlay.scroll_anchor.unwrap_or(overlay.row_offset),
+    );
+    let area = TuiRect::new(
+        editor_area.x,
+        editor_area.y + editor_area.height.saturating_sub(layout.height),
+        editor_area.width,
+        layout.height,
+    );
+    let range = if overlay.total_rows > layout.visible_rows {
+        let controls = overlay
+            .actions
+            .first()
+            .map(|action| format!(" {}", action.key_hint))
+            .unwrap_or_default();
+        format!(
+            " {}-{}/{}{}",
+            layout.offset + 1,
+            layout.offset + layout.visible_rows,
+            overlay.total_rows,
+            controls
+        )
+    } else {
+        String::new()
+    };
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme.accent))
+        .title(format!(" {}{range} ", overlay.title))
+        .style(Style::default().bg(theme.overlay_background));
+    let inner = block.inner(area);
+    frame.render_widget(Clear, area);
+    frame.render_widget(block, area);
+
+    let column_width = (usize::from(inner.width) / layout.columns).max(1) as u16;
+    for (index, row) in overlay
+        .rows
+        .iter()
+        .skip(layout.offset.saturating_sub(overlay.row_offset))
+        .take(layout.visible_rows)
+        .enumerate()
+    {
+        let column = index / layout.content_rows;
+        let row_index = index % layout.content_rows;
+        let x = inner.x + column as u16 * column_width;
+        let width = if column + 1 == layout.columns {
+            inner.right().saturating_sub(x)
+        } else {
+            column_width
+        };
+        let unavailable = !row.available;
+        let description_style = Style::default()
+            .fg(if unavailable {
+                theme.muted
+            } else {
+                theme.foreground
+            })
+            .add_modifier(if unavailable {
+                Modifier::DIM
+            } else {
+                Modifier::empty()
+            });
+        let key_style = if unavailable {
+            description_style
+        } else {
+            Style::default().fg(theme.accent)
+        };
+        let line = Line::from(vec![
+            Span::styled(
+                format!("{:<width$} ", row.label, width = layout.key_width),
+                key_style,
+            ),
+            Span::styled(row.detail.clone(), description_style),
+        ]);
+        frame.render_widget(
+            Paragraph::new(line),
+            TuiRect::new(x, inner.y + row_index as u16, width, 1),
+        );
     }
 }
 
@@ -3555,10 +3691,6 @@ fn draw_program_actions(frame: &mut Frame<'_>, app: &TuiApp<'_>, parent: Rect) {
     StatefulWidget::render(list, area, frame.buffer_mut(), &mut state);
 }
 
-/// Width of the key column shared by the hint popup and the help window, so a
-/// sequence and its description never run together.
-const KEY_COLUMN_WIDTH: usize = 12;
-
 fn draw_key_hints(
     frame: &mut Frame<'_>,
     app: &TuiApp<'_>,
@@ -3604,44 +3736,31 @@ fn draw_key_hints(
         return;
     }
 
-    const MIN_COLUMN_WIDTH: usize = 36;
-    const MAX_COLUMN_WIDTH: usize = 72;
-    const COLUMN_GAP: usize = 2;
-    const MAX_POPUP_HEIGHT: usize = 16;
-    const MAX_KEY_COLUMN_WIDTH: usize = 20;
-    let inner_width = editor_area.width.saturating_sub(2) as usize;
-    // Size both columns from the widest entry so sequences stay aligned and
-    // descriptions are not cut off.
-    let key_width = rows
+    let widest_key = rows
         .iter()
-        .map(|row| key_hint_keys(row).chars().count())
+        .map(|row| UnicodeWidthStr::width(key_hint_keys(row).as_str()))
         .max()
-        .unwrap_or(KEY_COLUMN_WIDTH)
-        .clamp(KEY_COLUMN_WIDTH, MAX_KEY_COLUMN_WIDTH);
-    let widest = rows
+        .unwrap_or_default();
+    let widest_description = rows
         .iter()
-        .map(|row| key_width + 1 + key_hint_description(row).chars().count())
+        .map(|row| UnicodeWidthStr::width(key_hint_description(row).as_str()))
         .max()
-        .unwrap_or(MIN_COLUMN_WIDTH)
-        .clamp(MIN_COLUMN_WIDTH, MAX_COLUMN_WIDTH)
-        + COLUMN_GAP;
-    let columns = (inner_width / widest).max(1).min(rows.len());
-    let maximum_content_rows = (editor_area.height as usize)
-        .saturating_sub(2)
-        .min(MAX_POPUP_HEIGHT.saturating_sub(2))
-        .max(1);
-    let capacity = maximum_content_rows * columns;
-    let maximum_offset = rows.len().saturating_sub(capacity);
-    key_hints.note_scroll_limit(maximum_offset);
-    let offset = key_hints.scroll_offset();
-    let visible = &rows[offset..(offset + capacity).min(rows.len())];
-    let content_rows = visible.len().div_ceil(columns).max(1);
-    let height = (content_rows + 2).min(editor_area.height as usize) as u16;
+        .unwrap_or_default();
+    let layout = key_hint_layout(
+        editor_area.width,
+        editor_area.height,
+        rows.len(),
+        widest_key,
+        widest_description,
+        key_hints.scroll_offset(),
+    );
+    key_hints.note_scroll_limit(rows.len().saturating_sub(layout.capacity));
+    let visible = &rows[layout.offset..layout.offset + layout.visible_rows];
     let area = TuiRect::new(
         editor_area.x,
-        editor_area.y + editor_area.height.saturating_sub(height),
+        editor_area.y + editor_area.height.saturating_sub(layout.height),
         editor_area.width,
-        height,
+        layout.height,
     );
     let range = if rows.len() > visible.len() {
         let arrows_are_free =
@@ -3654,8 +3773,8 @@ fn draw_key_hints(
         };
         format!(
             " {}-{}/{} Ctrl-n/p{alternatives}",
-            offset + 1,
-            offset + visible.len(),
+            layout.offset + 1,
+            layout.offset + visible.len(),
             rows.len()
         )
     } else {
@@ -3675,62 +3794,21 @@ fn draw_key_hints(
     frame.render_widget(Clear, area);
     frame.render_widget(block, area);
 
-    let column_width = (inner.width as usize / columns).max(1) as u16;
+    let column_width = (inner.width as usize / layout.columns).max(1) as u16;
     for (index, row) in visible.iter().enumerate() {
-        let column = index / content_rows;
-        let row_index = index % content_rows;
+        let column = index / layout.content_rows;
+        let row_index = index % layout.content_rows;
         let x = inner.x + column as u16 * column_width;
-        let width = if column + 1 == columns {
+        let width = if column + 1 == layout.columns {
             inner.right().saturating_sub(x)
         } else {
             column_width
         };
         let cell = TuiRect::new(x, inner.y + row_index as u16, width, 1);
-        frame.render_widget(Paragraph::new(key_hint_line(row, app, key_width)), cell);
-    }
-}
-
-/// The description column of a hint row, including any availability suffix.
-fn key_hint_description(row: &KeyHintRow) -> String {
-    let exact = if row.exact { "  (exact)" } else { "" };
-    let namespace = if row.namespace { " ›" } else { "" };
-    if let Some(reason) = &row.unavailable_reason {
-        return format!(
-            "{}{namespace}{exact}  unavailable: {reason}",
-            row.description
+        frame.render_widget(
+            Paragraph::new(key_hint_line(row, app, layout.key_width)),
+            cell,
         );
-    }
-    match row.availability {
-        BindingAvailability::Implemented => format!("{}{namespace}{exact}", row.description),
-        BindingAvailability::Planned(reason) => {
-            format!("{}{namespace}{exact}  planned: {reason}", row.description)
-        }
-        BindingAvailability::Unsupported(reason) => {
-            format!(
-                "{}{namespace}{exact}  unsupported: {reason}",
-                row.description
-            )
-        }
-    }
-}
-
-/// The key column of a hint row: the sequence that opened this menu, then any
-/// other spelling of the same command. Both belong in the key column rather
-/// than in the prose, which is already the longest thing on the line.
-fn key_hint_keys(row: &KeyHintRow) -> String {
-    match row.alias.as_ref() {
-        Some(alias) => match row.alias_modes {
-            Some(modes) => {
-                let modes = modes
-                    .iter()
-                    .map(|mode| mode.label())
-                    .collect::<Vec<_>>()
-                    .join("/");
-                format!("{}, {modes} {alias}", row.sequence)
-            }
-            None => format!("{}, {alias}", row.sequence),
-        },
-        None => row.sequence.to_string(),
     }
 }
 
@@ -3747,16 +3825,6 @@ fn key_hint_line(row: &KeyHintRow, app: &TuiApp<'_>, key_width: usize) -> Line<'
         } else {
             Modifier::empty()
         });
-    let exact = if row.exact { "  (exact)" } else { "" };
-    let namespace = if row.namespace { " ›" } else { "" };
-    let availability = match (&row.unavailable_reason, row.availability) {
-        (Some(reason), BindingAvailability::Implemented) => {
-            format!("  unavailable: {reason}")
-        }
-        (_, BindingAvailability::Implemented) => String::new(),
-        (_, BindingAvailability::Planned(reason)) => format!("  planned: {reason}"),
-        (_, BindingAvailability::Unsupported(reason)) => format!("  unsupported: {reason}"),
-    };
     let key_style = if unavailable {
         description_style
     } else {
@@ -3764,17 +3832,7 @@ fn key_hint_line(row: &KeyHintRow, app: &TuiApp<'_>, key_width: usize) -> Line<'
     };
     Line::from(vec![
         Span::styled(format!("{:<key_width$} ", key_hint_keys(row)), key_style),
-        Span::styled(row.description, description_style),
-        Span::styled(
-            namespace,
-            if unavailable {
-                description_style
-            } else {
-                Style::default().fg(app.theme.accent)
-            },
-        ),
-        Span::styled(exact, Style::default().fg(app.theme.muted)),
-        Span::styled(availability, description_style),
+        Span::styled(key_hint_description(row), description_style),
     ])
 }
 
