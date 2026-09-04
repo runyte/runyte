@@ -886,3 +886,63 @@ fn a_broken_symlink_is_listed_and_reports_why_it_cannot_be_opened() {
 
     assert!(error.contains("broken symlink"), "{error}");
 }
+
+/// Copying a row reads it from the listing's own identities, so a row that has
+/// no identity yet, or whose name no longer matches the one on disk, has to be
+/// written before it can be the source of anything.
+#[test]
+fn a_row_can_only_be_copied_once_the_listing_and_the_disk_agree_about_it() {
+    let directory = TempDir::new("transfer-source-state");
+    fs::write(directory.path().join("note.txt"), "text").unwrap();
+    let mut buffer = Buffer::open_directory(directory.path(), true).unwrap();
+
+    let transfer = buffer.directory_transfer_at(0).unwrap().unwrap();
+    assert_eq!(transfer.source, directory.path().join("note.txt"));
+    assert_eq!(transfer.label, "note.txt");
+
+    assert!(
+        buffer.directory_transfer_at(9).unwrap().is_none(),
+        "a row past the end of the listing is nothing to copy"
+    );
+
+    let end = buffer.len_chars();
+    assert!(buffer.apply(&Transaction::insert(end, "created\n")));
+    let error = buffer.directory_transfer_at(1).unwrap_err().to_string();
+    assert!(error.contains("write it before copying it"), "{error}");
+
+    assert!(buffer.apply(&Transaction::new(vec![Change::new(
+        0,
+        "note.txt".len(),
+        "renamed.txt"
+    )])));
+    let error = buffer.directory_transfer_at(0).unwrap_err().to_string();
+    assert!(error.contains("pending edits"), "{error}");
+}
+
+/// A row that is itself a pending transfer can be copied again: what it names
+/// is the transfer's own source, not a path inside the listing showing it.
+#[test]
+fn a_pasted_row_is_copied_from_the_source_it_still_points_at() {
+    let source = TempDir::new("second-hand-source");
+    fs::create_dir(source.path().join("tree")).unwrap();
+    let source_buffer = Buffer::open_directory(source.path(), true).unwrap();
+    let transfer = source_buffer.directory_transfer_at(0).unwrap().unwrap();
+
+    let destination = TempDir::new("second-hand-destination");
+    let mut destination_buffer = Buffer::open_directory(destination.path(), true).unwrap();
+    assert!(destination_buffer.apply(&Transaction::insert(0, "tree/\n")));
+    destination_buffer
+        .assign_directory_transfers(0, &[transfer], TransferMode::Copy)
+        .unwrap();
+
+    let again = destination_buffer
+        .directory_transfer_at(0)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        again.source,
+        source.path().join("tree"),
+        "the second copy still comes from the original entry"
+    );
+    assert_eq!(again.label, "tree/");
+}

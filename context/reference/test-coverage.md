@@ -41,6 +41,79 @@ days, and fails below 89% total line coverage. The floor is deliberately below
 the observed baseline because conditional Linux and macOS code changes both the
 instrumented denominator and the paths available to a run on one platform.
 
+## 2026-09-04 — Linux
+
+Measured with `cargo-llvm-cov` 0.9.0 and Rust 1.97.1 on
+`x86_64-unknown-linux-gnu`. The ordinary non-ignored workspace tests passed
+under instrumentation.
+
+| Measure | Covered | Total | Coverage |
+| --- | ---: | ---: | ---: |
+| Lines | 94,920 | 103,687 | 91.54% |
+| Functions | 8,811 | 9,551 | 92.25% |
+| Regions | 147,167 | 161,695 | 91.02% |
+
+The fresh same-tree baseline before this pass was 94,681 of 103,687 lines
+(91.31%), 8,798 of 9,551 functions (92.12%), and 146,828 of 161,695 regions
+(90.81%). It is higher than the 2026-09-03 Linux record below, and instruments
+more lines, because the tree has moved on since that measurement; the
+comparison here is against the fresh run rather than the recorded one.
+
+Every test added by this pass lives in a directory named `tests`, so the
+instrumented total did not move: covered lines rose by 239, covered functions
+by 13, and covered regions by 339, raising total line coverage by 0.23
+percentage points.
+
+The retained tests cover every language-server state the service-health report
+can describe for the active buffer — a manager attached under a disabled
+policy, a configured server nobody has handshaken with, a ready server and
+document, a recognized language with no configured server, and a buffer with no
+recognized language — and the syntax row before and after the active buffer has
+a tree; the terminal entry points that start a session from a place rather than
+from a command line, with the directory each one chooses and the refusals for a
+directory view, a row that is not a directory, a row with no entry at all, a
+program that cannot start, and a session that has already gone; which terminal
+a send of buffer text goes to and each reason it cannot go anywhere, the
+freezing of a session's output into a read-only page, the rename refusals and
+an unusable name, and the terminal list's rows and details; view alignment at
+the top, centre and bottom, the horizontal middle measured against the pane's
+width, and soft-wrapped alignment and one-screen-row scrolling in both
+directions; the settings registry exhaustively, so that every identity writes
+and reads back its own configuration field and no other's, a wrong-typed value
+is refused naming what the setting expects, an out-of-range integer and an
+unresolvable theme are refused, and only the enumerated types offer values to
+choose from; the diagnostic-log page with no logger installed, with an
+installed file logger whose header and drained records it shows, with a
+degraded status carrying no destination, and with a destination that cannot be
+read; and directory transfers refused for a row past the end of a listing, a
+row that has never been written, and a row whose name no longer matches the
+disk, with a pasted row copied again from its original source.
+
+Two of those needed a boundary of their own. Logging status is process-global —
+a logger installs once, and the degraded status a failed installation records
+then replaces it — so `tests/log_buffer.rs` reaches all four states in order
+inside one test in a binary it owns. The settings sweep is exhaustive over
+`SettingId::ALL` rather than a sample because a setting wired to the wrong
+configuration field reads back whatever that field still holds, so only the
+identity nobody happened to test is wrong.
+
+`app/terminal_workflows.rs` gained 70 covered lines, `settings.rs` 49,
+`app/settings_workflows.rs` 42, `app/search_history.rs` 30, `main.rs` 16 and
+`directory_buffer.rs` 12. Three files ended one or two uncovered lines worse
+than the pass's own baseline (`git_monitor.rs`, `terminal/pty.rs`, `ui.rs`),
+which is the run-to-run variation in concurrent paths that earlier passes also
+recorded; the figures above are the net.
+
+The largest remaining Linux gaps by uncovered lines are `main.rs` (703),
+`app/git_workflows.rs` (691), `app/input.rs` (661), `git/cli.rs` (412),
+`app/language_workflows.rs` (356), `workspace/transport.rs` (340), `ui.rs`
+(334), `workspace/catalog.rs` (316), `syntax/mod.rs` (294) and
+`input_grammar.rs` (269).
+
+The enforced floor and the README badge stay at 89%: the macOS baseline has not
+been remeasured on this tree, and the floor has to hold on whichever target CI
+measures. The above-95% target has not been reached.
+
 ## 2026-09-03 — Linux
 
 Measured with `cargo-llvm-cov` 0.9.0 and Rust 1.97.1 on

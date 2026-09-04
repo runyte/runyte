@@ -3955,3 +3955,106 @@ fn a_document_symbol_picker_filters_and_jumps() {
         "the picker jumped to the wrong symbol"
     );
 }
+
+/// The `lsp` row of a service-health report, which is the row the state of a
+/// language server actually reaches a person through.
+fn lsp_health(app: &App) -> (ServiceState, String) {
+    let entry = app
+        .service_health_snapshot()
+        .entries
+        .into_iter()
+        .find(|entry| entry.service == "lsp")
+        .expect("every report carries an lsp row");
+    (entry.state, entry.detail)
+}
+
+#[test]
+fn service_health_distinguishes_every_language_server_state_a_buffer_can_be_in() {
+    let mut disabled_config = Config::default();
+    disabled_config.lsp.enable = false;
+    let mut disabled = App::new(disabled_config, None).unwrap();
+    let (handle, _queue) = crate::lsp::command_channel();
+    disabled.attach_lsp(handle);
+    assert_eq!(
+        lsp_health(&disabled),
+        (ServiceState::Disabled, "disabled in settings".to_owned(),),
+        "a manager attached under a disabled policy is still disabled"
+    );
+
+    let (mut app, _path, _queue) = rust_app("fn main() {}\n");
+    assert_eq!(
+        lsp_health(&app),
+        (
+            ServiceState::Idle,
+            "rust server is configured and starting or stopped".to_owned(),
+        ),
+        "a configured server nobody has handshaken with is not ready"
+    );
+
+    ready(&mut app, Encoding::Utf8);
+    assert_eq!(
+        lsp_health(&app),
+        (
+            ServiceState::Ready,
+            "rust server and document are attached".to_owned(),
+        )
+    );
+
+    let (mut python, _python_queue) = {
+        let mut app = App::new(Config::default(), None).unwrap();
+        app.buffers[0].path = Some(temporary("script.py"));
+        app.buffers[0].kind = crate::buffer::BufferKind::File;
+        let (handle, queue) = crate::lsp::command_channel();
+        app.attach_lsp(handle);
+        (app, queue)
+    };
+    assert_eq!(
+        lsp_health(&python),
+        (
+            ServiceState::Idle,
+            "no server configured for active python buffer".to_owned(),
+        ),
+        "a recognized language without a configured server names the language"
+    );
+
+    python.buffers[0].path = Some(temporary("notes.unknown-suffix"));
+    assert_eq!(
+        lsp_health(&python),
+        (
+            ServiceState::Idle,
+            "active buffer has no recognized language".to_owned(),
+        )
+    );
+}
+
+#[test]
+fn service_health_reports_syntax_ready_only_once_the_active_buffer_has_a_tree() {
+    let syntax_health = |app: &App| {
+        let entry = app
+            .service_health_snapshot()
+            .entries
+            .into_iter()
+            .find(|entry| entry.service == "syntax")
+            .expect("every report carries a syntax row");
+        (entry.state, entry.detail)
+    };
+
+    let (mut app, _path, _queue) = rust_app("fn main() {}\n");
+    assert_eq!(
+        syntax_health(&app),
+        (
+            ServiceState::Idle,
+            "active buffer is using plain text".to_owned(),
+        ),
+        "a buffer that has not been parsed yet is not reported as parsed"
+    );
+
+    app.reparse_whole(0);
+    assert_eq!(
+        syntax_health(&app),
+        (
+            ServiceState::Ready,
+            "active buffer parsed successfully".to_owned(),
+        )
+    );
+}

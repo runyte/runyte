@@ -229,7 +229,48 @@ On that basis the CI floor and the README badge move from 86% to 89%, leaving
 taken: 0.21 percentage points is less than one ordinary feature landing with
 an untested platform-conditional arm.
 
-The issue remains open. Linux still has 8,872 uncovered lines and macOS 8,957.
+A further pass on Linux began from a fresh same-tree measurement, the tree
+having moved on again since the figures above: 94,681 of 103,687 lines
+(91.31%), 8,798 of 9,551 functions (92.12%), and 146,828 of 161,695 regions
+(90.81%). The clean canonical result after the pass is 94,920 of 103,687 lines
+(91.54%), 8,811 of 9,551 functions (92.25%), and 147,167 of 161,695 regions
+(91.02%). Every added test lives in a directory named `tests`, so the
+instrumented total did not move: 239 newly covered lines, 13 functions and 339
+regions produce a 0.23 percentage-point line gain.
+
+Its retained tests cover every language-server state the service-health report
+can describe for the active buffer, and the syntax row before and after that
+buffer has a tree; the terminal entry points that start a session from a place
+rather than from a command line, with the directory each chooses and the
+refusals for a directory view, a row that is not a directory, a row with no
+entry, a program that cannot start, and a session that has gone; which terminal
+a send of buffer text goes to and every reason it cannot go anywhere, the
+freezing of a session's output into a read-only page, the rename refusals, and
+the terminal list's rows and details; view alignment at the top, centre and
+bottom, the horizontal middle measured against the pane's width, and
+soft-wrapped alignment and one-screen-row scrolling in both directions; the
+settings registry exhaustively, so that every identity writes and reads back
+its own configuration field and no other's and each refusal names what the
+setting expects; the diagnostic-log page across all four logging states; and
+directory transfers refused for a row past the end of a listing, a row never
+written, and a row whose name no longer matches the disk.
+
+Two of those needed a boundary of their own. Logging status is process-global,
+so `tests/log_buffer.rs` reaches its four states in order inside one test in a
+binary it owns rather than as four tests that would race. The settings sweep is
+exhaustive over `SettingId::ALL` rather than a sample because a setting wired
+to the wrong configuration field reads back whatever that field still holds, so
+the only identity that can be wrong is the one nobody tested.
+
+After that pass the largest remaining Linux gaps by uncovered lines are
+`main.rs` (703), `app/git_workflows.rs` (691), `app/input.rs` (661),
+`git/cli.rs` (412), `app/language_workflows.rs` (356),
+`workspace/transport.rs` (340), `ui.rs` (334), `workspace/catalog.rs` (316),
+`syntax/mod.rs` (294) and `input_grammar.rs` (269). The floor and the README
+badge stay at 89%: the macOS baseline has not been remeasured on this tree, and
+the enforced floor must hold on whichever target CI measures.
+
+The issue remains open. Linux still has 8,767 uncovered lines.
 The above-95% target remains open.
 
 ## Current macOS baseline

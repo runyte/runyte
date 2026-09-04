@@ -3422,3 +3422,354 @@ fn unavailable_colon_command_stays_typed_and_leaves_the_prior_echo_alone() {
     assert!(app.status.contains("unavailable"));
     assert_eq!(app.unread_notification_counts().infos, 1);
 }
+
+/// Moves the caret to `row` of the active buffer, which is how a directory
+/// entry is chosen without depending on the shape of the listing above it.
+fn place_caret_on_row(app: &mut App, row: usize) {
+    let offset = app.active_buffer().offset_of(Position::new(row, 0));
+    app.active_mut()
+        .replace_selection(Selection::single(Range::point(offset)));
+}
+
+/// The first row of an open explorer whose entry satisfies `wanted`.
+fn directory_row<F>(app: &App, wanted: F) -> usize
+where
+    F: Fn(Option<&Path>) -> bool,
+{
+    let buffer = app.active_buffer();
+    (0..=buffer.last_row())
+        .find(|row| {
+            buffer
+                .directory_entry_path(*row)
+                .is_ok_and(|entry| wanted(entry.as_deref()))
+        })
+        .expect("the explorer has no row of the required kind")
+}
+
+#[test]
+fn a_terminal_started_from_a_place_runs_in_that_places_directory() {
+    let root = temporary("terminal-from-a-place");
+    fs::create_dir_all(root.join("nested")).unwrap();
+    let file = root.join("note.txt");
+    fs::write(&file, "note\n").unwrap();
+    let root = root.canonicalize().unwrap();
+    let nested = root.join("nested");
+    let mut app = App::new(Config::default(), Some(root.join("note.txt"))).unwrap();
+
+    app.open_terminal_file_directory(Some("/bin/cat".to_owned()));
+    let from_file = app.active_terminal().expect("a terminal opened");
+    assert_eq!(app.terminals.get(from_file).unwrap().directory(), root);
+
+    app.leave_terminal();
+    press(&mut app, ' ');
+    press(&mut app, 'e');
+    assert!(app.active_buffer().is_directory());
+
+    app.open_terminal_file_directory(Some("/bin/cat".to_owned()));
+    assert!(app.status_error && app.status.contains("terminal-directory-root"));
+
+    app.open_terminal_directory_root(Some("/bin/cat".to_owned()));
+    let from_root = app.active_terminal().expect("a terminal opened");
+    assert_ne!(from_root, from_file);
+    assert_eq!(app.terminals.get(from_root).unwrap().directory(), root);
+
+    app.leave_terminal();
+    let nested_row = directory_row(&app, |entry| entry == Some(nested.as_path()));
+    place_caret_on_row(&mut app, nested_row);
+    app.open_terminal_selected_directory(Some("/bin/cat".to_owned()));
+    let from_entry = app.active_terminal().expect("a terminal opened");
+    assert_eq!(app.terminals.get(from_entry).unwrap().directory(), nested);
+
+    app.open_terminal_session_directory(&from_entry.to_string());
+    let from_session = app.active_terminal().expect("a terminal opened");
+    assert_ne!(from_session, from_entry);
+    assert_eq!(app.terminals.get(from_session).unwrap().directory(), nested);
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn a_selected_entry_that_is_not_a_directory_starts_no_terminal() {
+    let root = temporary("terminal-from-a-file-row");
+    fs::create_dir_all(&root).unwrap();
+    fs::write(root.join("note.txt"), "note\n").unwrap();
+    let root = root.canonicalize().unwrap();
+    let file = root.join("note.txt");
+    let mut app = App::new(Config::default(), Some(file.clone())).unwrap();
+
+    press(&mut app, ' ');
+    press(&mut app, 'e');
+    let file_row = directory_row(&app, |entry| entry == Some(file.as_path()));
+    place_caret_on_row(&mut app, file_row);
+    app.open_terminal_selected_directory(None);
+    assert!(app.status_error && app.status.contains("not a directory"));
+
+    let empty_row = directory_row(&app, |entry| entry.is_none());
+    place_caret_on_row(&mut app, empty_row);
+    app.open_terminal_selected_directory(None);
+    assert!(
+        app.status_error && app.status.contains("no directory entry on this row"),
+        "{}",
+        app.status
+    );
+
+    assert!(
+        app.terminals.is_empty(),
+        "a refused row must not leave a terminal session behind"
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn a_program_that_cannot_start_is_reported_rather_than_left_as_a_session() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    let missing = temporary("terminal-program-that-does-not-exist");
+
+    app.open_terminal(Some(missing.display().to_string()));
+
+    assert!(app.status_error, "{}", app.status);
+    assert!(
+        app.status.contains("cannot start"),
+        "the message names what failed to start: {}",
+        app.status
+    );
+    assert!(app.terminals.is_empty());
+    assert!(app.active_terminal().is_none());
+}
+
+#[test]
+fn showing_a_terminal_that_has_already_gone_is_refused() {
+    let root = temporary("terminal-shown-after-it-is-gone");
+    fs::create_dir_all(&root).unwrap();
+    let root = root.canonicalize().unwrap();
+    let mut app = App::new(Config::default(), None).unwrap();
+
+    app.open_terminal_at(Some("/bin/cat".to_owned()), root.clone());
+    let id = app.active_terminal().expect("a terminal opened");
+    app.leave_terminal();
+    app.terminals.close(id);
+
+    app.show_terminal(id);
+    assert!(app.status_error && app.status.contains("that terminal is gone"));
+    assert!(app.active_terminal().is_none());
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// A send goes to the terminal being worked with, and every reason it cannot
+/// go anywhere says which one that was.
+#[test]
+fn sending_buffer_text_chooses_one_terminal_and_names_why_it_cannot() {
+    let root = temporary("terminal-send-routing");
+    fs::create_dir_all(&root).unwrap();
+    let root = root.canonicalize().unwrap();
+    let mut app = App::new(Config::default(), None).unwrap();
+    seed(&mut app, "echo composed\n");
+
+    app.send_to_terminal();
+    assert!(
+        app.status_error && app.status.contains("no terminal to send to"),
+        "{}",
+        app.status
+    );
+
+    app.open_terminal_at(Some("/bin/cat".to_owned()), root.clone());
+    let id = app.active_terminal().expect("a terminal opened");
+    app.send_to_terminal();
+    assert!(
+        app.status_error && app.status.contains("that is the terminal you are in"),
+        "{}",
+        app.status
+    );
+
+    app.leave_terminal();
+    app.send_to_terminal();
+    assert!(!app.status_error, "{}", app.status);
+    assert!(
+        app.status.contains("sent 14 characters"),
+        "the whole buffer is sent when nothing is selected: {}",
+        app.status
+    );
+
+    app.send_to_terminal_target(Some("no-such-terminal"));
+    assert!(app.status_error && app.status.contains("no-such-terminal"));
+
+    app.apply_terminal_output(TerminalOutput::Exited { id, code: Some(0) });
+    app.send_to_terminal_target(Some(&id.to_string()));
+    assert!(
+        app.status_error && app.status.contains("program has exited"),
+        "{}",
+        app.status
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn a_buffer_with_nothing_in_it_is_not_sent_to_a_terminal() {
+    let root = temporary("terminal-send-nothing");
+    fs::create_dir_all(&root).unwrap();
+    let root = root.canonicalize().unwrap();
+    let mut app = App::new(Config::default(), None).unwrap();
+    seed(&mut app, "   \n\t\n");
+
+    app.open_terminal_at(Some("/bin/cat".to_owned()), root.clone());
+    app.leave_terminal();
+    app.send_to_terminal();
+
+    assert!(app.status_error && app.status.contains("nothing to send"));
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// Copying output freezes the grid into a read-only page, and says so
+/// differently for a full-screen program whose scrollback has nothing behind
+/// it.
+#[test]
+fn copying_terminal_output_opens_a_page_and_refuses_when_there_is_no_session() {
+    let root = temporary("terminal-copy-output");
+    fs::create_dir_all(&root).unwrap();
+    let root = root.canonicalize().unwrap();
+    let mut app = App::new(Config::default(), None).unwrap();
+
+    app.copy_terminal_output();
+    assert!(
+        app.status_error && app.status.contains("no terminal to copy output from"),
+        "{}",
+        app.status
+    );
+
+    app.open_terminal_at(Some("/bin/cat".to_owned()), root.clone());
+    let id = app.active_terminal().expect("a terminal opened");
+    app.apply_terminal_output(TerminalOutput::Bytes {
+        id,
+        bytes: b"frozen output\r\n".to_vec(),
+    });
+
+    app.copy_terminal_output();
+    assert!(!app.status_error, "{}", app.status);
+    assert!(app.status.contains("output copied into a buffer"));
+    assert!(
+        app.active_buffer().to_string().contains("frozen output"),
+        "{:?}",
+        app.active_buffer().to_string()
+    );
+    assert!(app.active_buffer().is_read_only());
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// Naming a session is separate from reaching one, so it is refused rather
+/// than redirected wherever there is nothing to name.
+#[test]
+fn renaming_a_terminal_refuses_an_absent_session_and_an_unusable_name() {
+    let root = temporary("terminal-rename");
+    fs::create_dir_all(&root).unwrap();
+    let root = root.canonicalize().unwrap();
+    let mut app = App::new(Config::default(), None).unwrap();
+
+    app.rename_active_terminal("build");
+    assert!(
+        app.status_error && app.status.contains("not showing a terminal"),
+        "{}",
+        app.status
+    );
+    app.open_terminal_rename_prompt();
+    assert!(app.status_error && app.status.contains("not showing a terminal"));
+
+    app.open_terminal_at(Some("/bin/cat".to_owned()), root.clone());
+    let id = app.active_terminal().expect("a terminal opened");
+
+    app.rename_active_terminal("build");
+    assert!(!app.status_error, "{}", app.status);
+    assert_eq!(app.terminals.get(id).unwrap().user_name(), Some("build"));
+
+    app.rename_terminal_id(id, "na\u{7}me");
+    assert!(
+        app.status_error && app.status.contains("without controls"),
+        "{}",
+        app.status
+    );
+    assert_eq!(
+        app.terminals.get(id).unwrap().user_name(),
+        Some("build"),
+        "a refused name left the previous one standing"
+    );
+
+    app.leave_terminal();
+    app.terminals.close(id);
+    app.rename_terminal_id(id, "gone");
+    assert!(app.status_error && app.status.contains("that terminal is gone"));
+    app.open_listed_terminal_rename_prompt(id);
+    assert!(app.status_error && app.status.contains("that terminal is gone"));
+    app.show_terminal_target(&id.to_string());
+    assert!(app.status_error, "{}", app.status);
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// The terminal list is a manager over sessions rather than a way of reaching
+/// one, so it says what each session is doing and where.
+#[test]
+fn the_terminal_list_describes_each_session_and_says_so_when_there_are_none() {
+    let root = temporary("terminal-list");
+    fs::create_dir_all(&root).unwrap();
+    let root = root.canonicalize().unwrap();
+    let mut app = App::new(Config::default(), None).unwrap();
+
+    app.open_terminal_list();
+    assert!(app.list.is_none());
+    assert!(app.status.contains("no terminals"), "{}", app.status);
+
+    app.open_terminal_at(Some("/bin/cat".to_owned()), root.clone());
+    let shown = app.active_terminal().expect("a terminal opened");
+    app.leave_terminal();
+    app.open_terminal_at(Some("/bin/cat".to_owned()), root.clone());
+    let exited = app.active_terminal().expect("a second terminal opened");
+    app.apply_terminal_output(TerminalOutput::Exited {
+        id: exited,
+        code: Some(1),
+    });
+    app.rename_terminal_id(shown, "builder");
+    app.show_terminal(shown);
+
+    app.open_terminal_list();
+    let list = app.list.as_ref().expect("the list opened");
+    assert_eq!(list.title, "Terminals");
+    assert_eq!(list.items.len(), 2);
+    assert_eq!(
+        app.list_actions
+            .iter()
+            .map(|action| match action {
+                ListAction::Terminal(id) => *id,
+                other => panic!("{other:?} is not a terminal row"),
+            })
+            .collect::<Vec<_>>(),
+        vec![shown, exited]
+    );
+
+    let details = list
+        .items
+        .iter()
+        .map(|item| item.detail.clone())
+        .collect::<Vec<_>>();
+    assert!(details[0].contains("running"), "{:?}", details[0]);
+    assert!(details[0].contains(&root.display().to_string()));
+    assert!(
+        details[0].contains("shown"),
+        "a session a pane is showing says so: {:?}",
+        details[0]
+    );
+    assert!(
+        list.items[0].label.contains("builder"),
+        "the list carries the name it was given: {:?}",
+        list.items[0].label
+    );
+    assert!(details[1].contains("exited"), "{:?}", details[1]);
+    assert!(
+        details[1].contains("unread"),
+        "a session nobody has looked at since it wrote says so: {:?}",
+        details[1]
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}

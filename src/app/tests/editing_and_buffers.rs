@@ -2226,3 +2226,121 @@ fn disabled_smart_newline_does_not_add_syntax_indentation() {
     assert_eq!(text(&app), "fn outer() {\n    if ready {\n    \n    }\n}\n");
     fs::remove_file(path).unwrap();
 }
+
+/// View alignment moves the pane rather than the caret: the same line ends up
+/// at the top, the middle, or the bottom of the viewport without the document
+/// position changing.
+#[test]
+fn view_alignment_places_the_cursor_line_at_the_top_middle_or_bottom() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    let document = (0..60).fold(String::new(), |mut text, line| {
+        text.push_str(&format!("line {line}\n"));
+        text
+    });
+    seed(&mut app, &document);
+    let viewport = app.viewport_height();
+    assert_eq!(viewport, 20, "the default viewport this test counts in");
+    set_cursor(&mut app, 30, 0);
+
+    for (key, expected) in [
+        ('t', 30),
+        ('b', 30 - (viewport - 1)),
+        ('z', 30 - viewport / 2),
+    ] {
+        press(&mut app, 'z');
+        press(&mut app, key);
+        assert_eq!(app.active().scroll_row, expected, "z{key}");
+        assert_eq!(cursor(&app), Position::new(30, 0), "z{key} moved the caret");
+    }
+}
+
+/// Aligning the middle is the horizontal half of the same idea, and is the one
+/// alignment measured against the pane's width rather than its height.
+#[test]
+fn aligning_the_middle_centers_the_cursor_column_in_the_pane_width() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    seed(&mut app, &"x".repeat(400));
+    set_cursor(&mut app, 0, 200);
+
+    press(&mut app, 'z');
+    press(&mut app, 'm');
+
+    assert_eq!(app.active().scroll_col, 200 - 80 / 2);
+    assert_eq!(cursor(&app), Position::new(0, 200));
+
+    set_cursor(&mut app, 0, 10);
+    press(&mut app, 'z');
+    press(&mut app, 'm');
+    assert_eq!(
+        app.active().scroll_col,
+        0,
+        "a column nearer the start than half a pane cannot scroll behind itself"
+    );
+}
+
+/// Under soft wrap the alignment is resolved in screen rows, so the pane
+/// starts part-way through a line and remembers which of its segments that is.
+#[test]
+fn soft_wrapped_alignment_and_scrolling_are_measured_in_wrapped_segments() {
+    let mut config = Config::default();
+    config.editor.soft_wrap = true;
+    let mut app = App::new(config, None).unwrap();
+    seed(&mut app, "aaaaaa\nbbbbbb\ncccccc");
+    app.active_mut().wrap_width = 3;
+
+    // Six screen rows in a twenty-row viewport, so the top alignment is the
+    // only one with anywhere to go.
+    set_cursor(&mut app, 2, 3);
+    press(&mut app, 'z');
+    press(&mut app, 't');
+    assert_eq!(
+        (app.active().scroll_row, app.active().scroll_wrap),
+        (2, 1),
+        "the pane starts at the second segment of the last line"
+    );
+
+    press(&mut app, 'z');
+    press(&mut app, 'k');
+    assert_eq!(
+        (app.active().scroll_row, app.active().scroll_wrap),
+        (2, 0),
+        "one screen row back is the earlier segment of the same line"
+    );
+
+    press(&mut app, 'z');
+    press(&mut app, 'k');
+    assert_eq!(
+        (app.active().scroll_row, app.active().scroll_wrap),
+        (1, 1),
+        "the row before it is entered at its last segment, not its first"
+    );
+
+    press(&mut app, 'z');
+    press(&mut app, 'j');
+    assert_eq!((app.active().scroll_row, app.active().scroll_wrap), (2, 0));
+}
+
+/// Without soft wrap a screen row is a line, so scrolling the view is a row at
+/// a time in both directions and stops at the document's own edges.
+#[test]
+fn scrolling_the_view_without_soft_wrap_moves_one_line_and_stops_at_the_top() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    seed(&mut app, "one\ntwo\nthree\nfour\n");
+    app.active_mut().scroll_row = 2;
+
+    press(&mut app, 'z');
+    press(&mut app, 'k');
+    assert_eq!(app.active().scroll_row, 1);
+
+    press(&mut app, 'z');
+    press(&mut app, 'k');
+    assert_eq!(app.active().scroll_row, 0);
+
+    press(&mut app, 'z');
+    press(&mut app, 'k');
+    assert_eq!(app.active().scroll_row, 0, "the first line is the top");
+
+    press(&mut app, 'z');
+    press(&mut app, 'j');
+    assert_eq!(app.active().scroll_row, 1);
+}
