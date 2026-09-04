@@ -526,6 +526,92 @@ fn explorer_entry_points_open_editable_directories_and_keep_picker_distinct() {
 }
 
 #[test]
+fn goto_file_infers_the_complete_absolute_path_at_every_kind_of_character() {
+    let directory = temporary("goto-file-absolute");
+    fs::create_dir_all(&directory).unwrap();
+    let target = directory.join("file.txt");
+    let source = directory.join("source.txt");
+    fs::write(&target, "target\n").unwrap();
+    let path = target.display().to_string();
+    fs::write(&source, format!("{path}\n")).unwrap();
+
+    for column in [
+        path.chars().position(|character| character == 'i').unwrap(),
+        path.chars().position(|character| character == '/').unwrap(),
+        path.chars().count() - 1,
+    ] {
+        let mut app = App::new(Config::default(), Some(source.clone())).unwrap();
+        set_cursor(&mut app, 0, column);
+        press(&mut app, 'g');
+        press(&mut app, 'f');
+        assert_eq!(app.active_buffer().path.as_deref(), Some(target.as_path()));
+    }
+
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn goto_file_uses_an_exact_selection_and_asks_between_relative_matches() {
+    let root = temporary("goto-file-relative");
+    let active_directory = root.join("active");
+    fs::create_dir_all(&active_directory).unwrap();
+    let project_match = root.join("file.txt");
+    let active_match = active_directory.join("file.txt");
+    let source = active_directory.join("source.txt");
+    fs::write(&project_match, "project\n").unwrap();
+    fs::write(&active_match, "active\n").unwrap();
+    fs::write(&source, "prefix/file.txt/suffix\n").unwrap();
+
+    let mut app = App::new(Config::default(), Some(source)).unwrap();
+    app.project_root = root.clone();
+    let start = "prefix/".chars().count();
+    let end = start + "file.txt".chars().count();
+    app.active_mut()
+        .replace_selection(Selection::single(Range::new(start, end - 1)));
+    press(&mut app, 'g');
+    press(&mut app, 'f');
+
+    let picker = app.list.as_ref().expect("two matches open a picker");
+    assert_eq!(picker.title, "Go to file");
+    assert_eq!(picker.items.len(), 2);
+    assert_eq!(picker.items[0].label, active_match.display().to_string());
+    assert_eq!(picker.items[1].label, project_match.display().to_string());
+
+    key(&mut app, KeyCode::Down, Modifiers::NONE);
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert!(app.list.is_none());
+    assert_eq!(
+        app.active_buffer().path.as_deref(),
+        Some(project_match.as_path())
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn goto_file_opens_a_selected_directory_as_an_explorer() {
+    let root = temporary("goto-file-directory");
+    let destination = root.join("destination");
+    fs::create_dir_all(&destination).unwrap();
+    let source = root.join("source.txt");
+    let path = destination.display().to_string();
+    fs::write(&source, format!("{path}/file.txt\n")).unwrap();
+
+    let mut app = App::new(Config::default(), Some(source)).unwrap();
+    app.active_mut()
+        .replace_selection(Selection::single(Range::new(0, path.chars().count() - 1)));
+    press(&mut app, 'g');
+    press(&mut app, 'f');
+
+    assert!(app.active_buffer().is_directory());
+    assert_eq!(
+        app.active_buffer().path.as_deref(),
+        Some(destination.as_path())
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn file_picker_lists_directories_and_enter_opens_the_explorer() {
     let directory = temporary("picker-directory-entry");
     let child = directory.join("child");

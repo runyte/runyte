@@ -7,10 +7,11 @@ use super::{
     App, Axis, Buffer, BufferKind, ContentAlignment, DiffSession, DiffSide,
     DirectoryReloadConfirmation, DirectoryView, DocumentSyntax, FileObservation,
     FileReloadConfirmation, FsConfirmation, FsOperation, FsPlan, GeneratedViewIdentity, HashSet,
-    InputGrammar, Layout, MAX_DIFF_BYTES, MaximizedPane, MaximizedView, Mode, PaneDirectory, Path,
-    PathBuf, PromptKind, Result, Selection, SelectionSemantics, Side, TerminalId, Transaction,
-    TransferMode, bail, buffer_language, diff_row_for_identity, diff_row_identity, enclosing_area,
-    ensure, expand_home_path, external_open, fs, open_or_new_at_identity, parse_buffer,
+    InputGrammar, Layout, ListAction, ListPicker, MAX_DIFF_BYTES, MaximizedPane, MaximizedView,
+    Mode, PaneDirectory, Path, PathBuf, PickerItem, PromptKind, Result, Selection,
+    SelectionSemantics, Side, TerminalId, Transaction, TransferMode, bail, buffer_language,
+    diff_row_for_identity, diff_row_identity, enclosing_area, ensure, expand_home_path,
+    external_open, fs, open_or_new_at_identity, parse_buffer, path_token_bounds,
     resolved_operation_path, trailing_whitespace_changes,
 };
 
@@ -47,6 +48,69 @@ pub(super) fn reload_dispatch(kind: &BufferKind) -> ReloadDispatch {
 }
 
 impl App {
+    /// Opens the selected path, or the complete path-like token under a bare
+    /// caret. Relative paths use the same two editor contexts as path
+    /// completion: beside the active file or explorer, then the project root.
+    pub(super) fn goto_file_under_cursor(&mut self) -> Result<()> {
+        let buffer = self.active().buffer;
+        let range = self.active().selection.primary();
+        let span = if range.is_empty() {
+            path_token_bounds(&self.buffers[buffer], range.head)
+        } else if matches!(
+            self.active().selection_semantics(),
+            SelectionSemantics::HalfOpen | SelectionSemantics::VimLinewise
+        ) {
+            Some((range.from(), range.to()))
+        } else {
+            Some(super::operative_span(&self.buffers[buffer], &range))
+        };
+        let Some((from, to)) = span else {
+            self.action_failed("no path under the cursor");
+            return Ok(());
+        };
+        let requested_text = self.buffers[buffer].slice(from, to);
+        if requested_text.is_empty() || requested_text.contains('\n') {
+            self.action_failed("no path under the cursor");
+            return Ok(());
+        }
+
+        let requested = expand_home_path(
+            PathBuf::from(&requested_text),
+            self.home_directory.as_deref(),
+        );
+        let mut unresolved = Vec::new();
+        if requested.is_absolute() {
+            unresolved.push(requested);
+        } else {
+            if let Some(directory) = self.buffer_directory(buffer) {
+                unresolved.push(directory.join(&requested));
+            }
+            unresolved.push(self.project_root.join(requested));
+        }
+
+        let mut seen = HashSet::new();
+        let candidates = unresolved
+            .into_iter()
+            .filter_map(|path| path.canonicalize().ok())
+            .filter(|path| path.is_file() || path.is_dir())
+            .filter(|path| seen.insert(path.clone()))
+            .collect::<Vec<_>>();
+        match candidates.as_slice() {
+            [] => self.action_failed(format!("path not found: {requested_text}")),
+            [path] => self.open_file(path.clone())?,
+            _ => {
+                let items = candidates
+                    .iter()
+                    .enumerate()
+                    .map(|(index, path)| PickerItem::new(path.display().to_string(), "", index))
+                    .collect();
+                self.list_actions = candidates.into_iter().map(ListAction::OpenPath).collect();
+                self.list = Some(ListPicker::new("Go to file", items));
+            }
+        }
+        Ok(())
+    }
+
     pub(super) fn open_explorer(&mut self, requested: Option<PathBuf>) -> Result<()> {
         let root = if let Some(path) = requested {
             self.resolve_working_path(path)

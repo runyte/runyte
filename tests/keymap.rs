@@ -440,6 +440,17 @@ fn explorer_bindings_distinguish_active_and_working_directories() {
 }
 
 #[test]
+fn g_f_opens_the_file_under_the_cursor() {
+    let sequence = KeySequence::from([Key::char('g'), Key::char('f')]);
+    assert!(matches!(
+        default_keymap().lookup(Mode::Normal, &sequence),
+        Lookup::Exact(binding)
+            if binding.target == BindingTarget::Editor(EditorCommand::GotoFile)
+                && binding.description == "Go to the file under the cursor"
+    ));
+}
+
+#[test]
 fn syntax_shrink_binding_describes_the_action_as_shrinking() {
     let sequence = KeySequence::from([Key::char(' '), Key::char('x'), Key::char('s')]);
     assert!(matches!(

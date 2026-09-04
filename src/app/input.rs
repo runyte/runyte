@@ -3716,6 +3716,7 @@ impl App {
             Command::GotoWindowTop => self.motion(Motion::WindowTop),
             Command::GotoWindowCenter => self.motion(Motion::WindowCenter),
             Command::GotoWindowBottom => self.motion(Motion::WindowBottom),
+            Command::GotoFile => self.goto_file_under_cursor()?,
             Command::GotoWord => self.label_visible_words(),
             Command::ToggleSoftWrap => {
                 self.config.editor.soft_wrap = !self.config.editor.soft_wrap;

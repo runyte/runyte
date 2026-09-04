@@ -3331,6 +3331,7 @@ fn outcome_clause(outcome: &str, message: &str) -> String {
 #[derive(Clone, Debug)]
 enum ListAction {
     Jump(crate::lsp::Location),
+    OpenPath(PathBuf),
     CodeAction(usize),
     Buffer(usize),
     SettingValue {
