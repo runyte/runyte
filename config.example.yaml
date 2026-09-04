@@ -13,6 +13,8 @@ editor:
   render_whitespace: false
   zen_width: 100
   hard_wrap_width: 80
+  # The scratch buffer names no language, so Space p r refills it as Markdown.
+  scratch_markdown: true
   # Gray out every pane's text while a command prompt is open.
   command_mode_dim: true
 

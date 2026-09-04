@@ -378,6 +378,9 @@ fn wrapping_namespace_wraps_and_toggles_soft_wrap_and_whitespace_markers() {
 fn wrapping_namespace_reflows_at_configured_width_as_one_edit() {
     let mut config = Config::default();
     config.editor.hard_wrap_width = 16;
+    // Comment-leader reflow is what this covers, and the test buffer is the
+    // pathless scratch, so the Markdown scratchpad default is turned off here.
+    config.editor.scratch_markdown = false;
     let mut app = App::new(config, None).unwrap();
     seed(&mut app, "// alpha beta\n// gamma delta epsilon");
     app.mode = Mode::Select;
@@ -398,6 +401,44 @@ fn wrapping_namespace_reflows_at_configured_width_as_one_edit() {
     assert_eq!(text(&app), "// alpha beta gamma\n// delta epsilon");
     press(&mut app, 'u');
     assert_eq!(text(&app), "// alpha beta\n// gamma delta\n// epsilon");
+}
+
+#[test]
+fn the_scratchpad_reflows_as_markdown_unless_the_option_or_its_text_says_otherwise() {
+    let reflow = |config: Config, seeded: &str| {
+        let mut app = App::new(config, None).unwrap();
+        assert!(matches!(app.active_buffer().kind, BufferKind::Scratch));
+        seed(&mut app, seeded);
+        app.mode = Mode::Select;
+        app.panes.get_mut(&0).unwrap().selection =
+            Selection::single(Range::new(0, text(&app).chars().count() - 1));
+        for stroke in [' ', 'p', 'r'] {
+            press(&mut app, stroke);
+        }
+        text(&app)
+    };
+
+    let mut config = Config::default();
+    config.editor.hard_wrap_width = 16;
+    assert!(config.editor.scratch_markdown);
+    assert_eq!(
+        reflow(config.clone(), "- alpha beta gamma delta"),
+        "- alpha beta\n  gamma delta",
+    );
+
+    let mut plain = config.clone();
+    plain.editor.scratch_markdown = false;
+    assert_eq!(
+        reflow(plain, "- alpha beta gamma delta"),
+        "- alpha beta\ngamma delta",
+    );
+
+    // Scratch text naming its own language is read as that language, so the
+    // option never reaches it.
+    assert!(
+        reflow(config, "#!/bin/sh\necho alpha beta gamma delta epsilon")
+            .contains("echo alpha beta gamma delta epsilon"),
+    );
 }
 
 #[test]
