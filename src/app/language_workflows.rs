@@ -6,10 +6,10 @@
 use super::{
     ActionEntry, App, Assoc, BTreeMap, Buffer, BufferAction, BufferActionMenu, BufferKind, Change,
     ChangeSync, Completion, CompletionSource, CompletionState, ContextAction, ContextActionMenu,
-    DocumentEdit, DocumentState, DocumentSyntax, Encoding, HashMap, HashSet, HoverState,
-    InputGrammar, KeyCode, KeyStroke, ListAction, ListPicker, ListPurpose, LspCommand, LspEvent,
-    LspHandle, LspRange, Mode, Modifiers, Offset, PATH_COMPLETION_ITEM_LIMIT_PER_ROOT, Path,
-    PathActionMenu, PathBuf, PathClipboardTarget, PathPopup, PendingRequest, PickerItem,
+    DocumentEdit, DocumentState, DocumentSyntax, Encoding, FailureClass, HashMap, HashSet,
+    HoverState, InputGrammar, KeyCode, KeyStroke, ListAction, ListPicker, ListPurpose, LspCommand,
+    LspEvent, LspHandle, LspRange, Mode, Modifiers, Offset, PATH_COMPLETION_ITEM_LIMIT_PER_ROOT,
+    Path, PathActionMenu, PathBuf, PathClipboardTarget, PathPopup, PendingRequest, PickerItem,
     PromptKind, Range, Register, RequestKind, Response, Result, SPECIAL_BUFFER_RETENTION_LIMIT,
     SearchMode, Selection, SelectionSemantics, ServerState, SignatureContext, SignatureState,
     TerminalAction, TerminalActionMenu, TerminalSession, Text, TextDocumentContentChangeEvent,
@@ -23,6 +23,117 @@ use super::{
 };
 #[cfg(unix)]
 use super::{SessionAction, SessionActionMenu};
+
+#[derive(Debug)]
+enum DocumentEditFailure {
+    MissingTarget,
+    OutsideWorkspace {
+        path: PathBuf,
+        root: PathBuf,
+    },
+    ResolvePath {
+        path: PathBuf,
+        error: String,
+    },
+    ConflictingVersions {
+        path: PathBuf,
+        left: i32,
+        right: i32,
+    },
+    ChangedSinceRequest {
+        path: PathBuf,
+    },
+    OpenedSinceRequest {
+        path: PathBuf,
+    },
+    VersionChanged {
+        path: PathBuf,
+        expected: i32,
+    },
+    ReadOnly {
+        path: PathBuf,
+    },
+    OpenFile {
+        error: String,
+    },
+    InvalidRange {
+        path: PathBuf,
+    },
+    OverlappingEdits {
+        path: PathBuf,
+    },
+}
+
+impl DocumentEditFailure {
+    const fn class(&self) -> FailureClass {
+        match self {
+            Self::OutsideWorkspace { .. }
+            | Self::ChangedSinceRequest { .. }
+            | Self::OpenedSinceRequest { .. }
+            | Self::VersionChanged { .. }
+            | Self::ReadOnly { .. } => FailureClass::Protective,
+            Self::MissingTarget
+            | Self::ResolvePath { .. }
+            | Self::ConflictingVersions { .. }
+            | Self::OpenFile { .. }
+            | Self::InvalidRange { .. }
+            | Self::OverlappingEdits { .. } => FailureClass::Fault,
+        }
+    }
+}
+
+impl std::fmt::Display for DocumentEditFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::MissingTarget => {
+                formatter.write_str("the language server did not say which file to change")
+            }
+            Self::OutsideWorkspace { path, root } => write!(
+                formatter,
+                "{} refused: it is outside {}",
+                display_path(path),
+                display_path(root)
+            ),
+            Self::ResolvePath { path, error } => {
+                write!(formatter, "cannot resolve {}: {error}", display_path(path))
+            }
+            Self::ConflictingVersions { path, left, right } => write!(
+                formatter,
+                "{} has conflicting language-server versions {left} and {right}",
+                display_path(path)
+            ),
+            Self::ChangedSinceRequest { path } => write!(
+                formatter,
+                "{} changed, closed, or moved since the language-server request",
+                display_path(path)
+            ),
+            Self::OpenedSinceRequest { path } => write!(
+                formatter,
+                "{} opened since the language-server request",
+                display_path(path)
+            ),
+            Self::VersionChanged { path, expected } => write!(
+                formatter,
+                "{} changed since language-server version {expected}",
+                display_path(path)
+            ),
+            Self::ReadOnly { path } => write!(formatter, "{} is read-only", display_path(path)),
+            Self::OpenFile { error } => formatter.write_str(error),
+            Self::InvalidRange { path } => write!(
+                formatter,
+                "{} has an invalid language-server edit range",
+                display_path(path)
+            ),
+            Self::OverlappingEdits { path } => write!(
+                formatter,
+                "{} has overlapping language-server edits",
+                display_path(path)
+            ),
+        }
+    }
+}
+
+impl std::error::Error for DocumentEditFailure {}
 
 // -- Language servers ------------------------------------------------------
 //
@@ -1432,7 +1543,7 @@ impl App {
                         });
                     }
                     Err(error) => {
-                        self.error_from("LSP", "Workspace edit failed", error);
+                        self.report_document_edit_failure(error, "LSP", "Workspace edit failed");
                         self.lsp_reply(LspCommand::EditApplied {
                             language,
                             generation,
@@ -1590,7 +1701,9 @@ impl App {
                 let fallback = (!path.as_os_str().is_empty()).then_some(path);
                 match self.apply_document_edits(edits, fallback, Some(&documents), encoding, None) {
                     Ok(summary) => self.status(edit_summary(label, summary, skipped)),
-                    Err(error) => self.action_failed(error),
+                    Err(error) => {
+                        self.report_document_edit_failure(error, "Runyte", "Action failed")
+                    }
                 }
                 self.report_new_registry_errors();
             }
@@ -1639,7 +1752,9 @@ impl App {
                             }
                         }
                     }
-                    Err(error) => self.action_failed(error),
+                    Err(error) => {
+                        self.report_document_edit_failure(error, "Runyte", "Action failed")
+                    }
                 }
                 self.report_new_registry_errors();
             }
@@ -1949,7 +2064,11 @@ impl App {
                                         }
                                     }
                                 }
-                                Err(error) => self.action_failed(error),
+                                Err(error) => self.report_document_edit_failure(
+                                    error,
+                                    "Runyte",
+                                    "Action failed",
+                                ),
                             },
                             Err(error) => self.action_failed(error),
                         }
@@ -1980,6 +2099,15 @@ impl App {
     /// Files that are not open are opened rather than written directly: an
     /// edit the person has not seen and has not saved is one they can still
     /// undo or discard.
+    fn report_document_edit_failure(
+        &mut self,
+        error: DocumentEditFailure,
+        source: &'static str,
+        title: &'static str,
+    ) {
+        self.failure_from(error.class(), source, title, error.to_string());
+    }
+
     fn apply_document_edits(
         &mut self,
         edits: Vec<DocumentEdit>,
@@ -1987,7 +2115,7 @@ impl App {
         guards: Option<&HashMap<PathBuf, (usize, u64)>>,
         encoding: Encoding,
         command_server: Option<(&str, u64)>,
-    ) -> Result<(usize, usize, bool), String> {
+    ) -> std::result::Result<(usize, usize, bool), DocumentEditFailure> {
         struct PlannedEdit {
             target: PlannedTarget,
             transaction: Transaction,
@@ -2019,7 +2147,7 @@ impl App {
                 match &fallback {
                     Some(path) => path.clone(),
                     None => {
-                        return Err("the language server did not say which file to change".into());
+                        return Err(DocumentEditFailure::MissingTarget);
                     }
                 }
             } else {
@@ -2036,24 +2164,24 @@ impl App {
             // `~/.bashrc` through a `file://` URI.
             let resolved = self.resolve_working_path(path.clone());
             if crate::path_safety::ensure_within_root(&self.project_root, &resolved).is_err() {
-                return Err(format!(
-                    "{} refused: it is outside {}",
-                    display_path(&path),
-                    display_path(&self.project_root)
-                ));
+                return Err(DocumentEditFailure::OutsideWorkspace {
+                    path,
+                    root: self.project_root.clone(),
+                });
             }
-            let identity = workspace_edit_path_identity(&resolved)
-                .map_err(|error| format!("cannot resolve {}: {error}", display_path(&path)))?;
+            let identity = workspace_edit_path_identity(&resolved).map_err(|error| {
+                DocumentEditFailure::ResolvePath {
+                    path: path.clone(),
+                    error: error.to_string(),
+                }
+            })?;
 
             if let Some(group) = grouped_paths.get(&identity).copied() {
                 let grouped = &mut grouped[group];
                 if let (Some(left), Some(right)) = (grouped.version, document.version)
                     && left != right
                 {
-                    return Err(format!(
-                        "{} has conflicting language-server versions {left} and {right}",
-                        display_path(&path)
-                    ));
+                    return Err(DocumentEditFailure::ConflictingVersions { path, left, right });
                 }
                 grouped.version = grouped.version.or(document.version);
                 grouped.edits.extend(document.edits);
@@ -2089,16 +2217,10 @@ impl App {
                                     .is_ok_and(|current| current == document.identity)
                             }) => {}
                     (Some(_), _) => {
-                        return Err(format!(
-                            "{} changed, closed, or moved since the language-server request",
-                            display_path(&path)
-                        ));
+                        return Err(DocumentEditFailure::ChangedSinceRequest { path });
                     }
                     (None, Some(_)) => {
-                        return Err(format!(
-                            "{} opened since the language-server request",
-                            display_path(&path)
-                        ));
+                        return Err(DocumentEditFailure::OpenedSinceRequest { path });
                     }
                     (None, None) => {}
                 }
@@ -2111,37 +2233,33 @@ impl App {
                                 .is_ok_and(|identity| identity == document.identity)
                     })
                 }) else {
-                    return Err(format!(
-                        "{} changed since language-server version {expected}",
-                        display_path(&path)
-                    ));
+                    return Err(DocumentEditFailure::VersionChanged { path, expected });
                 };
                 Some(buffer_id)
             } else {
                 existing
             };
-            let mut staged = match buffer_id {
-                Some(buffer_id) => self.buffers[buffer_id].clone(),
-                None => open_or_new(&path, self.config.editor.show_hidden_files)
-                    .map_err(|error| error.to_string())?,
-            };
+            let mut staged =
+                match buffer_id {
+                    Some(buffer_id) => self.buffers[buffer_id].clone(),
+                    None => open_or_new(&path, self.config.editor.show_hidden_files).map_err(
+                        |error| DocumentEditFailure::OpenFile {
+                            error: error.to_string(),
+                        },
+                    )?,
+                };
             if staged.is_read_only() {
-                return Err(format!("{} is read-only", display_path(&path)));
+                return Err(DocumentEditFailure::ReadOnly { path });
             }
             let mut changes = document
                 .edits
                 .iter()
                 .map(|edit| {
                     let (from, to) = checked_lsp_range(staged.text(), edit.range, encoding)
-                        .ok_or_else(|| {
-                            format!(
-                                "{} has an invalid language-server edit range",
-                                display_path(&path)
-                            )
-                        })?;
+                        .ok_or_else(|| DocumentEditFailure::InvalidRange { path: path.clone() })?;
                     Ok(Change::new(from, to, edit.new_text.clone()))
                 })
-                .collect::<Result<Vec<_>, String>>()?;
+                .collect::<std::result::Result<Vec<_>, DocumentEditFailure>>()?;
             changes.sort_by_key(|change| (change.from, change.to));
             if changes.windows(2).any(|pair| {
                 pair[1].from < pair[0].to
@@ -2149,10 +2267,7 @@ impl App {
                         && pair[1].from == pair[1].to
                         && pair[0].from == pair[1].from)
             }) {
-                return Err(format!(
-                    "{} has overlapping language-server edits",
-                    display_path(&path)
-                ));
+                return Err(DocumentEditFailure::OverlappingEdits { path });
             }
             let transaction = Transaction::new(changes);
             if !staged.apply(&transaction) {

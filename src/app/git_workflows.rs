@@ -11,17 +11,17 @@ use super::{
     BranchCascade, BranchDeletionConfirmation, BranchDeletionPlan, BranchList, BranchStart,
     BranchSwitch, BranchSwitchConfirmation, Buffer, BufferKind, BufferRevisionGuard,
     COMMIT_INSTRUCTIONS, ColonCommand, CommitDetail, CommitSearchResult, CommitSummary,
-    DeletionAuthorization, DiffScope, DiffSession, DiffSide, Duration, FileComparison,
-    GeneralWorktreeRow, GeneratedViewIdentity, GitDiscardConfirmation, GitMutation, GitOperation,
-    GitProvider, GitRequestId, GitResponse, GitServiceEvent, GitServiceHandle, GitServiceProgress,
-    GitServiceState, GitStashConfirmation, GitTracker, HashMap, HashSet, Instant, KeyCode,
-    KeyStroke, LineChange, ListAction, ListPicker, LogCursor, LogPage, LogRequest, LogViewRequest,
-    MAX_BLAME_INPUT_BYTES, MAX_BLAME_LINES, MAX_DIFF_BYTES, Mode, PartialStageSelection, PatchHunk,
-    Path, PathBuf, PickerItem, PromptKind, PullRebaseConfirmation, RefreshSpec, Repository,
-    RepositoryGeneration, RepositorySnapshot, Result, Selection, StashEntry, StashMutation,
-    StashScope, StatusSide, WorkspaceSwitchRequest, Worktree, WorktreeCreate,
-    WorktreeRemovalConfirmation, WorktreeRemovalPlan, buffer_language, commit_message_body,
-    is_refreshed_projection, selection_is_deliberate,
+    DeletionAuthorization, DiffScope, DiffSession, DiffSide, Duration, FailureClass,
+    FileComparison, GeneralWorktreeRow, GeneratedViewIdentity, GitDiscardConfirmation, GitMutation,
+    GitOperation, GitProvider, GitRequestId, GitResponse, GitServiceEvent, GitServiceHandle,
+    GitServiceProgress, GitServiceState, GitStashConfirmation, GitTracker, HashMap, HashSet,
+    Instant, KeyCode, KeyStroke, LineChange, ListAction, ListPicker, LogCursor, LogPage,
+    LogRequest, LogViewRequest, MAX_BLAME_INPUT_BYTES, MAX_BLAME_LINES, MAX_DIFF_BYTES, Mode,
+    PartialStageSelection, PatchHunk, Path, PathBuf, PickerItem, PromptKind,
+    PullRebaseConfirmation, RefreshSpec, Repository, RepositoryGeneration, RepositorySnapshot,
+    Result, Selection, StashEntry, StashMutation, StashScope, StatusSide, WorkspaceSwitchRequest,
+    Worktree, WorktreeCreate, WorktreeRemovalConfirmation, WorktreeRemovalPlan, buffer_language,
+    commit_message_body, is_refreshed_projection, selection_is_deliberate,
 };
 
 const AUTOMATIC_GIT_INTERACTION_QUIET: Duration = Duration::from_millis(250);
@@ -1419,7 +1419,6 @@ impl App {
             .enumerate()
             .filter_map(|(index, buffer)| {
                 (!self.closed_buffers.contains(&index)
-                    && !buffer.dirty
                     && buffer.kind == BufferKind::File
                     && buffer
                         .path
@@ -1429,8 +1428,27 @@ impl App {
             })
             .collect::<Vec<_>>();
         for buffer in buffers {
+            let path = self.buffers[buffer]
+                .path
+                .as_ref()
+                .expect("a repository file buffer has a path")
+                .clone();
+            if self.buffers[buffer].dirty {
+                self.failure_from(
+                    FailureClass::Protective,
+                    "Runyte",
+                    "Action failed",
+                    format!(
+                        "Git changed {} on disk, but its unsaved buffer was kept; reload or save it explicitly",
+                        path.display()
+                    ),
+                );
+                continue;
+            }
             let language = buffer_language(&self.buffers[buffer], &self.registry);
-            if self.buffers[buffer].reload().is_ok() {
+            if let Err(error) = self.buffers[buffer].reload() {
+                self.error_from("Git", "Git operation failed", error.to_string());
+            } else {
                 self.resync_replaced_buffer(buffer, language);
             }
         }
@@ -1447,10 +1465,15 @@ impl App {
                 continue;
             };
             if self.buffers[buffer].dirty {
-                self.action_failed(format!(
-                    "Git changed {} on disk, but its unsaved buffer was kept; reload or save it explicitly",
-                    path.display()
-                ));
+                self.failure_from(
+                    FailureClass::Protective,
+                    "Runyte",
+                    "Action failed",
+                    format!(
+                        "Git changed {} on disk, but its unsaved buffer was kept; reload or save it explicitly",
+                        path.display()
+                    ),
+                );
                 continue;
             }
             if !path.exists() {
@@ -3061,10 +3084,15 @@ impl App {
             || "no branch was deleted".to_owned(),
             |branch| format!("branch {} was not deleted", branch.branch),
         );
-        self.action_failed(format!(
-            "removed worktree {path}{stopped}; its session record could not be forgotten: {}; {branch}",
-            reason.as_ref()
-        ));
+        self.failure_from(
+            FailureClass::Fault,
+            "Runyte",
+            "Action failed",
+            format!(
+                "removed worktree {path}{stopped}; its session record could not be forgotten: {}; {branch}",
+                reason.as_ref()
+            ),
+        );
     }
 
     /// The one message a completed cascade leaves behind, naming every level
@@ -4317,9 +4345,12 @@ impl App {
         self.refresh_git_status_buffer();
         self.refresh_git_branches_buffer(branch);
         if let Some(error) = reload_error {
-            self.action_failed(format!(
-                "{outcome}, but an open buffer could not be reloaded: {error}"
-            ));
+            self.failure_from(
+                FailureClass::Fault,
+                "Runyte",
+                "Action failed",
+                format!("{outcome}, but an open buffer could not be reloaded: {error}"),
+            );
         } else {
             self.status(outcome);
         }

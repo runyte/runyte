@@ -10,13 +10,16 @@ impl App {
         if let Some(value) = request
             && !matches!(value, "reset" | "sessions")
         {
-            bail!("tutorial accepts only `reset` or `sessions`");
+            return Err(
+                CommandRefusal::routine("tutorial accepts only `reset` or `sessions`").into(),
+            );
         }
         if let Some(maximized) = self.maximized {
-            bail!(
+            return Err(CommandRefusal::routine(format!(
                 "leave {} before opening the tutorial",
                 maximized.view.label()
-            );
+            ))
+            .into());
         }
 
         if self.tutorial.is_none() {

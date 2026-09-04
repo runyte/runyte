@@ -705,6 +705,10 @@ fn a_failed_teardown_forget_leaves_the_branch_intact() {
         "{}",
         app.status
     );
+    assert_eq!(
+        app.notifications.entries()[0].severity,
+        NotificationSeverity::Error
+    );
     fs::remove_dir_all(root).unwrap();
 }
 

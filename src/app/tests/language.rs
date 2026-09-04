@@ -325,6 +325,141 @@ fn edit(row: u32, from: u32, to: u32, text: &str) -> crate::lsp::TextEdit {
     }
 }
 
+fn deliver_document_edits(
+    app: &mut App,
+    queue: &mut tokio::sync::mpsc::Receiver<LspCommand>,
+    edits: Vec<DocumentEdit>,
+    server_initiated: bool,
+) {
+    drain(queue);
+    if server_initiated {
+        app.apply_lsp_event(LspEvent::ApplyEdit {
+            language: "rust".to_owned(),
+            generation: 1,
+            encoding: Encoding::Utf8,
+            id: serde_json::json!(904),
+            edits,
+            skipped: 0,
+        });
+    } else {
+        let request = tracked(
+            app,
+            PendingRequest::Edits {
+                label: "formatted",
+                path: PathBuf::new(),
+            },
+        );
+        app.lsp_requests.insert(904, request);
+        app.apply_lsp_event(LspEvent::Response {
+            token: 904,
+            response: Response::Edits {
+                edits,
+                skipped: 0,
+                encoding: Encoding::Utf8,
+            },
+        });
+    }
+}
+
+#[test]
+fn document_edit_protections_are_warnings_through_both_request_paths() {
+    for server_initiated in [false, true] {
+        let (mut app, path, mut queue) = rust_app("original\n");
+        ready(&mut app, Encoding::Utf8);
+        deliver_document_edits(
+            &mut app,
+            &mut queue,
+            vec![DocumentEdit {
+                path,
+                version: Some(999),
+                edits: vec![edit(0, 0, 8, "changed")],
+            }],
+            server_initiated,
+        );
+        assert_eq!(
+            app.notifications.entries()[0].severity,
+            NotificationSeverity::Warning
+        );
+
+        let (mut app, path, mut queue) = rust_app("original\n");
+        ready(&mut app, Encoding::Utf8);
+        app.buffers[0].kind = BufferKind::Help;
+        deliver_document_edits(
+            &mut app,
+            &mut queue,
+            vec![DocumentEdit {
+                path,
+                version: None,
+                edits: vec![edit(0, 0, 8, "changed")],
+            }],
+            server_initiated,
+        );
+        assert_eq!(
+            app.notifications.entries()[0].severity,
+            NotificationSeverity::Warning
+        );
+    }
+}
+
+#[test]
+fn malformed_and_unopenable_document_edits_are_errors_through_both_request_paths() {
+    for server_initiated in [false, true] {
+        let (mut app, path, mut queue) = rust_app("original\n");
+        ready(&mut app, Encoding::Utf8);
+        deliver_document_edits(
+            &mut app,
+            &mut queue,
+            vec![DocumentEdit {
+                path,
+                version: None,
+                edits: vec![edit(8, 0, 0, "changed")],
+            }],
+            server_initiated,
+        );
+        assert_eq!(
+            app.notifications.entries()[0].severity,
+            NotificationSeverity::Error
+        );
+
+        let (mut app, path, mut queue) = rust_app("original\n");
+        ready(&mut app, Encoding::Utf8);
+        deliver_document_edits(
+            &mut app,
+            &mut queue,
+            vec![DocumentEdit {
+                path,
+                version: None,
+                edits: vec![edit(0, 0, 8, "first"), edit(0, 0, 8, "second")],
+            }],
+            server_initiated,
+        );
+        assert_eq!(
+            app.notifications.entries()[0].severity,
+            NotificationSeverity::Error
+        );
+
+        let (mut app, _path, mut queue) = rust_app("original\n");
+        ready(&mut app, Encoding::Utf8);
+        let binary = temporary("unopenable-edit.rs");
+        fs::write(&binary, [0xff, 0xfe]).unwrap();
+        deliver_document_edits(
+            &mut app,
+            &mut queue,
+            vec![DocumentEdit {
+                path: binary.clone(),
+                version: None,
+                edits: vec![edit(0, 0, 0, "changed")],
+            }],
+            server_initiated,
+        );
+        assert_eq!(
+            app.notifications.entries()[0].severity,
+            NotificationSeverity::Error
+        );
+        fs::remove_file(binary).unwrap();
+    }
+}
+
 #[test]
 fn a_document_is_announced_only_once_the_handshake_lands() {
     let (mut app, path, mut queue) = rust_app("fn main() {}\n");

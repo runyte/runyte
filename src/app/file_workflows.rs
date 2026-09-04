@@ -4,7 +4,7 @@
 
 // Application-module dependencies:
 use super::{
-    App, Axis, Buffer, BufferKind, ContentAlignment, DiffSession, DiffSide,
+    App, Axis, Buffer, BufferKind, CommandRefusal, ContentAlignment, DiffSession, DiffSide,
     DirectoryReloadConfirmation, DirectoryView, DocumentSyntax, FileObservation,
     FileReloadConfirmation, FsConfirmation, FsOperation, FsPlan, GeneratedViewIdentity, HashSet,
     InputGrammar, Layout, ListAction, ListPicker, MAX_DIFF_BYTES, MaximizedPane, MaximizedView,
@@ -1449,7 +1449,11 @@ impl App {
 
     pub(super) fn split(&mut self, axis: Axis, path: Option<PathBuf>) -> Result<()> {
         if let Some(maximized) = self.maximized {
-            bail!("leave {} before creating a split", maximized.view.label());
+            return Err(CommandRefusal::routine(format!(
+                "leave {} before creating a split",
+                maximized.view.label()
+            ))
+            .into());
         }
         let old = self.active_pane;
         let new = self.next_pane;

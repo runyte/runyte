@@ -61,6 +61,143 @@ fn saving_an_external_file_does_not_ask_git_about_it() {
     fs::remove_dir_all(root).unwrap();
 }
 
+#[test]
+fn git_reconciliation_classifies_protected_buffers_and_reload_faults() {
+    use crate::git::{GitMutation, GitServiceState, Repository};
+
+    for path_specific in [false, true] {
+        let root = temporary(if path_specific {
+            "path-specific-dirty-reconciliation"
+        } else {
+            "repository-dirty-reconciliation"
+        });
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("open.rs");
+        fs::write(&path, "disk changed\n").unwrap();
+        let root = root.canonicalize().unwrap();
+        let path = path.canonicalize().unwrap();
+        let mut app = App::new_in_isolated_project(
+            &root,
+            HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+                String::new(),
+            ))))),
+        )
+        .unwrap();
+        app.open_file(path.clone()).unwrap();
+        let buffer = app.active().buffer;
+        app.buffers[buffer].apply(&Transaction::insert(0, "unsaved "));
+        app.git.attach(Some(Repository::new(&root)));
+
+        app.apply_git_mutation_result(
+            if path_specific {
+                GitMutation::Discard(vec![path.clone()])
+            } else {
+                GitMutation::Pull
+            },
+            if path_specific {
+                vec![path.clone()]
+            } else {
+                Vec::new()
+            },
+            None,
+            None,
+            GitServiceState::Completed,
+            None,
+        );
+
+        assert_eq!(
+            app.notifications.entries()[0].severity,
+            NotificationSeverity::Warning
+        );
+        assert!(app.active_buffer().to_string().starts_with("unsaved "));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    for path_specific in [false, true] {
+        let root = temporary(if path_specific {
+            "path-specific-reload-fault"
+        } else {
+            "repository-reload-fault"
+        });
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("open.rs");
+        fs::write(&path, "original\n").unwrap();
+        let root = root.canonicalize().unwrap();
+        let path = path.canonicalize().unwrap();
+        let mut app = App::new_in_isolated_project(
+            &root,
+            HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+                String::new(),
+            ))))),
+        )
+        .unwrap();
+        app.open_file(path.clone()).unwrap();
+        app.git.attach(Some(Repository::new(&root)));
+        fs::write(&path, [0xff, 0xfe]).unwrap();
+
+        app.apply_git_mutation_result(
+            if path_specific {
+                GitMutation::Discard(vec![path.clone()])
+            } else {
+                GitMutation::Pull
+            },
+            if path_specific {
+                vec![path.clone()]
+            } else {
+                Vec::new()
+            },
+            None,
+            None,
+            GitServiceState::Completed,
+            None,
+        );
+
+        assert_eq!(
+            app.notifications.entries()[0].severity,
+            NotificationSeverity::Error
+        );
+        assert_eq!(app.active_buffer().to_string(), "original\n");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    let root = temporary("synchronous-branch-reload-fault");
+    fs::create_dir_all(&root).unwrap();
+    let path = root.join("open.rs");
+    fs::write(&path, "original\n").unwrap();
+    let root = root.canonicalize().unwrap();
+    let path = path.canonicalize().unwrap();
+    let repository = Repository::new(&root);
+    let mut ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    ports.replace_git(Box::new(
+        crate::git::MemoryGitProvider::new(repository.clone()).with_branches(&["main"], "main"),
+    ));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    app.open_file(path.clone()).unwrap();
+    app.git.attach(Some(repository.clone()));
+    fs::write(&path, [0xff, 0xfe]).unwrap();
+
+    app.apply_branch_switch(
+        repository,
+        BranchSwitch::Checkout {
+            branch: "main".to_owned(),
+        },
+    );
+
+    assert_eq!(
+        app.notifications.entries()[0].severity,
+        NotificationSeverity::Error
+    );
+    assert!(
+        app.notifications.entries()[0]
+            .body
+            .contains("checked out main")
+    );
+    assert_eq!(app.active_buffer().to_string(), "original\n");
+    fs::remove_dir_all(root).unwrap();
+}
+
 /// The Git gutter and the branch summary come from one tracker, and the
 /// tracker is fed by a provider the test owns: no repository is created,
 /// and no `git` runs.

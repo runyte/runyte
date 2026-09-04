@@ -4,10 +4,10 @@
 
 // Application-module dependencies:
 use super::{
-    ActionFeedback, ActiveGrammar, App, Buffer, CommandOutcome, DefaultColors, InputGrammar,
-    ListAction, ListPicker, Mode, NotificationCenter, NotificationCounts, NotificationDraft,
-    NotificationSeverity, Path, PickerItem, PreviewPolicy, PromptKind, Result, Selection,
-    ServiceHealthEntry, ServiceHealthSnapshot, ServiceState, SettingId, SettingPreview,
+    ActionFeedback, ActiveGrammar, App, Buffer, CommandOutcome, DefaultColors, FailureClass,
+    InputGrammar, ListAction, ListPicker, Mode, NotificationCenter, NotificationCounts,
+    NotificationDraft, NotificationSeverity, Path, PickerItem, PreviewPolicy, PromptKind, Result,
+    Selection, ServiceHealthEntry, ServiceHealthSnapshot, ServiceState, SettingId, SettingPreview,
     SettingType, SettingValue, SettingsView, Theme, ThemeAppearance, WorkspaceMode, fs,
     outcome_clause, persist_setting, registry_failure_summary, render_settings_page,
     startup_status,
@@ -1016,16 +1016,7 @@ impl App {
     /// refusals are informational because Runyte and its dependencies are
     /// still operating normally.
     pub(super) fn action_failed(&mut self, message: impl Into<String>) {
-        let message = message.into();
-        self.status.clone_from(&message);
-        self.status_error = true;
-        self.status_revision = self.status_revision.wrapping_add(1);
-        self.push_notification(NotificationDraft::new(
-            NotificationSeverity::Info,
-            "Runyte",
-            "Action failed",
-            message,
-        ));
+        self.failure_from(FailureClass::Routine, "Runyte", "Action failed", message);
     }
 
     /// Reports a failure without retaining a notification.
@@ -1049,28 +1040,35 @@ impl App {
         title: impl Into<String>,
         message: impl Into<String>,
     ) {
-        let message = message.into();
-        self.status.clone_from(&message);
-        self.status_error = true;
-        self.status_revision = self.status_revision.wrapping_add(1);
-        self.push_notification(NotificationDraft::new(
-            NotificationSeverity::Error,
-            source,
-            title,
-            message,
-        ));
+        self.failure_from(FailureClass::Fault, source, title, message);
     }
 
     /// Reports a refusal or incomplete result that needs attention because it
     /// protects data or leaves state needing review.
     pub(super) fn action_warning(&mut self, title: impl Into<String>, message: impl Into<String>) {
+        self.failure_from(FailureClass::Protective, "Runyte", title, message);
+    }
+
+    /// Maps one semantic failure to retained presentation without changing
+    /// the interaction line's failed-action styling.
+    pub(super) fn failure_from(
+        &mut self,
+        class: FailureClass,
+        source: impl Into<String>,
+        title: impl Into<String>,
+        message: impl Into<String>,
+    ) {
         let message = message.into();
         self.status.clone_from(&message);
         self.status_error = true;
         self.status_revision = self.status_revision.wrapping_add(1);
         self.push_notification(NotificationDraft::new(
-            NotificationSeverity::Warning,
-            "Runyte",
+            match class {
+                FailureClass::Routine => NotificationSeverity::Info,
+                FailureClass::Protective => NotificationSeverity::Warning,
+                FailureClass::Fault => NotificationSeverity::Error,
+            },
+            source,
             title,
             message,
         ));

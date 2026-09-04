@@ -3331,6 +3331,34 @@ fn counted_colon_binding_echoes_failure_and_retains_its_info_notification() {
 }
 
 #[test]
+fn a_maximized_split_is_routine_but_an_unclassified_command_failure_is_an_error() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    app.toggle_maximized(MaximizedView::Zen);
+
+    let outcome = app
+        .execute(CommandInvocation::split_vertical(None))
+        .unwrap();
+
+    assert!(matches!(outcome, CommandOutcome::UserError(_)));
+    assert_eq!(
+        app.notifications.entries()[0].severity,
+        NotificationSeverity::Info
+    );
+
+    let missing = temporary("missing-command-directory");
+    let change_directory =
+        crate::command::parse_named_command("cd", Some(missing.to_string_lossy().as_ref()))
+            .unwrap();
+    let outcome = app.execute(change_directory).unwrap();
+
+    assert!(matches!(outcome, CommandOutcome::UserError(_)));
+    assert_eq!(
+        app.notifications.entries()[0].severity,
+        NotificationSeverity::Error
+    );
+}
+
+#[test]
 fn failed_action_echoes_its_message_inline_in_full() {
     // Composition never truncates: src/ui.rs::clip_interaction_line
     // truncates against the render frame's actual width instead, since

@@ -9,20 +9,20 @@ use super::{
     ActiveGrammar, App, AppCapabilitySnapshot, ApplyReport, ArgumentKind, Axis, BTreeMap, Buffer,
     BufferKind, COMMAND_PATH_HINT_LIMIT, COMMANDS, Capabilities, Change, ColonCommand,
     CommandArguments, CommandAvailability, CommandExecutionContext, CommandId, CommandInvocation,
-    CommandMatch, CommandOutcome, CommandOutcomeHint, CommandState, CommandUnavailable,
-    CompletionSource, ContentAlignment, DEFAULT_MACRO_REGISTER, DeletionAuthorization,
-    DeletionMode, DelimiterPair, DiffScope, EditorCommand, EditorIntent, EntryKind,
-    FileObservation, FilePicker, FinderTarget, FsOperation, GeneratedViewIdentity, GrammarContext,
-    GrammarNotice, GrammarOutput, HOVER_PEEK_ROWS, HashSet, HelpInvocation, InputEvent,
-    InputGrammar, Instant, InvocationParameters, KeyCode, KeySequence, KeyStroke, Keymap,
-    LineDirection, ListPicker, LspCommand, MaximizedView, Mode, Modifiers, Motion, Offset, Path,
-    PathBuf, PathHint, PickerTarget, PointerButton, PointerDrag, PointerEvent, PointerEventKind,
-    PointerOutcome, PreparedView, ProgramAction, ProgramActionMenu, ProgramChoice, PromptKind,
-    Range, RangeIntent, RequestKind, Result, SearchMode, SearchQuery, Selection,
-    SelectionSemantics, SettingId, SettingType, SettingValue, SignatureContext, StashScope,
-    SyntaxObject, SyntaxObjectPart, SyntaxSelectionTransform, SystemClipboard, Transaction,
-    ViewAlignment, VimMotion, VimOperator, VimRangeTarget, VimTextObject, buffer_language,
-    char_to_byte, display_path, enclosing_area, expand_home_path, external_open,
+    CommandMatch, CommandOutcome, CommandOutcomeHint, CommandRefusal, CommandState,
+    CommandUnavailable, CompletionSource, ContentAlignment, DEFAULT_MACRO_REGISTER,
+    DeletionAuthorization, DeletionMode, DelimiterPair, DiffScope, EditorCommand, EditorIntent,
+    EntryKind, FileObservation, FilePicker, FinderTarget, FsOperation, GeneratedViewIdentity,
+    GrammarContext, GrammarNotice, GrammarOutput, HOVER_PEEK_ROWS, HashSet, HelpInvocation,
+    InputEvent, InputGrammar, Instant, InvocationParameters, KeyCode, KeySequence, KeyStroke,
+    Keymap, LineDirection, ListPicker, LspCommand, MaximizedView, Mode, Modifiers, Motion, Offset,
+    Path, PathBuf, PathHint, PickerTarget, PointerButton, PointerDrag, PointerEvent,
+    PointerEventKind, PointerOutcome, PreparedView, ProgramAction, ProgramActionMenu,
+    ProgramChoice, PromptKind, Range, RangeIntent, RequestKind, Result, SearchMode, SearchQuery,
+    Selection, SelectionSemantics, SettingId, SettingType, SettingValue, SignatureContext,
+    StashScope, SyntaxObject, SyntaxObjectPart, SyntaxSelectionTransform, SystemClipboard,
+    Transaction, ViewAlignment, VimMotion, VimOperator, VimRangeTarget, VimTextObject,
+    buffer_language, char_to_byte, display_path, enclosing_area, expand_home_path, external_open,
     hint_is_not_before, hover_content_rows, is_path_separator, is_path_token_boundary,
     is_terminal_normal_key, is_word, is_word_completion_character, keymap_for, mapped_applied_path,
     operative_span, parse_colon_command, persistent_session_availability, pointer_pane,
@@ -4536,7 +4536,16 @@ impl App {
             CommandId::Colon(command) => self.execute_colon_invocation(command, parameters),
         };
         if let Err(error) = execution_result {
-            self.error_from("Runyte", "Command failed", error.to_string());
+            if let Some(refusal) = error.downcast_ref::<CommandRefusal>() {
+                self.failure_from(
+                    refusal.class(),
+                    "Runyte",
+                    "Command failed",
+                    error.to_string(),
+                );
+            } else {
+                self.error_from("Runyte", "Command failed", error.to_string());
+            }
             return Ok(CommandOutcome::UserError(self.status.clone()));
         }
         self.retire_detached_ephemeral_buffers();

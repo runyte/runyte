@@ -256,6 +256,23 @@ fn tutorial_start_is_atomic_while_the_active_pane_is_maximized() {
     assert_eq!(app.panes.len(), 1);
     assert_eq!(app.active().buffer, original_buffer);
     assert!(app.tutorial_state().is_none());
+    assert_eq!(
+        app.notifications.entries()[0].severity,
+        NotificationSeverity::Info
+    );
+}
+
+#[test]
+fn an_unsupported_tutorial_argument_is_a_routine_command_refusal() {
+    let mut app = App::new(Config::default(), None).unwrap();
+
+    let outcome = app.execute_command("tutorial unknown").unwrap();
+
+    assert!(matches!(outcome, CommandOutcome::UserError(_)));
+    assert_eq!(
+        app.notifications.entries()[0].severity,
+        NotificationSeverity::Info
+    );
 }
 
 #[test]

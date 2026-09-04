@@ -1568,6 +1568,51 @@ pub enum CommandOutcome {
     AsynchronousRequest(Option<String>),
 }
 
+/// What a failed operation says about editor and dependency health.
+///
+/// This stays separate from notification presentation so fallible operations
+/// can preserve their meaning without depending on a particular frontend.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum FailureClass {
+    /// A normal negative outcome such as an unavailable action or no match.
+    Routine,
+    /// Runyte stopped an operation to protect newer, read-only, or unsafe state.
+    Protective,
+    /// An external command, I/O operation, protocol peer, or invariant failed.
+    Fault,
+}
+
+/// An expected refusal propagated through the generic command boundary.
+///
+/// Unclassified `anyhow::Error` values remain faults. Commands use this type
+/// only when their producer knows that the negative outcome is expected.
+#[derive(Debug)]
+pub(crate) struct CommandRefusal {
+    class: FailureClass,
+    message: String,
+}
+
+impl CommandRefusal {
+    pub(crate) fn routine(message: impl Into<String>) -> Self {
+        Self {
+            class: FailureClass::Routine,
+            message: message.into(),
+        }
+    }
+
+    pub(crate) const fn class(&self) -> FailureClass {
+        self.class
+    }
+}
+
+impl std::fmt::Display for CommandRefusal {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for CommandRefusal {}
+
 /// Whether pointer input changed anything represented by an editor frame.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PointerOutcome {
