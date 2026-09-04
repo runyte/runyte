@@ -42,6 +42,12 @@ a parser-completion benchmark.
 Absolute values are machine-specific and are not comparable between result sets
 taken on different hardware.
 
+The default startup path does not compile a configured keymap: it clones one
+`Arc` from the already initialized built-in variant. When a `keys` section is
+present, startup compiles and validates both `editor.fast_pane_keys` variants
+once so a later settings preview only selects an already diagnosed map. This
+bounded, configured-only work has not been added to the measurements below.
+
 ## 2026-08-31
 
 Startup and quit harness `18a6bb9`; idle harness `e44e2cf`. Startup and quit are

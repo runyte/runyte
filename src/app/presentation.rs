@@ -729,7 +729,7 @@ impl App {
             }
             None => None,
         };
-        let document = crate::manual::render_document();
+        let document = crate::manual::render_document_for(self.keymap());
         let buffer = self.open_virtual_page(
             GeneratedViewIdentity::Manual,
             "[help]".to_owned(),
@@ -752,7 +752,7 @@ impl App {
     /// Opens the small product front page as an ordinary read-only buffer,
     /// centred in whatever pane it lands in.
     pub(super) fn open_about(&mut self) {
-        let document = crate::about::render_document();
+        let document = crate::about::render_document_for(self.keymap());
         let buffer = self.open_virtual_page(
             GeneratedViewIdentity::About,
             "[about]".to_owned(),
@@ -804,6 +804,7 @@ impl App {
                     self.buffers[confirmation.buffer]
                         .external_file_status()
                         .is_stale(),
+                    self.keymap(),
                 ),
                 input: None,
             });

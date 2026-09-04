@@ -618,6 +618,7 @@ editor_commands! {
     GotoWindowTop => ("goto-window-top", "Move to the top of the view"),
     GotoWindowCenter => ("goto-window-center", "Move to the center of the view"),
     GotoWindowBottom => ("goto-window-bottom", "Move to the bottom of the view"),
+    GotoFile => ("goto-file", "Go to the file under the cursor"),
     GotoWord => (
         "goto-word",
         "Label visible words by proximity and jump to one"
@@ -939,6 +940,7 @@ impl EditorCommand {
             | Self::GotoWindowTop
             | Self::GotoWindowCenter
             | Self::GotoWindowBottom
+            | Self::GotoFile
             | Self::GotoWord
             | Self::JumpBackward
             | Self::JumpForward

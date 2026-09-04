@@ -32,17 +32,23 @@ use super::{
 };
 
 impl App {
+    pub(super) fn key_text(&self, template: &str) -> String {
+        crate::key_spelling::resolve(template, self.keymap())
+            .expect("actionable-message key markers must resolve")
+            .text
+    }
+
     /// Returns the registry used by this editor instance.
     ///
     /// Dispatch remains behavior-compatible in the foundation commit; Feature
     /// B will route execution through this same registry.
     pub fn keymap(&self) -> &Keymap {
-        self.keymap
+        &self.keymap
     }
 
     /// Replaces the binding registry. Primarily useful to deterministic
     /// embedders and tests that need a keymap smaller than the default one.
-    pub fn set_keymap(&mut self, keymap: &'static Keymap) {
+    pub fn set_keymap(&mut self, keymap: std::sync::Arc<Keymap>) {
         self.keymap = keymap;
     }
 
@@ -53,7 +59,13 @@ impl App {
     /// state of its own, and a stale one would answer keys the reader has
     /// already turned off.
     pub(super) fn sync_keymap(&mut self) {
-        self.keymap = keymap_for(self.config.editor.fast_pane_keys);
+        self.keymap = self
+            .configured_keymaps
+            .as_ref()
+            .map(|maps| {
+                std::sync::Arc::clone(&maps[usize::from(self.config.editor.fast_pane_keys)])
+            })
+            .unwrap_or_else(|| keymap_for(self.config.editor.fast_pane_keys));
     }
 
     /// Whether this key moves between panes on its own right now.
@@ -124,7 +136,8 @@ impl App {
     /// Registry mode a frontend should use while observing this key.
     pub fn key_hint_mode_for_key(&self, key: KeyStroke) -> Option<Mode> {
         if matches!(self.mode, Mode::Insert | Mode::Replace)
-            && (key == KeyStroke::ctrl('w') || !self.grammar.pending_sequence().is_empty())
+            && (key.canonical_for_binding() == self.keymap.window_prefix()
+                || !self.grammar.pending_sequence().is_empty())
         {
             return Some(self.mode);
         }
@@ -1139,13 +1152,13 @@ impl App {
     }
 
     fn handle_key_stroke(&mut self, mut key: KeyStroke) -> Result<()> {
-        // Space opens most application surfaces, so the same bare key closes
-        // a modal overlay that already owns input. Route it through Escape
+        // The effective leader opens most application surfaces, so the same
+        // key closes a modal overlay that already owns input. Route it through Escape
         // instead of clearing state here: settings previews, confirmations,
         // and nested action menus each retain their existing cancellation
         // semantics. Exact-text confirmations are the exception because a
         // branch or path can legitimately contain a space.
-        if key == KeyStroke::new(KeyCode::Char(' '), Modifiers::NONE)
+        if key.canonical_for_binding() == self.keymap.leader()
             && self.space_dismisses_input_overlay()
         {
             key = KeyStroke::new(KeyCode::Escape, Modifiers::NONE);
@@ -1229,14 +1242,14 @@ impl App {
         self.hover = None;
 
         // A terminal in Insert mode owns every key except Ctrl-\\, the
-        // registered Ctrl-w window prefix, and the single-key pane moves while
-        // those are configured on. Pending Ctrl-w suffixes continue through
+        // registered effective window prefix, and the single-key pane moves
+        // while those are configured on. Pending prefix suffixes continue through
         // the same declarative grammar as every other view.
         if self.mode == Mode::Insert
             && let Some(id) = self.active_terminal()
             && self.grammar.pending_sequence().is_empty()
             && !is_terminal_normal_key(key)
-            && key != KeyStroke::ctrl('w')
+            && key.canonical_for_binding() != self.keymap.window_prefix()
             && !self.is_fast_pane_key(key)
         {
             return self.handle_terminal_key(id, key);
@@ -1436,7 +1449,7 @@ impl App {
                 return Ok(());
             }
 
-            let context = GrammarContext::new(self.mode, self.key_binding_scope(), self.keymap)
+            let context = GrammarContext::new(self.mode, self.key_binding_scope(), &self.keymap)
                 .with_recording_macro(self.recording_macro.is_some());
             let GrammarOutput {
                 intents,
@@ -3703,6 +3716,7 @@ impl App {
             Command::GotoWindowTop => self.motion(Motion::WindowTop),
             Command::GotoWindowCenter => self.motion(Motion::WindowCenter),
             Command::GotoWindowBottom => self.motion(Motion::WindowBottom),
+            Command::GotoFile => self.goto_file_under_cursor()?,
             Command::GotoWord => self.label_visible_words(),
             Command::ToggleSoftWrap => {
                 self.config.editor.soft_wrap = !self.config.editor.soft_wrap;

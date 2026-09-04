@@ -3209,9 +3209,10 @@ impl App {
     fn create_branch_worktree(&mut self, branch: Branch) {
         if let Some(path) = branch.checkouts.first() {
             self.action_failed(format!(
-                "{} is already checked out at {}; use Space g w to attach there",
+                "{} is already checked out at {}; use {} to attach there",
                 branch.name,
-                crate::git::display_path(path)
+                crate::git::display_path(path),
+                self.key_text(crate::key_spelling::actionable::WORKTREE_MANAGER)
             ));
             return;
         }

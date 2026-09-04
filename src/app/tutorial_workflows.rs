@@ -417,7 +417,7 @@ impl App {
             return;
         };
         let buffer = state.instruction_buffer;
-        let text = crate::tutorial::render(state, self.persistent_session);
+        let text = crate::tutorial::render_for(state, self.persistent_session, self.keymap());
         self.buffers[buffer].replace_virtual_text(&text);
         for pane in self.panes.values_mut().filter(|pane| pane.buffer == buffer) {
             pane.replace_selection(Selection::point(0));

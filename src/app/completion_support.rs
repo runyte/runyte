@@ -96,6 +96,36 @@ pub(super) fn path_token_before(buffer: &Buffer, head: Offset) -> String {
     line[token_start..].to_owned()
 }
 
+/// Inclusive-start, exclusive-end bounds of the path-like token under a
+/// caret, confined to one row. The token grammar is shared with path
+/// completion so quotes and prose punctuation stop both features in the same
+/// places, while separators remain part of the path.
+pub(super) fn path_token_bounds(buffer: &Buffer, offset: Offset) -> Option<(Offset, Offset)> {
+    let character = buffer.char_at(offset)?;
+    if is_path_token_boundary(character) {
+        return None;
+    }
+    let row = buffer.offset_to_row(offset);
+    let row_start = buffer.line_to_offset(row);
+    let row_end = row_start + buffer.line_len(row);
+    let mut start = offset;
+    while start > row_start {
+        let previous = start - 1;
+        if buffer.char_at(previous).is_none_or(is_path_token_boundary) {
+            break;
+        }
+        start = previous;
+    }
+    let mut end = offset + 1;
+    while end < row_end {
+        if buffer.char_at(end).is_none_or(is_path_token_boundary) {
+            break;
+        }
+        end += 1;
+    }
+    Some((start, end))
+}
+
 pub(super) fn is_word_completion_character(character: char) -> bool {
     character.is_alphanumeric() || character == '-'
 }

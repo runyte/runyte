@@ -27,12 +27,25 @@ pub struct Config {
     pub lsp: LspConfig,
     pub git: GitConfig,
     pub notifications: NotificationsConfig,
+    /// Raw so malformed key-remapping sections can be reported non-fatally by
+    /// the keymap compiler after the built-in registry is available.
+    #[serde(default, deserialize_with = "deserialize_present_yaml_value")]
+    pub keys: Option<serde_yaml::Value>,
     /// The theme to start in, or `None` to use [`DEFAULT_THEME`].
     ///
     /// Theme choices made inside the editor are persisted back to this field,
     /// so configuration remains the single source of truth.
     pub theme: Option<String>,
     pub themes: HashMap<String, ThemeDefinition>,
+}
+
+fn deserialize_present_yaml_value<'de, D>(
+    deserializer: D,
+) -> Result<Option<serde_yaml::Value>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    serde_yaml::Value::deserialize(deserializer).map(Some)
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -678,6 +691,7 @@ impl Default for Config {
             lsp: LspConfig::default(),
             git: GitConfig::default(),
             notifications: NotificationsConfig::default(),
+            keys: None,
             theme: None,
             themes: built_in_themes(),
         }
@@ -866,6 +880,9 @@ impl Config {
     }
 
     pub(crate) fn validate_settings(&self) -> std::result::Result<(), String> {
+        // `keys` is deliberately absent: structural and semantic errors take
+        // the non-fatal configured-keymap path so a typo cannot lock someone
+        // out of the editor needed to repair the file.
         if !(1..=16).contains(&self.editor.tab_width) {
             return Err("editor.tab_width must be between 1 and 16".to_owned());
         }
@@ -1281,6 +1298,27 @@ mod tests {
         let error = format!("{:#}", Config::load(Some(&path)).unwrap_err());
         fs::remove_file(path).unwrap();
         assert!(error.contains("editor.tab_width must be between 1 and 16"));
+    }
+
+    #[test]
+    fn keys_is_captured_raw_and_does_not_enter_settings_validation() {
+        let config: Config =
+            serde_yaml::from_str("keys:\n  leader: Ctrl-x\n  rebind:\n    Space g: Leader G\n")
+                .unwrap();
+        assert!(matches!(config.keys, Some(serde_yaml::Value::Mapping(_))));
+        assert!(config.validate_settings().is_ok());
+
+        let malformed: Config = serde_yaml::from_str("keys: [not, a, mapping]\n").unwrap();
+        assert!(matches!(
+            malformed.keys,
+            Some(serde_yaml::Value::Sequence(_))
+        ));
+        assert!(malformed.validate_settings().is_ok());
+
+        let explicit_null: Config = serde_yaml::from_str("keys: null\n").unwrap();
+        assert!(matches!(explicit_null.keys, Some(serde_yaml::Value::Null)));
+        let absent: Config = serde_yaml::from_str("editor: {}\n").unwrap();
+        assert!(absent.keys.is_none());
     }
 
     #[test]

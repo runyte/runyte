@@ -41,6 +41,19 @@ workspace:
 notifications:
   history_limit: 50
 
+# Remap built-in prefixes, descendants, and advertised aliases. Left sides
+# always use default spellings; Leader and Window on right sides expand to the
+# configured one-key prefixes. See "Key remapping" in docs/user-guide.md.
+# keys:
+#   leader: Ctrl-x
+#   window: Ctrl-a
+#   rebind:
+#     Space g: Leader G
+#     Space g l: Leader G c
+#     Ctrl-w x: Window e
+#     Space e: Space
+#     ",": F12
+
 # rust-analyzer is configured automatically. Other servers are keyed directly
 # by Runyte's language name; see docs/lsp/ for copy-ready examples.
 # lsp:

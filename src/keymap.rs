@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: MPL-2.0
 
-use std::{fmt, sync::LazyLock};
+use std::{
+    collections::HashMap,
+    fmt,
+    sync::{Arc, LazyLock},
+};
 
 use crate::{
     command::{
@@ -9,6 +13,9 @@ use crate::{
     },
     input::{KeyCode, KeyStroke, Modifiers},
 };
+
+pub mod configured;
+pub mod validate;
 
 /// Compatibility name for a keymap key while callers migrate to the owned
 /// input vocabulary.
@@ -52,6 +59,17 @@ impl KeySequence {
 
     pub fn starts_with(&self, prefix: &Self) -> bool {
         self.0.starts_with(&prefix.0)
+    }
+
+    pub fn parse(value: &str) -> Result<Self, String> {
+        let keys = value
+            .split_whitespace()
+            .map(KeyStroke::parse)
+            .collect::<Result<Vec<_>, _>>()?;
+        if keys.is_empty() {
+            return Err("a key sequence cannot be empty".to_owned());
+        }
+        Ok(Self::new(keys))
     }
 }
 
@@ -531,11 +549,20 @@ impl fmt::Display for DuplicateBinding {
 
 impl std::error::Error for DuplicateBinding {}
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct Keymap {
     bindings: Vec<Binding>,
     namespaces: Vec<BindingNamespace>,
     context_actions: Vec<ContextAction>,
+    leader: KeyStroke,
+    window: KeyStroke,
+    default_spellings: HashMap<KeySequence, KeySequence>,
+}
+
+impl Default for Keymap {
+    fn default() -> Self {
+        Self::new(Vec::new()).expect("an empty keymap is valid")
+    }
 }
 
 impl Keymap {
@@ -555,11 +582,16 @@ impl Keymap {
                 }
             }
         }
-        Ok(Self {
+        let mut keymap = Self {
             bindings,
             namespaces: Vec::new(),
             context_actions: Vec::new(),
-        })
+            leader: Key::char(' '),
+            window: Key::ctrl('w'),
+            default_spellings: HashMap::new(),
+        };
+        keymap.record_identity_spellings();
+        Ok(keymap)
     }
 
     pub fn with_namespaces(
@@ -568,6 +600,7 @@ impl Keymap {
     ) -> Result<Self, DuplicateBinding> {
         let mut keymap = Self::new(bindings)?;
         keymap.namespaces = namespaces;
+        keymap.record_identity_spellings();
         Ok(keymap)
     }
 
@@ -594,6 +627,48 @@ impl Keymap {
         }
         self.context_actions = actions;
         self
+    }
+
+    pub(crate) fn with_spelling_metadata(
+        mut self,
+        leader: KeyStroke,
+        window: KeyStroke,
+        default_spellings: HashMap<KeySequence, KeySequence>,
+    ) -> Self {
+        self.leader = leader;
+        self.window = window;
+        self.default_spellings = default_spellings;
+        self
+    }
+
+    fn record_identity_spellings(&mut self) {
+        for sequence in self
+            .bindings
+            .iter()
+            .flat_map(|binding| {
+                [
+                    &binding.sequence,
+                    binding.alias.as_ref().unwrap_or(&binding.sequence),
+                ]
+            })
+            .chain(self.namespaces.iter().map(|namespace| &namespace.sequence))
+        {
+            self.default_spellings
+                .entry(sequence.clone())
+                .or_insert_with(|| sequence.clone());
+        }
+    }
+
+    pub const fn leader(&self) -> KeyStroke {
+        self.leader
+    }
+
+    pub const fn window_prefix(&self) -> KeyStroke {
+        self.window
+    }
+
+    pub fn spelling_for_default(&self, sequence: &KeySequence) -> Option<&KeySequence> {
+        self.default_spellings.get(sequence)
     }
 
     pub fn bindings(&self) -> &[Binding] {
@@ -1050,6 +1125,7 @@ fn built_in_bindings() -> Vec<Binding> {
             [Key::char('g'), Key::char('P')],
             Command::GotoPreviousParagraph,
         ),
+        modal([Key::char('g'), Key::char('f')], Command::GotoFile),
         modal([Key::char('g'), Key::char('w')], Command::GotoWord),
         modal([Key::char('g'), Key::char('d')], Command::GotoDefinition),
         modal([Key::char('g'), Key::char('D')], Command::GotoDeclaration),
@@ -2219,10 +2295,11 @@ fn build_keymap(bindings: Vec<Binding>) -> Keymap {
         .with_context_actions(actions)
 }
 
-static DEFAULT_KEYMAP: LazyLock<Keymap> = LazyLock::new(|| build_keymap(built_in_bindings()));
+static DEFAULT_KEYMAP: LazyLock<Arc<Keymap>> =
+    LazyLock::new(|| Arc::new(build_keymap(built_in_bindings())));
 
-static FAST_PANE_KEYMAP: LazyLock<Keymap> =
-    LazyLock::new(|| build_keymap(with_fast_pane_keys(built_in_bindings())));
+static FAST_PANE_KEYMAP: LazyLock<Arc<Keymap>> =
+    LazyLock::new(|| Arc::new(build_keymap(with_fast_pane_keys(built_in_bindings()))));
 
 pub fn default_keymap() -> &'static Keymap {
     &DEFAULT_KEYMAP
@@ -2235,11 +2312,11 @@ pub fn default_keymap() -> &'static Keymap {
 /// execution, help, and the hint popup all read the registry: an option only
 /// dispatch knew about would move panes on a key that help still swore
 /// deleted to end of line.
-pub fn keymap_for(fast_pane_keys: bool) -> &'static Keymap {
+pub fn keymap_for(fast_pane_keys: bool) -> Arc<Keymap> {
     if fast_pane_keys {
-        &FAST_PANE_KEYMAP
+        Arc::clone(&FAST_PANE_KEYMAP)
     } else {
-        &DEFAULT_KEYMAP
+        Arc::clone(&DEFAULT_KEYMAP)
     }
 }
 
@@ -2247,7 +2324,7 @@ pub fn keymap_for(fast_pane_keys: bool) -> &'static Keymap {
 mod tests {
     use super::*;
 
-    fn built_in_keymaps() -> [(&'static str, &'static Keymap); 2] {
+    fn built_in_keymaps() -> [(&'static str, Arc<Keymap>); 2] {
         [
             ("default", keymap_for(false)),
             ("fast pane", keymap_for(true)),

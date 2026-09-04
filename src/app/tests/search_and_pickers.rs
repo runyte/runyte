@@ -504,7 +504,7 @@ fn alt_delete_deletes_forward_by_word_class_across_unicode_and_lines() {
 
 #[test]
 fn insert_exact_prefix_fallback_executes_then_reprocesses_literal_key() {
-    let keymap = Box::leak(Box::new(
+    let keymap = std::sync::Arc::new(
         Keymap::new(vec![
             Binding::implemented(
                 &[Mode::Insert],
@@ -518,7 +518,7 @@ fn insert_exact_prefix_fallback_executes_then_reprocesses_literal_key() {
             ),
         ])
         .unwrap(),
-    ));
+    );
     let mut app = App::new(Config::default(), None).unwrap();
     app.set_keymap(keymap);
     app.mode = Mode::Insert;
@@ -746,6 +746,44 @@ fn space_closes_a_new_picker_but_remains_a_query_separator_after_text() {
     app.picker = Some(picker);
     key(&mut app, KeyCode::Char(' '), Modifiers::NONE);
     assert_eq!(app.picker.as_ref().unwrap().query, "src ");
+}
+
+#[test]
+fn configured_leader_dismisses_an_empty_picker_and_space_becomes_query_text() {
+    let config = Config {
+        keys: Some(serde_yaml::from_str("leader: Ctrl-x\n").unwrap()),
+        ..Config::default()
+    };
+    let mut app = App::new(config, None).unwrap();
+    app.picker = Some(FilePicker::new(
+        1,
+        PathBuf::from("/project"),
+        crate::file_picker::ScanScope::ignoring("/project"),
+    ));
+
+    key(&mut app, KeyCode::Char(' '), Modifiers::NONE);
+    assert_eq!(app.picker.as_ref().unwrap().query, " ");
+    app.picker.as_mut().unwrap().query.clear();
+
+    key(&mut app, KeyCode::Char('x'), Modifiers::CONTROL);
+    assert!(app.picker.is_none());
+}
+
+#[test]
+fn shifted_character_leader_uses_canonical_input_for_overlay_ownership() {
+    let config = Config {
+        keys: Some(serde_yaml::from_str("leader: Q\n").unwrap()),
+        ..Config::default()
+    };
+    let mut app = App::new(config, None).unwrap();
+    app.picker = Some(FilePicker::new(
+        1,
+        PathBuf::from("/project"),
+        crate::file_picker::ScanScope::ignoring("/project"),
+    ));
+
+    key(&mut app, KeyCode::Char('Q'), Modifiers::SHIFT);
+    assert!(app.picker.is_none());
 }
 
 #[test]

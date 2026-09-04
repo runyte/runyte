@@ -32,6 +32,7 @@ pub mod input_grammar;
 pub mod jump_labels;
 pub mod jumplist;
 pub mod key_hints;
+pub mod key_spelling;
 pub mod keymap;
 pub mod launch;
 pub mod layout;

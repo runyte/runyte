@@ -19,6 +19,9 @@ current sources take precedence.
 
 The retained completed records cover:
 
+- `PLAN_KEY_REMAPPING.md`: a bounded `keys` section that remaps default
+  bindings, advertised aliases, and the application and window prefixes into
+  the one keymap read by dispatch and every live teaching surface;
 - `PLAN_V4_EDITOR_CORE.md`: the rope, transaction, selection, syntax, LSP, and
   directory-buffer foundation;
 - `PLAN_V8_ASYNC_WORKSPACE_GIT.md`: asynchronous services, persistent

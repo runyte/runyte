@@ -1186,6 +1186,11 @@ The former `vim` grammar has been removed; configurations that still set
 
 ## Key bindings
 
+The spellings in this guide are Runyte's defaults. The `keys` section in
+`config.yaml` can move the application and window prefixes, their descendants,
+and advertised aliases; live help, hints, About, tutorials, and action messages
+show the effective spelling.
+
 The interaction line teaches completed commands as they are used. A binding
 that has no more specific result leaves its exact typed spelling and registry
 description, such as `g l (Move to line end)`. Commands with a useful result
@@ -1357,6 +1362,7 @@ context; scoped explorer keys are documented under
 | `PageUp` / `PageDown` | Page up / down |
 | `gg` / `ge` or `G` | Start / end of file |
 | `gp` / `gP` | Next / previous paragraph |
+| `gf` | Open the selected path, or infer the complete path under a bare cursor |
 | `gw` | Dim the view, label nearby words with one key and farther words with two, then type a label to jump |
 | `gt` / `gc` / `gb`; `H` / `M` / `L` | Move to the top / center / bottom of the visible window |
 | `i` / `a` / `I` / `A` | Insert before/after cursor or at line boundary |
@@ -1719,6 +1725,7 @@ cancellation keys.
 | Key | Action |
 | --- | --- |
 | `Space c y` / `Space c p` / `Space c P` | System clipboard yank / replace the selection, or paste after a bare caret / paste before |
+| `g f` | Open the selected path, or the complete path under the cursor; choose between matches beside the active file/explorer and at the project root |
 | `Space e` | Open the active buffer's directory as an editable explorer; from a file, select that file |
 | `Space E` | Open the working directory (controlled by `:cd`) as an editable explorer |
 | `Space Space` | Open the persistent-session manager (`:session-list`, `:sl`); another `Space` closes it while the filter is empty, `1`-`9` attach to a numbered session then too, and `Tab` shows the selected row's actions |
@@ -3057,6 +3064,54 @@ location.
 The key was previously spelled `workspace.root`, which read as the workspace's
 own root while naming the state directory nested inside it. The old spelling is
 still accepted.
+
+### Key remapping
+
+Key remapping moves bindings Runyte already ships. It cannot unbind a command,
+bind a command that has no default, or move most direct single-key editing
+bindings. The left side of each `rebind` entry is always a default spelling;
+Runyte reports it at startup if a later release no longer has that default.
+
+```yaml
+keys:
+  leader: Ctrl-x
+  window: Ctrl-a
+  rebind:
+    Space g: Leader G
+    Space g l: Leader G c
+    Ctrl-w x: Window e
+    Space e: Space
+    ",": F12
+```
+
+`leader` and `window` each take one key. `window` cannot be an unmodified
+character, including `Space`, because it is captured in Insert, Replace, and
+Terminal Insert modes and would make ordinary text impossible to type. On a
+right side, `Leader` and `Window` mean the configured prefixes. Literal `Space`
+and `Ctrl-w` mean those physical keys. On a left side, write only the default
+`Space` and `Ctrl-w` spellings; `Leader` and `Window` are rejected.
+
+Rules are simultaneous and the longest matching left side wins. In the
+example, default `Space g d` becomes `Ctrl-x G d`, while `Space g l` becomes
+`Ctrl-x G c`; a more specific descendant may deliberately leave the namespace
+chosen by a broader rule. File order does not affect this composition.
+
+A configured window prefix moves the complete window grammar in Normal,
+Insert, and Terminal Insert modes. The old `Ctrl-w` is then delivered to a
+terminal child, while the new prefix is reserved by Runyte instead. Choosing
+`Ctrl-a`, for example, takes the key commonly used by tmux and by readline's
+beginning-of-line command. A configured leader likewise becomes the symmetric
+dismissal key for modal lists, choice overlays, action menus, ordinary
+confirmations, and an empty picker; the old bare Space becomes ordinary input.
+Exact-text confirmations keep every printable key, including the leader, as
+literal input because the branch or path they require may contain it.
+
+Malformed sections, unknown members, bad key spellings, unmatched defaults,
+overlong sequences, and conflicts are non-fatal. Runyte rejects the affected
+section or rules, restores valid built-in behavior, and opens an error
+notification titled `Key bindings`. YAML syntax errors and invalid settings
+outside `keys` retain their normal startup failure behavior. Key remapping is
+read from the file only; it is not written by the `[config]` buffer.
 
 
 Built-in themes are `default-dark`, `default-light`, `dark`, `light`,

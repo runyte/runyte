@@ -3481,6 +3481,7 @@ impl App {
         self.buffer_action_menu = None;
         match chosen {
             Some(ListAction::Jump(location)) => self.jump_to(&location)?,
+            Some(ListAction::OpenPath(path)) => self.open_file(path)?,
             Some(ListAction::CodeAction(index)) => self.run_code_action(index),
             Some(ListAction::Buffer(buffer)) => self.switch_buffer(buffer),
             Some(ListAction::SyntaxOutline { buffer, target }) => {

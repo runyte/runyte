@@ -122,9 +122,9 @@ impl HelpTopic {
                 "Runyte is a selection-first modal editor: move to select, then act. Every editing command works on whatever is selected, however many ranges that is.",
                 "NORMAL mode replaces the selection as you move. v enters SELECT mode, where moving extends every selection instead; v or Escape returns.",
                 "Search selects every match at once. With two or more characters selected, s and / search only inside the selection, leaving a cursor on every match; n and N then select only one result and step through them.",
-                "Press Space and pause to explore command groups without memorising the full keymap.",
-                "Space w x exchanges this pane's complete content with the previously focused pane and follows it to its new position; Ctrl-w x is the compatibility spelling.",
-                "An ordinary file changed outside Runyte keeps its in-memory text and gains [STALE]. Space b d compares a fresh disk snapshot without discarding edits; Space r reloads, asking first whenever the buffer is dirty.",
+                "Press {prefix:Space} and pause to explore command groups without memorising the full keymap.",
+                "{key:swap-window} exchanges this pane's complete content with the previously focused pane and follows it to its new position; {key:swap-window:compatibility} is the compatibility spelling.",
+                "An ordinary file changed outside Runyte keeps its in-memory text and gains [STALE]. {binding:Space b d} compares a fresh disk snapshot without discarding edits; {binding:Space r} reloads, asking first whenever the buffer is dirty.",
                 "Below the editor area, the global status line reports editor state and unread notification counts. The interaction line below it is reserved for active prompts and the last action echo; :notifications or :not opens complete retained feedback.",
                 ":service-health describes optional services right now, and :log-open opens the durable diagnostic log of the process that owns this workspace. Start Runyte with -v, -vv, or -vvv for more detail in it; :help diagnostics explains the rest.",
             ],
@@ -184,9 +184,9 @@ const COMMIT_MESSAGE_OVERVIEW: &[&str] = &[
 /// which keys get out. `Escape` belongs to whatever is running, so saying so
 /// comes before anything else this view can do.
 const TERMINAL_OVERVIEW: &[&str] = &[
-    "This pane is running a program on a pseudoterminal. INSERT sends Escape, Ctrl-c, Ctrl-o, Space, and ordinary keys to it. Ctrl-\\ leaves input for live NORMAL; pressing it again captures review. Ctrl-w instead starts window commands directly; h/j/k/l and their control-key aliases move immediately. A live terminal destination enters INSERT, a reviewed terminal stays in NORMAL/review, and a document enters NORMAL; w uses the same destination behavior, x swaps complete pane contents, and v/s split into the working-directory explorer without capturing review.",
-    "Directional pane movement never starts or discards review. i resumes input, and canceling a Ctrl-w prefix leaves this terminal in INSERT.",
-    "Live NORMAL keeps showing current output without sending keys to the child. A second Ctrl-\\ or the first review operation captures a stable snapshot; live output continues behind it. Move with ordinary motions, press v to extend, x/X to select and walk whole lines, or C/Alt-C to add carets below/above at the same occupied cell column. Escape cancels a selection made either way. y copies every selection to the unnamed register and Space c y uses the system clipboard. Ctrl-u/Ctrl-d and Ctrl-b/Ctrl-f scroll; s and / search, n/N move among matches, and p sends clipboard text to the live child. u takes that paste back with one delete per character, while it is still the child's last input and did not end a line it has run.",
+    "This pane is running a program on a pseudoterminal. INSERT sends Escape, Ctrl-c, Ctrl-o, the space bar, and ordinary keys to it. Ctrl-\\ leaves input for live NORMAL; pressing it again captures review. {prefix:Ctrl-w} instead starts window commands directly; h/j/k/l and their control-key aliases move immediately. A live terminal destination enters INSERT, a reviewed terminal stays in NORMAL/review, and a document enters NORMAL; w uses the same destination behavior, x swaps complete pane contents, and v/s split into the working-directory explorer without capturing review.",
+    "Directional pane movement never starts or discards review. i resumes input, and canceling a {prefix:Ctrl-w} prefix leaves this terminal in INSERT.",
+    "Live NORMAL keeps showing current output without sending keys to the child. A second Ctrl-\\ or the first review operation captures a stable snapshot; live output continues behind it. Move with ordinary motions, press v to extend, x/X to select and walk whole lines, or C/Alt-C to add carets below/above at the same occupied cell column. Escape cancels a selection made either way. y copies every selection to the unnamed register and {binding:Space c y} uses the system clipboard. Ctrl-u/Ctrl-d and Ctrl-b/Ctrl-f scroll; s and / search, n/N move among matches, and p sends clipboard text to the live child. u takes that paste back with one delete per character, while it is still the child's last input and did not end a line it has run.",
     "For real Runyte editing over what a terminal printed, copy its output into a buffer: that text is an ordinary read-only document where search, multiple selections, and yank all work.",
     "Composing goes the other way. Write the text in an ordinary buffer with every editing command available, then send the selection — or the whole buffer, with nothing selected — to a terminal as one bracketed paste. That is the only way modal editing can reach a program that owns its own input area.",
     "The pane's buffer is still there behind the terminal, and leaving the terminal shows it again without ending the program. Closing the pane or opening a file in it does the same; the session keeps running and the terminal list reaches it.",
@@ -197,9 +197,13 @@ const TERMINAL_OVERVIEW: &[&str] = &[
 /// here so every contextual help document describes them.
 const MOUSE_OVERVIEW: &[&str] = &[
     "Left click focuses a pane and places its caret. Shift-click extends the current selection, and left-button drag selects text and enters SELECT mode. The wheel scrolls the pane under the pointer; dragging a shared pane border resizes the split.",
-    "Right-clicking any current selection copies all current selections to the system clipboard, exactly like Space c y, without moving or replacing them.",
+    "Right-clicking any current selection copies all current selections to the system clipboard, exactly like {binding:Space c y}, without moving or replacing them.",
     "A reviewed terminal accepts the same drag-selection and right-click copy gestures. A live terminal that requests SGR mouse input receives its mouse events instead. Runyte's mouse capture replaces the terminal's native text selection; set editor.mouse to false and restart when native selection is preferred.",
 ];
+
+const HELP_TRAILER: &str = ":help opens the general Runyte manual; :help <topic> jumps to one of\n\
+its sections. This contextual page remains available through {binding:Space ?}.\n\
+:tutorial opens a guided two-pane introduction with disposable scratch text.\n";
 
 const DIFF_OVERVIEW: &[&str] = &[
     "A unified diff, rendered read-only. Leading `+` and `-` belong to the patch rather than to the text, so nothing here can be edited into a different change.",
@@ -283,12 +287,7 @@ pub(crate) fn render_document(
             "editor.fast_pane_keys is on, so Ctrl-h/j/k/l also leave this pane and the\n             program never receives them.\n"
         );
     }
-    let _ = writeln!(
-        out,
-        ":help opens the general Runyte manual; :help <topic> jumps to one of\n\
-         its sections. This contextual page remains available through Space ?.\n\
-         :tutorial opens a guided two-pane introduction with disposable scratch text.\n"
-    );
+    let _ = writeln!(out, "{}", HELP_TRAILER);
 
     let _ = writeln!(out, "Mouse");
     for paragraph in MOUSE_OVERVIEW {
@@ -409,8 +408,13 @@ pub(crate) fn render_document(
         }
     }
 
+    let (resolved, offset_map) = crate::key_spelling::resolve_with_map(&out, keymap)
+        .expect("help key markers must resolve against every built-in keymap");
     let mut document = HelpDocumentWriter::new();
-    document.write_prose(&out);
+    document.write_prose(&resolved.text);
+    for range in resolved.substitutions {
+        document.mark_range(range.start, range.end, HelpRole::KeyBinding);
+    }
 
     let title = topic.title_for(grammar, read_only);
     for heading in [
@@ -439,7 +443,11 @@ pub(crate) fn render_document(
     // "Right" of "Left click" and "Right-clicking" wearing the key colour
     // throughout the prose.
     for cell in &key_cells {
-        document.mark_range(cell.start, cell.end, HelpRole::KeyBinding);
+        document.mark_range(
+            offset_map[cell.start],
+            offset_map[cell.end],
+            HelpRole::KeyBinding,
+        );
     }
     // A context action is spelled `Tab x`, which is never an English word, so
     // it is safe to mark wherever the prose names one.
@@ -462,18 +470,11 @@ pub(crate) fn render_document(
         "Ctrl-b/Ctrl-f",
         "h/j/k/l",
         "C/Alt-C",
-        "Ctrl-w",
         "Ctrl-\\",
         "Ctrl-c",
         "Ctrl-o",
         "Ctrl-n",
         "Ctrl-p",
-        "Space b d",
-        "Space g r",
-        "Space c y",
-        "Space ?",
-        "Space r",
-        "Space",
         "Escape",
         "Enter",
         "NORMAL",
@@ -666,7 +667,7 @@ const GIT_WORKTREES_OVERVIEW: &[&str] = &[
 
 const GIT_LOG_OVERVIEW: &[&str] = &[
     "The log loads up to 10,000 commits per page in topological order. Rows keep their full commit object identity even though the display uses an abbreviation.",
-    "Enter opens the selected commit's bounded metadata and patch. `Ctrl-n` and `Ctrl-p` load the next and previous object-cursor pages; `Space g r` reconciles the view without taking the replace-character key.",
+    "Enter opens the selected commit's bounded metadata and patch. `Ctrl-n` and `Ctrl-p` load the next and previous object-cursor pages; {binding:Space g r} reconciles the view without taking the replace-character key.",
 ];
 
 const GIT_BLAME_OVERVIEW: &[&str] = &[
@@ -678,6 +679,23 @@ const GIT_BLAME_OVERVIEW: &[&str] = &[
 mod tests {
     use super::*;
     use crate::keymap::default_keymap;
+
+    #[test]
+    fn authored_key_markers_are_complete_and_resolve_in_both_variants() {
+        crate::key_spelling::assert_authored_template(HELP_TRAILER);
+        for template in MOUSE_OVERVIEW {
+            crate::key_spelling::assert_authored_template(template);
+        }
+        for topic in HelpTopic::ALL {
+            for template in topic
+                .overview_for(GrammarKind::Runyte)
+                .iter()
+                .chain(topic.table_for(GrammarKind::Runyte))
+            {
+                crate::key_spelling::assert_authored_template(template);
+            }
+        }
+    }
 
     /// The buffer type picks the topic. Nothing else does, and in particular
     /// the mode does not: a text buffer answers with one document whether the

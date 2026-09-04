@@ -440,6 +440,17 @@ fn explorer_bindings_distinguish_active_and_working_directories() {
 }
 
 #[test]
+fn g_f_opens_the_file_under_the_cursor() {
+    let sequence = KeySequence::from([Key::char('g'), Key::char('f')]);
+    assert!(matches!(
+        default_keymap().lookup(Mode::Normal, &sequence),
+        Lookup::Exact(binding)
+            if binding.target == BindingTarget::Editor(EditorCommand::GotoFile)
+                && binding.description == "Go to the file under the cursor"
+    ));
+}
+
+#[test]
 fn syntax_shrink_binding_describes_the_action_as_shrinking() {
     let sequence = KeySequence::from([Key::char(' '), Key::char('x'), Key::char('s')]);
     assert!(matches!(
@@ -990,7 +1001,7 @@ fn colon_key_targets_construct_the_same_typed_identities_as_direct_calls() {
 #[test]
 fn single_key_pane_moves_are_absent_until_configured_on() {
     let keymap = keymap_for(false);
-    assert!(std::ptr::eq(keymap, default_keymap()));
+    assert!(std::ptr::eq(keymap.as_ref(), default_keymap()));
 
     for mode in [Mode::Normal, Mode::Select] {
         for character in ['h', 'j', 'k', 'l'] {

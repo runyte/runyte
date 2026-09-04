@@ -716,7 +716,7 @@ fn repeated_arrow_scroll_saturates_at_the_rendered_end() {
 #[test]
 fn unavailable_action_is_dimmed_and_labeled() {
     const NORMAL: &[Mode] = &[Mode::Normal];
-    let keymap: &'static Keymap = Box::leak(Box::new(
+    let keymap = std::sync::Arc::new(
         Keymap::new(vec![Binding {
             modes: NORMAL,
             scope: BindingScope::Global,
@@ -729,14 +729,14 @@ fn unavailable_action_is_dimmed_and_labeled() {
             alias_modes: None,
         }])
         .unwrap(),
-    ));
+    );
     let mut app = App::new(Config::default(), None).unwrap();
-    app.set_keymap(keymap);
+    app.set_keymap(std::sync::Arc::clone(&keymap));
     let mut hints = KeyHintState::default();
     hints.observe(
         stroke(KeyCode::Char(' '), Modifiers::NONE),
         Mode::Normal,
-        keymap,
+        &keymap,
     );
 
     let screen = render(80, 24, &mut app, &hints);
