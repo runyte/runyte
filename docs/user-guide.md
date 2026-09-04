@@ -1983,15 +1983,22 @@ so the overlay does not flash empty, but they cannot be opened until the
 current ranking arrives. Results and previews tagged for an older query are
 discarded.
 
-A space separates the query into terms rather than being matched. One word is
-the fuzzy subsequence it has always been, so `fpick` finds `file_picker.rs`.
-Two or more words each have to be present as themselves, in the order they were
-typed: `src picker` finds `src/picker.rs` without the incidental matches a
-subsequence through `s…r…c…p…i…c…k…e…r` collects, and `content entries` finds
-the eighteen lines holding both words rather than 272 lines holding their
-letters in order. Because the terms are wanted in order, `picker src` does not
-find `src/picker.rs`. Smart case reads the whole query: one capital anywhere
-makes every term case-sensitive. Both pickers and fuzzy grep share this rule.
+A space separates the query into terms rather than being matched. Every term is
+the fuzzy subsequence a single word has always been, so `fpick` finds
+`file_picker.rs` and `kmap validate` finds `src/keymap/validate.rs`. The terms
+are wanted in the order they were typed, so `src picker` finds `src/picker.rs`
+where `picker src` finds nothing.
+
+Because each term is as loose as a lone word, a space decides how a candidate
+ranks rather than whether it matches at all: `ab cd` accepts exactly what
+`abcd` accepts. What it changes is the distance between the terms. That
+distance costs nothing, where the same distance inside a single term is a gap
+that lowers the score, so typing two words apart is how you say you expect to
+find them apart. Terms that land on contiguous spans are emphasized as a direct
+match; one that had to spread out is shown in the secondary colour.
+
+Smart case reads the whole query: one capital anywhere makes every term
+case-sensitive. Both pickers and fuzzy grep share this rule.
 
 The Finder's content mode uses the same interaction to search contents
 rather than names. `:fuzzy-grep` opens that mode directly;

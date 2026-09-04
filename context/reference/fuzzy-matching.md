@@ -116,7 +116,7 @@ decides whether a corpus that large is reached in practice.
 | across a separator | `keymap` | 196 | 196 | same | 8/10 | yes |
 | basename | `file_picker.rs` | 63 | 63 | same | 10/10 | yes |
 | path | `src/parser` | 191 | 191 | same | 4/10 | yes |
-| two terms | `parser test` | 239 | 691 | +0 / −452 | 0/10 | no |
+| two terms | `parser test` | 310 | 691 | +0 / −381 | 0/10 | no |
 | no match | `zzqx` | 0 | 0 | same | — | no |
 
 The two programs agree closely. On every query but one they accept exactly the
@@ -130,20 +130,19 @@ the files inside it differently, on scores separated by a few points. This is
 the ordinary case of two scorers weighing the same near-equal candidates
 slightly differently, not a disagreement about what the query meant.
 
-**Multiple terms mean different things in the two programs.** This is the only
-substantive divergence, and it is deliberate. `parser test` matched 239
-candidates in Runyte and 691 in fzf, and every one of the 452 extra is fzf's.
-Runyte requires each term to appear as a contiguous literal substring, in the
-order typed; fzf treats each term as an independent fuzzy subsequence in any
-order. So fzf's entire top ten is directories like `test/parser` and
-`test/parser/app`, none of which Runyte matches at all, because `test` precedes
-`parser` there.
+**Multiple terms are ordered here and unordered in fzf.** This is the only
+substantive divergence and it is deliberate. `parser test` matched 310
+candidates in Runyte and 691 in fzf, and every one of the 381 extra is fzf's.
+Both programs match each term as a fuzzy subsequence; Runyte additionally
+requires the terms in the order typed. So fzf's entire top ten is directories
+like `test/parser` and `test/parser/app`, none of which Runyte matches, because
+`test` precedes `parser` there. Runyte's own top ten is `parser_test.*` files,
+which is the better answer to this particular query.
 
-`FuzzyMatcher` documents the rule: two or more terms are matched as themselves,
-in order, "because that is what someone typing three words means by them". The
-measurement records what it costs — roughly two thirds of the candidates fzf
-would offer, and a different set of results entirely for a query of this shape
-— rather than proposing that it change.
+The counts moved once before, when terms stopped having to be contiguous
+(`space_separated_query_terms`): Runyte matched 239 of these candidates when
+each term had to appear as a literal run. What remains is the ordering rule
+alone, and it is not expected to close.
 
 `parser test` is also the query where fzf gains most from threads: 27.2 ms on
 20 cores against 57.3 ms on one, at 100,000 candidates. Runyte ranks it in
