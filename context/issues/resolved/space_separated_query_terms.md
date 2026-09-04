@@ -66,11 +66,11 @@ match direct when there were no more runs than terms, which was sound only
 while every term was a contiguous literal. Once a term is itself fuzzy, a gap
 inside one term cancels against the next term landing adjacent: `ab cd` against
 `a_bcd` matches at `[0, 2, 3, 4]`, two runs for two terms, and was rendered in
-the primary emphasis colour although `ab` is plainly scattered. `8b83c66`
-(`Read directness per term and refuse unanswered filter runs`) reads the term
-boundaries from the query instead and requires each term's own slice of the
-positions to be consecutive. Terms landing next to each other stay direct,
-which is still the tightest a multi-word query can land.
+the primary emphasis colour although `ab` is plainly scattered. The review
+follow-up, `Read directness per term and refuse unanswered filter runs`, reads
+the term boundaries from the query instead and requires each term's own slice
+of the positions to be consecutive. Terms landing next to each other stay
+direct, which is still the tightest a multi-word query can land.
 
 Tests, all in `src/file_picker.rs`:
 
