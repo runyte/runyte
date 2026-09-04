@@ -11,7 +11,7 @@ recorded by running:
 
 ```sh
 cargo build --release --example fuzzy_filter
-benchmarks/fuzzy.py
+benchmarks/fuzzy.py --runs 15
 ```
 
 ## Reading these numbers
@@ -32,8 +32,11 @@ answer. Runyte's side of that is `examples/fuzzy_filter.rs`, which reads
 standard input into one string; the editor never does this. Those columns say
 whether Runyte could stand in for fzf as a filter. They are also the noisiest
 rows here — on the 100,000-candidate corpus the same cell has moved by more
-than 10 ms between runs on an otherwise idle machine, while the rank-only
-figure beside it moved by under 1 ms.
+than 10 ms between runs on an otherwise idle machine. The rank-only figure
+beside it is steadier but not still: at that size it has moved by several
+milliseconds between short runs, which is why this set takes fifteen samples
+per cell rather than seven. Read a difference of a millisecond or two at
+100,000 candidates as noise unless a rebuild reproduces it.
 
 **fzf matches on every core.** The `fzf, one thread` column is the same run
 under `GOMAXPROCS=1`. Runyte ranks on one background worker, so that column is
@@ -46,8 +49,8 @@ does not change when Runyte's source does.
 ## Result set, 2026-09-04
 
 AMD Ryzen AI 9 365, 20 cores, 27 GB, Linux 7.1.9-200.fc44.x86_64, rustc 1.97.1,
-release profile. Runyte 0.1.10, fzf 0.74.2, `--scheme=path`. Seven samples per
-cell, median reported.
+release profile. Runyte 0.1.10, fzf 0.74.2, `--scheme=path`. Fifteen samples
+per cell, median reported.
 
 ### Cost
 
@@ -57,46 +60,46 @@ Milliseconds.
 
 | query | typed | runyte | runyte rank only | fzf | fzf, one thread |
 | --- | --- | ---: | ---: | ---: | ---: |
-| empty | (empty) | 0.8 | 0.1 | 2.7 | 2.5 |
-| one character | `s` | 1.5 | 0.6 | 3.0 | 2.8 |
-| segment | `src` | 1.0 | 0.3 | 2.8 | 2.6 |
-| acronym | `fpr` | 0.9 | 0.1 | 2.5 | 2.4 |
-| across a separator | `keymap` | 0.9 | 0.1 | 2.5 | 2.3 |
-| basename | `file_picker.rs` | 0.8 | 0.1 | 2.5 | 2.3 |
-| path | `src/parser` | 0.8 | 0.1 | 2.7 | 2.5 |
-| two terms | `parser test` | 0.8 | 0.1 | 3.1 | 2.8 |
-| no match | `zzqx` | 0.7 | 0.1 | 2.5 | 2.3 |
+| empty | (empty) | 0.8 | 0.1 | 2.8 | 2.6 |
+| one character | `s` | 1.5 | 0.6 | 3.1 | 2.9 |
+| segment | `src` | 1.0 | 0.3 | 2.8 | 2.7 |
+| acronym | `fpr` | 0.8 | 0.1 | 2.6 | 2.4 |
+| across a separator | `keymap` | 0.8 | 0.1 | 2.6 | 2.4 |
+| basename | `file_picker.rs` | 0.9 | 0.1 | 2.6 | 2.4 |
+| path | `src/parser` | 0.8 | 0.1 | 2.6 | 2.5 |
+| two terms | `parser test` | 0.8 | 0.1 | 3.1 | 3.0 |
+| no match | `zzqx` | 0.7 | 0.1 | 2.6 | 2.3 |
 
 #### 10,000 candidates
 
 | query | typed | runyte | runyte rank only | fzf | fzf, one thread |
 | --- | --- | ---: | ---: | ---: | ---: |
-| empty | (empty) | 3.2 | 1.0 | 5.9 | 5.5 |
-| one character | `s` | 10.8 | 6.2 | 9.1 | 10.4 |
-| segment | `src` | 8.5 | 5.3 | 6.9 | 9.2 |
-| acronym | `fpr` | 3.2 | 1.3 | 5.2 | 4.9 |
-| across a separator | `keymap` | 3.0 | 1.6 | 4.8 | 4.0 |
-| basename | `file_picker.rs` | 2.8 | 1.0 | 4.7 | 3.9 |
-| path | `src/parser` | 3.5 | 1.9 | 5.0 | 4.5 |
-| two terms | `parser test` | 2.7 | 1.5 | 6.3 | 12.3 |
-| no match | `zzqx` | 2.2 | 1.0 | 4.6 | 3.6 |
+| empty | (empty) | 3.2 | 0.9 | 6.0 | 5.7 |
+| one character | `s` | 10.1 | 7.9 | 8.9 | 10.7 |
+| segment | `src` | 8.2 | 5.0 | 7.1 | 9.5 |
+| acronym | `fpr` | 3.4 | 1.9 | 5.1 | 4.9 |
+| across a separator | `keymap` | 3.1 | 1.6 | 4.9 | 4.1 |
+| basename | `file_picker.rs` | 2.8 | 0.9 | 4.8 | 3.9 |
+| path | `src/parser` | 3.4 | 1.5 | 5.0 | 4.9 |
+| two terms | `parser test` | 4.0 | 1.8 | 6.2 | 11.7 |
+| no match | `zzqx` | 2.2 | 1.0 | 4.5 | 3.8 |
 
 #### 100,000 candidates
 
 | query | typed | runyte | runyte rank only | fzf | fzf, one thread |
 | --- | --- | ---: | ---: | ---: | ---: |
-| empty | (empty) | 22.6 | 11.5 | 36.6 | 40.1 |
-| one character | `s` | 62.4 | 48.9 | 56.9 | 61.9 |
-| segment | `src` | 54.9 | 46.3 | 36.0 | 54.7 |
-| acronym | `fpr` | 19.9 | 11.9 | 19.1 | 19.8 |
-| across a separator | `keymap` | 17.2 | 8.3 | 14.4 | 17.3 |
-| basename | `file_picker.rs` | 12.8 | 7.4 | 12.4 | 22.2 |
-| path | `src/parser` | 18.5 | 11.4 | 15.3 | 19.0 |
-| two terms | `parser test` | 15.4 | 7.5 | 27.2 | 57.3 |
-| no match | `zzqx` | 15.3 | 5.7 | 13.2 | 13.3 |
+| empty | (empty) | 26.2 | 11.6 | 30.5 | 33.0 |
+| one character | `s` | 62.8 | 49.3 | 57.0 | 72.1 |
+| segment | `src` | 60.5 | 47.3 | 41.5 | 58.7 |
+| acronym | `fpr` | 20.5 | 11.6 | 18.8 | 24.0 |
+| across a separator | `keymap` | 19.1 | 8.3 | 16.5 | 19.0 |
+| basename | `file_picker.rs` | 19.5 | 7.5 | 15.5 | 20.8 |
+| path | `src/parser` | 20.4 | 11.2 | 16.6 | 21.3 |
+| two terms | `parser test` | 20.9 | 13.8 | 25.8 | 59.6 |
+| no match | `zzqx` | 13.9 | 5.0 | 14.0 | 16.7 |
 
 Ranking is not what a picker keystroke is spent on at the sizes a picker is
-normally opened at. At 10,000 candidates every query ranks in under 7 ms and
+normally opened at. At 10,000 candidates every query ranks in under 8 ms and
 most in under 2 ms, well inside a frame. The cost is carried by the number of
 candidates that match rather than the number scanned: `s` and `src`, which
 match 93% and 39% of the corpus, are several times the rest, because a rejected
@@ -105,6 +108,16 @@ candidate leaves the filter before it is ever scored.
 At 100,000 candidates a single character costs 49 ms of ranking, which is past
 a frame. That is the ceiling worth knowing about; the file scanner's own bound
 decides whether a corpus that large is reached in practice.
+
+Multi-term queries cost about twice what they did before terms became fuzzy
+(`space_separated_query_terms`). Measured on this corpus at the commit before
+that change, `parser test` ranked in 7.7 ms at 100,000 candidates against the
+13.8 ms above; at 10,000 the two are inside the noise. A term is now an
+ordered subsequence rather than a literal run, so it can no longer be rejected
+by a substring search that fails on the first character, and 310 candidates
+reach scoring where 239 did. Doubled, it is still the query Runyte answers
+furthest ahead of fzf: 20.9 ms whole-process against 25.8 on 20 cores and
+59.6 on one.
 
 ### Agreement, 10,000 candidates
 
@@ -144,9 +157,9 @@ The counts moved once before, when terms stopped having to be contiguous
 each term had to appear as a literal run. What remains is the ordering rule
 alone, and it is not expected to close.
 
-`parser test` is also the query where fzf gains most from threads: 27.2 ms on
-20 cores against 57.3 ms on one, at 100,000 candidates. Runyte ranks it in
-7.5 ms on one thread.
+`parser test` is also the query where fzf gains most from threads: 25.8 ms on
+20 cores against 59.6 ms on one, at 100,000 candidates. Runyte ranks it in
+13.8 ms on one thread.
 
 ## Why directories are in the corpus
 
