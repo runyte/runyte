@@ -228,7 +228,7 @@ const DESCRIPTORS: &[SettingDescriptor] = &[
         id: SettingId::EditorScratchMarkdown,
         key: "editor.scratch_markdown",
         title: "Markdown scratchpad",
-        description: "Reflow the pathless scratch buffer as Markdown",
+        description: "Reflow and render the pathless scratch buffer as Markdown",
         value_type: SettingType::Boolean,
         preview: PreviewPolicy::Immediate,
         persistence: PersistencePolicy::ConfigFile,

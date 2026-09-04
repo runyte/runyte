@@ -4,9 +4,9 @@
 
 // Application-module dependencies:
 use super::{
-    App, Assoc, BTreeMap, Buffer, BufferKind, Change, DelimiterPair, DirectoryRegister, HashSet,
-    HistoryReset, Jump, JumpLabels, KeyCode, KeyStroke, LanguageId, ListAction, ListPicker, Mode,
-    Modifiers, Motion, Offset, Outline, Pane, PickerItem, Press, Range, Regex, Register, Result,
+    App, Assoc, BTreeMap, Buffer, Change, DelimiterPair, DirectoryRegister, HashSet, HistoryReset,
+    Jump, JumpLabels, KeyCode, KeyStroke, LanguageId, ListAction, ListPicker, Mode, Modifiers,
+    Motion, Offset, Outline, Pane, PickerItem, Press, Range, Regex, Register, Result,
     SearchSelectionPresentation, Selection, SelectionSemantics, ShrinkResult, SyntaxError,
     SyntaxObject, SyntaxObjectPart, SyntaxSelectionRange, SyntaxSelectionTransform, TerminalId,
     Transaction, TransferMode, buffer_language, column_at_visual_column, fold_degradation_suffix,
@@ -1886,14 +1886,11 @@ impl App {
         {
             Some("markdown") => crate::wrap::ReflowKind::Markdown,
             Some(_) => crate::wrap::ReflowKind::Source,
-            // A scratchpad has no path to name a language with, but is where
-            // notes and drafts are written, so `editor.scratch_markdown` reads
-            // one that says nothing about itself as Markdown. Text that does
-            // identify a language, through the metadata `buffer_language`
-            // already reads, is matched above and keeps that language.
-            None if self.config.editor.scratch_markdown
-                && self.active_buffer().kind == BufferKind::Scratch =>
-            {
+            // A scratchpad that names no language reads as Markdown when
+            // `editor.scratch_markdown` is on. The same question decides what
+            // `?` renders, so reflow and rendering cannot disagree about what
+            // the scratchpad is.
+            None if self.scratch_reads_as_markdown(self.active().buffer) => {
                 crate::wrap::ReflowKind::Markdown
             }
             None => crate::wrap::ReflowKind::Plain,

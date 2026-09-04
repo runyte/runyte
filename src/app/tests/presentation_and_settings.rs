@@ -2444,3 +2444,59 @@ fn a_rendered_page_refuses_to_return_to_a_document_that_was_closed() {
     );
     fs::remove_file(path).unwrap();
 }
+
+#[test]
+fn the_scratchpad_renders_as_markdown_unless_the_option_is_off() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    assert!(matches!(app.active_buffer().kind, BufferKind::Scratch));
+    assert!(app.config.editor.scratch_markdown);
+    seed(&mut app, "# Notes\n\n- a **strong** item\n");
+    let scratch = app.active().buffer;
+    assert_eq!(app.key_binding_scope(), BindingScope::Markdown);
+
+    press(&mut app, '?');
+
+    let rendered = app.active().buffer;
+    assert_ne!(rendered, scratch);
+    assert_eq!(text(&app), "Notes\n─────\n\n• a strong item\n");
+    // A pathless buffer's page is named without nesting one bracketed name
+    // inside another.
+    assert_eq!(app.buffers[rendered].display_name(), "[rendered scratch]");
+    assert_eq!(
+        app.buffers[rendered].markdown_render_source(),
+        Some(scratch)
+    );
+
+    press(&mut app, '?');
+
+    assert_eq!(app.active().buffer, scratch);
+}
+
+#[test]
+fn a_plain_scratchpad_has_no_render_key() {
+    let mut config = Config::default();
+    config.editor.scratch_markdown = false;
+    let mut app = App::new(config, None).unwrap();
+    seed(&mut app, "# Notes\n");
+
+    assert_eq!(app.key_binding_scope(), BindingScope::Global);
+
+    // The command line reaches it regardless of the binding, and refuses for
+    // the same reason the key is absent.
+    super::commands::type_command(&mut app, "render");
+
+    assert!(matches!(app.active_buffer().kind, BufferKind::Scratch));
+    assert!(
+        app.status.contains("not a Markdown document"),
+        "status was {:?}",
+        app.status
+    );
+}
+
+#[test]
+fn scratch_text_naming_its_own_language_is_not_rendered_as_markdown() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    seed(&mut app, "#!/bin/sh\necho **not bold**\n");
+
+    assert_eq!(app.key_binding_scope(), BindingScope::Global);
+}

@@ -109,6 +109,12 @@ the source. `:render` (also `:markdown`) does the same from the command line.
 The page is a generated read-only buffer beside the document rather than a mode
 the document is in, so both stay open and the source keeps every editing key.
 
+The scratch buffer names no language, so `?` renders it while
+`editor.scratch_markdown` is on — the same option that decides how `Space p r`
+refills it, so notes drafted there read as the Markdown they are reflowed as.
+Its page is named `[rendered scratch]`. Set the option to `false` and the
+scratchpad is plain text again, with no `?` binding.
+
 The page is written without the markers that were only there to be parsed.
 Emphasis is drawn with terminal attributes: `**strong**` is bold, `*emphasis*`
 is italic, `~~struck~~` is crossed out, and a link destination is underlined.
@@ -1653,10 +1659,11 @@ width stays intact.
 The scratch buffer has no path to name a language with, so
 `editor.scratch_markdown`, on by default, makes `Space p r` refill it as
 Markdown rather than as undifferentiated prose. Set it to `false` to reflow a
-scratchpad as plain text. Only reflow reads the option: nothing about how the
-scratch buffer is highlighted, completed, or saved changes. Scratch text whose
-own first lines already identify a language keeps that language, and is
-refilled as a source file is.
+scratchpad as plain text. Reflow and `?` read the option together, so a
+scratchpad whose lists survive a refill is also one that renders; nothing about
+how the scratch buffer is highlighted, completed, or saved changes. Scratch
+text whose own first lines already identify a language keeps that language, and
+is refilled as a source file is.
 
 `Space p s` toggles `editor.soft_wrap` for the current session. Soft wrapping
 always follows the live pane width, including after a resize; it does not use
@@ -1795,7 +1802,7 @@ cancellation keys.
 | `Space / /` | Search the workspace with a regular expression; see [Search](#search) |
 | `Space r` | Reload the active text file or refresh the active explorer or supported Git list |
 | `Enter` in a directory | Open the selected file or directory |
-| `?` in a Markdown document | Render it as formatted text, or return from that page to the source (`:render`) |
+| `?` in a Markdown document or the scratchpad | Render it as formatted text, or return from that page to the source (`:render`) |
 | `?` in a directory | Toggle read-only permissions, owner, group, size, and modification-time columns |
 | `-` or Backspace in a directory | Open the parent directory and select the child just left |
 | `.` in a directory | Show or hide dotfiles in the explorer |
@@ -3068,7 +3075,7 @@ editor:
   render_whitespace: false # show · for spaces, → for tabs, and ↵ for line endings
   zen_width: 100 # maximum text width while :zen is active; editable in :config's popup
   hard_wrap_width: 80 # width for Space p w and Space p r; editable in :config's popup
-  scratch_markdown: true # Space p r refills the pathless scratch buffer as Markdown
+  scratch_markdown: true # Space p r refills and ? renders the pathless scratch buffer as Markdown
   trim_trailing_whitespace: true # remove spaces and tabs at line ends on save
   mouse: true # set false to retain the terminal's native text selection; restart required
   word_completion: true # suggest words already open elsewhere in the workspace

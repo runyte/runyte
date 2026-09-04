@@ -6,7 +6,7 @@
 #[cfg(unix)]
 use super::WorkspaceRow;
 use super::{
-    App, BindingScope, Buffer, CompletionSource, ConfirmationOverlay, ContentAlignment,
+    App, BindingScope, Buffer, BufferKind, CompletionSource, ConfirmationOverlay, ContentAlignment,
     ContentLayout, DiffProjection, DiffSession, FinderMatchSource, FinderMode, FinderTarget,
     FrameGeometry, GeneratedViewIdentity, HelpTopic, ListPurpose, MaximizedView, Mode,
     PICKER_LIST_INTERVAL, PICKER_PROGRESS_INTERVAL, Pane, Path, PickerProgress, Position,
@@ -798,13 +798,21 @@ impl App {
         // shows the work in progress rather than the last thing saved.
         let rendered = crate::markdown::render(&self.buffers[active].to_string());
         // Named the way every other generated view is: the pane title says
-        // what the page is, and a file's directory is not part of that.
+        // what the page is, and a file's directory is not part of that. A
+        // pathless buffer is named by its display name with the brackets
+        // stripped, so the scratchpad's page reads `[rendered scratch]`
+        // rather than nesting one bracketed name inside another.
         let name = self.buffers[active]
             .path
             .as_ref()
             .and_then(|path| path.file_name())
             .map_or_else(
-                || self.buffers[active].display_name(),
+                || {
+                    self.buffers[active]
+                        .display_name()
+                        .trim_matches(['[', ']'])
+                        .to_owned()
+                },
                 |name| name.to_string_lossy().into_owned(),
             );
         let name = format!("[rendered {name}]");
@@ -826,6 +834,23 @@ impl App {
     fn is_markdown_document(&self, buffer: usize) -> bool {
         super::buffer_language(&self.buffers[buffer], &self.registry)
             .is_some_and(|language| self.registry.language_name(language) == "markdown")
+            || self.scratch_reads_as_markdown(buffer)
+    }
+
+    /// Whether a scratchpad that names no language is read as Markdown.
+    ///
+    /// A scratchpad has no path to name a language with, but is where notes
+    /// and drafts are written, so `editor.scratch_markdown` reads text that
+    /// says nothing about itself as Markdown. Text that does identify a
+    /// language, through the first-line `buffer_language` metadata the
+    /// registry already reads, has one and is not this case.
+    ///
+    /// Reflow and rendering ask the same question here, so a scratchpad whose
+    /// lists survive `Space p r` is also one `?` will render.
+    pub(super) fn scratch_reads_as_markdown(&self, buffer: usize) -> bool {
+        self.config.editor.scratch_markdown
+            && self.buffers[buffer].kind == BufferKind::Scratch
+            && super::buffer_language(&self.buffers[buffer], &self.registry).is_none()
     }
 
     /// Whether a modal overlay owns the next key before normal/select dispatch.

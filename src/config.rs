@@ -269,13 +269,14 @@ pub struct EditorConfig {
     pub zen_width: usize,
     /// Default character width used by hard-wrap and reflow.
     pub hard_wrap_width: usize,
-    /// Reflow the pathless scratch buffer as Markdown.
+    /// Read the pathless scratch buffer as Markdown.
     ///
     /// On by default: a scratchpad has no path to name a language with, so
     /// reflow would otherwise treat notes, lists, and quoted blocks as
-    /// undifferentiated prose. Only a scratch buffer whose own text does not
-    /// already identify a language is affected, and only reflow reads this;
-    /// nothing about how the buffer is highlighted or saved changes.
+    /// undifferentiated prose, and `?` would have nothing to render. Only a
+    /// scratch buffer whose own text does not already identify a language is
+    /// affected, and only reflow and rendering read this; nothing about how
+    /// the buffer is highlighted or saved changes.
     pub scratch_markdown: bool,
     /// Remove spaces and tabs at line ends when writing text files.
     pub trim_trailing_whitespace: bool,
