@@ -1616,6 +1616,14 @@ code cannot join code statements together. Lists inside line comments receive
 the same hanging indent treatment. A word wider than the available content
 width stays intact.
 
+The scratch buffer has no path to name a language with, so
+`editor.scratch_markdown`, on by default, makes `Space p r` refill it as
+Markdown rather than as undifferentiated prose. Set it to `false` to reflow a
+scratchpad as plain text. Only reflow reads the option: nothing about how the
+scratch buffer is highlighted, completed, or saved changes. Scratch text whose
+own first lines already identify a language keeps that language, and is
+refilled as a source file is.
+
 `Space p s` toggles `editor.soft_wrap` for the current session. Soft wrapping
 always follows the live pane width, including after a resize; it does not use
 the hard-wrap width and does not change buffer text. It uses the same
@@ -3025,6 +3033,7 @@ editor:
   render_whitespace: false # show · for spaces, → for tabs, and ↵ for line endings
   zen_width: 100 # maximum text width while :zen is active; editable in :config's popup
   hard_wrap_width: 80 # width for Space p w and Space p r; editable in :config's popup
+  scratch_markdown: true # Space p r refills the pathless scratch buffer as Markdown
   trim_trailing_whitespace: true # remove spaces and tabs at line ends on save
   mouse: true # set false to retain the terminal's native text selection; restart required
   word_completion: true # suggest words already open elsewhere in the workspace

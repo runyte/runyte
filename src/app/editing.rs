@@ -4,9 +4,9 @@
 
 // Application-module dependencies:
 use super::{
-    App, Assoc, BTreeMap, Buffer, Change, DelimiterPair, DirectoryRegister, HashSet, HistoryReset,
-    Jump, JumpLabels, KeyCode, KeyStroke, LanguageId, ListAction, ListPicker, Mode, Modifiers,
-    Motion, Offset, Outline, Pane, PickerItem, Press, Range, Regex, Register, Result,
+    App, Assoc, BTreeMap, Buffer, BufferKind, Change, DelimiterPair, DirectoryRegister, HashSet,
+    HistoryReset, Jump, JumpLabels, KeyCode, KeyStroke, LanguageId, ListAction, ListPicker, Mode,
+    Modifiers, Motion, Offset, Outline, Pane, PickerItem, Press, Range, Regex, Register, Result,
     SearchSelectionPresentation, Selection, SelectionSemantics, ShrinkResult, SyntaxError,
     SyntaxObject, SyntaxObjectPart, SyntaxSelectionRange, SyntaxSelectionTransform, TerminalId,
     Transaction, TransferMode, buffer_language, column_at_visual_column, fold_degradation_suffix,
@@ -1886,6 +1886,16 @@ impl App {
         {
             Some("markdown") => crate::wrap::ReflowKind::Markdown,
             Some(_) => crate::wrap::ReflowKind::Source,
+            // A scratchpad has no path to name a language with, but is where
+            // notes and drafts are written, so `editor.scratch_markdown` reads
+            // one that says nothing about itself as Markdown. Text that does
+            // identify a language, through the metadata `buffer_language`
+            // already reads, is matched above and keeps that language.
+            None if self.config.editor.scratch_markdown
+                && self.active_buffer().kind == BufferKind::Scratch =>
+            {
+                crate::wrap::ReflowKind::Markdown
+            }
             None => crate::wrap::ReflowKind::Plain,
         };
         let buffer = self.active_buffer();

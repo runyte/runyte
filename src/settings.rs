@@ -48,6 +48,7 @@ pub enum SettingId {
     EditorRenderWhitespace,
     EditorZenWidth,
     EditorHardWrapWidth,
+    EditorScratchMarkdown,
     EditorTrimTrailingWhitespace,
     EditorMouse,
     EditorWordCompletion,
@@ -224,6 +225,15 @@ const DESCRIPTORS: &[SettingDescriptor] = &[
         persistence: PersistencePolicy::ConfigFile,
     },
     SettingDescriptor {
+        id: SettingId::EditorScratchMarkdown,
+        key: "editor.scratch_markdown",
+        title: "Markdown scratchpad",
+        description: "Reflow the pathless scratch buffer as Markdown",
+        value_type: SettingType::Boolean,
+        preview: PreviewPolicy::Immediate,
+        persistence: PersistencePolicy::ConfigFile,
+    },
+    SettingDescriptor {
         id: SettingId::EditorTrimTrailingWhitespace,
         key: "editor.trim_trailing_whitespace",
         title: "Trim trailing whitespace",
@@ -360,6 +370,7 @@ impl SettingId {
         Self::EditorRenderWhitespace,
         Self::EditorZenWidth,
         Self::EditorHardWrapWidth,
+        Self::EditorScratchMarkdown,
         Self::EditorTrimTrailingWhitespace,
         Self::EditorMouse,
         Self::EditorWordCompletion,
@@ -401,6 +412,7 @@ impl SettingId {
             Self::EditorRenderWhitespace => SettingValue::Boolean(config.editor.render_whitespace),
             Self::EditorZenWidth => SettingValue::Integer(config.editor.zen_width),
             Self::EditorHardWrapWidth => SettingValue::Integer(config.editor.hard_wrap_width),
+            Self::EditorScratchMarkdown => SettingValue::Boolean(config.editor.scratch_markdown),
             Self::EditorTrimTrailingWhitespace => {
                 SettingValue::Boolean(config.editor.trim_trailing_whitespace)
             }
@@ -520,6 +532,9 @@ impl SettingId {
             }
             (Self::EditorHardWrapWidth, SettingValue::Integer(value)) => {
                 config.editor.hard_wrap_width = *value;
+            }
+            (Self::EditorScratchMarkdown, SettingValue::Boolean(value)) => {
+                config.editor.scratch_markdown = *value;
             }
             (Self::EditorTrimTrailingWhitespace, SettingValue::Boolean(value)) => {
                 config.editor.trim_trailing_whitespace = *value;

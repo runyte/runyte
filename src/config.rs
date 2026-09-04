@@ -269,6 +269,14 @@ pub struct EditorConfig {
     pub zen_width: usize,
     /// Default character width used by hard-wrap and reflow.
     pub hard_wrap_width: usize,
+    /// Reflow the pathless scratch buffer as Markdown.
+    ///
+    /// On by default: a scratchpad has no path to name a language with, so
+    /// reflow would otherwise treat notes, lists, and quoted blocks as
+    /// undifferentiated prose. Only a scratch buffer whose own text does not
+    /// already identify a language is affected, and only reflow reads this;
+    /// nothing about how the buffer is highlighted or saved changes.
+    pub scratch_markdown: bool,
     /// Remove spaces and tabs at line ends when writing text files.
     pub trim_trailing_whitespace: bool,
     /// Capture terminal mouse events for selection, scrolling, and resizing.
@@ -761,6 +769,7 @@ impl Default for EditorConfig {
             render_whitespace: false,
             zen_width: 100,
             hard_wrap_width: 80,
+            scratch_markdown: true,
             trim_trailing_whitespace: true,
             mouse: true,
             word_completion: true,
@@ -1332,6 +1341,14 @@ mod tests {
         let error = format!("{:#}", Config::load(Some(&path)).unwrap_err());
         fs::remove_file(path).unwrap();
         assert!(error.contains("editor.hard_wrap_width must be between 1 and 1000"));
+    }
+
+    #[test]
+    fn scratch_markdown_defaults_to_on_and_is_configurable() {
+        assert!(Config::default().editor.scratch_markdown);
+        let config: Config = serde_yaml::from_str("editor:\n  scratch_markdown: false\n").unwrap();
+        assert!(!config.editor.scratch_markdown);
+        assert!(config.validate_settings().is_ok());
     }
 
     #[test]
