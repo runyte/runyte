@@ -26,14 +26,16 @@ Other boundaries have the same underlying problem:
 - the generic command-result boundary reports every propagated error as
   ERROR, including routine context refusals such as an unsupported tutorial
   argument or attempting to open the tutorial from a maximized view;
-- workspace search reports filesystem traversal failures as INFO because
-  `workspace_matches` errors reach `action_failed`;
-- failures from the persistent-session host during the worktree-removal
-  cascade can be reported as INFO even after the Git mutation has succeeded;
-  and
-- post-Git reconciliation reports both a dirty buffer protected from reload
-  and an actual filesystem reload failure as INFO, though the former should be
-  WARNING and the latter ERROR.
+- a persistent-session catalog failure while forgetting a removed worktree's
+  record is reported as INFO after the Git mutation has succeeded, even though
+  the host operation failed and the record still claims its session number;
+- path-specific post-Git reconciliation reports a dirty buffer protected from
+  reload as INFO rather than WARNING; and
+- repository-wide post-Git reconciliation silently skips dirty buffers and
+  silently discards filesystem reload failures. The synchronous branch-switch
+  path reports the same reload failure as INFO. Dirty buffers should produce a
+  WARNING and reload I/O failures should produce an ERROR regardless of which
+  Git execution path was used.
 
 ## Expected design
 
@@ -77,11 +79,12 @@ the original message. The safe default must remain ERROR: a new I/O, Git,
 host, or internal failure should not silently become informational merely
 because its producer has not yet been classified.
 
-Workspace traversal, host operations, and post-Git reconciliation should
-likewise preserve whether an outcome is protective or a fault across helper
-boundaries. Where a helper already has a concrete error type, it may expose a
-`FailureClass` mapping directly; it does not need to wrap the error only to
-change its notification severity.
+Host operations and post-Git reconciliation should likewise preserve whether
+an outcome is protective or a fault across helper boundaries. A helper must
+not silently discard a classified failure merely because the Git operation's
+success status will become the interaction-line result. Where a helper already
+has a concrete error type, it may expose a `FailureClass` mapping directly; it
+does not need to wrap the error only to change its notification severity.
 
 ## Constraints
 
@@ -107,7 +110,6 @@ not only the interaction-line message. Coverage should include:
   through both document-edit call paths;
 - routine tutorial and other command-context refusals as INFO while an
   unexpected propagated command failure remains ERROR;
-- workspace-search traversal failure as ERROR;
-- persistent-session host failure during worktree cleanup as ERROR; and
+- persistent-session catalog failure after worktree removal as ERROR; and
 - dirty-buffer post-Git reconciliation as WARNING while reload I/O failure is
-  ERROR.
+  ERROR through both path-specific and repository-wide reconciliation.
