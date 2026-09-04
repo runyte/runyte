@@ -472,8 +472,8 @@ round up, including across a boundary, so 59 minutes and one second reads
 records the end of that visit, and elapsed values continue advancing while the
 manager remains open. `Status` reads `QUIET` when a running host owns at least
 one live terminal session and none of those terminals has completed a new
-presentation line for five minutes. A newly created terminal begins that
-five-minute clock without treating its initial empty row as output. Line-feed,
+presentation line for two minutes. A newly created terminal begins that
+two-minute clock without treating its initial empty row as output. Line-feed,
 index/new-line controls, an automatic wrap, and a top-anchored primary-screen
 scroll commit complete lines. Unterminated partial text, carriage-return
 rewrites such as a spinner, cursor-only movement, application-internal scroll

@@ -44,7 +44,7 @@ const SESSION_PREVIEW_OTHER_RESOURCES: usize = 8;
 const AUTOMATIC_GIT_RETRY_DELAY: Duration = Duration::from_secs(1);
 /// A live terminal must complete no presentation line for this long before
 /// the persistent-session manager calls its workspace quiet.
-pub const TERMINAL_OUTPUT_QUIET_INTERVAL: Duration = Duration::from_secs(5 * 60);
+pub const TERMINAL_OUTPUT_QUIET_INTERVAL: Duration = Duration::from_secs(2 * 60);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum BufferRequestError {

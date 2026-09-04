@@ -48,7 +48,7 @@ carriage-return rewrites, cursor-only movement, application-internal scroll
 regions, alternate-screen/full-screen repainting, and resize do not. The
 manager polls that host-owned scalar at most once every five seconds while
 open and labels the workspace `QUIET` only after every live terminal has
-crossed five minutes without a completed line. Exited terminals and
+crossed two minutes without a completed line. Exited terminals and
 workspaces without live terminals make no quietness claim.
 
 Wait-client PTY loss is exercised on both Linux and macOS CI. Linux observes
