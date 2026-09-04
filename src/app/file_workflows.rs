@@ -1711,6 +1711,28 @@ impl App {
     pub(super) fn diff_off(&mut self) {
         let pane_id = self.active_pane;
         let buffer = self.panes[&pane_id].buffer;
+        let temporary_pane = self.diffs.iter().find_map(|session| {
+            session.pane_close_return()?;
+            if session.has_pane(pane_id) {
+                return Some(pane_id);
+            }
+            [Side::Left, Side::Right].into_iter().find_map(|side| {
+                let side = session.side(side);
+                (side.buffer == buffer).then_some(side.pane)
+            })
+        });
+        if let Some(closing) = temporary_pane {
+            if let Some(maximized) = self.maximized {
+                self.status(format!(
+                    "leave {} before closing the pane",
+                    maximized.view.label()
+                ));
+                return;
+            }
+            let handled = self.close_temporary_comparison(closing);
+            debug_assert!(handled, "the selected comparison must be temporary");
+            return;
+        }
         let before = self.diffs.len();
         self.diffs
             .retain(|session| !session.has_pane(pane_id) && !session.has_buffer(buffer));
@@ -1737,7 +1759,73 @@ impl App {
             self.status("Cannot close the last pane. To quit runyte type :quit");
             return;
         }
+        if self.close_temporary_comparison(self.active_pane) {
+            return;
+        }
         self.remove_pane(self.active_pane);
+    }
+
+    /// Collapses a comparison which was opened as one temporary paired view.
+    ///
+    /// The pane the person closes is removed. Its partner survives in the
+    /// restored layout and returns to the exact buffer the pair replaced; if
+    /// that buffer has since gone away, the workspace explorer is the stable
+    /// fallback rather than either generated comparison side.
+    fn close_temporary_comparison(&mut self, closing: usize) -> bool {
+        let Some((index, other, return_buffer, compared_buffers)) =
+            self.diffs.iter().enumerate().find_map(|(index, session)| {
+                let return_buffer = session.pane_close_return()?;
+                let [first, second] = session.panes();
+                let other = if first == closing {
+                    second
+                } else if second == closing {
+                    first
+                } else {
+                    return None;
+                };
+                Some((
+                    index,
+                    other,
+                    return_buffer,
+                    [
+                        session.side(Side::Left).buffer,
+                        session.side(Side::Right).buffer,
+                    ],
+                ))
+            })
+        else {
+            return false;
+        };
+
+        // Focus the known survivor before changing the layout. Removing the
+        // active last pane would otherwise wrap through an unrelated pane —
+        // possibly a live terminal, which enters Insert mode — before coming
+        // back here. The temporary focus would then leak its mode into the
+        // restored document.
+        if self.panes.contains_key(&other) {
+            self.activate_pane(other);
+        }
+        let removed = self.remove_pane(closing);
+        debug_assert!(removed, "a live comparison must own two live panes");
+        if !removed {
+            return true;
+        }
+        self.diffs.remove(index);
+        if !self.panes.contains_key(&other) {
+            return true;
+        }
+        if return_buffer < self.buffers.len() && !self.closed_buffers.contains(&return_buffer) {
+            self.switch_buffer(return_buffer);
+        } else if let Err(error) = self.open_explorer(None) {
+            self.action_failed(error.to_string());
+            return true;
+        }
+        if let Some(pane) = self.panes.get_mut(&other) {
+            pane.buffer_history
+                .retain(|buffer| !compared_buffers.contains(buffer));
+        }
+        self.status("comparison closed");
+        true
     }
 
     /// Removes one pane while preserving a valid focus and layout.

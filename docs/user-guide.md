@@ -668,6 +668,10 @@ comparison as two complete, aligned file versions: the index on the left and
 the working tree on the right. In the changed-file list both commands follow
 the selected row, so a staged row compares `HEAD` with the index instead. A
 missing side of an added or removed file is shown entirely as hatched filler.
+The complete-version panes are one temporary pair: closing either one removes
+the split and returns the surviving pane to the buffer that was active before
+the comparison. `:diff-off` (`:do`) does the same from either side. If that
+buffer has since been closed, the pane opens the workspace explorer instead.
 The changed-file list's Tab
 menu stages and unstages selected files, stages all outstanding files, and
 opens everything staged for the next commit. These operations read files on
@@ -886,7 +890,10 @@ when a comparison opens for the same reason.
 
 A comparison needs both its panes and both its buffers. Closing either pane, or
 pointing one of them at a different buffer, ends it — the view was about those
-two files.
+two files. The complete Git comparison opened by `Space g D` additionally owns
+the temporary split it creates, so closing either of its read-only sides or
+running `:diff-off` collapses that pair and restores the preceding buffer or
+the explorer.
 
 ### Files changed outside Runyte
 

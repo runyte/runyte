@@ -2237,6 +2237,139 @@ fn space_g_shift_d_compares_complete_index_and_worktree_versions() {
     fs::remove_dir_all(root).unwrap();
 }
 
+fn complete_git_diff_app(name: &str, with_terminal: bool) -> (PathBuf, App, usize) {
+    use crate::git::{MemoryGitProvider, Repository};
+
+    let root = temporary(name);
+    fs::create_dir_all(&root).unwrap();
+    let root = root.canonicalize().unwrap();
+    let path = root.join("source.txt");
+    fs::write(&path, "working\n").unwrap();
+    let mut ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    ports.replace_git(Box::new(
+        MemoryGitProvider::new(Repository::new(&root))
+            .with_staged("source.txt", "staged\n")
+            .with_working("source.txt", "working\n"),
+    ));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    app.open_file(path).unwrap();
+    if with_terminal {
+        app.open_terminal_at(Some("/bin/cat".to_owned()), root.clone());
+        app.split(Axis::Horizontal, None).unwrap();
+        app.enter_normal_mode();
+    }
+    let source = app.active().buffer;
+    for character in [' ', 'g', 'D'] {
+        press(&mut app, character);
+    }
+    (root, app, source)
+}
+
+#[test]
+fn closing_either_complete_git_diff_side_restores_the_previous_buffer() {
+    for (side, command, name) in [
+        (
+            Side::Left,
+            "window-close",
+            "window-close-left-complete-git-diff",
+        ),
+        (
+            Side::Right,
+            "window-close",
+            "window-close-right-complete-git-diff",
+        ),
+        (Side::Left, "q", "quit-left-complete-git-diff"),
+        (Side::Right, "q", "quit-right-complete-git-diff"),
+    ] {
+        let (root, mut app, source) = complete_git_diff_app(name, false);
+        let closing = app.diff_session(app.active_pane).unwrap().side(side).pane;
+
+        app.activate_pane(closing);
+        app.execute_command(command).unwrap();
+
+        assert_eq!(app.panes.len(), 1);
+        assert!(app.diffs.is_empty());
+        assert_eq!(app.active().buffer, source);
+        assert_eq!(
+            app.active_buffer().path.as_deref(),
+            Some(root.join("source.txt").as_path())
+        );
+        assert_eq!(app.status, "comparison closed");
+        fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[test]
+fn diff_off_collapses_a_complete_git_diff_and_restores_the_previous_buffer() {
+    for (side, command, name) in [
+        (Side::Left, "diff-off", "diff-off-left-complete-git-diff"),
+        (Side::Right, "do", "do-right-complete-git-diff"),
+    ] {
+        let (root, mut app, source) = complete_git_diff_app(name, false);
+        let closing = app.diff_session(app.active_pane).unwrap().side(side).pane;
+
+        app.activate_pane(closing);
+        app.execute_command(command).unwrap();
+
+        assert_eq!(app.panes.len(), 1);
+        assert!(app.diffs.is_empty());
+        assert_eq!(app.active().buffer, source);
+        assert_eq!(
+            app.active_buffer().path.as_deref(),
+            Some(root.join("source.txt").as_path())
+        );
+        assert_eq!(app.status, "comparison closed");
+        fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[test]
+fn closing_a_complete_git_diff_after_its_origin_is_gone_opens_the_explorer() {
+    let (root, mut app, source) = complete_git_diff_app("closed-complete-git-diff-origin", false);
+    app.close_buffer(source);
+    assert!(app.closed_buffers.contains(&source));
+
+    app.execute_command("q").unwrap();
+
+    assert_eq!(app.panes.len(), 1);
+    assert!(app.diffs.is_empty());
+    assert!(app.active_buffer().is_directory());
+    assert_eq!(app.active_buffer().path.as_deref(), Some(root.as_path()));
+    assert_eq!(app.status, "comparison closed");
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn closing_a_complete_git_diff_does_not_inherit_an_unrelated_terminals_insert_mode() {
+    let (root, mut app, source) = complete_git_diff_app("complete-git-diff-next-to-terminal", true);
+    assert_eq!(app.panes.len(), 3);
+    assert!(
+        app.panes
+            .keys()
+            .any(|pane| app.terminal_of_pane(*pane).is_some())
+    );
+    let right = app
+        .diff_session(app.active_pane)
+        .unwrap()
+        .side(Side::Right)
+        .pane;
+
+    app.activate_pane(right);
+    app.execute_command("window-close").unwrap();
+
+    assert_eq!(app.panes.len(), 2);
+    assert_eq!(app.active().buffer, source);
+    assert_eq!(app.mode, Mode::Normal);
+    assert!(
+        app.panes
+            .keys()
+            .any(|pane| app.terminal_of_pane(*pane).is_some())
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
 #[test]
 fn side_by_side_git_views_make_added_and_removed_sides_empty() {
     use crate::git::{

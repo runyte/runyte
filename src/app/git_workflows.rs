@@ -1814,6 +1814,7 @@ impl App {
                 format!("[worktree {relative}]"),
             ),
         };
+        let return_buffer = self.active().buffer;
         let previous_buffer =
             self.ensure_git_comparison_buffer(&path, scope, true, previous_name, &previous);
         let current_buffer =
@@ -1839,18 +1840,21 @@ impl App {
         self.diffs.retain(|session| {
             !session.has_buffer(previous_buffer) && !session.has_buffer(current_buffer)
         });
-        self.diffs.push(DiffSession::new(
-            DiffSide {
-                pane: left_pane,
-                buffer: previous_buffer,
-            },
-            DiffSide {
-                pane: right_pane,
-                buffer: current_buffer,
-            },
-            &previous,
-            &current,
-        ));
+        self.diffs.push(
+            DiffSession::new(
+                DiffSide {
+                    pane: left_pane,
+                    buffer: previous_buffer,
+                },
+                DiffSide {
+                    pane: right_pane,
+                    buffer: current_buffer,
+                },
+                &previous,
+                &current,
+            )
+            .returning_on_pane_close(return_buffer),
+        );
         self.status(format!("comparing Git versions of {relative}"));
     }
 

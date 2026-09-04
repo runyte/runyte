@@ -3,11 +3,11 @@
 //! Two buffers shown side by side, and what ties them together.
 //!
 //! A session is deliberately thin. It names two panes and the two buffers they
-//! show, and it caches the [`Alignment`] between those buffers' text. It does
-//! not know what a file is, so anything that can produce a buffer can be a
-//! side: the file-against-file view this was written for, and a Git base
-//! against a working tree later, are the same object with different buffers in
-//! it.
+//! show, caches the [`Alignment`] between those buffers' text, and may remember
+//! the buffer a temporary paired presentation replaced. It does not know what
+//! a file is, so anything that can produce a buffer can be a side: the
+//! file-against-file view this was written for, and a Git base against a
+//! working tree later, are the same object with different buffers in it.
 //!
 //! Nothing here draws or scrolls. The session answers two questions — how does
 //! this row of this side read, and which row of the other side sits level with
@@ -34,6 +34,14 @@ pub struct DiffSide {
 pub struct DiffSession {
     left: DiffSide,
     right: DiffSide,
+    /// Buffer a temporary paired view replaced, if closing either pane should
+    /// collapse the pair and return the survivor to that buffer.
+    ///
+    /// Ordinary `:diff-this` sessions borrow whatever panes already show
+    /// their buffers and leave this absent. Git's complete-version view
+    /// creates both sides as one temporary presentation over the active pane,
+    /// so either close dismisses the whole presentation instead.
+    pane_close_return: Option<usize>,
     alignment: Alignment,
     /// The buffer revisions `alignment` was computed from, left then right.
     /// Both sides stay editable, so the alignment is only ever as current as
@@ -53,6 +61,7 @@ impl DiffSession {
         Self {
             left,
             right,
+            pane_close_return: None,
             alignment: align_text(left_text, right_text),
             // A fresh session has not seen a revision yet, so the first update
             // always recomputes rather than trusting a default.
@@ -101,6 +110,16 @@ impl DiffSession {
 
     pub fn panes(&self) -> [usize; 2] {
         [self.left.pane, self.right.pane]
+    }
+
+    /// Makes the two panes one temporary presentation for close purposes.
+    pub(crate) fn returning_on_pane_close(mut self, buffer: usize) -> Self {
+        self.pane_close_return = Some(buffer);
+        self
+    }
+
+    pub(crate) fn pane_close_return(&self) -> Option<usize> {
+        self.pane_close_return
     }
 
     /// Moves a comparison's pane ownership with the pane contents being
