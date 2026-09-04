@@ -3808,6 +3808,59 @@ fn a_retained_content_row_keeps_its_preview_while_the_new_scan_ranks() {
 }
 
 #[test]
+fn a_retyped_multi_term_query_never_previews_the_previous_queries_spans() {
+    let root = temporary("retained-content-preview-current-emphasis");
+    fs::create_dir_all(&root).unwrap();
+    let path = root.join("imports.py");
+    fs::write(&path, "before\nimport unittest\nafter\n").unwrap();
+    let mut app = App::new_in_isolated_project(
+        &root,
+        HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+            String::new(),
+        ))))),
+    )
+    .unwrap();
+    let mut picker = FilePicker::grep(
+        9,
+        root.clone(),
+        crate::file_picker::ScanScope::ignoring(&root),
+    );
+    picker.add_content(vec![crate::file_picker::FileHits {
+        path,
+        lines: vec![crate::file_picker::LineHit {
+            row: 1,
+            column: 0,
+            text: "import unittest".to_owned(),
+        }],
+    }]);
+    picker.insert_query_text("import tes");
+    let mut finder = ResourceFinder::new(FinderMode::Contents);
+    finder.merge_files(&picker, "import tes");
+
+    // Background ranking leaves the preceding answer visible and inert. The
+    // final `t` changes neither this row nor its first matched column, which is
+    // the case where target-only preview de-duplication used to preserve the
+    // old `import tes` highlight indefinitely.
+    picker.insert_query_unranked('t');
+    assert!(picker.ranking);
+    app.picker = Some(picker);
+    app.finder = Some(finder);
+
+    app.refresh_finder_preview();
+
+    let preview = app
+        .picker
+        .as_ref()
+        .unwrap()
+        .preview
+        .as_ref()
+        .expect("the retained matching row should remain previewable");
+    assert_eq!(previewed_match(preview), "importtest");
+    app.close_file_picker();
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn rapid_finder_mode_switches_and_retyped_query_restore_the_file_preview() {
     let root = temporary("rapid-finder-mode-preview");
     fs::create_dir_all(&root).unwrap();

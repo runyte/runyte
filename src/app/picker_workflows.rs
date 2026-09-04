@@ -450,7 +450,7 @@ impl App {
         let Some((target, path, is_dir, content_match)) = selected else {
             if let Some(picker) = self.picker.as_mut() {
                 picker.preview = None;
-                picker.set_preview_request(None);
+                picker.clear_preview_request();
             }
             return;
         };
@@ -479,12 +479,13 @@ impl App {
         if let Some(preview) = live_preview {
             let picker = self.picker.as_mut().unwrap();
             picker.preview = Some(preview);
-            picker.set_preview_request(None);
+            picker.clear_preview_request();
             return;
         }
         if let Some(scanner) = self.file_scanner.clone() {
             let picker = self.picker.as_mut().unwrap();
-            let Some(request_id) = picker.begin_preview_request(target) else {
+            let Some(request_id) = picker.begin_preview_request(target, content_match.as_ref())
+            else {
                 return;
             };
             scanner.preview(FilePreviewRequest {
@@ -1467,12 +1468,27 @@ impl App {
                     let FinderMatchSource::File(entry) = found.source else {
                         return None;
                     };
-                    Some(finder.file_entry(picker, entry).map(|entry| {
+                    Some(finder.file_entry(picker, entry).and_then(|entry| {
+                        // The rows deliberately remain visible while a new
+                        // query ranks, but their stored emphasis still answers
+                        // the preceding query. Previewing one of those rows
+                        // under the new query revision used to bless the stale
+                        // spans as current. Re-score just this selected line —
+                        // bounded to the content candidate size — so the cheap
+                        // retained preview is truthful without re-ranking the
+                        // list on the input thread.
+                        let emphasis = match (entry.row, entry.text) {
+                            (Some(_), Some(text)) => {
+                                let mut matcher =
+                                    crate::file_picker::FuzzyMatcher::for_lines(&picker.query);
+                                matcher.score(text)?.1
+                            }
+                            _ => found.emphasis.clone(),
+                        };
                         let content_match = entry.row.map(|row| {
                             (
                                 row,
-                                found
-                                    .emphasis
+                                emphasis
                                     .iter()
                                     .map(|position| entry.column + position)
                                     .collect::<Vec<_>>(),
@@ -1484,15 +1500,15 @@ impl App {
                             column: entry.column
                                 + entry
                                     .row
-                                    .and_then(|_| found.emphasis.first().copied())
+                                    .and_then(|_| emphasis.first().copied())
                                     .unwrap_or(0),
                         };
-                        (
+                        Some((
                             target,
                             entry.path.to_path_buf(),
                             entry.is_dir,
                             content_match,
-                        )
+                        ))
                     }))
                 });
         if let Some(selected) = selected_file {
@@ -1766,10 +1782,7 @@ impl App {
                 request_id,
                 preview,
             } if scan_id == picker.scan_id && query_revision == picker.query_revision => {
-                if picker
-                    .preview_request()
-                    .is_some_and(|(pending, _)| *pending == request_id)
-                {
+                if picker.preview_request_id() == Some(request_id) {
                     picker.preview = Some(preview);
                 }
                 return;

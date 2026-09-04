@@ -219,6 +219,12 @@ pub struct PickerTarget {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+struct FilePreviewKey {
+    target: PickerTarget,
+    content_match: Option<(usize, Vec<usize>)>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FuzzyMatch {
     pub entry: usize,
     pub score: i64,
@@ -534,7 +540,7 @@ pub struct FilePicker {
     /// literally.
     unified_finder: bool,
     path_files: HashMap<PathBuf, u32>,
-    preview_request: Option<(u64, PickerTarget)>,
+    preview_request: Option<(u64, FilePreviewKey)>,
     next_preview_request_id: u64,
 }
 
@@ -1161,25 +1167,41 @@ impl FilePicker {
         self.final_rank_pending = true;
     }
 
-    pub(crate) fn preview_request(&self) -> Option<&(u64, PickerTarget)> {
-        self.preview_request.as_ref()
+    pub(crate) fn preview_request_id(&self) -> Option<u64> {
+        self.preview_request.as_ref().map(|(request, _)| *request)
     }
 
-    pub(crate) fn set_preview_request(&mut self, request: Option<(u64, PickerTarget)>) {
-        self.preview_request = request;
+    pub(crate) fn clear_preview_request(&mut self) {
+        self.preview_request = None;
     }
 
-    pub(crate) fn begin_preview_request(&mut self, target: PickerTarget) -> Option<u64> {
+    /// Starts a preview unless the exact destination and match spans are
+    /// already in flight.
+    ///
+    /// A content query may keep the same file, row, and first matched column
+    /// while an added term changes the rest of the emphasized positions. The
+    /// spans therefore belong to preview identity just as much as the target;
+    /// comparing only the target can leave an older, partial highlight in
+    /// place after the current ranking arrives.
+    pub(crate) fn begin_preview_request(
+        &mut self,
+        target: PickerTarget,
+        content_match: Option<&(usize, Vec<usize>)>,
+    ) -> Option<u64> {
+        let key = FilePreviewKey {
+            target,
+            content_match: content_match.cloned(),
+        };
         if self
             .preview_request
             .as_ref()
-            .is_some_and(|(_, pending)| pending == &target)
+            .is_some_and(|(_, pending)| pending == &key)
         {
             return None;
         }
         let request = self.next_preview_request_id;
         self.next_preview_request_id = self.next_preview_request_id.wrapping_add(1).max(1);
-        self.preview_request = Some((request, target));
+        self.preview_request = Some((request, key));
         self.preview = None;
         Some(request)
     }
@@ -1972,7 +1994,7 @@ pub(crate) struct DiscardedPickerCorpus {
     preview: Option<FilePreview>,
     scan_query: String,
     error: Option<String>,
-    preview_request: Option<(u64, PickerTarget)>,
+    preview_request: Option<(u64, FilePreviewKey)>,
 }
 
 impl DiscardedPickerCorpus {
@@ -4277,6 +4299,36 @@ mod tests {
         );
         assert!(receiver.try_recv().is_ok());
         assert!(receiver.try_recv().is_err());
+    }
+
+    #[test]
+    fn preview_identity_includes_every_content_match_position() {
+        let root = PathBuf::from("/project");
+        let mut picker = FilePicker::grep(1, root.clone(), ScanScope::ignoring(&root));
+        let target = PickerTarget {
+            path: root.join("imports.py"),
+            row: Some(8),
+            column: 0,
+        };
+        let partial = (8, vec![0, 1, 2, 3, 4, 5, 11, 12, 13]);
+        let complete = (8, vec![0, 1, 2, 3, 4, 5, 11, 12, 13, 14]);
+
+        assert_eq!(
+            picker.begin_preview_request(target.clone(), Some(&partial)),
+            Some(1)
+        );
+        picker.preview = Some(FilePreview::Text(vec!["stale".to_owned()]));
+        assert_eq!(
+            picker.begin_preview_request(target.clone(), Some(&complete)),
+            Some(2),
+            "the unchanged target must not hide corrected match spans"
+        );
+        assert!(picker.preview.is_none());
+        assert_eq!(
+            picker.begin_preview_request(target, Some(&complete)),
+            None,
+            "an identical preview request is still coalesced"
+        );
     }
 
     #[test]
