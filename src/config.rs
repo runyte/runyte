@@ -1164,6 +1164,7 @@ fn syntax_theme(pairs: &[(&str, &str)]) -> HashMap<String, String> {
         ("markup.list", "keyword"),
         ("markup.quote", "comment"),
         ("markup.raw", "string"),
+        ("markup.strikethrough", "comment"),
     ] {
         if let Some(color) = theme.get(source).cloned() {
             theme.insert(markup.to_owned(), color);

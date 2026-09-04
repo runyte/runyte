@@ -3734,6 +3734,7 @@ impl App {
                     "whitespace markers disabled"
                 });
             }
+            Command::ToggleMarkdownRender => self.toggle_markdown_render(),
             Command::ToggleZen => self.toggle_maximized(MaximizedView::Zen),
             Command::ToggleFullscreen => self.toggle_maximized(MaximizedView::Fullscreen),
             Command::OpenExplorer => self.open_active_directory_explorer()?,

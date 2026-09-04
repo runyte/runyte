@@ -625,6 +625,10 @@ editor_commands! {
     ),
     ToggleSoftWrap => ("toggle-soft-wrap", "Toggle soft wrapping"),
     ToggleWhitespace => ("toggle-whitespace", "Toggle whitespace markers"),
+    ToggleMarkdownRender => (
+        "toggle-markdown-render",
+        "Show a Markdown document as formatted text, or return to its source"
+    ),
     ToggleZen => ("toggle-zen", "Toggle the centred, maximized writing view"),
     ToggleFullscreen => (
         "toggle-fullscreen",
@@ -1061,6 +1065,7 @@ impl EditorCommand {
             | Self::ScrollViewUp => CommandCategory::View,
             Self::ToggleSoftWrap
             | Self::ToggleWhitespace
+            | Self::ToggleMarkdownRender
             | Self::ToggleZen
             | Self::ToggleFullscreen => CommandCategory::View,
             Self::OpenExplorer
@@ -1512,6 +1517,13 @@ pub const COMMANDS: &[CommandSpec] = &[
         [],
         "terminal-send [id|name]",
         Optional(FreeText)
+    ),
+    editor_spec!(
+        Editor::ToggleMarkdownRender,
+        "render",
+        ["markdown"],
+        "render",
+        NoArguments
     ),
     editor_spec!(Editor::ToggleZen, "zen", [], "zen", NoArguments),
     editor_spec!(
@@ -2592,6 +2604,7 @@ fn invocation_from_parts(
             }
             (
                 EditorCommand::ShowAbout
+                | EditorCommand::ToggleMarkdownRender
                 | EditorCommand::ToggleZen
                 | EditorCommand::ToggleFullscreen,
                 ParsedArgument::None,

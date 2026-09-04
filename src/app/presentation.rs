@@ -658,6 +658,14 @@ impl App {
             BindingScope::CommitMessage
         } else if self.active_buffer().is_diff() {
             BindingScope::Diff
+        } else if self.active_buffer().markdown_render_source().is_some()
+            || self.is_markdown_document(self.active().buffer)
+        {
+            // Last, and deliberately: every generated view above owns its keys
+            // outright, and a Markdown document only adds one to the ordinary
+            // set. A `.md` file opened as a Git diff or an explorer row is that
+            // view first.
+            BindingScope::Markdown
         } else {
             BindingScope::Global
         }
@@ -761,6 +769,63 @@ impl App {
         );
         self.generated_highlights
             .insert(buffer, document.spans().to_vec());
+    }
+
+    /// Shows the active Markdown document as formatted text, or returns from
+    /// such a page to the document it was rendered from.
+    ///
+    /// The rendered page is a generated read-only buffer rather than a mode the
+    /// document is in. Nothing about the document changes while it is being
+    /// read, both are open at once, and the page keeps every ordinary key:
+    /// search, splits, selections, and yank all work on the text that is
+    /// actually on screen, which is the whole reason the markers are gone from
+    /// it rather than merely hidden.
+    pub(super) fn toggle_markdown_render(&mut self) {
+        let active = self.active().buffer;
+        if let Some(source) = self.buffers[active].markdown_render_source() {
+            if self.closed_buffers.contains(&source) {
+                self.action_failed("the rendered document is no longer open");
+                return;
+            }
+            self.switch_buffer(source);
+            return;
+        }
+        if !self.is_markdown_document(active) {
+            self.action_failed("not a Markdown document");
+            return;
+        }
+        // The page is rendered from the buffer rather than from the file, so it
+        // shows the work in progress rather than the last thing saved.
+        let rendered = crate::markdown::render(&self.buffers[active].to_string());
+        // Named the way every other generated view is: the pane title says
+        // what the page is, and a file's directory is not part of that.
+        let name = self.buffers[active]
+            .path
+            .as_ref()
+            .and_then(|path| path.file_name())
+            .map_or_else(
+                || self.buffers[active].display_name(),
+                |name| name.to_string_lossy().into_owned(),
+            );
+        let name = format!("[rendered {name}]");
+        let buffer = self.open_virtual_page(
+            GeneratedViewIdentity::MarkdownRender {
+                source_buffer: active,
+            },
+            name,
+            rendered.text(),
+            ContentAlignment::default(),
+        );
+        self.generated_highlights
+            .insert(buffer, rendered.spans().to_vec());
+        let message = self.key_text(crate::key_spelling::actionable::MARKDOWN_SOURCE);
+        self.status(message);
+    }
+
+    /// Whether a buffer holds a Markdown document Runyte can render.
+    fn is_markdown_document(&self, buffer: usize) -> bool {
+        super::buffer_language(&self.buffers[buffer], &self.registry)
+            .is_some_and(|language| self.registry.language_name(language) == "markdown")
     }
 
     /// Whether a modal overlay owns the next key before normal/select dispatch.

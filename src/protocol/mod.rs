@@ -158,7 +158,11 @@ use crate::workspace::{
 /// Version 47 adds the host's bounded completed-terminal-line activity scalar
 /// to health. An older host cannot answer the session manager's Status column,
 /// so accepting it would silently present unknown activity as current.
-pub const VERSION: u32 = 47;
+/// Version 48 adds the `markup.strikethrough` highlight scope. Theme colours
+/// travel as a vector indexed by scope, so a peer built before the scope
+/// existed reads every entry after it by one place and would paint namespaces,
+/// numbers, and the rest in the colours of their neighbours.
+pub const VERSION: u32 = 48;
 pub const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const MAX_PATHS: usize = 32;
 pub const MAX_PATH_BYTES: usize = 32 * 1024;
@@ -935,7 +939,7 @@ mod tests {
 
     #[test]
     fn protocol_version_and_request_bounds_are_explicit() {
-        assert_eq!(VERSION, 47);
+        assert_eq!(VERSION, 48);
         let oversized_command = ClientRequest::Invoke {
             command: CommandRequest {
                 name: "open".to_owned(),

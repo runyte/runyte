@@ -236,6 +236,13 @@ pub enum BindingScope {
     CommitMessage,
     /// A read-only unified diff, including the staged-review buffer.
     Diff,
+    /// A Markdown document and the page it renders to.
+    ///
+    /// Unlike every other scope here, this one is not a special buffer: an
+    /// ordinary `.md` file keeps all of its editing keys and gains one more.
+    /// The document and its rendered page share the scope because the key that
+    /// opens the page is the key that leaves it.
+    Markdown,
     /// A terminal's live/review surface. The buffer behind the pane must not
     /// lend it scoped bindings, while terminal-only escapes stay out of
     /// ordinary editor hints.
@@ -259,10 +266,17 @@ impl BindingScope {
         Self::Help,
         Self::CommitMessage,
         Self::Diff,
+        Self::Markdown,
     ];
 
+    /// Whether the scope belongs to a generated view rather than to a document
+    /// someone opened.
+    ///
+    /// `Markdown` is not one: it covers every Markdown file as well as the page
+    /// rendered from it, so counting it would claim an ordinary document as a
+    /// view of the editor's own.
     pub const fn is_special_buffer_scope(self) -> bool {
-        !matches!(self, Self::Global | Self::Terminal)
+        !matches!(self, Self::Global | Self::Terminal | Self::Markdown)
     }
 }
 
@@ -892,6 +906,10 @@ fn directory(sequence: impl Into<KeySequence>, command: EditorCommand) -> Bindin
     let sequence = sequence.into();
     let role = existing_binding_role(&sequence);
     Binding::implemented_in(MODAL, BindingScope::Directory, sequence, command).with_role(role)
+}
+
+fn markdown(sequence: impl Into<KeySequence>, command: EditorCommand) -> Binding {
+    Binding::implemented_in(MODAL, BindingScope::Markdown, sequence, command)
 }
 
 fn git_status(sequence: impl Into<KeySequence>, target: impl Into<BindingTarget>) -> Binding {
@@ -1954,6 +1972,11 @@ fn built_in_bindings() -> Vec<Binding> {
         // discovery on the same mnemonic behind Space in explorer buffers.
         directory(Key::char('.'), Command::ToggleHiddenFiles),
         directory(Key::char('?'), Command::ToggleDirectoryDetails),
+        // The same question in a document: `?` asks a Markdown file to show
+        // itself as it is meant to be read, and asks the page it opened to go
+        // back to the source. Nothing else answers it, so the key stays free
+        // everywhere it would have nothing to say.
+        markdown(Key::char('?'), Command::ToggleMarkdownRender),
         // A directory buffer deliberately leaves the split sequences to the
         // global bindings: splitting an explorer shows the same listing twice,
         // exactly as splitting a file shows the same text twice.

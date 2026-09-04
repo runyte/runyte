@@ -53,3 +53,5 @@
     "["
     "]"
   ] @punctuation.delimiter)
+
+(strikethrough) @markup.strikethrough

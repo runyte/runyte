@@ -36,6 +36,8 @@ For the project overview and quick start, see the [main README](../README.md).
 - Multicursor search over the buffer or a selection, with literal and regular-expression flavours
 - Filterable open-buffer picker and workspace-wide text search
 - Editable directory buffers with explicit filesystem plan confirmation
+- Markdown documents rendered as formatted text on `?`, with terminal bold,
+  italic, underline, and strikethrough
 - Built-in and user-defined themes, browsable and configurable under `:theme`
 - A registry-backed settings browser with previews and atomic YAML updates
 - A centred, editable writing viewport toggled with `:zen`, and a plain
@@ -99,6 +101,38 @@ syntax base and target text revision still match the live document.
 There is no separate line or byte refusal for syntax highlighting. Documents
 past the former 200,000-line and 8 MB limits are parsed; a slow parse delays the
 new tree, not the keystroke that requested it.
+
+### Rendered Markdown
+
+`?` in a Markdown document opens it as a page to read, and `?` again returns to
+the source. `:render` (also `:markdown`) does the same from the command line.
+The page is a generated read-only buffer beside the document rather than a mode
+the document is in, so both stay open and the source keeps every editing key.
+
+The page is written without the markers that were only there to be parsed.
+Emphasis is drawn with terminal attributes: `**strong**` is bold, `*emphasis*`
+is italic, `~~struck~~` is crossed out, and a link destination is underlined.
+Headings lose their hashes and the first level is underlined with a rule.
+Bullets become `•`, `◦`, and `▪` by depth, ordered items keep their numbers,
+task boxes become `☐` and `☑`, block quotes are marked in the margin with `▌`,
+thematic breaks become a rule, tables are re-aligned around `│`, fenced code is
+indented without its fences, and a link reads as its text followed by its
+destination. YAML front matter is kept, without its `---` fences, in the colour
+every theme dims. Anything Runyte does not recognise is passed through as it
+was written.
+
+Nothing is concealed to achieve this. The markers are absent from the page
+because they were never written into it, so no offset in the document moves and
+a row and a column in either buffer mean what they say. Search, selections,
+splits, and yank all work on the page as on any other buffer, and what they
+find is the text actually on screen.
+
+The page is rendered from the buffer rather than from the file, so it shows
+unsaved work; rendering the same document again reuses its one page and
+regenerates it. Bold and underline are drawn by every terminal, italic by most;
+because each of these roles also keeps a theme colour, a terminal that ignores
+an attribute still shows the distinction. The roles are the `markup.*` entries
+in [Configuration](#configuration), so a theme can recolour them.
 
 ### Language servers
 
@@ -1753,6 +1787,7 @@ cancellation keys.
 | `Space / /` | Search the workspace with a regular expression; see [Search](#search) |
 | `Space r` | Reload the active text file or refresh the active explorer or supported Git list |
 | `Enter` in a directory | Open the selected file or directory |
+| `?` in a Markdown document | Render it as formatted text, or return from that page to the source (`:render`) |
 | `?` in a directory | Toggle read-only permissions, owner, group, size, and modification-time columns |
 | `-` or Backspace in a directory | Open the parent directory and select the child just left |
 | `.` in a directory | Show or hide dotfiles in the explorer |
@@ -3229,9 +3264,16 @@ themes:
 
 Markdown uses the semantic syntax scopes `markup.heading`, `markup.bold`,
 `markup.italic`, `markup.link.text`, `markup.link.url`, `markup.list`,
-`markup.quote`, and `markup.raw`. Bundled themes assign all of them colours;
-custom themes may override any subset, and omitted scopes use the theme's
-foreground like every other omitted syntax scope.
+`markup.quote`, `markup.raw`, and `markup.strikethrough`. Bundled themes assign
+all of them colours; custom themes may override any subset, and omitted scopes
+use the theme's foreground like every other omitted syntax scope.
+
+Four of these scopes also carry a terminal attribute, in a rendered page and in
+Markdown source alike: `markup.bold` and `markup.heading` are drawn bold,
+`markup.italic` italic, `markup.link.url` underlined, and
+`markup.strikethrough` crossed out. The attribute belongs to the scope rather
+than to the theme, because bold text is bold in every palette; a theme chooses
+the colour that goes with it.
 
 `whitespace` colours the display-only `·`, `→`, and `↵` markers. When a custom
 theme omits it, Runyte derives a very dim colour one small step away from that

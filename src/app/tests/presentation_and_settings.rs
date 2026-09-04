@@ -2328,3 +2328,119 @@ fn prompt_test_geometry() -> FrameGeometry {
         },
     }
 }
+
+#[test]
+fn question_mark_renders_a_markdown_document_and_returns_to_its_source() {
+    let path = temporary("notes.md");
+    let source = "# Title\n\nA **strong** word and a `call()`.\n";
+    fs::write(&path, source).unwrap();
+    let mut app = App::new(Config::default(), Some(path.clone())).unwrap();
+    let document = app.active().buffer;
+    assert_eq!(app.key_binding_scope(), BindingScope::Markdown);
+
+    press(&mut app, '?');
+
+    let rendered = app.active().buffer;
+    assert_ne!(rendered, document);
+    assert!(app.active_buffer().is_read_only());
+    assert_eq!(text(&app), "Title\n─────\n\nA strong word and a call().\n");
+    assert_eq!(app.key_binding_scope(), BindingScope::Markdown);
+    assert_eq!(
+        app.buffers[rendered].markdown_render_source(),
+        Some(document)
+    );
+
+    // The page is themed through the same scopes as a highlighted document,
+    // so the frontend needs nothing markdown-specific to colour it.
+    let spans = app.highlights(rendered, 0, app.buffers[rendered].len_chars());
+    assert!(
+        spans.iter().any(|span| span.scope.name() == "markup.bold"),
+        "the rendered page names its emphasis"
+    );
+
+    press(&mut app, '?');
+
+    assert_eq!(app.active().buffer, document);
+    assert_eq!(text(&app), source);
+    fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn a_rendered_page_shows_unsaved_work_rather_than_the_file_on_disk() {
+    let path = temporary("draft.md");
+    fs::write(&path, "written\n").unwrap();
+    let mut app = App::new(Config::default(), Some(path.clone())).unwrap();
+    let document = app.active().buffer;
+    app.apply_to_buffer(document, &Transaction::insert(0, "**unsaved** and "));
+
+    press(&mut app, '?');
+
+    assert_eq!(text(&app), "unsaved and written\n");
+    fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn rendering_the_same_document_twice_reuses_one_page() {
+    let path = temporary("reused.md");
+    fs::write(&path, "first\n").unwrap();
+    let mut app = App::new(Config::default(), Some(path.clone())).unwrap();
+    let document = app.active().buffer;
+
+    press(&mut app, '?');
+    let rendered = app.active().buffer;
+    press(&mut app, '?');
+    app.apply_to_buffer(document, &Transaction::insert(0, "second and "));
+    press(&mut app, '?');
+
+    assert_eq!(app.active().buffer, rendered, "one page per document");
+    assert_eq!(text(&app), "second and first\n");
+    assert_eq!(
+        app.buffers
+            .iter()
+            .enumerate()
+            .filter(|(index, buffer)| !app.closed_buffers.contains(index)
+                && buffer.markdown_render_source().is_some())
+            .count(),
+        1
+    );
+    fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn question_mark_is_free_outside_a_markdown_document() {
+    let path = temporary("notes.txt");
+    fs::write(&path, "plain\n").unwrap();
+    let mut app = App::new(Config::default(), Some(path.clone())).unwrap();
+    let document = app.active().buffer;
+    assert_eq!(app.key_binding_scope(), BindingScope::Global);
+
+    press(&mut app, '?');
+
+    assert_eq!(app.active().buffer, document);
+    assert!(
+        app.buffers
+            .iter()
+            .all(|buffer| buffer.markdown_render_source().is_none())
+    );
+    fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn a_rendered_page_refuses_to_return_to_a_document_that_was_closed() {
+    let path = temporary("closed.md");
+    fs::write(&path, "body\n").unwrap();
+    let mut app = App::new(Config::default(), Some(path.clone())).unwrap();
+    let document = app.active().buffer;
+
+    press(&mut app, '?');
+    app.closed_buffers.insert(document);
+    press(&mut app, '?');
+
+    assert!(app.active_buffer().is_read_only());
+    assert!(
+        app.status.contains("no longer open"),
+        "status was {:?}",
+        app.status
+    );
+    fs::remove_file(path).unwrap();
+}

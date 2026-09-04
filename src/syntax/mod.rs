@@ -782,6 +782,7 @@ pub const SCOPES: &[&str] = &[
     "markup.list",
     "markup.quote",
     "markup.raw",
+    "markup.strikethrough",
     "namespace",
     "number",
     "operator",

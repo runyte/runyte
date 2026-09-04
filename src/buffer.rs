@@ -173,6 +173,15 @@ pub enum GeneratedViewIdentity {
         source_buffer: usize,
         revision: String,
     },
+    /// One Markdown document rendered for reading.
+    ///
+    /// Named by the buffer it was rendered from rather than by a path, so a
+    /// document that has never been saved has a page of its own too, and
+    /// rendering the same buffer twice reuses the one page instead of leaving
+    /// a second copy behind every time it is consulted.
+    MarkdownRender {
+        source_buffer: usize,
+    },
 }
 
 /// Why an ordinary file buffer no longer agrees with its accepted baseline.
@@ -2395,6 +2404,14 @@ impl Buffer {
 
     pub fn is_settings(&self) -> bool {
         matches!(self.kind, BufferKind::Settings { .. })
+    }
+
+    /// The buffer a rendered Markdown page was produced from.
+    pub fn markdown_render_source(&self) -> Option<usize> {
+        match self.generated_view_identity()? {
+            GeneratedViewIdentity::MarkdownRender { source_buffer } => Some(*source_buffer),
+            _ => None,
+        }
     }
 
     /// Bytes in the longest line this buffer's text had when it was built.

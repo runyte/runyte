@@ -81,13 +81,25 @@ them, regardless of which extensibility direction is chosen.
   pathless scratch text is not. The complete scoped set is `Directory`,
   `Settings`, `GitStatus`, `GitBranches`, `GitWorktrees`, `GitLog`, `GitBlame`,
   `GitStash`, `WorkspaceSearch`, `Help`, `CommitMessage`, and `Diff` in
-  `BindingScope`. The notification buffer, the diagnostic-log buffer, and the
+  `BindingScope`. `BindingScope::Markdown` is deliberately not in that set: it
+  covers every Markdown document as well as the page rendered from one, so an
+  ordinary file would otherwise be counted as a view of the editor's own. The notification buffer, the diagnostic-log buffer, and the
   about page are special too, but use the global scope because they have no
   actions of their own yet. Generated help and about pages may carry semantic
   colour spans for headings, commands, keys, paths, links, and technical
   literals. Those spans are presentation metadata over ordinary buffer
   character offsets: they add no markup characters, actions, or alternate
   coordinates.
+- **Rendered page** — a generated read-only buffer holding a document as it is
+  meant to be read rather than as it is written. `?` renders the active
+  Markdown document into one and returns from it to the source; both stay open,
+  and the page is regenerated from the buffer, so it shows unsaved work. Its
+  markers are absent because they were never written into it: nothing is
+  concealed, and a row and a column in the page mean what they say. Like every
+  generated page it carries semantic colour spans over ordinary buffer offsets,
+  and the frontend draws terminal attributes — bold, italic, underline, and
+  strikethrough — from the `markup.*` scopes in those spans rather than from
+  anything Markdown-specific.
 - **Pane-backed filterable list** — a bounded-lifetime special buffer whose
   stable rows are actions or destinations. Filtering is an operation on the
   view; the list otherwise speaks normal Runyte and does not permanently own

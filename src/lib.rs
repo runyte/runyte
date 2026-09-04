@@ -39,6 +39,7 @@ pub mod layout;
 pub mod log;
 pub mod lsp;
 pub mod manual;
+pub mod markdown;
 pub mod notification;
 pub mod path_safety;
 pub mod picker;

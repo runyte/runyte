@@ -26,6 +26,7 @@ pub(crate) mod actionable {
     pub const FILE_RELOAD_NOTE: &str = "{binding:Space b d} compares without discarding changes.";
     pub const STALE_SAVE: &str = "file changed on disk; {binding:Space b d} compares, {binding:Space r} reloads, and :write! replaces it";
     pub const STARTUP_HELP: &str = ":? or {binding:Space ?} for help";
+    pub const MARKDOWN_SOURCE: &str = "rendered Markdown; {binding:?} returns to the source";
 
     #[cfg(test)]
     pub const ALL: &[&str] = &[
@@ -37,6 +38,7 @@ pub(crate) mod actionable {
         FILE_RELOAD_NOTE,
         STALE_SAVE,
         STARTUP_HELP,
+        MARKDOWN_SOURCE,
     ];
 }
 

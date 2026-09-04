@@ -1978,6 +1978,18 @@ fn text_run_style(
             .bg(theme.cursor_insert),
         TextRole::Caret => Style::default().fg(theme.background).bg(theme.cursor(mode)),
     };
+    // Emphasis belongs to the scope rather than to the theme: bold text is
+    // bold in every palette, and a theme that gives `markup.bold` no colour of
+    // its own still has to be able to say which words were emphasised. It is
+    // read only where the scope is what chose the colour; a diff line, a
+    // change count, a directory row, and a whitespace marker are all painted
+    // by what the row is, and none of them is prose.
+    let emphasis = if whitespace || directory || count.is_some() || diff.is_some() {
+        Modifier::empty()
+    } else {
+        scope.map_or_else(Modifier::empty, scope_emphasis)
+    };
+    let base = base.add_modifier(emphasis);
     match diagnostic {
         Some(_)
             if !matches!(
@@ -1988,6 +2000,23 @@ fn text_run_style(
             base.add_modifier(Modifier::UNDERLINED)
         }
         _ => base,
+    }
+}
+
+/// The terminal attributes a highlight scope is drawn with, beside its colour.
+///
+/// Only the markup scopes carry any: they name what a passage *is* in prose —
+/// emphasised, a heading, a destination, struck out — and a colour alone
+/// cannot say that. Bold and underline are drawn by every terminal; italic is
+/// not, which is why each of these scopes keeps a colour as well, and why a
+/// terminal that ignores the attribute still shows the distinction.
+fn scope_emphasis(scope: crate::syntax::Scope) -> Modifier {
+    match scope.name() {
+        "markup.bold" | "markup.heading" => Modifier::BOLD,
+        "markup.italic" => Modifier::ITALIC,
+        "markup.link.url" => Modifier::UNDERLINED,
+        "markup.strikethrough" => Modifier::CROSSED_OUT,
+        _ => Modifier::empty(),
     }
 }
 
@@ -6353,6 +6382,48 @@ mod tests {
             theme.foreground,
             "an unemphasized character does not"
         );
+    }
+
+    /// Emphasis reaches the terminal as an attribute rather than only as a
+    /// colour. A rendered Markdown page is where the distinction is load
+    /// bearing: its bold and italic runs may share the document's foreground,
+    /// and a theme is entitled to give them no colour of their own.
+    #[test]
+    fn rendered_markdown_emphasis_is_drawn_with_terminal_attributes() {
+        let directory = std::env::temp_dir().join(format!(
+            "runyte-ui-markdown-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("notes.md");
+        std::fs::write(&path, "# Heading\n\nA **strong** and *soft* claim.\n").unwrap();
+        let mut app = App::new(Config::default(), Some(path)).unwrap();
+        app.handle_key(crate::input::KeyStroke::char('?')).unwrap();
+
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        terminal
+            .draw(|frame| render_test_frame(frame, &mut app, &KeyHintState::default()))
+            .unwrap();
+        let buffer = terminal.backend().buffer().clone();
+
+        for (needle, modifier) in [
+            ("Heading", Modifier::BOLD),
+            ("strong", Modifier::BOLD),
+            ("soft", Modifier::ITALIC),
+        ] {
+            let (column, row) = find_text(&buffer, needle).unwrap_or_else(|| {
+                panic!("{needle:?} is on the rendered page");
+            });
+            assert!(
+                buffer[(column, row)].modifier.contains(modifier),
+                "{needle:?} is drawn without {modifier:?}"
+            );
+        }
+        let (plain, row) = find_text(&buffer, "claim").expect("the unemphasized words");
+        assert!(buffer[(plain, row)].modifier.is_empty());
+
+        std::fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]
