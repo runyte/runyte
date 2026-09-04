@@ -897,14 +897,15 @@ the explorer.
 
 ### Files changed outside Runyte
 
-Runyte monitors the parent directories of open ordinary files in standalone
-and persistent modes, including while a persistent TUI is detached. When a
-path no longer agrees with the disk state accepted at open, save, or reload,
-every pane showing it and the global status line show `[STALE]`; the buffer
-manager marks hidden stale buffers too. This is separate from `[+]`, so a
-conflict reads `[+] [STALE]`. Detection preserves text, selections, undo, and
-language-server state, and the first observation of each disk revision creates
-one retained WARNING notification.
+Runyte monitors the parent directories of open ordinary files, and the
+directory of every open explorer, in standalone and persistent modes,
+including while a persistent TUI is detached. When a path no longer agrees
+with the state accepted at open, save, reload, or refresh, every pane showing
+it and the global status line show `[STALE]`; the buffer manager marks hidden
+stale buffers too. This is separate from `[+]`, so a conflict reads
+`[+] [STALE]`. Detection preserves text, selections, undo, and language-server
+state, and the first observation of each disk revision creates one retained
+WARNING notification.
 
 `Space b d` or `:diff-disk` reads the path again and opens that immutable disk
 revision as `[disk] path [RO]` on the left of the editable Runyte buffer. The
@@ -950,6 +951,16 @@ the plan will move, copy, or delete changed. Activity inside an unaffected
 child directory does not stale the explorer. If an operation fails midway, an
 ERROR notification names the failed operation and every operation already
 applied.
+
+An explorer is monitored the same way an ordinary file is. When another
+process adds, removes, or renames an entry directly below the directory it
+shows, every pane showing that explorer gains `[STALE]`. The listing itself is
+left alone: rows, selections, unsaved renames, and undo history all survive,
+because replacing them would discard edits that have not reached a write plan.
+`Space r` or `:reload` re-reads the directory and clears the marker; so does
+navigating the explorer elsewhere or writing a plan, both of which accept a
+fresh listing. Entries the dotfile filter leaves out of the listing are not
+compared, so hiding dotfiles also hides their comings and goings.
 
 Press `?` in an explorer to toggle file details before every existing entry:
 permissions, owner, group, human-readable size, and modification time. These
@@ -1011,8 +1022,9 @@ mode already uses green), orange for Select, and purple for Command;
 Insert, purple for Replace, pink for Select, and blue for Command. The rest of
 the row keeps the theme's ordinary background. Its left side
 then names the workspace mode and current workspace directory, marking the
-active buffer `[+]` when it has unsaved changes, `[STALE]` when its file path
-disagrees with the accepted disk baseline, and `[RO]` when it is read-only.
+active buffer `[+]` when it has unsaved changes, `[STALE]` when the path it
+projects disagrees with the accepted baseline, and `[RO]` when it is
+read-only.
 Pane titles carry file and buffer identity. The right carries the cursor and how
 far through the file it sits:
 

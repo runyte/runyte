@@ -155,6 +155,180 @@ fn stale_state_is_shared_by_panes_and_transported_snapshots() {
     fs::remove_dir_all(directory).unwrap();
 }
 
+/// Applies one freshly read observation of whatever the buffer projects.
+fn observe(app: &mut App, buffer: usize) {
+    let event = app.buffers[buffer].observe_now(buffer).unwrap();
+    app.apply_file_observation(event);
+}
+
+fn explorer_status(app: &App, buffer: usize) -> crate::buffer::ExternalFileStatus {
+    app.buffers[buffer].external_file_status()
+}
+
+#[test]
+fn external_children_make_an_explorer_listing_stale_until_it_is_refreshed() {
+    let directory = temporary("explorer-stale-listing");
+    fs::create_dir_all(&directory).unwrap();
+    fs::write(directory.join("a.txt"), "a\n").unwrap();
+    let mut app = App::new(Config::default(), None).unwrap();
+    app.open_explorer(Some(directory.clone())).unwrap();
+    let buffer = app.active().buffer;
+    let listed = app.buffers[buffer].to_string();
+
+    observe(&mut app, buffer);
+    assert_eq!(
+        explorer_status(&app, buffer),
+        crate::buffer::ExternalFileStatus::Synchronized
+    );
+
+    fs::write(directory.join("b.txt"), "b\n").unwrap();
+    observe(&mut app, buffer);
+    assert_eq!(
+        explorer_status(&app, buffer),
+        crate::buffer::ExternalFileStatus::Changed
+    );
+    // Detection reports; it does not re-read the rows the person is looking at.
+    assert_eq!(app.buffers[buffer].to_string(), listed);
+
+    app.refresh_directory().unwrap();
+    assert_eq!(
+        explorer_status(&app, buffer),
+        crate::buffer::ExternalFileStatus::Synchronized
+    );
+    observe(&mut app, buffer);
+    assert_eq!(
+        explorer_status(&app, buffer),
+        crate::buffer::ExternalFileStatus::Synchronized
+    );
+
+    fs::remove_file(directory.join("b.txt")).unwrap();
+    observe(&mut app, buffer);
+    assert_eq!(
+        explorer_status(&app, buffer),
+        crate::buffer::ExternalFileStatus::Changed
+    );
+
+    app.refresh_directory().unwrap();
+    fs::rename(directory.join("a.txt"), directory.join("c.txt")).unwrap();
+    observe(&mut app, buffer);
+    assert_eq!(
+        explorer_status(&app, buffer),
+        crate::buffer::ExternalFileStatus::Changed
+    );
+
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn a_hidden_entry_outside_the_listing_does_not_make_it_stale() {
+    let directory = temporary("explorer-stale-hidden");
+    fs::create_dir_all(&directory).unwrap();
+    fs::write(directory.join("a.txt"), "a\n").unwrap();
+    let mut config = Config::default();
+    config.editor.show_hidden_files = false;
+    let mut app = App::new(config, None).unwrap();
+    app.open_explorer(Some(directory.clone())).unwrap();
+    let buffer = app.active().buffer;
+
+    fs::write(directory.join(".hidden"), "x\n").unwrap();
+    observe(&mut app, buffer);
+
+    assert_eq!(
+        explorer_status(&app, buffer),
+        crate::buffer::ExternalFileStatus::Synchronized
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn a_stale_explorer_marks_every_pane_and_keeps_its_unsaved_edits() {
+    let directory = temporary("explorer-stale-panes");
+    fs::create_dir_all(&directory).unwrap();
+    fs::write(directory.join("a.txt"), "a\n").unwrap();
+    let mut app = App::new(Config::default(), None).unwrap();
+    app.open_explorer(Some(directory.clone())).unwrap();
+    let buffer = app.active().buffer;
+    app.split(Axis::Horizontal, None).unwrap();
+    assert!(
+        app.panes.values().all(|pane| pane.buffer == buffer),
+        "both panes must show the explorer"
+    );
+    app.apply_to_buffer(buffer, &Transaction::insert(0, "renamed-"));
+    let edited = app.buffers[buffer].to_string();
+
+    fs::write(directory.join("b.txt"), "b\n").unwrap();
+    observe(&mut app, buffer);
+
+    let view = app.prepare_view(FrameGeometry {
+        screen: Rect {
+            width: 80,
+            height: 22,
+            ..Rect::default()
+        },
+        editor: Rect {
+            width: 80,
+            height: 20,
+            ..Rect::default()
+        },
+        status: Rect::default(),
+        message: Rect::default(),
+    });
+    let snapshot = app.snapshot(&view);
+    assert!(snapshot.panes.len() >= 2);
+    assert!(snapshot.panes.iter().all(|pane| {
+        pane.title.external_file_status == crate::buffer::ExternalFileStatus::Changed
+    }));
+    assert_eq!(app.buffers[buffer].to_string(), edited);
+    assert!(app.buffers[buffer].dirty);
+
+    // The edit is still undoable: nothing replaced the projection.
+    app.undo();
+    assert_ne!(app.buffers[buffer].to_string(), edited);
+
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn an_observation_of_the_listing_being_replaced_cannot_re_mark_a_refreshed_explorer() {
+    let directory = temporary("explorer-stale-generation");
+    fs::create_dir_all(&directory).unwrap();
+    fs::write(directory.join("a.txt"), "a\n").unwrap();
+    let mut app = App::new(Config::default(), None).unwrap();
+    app.open_explorer(Some(directory.clone())).unwrap();
+    let buffer = app.active().buffer;
+
+    fs::write(directory.join("b.txt"), "b\n").unwrap();
+    let in_flight = app.buffers[buffer].observe_now(buffer).unwrap();
+    app.refresh_directory().unwrap();
+    app.apply_file_observation(in_flight);
+
+    assert_eq!(
+        explorer_status(&app, buffer),
+        crate::buffer::ExternalFileStatus::Synchronized
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn a_removed_directory_is_reported_without_discarding_the_explorer() {
+    let directory = temporary("explorer-stale-removed");
+    fs::create_dir_all(&directory).unwrap();
+    fs::write(directory.join("a.txt"), "a\n").unwrap();
+    let mut app = App::new(Config::default(), None).unwrap();
+    app.open_explorer(Some(directory.clone())).unwrap();
+    let buffer = app.active().buffer;
+    let listed = app.buffers[buffer].to_string();
+
+    fs::remove_dir_all(&directory).unwrap();
+    observe(&mut app, buffer);
+
+    assert_eq!(
+        explorer_status(&app, buffer),
+        crate::buffer::ExternalFileStatus::Deleted
+    );
+    assert_eq!(app.buffers[buffer].to_string(), listed);
+}
+
 #[cfg(unix)]
 #[test]
 fn opening_a_symlink_alias_reuses_the_live_file_buffer() {

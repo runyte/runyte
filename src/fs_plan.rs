@@ -117,16 +117,7 @@ impl EntryFingerprint {
     fn capture(path: &Path, purpose: &str) -> Result<Self> {
         let metadata = fs::symlink_metadata(path)
             .with_context(|| format!("failed to inspect {purpose} {}", path.display()))?;
-        let file_type = metadata.file_type();
-        let kind = if file_type.is_symlink() {
-            EntryKind::Symlink
-        } else if file_type.is_dir() {
-            EntryKind::Directory
-        } else if file_type.is_file() {
-            EntryKind::File
-        } else {
-            EntryKind::Other
-        };
+        let kind = entry_kind(metadata.file_type());
         let modified_nanos = metadata
             .modified()
             .ok()
@@ -251,6 +242,95 @@ impl SnapshotEntry {
     }
 }
 
+/// The rows a directory listing projects: one name and kind per listed entry,
+/// in listing order.
+///
+/// Deliberately smaller than a [`DirectorySnapshot`], because it answers one
+/// question: does the directory still list what an explorer accepted. A child
+/// directory's own length and modification time describe that child's
+/// contents rather than this listing, and fingerprinting every entry to
+/// compare them would make a periodic check cost a `stat` per row.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DirectoryListing {
+    rows: Vec<(PathBuf, EntryKind)>,
+    show_hidden: bool,
+}
+
+impl DirectoryListing {
+    /// Reads the rows a listing covers, under the same dotfile choice and the
+    /// same name restrictions [`DirectorySnapshot::read_with`] applies.
+    ///
+    /// Kinds come from the directory read itself wherever the platform
+    /// reports them, so this costs one directory read rather than one read
+    /// plus a `stat` per entry.
+    pub fn read(root: &Path, show_hidden: bool) -> Result<Self> {
+        Ok(Self {
+            rows: read_listed_rows(root, show_hidden)?,
+            show_hidden,
+        })
+    }
+}
+
+/// Reads one directory's listed names and kinds, sorted by name.
+///
+/// The one place that decides which entries a listing covers and which names
+/// the editable explorer can represent, so a staleness check and a plan
+/// baseline never disagree about what the directory contains.
+fn read_listed_rows(root: &Path, show_hidden: bool) -> Result<Vec<(PathBuf, EntryKind)>> {
+    ensure!(root.is_dir(), "{} is not a directory", root.display());
+    let mut rows = fs::read_dir(root)
+        .with_context(|| format!("failed to read directory {}", root.display()))?
+        .filter_map(|entry| {
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(error) => {
+                    return Some(
+                        Err(error)
+                            .with_context(|| format!("failed to read entry in {}", root.display())),
+                    );
+                }
+            };
+            let name = entry.file_name();
+            let Some(text) = name.to_str() else {
+                return Some(Err(anyhow::anyhow!(
+                    "{} contains a non-UTF-8 entry",
+                    root.display()
+                )));
+            };
+            (show_hidden || !text.starts_with('.')).then(|| {
+                ensure!(
+                    !text.chars().any(char::is_control),
+                    "{} contains a filename with control characters that the editable directory explorer cannot represent",
+                    root.display()
+                );
+                ensure!(
+                    !text.chars().last().is_some_and(char::is_whitespace),
+                    "{} contains a filename ending in whitespace that the editable directory explorer cannot represent",
+                    root.display()
+                );
+                let kind = entry_kind(entry.file_type().with_context(|| {
+                    format!("failed to inspect directory entry {}", entry.path().display())
+                })?);
+                Ok((PathBuf::from(&name), kind))
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    rows.sort_by(|left, right| left.0.cmp(&right.0));
+    Ok(rows)
+}
+
+fn entry_kind(file_type: fs::FileType) -> EntryKind {
+    if file_type.is_symlink() {
+        EntryKind::Symlink
+    } else if file_type.is_dir() {
+        EntryKind::Directory
+    } else if file_type.is_file() {
+        EntryKind::File
+    } else {
+        EntryKind::Other
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DirectorySnapshot {
     entries: Vec<SnapshotEntry>,
@@ -271,45 +351,10 @@ impl DirectorySnapshot {
     /// it showed: an unlisted dotfile is neither deleted for being absent nor
     /// reported as a change when it appears.
     pub fn read_with(root: &Path, show_hidden: bool) -> Result<Self> {
-        ensure!(root.is_dir(), "{} is not a directory", root.display());
-        let mut paths = fs::read_dir(root)
-            .with_context(|| format!("failed to read directory {}", root.display()))?
-            .filter_map(|entry| {
-                let entry = match entry {
-                    Ok(entry) => entry,
-                    Err(error) => {
-                        return Some(Err(error).with_context(|| {
-                            format!("failed to read entry in {}", root.display())
-                        }));
-                    }
-                };
-                let name = entry.file_name();
-                let Some(text) = name.to_str() else {
-                    return Some(Err(anyhow::anyhow!(
-                        "{} contains a non-UTF-8 entry",
-                        root.display()
-                    )));
-                };
-                (show_hidden || !text.starts_with('.')).then(|| {
-                    ensure!(
-                        !text.chars().any(char::is_control),
-                        "{} contains a filename with control characters that the editable directory explorer cannot represent",
-                        root.display()
-                    );
-                    ensure!(
-                        !text.chars().last().is_some_and(char::is_whitespace),
-                        "{} contains a filename ending in whitespace that the editable directory explorer cannot represent",
-                        root.display()
-                    );
-                    Ok(PathBuf::from(&name))
-                })
-            })
-            .collect::<Result<Vec<_>>>()?;
-        paths.sort();
-        let entries = paths
+        let entries = read_listed_rows(root, show_hidden)?
             .into_iter()
             .enumerate()
-            .map(|(index, path)| {
+            .map(|(index, (path, _))| {
                 SnapshotEntry::from_path(EntryId::new(index as u64 + 1), root, path)
             })
             .collect::<Result<Vec<_>>>()?;
@@ -317,6 +362,18 @@ impl DirectorySnapshot {
             entries,
             show_hidden,
         })
+    }
+
+    /// What this snapshot lists, without the per-entry fingerprints.
+    pub fn listing(&self) -> DirectoryListing {
+        DirectoryListing {
+            rows: self
+                .entries
+                .iter()
+                .map(|entry| (entry.path.clone(), entry.kind))
+                .collect(),
+            show_hidden: self.show_hidden,
+        }
     }
 
     /// Whether this snapshot covers dotfiles.

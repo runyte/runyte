@@ -21,7 +21,7 @@ use anyhow::{Context, Result, bail, ensure};
 use crate::{
     content_alignment::{ContentAlignment, ContentLayout},
     directory_buffer::{DirectoryBuffer, DirectoryTransfer},
-    fs_plan::{FsPlan, TransferMode},
+    fs_plan::{DirectoryListing, FsPlan, TransferMode},
     notification::{NOTIFICATIONS_BUFFER_NAME, NotificationDocument, NotificationRow},
     row_hints::{RowHints, display_cells},
     settings::{SETTINGS_BUFFER_NAME, SettingId},
@@ -280,10 +280,45 @@ pub(crate) struct DiskState {
 /// the same open file handle, so a confirmation never combines two revisions.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum FileObservation {
-    Text { text: Arc<str>, state: DiskState },
+    Text {
+        text: Arc<str>,
+        state: DiskState,
+    },
+    /// What a directory lists, for the explorer projecting it.
+    Directory {
+        listing: DirectoryListing,
+    },
     Deleted,
-    Binary { digest: String },
-    Unreadable { message: String },
+    Binary {
+        digest: String,
+    },
+    Unreadable {
+        message: String,
+    },
+}
+
+/// What a monitored path is being observed as.
+///
+/// A path is watched because a buffer projects it, and the two projections
+/// ask different questions of the same filesystem: a file buffer asks what
+/// the bytes are, an explorer asks what the directory lists.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ObservationTarget {
+    File,
+    /// A directory listing, covering dotfiles only when `show_hidden`.
+    ///
+    /// The preference travels with the request because a listing is a
+    /// projection of it: comparing against a listing read under the other
+    /// choice would report every dotfile as an external change.
+    Directory {
+        show_hidden: bool,
+    },
+}
+
+impl ObservationTarget {
+    pub(crate) const fn is_directory(self) -> bool {
+        matches!(self, Self::Directory { .. })
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -291,6 +326,7 @@ pub struct FileObservationRequest {
     pub(crate) buffer: usize,
     pub(crate) path: PathBuf,
     pub(crate) generation: u64,
+    pub(crate) target: ObservationTarget,
     pub(crate) baseline_metadata: Option<FileMetadataHint>,
 }
 
@@ -584,6 +620,34 @@ pub(crate) fn observe_file(path: &Path) -> FileObservation {
         .expect("complete binary classification rejects invalid UTF-8")
         .into();
     FileObservation::Text { text, state }
+}
+
+/// Observes a directory as the listing an explorer projects.
+///
+/// A directory that has become an ordinary file is reported as unreadable
+/// rather than deleted: the path still resolves, and the explorer showing it
+/// has nothing to project.
+pub(crate) fn observe_directory(path: &Path, show_hidden: bool) -> FileObservation {
+    match fs::metadata(path) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return FileObservation::Deleted,
+        Err(error) => {
+            return FileObservation::Unreadable {
+                message: error.to_string(),
+            };
+        }
+        Ok(metadata) if !metadata.is_dir() => {
+            return FileObservation::Unreadable {
+                message: format!("{} is no longer a directory", path.display()),
+            };
+        }
+        Ok(_) => {}
+    }
+    match DirectoryListing::read(path, show_hidden) {
+        Ok(listing) => FileObservation::Directory { listing },
+        Err(error) => FileObservation::Unreadable {
+            message: error.to_string(),
+        },
+    }
 }
 
 pub(crate) fn inspect_file_metadata(path: &Path) -> Option<FileMetadataHint> {
@@ -1647,19 +1711,48 @@ impl Buffer {
         self.external_status
     }
 
+    /// What the host should watch on this buffer's behalf, if anything.
+    ///
+    /// An explorer is registered as well as an ordinary file: the listing it
+    /// projects can stop agreeing with the directory just as a file's text
+    /// can stop agreeing with its bytes, and both answers belong to the same
+    /// monitor rather than to a redraw.
     pub(crate) fn file_observation_request(&self, buffer: usize) -> Option<FileObservationRequest> {
-        (self.kind == BufferKind::File).then(|| FileObservationRequest {
+        let target = match self.kind {
+            BufferKind::File => ObservationTarget::File,
+            BufferKind::Directory => ObservationTarget::Directory {
+                show_hidden: self.directory.as_ref()?.baseline().show_hidden(),
+            },
+            _ => return None,
+        };
+        Some(FileObservationRequest {
             buffer,
-            path: self.path.clone().expect("a file buffer has a path"),
+            path: self
+                .path
+                .clone()
+                .expect("a file or directory buffer has a path"),
             generation: self.disk_generation,
+            target,
             baseline_metadata: self.disk_state.as_ref().map(DiskState::metadata_hint),
         })
     }
 
+    /// Observes this buffer's path on the caller's thread, as whatever the
+    /// buffer projects it as.
+    ///
+    /// Callers that go on to read, reload, or compare text check the buffer
+    /// kind themselves rather than reading it out of this returning `None`:
+    /// an explorer has a path and an observation, just not a text revision.
     pub(crate) fn observe_now(&self, buffer: usize) -> Option<FileObservationEvent> {
         let request = self.file_observation_request(buffer)?;
+        let observation = match request.target {
+            ObservationTarget::File => observe_file(&request.path),
+            ObservationTarget::Directory { show_hidden } => {
+                observe_directory(&request.path, show_hidden)
+            }
+        };
         Some(FileObservationEvent {
-            observation: observe_file(&request.path),
+            observation,
             buffer: request.buffer,
             path: request.path,
             generation: request.generation,
@@ -1670,13 +1763,54 @@ impl Buffer {
         &mut self,
         event: &FileObservationEvent,
     ) -> ObservationApply {
-        if self.kind != BufferKind::File
-            || self.path.as_deref() != Some(event.path.as_path())
+        if self.path.as_deref() != Some(event.path.as_path())
             || self.disk_generation != event.generation
         {
             return ObservationApply::Ignored;
         }
+        match self.kind {
+            BufferKind::File => self.apply_observed_file(event),
+            BufferKind::Directory => self.apply_observed_directory(event),
+            _ => ObservationApply::Ignored,
+        }
+    }
 
+    /// Records what a directory now lists against the listing this explorer
+    /// accepted.
+    ///
+    /// Nothing here touches the text: an explorer is editable, and replacing
+    /// its rows would discard a rename the person has typed but not yet
+    /// written. The marker says the listing is behind; an explicit refresh is
+    /// what accepts a new one.
+    fn apply_observed_directory(&mut self, event: &FileObservationEvent) -> ObservationApply {
+        let Some(directory) = self.directory.as_ref() else {
+            return ObservationApply::Ignored;
+        };
+        let status = match &event.observation {
+            FileObservation::Directory { listing } => {
+                if &directory.baseline().listing() == listing {
+                    self.clear_external_file_state();
+                    return ObservationApply::Synchronized;
+                }
+                ExternalFileStatus::Changed
+            }
+            FileObservation::Deleted => ExternalFileStatus::Deleted,
+            // A directory target produces neither, but an observation that
+            // outlived its request must not be read as agreement.
+            FileObservation::Text { .. }
+            | FileObservation::Binary { .. }
+            | FileObservation::Unreadable { .. } => ExternalFileStatus::Unreadable,
+        };
+        self.external_status = status;
+        let notify = self.last_reported_observation.as_ref() != Some(&event.observation);
+        self.external_observation = Some(event.observation.clone());
+        if notify {
+            self.last_reported_observation = Some(event.observation.clone());
+        }
+        ObservationApply::Stale { notify }
+    }
+
+    fn apply_observed_file(&mut self, event: &FileObservationEvent) -> ObservationApply {
         if let FileObservation::Text { text, state } = &event.observation {
             if self.disk_state.as_ref() == Some(state) {
                 self.clear_external_file_state();
@@ -1698,7 +1832,9 @@ impl Buffer {
             FileObservation::Text { .. } => ExternalFileStatus::Changed,
             FileObservation::Deleted => ExternalFileStatus::Deleted,
             FileObservation::Binary { .. } => ExternalFileStatus::Binary,
-            FileObservation::Unreadable { .. } => ExternalFileStatus::Unreadable,
+            FileObservation::Directory { .. } | FileObservation::Unreadable { .. } => {
+                ExternalFileStatus::Unreadable
+            }
         };
         let notify = self.last_reported_observation.as_ref() != Some(&event.observation);
         self.external_observation = Some(event.observation.clone());
@@ -1727,6 +1863,7 @@ impl Buffer {
             FileObservation::Text { state, .. } => state.revision_key(),
             FileObservation::Deleted => "deleted".to_owned(),
             FileObservation::Binary { digest } => format!("binary:{digest}"),
+            FileObservation::Directory { .. } => "directory".to_owned(),
             FileObservation::Unreadable { message } => format!("unreadable:{message}"),
         }
     }
@@ -1735,6 +1872,17 @@ impl Buffer {
         self.external_status = ExternalFileStatus::Synchronized;
         self.external_observation = None;
         self.last_reported_observation = None;
+    }
+
+    /// Records that this explorer's listing is the one the directory has.
+    ///
+    /// The advanced generation retires observations already in flight against
+    /// the listing being replaced, so a refresh is not immediately re-marked
+    /// stale by the read that reported it.
+    fn accept_current_as_listing_baseline(&mut self) {
+        self.mark_saved();
+        self.disk_generation = self.disk_generation.wrapping_add(1);
+        self.clear_external_file_state();
     }
 
     fn accept_current_as_disk_baseline(&mut self) {
@@ -3013,7 +3161,7 @@ impl Buffer {
         self.undo.clear();
         self.redo.clear();
         self.undo_group = None;
-        self.mark_saved();
+        self.accept_current_as_listing_baseline();
         Ok(())
     }
 
@@ -3031,7 +3179,7 @@ impl Buffer {
         self.undo.clear();
         self.redo.clear();
         self.undo_group = None;
-        self.mark_saved();
+        self.accept_current_as_listing_baseline();
         Ok(())
     }
 
@@ -3040,10 +3188,20 @@ impl Buffer {
         removed: &std::collections::HashSet<PathBuf>,
     ) -> Result<bool> {
         let text = self.text.to_string();
-        self.directory
+        let rebased = self
+            .directory
             .as_mut()
             .context("buffer is not a directory")?
-            .rebase_after_external_removals(&text, removed)
+            .rebase_after_external_removals(&text, removed)?;
+        if rebased {
+            // The listing now names what the directory holds, so the marker
+            // has nothing left to report. The edits that were never in the
+            // completed move keep the buffer dirty, which is a separate
+            // question from whether the baseline is current.
+            self.disk_generation = self.disk_generation.wrapping_add(1);
+            self.clear_external_file_state();
+        }
+        Ok(rebased)
     }
 
     pub fn retarget_path(&mut self, path: PathBuf) {
@@ -3084,7 +3242,7 @@ impl Buffer {
         self.undo.clear();
         self.redo.clear();
         self.undo_group = None;
-        self.mark_saved();
+        self.accept_current_as_listing_baseline();
         Ok(())
     }
 

@@ -2846,6 +2846,7 @@ impl App {
             .strip_prefix(&self.project_root)
             .unwrap_or(&event.path)
             .display();
+        let explorer = self.buffers[event.buffer].is_directory();
         let body = match &event.observation {
             FileObservation::Text { .. } => {
                 format!(
@@ -2853,6 +2854,15 @@ impl App {
                     self.key_text(crate::key_spelling::actionable::COMPARE_DISK),
                     self.key_text(crate::key_spelling::actionable::RELOAD)
                 )
+            }
+            FileObservation::Directory { .. } => {
+                format!(
+                    "{shown} no longer lists what the explorer shows · {} refreshes it",
+                    self.key_text(crate::key_spelling::actionable::RELOAD)
+                )
+            }
+            FileObservation::Deleted if explorer => {
+                format!("{shown} was removed on disk · the explorer kept its listing")
             }
             FileObservation::Deleted => {
                 format!("{shown} was deleted on disk · saving recreates it")
