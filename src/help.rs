@@ -132,6 +132,7 @@ impl HelpTopic {
                 "The explorer is an editable directory listing. Move and edit here just as you do in a text buffer.",
                 "Edits do not touch the filesystem until you review and confirm the write plan.",
                 "A symlink carries a muted → target hint that is not part of the text. Enter opens what the link points at; renaming and deleting stay with the link.",
+                "An explorer whose directory changed outside Runyte gains [STALE] and keeps its rows, selections, and unsaved edits. {binding:Space r} re-reads the directory and clears it.",
             ],
             Self::Config => &[
                 "The config page is a read-only view of the setting registry. Search, select, split, and move through it like any other text buffer; Enter changes the setting on the current row.",

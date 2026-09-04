@@ -1340,6 +1340,10 @@ impl App {
     pub(super) fn reload_file(&mut self) -> Result<()> {
         let buffer_id = self.active().buffer;
         let was_dirty = self.buffers[buffer_id].dirty;
+        ensure!(
+            self.buffers[buffer_id].kind == BufferKind::File,
+            "buffer is not a file"
+        );
         let Some(observation) = self.buffers[buffer_id].observe_now(buffer_id) else {
             bail!("buffer is not a file");
         };
@@ -1407,7 +1411,7 @@ impl App {
             FileObservation::Binary { .. } => {
                 "file became binary on disk; the text buffer was preserved"
             }
-            FileObservation::Unreadable { .. } => {
+            FileObservation::Directory { .. } | FileObservation::Unreadable { .. } => {
                 "file is unreadable on disk; the text buffer was preserved"
             }
             FileObservation::Text { .. } => return Ok(()),
@@ -1640,7 +1644,7 @@ impl App {
                 FileObservation::Binary { .. } => {
                     "the disk version is binary and cannot be compared"
                 }
-                FileObservation::Unreadable { .. } => {
+                FileObservation::Directory { .. } | FileObservation::Unreadable { .. } => {
                     "the disk version is unreadable and cannot be compared"
                 }
                 FileObservation::Text { .. } => unreachable!(),

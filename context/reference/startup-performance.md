@@ -48,6 +48,12 @@ present, startup compiles and validates both `editor.fast_pane_keys` variants
 once so a later settings preview only selects an already diagnosed map. This
 bounded, configured-only work has not been added to the measurements below.
 
+The file monitor's two-second reconciliation reads the directory of every open
+explorer, because a listing has no cheaper baseline to compare first. The read
+happens on the monitor thread and forwards nothing when the listing is
+unchanged, so it does not wake the editor. The fixtures below open a document
+rather than an explorer, so this work is not in the measurements either.
+
 ## 2026-08-31
 
 Startup and quit harness `18a6bb9`; idle harness `e44e2cf`. Startup and quit are

@@ -19,9 +19,10 @@ them, regardless of which extensibility direction is chosen.
 - **Pane title** — structural buffer identity in the pane's top border, such as
   `[file] path`, `[explorer] path`, `[notifications]`, or `[log]`, plus `[+]`,
   `[STALE]`, and `[RO]`, in that order, and finally `[zen]` or `[fullscreen]`
-  while the pane is the maximized one. `[STALE]` means an ordinary file's path
-  no longer agrees with the disk baseline Runyte accepted; it is independent
-  of `[+]`, which means the buffer text differs from its baseline.
+  while the pane is the maximized one. `[STALE]` means the path a buffer
+  projects no longer agrees with the baseline Runyte accepted: an ordinary
+  file's bytes, or the entries an explorer's directory lists. It is
+  independent of `[+]`, which means the buffer text differs from its baseline.
   The first markers describe the buffer; the last describes how this pane is
   presented, and is absent in an ordinary layout.
 - **Pane body** — the complete drawable interior of a pane border.
