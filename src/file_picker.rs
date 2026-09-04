@@ -267,25 +267,40 @@ impl FilePreviewSnippet {
 /// Whether the emphasized candidate characters are direct, meaning each term
 /// of the query landed on a contiguous span of its own.
 ///
-/// The scorer returns one position per query character, in query order, so a
-/// run of consecutive positions is a stretch that matched as itself. A query
-/// is direct when it produced no more runs than it has terms: one word landing
-/// on one span, or three words on three. More runs than terms means a gap
-/// opened inside a term, which is the fuzzy subsequence the secondary colour
-/// is for.
+/// The scorer returns one position per query character, in query order, so the
+/// positions belonging to a term are the slice as long as that term, and the
+/// term landed as itself when that slice is consecutive. A gap inside any one
+/// of them is the fuzzy subsequence the secondary colour is for.
 ///
-/// Fewer runs than terms is not a lesser match but a better one — terms that
-/// happen to sit next to each other in the candidate merge into a single run,
-/// which is the tightest a multi-word query can land.
+/// Counting runs across the whole query instead would be wrong now that a term
+/// is itself fuzzy, because a gap inside one term and two terms landing
+/// adjacent cancel out in the total: `ab cd` against `a_bcd` matches at
+/// `[0, 2, 3, 4]`, which is two runs for two terms while `ab` is plainly
+/// scattered. Where the terms fall has to be read from the query rather than
+/// inferred from how many runs appeared.
+///
+/// Terms that happen to sit next to each other in the candidate are still the
+/// tightest a multi-word query can land, and stay direct: their spans merge
+/// into one run, but each term's own slice is consecutive.
 pub fn is_direct_match(positions: &[usize], query: &str) -> bool {
     if positions.is_empty() {
         return false;
     }
-    let runs = 1 + positions
-        .windows(2)
-        .filter(|pair| pair[1] != pair[0] + 1)
-        .count();
-    runs <= query.split_whitespace().count().max(1)
+    let mut rest = positions;
+    for term in query.split_whitespace() {
+        let length = term.chars().count();
+        if rest.len() < length {
+            return false;
+        }
+        let (landed, remaining) = rest.split_at(length);
+        if landed.windows(2).any(|pair| pair[1] != pair[0] + 1) {
+            return false;
+        }
+        rest = remaining;
+    }
+    // Every position belongs to a term, so anything left over means these
+    // positions did not come from this query and nothing can be claimed.
+    rest.is_empty()
 }
 
 impl FilePreview {
@@ -1404,6 +1419,12 @@ fn char_to_byte(text: &str, character: usize) -> usize {
 /// Whether `query` occurs in `candidate` as an ordered subsequence, under the
 /// same smart-case rule the scorer uses.
 ///
+/// Whitespace separates rather than matches. Each term is as loose as a lone
+/// word and the terms are wanted in the order they were typed, which together
+/// is one ordered subsequence of the terms run together — so `ab cd` accepts
+/// what `abcd` accepts, and differs from it only in how the two stretches
+/// score.
+///
 /// This decides exactly what `fuzzy_match` decides — the scorer reaches a
 /// final state precisely when such a subsequence exists — but in one linear
 /// pass that allocates nothing. That makes it the filter the content scanner
@@ -1411,109 +1432,39 @@ fn char_to_byte(text: &str, character: usize) -> usize {
 /// takes before building a dynamic-programming table it could never fill.
 pub fn matches_fuzzy(query: &str, candidate: &str) -> bool {
     let case_sensitive = query.chars().any(char::is_uppercase);
-    let mut terms = query.split_whitespace();
-    let Some(first) = terms.next() else {
-        return true;
-    };
-    if terms.next().is_none() {
-        return subsequence(first, candidate, case_sensitive);
-    }
-    // Two or more terms are a different question: each has to be there as
-    // itself. Nothing is allocated to ask it — `split_whitespace` borrows, and
-    // the walk is one pass per term over what is left of the candidate.
-    let mut rest = candidate;
-    for term in query.split_whitespace() {
-        let Some(end) = find_term(rest, term.chars(), case_sensitive) else {
-            return false;
-        };
-        rest = &rest[end..];
+    subsequence(
+        query.split_whitespace().flat_map(str::chars),
+        candidate,
+        case_sensitive,
+    )
+}
+
+/// Whether `query` occurs in `candidate` as an ordered subsequence.
+///
+/// Generic over how the query is spelled so the two callers can each use what
+/// they already hold — `matches_fuzzy` the borrowed `&str` slices
+/// `split_whitespace` hands it, and `FuzzyMatcher` its prepared characters —
+/// without either allocating to ask the question.
+///
+/// Feeding it the terms one after another is what makes several words one
+/// question: each term is consumed from where the last one ended, so the terms
+/// are ordered and cannot overlap, and each is itself as loose as a lone word.
+fn subsequence<I>(query: I, candidate: &str, case_sensitive: bool) -> bool
+where
+    I: IntoIterator<Item = char>,
+{
+    let mut characters = candidate.chars();
+    'wanted: for wanted in query {
+        for character in characters.by_ref() {
+            if characters_match(character, wanted, case_sensitive) {
+                continue 'wanted;
+            }
+        }
+        return false;
     }
     true
 }
 
-/// Whether `query` occurs in `candidate` as an ordered subsequence.
-fn subsequence(query: &str, candidate: &str, case_sensitive: bool) -> bool {
-    let mut wanted = query.chars().peekable();
-    for character in candidate.chars() {
-        let Some(next) = wanted.peek().copied() else {
-            return true;
-        };
-        if characters_match(character, next, case_sensitive) {
-            wanted.next();
-        }
-    }
-    wanted.peek().is_none()
-}
-
-/// The byte index just past the first literal occurrence of `term`.
-///
-/// Generic over how the term is spelled so the two callers can each use what
-/// they already hold — `matches_fuzzy` the borrowed `&str` slices
-/// `split_whitespace` hands it, and `FuzzyMatcher` its prepared `[char]` terms
-/// — without either allocating to ask the question.
-fn find_term<T>(candidate: &str, term: T, case_sensitive: bool) -> Option<usize>
-where
-    T: IntoIterator<Item = char> + Clone,
-{
-    if term.clone().into_iter().next().is_none() {
-        return Some(0);
-    }
-    for (start, _) in candidate.char_indices() {
-        let mut have = candidate[start..].chars();
-        let mut end = start;
-        let found = term.clone().into_iter().all(|wanted| match have.next() {
-            Some(character) if characters_match(character, wanted, case_sensitive) => {
-                end += character.len_utf8();
-                true
-            }
-            _ => false,
-        });
-        if found {
-            return Some(end);
-        }
-    }
-    None
-}
-
-/// Whether `term` occurs whole at `start`.
-fn term_at(candidate: &[char], start: usize, term: &[char], case_sensitive: bool) -> bool {
-    start + term.len() <= candidate.len()
-        && term.iter().enumerate().all(|(offset, wanted)| {
-            characters_match(candidate[start + offset], *wanted, case_sensitive)
-        })
-}
-
-/// The first character index at or after `from` where `term` occurs whole.
-fn term_start(
-    candidate: &[char],
-    from: usize,
-    term: &[char],
-    case_sensitive: bool,
-) -> Option<usize> {
-    (from..=candidate.len().checked_sub(term.len())?)
-        .find(|start| term_at(candidate, *start, term, case_sensitive))
-}
-
-/// The last character index at which `term` occurs whole and ends by `limit`.
-fn last_term_start(
-    candidate: &[char],
-    limit: usize,
-    term: &[char],
-    case_sensitive: bool,
-) -> Option<usize> {
-    (0..=limit.checked_sub(term.len())?)
-        .rev()
-        .find(|start| term_at(candidate, *start, term, case_sensitive))
-}
-
-/// One character compared under the smart-case rule.
-///
-/// The ASCII branch carries the cost of content search rather than shaving it:
-/// this runs once per character of every line in a project, and
-/// `char::to_lowercase` builds an iterator per call. It agrees with the
-/// general branch by construction, because an ASCII character's lowercase is
-/// its ASCII lowercase; anything outside ASCII, where a single character can
-/// fold to several, still takes the full comparison.
 fn characters_match(candidate: char, wanted: char, case_sensitive: bool) -> bool {
     if case_sensitive {
         candidate == wanted
@@ -1554,14 +1505,23 @@ pub enum FuzzyCandidate {
 /// caller keeps.
 pub struct FuzzyMatcher {
     kind: FuzzyCandidate,
-    /// The whitespace-separated terms of the query.
+    /// The characters the alignment searches for: the whitespace-separated
+    /// terms of the query run together.
     ///
-    /// One term is the query itself and is matched as a fuzzy subsequence
-    /// through `query` below, which is what a single word has always meant.
-    /// Two or more are matched as themselves, in order, because that is what
-    /// someone typing three words means by them.
-    terms: Vec<Vec<char>>,
+    /// Each term is matched as its own fuzzy subsequence and the terms are
+    /// wanted in the order they were typed. Matching them that way is the same
+    /// question as matching them run together, because an ordered subsequence
+    /// of `ab` followed by one of `cd` is an ordered subsequence of `abcd`. So
+    /// which candidates match is decided here, and the whitespace survives in
+    /// `boundaries` below, which decides how they score.
     query: Vec<char>,
+    /// Whether each character of `query` opens a term.
+    ///
+    /// The distance between two terms is not a gap. Whitespace is what someone
+    /// types to say that two stretches are separate, so the alignment charges
+    /// nothing for how far apart they land and pays nothing for their landing
+    /// adjacent, where the same distance inside one term is penalized.
+    boundaries: Vec<bool>,
     /// The query under the same case folding `comparable` applied, held for
     /// the whole-basename and basename-prefix bonuses.
     comparable_query: String,
@@ -1593,21 +1553,25 @@ impl FuzzyMatcher {
 
     pub fn for_candidate(query: &str, kind: FuzzyCandidate) -> Self {
         let case_sensitive = query.chars().any(char::is_uppercase);
-        let terms = query
-            .split_whitespace()
-            .map(|term| term.chars().collect::<Vec<_>>())
-            .collect::<Vec<_>>();
-        // Whitespace separates rather than matches, so a lone term is the
-        // query: `abc ` asks exactly what `abc` asks, and the subsequence
-        // scored below is the term, not the spaces around it.
-        let query = match terms.as_slice() {
-            [only] => only.clone(),
-            _ => query.trim().chars().collect(),
-        };
-        let comparable_query = query.iter().collect::<String>();
+        // Whitespace separates rather than matches, so neither the spaces
+        // around a lone term nor those between several are characters a
+        // candidate has to hold: `abc ` asks exactly what `abc` asks.
+        let mut characters = Vec::new();
+        let mut boundaries = Vec::new();
+        for term in query.split_whitespace() {
+            for (offset, character) in term.chars().enumerate() {
+                characters.push(character);
+                boundaries.push(offset == 0);
+            }
+        }
+        // The basename bonuses compare a whole name against what was typed, so
+        // they keep the query as typed, spaces and all. A file really named
+        // `release notes.md` is what `release notes` should land on.
+        let comparable_query = query.trim().to_owned();
+        let query = characters;
         Self {
             kind,
-            terms,
+            boundaries,
             comparable_query: if case_sensitive {
                 comparable_query
             } else {
@@ -1630,26 +1594,7 @@ impl FuzzyMatcher {
     /// exactly what `score` will accept, so the scanner's filter, the picker's
     /// narrowing, and the ranker never disagree about what a match is.
     pub fn matches(&self, candidate: &str) -> bool {
-        if self.terms.len() < 2 {
-            let mut wanted = self.query.iter().copied().peekable();
-            for character in candidate.chars() {
-                let Some(next) = wanted.peek().copied() else {
-                    return true;
-                };
-                if characters_match(character, next, self.case_sensitive) {
-                    wanted.next();
-                }
-            }
-            return wanted.peek().is_none();
-        }
-        let mut rest = candidate;
-        for term in &self.terms {
-            let Some(end) = find_term(rest, term.iter().copied(), self.case_sensitive) else {
-                return false;
-            };
-            rest = &rest[end..];
-        }
-        true
+        subsequence(self.query.iter().copied(), candidate, self.case_sensitive)
     }
 
     /// Scores an ordered subsequence match and returns the candidate character
@@ -1699,8 +1644,8 @@ impl FuzzyMatcher {
         };
 
         let Self {
-            terms,
             query,
+            boundaries,
             case_sensitive,
             candidate: candidate_chars,
             previous,
@@ -1731,63 +1676,18 @@ impl FuzzyMatcher {
             }
             score
         };
-        // Terms are contiguous by construction, so with two or more of them
-        // there is no alignment to search: the only choice is which occurrence
-        // of each term to take. `latest` says how far right each term may sit
-        // and still leave room for the ones after it, so any occurrence up to
-        // it can be preferred on score alone without stranding a later term.
-        let (alignment_score, positions) = if terms.len() > 1 {
-            let mut latest = vec![0; terms.len()];
-            let mut limit = width;
-            for (index, term) in terms.iter().enumerate().rev() {
-                let start = last_term_start(candidate_chars, limit, term, case_sensitive)
-                    .expect("the membership test found every term");
-                latest[index] = start;
-                limit = start;
-            }
-            let mut positions = Vec::with_capacity(terms.iter().map(Vec::len).sum());
-            let mut alignment_score = 0;
-            let mut cursor = 0;
-            for (index, term) in terms.iter().enumerate() {
-                let mut best: Option<(i64, usize)> = None;
-                let mut from = cursor;
-                while let Some(start) = term_start(candidate_chars, from, term, case_sensitive) {
-                    if start > latest[index] {
-                        break;
-                    }
-                    // The same per-character rules the alignment uses, plus
-                    // the adjacency it would have paid for a run this long, so
-                    // one term and one word score on the same scale.
-                    let score = term
-                        .iter()
-                        .enumerate()
-                        .map(|(offset, wanted)| character_score(*wanted, start + offset))
-                        .sum::<i64>()
-                        + 28 * (term.len() as i64 - 1);
-                    if best.is_none_or(|(best, _)| score > best) {
-                        best = Some((score, start));
-                    }
-                    from = start + 1;
-                }
-                let (score, start) = best.expect("a term is reachable up to its latest start");
-                alignment_score += score;
-                positions.extend(start..start + term.len());
-                cursor = start + term.len();
-            }
-            (alignment_score, positions)
-        } else {
-            score_one_term(
-                query,
-                candidate_chars,
-                case_sensitive,
-                width,
-                previous,
-                current,
-                prefix,
-                parents,
-                character_score,
-            )?
-        };
+        let (alignment_score, positions) = score_one_term(
+            query,
+            boundaries,
+            candidate_chars,
+            case_sensitive,
+            width,
+            previous,
+            current,
+            prefix,
+            parents,
+            character_score,
+        )?;
 
         let mut score = base_score + alignment_score;
         if self.kind == FuzzyCandidate::Path {
@@ -1802,16 +1702,22 @@ impl FuzzyMatcher {
     }
 }
 
-/// The single-word alignment: the query as one fuzzy ordered subsequence.
+/// The alignment: the query as one fuzzy ordered subsequence.
 ///
 /// Dynamic programming chooses the globally best alignment instead of greedily
 /// committing each character. Gap penalties saturate after 32 characters, so
 /// each state needs at most 31 nearby predecessors plus a prefix maximum for
 /// every older one: O(query × candidate × 32), with the multiplier bounded
 /// independently of candidate length.
+///
+/// `boundaries` marks the characters that open a term. A term boundary is the
+/// one transition that costs nothing at any distance, because the whitespace
+/// the person typed there says the two stretches are separate. Everywhere else
+/// distance is a gap and is charged for.
 #[allow(clippy::too_many_arguments)]
 fn score_one_term(
     query: &[char],
+    boundaries: &[bool],
     candidate_chars: &[char],
     case_sensitive: bool,
     width: usize,
@@ -1864,27 +1770,39 @@ fn score_one_term(
                     transition = Some((score, parent));
                 }
             };
-            if position > 0 && previous[position - 1] != IMPOSSIBLE {
-                consider(previous[position - 1] + 28, position - 1);
-            }
-            if position >= 2 {
-                for (parent, previous_score) in previous
-                    .iter()
-                    .copied()
-                    .enumerate()
-                    .take(position - 1)
-                    .skip(position.saturating_sub(32))
+            if boundaries[query_index] {
+                // Opening a term: any predecessor will do and none is
+                // preferred, so the best one anywhere earlier is taken at no
+                // charge. Terms that land adjacent are not rewarded for it
+                // either — the space said they were separate.
+                if position > 0
+                    && let Some((score, parent)) = prefix[position - 1]
                 {
-                    let gap = position - parent - 1;
-                    if previous_score != IMPOSSIBLE {
-                        consider(previous_score - gap as i64, parent);
+                    consider(score, parent);
+                }
+            } else {
+                if position > 0 && previous[position - 1] != IMPOSSIBLE {
+                    consider(previous[position - 1] + 28, position - 1);
+                }
+                if position >= 2 {
+                    for (parent, previous_score) in previous
+                        .iter()
+                        .copied()
+                        .enumerate()
+                        .take(position - 1)
+                        .skip(position.saturating_sub(32))
+                    {
+                        let gap = position - parent - 1;
+                        if previous_score != IMPOSSIBLE {
+                            consider(previous_score - gap as i64, parent);
+                        }
                     }
                 }
-            }
-            if position >= 33
-                && let Some((score, parent)) = prefix[position - 33]
-            {
-                consider(score - 32, parent);
+                if position >= 33
+                    && let Some((score, parent)) = prefix[position - 33]
+                {
+                    consider(score - 32, parent);
+                }
             }
             if let Some((score, parent)) = transition {
                 current[position] = score + character_score(query[query_index], position);
@@ -4614,17 +4532,21 @@ mod tests {
 
     #[test]
     fn a_query_of_several_words_asks_for_each_of_them() {
-        // A space separates rather than matches. One word stays the fuzzy
-        // subsequence it has always been; two or more each have to be there as
-        // themselves, in the order they were typed.
+        // A space separates rather than matches. Every term is the fuzzy
+        // subsequence a lone word has always been, and the terms are wanted in
+        // the order they were typed.
         assert!(matches_fuzzy("cntnt", "content_entries_from_text"));
         assert!(matches_fuzzy(
             "content entries",
             "content_entries_from_text"
         ));
         assert!(
-            !matches_fuzzy("cntnt entries", "content_entries_from_text"),
-            "a term of a several-word query is not itself fuzzy"
+            matches_fuzzy("cntnt entries", "content_entries_from_text"),
+            "a term of a several-word query is as loose as a lone word"
+        );
+        assert!(
+            matches_fuzzy("kmap validate", "src/keymap/validate.rs"),
+            "an abbreviation narrowed by a second word still finds its file"
         );
         assert!(
             !matches_fuzzy("entries content", "content_entries_from_text"),
@@ -4641,6 +4563,22 @@ mod tests {
             matches_fuzzy("  cntnt  ", "content_entries_from_text"),
             matches_fuzzy("cntnt", "content_entries_from_text")
         );
+
+        // Ordered terms that are each as loose as a lone word ask the same
+        // question as the terms run together, so where a space falls decides
+        // how a candidate scores rather than whether it matches at all.
+        for candidate in [
+            "content_entries_from_text",
+            "cone_ties",
+            "c_o_n_t_e_n_t_r_i_e_s",
+            "entries_content",
+        ] {
+            assert_eq!(
+                matches_fuzzy("content entries", candidate),
+                matches_fuzzy("contententries", candidate),
+                "a split term accepts what the joined term accepts: {candidate}"
+            );
+        }
 
         // Smart case reads the whole query: one capital makes every term
         // case-sensitive.
@@ -4693,69 +4631,158 @@ mod tests {
     }
 
     #[test]
-    fn splitting_a_term_reconsiders_paths_the_whole_term_excluded() {
-        // Narrowing from the previous result set is only sound while the edit
-        // could not widen it. Typing at the end cannot, which is the case
-        // `a_longer_query_can_only_narrow_what_a_shorter_one_matched` covers.
-        // Typing into the middle can: splitting `ab` into `a b` replaces one
-        // literal with two that a path may satisfy far apart, and the path
-        // holding them was thrown out by the term it never contained.
+    fn a_space_frees_the_distance_between_terms_but_not_inside_one() {
+        // The whitespace someone types says the two stretches are separate, so
+        // the alignment charges nothing for how far apart they land. The same
+        // distance inside a single term is a gap and is paid for. This is the
+        // whole of what a space still decides, now that it no longer decides
+        // which candidates match.
+        let candidate = "ab________cd";
+        let (split, _) = FuzzyMatcher::for_lines("ab cd")
+            .score(candidate)
+            .expect("the terms are present in order");
+        let (joined, _) = FuzzyMatcher::for_lines("abcd")
+            .score(candidate)
+            .expect("the same characters are present in order");
+        assert!(
+            split > joined,
+            "a term boundary is free where a gap is not: {split} vs {joined}"
+        );
+
+        // Nothing is paid for terms landing adjacent either. On a candidate
+        // where both queries align on the same characters, so that every
+        // position-dependent bonus and the length penalty are identical, the
+        // only difference left is the one adjacency bonus the boundary
+        // declines to pay.
+        let (joined, _) = FuzzyMatcher::for_lines("abcd")
+            .score("zabcdz")
+            .expect("a match");
+        let (split, _) = FuzzyMatcher::for_lines("ab cd")
+            .score("zabcdz")
+            .expect("a match");
+        assert_eq!(
+            joined - split,
+            28,
+            "exactly the adjacency across the boundary"
+        );
+    }
+
+    #[test]
+    fn each_term_of_a_several_word_query_is_itself_fuzzy() {
+        // The reported case: an abbreviation that no candidate holds as a
+        // contiguous run, narrowed by a second word.
+        let mut matcher = FuzzyMatcher::new("kmap validate");
+        assert!(matcher.score("src/keymap/validate.rs").is_some());
+        assert!(matcher.score("src/keymap/configured.rs").is_none());
+
+        // The terms are still wanted in the order they were typed, which is
+        // where this deliberately parts from fzf.
+        let mut reversed = FuzzyMatcher::new("validate kmap");
+        assert!(
+            reversed.score("src/keymap/validate.rs").is_none(),
+            "terms are wanted in the order they were typed"
+        );
+
+        // A term that is fuzzy rather than whole is what the secondary
+        // emphasis colour is for, and stays distinguishable from one that
+        // landed as itself.
+        let (_, scattered) = FuzzyMatcher::new("kmap validate")
+            .score("src/keymap/validate.rs")
+            .expect("a match");
+        assert!(!is_direct_match(&scattered, "kmap validate"));
+        let (_, whole) = FuzzyMatcher::new("keymap validate")
+            .score("src/keymap/validate.rs")
+            .expect("a match");
+        assert!(is_direct_match(&whole, "keymap validate"));
+    }
+
+    #[test]
+    fn directness_is_read_per_term_rather_than_from_the_run_count() {
+        // A gap inside one term and the next term landing adjacent cancel out
+        // in the total run count, so counting runs across the whole query
+        // calls this direct: two runs for two terms, while `ab` is scattered.
+        let (_, positions) = FuzzyMatcher::for_lines("ab cd")
+            .score("a_bcd")
+            .expect("a match");
+        assert_eq!(positions, [0, 2, 3, 4]);
+        assert!(
+            !is_direct_match(&positions, "ab cd"),
+            "a term that had to spread out is not a direct match"
+        );
+
+        // Terms landing adjacent are still the tightest a multi-word query can
+        // land: one run for two terms, and each term's own span is whole.
+        let (_, positions) = FuzzyMatcher::for_lines("ab cd")
+            .score("abcd")
+            .expect("a match");
+        assert_eq!(positions, [0, 1, 2, 3]);
+        assert!(is_direct_match(&positions, "abcd"));
+        assert!(is_direct_match(&positions, "ab cd"));
+
+        // Positions that cannot have come from this query claim nothing.
+        assert!(!is_direct_match(&[0, 1, 2], "ab cd"));
+        assert!(!is_direct_match(&[0, 1, 2, 3, 4], "ab cd"));
+    }
+
+    #[test]
+    fn inserting_into_the_query_can_only_narrow_what_matched() {
+        // Narrowing from the previous result set is sound while the edit could
+        // not widen it. Every insertion leaves the earlier characters in place
+        // and in order, so the terms run together only grow, and a candidate
+        // that did not hold the shorter run cannot hold the longer one. Typing
+        // at the end is the case
+        // `a_longer_query_can_only_narrow_what_a_shorter_one_matched` covers;
+        // these are the edits that rewrite a term from the middle.
         let root = PathBuf::from("/project");
+        let rows = |picker: &FilePicker| {
+            let mut found = picker
+                .ranked()
+                .map(|entry| entry.relative.to_owned())
+                .collect::<Vec<_>>();
+            found.sort_unstable();
+            found
+        };
+
+        // Splitting a term is the edit that used to widen, back when each term
+        // had to be present as a contiguous literal and `a_x_b_cd` was thrown
+        // out by an `ab` it never held. A term is now as loose as a lone word,
+        // so it was never excluded, and the space that splits it is separation
+        // rather than a character to hold.
         let mut picker = FilePicker::new(1, root.clone(), ScanScope::ignoring(&root));
         picker.add_paths(vec![
             ScanEntry::file(root.join("a_x_b_cd")),
             ScanEntry::file(root.join("ab_cd")),
         ]);
         picker.insert_query_text("ab cd");
-        assert_eq!(
-            picker
-                .ranked()
-                .map(|entry| entry.relative)
-                .collect::<Vec<_>>(),
-            ["ab_cd"],
-            "`a_x_b_cd` holds no literal `ab`"
-        );
+        let before = rows(&picker);
+        assert_eq!(before, ["a_x_b_cd", "ab_cd"]);
 
         // Put the caret between `a` and `b` and split the term.
         picker.query_cursor = 1;
         picker.insert_query(' ');
         assert_eq!(picker.query, "a b cd");
-        let mut found = picker
-            .ranked()
-            .map(|entry| entry.relative)
-            .collect::<Vec<_>>();
-        found.sort_unstable();
         assert_eq!(
-            found,
-            ["a_x_b_cd", "ab_cd"],
-            "a path the old term excluded has to be reconsidered, not stay hidden"
+            rows(&picker),
+            before,
+            "where a space falls decides how a candidate scores, not whether it matches"
         );
 
-        // Not a whitespace question. Growing a term from the middle rewrites
-        // the literal just as splitting it does, and widens the same way.
+        // Growing a term from the middle is a different edit: it adds a
+        // character the run has to hold, so it narrows like any other.
         let mut picker = FilePicker::new(2, root.clone(), ScanScope::ignoring(&root));
         picker.add_paths(vec![
             ScanEntry::file(root.join("aXb_cd")),
             ScanEntry::file(root.join("ab_cd")),
         ]);
         picker.insert_query_text("ab cd");
-        assert_eq!(
-            picker
-                .ranked()
-                .map(|entry| entry.relative)
-                .collect::<Vec<_>>(),
-            ["ab_cd"]
-        );
+        assert_eq!(rows(&picker), ["aXb_cd", "ab_cd"]);
         picker.query_cursor = 1;
         picker.insert_query('X');
         assert_eq!(picker.query, "aXb cd");
         assert_eq!(
-            picker
-                .ranked()
-                .map(|entry| entry.relative)
-                .collect::<Vec<_>>(),
+            rows(&picker),
             ["aXb_cd"],
-            "the path the rewritten term now matches was excluded by the old one"
+            "the path without the added character drops out"
         );
 
         // Growing the query at its end still narrows from what is on hand,
@@ -4768,13 +4795,7 @@ mod tests {
         picker.insert_query_text("ab c");
         assert_eq!(picker.matches.len(), 2);
         picker.insert_query('d');
-        assert_eq!(
-            picker
-                .ranked()
-                .map(|entry| entry.relative)
-                .collect::<Vec<_>>(),
-            ["ab_cd"]
-        );
+        assert_eq!(rows(&picker), ["ab_cd"]);
     }
 
     #[test]

@@ -1,12 +1,23 @@
-# Startup, quit and idle benchmark
+# Benchmarks
 
-Measures when a terminal editor first emits shared document content, and
-then how long it takes to quit, plus what it costs while sitting idle. Runyte is
-measured alongside Neovim and Helix where those are installed, so a change in
-Runyte's numbers can be separated from a change in the machine.
+Two independent harnesses, each measuring Runyte against a program people
+already use, so that a change in Runyte's numbers can be separated from a
+change in the machine.
 
-Results are recorded in
-[`context/reference/startup-performance.md`](../context/reference/startup-performance.md).
+- **`run.py`** — when a terminal editor first emits shared document content,
+  how long it then takes to quit, and what it costs while sitting idle, with
+  Neovim and Helix measured the same way. Recorded in
+  [`context/reference/startup-performance.md`](../context/reference/startup-performance.md).
+- **`fuzzy.py`** — what the picker's fuzzy path ranking costs and whether it
+  puts the same candidates at the top of the list as fzf, on the same
+  candidates. Recorded in
+  [`context/reference/fuzzy-matching.md`](../context/reference/fuzzy-matching.md).
+  Its own section is [below](#fuzzy-matching-against-fzf).
+
+Both generate their inputs from a fixed seed into `.work/`, which is ignored by
+Git. Deleting `.work/` is safe; the next run rebuilds everything in it.
+
+# Startup, quit and idle
 
 ## Running
 
@@ -214,8 +225,136 @@ diagnostic file out of the repository root. Neovim additionally runs with
 measurements. Packaged editor runtimes and grammars remain available; a result
 set must still confirm parser availability as described above.
 
-## Related
+# Fuzzy matching against fzf
+
+`benchmarks/fuzzy.py` is a second, independent harness. It measures what
+Runyte's picker ranking costs and whether it puts the same candidates at the
+top of the list as fzf does, on the same candidates.
+
+```sh
+cargo build --release --example fuzzy_filter
+benchmarks/fuzzy.py                    # every size and query
+benchmarks/fuzzy.py --sizes medium     # one corpus size
+benchmarks/fuzzy.py --runs 15          # more timing samples; default 7
+benchmarks/fuzzy.py --no-fzf           # Runyte alone
+```
+
+Results are recorded in
+[`context/reference/fuzzy-matching.md`](../context/reference/fuzzy-matching.md).
+
+## How the two sides are made comparable
+
+fzf is an interactive program, but `fzf --filter=QUERY` is not: it reads
+candidates on standard input and writes its matches to standard output, best
+first. `examples/fuzzy_filter.rs` presents `FuzzyMatcher` behind the same
+command line, ordering its results the way `file_match_order` orders the
+picker's. Both programs are then handed byte-identical bytes on standard input,
+and the comparison is between two complete filters rather than between two
+functions chosen because they looked alike.
+
+The example is benchmark scaffolding. Nothing in the editor uses it, and it is
+excluded from the published crate.
+
+## What the timing columns are
+
+**runyte** and **fzf** are whole processes: start, read the corpus, filter,
+write the answer, exit. Nothing is subtracted. A derived "matching only" figure
+for fzf would have to be invented rather than measured, and one taken by
+differencing against an empty-query run would also difference away the cost of
+writing a different number of result lines.
+
+**runyte rank only** is ranking alone, timed inside the process across
+`--repeat` passes and reported as their median. It excludes process start,
+reading standard input and writing the answer. This is the column that
+corresponds to what the editor actually does: the picker's candidates are
+already in memory from its own scanner, so a keystroke costs the ranking pass
+and nothing around it.
+
+Reading the two together also says what is not being measured. Where the
+whole-process figures are close but the rank-only figure is much smaller, most
+of both numbers is input handling, and the standard-input path being compared
+there is the example's, not the editor's.
+
+**fzf, one thread** is the same fzf run under `GOMAXPROCS=1`. fzf matches on
+every available core; Runyte ranks on one background worker. Without that row a
+reader cannot tell how much of a difference is the algorithm and how much is
+core count.
+
+`FZF_DEFAULT_OPTS`, `FZF_DEFAULT_OPTS_FILE` and `FZF_DEFAULT_COMMAND` are
+removed from the environment. Any of them can change fzf's scheme, tiebreak or
+matching algorithm, which would make a recorded result impossible to reproduce
+anywhere else. fzf otherwise runs with `--scheme=path`, because the corpus is
+paths; `--scheme default` is available through `--scheme`.
+
+## What the agreement table is
+
+Three questions that fail separately:
+
+- **match set** — whether the two programs consider the same candidates to
+  match at all, ignoring order. This is a property of the filter.
+- **top N shared** — how many of one program's first N results appear anywhere
+  in the other's first N. This is a property of the ranking, and it is what
+  decides whether a person sees the file they wanted without scrolling.
+- **same first** — whether the same candidate is first. This is what someone
+  who types and presses <kbd>Enter</kbd> without looking gets.
+
+Where the first results differ, the top five from each side are printed, so a
+disagreement can be read rather than only counted.
+
+The empty query is measured for timing but left out of the agreement table.
+Neither program ranks it — fzf echoes its input order and Runyte's picker sorts
+by path — so comparing those two orders would report a ranking disagreement
+where no ranking happened.
+
+## Corpus
+
+Generated by `corpus.py` from a fixed seed into `.work/fuzzy/`, and ignored by
+Git, for the same reason the startup fixtures are: a benchmark whose input is
+Runyte's own tree reports a different number every time that tree changes.
+
+| Size | Candidates |
+| --- | ---: |
+| small | 1,000 |
+| medium | 10,000 |
+| large | 100,000 |
+
+The paths are shaped like a source repository rather than drawn from random
+strings, since both matchers here are tuned for paths. Segments come from a
+small vocabulary, so names repeat across directories and a short query has many
+plausible answers to choose between — which is the case a ranking disagreement
+shows up in.
+
+**Directories are candidates, not just the files under them**, because that is
+what the picker ranks: typing a folder name and being offered the folder is the
+ordinary way to reach what is inside it. They are spelled without a trailing
+separator, which is how `path_text` spells them for the matcher; the slash in
+the picker is added when the row is drawn. Leaving them out once produced a
+recorded result claiming Runyte ranked `src` badly, when the editor puts the
+`src` directory first.
+
+Directories are grown as a tree rather than drawn per file, so that roughly ten
+files share each one, as they do in Runyte's own tree. A generator that gave
+every file a fresh chain would both invert that ratio and leave no directory
+query able to match more than a file or two.
+
+A synthetic corpus is a controlled input, not a claim about any real tree. A
+disagreement seen here is worth confirming against a real checkout, which
+`git ls-files` will pipe into either program directly.
+
+## Query shapes
+
+Each row isolates a different part of a score: the empty query as a floor, one
+character as the widest possible match set, a directory segment, a scattered
+acronym, a query spanning a word separator, a whole basename, a path with the
+separator typed, two whitespace-separated terms, and a query nothing matches.
+
+No query uses `^`, `$`, `!`, `'` or `|`. Those are fzf's extended-search
+operators and Runyte has no equivalent, so such a query would compare fzf's
+syntax against Runyte reading the character literally — not a disagreement
+about fuzzy matching.
+
+# Related
 
 `tests/performance.rs` holds in-process budgets for large-document operations.
-Those are assertions that fail in CI; this harness is a measurement that is run
-deliberately and whose results are recorded by hand.
+Those are assertions that fail in CI; the harnesses here are measurements that
+are run deliberately and whose results are recorded by hand.
