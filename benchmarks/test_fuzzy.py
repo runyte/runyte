@@ -4,7 +4,10 @@
 
 from __future__ import annotations
 
+import os
+import tempfile
 import unittest
+from pathlib import Path
 from unittest import mock
 
 import corpus
@@ -46,6 +49,80 @@ class CommandTests(unittest.TestCase):
 
     def test_an_empty_query_is_still_passed(self) -> None:
         self.assertIn("--filter=", fuzzy.fzf_command("", "path"))
+
+
+class RunTests(unittest.TestCase):
+    """A filter that did not answer must not be measured.
+
+    The failure this guards is silent: a crashed filter, or an fzf that
+    rejected an option, exits fast and writes nothing, so timing would record
+    the speed of the failure and agreement would read the empty output as a
+    legitimate empty result set.
+    """
+
+    def setUp(self) -> None:
+        self.directory = tempfile.TemporaryDirectory()
+        self.candidates = Path(self.directory.name) / "corpus.txt"
+        self.candidates.write_text("alpha\nbeta\n", encoding="utf-8")
+        self.addCleanup(self.directory.cleanup)
+
+    def test_an_answering_status_returns_the_process(self) -> None:
+        completed = fuzzy.run(
+            ["cat"], self.candidates, dict(os.environ), True, fuzzy.RUNYTE_ANSWERED
+        )
+        self.assertEqual(completed.stdout, b"alpha\nbeta\n")
+
+    def test_fzfs_no_match_status_is_an_answer_not_a_failure(self) -> None:
+        completed = fuzzy.run(
+            ["sh", "-c", "exit 1"],
+            self.candidates,
+            dict(os.environ),
+            False,
+            fuzzy.FZF_ANSWERED,
+        )
+        self.assertEqual(completed.returncode, 1)
+
+    def test_the_same_status_from_the_runyte_filter_is_a_failure(self) -> None:
+        with self.assertRaises(fuzzy.FilterFailed):
+            fuzzy.run(
+                ["sh", "-c", "exit 1"],
+                self.candidates,
+                dict(os.environ),
+                False,
+                fuzzy.RUNYTE_ANSWERED,
+            )
+
+    def test_a_rejected_option_is_refused_and_its_message_surfaced(self) -> None:
+        with self.assertRaises(fuzzy.FilterFailed) as failure:
+            fuzzy.run(
+                ["sh", "-c", "echo 'unknown option: --scheme' >&2; exit 2"],
+                self.candidates,
+                dict(os.environ),
+                False,
+                fuzzy.FZF_ANSWERED,
+            )
+        message = str(failure.exception)
+        self.assertIn("exited 2", message)
+        self.assertIn("unknown option: --scheme", message)
+
+    def test_a_failure_is_not_timed(self) -> None:
+        with self.assertRaises(fuzzy.FilterFailed):
+            fuzzy.median_wall(
+                ["sh", "-c", "exit 3"],
+                self.candidates,
+                dict(os.environ),
+                2,
+                fuzzy.FZF_ANSWERED,
+            )
+
+    def test_a_failure_is_not_read_as_an_empty_result_set(self) -> None:
+        with self.assertRaises(fuzzy.FilterFailed):
+            fuzzy.results(
+                ["sh", "-c", "exit 3"],
+                self.candidates,
+                dict(os.environ),
+                fuzzy.FZF_ANSWERED,
+            )
 
 
 class AgreementTests(unittest.TestCase):

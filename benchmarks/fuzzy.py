@@ -126,36 +126,60 @@ def fzf_command(query: str, scheme: str) -> list[str]:
     return ["fzf", f"--filter={query}", f"--scheme={scheme}"]
 
 
+# Exit statuses that are answers rather than failures. fzf reports 1 when
+# nothing matched, which is a result the agreement table needs; anything else
+# from either program is a failure whose empty output must not be measured.
+RUNYTE_ANSWERED = (0,)
+FZF_ANSWERED = (0, 1)
+
+
+class FilterFailed(Exception):
+    """A filter exited with a status that is not an answer.
+
+    Worth its own type because the failure it guards against is silent. A
+    filter that crashes, or an fzf that rejects an option such as an
+    unsupported `--scheme`, exits fast and writes nothing: the timing table
+    would record the speed of the failure and the agreement table would read
+    the empty output as a legitimate empty result set.
+    """
+
+
 def run(command: list[str], candidates: Path, environment: dict[str, str],
-        capture: bool) -> subprocess.CompletedProcess:
+        capture: bool, answered: tuple[int, ...]) -> subprocess.CompletedProcess:
     """One filter run, with the corpus on standard input.
 
-    fzf exits 1 when nothing matched, which is an answer rather than a failure,
-    so the exit status is not checked here. A crash shows up as empty output
-    against a query the other program answered.
+    Raises `FilterFailed` unless the process exits with one of `answered`.
     """
     with candidates.open("rb") as stdin:
-        return subprocess.run(
+        completed = subprocess.run(
             command,
             stdin=stdin,
             stdout=subprocess.PIPE if capture else subprocess.DEVNULL,
             stderr=subprocess.PIPE,
             env=environment,
         )
+    if completed.returncode not in answered:
+        message = completed.stderr.decode("utf-8", "replace").strip()
+        raise FilterFailed(
+            f"{' '.join(command)}\n  exited {completed.returncode}, "
+            f"expected one of {', '.join(str(status) for status in answered)}"
+            + (f"\n  {message}" if message else "")
+        )
+    return completed
 
 
 def median_wall(command: list[str], candidates: Path, environment: dict[str, str],
-                runs: int) -> float:
+                runs: int, answered: tuple[int, ...]) -> float:
     """Median wall time of `runs` complete runs, in milliseconds.
 
     One warm-up run is discarded so that the first read of a corpus file, which
     comes off the disk rather than the page cache, is not one of the samples.
     """
-    run(command, candidates, environment, capture=False)
+    run(command, candidates, environment, False, answered)
     samples = []
     for _ in range(runs):
         start = time.perf_counter()
-        run(command, candidates, environment, capture=False)
+        run(command, candidates, environment, False, answered)
         samples.append((time.perf_counter() - start) * 1000.0)
     return statistics.median(samples)
 
@@ -167,7 +191,8 @@ def rank_microseconds(query: str, candidates: Path, environment: dict[str, str],
         runyte_command(query, repeat=repeat, time_it=True),
         candidates,
         environment,
-        capture=False,
+        False,
+        RUNYTE_ANSWERED,
     )
     for line in completed.stderr.decode("utf-8", "replace").splitlines():
         if line.startswith("rank_us "):
@@ -175,9 +200,9 @@ def rank_microseconds(query: str, candidates: Path, environment: dict[str, str],
     return None
 
 
-def results(command: list[str], candidates: Path,
-            environment: dict[str, str]) -> list[str]:
-    completed = run(command, candidates, environment, capture=True)
+def results(command: list[str], candidates: Path, environment: dict[str, str],
+            answered: tuple[int, ...]) -> list[str]:
+    completed = run(command, candidates, environment, True, answered)
     return completed.stdout.decode("utf-8", "replace").splitlines()
 
 
@@ -270,17 +295,25 @@ def main(argv: list[str] | None = None) -> int:
         rows = []
         for name, query, _ in queries:
             row = [name, f"`{query}`" if query else "(empty)"]
-            row.append(f"{median_wall(runyte_command(query), candidates, environment, options.runs):.1f}")
+            ours = median_wall(
+                runyte_command(query), candidates, environment,
+                options.runs, RUNYTE_ANSWERED,
+            )
+            row.append(f"{ours:.1f}")
             rank = rank_microseconds(query, candidates, environment, options.repeat)
             row.append("—" if rank is None else f"{rank / 1000.0:.1f}")
             if have_fzf:
-                row.append(
-                    f"{median_wall(fzf_command(query, options.scheme), candidates, environment, options.runs):.1f}"
+                theirs = median_wall(
+                    fzf_command(query, options.scheme), candidates, environment,
+                    options.runs, FZF_ANSWERED,
                 )
+                row.append(f"{theirs:.1f}")
                 single = dict(environment, GOMAXPROCS="1")
-                row.append(
-                    f"{median_wall(fzf_command(query, options.scheme), candidates, single, options.runs):.1f}"
+                alone = median_wall(
+                    fzf_command(query, options.scheme), candidates, single,
+                    options.runs, FZF_ANSWERED,
                 )
+                row.append(f"{alone:.1f}")
             rows.append(row)
         headers = ["query", "typed", "runyte", "runyte rank only", "fzf", "fzf, one thread"]
         alignments = ["---", "---", "---:", "---:", "---:", "---:"]
@@ -307,8 +340,10 @@ def main(argv: list[str] | None = None) -> int:
         # row stays in the timing table above, which is what it is for.
         if not query:
             continue
-        ours = results(runyte_command(query), candidates, environment)
-        theirs = results(fzf_command(query, options.scheme), candidates, environment)
+        ours = results(runyte_command(query), candidates, environment, RUNYTE_ANSWERED)
+        theirs = results(
+            fzf_command(query, options.scheme), candidates, environment, FZF_ANSWERED
+        )
         measured = agreement(ours, theirs, options.top)
         rows.append([
             name,
@@ -389,4 +424,8 @@ def machine() -> str:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        raise SystemExit(main())
+    except FilterFailed as failure:
+        print(f"\nfuzzy.py: a filter did not answer:\n{failure}", file=sys.stderr)
+        raise SystemExit(1) from failure

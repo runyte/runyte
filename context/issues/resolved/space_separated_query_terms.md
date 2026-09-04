@@ -60,6 +60,18 @@ edit that can no longer widen and became
 rescans rather than narrowing on a mid-query edit, which is now conservative
 rather than required, and was left alone.
 
+`is_direct_match` was left unchanged by that commit and should not have been.
+It counted runs of consecutive positions across the whole query and called the
+match direct when there were no more runs than terms, which was sound only
+while every term was a contiguous literal. Once a term is itself fuzzy, a gap
+inside one term cancels against the next term landing adjacent: `ab cd` against
+`a_bcd` matches at `[0, 2, 3, 4]`, two runs for two terms, and was rendered in
+the primary emphasis colour although `ab` is plainly scattered. `8b83c66`
+(`Read directness per term and refuse unanswered filter runs`) reads the term
+boundaries from the query instead and requires each term's own slice of the
+positions to be consecutive. Terms landing next to each other stay direct,
+which is still the tightest a multi-word query can land.
+
 Tests, all in `src/file_picker.rs`:
 
 - `a_query_of_several_words_asks_for_each_of_them` — a term is as loose as a
@@ -75,6 +87,9 @@ Tests, all in `src/file_picker.rs`:
 - `inserting_into_the_query_can_only_narrow_what_matched` — splitting a term
   leaves the matched set unchanged, growing one from the middle narrows it, and
   appending still narrows from what is on hand.
+- `directness_is_read_per_term_rather_than_from_the_run_count` — the
+  cancelling case above, that adjacent terms are still direct, and that
+  positions which cannot have come from the query claim nothing.
 - `the_subsequence_filter_decides_exactly_what_the_scorer_decides` — unchanged,
   and now covers a single rule rather than two agreeing ones.
 

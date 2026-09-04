@@ -267,25 +267,40 @@ impl FilePreviewSnippet {
 /// Whether the emphasized candidate characters are direct, meaning each term
 /// of the query landed on a contiguous span of its own.
 ///
-/// The scorer returns one position per query character, in query order, so a
-/// run of consecutive positions is a stretch that matched as itself. A query
-/// is direct when it produced no more runs than it has terms: one word landing
-/// on one span, or three words on three. More runs than terms means a gap
-/// opened inside a term, which is the fuzzy subsequence the secondary colour
-/// is for.
+/// The scorer returns one position per query character, in query order, so the
+/// positions belonging to a term are the slice as long as that term, and the
+/// term landed as itself when that slice is consecutive. A gap inside any one
+/// of them is the fuzzy subsequence the secondary colour is for.
 ///
-/// Fewer runs than terms is not a lesser match but a better one — terms that
-/// happen to sit next to each other in the candidate merge into a single run,
-/// which is the tightest a multi-word query can land.
+/// Counting runs across the whole query instead would be wrong now that a term
+/// is itself fuzzy, because a gap inside one term and two terms landing
+/// adjacent cancel out in the total: `ab cd` against `a_bcd` matches at
+/// `[0, 2, 3, 4]`, which is two runs for two terms while `ab` is plainly
+/// scattered. Where the terms fall has to be read from the query rather than
+/// inferred from how many runs appeared.
+///
+/// Terms that happen to sit next to each other in the candidate are still the
+/// tightest a multi-word query can land, and stay direct: their spans merge
+/// into one run, but each term's own slice is consecutive.
 pub fn is_direct_match(positions: &[usize], query: &str) -> bool {
     if positions.is_empty() {
         return false;
     }
-    let runs = 1 + positions
-        .windows(2)
-        .filter(|pair| pair[1] != pair[0] + 1)
-        .count();
-    runs <= query.split_whitespace().count().max(1)
+    let mut rest = positions;
+    for term in query.split_whitespace() {
+        let length = term.chars().count();
+        if rest.len() < length {
+            return false;
+        }
+        let (landed, remaining) = rest.split_at(length);
+        if landed.windows(2).any(|pair| pair[1] != pair[0] + 1) {
+            return false;
+        }
+        rest = remaining;
+    }
+    // Every position belongs to a term, so anything left over means these
+    // positions did not come from this query and nothing can be claimed.
+    rest.is_empty()
 }
 
 impl FilePreview {
@@ -4679,6 +4694,34 @@ mod tests {
             .score("src/keymap/validate.rs")
             .expect("a match");
         assert!(is_direct_match(&whole, "keymap validate"));
+    }
+
+    #[test]
+    fn directness_is_read_per_term_rather_than_from_the_run_count() {
+        // A gap inside one term and the next term landing adjacent cancel out
+        // in the total run count, so counting runs across the whole query
+        // calls this direct: two runs for two terms, while `ab` is scattered.
+        let (_, positions) = FuzzyMatcher::for_lines("ab cd")
+            .score("a_bcd")
+            .expect("a match");
+        assert_eq!(positions, [0, 2, 3, 4]);
+        assert!(
+            !is_direct_match(&positions, "ab cd"),
+            "a term that had to spread out is not a direct match"
+        );
+
+        // Terms landing adjacent are still the tightest a multi-word query can
+        // land: one run for two terms, and each term's own span is whole.
+        let (_, positions) = FuzzyMatcher::for_lines("ab cd")
+            .score("abcd")
+            .expect("a match");
+        assert_eq!(positions, [0, 1, 2, 3]);
+        assert!(is_direct_match(&positions, "abcd"));
+        assert!(is_direct_match(&positions, "ab cd"));
+
+        // Positions that cannot have come from this query claim nothing.
+        assert!(!is_direct_match(&[0, 1, 2], "ab cd"));
+        assert!(!is_direct_match(&[0, 1, 2, 3, 4], "ab cd"));
     }
 
     #[test]
