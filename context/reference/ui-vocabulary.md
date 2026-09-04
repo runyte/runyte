@@ -93,8 +93,9 @@ them, regardless of which extensibility direction is chosen.
   printable input.
 - **Picker overlay** — a transient choose-one overlay. Printable input filters
   candidates, Enter accepts the selected candidate, and Escape, `Ctrl-c`, or
-  an initial bare Space cancels the request. Every overlay that owns its own
-  typed query — the project finder in all three scopes and the filterable
+  an initial effective leader (bare Space by default) cancels the request.
+  Every overlay that owns its own typed query — the project finder in all
+  three scopes and the filterable
   result lists alike — draws that query on the first line under its title,
   and draws it whether or not anything has been typed: an empty query line
   reads a muted invitation such as `> type to filter`, so accepting rows
@@ -228,11 +229,11 @@ browsing, search, and splits. `Space g f` opens a picker because fuzzy typing
 resolves one immediate commit choice. Enter from either surface opens the same
 retained commit-detail special buffer.
 
-Modal result lists, choice overlays, action menus, and confirmations use bare
-Space as a symmetric dismissal key through their existing cancellation paths.
-Exact-text confirmations keep Space as literal input, because the durable path
-they ask for may contain one. Interaction-line prompts are not overlays and
-retain ordinary space entry.
+Modal result lists, choice overlays, action menus, and confirmations use the
+effective leader (bare Space by default) as a symmetric dismissal key through
+their existing cancellation paths. Exact-text confirmations keep the space bar
+as literal input, because the durable path they ask for may contain one.
+Interaction-line prompts are not overlays and retain ordinary space entry.
 
 ## Row selection
 

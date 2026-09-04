@@ -5699,6 +5699,24 @@ mod tests {
         assert!(!hints.is_pending());
     }
 
+    #[test]
+    fn frontend_observes_the_configured_window_prefix_in_insert_mode() {
+        let config = Config {
+            keys: Some(serde_yaml::from_str("window: Ctrl-Q\n").unwrap()),
+            ..Config::default()
+        };
+        let mut app = App::new(config, None).unwrap();
+        app.mode = runyte::command::Mode::Insert;
+        let mut hints = KeyHintState::default();
+        let key = KeyStroke::new(KeyCode::Char('Q'), Modifiers::CONTROL | Modifiers::SHIFT);
+
+        assert_eq!(
+            observe_key_or_text_hint(&app, &mut hints, &InputEvent::Key(key)),
+            runyte::key_hints::HintEventResult::Forward
+        );
+        assert_eq!(hints.pending().to_string(), "Ctrl-Q");
+    }
+
     #[cfg(unix)]
     #[test]
     fn attached_host_treats_replacement_space_as_character_input() {

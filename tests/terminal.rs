@@ -406,6 +406,48 @@ fn control_w_starts_pane_navigation_without_leaving_terminal_input() {
 }
 
 #[test]
+fn configured_window_prefix_is_reserved_and_control_w_returns_to_the_child() {
+    let config = Config {
+        keys: Some(serde_yaml::from_str("window: Ctrl-a\n").unwrap()),
+        ..Config::default()
+    };
+    let mut session =
+        Session::start_with(config, "/bin/sh -c 'stty raw -echo; printf ready; cat -v'");
+    assert!(session.settle(|app| terminal_text(app).contains("ready")));
+
+    session.app.handle_key(KeyStroke::ctrl('w')).unwrap();
+    assert!(session.app.pending_sequence().is_empty());
+    assert!(session.settle(|app| terminal_text(app).contains("^W")));
+
+    session.app.handle_key(KeyStroke::ctrl('a')).unwrap();
+    assert_eq!(session.app.pending_sequence().to_string(), "Ctrl-a");
+    session.press(KeyCode::Escape);
+    assert!(session.app.pending_sequence().is_empty());
+}
+
+#[test]
+fn shifted_modified_character_window_prefix_is_canonicalized_before_terminal_routing() {
+    let config = Config {
+        keys: Some(serde_yaml::from_str("window: Ctrl-Q\n").unwrap()),
+        ..Config::default()
+    };
+    let mut session =
+        Session::start_with(config, "/bin/sh -c 'stty raw -echo; printf ready; cat -v'");
+    assert!(session.settle(|app| terminal_text(app).contains("ready")));
+
+    session
+        .app
+        .handle_key(KeyStroke::new(
+            KeyCode::Char('Q'),
+            Modifiers::CONTROL | Modifiers::SHIFT,
+        ))
+        .unwrap();
+    assert_eq!(session.app.pending_sequence().to_string(), "Ctrl-Q");
+    session.press(KeyCode::Escape);
+    assert!(session.app.pending_sequence().is_empty());
+}
+
+#[test]
 fn control_w_fullscreen_and_zen_preserve_every_terminal_mode() {
     let mut session = Session::start("/bin/cat");
     let terminal = session.app.active_terminal().unwrap();

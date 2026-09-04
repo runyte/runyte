@@ -213,6 +213,12 @@ and the order of the push. Do not infer any of those from the commit history.
   is pane content, not a buffer, and nothing above this module handles escape
   sequences.
 - `src/keymap.rs`: the single declarative source of truth for key execution.
+- `src/keymap/validate.rs`: effective-scope validation shared by built-in and
+  configured keymaps.
+- `src/keymap/configured.rs`: bounded, non-fatal compilation and rollback for
+  the `keys` configuration section.
+- `src/key_spelling.rs`: live rendering of authored default key spellings for
+  help, tutorials, and actionable messages.
 - `src/key_hints.rs`: presentation-neutral key-discovery state.
 - `src/help.rs`: the hand-written overview each view opens its help window
   with, chosen from the mode and the binding scope. The key table below it

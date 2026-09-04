@@ -181,3 +181,128 @@ mod workspace;
 use commands::{type_command, type_text, vim_app};
 use editing_and_buffers::MemoryClipboard;
 use language::{drain, ready, rust_app, temporary, tracked};
+
+#[test]
+fn configured_leader_is_owned_by_the_app_and_space_becomes_insertable() {
+    let config = Config {
+        keys: Some(serde_yaml::from_str("leader: Ctrl-x\n").expect("valid raw key configuration")),
+        ..Config::default()
+    };
+    let mut app = App::new(config, None).unwrap();
+    assert_eq!(app.keymap().leader(), KeyStroke::ctrl('x'));
+    assert!(matches!(
+        app.keymap().lookup(
+            Mode::Normal,
+            &KeySequence::parse("Ctrl-x e").expect("valid sequence")
+        ),
+        crate::keymap::Lookup::Exact(binding)
+            if binding.target == BindingTarget::Editor(EditorCommand::OpenExplorer)
+    ));
+    assert!(matches!(
+        app.keymap().lookup(
+            Mode::Normal,
+            &KeySequence::parse("Space e").expect("valid sequence")
+        ),
+        crate::keymap::Lookup::NoMatch
+    ));
+
+    app.mode = Mode::Insert;
+    press(&mut app, ' ');
+    assert_eq!(text(&app), " ");
+}
+
+#[test]
+fn malformed_key_configuration_reports_an_error_and_keeps_defaults() {
+    let config = Config {
+        keys: Some(serde_yaml::Value::Bool(true)),
+        ..Config::default()
+    };
+    let app = App::new(config, None).unwrap();
+    assert_eq!(app.keymap().leader(), KeyStroke::char(' '));
+    let entries = app.notifications.entries();
+    assert_eq!(
+        entries
+            .iter()
+            .filter(|entry| entry.title == "Key bindings")
+            .count(),
+        1
+    );
+    assert!(entries[0].body.contains("expected a mapping"));
+    assert!(
+        !entries
+            .iter()
+            .any(|entry| entry.title == "Startup configuration")
+    );
+    assert!(app.status.contains("1 key binding entries rejected"));
+}
+
+#[test]
+fn explicit_null_key_configuration_is_reported_instead_of_treated_as_absent() {
+    let config: Config = serde_yaml::from_str("keys: null\n").unwrap();
+    let app = App::new(config, None).unwrap();
+    let notification = app
+        .notifications
+        .entries()
+        .iter()
+        .find(|entry| entry.title == "Key bindings")
+        .expect("an explicit null keys section is rejected");
+    assert!(notification.body.contains("expected a mapping"));
+}
+
+#[test]
+fn variant_specific_key_rejection_is_named_once_before_settings_change() {
+    let config = Config {
+        keys: Some(
+            serde_yaml::from_str("rebind:\n  Space e: Ctrl-h\n")
+                .expect("valid raw key configuration"),
+        ),
+        ..Config::default()
+    };
+    let app = App::new(config, None).unwrap();
+    let notification = app
+        .notifications
+        .entries()
+        .iter()
+        .find(|entry| entry.title == "Key bindings")
+        .expect("variant rejection is reported");
+    assert!(notification.body.contains("fast_pane_keys=true:"));
+    assert!(!notification.body.contains("fast_pane_keys=false:"));
+    assert!(app.status.contains("1 key binding entries rejected"));
+}
+
+#[test]
+fn configured_spellings_reach_about_manual_help_and_the_tutorial() {
+    let configured = || Config {
+        keys: Some(
+            serde_yaml::from_str("leader: Ctrl-x\nwindow: Ctrl-a\n")
+                .expect("valid raw key configuration"),
+        ),
+        ..Config::default()
+    };
+
+    let mut about = App::new(configured(), None).unwrap();
+    about.execute_command("about").unwrap();
+    assert!(text(&about).contains("Ctrl-x ?"));
+    assert!(text(&about).contains("Ctrl-x f"));
+
+    let mut manual = App::new(configured(), None).unwrap();
+    manual.execute_command("help").unwrap();
+    assert!(text(&manual).contains("Use Ctrl-x ? for contextual help"));
+    assert!(text(&manual).contains("Press Ctrl-x and pause"));
+
+    let mut contextual = App::new(configured(), None).unwrap();
+    key(&mut contextual, KeyCode::Char('x'), Modifiers::CONTROL);
+    press(&mut contextual, '?');
+    assert!(text(&contextual).contains("Ctrl-x ?"));
+    assert!(text(&contextual).contains("Ctrl-a"));
+
+    let mut tutorial = App::new(configured(), None).unwrap();
+    tutorial.execute_command("tutorial").unwrap();
+    key(&mut tutorial, KeyCode::Enter, Modifiers::NONE);
+    tutorial.tutorial.as_mut().unwrap().lesson = 8;
+    tutorial.refresh_tutorial_document();
+    let instructions = tutorial.tutorial.as_ref().unwrap().instruction_buffer;
+    let instructions = tutorial.buffers[instructions].to_string();
+    assert!(instructions.contains("Ctrl-x s c"));
+    assert!(instructions.contains("Ctrl-a"));
+}

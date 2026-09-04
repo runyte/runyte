@@ -1130,10 +1130,8 @@ impl App {
             && self.buffers[buffer_id].external_file_status()
                 != crate::buffer::ExternalFileStatus::Deleted
         {
-            self.action_warning(
-                "Save refused",
-                "file changed on disk; Space b d compares, Space r reloads, and :write! replaces it",
-            );
+            let message = self.key_text(crate::key_spelling::actionable::STALE_SAVE);
+            self.action_warning("Save refused", message);
             return Ok(());
         }
         let destination = path.as_deref().or(self.buffers[buffer_id].path.as_deref());
@@ -1312,9 +1310,10 @@ impl App {
             generation: observation.generation,
             observation: observation.observation,
         };
-        self.status(
-            confirmation.message(self.buffers[buffer_id].external_file_status().is_stale()),
-        );
+        self.status(confirmation.message(
+            self.buffers[buffer_id].external_file_status().is_stale(),
+            self.keymap(),
+        ));
         self.file_reload_confirmation = Some(confirmation);
         self.confirmation_revision = self.confirmation_revision.wrapping_add(1);
         Ok(())

@@ -10,13 +10,7 @@ Plans are grouped by their relationship to the current editor:
   decision.
 
 Empty lifecycle directories are omitted and created only when needed. No plan
-is currently active. One plan is proposed:
-
-- `proposed/PLAN_KEY_REMAPPING.md`: a `keys` section in `config.yaml` that
-  remaps the `Space` and `Ctrl-w` namespaces, the short aliases they advertise,
-  and the two named prefixes, resolved once into the keymap that dispatch,
-  help, hints, the manual, and the tutorial all read. Answers
-  `context/issues/configurable_key_bindings.md`.
+is currently active or proposed.
 
 Completed plans are decision records, not a second user guide. Current behavior
 belongs in `README.md`, `docs/user-guide.md`, the source, and the relevant file
@@ -25,6 +19,9 @@ current sources take precedence.
 
 The retained completed records cover:
 
+- `PLAN_KEY_REMAPPING.md`: a bounded `keys` section that remaps default
+  bindings, advertised aliases, and the application and window prefixes into
+  the one keymap read by dispatch and every live teaching surface;
 - `PLAN_V4_EDITOR_CORE.md`: the rope, transaction, selection, syntax, LSP, and
   directory-buffer foundation;
 - `PLAN_V8_ASYNC_WORKSPACE_GIT.md`: asynchronous services, persistent

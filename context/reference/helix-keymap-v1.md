@@ -1,5 +1,9 @@
 # Helix keymap compatibility — V1
 
+This register records Runyte's default spellings. A `keys` section in
+`config.yaml` may move the two named prefixes, their descendants, and
+advertised aliases without changing the compatibility status recorded here.
+
 Target: [Helix master keymap](https://docs.helix-editor.com/master/keymap.html),
 verified 2026-07-27.
 

@@ -152,6 +152,52 @@ impl KeyStroke {
             format!("{modifiers}-{code}")
         }
     }
+
+    /// Parses the stable, frontend-independent spelling emitted by
+    /// [`Self::label`]. The spelling describes the logical key reported by a
+    /// frontend, so Shift is rejected for character keys: terminals report
+    /// the shifted character itself and that character is layout-dependent.
+    pub fn parse(value: &str) -> Result<Self, String> {
+        let original = value;
+        if value.is_empty() {
+            return Err("a key spelling cannot be empty".to_owned());
+        }
+        let mut rest = value;
+        let mut modifiers = Modifiers::NONE;
+        loop {
+            let mut matched = false;
+            for (name, modifier) in [
+                ("Ctrl-", Modifiers::CONTROL),
+                ("Alt-", Modifiers::ALT),
+                ("Super-", Modifiers::SUPER),
+                ("Shift-", Modifiers::SHIFT),
+                ("Hyper-", Modifiers::HYPER),
+                ("Meta-", Modifiers::META),
+            ] {
+                if let Some(suffix) = rest.strip_prefix(name) {
+                    if modifiers.contains(modifier) {
+                        return Err(format!("duplicate modifier in {original:?}"));
+                    }
+                    modifiers.insert(modifier);
+                    rest = suffix;
+                    matched = true;
+                    break;
+                }
+            }
+            if !matched {
+                break;
+            }
+        }
+        let code = KeyCode::parse(rest)?;
+        if modifiers.contains(Modifiers::SHIFT)
+            && let KeyCode::Char(character) = code
+        {
+            return Err(format!(
+                "Shift- is not valid on a character key; write {character} instead"
+            ));
+        }
+        Ok(Self::new(code, modifiers).canonical_for_binding())
+    }
 }
 
 impl fmt::Display for KeyStroke {
@@ -353,6 +399,61 @@ impl KeyCode {
             Self::Modifier(key) => format!("Modifier({key})"),
         }
     }
+
+    fn parse(value: &str) -> Result<Self, String> {
+        let named = match value {
+            "Backspace" => Self::Backspace,
+            "Enter" => Self::Enter,
+            "Left" => Self::Left,
+            "Right" => Self::Right,
+            "Up" => Self::Up,
+            "Down" => Self::Down,
+            "Home" => Self::Home,
+            "End" => Self::End,
+            "PageUp" => Self::PageUp,
+            "PageDown" => Self::PageDown,
+            "Tab" => Self::Tab,
+            "BackTab" => Self::BackTab,
+            "Delete" => Self::Delete,
+            "Insert" => Self::Insert,
+            "Space" => Self::Char(' '),
+            "Null" => Self::Null,
+            "Esc" => Self::Escape,
+            "CapsLock" => Self::CapsLock,
+            "ScrollLock" => Self::ScrollLock,
+            "NumLock" => Self::NumLock,
+            "PrintScreen" => Self::PrintScreen,
+            "Pause" => Self::Pause,
+            "Menu" => Self::Menu,
+            "KeypadBegin" => Self::KeypadBegin,
+            _ => {
+                if let Some(number) = value.strip_prefix('F')
+                    && !number.is_empty()
+                    && let Ok(number) = number.parse::<u8>()
+                {
+                    return Ok(Self::Function(number));
+                }
+                if let Some(name) = value
+                    .strip_prefix("Media(")
+                    .and_then(|value| value.strip_suffix(')'))
+                {
+                    return MediaKey::parse(name).map(Self::Media);
+                }
+                if let Some(name) = value
+                    .strip_prefix("Modifier(")
+                    .and_then(|value| value.strip_suffix(')'))
+                {
+                    return ModifierKey::parse(name).map(Self::Modifier);
+                }
+                let mut characters = value.chars();
+                if let (Some(character), None) = (characters.next(), characters.next()) {
+                    return Ok(Self::Char(character));
+                }
+                return Err(format!("unknown key code {value:?}"));
+            }
+        };
+        Ok(named)
+    }
 }
 
 impl fmt::Display for KeyCode {
@@ -396,6 +497,25 @@ impl MediaKey {
             Self::RaiseVolume => "RaiseVolume",
             Self::MuteVolume => "MuteVolume",
         }
+    }
+
+    fn parse(value: &str) -> Result<Self, String> {
+        Ok(match value {
+            "Play" => Self::Play,
+            "Pause" => Self::Pause,
+            "PlayPause" => Self::PlayPause,
+            "Reverse" => Self::Reverse,
+            "Stop" => Self::Stop,
+            "FastForward" => Self::FastForward,
+            "Rewind" => Self::Rewind,
+            "TrackNext" => Self::TrackNext,
+            "TrackPrevious" => Self::TrackPrevious,
+            "Record" => Self::Record,
+            "LowerVolume" => Self::LowerVolume,
+            "RaiseVolume" => Self::RaiseVolume,
+            "MuteVolume" => Self::MuteVolume,
+            _ => return Err(format!("unknown media key {value:?}")),
+        })
     }
 }
 
@@ -442,6 +562,26 @@ impl ModifierKey {
             Self::IsoLevel3Shift => "IsoLevel3Shift",
             Self::IsoLevel5Shift => "IsoLevel5Shift",
         }
+    }
+
+    fn parse(value: &str) -> Result<Self, String> {
+        Ok(match value {
+            "LeftShift" => Self::LeftShift,
+            "LeftControl" => Self::LeftControl,
+            "LeftAlt" => Self::LeftAlt,
+            "LeftSuper" => Self::LeftSuper,
+            "LeftHyper" => Self::LeftHyper,
+            "LeftMeta" => Self::LeftMeta,
+            "RightShift" => Self::RightShift,
+            "RightControl" => Self::RightControl,
+            "RightAlt" => Self::RightAlt,
+            "RightSuper" => Self::RightSuper,
+            "RightHyper" => Self::RightHyper,
+            "RightMeta" => Self::RightMeta,
+            "IsoLevel3Shift" => Self::IsoLevel3Shift,
+            "IsoLevel5Shift" => Self::IsoLevel5Shift,
+            _ => return Err(format!("unknown modifier key {value:?}")),
+        })
     }
 }
 
@@ -505,6 +645,101 @@ mod tests {
 
         let back_tab = KeyStroke::new(KeyCode::BackTab, Modifiers::SHIFT);
         assert_eq!(back_tab.canonical_for_binding(), back_tab);
+    }
+
+    #[test]
+    fn canonical_key_labels_parse_back_to_the_same_binding_identity() {
+        let mut codes = vec![
+            KeyCode::Backspace,
+            KeyCode::Enter,
+            KeyCode::Left,
+            KeyCode::Right,
+            KeyCode::Up,
+            KeyCode::Down,
+            KeyCode::Home,
+            KeyCode::End,
+            KeyCode::PageUp,
+            KeyCode::PageDown,
+            KeyCode::Tab,
+            KeyCode::BackTab,
+            KeyCode::Delete,
+            KeyCode::Insert,
+            KeyCode::Function(5),
+            KeyCode::Char('x'),
+            KeyCode::Char('G'),
+            KeyCode::Char('-'),
+            KeyCode::Char(' '),
+            KeyCode::Null,
+            KeyCode::Escape,
+            KeyCode::CapsLock,
+            KeyCode::ScrollLock,
+            KeyCode::NumLock,
+            KeyCode::PrintScreen,
+            KeyCode::Pause,
+            KeyCode::Menu,
+            KeyCode::KeypadBegin,
+        ];
+        codes.extend(
+            [
+                MediaKey::Play,
+                MediaKey::Pause,
+                MediaKey::PlayPause,
+                MediaKey::Reverse,
+                MediaKey::Stop,
+                MediaKey::FastForward,
+                MediaKey::Rewind,
+                MediaKey::TrackNext,
+                MediaKey::TrackPrevious,
+                MediaKey::Record,
+                MediaKey::LowerVolume,
+                MediaKey::RaiseVolume,
+                MediaKey::MuteVolume,
+            ]
+            .map(KeyCode::Media),
+        );
+        codes.extend(
+            [
+                ModifierKey::LeftShift,
+                ModifierKey::LeftControl,
+                ModifierKey::LeftAlt,
+                ModifierKey::LeftSuper,
+                ModifierKey::LeftHyper,
+                ModifierKey::LeftMeta,
+                ModifierKey::RightShift,
+                ModifierKey::RightControl,
+                ModifierKey::RightAlt,
+                ModifierKey::RightSuper,
+                ModifierKey::RightHyper,
+                ModifierKey::RightMeta,
+                ModifierKey::IsoLevel3Shift,
+                ModifierKey::IsoLevel5Shift,
+            ]
+            .map(KeyCode::Modifier),
+        );
+
+        for code in codes {
+            for bits in 0..=Modifiers::ALL.bits() {
+                let modifiers = Modifiers::from_bits(bits).unwrap();
+                if matches!(code, KeyCode::Char(_)) && modifiers.contains(Modifiers::SHIFT) {
+                    continue;
+                }
+                let stroke = KeyStroke::new(code, modifiers);
+                assert_eq!(
+                    KeyStroke::parse(&stroke.label()).unwrap(),
+                    stroke.canonical_for_binding(),
+                    "{}",
+                    stroke.label()
+                );
+            }
+        }
+        for spelling in ["-", "Ctrl--", "Space", "F5", "Ctrl-Alt-x"] {
+            assert_eq!(
+                KeyStroke::parse(spelling).unwrap().label(),
+                spelling,
+                "{spelling}"
+            );
+        }
+        assert!(KeyStroke::parse("Shift-g").unwrap_err().contains("write g"));
     }
 
     #[test]

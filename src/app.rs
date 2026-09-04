@@ -918,13 +918,21 @@ struct FileReloadConfirmation {
 }
 
 impl FileReloadConfirmation {
-    fn message(&self, stale: bool) -> String {
+    fn message(&self, stale: bool, keymap: &Keymap) -> String {
         let mut message = format!(
             "Reload {} and discard unsaved Runyte changes and their undo history?",
             self.path.display()
         );
         if stale {
-            message.push_str("\nSpace b d compares without discarding changes.");
+            message.push('\n');
+            message.push_str(
+                &crate::key_spelling::resolve(
+                    crate::key_spelling::actionable::FILE_RELOAD_NOTE,
+                    keymap,
+                )
+                .expect("file-reload key marker must resolve")
+                .text,
+            );
         }
         message.push_str("\nEnter confirms.\nEscape cancels.");
         message
@@ -2759,9 +2767,9 @@ pub struct App {
     /// moment its sequence completes, in the order it arrived.
     macro_staging: Vec<InputEvent>,
     macro_replay: Option<MacroReplay>,
-    /// Last successfully invoked command reached through an actual `Space ...`
-    /// binding. The semantic invocation is replayed against current state;
-    /// aliases such as `Ctrl-w` never enter this history.
+    /// Last successfully invoked command reached through the effective leader
+    /// namespace. The semantic invocation is replayed against current state;
+    /// window-prefix aliases never enter this history.
     /// Live `goto-word` jump labels, painted over the active pane until two
     /// keystrokes name one or a stray key spends them.
     pub jump: Option<JumpLabels>,
@@ -2769,7 +2777,10 @@ pub struct App {
     /// ends. Unlike `v`, a line selection is transient: it survives only
     /// consecutive `x`/`X` presses, and any other command drops it.
     line_select: Option<Mode>,
-    keymap: &'static Keymap,
+    keymap: Arc<Keymap>,
+    /// Precompiled variants indexed by `editor.fast_pane_keys` when the
+    /// optional key-remapping section exists.
+    configured_keymaps: Option<[Arc<Keymap>; 2]>,
     grammar: ActiveGrammar,
     /// Cursor and scroll state per directory, keyed by path rather than by
     /// buffer: one explorer buffer now stands for every directory a pane has
@@ -2837,7 +2848,11 @@ impl App {
             .display();
         let body = match &event.observation {
             FileObservation::Text { .. } => {
-                format!("{shown} changed on disk · Space b d compares · Space r reloads")
+                format!(
+                    "{shown} changed on disk · {} compares · {} reloads",
+                    self.key_text(crate::key_spelling::actionable::COMPARE_DISK),
+                    self.key_text(crate::key_spelling::actionable::RELOAD)
+                )
             }
             FileObservation::Deleted => {
                 format!("{shown} was deleted on disk · saving recreates it")
@@ -2992,14 +3007,16 @@ impl App {
             startup,
         )?;
         let registry_errors = registry.errors();
-        let configured_help = ":? or Space+? for help";
+        let configured_help = ":? or <help-key> for help";
         let mut status = startup_status(&registry_errors, configured_help);
         let mut status_error = !registry_errors.is_empty();
+        let mut startup_notification_error = !registry_errors.is_empty();
         let grammar = match ActiveGrammar::new(config.editor.grammar) {
             Ok(grammar) => grammar,
             Err(error) => {
                 status = format!("{status} · {error}; using runyte");
                 status_error = true;
+                startup_notification_error = true;
                 ActiveGrammar::default()
             }
         };
@@ -3012,8 +3029,59 @@ impl App {
         panes.insert(0, Pane::new(0));
         let persisted_config = config.clone();
         let notification_limit = config.notifications.history_limit;
-        let keymap = keymap_for(config.editor.fast_pane_keys);
-        let startup_notification = status_error.then(|| status.clone());
+        let mut key_errors = Vec::new();
+        let mut key_rejection_count = 0;
+        let configured_keymaps = config.keys.as_ref().map(|section| {
+            let defaults = keymap_for(false);
+            let fast = keymap_for(true);
+            let normal = crate::keymap::configured::compile(section, &defaults);
+            let fast = crate::keymap::configured::compile(section, &fast);
+            if normal.errors == fast.errors {
+                key_errors.extend(normal.errors.iter().cloned());
+            } else {
+                for error in normal
+                    .errors
+                    .iter()
+                    .filter(|error| fast.errors.contains(error))
+                {
+                    key_errors.push(error.clone());
+                }
+                key_errors.extend(
+                    normal
+                        .errors
+                        .iter()
+                        .filter(|error| !fast.errors.contains(error))
+                        .map(|error| format!("fast_pane_keys=false: {error}")),
+                );
+                key_errors.extend(
+                    fast.errors
+                        .iter()
+                        .filter(|error| !normal.errors.contains(error))
+                        .map(|error| format!("fast_pane_keys=true: {error}")),
+                );
+            }
+            key_rejection_count = crate::keymap::configured::rejected_entry_count(
+                normal.errors.iter().chain(&fast.errors).map(String::as_str),
+            );
+            [normal.keymap, fast.keymap]
+        });
+        if !key_errors.is_empty() {
+            status.push_str(&format!(
+                " · {} key binding entries rejected",
+                key_rejection_count
+            ));
+            status_error = true;
+        }
+        let keymap = configured_keymaps
+            .as_ref()
+            .map(|maps| Arc::clone(&maps[usize::from(config.editor.fast_pane_keys)]))
+            .unwrap_or_else(|| keymap_for(config.editor.fast_pane_keys));
+        let live_help =
+            crate::key_spelling::resolve(crate::key_spelling::actionable::STARTUP_HELP, &keymap)
+                .expect("startup help marker must resolve")
+                .text;
+        status = status.replace(configured_help, &live_help);
+        let startup_notification = startup_notification_error.then(|| status.clone());
         let mut app = Self {
             config,
             persisted_config,
@@ -3152,6 +3220,7 @@ impl App {
             jump: None,
             line_select: None,
             keymap,
+            configured_keymaps,
             grammar,
             directory_views: HashMap::new(),
             search: SearchQuery::default(),
@@ -3185,6 +3254,14 @@ impl App {
                 "Startup",
                 "Startup configuration",
                 message,
+            ));
+        }
+        if !key_errors.is_empty() {
+            app.push_notification(NotificationDraft::new(
+                NotificationSeverity::Error,
+                "Configuration",
+                "Key bindings",
+                crate::keymap::configured::format_errors(&key_errors),
             ));
         }
         app.apply_pending_launch_position(0);

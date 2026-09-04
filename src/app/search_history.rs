@@ -90,11 +90,11 @@ impl App {
         ));
     }
 
-    fn macro_stop_hint(&self) -> &'static str {
+    fn macro_stop_hint(&self) -> String {
         if self.grammar.kind() == crate::command::GrammarKind::Vim {
-            "q"
+            "q".to_owned()
         } else {
-            "Space m m"
+            self.key_text(crate::key_spelling::actionable::MACRO_RECORD)
         }
     }
 
@@ -146,7 +146,10 @@ impl App {
     pub(super) fn replay_macro(&mut self, register: char, count: usize) -> Result<()> {
         let Some(inputs) = self.macros.get(&register) else {
             self.action_failed(if register == DEFAULT_MACRO_REGISTER {
-                "no default macro recorded; Space m m records one".to_owned()
+                format!(
+                    "no default macro recorded; {} records one",
+                    self.key_text(crate::key_spelling::actionable::MACRO_RECORD)
+                )
             } else {
                 format!("macro @{register} is empty")
             });

@@ -392,7 +392,7 @@ impl KeyHintState {
         self.expire_at(now);
         if matches!(mode, Mode::Insert | Mode::Replace)
             && !self.is_pending()
-            && key != KeyStroke::ctrl('w')
+            && key.canonical_for_binding() != keymap.window_prefix()
         {
             self.clear();
             return HintEventResult::Forward;
@@ -1019,6 +1019,21 @@ mod tests {
 
         hints.observe(event('g'), Mode::Insert, default_keymap());
         assert!(!hints.is_visible());
+    }
+
+    #[test]
+    fn configured_window_prefix_opens_insert_hints_from_canonical_input() {
+        let section: serde_yaml::Value = serde_yaml::from_str("window: Ctrl-Q\n").unwrap();
+        let compiled = crate::keymap::configured::compile(&section, default_keymap());
+        assert!(compiled.errors.is_empty(), "{:?}", compiled.errors);
+        let mut hints = KeyHintState::default();
+        let result = hints.observe(
+            KeyStroke::new(KeyCode::Char('Q'), Modifiers::CONTROL | Modifiers::SHIFT),
+            Mode::Insert,
+            &compiled.keymap,
+        );
+        assert_eq!(result, HintEventResult::Forward);
+        assert_eq!(hints.pending().to_string(), "Ctrl-Q");
     }
 
     #[test]

@@ -1,6 +1,6 @@
 # Key remapping
 
-Status: proposed 2026-09-03
+Status: completed 2026-09-03
 
 Created: 2026-09-03
 
@@ -45,7 +45,7 @@ keys:
     Space g l: Leader G c     # one binding
     Ctrl-w x: Window e        # the window namespace
     Space e: Space            # a literal Space, now that the leader has left
-    ",": ";"                  # an advertised alias
+    ",": F12                  # an advertised alias
 ```
 
 The left-hand side is the spelling Runyte ships with, so the file reads as the

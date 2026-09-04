@@ -266,7 +266,7 @@ const DESCRIPTORS: &[SettingDescriptor] = &[
         id: SettingId::EditorFastPaneKeys,
         key: "editor.fast_pane_keys",
         title: "Fast pane keys",
-        description: "Move between panes with Ctrl-h/j/k/l, without Ctrl-w",
+        description: "Move between panes with Ctrl-h/j/k/l, without entering the window prefix",
         value_type: SettingType::Boolean,
         preview: PreviewPolicy::Immediate,
         persistence: PersistencePolicy::ConfigFile,

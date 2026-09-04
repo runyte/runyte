@@ -5,6 +5,7 @@
 use unicode_width::UnicodeWidthStr;
 
 use crate::help_document::{HelpDocument, HelpDocumentWriter, HelpRole};
+use crate::keymap::{Keymap, default_keymap};
 
 const LOGO: &str = include_str!("../logo/ascii/logo.txt");
 const DESCRIPTION: &str = "A fast modal terminal editor with selection-first editing.";
@@ -12,14 +13,14 @@ const TAGLINE: &str = "Navigate. Select. Act.";
 const HEADING: &str = "Getting around";
 const FIRST_STEPS: &[(&str, &str)] = &[
     (":tutorial", "learn Runyte interactively"),
-    ("Space ?", "help for the current view"),
+    ("{binding:Space ?}", "help for the current view"),
     (":help", "open the general manual"),
     (
-        "Space f",
+        "{binding:Space f}",
         "find anything (Tab to switch between files/content)",
     ),
-    ("Space e", "explore the active directory"),
-    ("Space b b", "list open buffers"),
+    ("{binding:Space e}", "explore the active directory"),
+    ("{binding:Space b b}", "list open buffers"),
     ("Alt-o | Alt-i", "move back and forth between buffers"),
     (":", "open the command palette"),
     (":q", "quit"),
@@ -39,12 +40,16 @@ pub fn render() -> String {
 }
 
 pub(crate) fn render_document() -> HelpDocument {
+    render_document_for(default_keymap())
+}
+
+pub(crate) fn render_document_for(keymap: &Keymap) -> HelpDocument {
     let logo = LOGO.lines().map(str::to_owned).collect::<Vec<_>>();
     let version = vec![format!("Runyte {}", env!("CARGO_PKG_VERSION"))];
     let description = vec![DESCRIPTION.to_owned()];
     let tagline = vec![TAGLINE.to_owned()];
     let heading = vec![HEADING.to_owned()];
-    let steps = first_steps();
+    let steps = first_steps(keymap);
     let blocks = [&logo, &version, &description, &tagline, &heading, &steps];
     let width = blocks
         .iter()
@@ -70,26 +75,46 @@ pub(crate) fn render_document() -> HelpDocument {
     }
     document.mark_since(0, &version[0], HelpRole::Heading);
     document.mark_since(0, HEADING, HelpRole::Heading);
-    for (key, _) in FIRST_STEPS {
+    for ((key, _), rendered) in FIRST_STEPS.iter().zip(&steps) {
+        let key = if key.starts_with(':') {
+            (*key).to_owned()
+        } else {
+            rendered
+                .split_once(" · ")
+                .map_or_else(String::new, |(key, _)| key.trim_end().to_owned())
+        };
         let role = if key.starts_with(':') {
             HelpRole::Command
         } else {
             HelpRole::KeyBinding
         };
-        document.mark_since(0, key, role);
+        document.mark_since(0, &key, role);
     }
     document.finish()
 }
 
 /// The key table, each key padded to the widest so the separators line up.
-fn first_steps() -> Vec<String> {
-    let key_width = FIRST_STEPS
+fn first_steps(keymap: &Keymap) -> Vec<String> {
+    let resolved = FIRST_STEPS
+        .iter()
+        .map(|(key, description)| {
+            let key = if key.starts_with(':') {
+                (*key).to_owned()
+            } else {
+                crate::key_spelling::resolve(key, keymap)
+                    .expect("about key markers must resolve")
+                    .text
+            };
+            (key, *description)
+        })
+        .collect::<Vec<_>>();
+    let key_width = resolved
         .iter()
         .map(|(key, _)| key.width())
         .max()
         .unwrap_or_default();
-    FIRST_STEPS
-        .iter()
+    resolved
+        .into_iter()
         .map(|(key, description)| format!("{key:<key_width$} · {description}"))
         .collect()
 }
@@ -122,6 +147,13 @@ fn cells(lines: &[String]) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn authored_key_markers_are_complete_and_resolve_in_both_variants() {
+        for (key, _) in FIRST_STEPS {
+            crate::key_spelling::assert_authored_template(key);
+        }
+    }
 
     #[test]
     fn about_contains_the_source_logo_version_and_first_steps() {
@@ -174,7 +206,7 @@ mod tests {
             .lines()
             .find(|line| line.ends_with("quit"))
             .unwrap();
-        let steps = cells(&first_steps());
+        let steps = cells(&first_steps(default_keymap()));
         assert_eq!(
             quit.width() - quit.trim_start().width(),
             (width - steps) / 2

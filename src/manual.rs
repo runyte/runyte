@@ -10,6 +10,7 @@
 use std::fmt::Write as _;
 
 use crate::help_document::{HelpDocument, HelpDocumentWriter, HelpRole};
+use crate::keymap::{Keymap, default_keymap};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ManualTopic {
@@ -101,31 +102,31 @@ impl ManualTopic {
     const fn body(self) -> &'static str {
         match self {
             Self::GettingStarted => {
-                "Runyte is a selection-first modal editor: establish one or more selections, then act on all of them. NORMAL movement replaces the current selection; v enters SELECT mode, where movement extends it. Escape returns to NORMAL mode.\n\n:tutorial opens a guided two-pane introduction with read-only instructions and disposable scratch text. It asks whether to show Vim-like motion spellings, Helix-like motion spellings, or both; the choice changes only the displayed motion spellings, never Runyte's selection behavior or keymap. Its exercises include x/X line selection, buffer types, the explorer, and the complete creation and explicit closing of a terminal session.\n\nPress Space and pause to explore command groups. Space ? describes the view under the cursor and generates its key rows from the active keymap. The general manual you are reading is opened by :help, and :help <topic> jumps directly to a section.\n\nUse Space f to find files, buffers, and terminals by name or content, Space e to explore the active directory, Space b b to manage open buffers, and : to search every command by name, alias, category, or description."
+                "Runyte is a selection-first modal editor: establish one or more selections, then act on all of them. NORMAL movement replaces the current selection; v enters SELECT mode, where movement extends it. Escape returns to NORMAL mode.\n\n:tutorial opens a guided two-pane introduction with read-only instructions and disposable scratch text. It asks whether to show Vim-like motion spellings, Helix-like motion spellings, or both; the choice changes only the displayed motion spellings, never Runyte's selection behavior or keymap. Its exercises include x/X line selection, buffer types, the explorer, and the complete creation and explicit closing of a terminal session.\n\nPress {prefix:Space} and pause to explore command groups. {binding:Space ?} describes the view under the cursor and generates its key rows from the active keymap. The general manual you are reading is opened by :help, and :help <topic> jumps directly to a section.\n\nUse {binding:Space f} to find files, buffers, and terminals by name or content, {binding:Space e} to explore the active directory, {binding:Space b b} to manage open buffers, and : to search every command by name, alias, category, or description."
             }
             Self::Editing => {
                 "Every editing command operates on every selected range. A motion in NORMAL mode replaces each range; v enters SELECT mode so subsequent motions extend them. Multiple ranges are ordinary editor state rather than a special mode, so one change, delete, yank, or paste applies everywhere.\n\nSearch is the quickest way to create a useful multi-selection. An initial search selects every match; editing immediately changes them all. Press n or N first when the intended edit belongs to only one result.\n\nAll buffer mutations are transactions. Undo and redo therefore restore text and selections together rather than replaying direct writes."
             }
             Self::MouseAndClipboard => {
-                "Left click focuses a pane and places its caret. Shift-click extends the current selection, and left-button drag selects text and enters SELECT mode. The wheel scrolls the pane under the pointer; dragging a shared pane border resizes the split.\n\nRight-clicking any current selection copies all current selections to the system clipboard, exactly like Space c y, without moving or replacing them. Bare y instead yanks to the selected Runyte register. Space c p pastes from the system clipboard over the selection, or after a bare caret, and Space c P pastes before it without replacing anything.\n\nA reviewed terminal accepts the same drag-selection and right-click copy gestures. A live terminal that requests SGR mouse input receives its mouse events instead. Runyte's mouse capture replaces the terminal's native text selection; set editor.mouse to false and restart when native selection is preferred."
+                "Left click focuses a pane and places its caret. Shift-click extends the current selection, and left-button drag selects text and enters SELECT mode. The wheel scrolls the pane under the pointer; dragging a shared pane border resizes the split.\n\nRight-clicking any current selection copies all current selections to the system clipboard, exactly like {binding:Space c y}, without moving or replacing them. Bare y instead yanks to the selected Runyte register. {binding:Space c p} pastes from the system clipboard over the selection, or after a bare caret, and {binding:Space c P} pastes before it without replacing anything.\n\nA reviewed terminal accepts the same drag-selection and right-click copy gestures. A live terminal that requests SGR mouse input receives its mouse events instead. Runyte's mouse capture replaces the terminal's native text selection; set editor.mouse to false and restart when native selection is preferred."
             }
             Self::Search => {
-                "Runyte has two buffer-search flavours. s searches for a case-insensitive literal and / interprets the prompt as a regular expression. Write (?-i) in a regular expression when a search has to match case.\n\nA search selects every non-overlapping match at once. n and N reduce that result to one selection and cycle forward or backward through the remembered matches.\n\nWith at least two characters selected, a new search is confined to the selected spans. Successive searches therefore narrow. Collapse to a bare caret with ; before searching when the whole buffer should be considered again.\n\nSpace / widens those two keys to the whole project without respelling either: Space / s mirrors s and Space / / mirrors /. The Finder takes f in every namespace instead: Space f, also spelled Space / f, opens it in name mode across files, buffers, and terminals, and Tab switches it to content mode without clearing the query.\n\nThe Finder obeys the project's .gitignore and .ignore files. Space / a opens the same Finder over every file the project holds, ignore files not consulted, and Space / p asks for a path and roots that unfiltered Finder there, inside the workspace or outside it."
+                "Runyte has two buffer-search flavours. s searches for a case-insensitive literal and / interprets the prompt as a regular expression. Write (?-i) in a regular expression when a search has to match case.\n\nA search selects every non-overlapping match at once. n and N reduce that result to one selection and cycle forward or backward through the remembered matches.\n\nWith at least two characters selected, a new search is confined to the selected spans. Successive searches therefore narrow. Collapse to a bare caret with ; before searching when the whole buffer should be considered again.\n\n{prefix:Space /} widens those two keys to the whole project without respelling either: {binding:Space / s} mirrors s and {binding:Space / /} mirrors /. The Finder takes f in every namespace instead: {binding:Space f}, also spelled {binding:Space / f}, opens it in name mode across files, buffers, and terminals, and Tab switches it to content mode without clearing the query.\n\nThe Finder obeys the project's .gitignore and .ignore files. {binding:Space / a} opens the same Finder over every file the project holds, ignore files not consulted, and {binding:Space / p} asks for a path and roots that unfiltered Finder there, inside the workspace or outside it."
             }
             Self::Regex => {
-                "Runyte passes regex queries directly to Rust's regex engine. The opening / is a Runyte key that opens the prompt, not a delimiter around a /pattern/flags expression. Write (?i)hello, not /hello/i, for a case-insensitive match.\n\nCommon syntax\n  .             any character except newline\n  [abc] [^abc]  character classes\n  x|y           alternation\n  (x) (?:x)     capturing and non-capturing groups\n  * + ? {n,m}   repetition; append ? for lazy repetition\n  ^ $ \\A \\z   line/input anchors\n  \\b \\B       word-boundary assertions\n  \\d \\s \\w   Unicode-aware shorthand classes\n  \\p{Greek}    Unicode property or script\n\nInline flags\n  (?i)  case-insensitive\n  (?m)  ^ and $ match line boundaries\n  (?s)  . also matches newline\n  (?R)  CRLF-aware line boundaries when multiline is enabled\n  (?U)  swap greedy and lazy repetition\n  (?u)  Unicode mode; enabled by default\n  (?x)  verbose mode with insignificant whitespace and # comments\n\nFlags may be scoped, as in (?i:hello), or disabled later, as in (?i)hello(?-i:WORLD). Slash-delimited expressions, trailing flags, look-around, and backreferences are not supported. Capturing groups are accepted, but Runyte selects only the complete match.\n\nBare / searches the complete buffer as one string, so (?s)foo.*bar or an explicit \\n may span lines. Space / / searches each workspace file one line at a time, so a workspace result never spans lines."
+                "Runyte passes regex queries directly to Rust's regex engine. The opening / is a Runyte key that opens the prompt, not a delimiter around a /pattern/flags expression. Write (?i)hello, not /hello/i, for a case-insensitive match.\n\nCommon syntax\n  .             any character except newline\n  [abc] [^abc]  character classes\n  x|y           alternation\n  (x) (?:x)     capturing and non-capturing groups\n  * + ? {n,m}   repetition; append ? for lazy repetition\n  ^ $ \\A \\z   line/input anchors\n  \\b \\B       word-boundary assertions\n  \\d \\s \\w   Unicode-aware shorthand classes\n  \\p{Greek}    Unicode property or script\n\nInline flags\n  (?i)  case-insensitive\n  (?m)  ^ and $ match line boundaries\n  (?s)  . also matches newline\n  (?R)  CRLF-aware line boundaries when multiline is enabled\n  (?U)  swap greedy and lazy repetition\n  (?u)  Unicode mode; enabled by default\n  (?x)  verbose mode with insignificant whitespace and # comments\n\nFlags may be scoped, as in (?i:hello), or disabled later, as in (?i)hello(?-i:WORLD). Slash-delimited expressions, trailing flags, look-around, and backreferences are not supported. Capturing groups are accepted, but Runyte selects only the complete match.\n\nBare / searches the complete buffer as one string, so (?s)foo.*bar or an explicit \\n may span lines. {binding:Space / /} searches each workspace file one line at a time, so a workspace result never spans lines."
             }
             Self::FilesAndBuffers => {
-                "A buffer owns text and editor history; a pane is one view onto a buffer. Splitting creates panes, while buffer switching retargets the active pane without duplicating the buffer. Space b b manages open buffers, previews their authoritative text with Ctrl-t, and opens contextual actions with Tab. Space w opens pane commands. :close / :c closes a buffer in place; :quit / :q closes a pane and a buffer displayed only there. From the last pane it exits standalone Runyte or stops a persistent session; :detach is the persistent leave-it-running operation.\n\nSpace f opens the Finder in name mode across files, buffers, and terminals; Tab switches to content mode over those same source kinds without clearing the query, and Ctrl-t toggles preview in either mode. Explorer rows read [explorer] dirname plus their relative path. :file-picker-directory searches only files beside the active file or explorer. Space e opens the active directory as an editable explorer whose text becomes a reviewed filesystem plan only when written.\n\nRead-only generated pages, including this manual, remain ordinary searchable and splittable buffers. Runyte retains the eight most recently active clean special buffers for Ctrl-o/Ctrl-i and Alt-o/Alt-i; activating a ninth retires the least recent detached one. A dirty special buffer remains discoverable. Empty clean scratch buffers still retire immediately after their last pane leaves. The general manual and contextual help both give q a scoped close binding."
+                "A buffer owns text and editor history; a pane is one view onto a buffer. Splitting creates panes, while buffer switching retargets the active pane without duplicating the buffer. {binding:Space b b} manages open buffers, previews their authoritative text with Ctrl-t, and opens contextual actions with Tab. {prefix:Space w} opens pane commands. :close / :c closes a buffer in place; :quit / :q closes a pane and a buffer displayed only there. From the last pane it exits standalone Runyte or stops a persistent session; :detach is the persistent leave-it-running operation.\n\n{binding:Space f} opens the Finder in name mode across files, buffers, and terminals; Tab switches to content mode over those same source kinds without clearing the query, and Ctrl-t toggles preview in either mode. Explorer rows read [explorer] dirname plus their relative path. :file-picker-directory searches only files beside the active file or explorer. {binding:Space e} opens the active directory as an editable explorer whose text becomes a reviewed filesystem plan only when written.\n\nRead-only generated pages, including this manual, remain ordinary searchable and splittable buffers. Runyte retains the eight most recently active clean special buffers for Ctrl-o/Ctrl-i and Alt-o/Alt-i; activating a ninth retires the least recent detached one. A dirty special buffer remains discoverable. Empty clean scratch buffers still retire immediately after their last pane leaves. The general manual and contextual help both give q a scoped close binding."
             }
             Self::Workspace => {
-                "Space / s searches workspace text as a case-insensitive literal and Space / / searches with a regular expression. Results open one retained [workspace search] special buffer.\n\nWorkspace results are a query-time snapshot. Enter follows the typed file, line, and column represented by a result row; the clean result buffer remains available while it is among the eight most recently active special buffers. Unsaved open buffers are authoritative over their on-disk files, but rerunning the command is required to refresh the result set.\n\nWorkspace matching is line-scoped, reads UTF-8 text files no larger than 4 MiB, skips symlinks and internal directories, respects the hidden-file setting, and retains at most 10,000 results."
+                "{binding:Space / s} searches workspace text as a case-insensitive literal and {binding:Space / /} searches with a regular expression. Results open one retained [workspace search] special buffer.\n\nWorkspace results are a query-time snapshot. Enter follows the typed file, line, and column represented by a result row; the clean result buffer remains available while it is among the eight most recently active special buffers. Unsaved open buffers are authoritative over their on-disk files, but rerunning the command is required to refresh the result set.\n\nWorkspace matching is line-scoped, reads UTF-8 text files no larger than 4 MiB, skips symlinks and internal directories, respects the hidden-file setting, and retains at most 10,000 results."
             }
             Self::Git => {
-                "Space g opens Git navigation and refresh commands. The changed-file list, branches, worktrees, log, blame, stashes, and diffs are typed editor views rather than terminal output. Open Space ? in any of those views for its exact row actions and keys.\n\nGit reads and mutations run through Runyte's Git service boundary. Mutations are ordered per repository, and stale results are rejected rather than applied to newer editor or repository state. Cancellation stops waiting and reconciles state; it does not claim rollback.\n\nThe changed-file list distinguishes staged content from unstaged working-tree content. A commit takes the index shown by its Staged section, and writing the generated commit-message buffer performs the commit."
+                "{prefix:Space g} opens Git navigation and refresh commands. The changed-file list, branches, worktrees, log, blame, stashes, and diffs are typed editor views rather than terminal output. Open {binding:Space ?} in any of those views for its exact row actions and keys.\n\nGit reads and mutations run through Runyte's Git service boundary. Mutations are ordered per repository, and stale results are rejected rather than applied to newer editor or repository state. Cancellation stops waiting and reconciles state; it does not claim rollback.\n\nThe changed-file list distinguishes staged content from unstaged working-tree content. A commit takes the index shown by its Staged section, and writing the generated commit-message buffer performs the commit."
             }
             Self::LanguageServers => {
-                "rust-analyzer is configured automatically. To add another language, first install its server executable so it is on PATH, then add the language directly below lsp in ~/.config/runyte/config.yaml (or the path passed with --config):\n\nlsp:\n  markdown:\n    command: marksman\n    args: [\"server\"]\n\nThe language key is Runyte's built-in language name. command is an executable name or absolute path and args is the argument list passed to it; Runyte launches the process directly, without a shell. The older lsp.servers.<language> spelling is still accepted, but servers is only a redundant compatibility wrapper. Server definitions are edited in YAML; Space o o can enable or disable LSP as a whole. Exit and reopen standalone Runyte after changing the file. A persistent session retains its host's loaded configuration, so use runyte --session-restart [WORKSPACE] and repeat any non-default --config PATH.\n\nLanguage-server commands live under Space l. Definitions, references, implementations, symbols, diagnostics, code actions, hover documentation, completion, formatting, rename, and signature help appear only when the active language and server provide them.\n\nUse :lsp-status to inspect servers that have started or failed, :lsp-restart [language] to restart one from the loaded configuration, and :service-health to check whether the active document has a configured and attached server. Launch failures appear in :lsp-status after the first attempt and in notifications. Source and package checkouts include copy-ready configurations under docs/lsp/."
+                "rust-analyzer is configured automatically. To add another language, first install its server executable so it is on PATH, then add the language directly below lsp in ~/.config/runyte/config.yaml (or the path passed with --config):\n\nlsp:\n  markdown:\n    command: marksman\n    args: [\"server\"]\n\nThe language key is Runyte's built-in language name. command is an executable name or absolute path and args is the argument list passed to it; Runyte launches the process directly, without a shell. The older lsp.servers.<language> spelling is still accepted, but servers is only a redundant compatibility wrapper. Server definitions are edited in YAML; {binding:Space o o} can enable or disable LSP as a whole. Exit and reopen standalone Runyte after changing the file. A persistent session retains its host's loaded configuration, so use runyte --session-restart [WORKSPACE] and repeat any non-default --config PATH.\n\nLanguage-server commands live under {prefix:Space l}. Definitions, references, implementations, symbols, diagnostics, code actions, hover documentation, completion, formatting, rename, and signature help appear only when the active language and server provide them.\n\nUse :lsp-status to inspect servers that have started or failed, :lsp-restart [language] to restart one from the loaded configuration, and :service-health to check whether the active document has a configured and attached server. Launch failures appear in :lsp-status after the first attempt and in notifications. Source and package checkouts include copy-ready configurations under docs/lsp/."
             }
             Self::Configuration => {
                 "Runyte reads YAML configuration from its platform configuration path. :settings opens the typed setting registry as a read-only buffer; Enter on a row opens the appropriate finite-choice or validated-value prompt. :theme opens theme choices directly.\n\nThe settings page distinguishes changes that apply immediately from those that require restart. Accepted changes are persisted without replacing unrelated YAML settings and comments.\n\nThe active editing grammar is Runyte. The accepted helix configuration spelling is only a compatibility alias for that same grammar, not a claim of complete Helix compatibility."
@@ -134,7 +135,7 @@ impl ManualTopic {
                 "Three surfaces answer three different questions. The interaction line reports what the last command did. :notifications keeps bounded workspace-lifetime feedback in memory. :service-health describes optional services right now. The diagnostic log is the fourth: a small local file that survives the process, so a failure can still be read after Runyte is gone.\n\nThe process that owns editor state owns the log. Beneath the configured workspace state directory, normally .runyte, a standalone editor writes standalone-<pid>.log and a persistent host writes host.log, which keeps growing while no TUI is attached. :log-open opens whichever of those belongs to the process holding this workspace, as an ordinary read-only [log] buffer. A client never appends to a host's log.\n\nThe default level records warnings and errors. Start Runyte with -v for info, -vv for debug, and -vvv or more for trace; --log PATH writes somewhere else, and a path that cannot be written is a startup error. On Unix an explicit path already owned by another running Runyte process is refused. In persistent mode these belong to host startup: attaching to a running session leaves its logger alone and says so, so use runyte --session-restart [WORKSPACE] -v to change it. :service-health names the owner, level, resolved path, and any write failure; a write failure after startup also leaves one warning in :notifications.\n\nAt most 4 MiB is kept in the active file, with one previous 4 MiB file beside it. A standalone launch keeps the four newest logs left by exited standalone processes, removes older logs and their rotated files, and never touches a live owner's log. Records never contain document text, selections, clipboard or terminal contents, environment values, or language-server message bodies, but they do contain local paths and process metadata: review a log before sharing it."
             }
             Self::Commands => {
-                "Press : to open the command palette. It searches canonical names, aliases, usage, descriptions, and categories. Up and Down choose a row, Tab completes it, Enter runs it, and Escape closes the palette.\n\nCommands whose current service is unavailable remain discoverable with the reason they cannot run. Path-valued commands show bounded filesystem hints after their command name.\n\nUse :tutorial for the guided introduction, :help <topic> to return to a manual section, :about for Runyte's compact front page, :notifications for retained feedback, and Space ? for keys and behavior specific to the active view."
+                "Press : to open the command palette. It searches canonical names, aliases, usage, descriptions, and categories. Up and Down choose a row, Tab completes it, Enter runs it, and Escape closes the palette.\n\nCommands whose current service is unavailable remain discoverable with the reason they cannot run. Path-valued commands show bounded filesystem hints after their command name.\n\nUse :tutorial for the guided introduction, :help <topic> to return to a manual section, :about for Runyte's compact front page, :notifications for retained feedback, and {binding:Space ?} for keys and behavior specific to the active view."
             }
         }
     }
@@ -160,22 +161,31 @@ pub fn render() -> String {
     render_document().text().to_owned()
 }
 
+const MANUAL_INTRO: &str = "Help · RUNYTE\n\n\
+This is the general Runyte manual. Use {binding:Space ?} for contextual help about\n\
+the active view and its registry-backed keys. Use :help <topic> to return\n\
+directly to one of the sections below.\n\n\
+Topics\n";
+
 pub(crate) fn render_document() -> HelpDocument {
-    let mut out = String::from(
-        "Help · RUNYTE\n\n\
-         This is the general Runyte manual. Use Space ? for contextual help about\n\
-         the active view and its registry-backed keys. Use :help <topic> to return\n\
-         directly to one of the sections below.\n\n\
-         Topics\n",
-    );
+    render_document_for(default_keymap())
+}
+
+pub(crate) fn render_document_for(keymap: &Keymap) -> HelpDocument {
+    let mut out = String::from(MANUAL_INTRO);
     for topic in ManualTopic::ALL {
         let _ = writeln!(out, "  {:<20} :help {}", topic.title(), topic.slug());
     }
     for topic in ManualTopic::ALL {
         let _ = write!(out, "\n{}\n\n{}\n", topic.heading(), topic.body());
     }
+    let resolved = crate::key_spelling::resolve(&out, keymap)
+        .expect("manual key markers must resolve against every built-in keymap");
     let mut document = HelpDocumentWriter::new();
-    document.write_prose(&out);
+    document.write_prose(&resolved.text);
+    for range in resolved.substitutions {
+        document.mark_range(range.start, range.end, HelpRole::KeyBinding);
+    }
 
     for heading in ["Help · RUNYTE", "Topics"] {
         document.mark_since(0, heading, HelpRole::Heading);
@@ -210,30 +220,13 @@ pub(crate) fn render_document() -> HelpDocument {
     }
 
     for key in [
-        "Space / /",
-        "Space / a",
-        "Space / f",
-        "Space / p",
-        "Space / s",
-        "Space f",
-        "Space b b",
-        "Space c P",
-        "Space c p",
-        "Space c y",
-        "Space g",
-        "Space l",
-        "Space o o",
-        "Space w",
-        "Space e",
         "/",
-        "Space ?",
         "Alt-o/Alt-i",
         "Ctrl-o/Ctrl-i",
         "Ctrl-t",
         "Escape",
         "Enter",
         "NORMAL",
-        "Space",
         "Tab",
         "x/X",
         "n/N",
@@ -322,6 +315,14 @@ pub fn topic_offset(text: &str, topic: ManualTopic) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn authored_key_markers_are_complete_and_resolve_in_both_variants() {
+        crate::key_spelling::assert_authored_template(MANUAL_INTRO);
+        for topic in ManualTopic::ALL {
+            crate::key_spelling::assert_authored_template(topic.body());
+        }
+    }
 
     #[test]
     fn every_topic_is_indexed_resolvable_and_has_a_unique_heading() {

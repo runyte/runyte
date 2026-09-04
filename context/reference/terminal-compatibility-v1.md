@@ -71,6 +71,13 @@ Deliberate limits:
   survive a force stop, host crash/replacement, logout, reboot, or machine
   failure.
 
+The window prefix is `Ctrl-w` by default and may be moved by `keys.window`.
+Terminal Insert reserves the effective prefix for Runyte's complete window
+grammar and hands the old `Ctrl-w` back to the child. The trade is exact: a
+configured `Ctrl-a`, for example, is no longer available to tmux or readline
+inside the child. An unmodified character is not accepted as the window prefix
+because doing so would consume ordinary terminal and buffer text input.
+
 ## Outer terminal colour depth
 
 The terminal displaying Runyte is a separate compatibility boundary from an

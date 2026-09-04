@@ -791,15 +791,18 @@ impl App {
         self.persisted_config = self.config.clone();
         let errors = self.registry.errors();
         let configured_grammar_error = None::<&str>;
-        let help = ":? or Space+? for help";
+        let help = format!(
+            ":? or {} for help",
+            self.key_text(crate::key_spelling::actionable::HELP)
+        );
         let mut parts = Vec::new();
         if let Some(error) = configured_grammar_error {
             parts.push(error.to_owned());
         }
         if !errors.is_empty() {
-            parts.push(startup_status(&errors, help));
+            parts.push(startup_status(&errors, &help));
         } else if parts.is_empty() {
-            parts.push(help.to_owned());
+            parts.push(help);
         }
         let message = format!("config: {} · {}", path.display(), parts.join(" · "));
         if errors.is_empty() && configured_grammar_error.is_none() {

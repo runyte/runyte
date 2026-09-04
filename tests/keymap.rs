@@ -990,7 +990,7 @@ fn colon_key_targets_construct_the_same_typed_identities_as_direct_calls() {
 #[test]
 fn single_key_pane_moves_are_absent_until_configured_on() {
     let keymap = keymap_for(false);
-    assert!(std::ptr::eq(keymap, default_keymap()));
+    assert!(std::ptr::eq(keymap.as_ref(), default_keymap()));
 
     for mode in [Mode::Normal, Mode::Select] {
         for character in ['h', 'j', 'k', 'l'] {
