@@ -372,7 +372,7 @@ projection; keyboard overlays retain input ownership while open.
 | `:` path arguments | Helix command-line completion | command palette path hints | Implemented · Deviation | After a path-valued command and its separating space, the palette lists bounded filesystem matches from the editor working directory or the absolute path being typed. Directories sort first and retain a trailing separator so Tab can descend; `:open` opens a selected directory as Runyte's editable explorer. `~` expands to the user's home directory, and typing a dot prefix reveals matching dotfiles. |
 | Insert arrows/Home/End/Page | movement | matching motions | Implemented · Primary | Direct Insert-mode movement bindings. |
 | Insert `Ctrl-s` | undo checkpoint | `save` | Deviation | Retains Runyte’s global save shortcut. |
-| `Space o o`, `Space o t`, `Space o s` | configuration menu | `open-settings`, `open-theme-settings`, `service-health` | Added · Primary | Settings open as the searchable read-only `[config]` buffer; Enter opens a typed or finite-choice popup and persists only on Enter. The read-only health picker reports syntax, LSP, and diagnostic-log state without requiring those services. |
+| `Space o o`, `Space o t`, `Space o s` | configuration menu | `open-settings`, `open-theme-settings`, `service-health` | Added · Primary | Settings open as the searchable read-only `[config]` buffer; Enter opens a typed or finite-choice popup and persists only on Enter. The read-only health picker reports syntax, LSP, Git discovery, and diagnostic-log state without requiring those services. |
 | `:log-open` | `:log-open` | `log-open` | Implemented · Deviation | Named after Helix's command and, like it, opens the editor's own log as a read-only buffer. It differs in what it opens: Helix shows one per-user log file, while Runyte opens the log of the process that owns the workspace — a standalone editor's `standalone-<pid>.log` or a persistent host's `host.log`, both under the workspace state directory. It never opens or aggregates a client-side trace, and Runyte has no `:log-truncate`. Unbound, as in Helix. |
 | Picker `Ctrl-p`, `Shift-Tab` | previous entry | direct picker action | Implemented | Up remains an alias; printable `k` filters. Shift-Tab retains previous-entry navigation in the Finder while Tab switches between name and content modes. |
 | Picker `Ctrl-n`; directory/content picker `Tab` | next entry | direct picker action | Implemented | Down remains an alias; printable `j` filters like other text. Tab instead switches unified project-finder modes. |
@@ -422,6 +422,16 @@ manager's remaining keys stay inside its overlay.
   search, and selection-filter prompts carry their flavour in the `PromptKind`
   variant, so the label follows the command that opened it without a second
   piece of state to keep in step.
+
+## Git discovery recovery
+
+`:git-refresh` remains an added Git command with its existing bindings. It
+refreshes an attached repository, or starts one asynchronous attempt after
+repository discovery failed. The shared registry keeps it unavailable during
+discovery and after authoritative repository absence. Other Git commands keep
+their repository requirement and expose the retained failure with a
+`:git-refresh` hint. No discovery retry runs automatically or on persistent
+session reattachment. The service-health report includes Git discovery state.
 
 ## Workspace LSP permission
 

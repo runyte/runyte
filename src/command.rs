@@ -41,6 +41,8 @@ pub enum CommandCapability {
     LspDocument,
     LspManager,
     GitProject,
+    /// Refresh a discovered repository or retry a failed discovery.
+    GitRefresh,
     /// A persistent session host this editor can reach: the platform supports
     /// one and this workspace is running in persistent mode. Everything in the
     /// `session` namespace addresses that host, so in standalone mode the whole
@@ -1211,6 +1213,7 @@ impl CommandId {
             Self::Colon(ColonCommand::LspRestart | ColonCommand::LspStatus) => {
                 Some(CommandCapability::LspManager)
             }
+            Self::Colon(ColonCommand::GitRefresh) => Some(CommandCapability::GitRefresh),
             Self::Colon(
                 ColonCommand::SessionAttach
                 | ColonCommand::SessionList
@@ -1815,7 +1818,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "git-refresh",
         [],
         "git-refresh",
-        "Re-read branch, changed files, and changed lines from Git",
+        "Refresh Git state or retry failed repository discovery",
         NoArguments
     ),
     spec!(

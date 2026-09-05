@@ -2181,7 +2181,14 @@ impl GitCliProvider {
         if !marker_probe(start)? {
             return Ok(None);
         }
-        let toplevel = self.run_text(start, &["rev-parse", "--show-toplevel"])?;
+        // Discovery, including explicit retries, is a read with the same
+        // deadline and output ceiling as other bounded local reads.
+        let read = |directory: &Path, argument: &str| -> Result<String> {
+            let arguments = ["rev-parse", argument];
+            let output = self.run_read_bounded(directory, &arguments, self.max_output_bytes)?;
+            Ok(self.utf8(&arguments, output)?.trim_end().to_owned())
+        };
+        let toplevel = read(start, "--show-toplevel")?;
         if toplevel.is_empty() {
             return Err(GitError::Malformed {
                 command: self.describe(&["rev-parse", "--show-toplevel"]),
@@ -2190,7 +2197,7 @@ impl GitCliProvider {
             });
         }
         let workdir = PathBuf::from(toplevel);
-        let git_dir_text = self.run_text(&workdir, &["rev-parse", "--git-dir"])?;
+        let git_dir_text = read(&workdir, "--git-dir")?;
         if git_dir_text.is_empty() {
             return Err(GitError::Malformed {
                 command: self.describe(&["rev-parse", "--git-dir"]),
@@ -2204,7 +2211,7 @@ impl GitCliProvider {
             workdir.join(git_dir)
         };
         let git_dir = git_dir.canonicalize().unwrap_or(git_dir);
-        let common_text = self.run_text(&workdir, &["rev-parse", "--git-common-dir"])?;
+        let common_text = read(&workdir, "--git-common-dir")?;
         if common_text.is_empty() {
             return Err(GitError::Malformed {
                 command: self.describe(&["rev-parse", "--git-common-dir"]),
@@ -4076,6 +4083,10 @@ fn stale_partial<T>() -> Result<T> {
             .to_owned(),
     })
 }
+
+#[cfg(all(test, unix))]
+#[path = "tests/discovery.rs"]
+mod discovery_tests;
 
 #[cfg(test)]
 mod tests {

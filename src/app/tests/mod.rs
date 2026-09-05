@@ -171,6 +171,7 @@ mod comparisons;
 mod editing;
 mod editing_and_buffers;
 mod git;
+mod git_discovery;
 mod language;
 mod navigation_and_files;
 mod presentation_and_settings;

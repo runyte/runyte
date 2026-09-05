@@ -75,6 +75,7 @@ pub struct AppCapabilitySnapshot {
     pub lsp_manager: CommandAvailability,
     pub lsp_document: CommandAvailability,
     pub git_project: CommandAvailability,
+    pub git_refresh: CommandAvailability,
     pub persistent_session: CommandAvailability,
 }
 
@@ -92,12 +93,13 @@ impl AppCapabilitySnapshot {
             CommandCapability::LspDocument => self.lsp_document.clone(),
             CommandCapability::LspManager => self.lsp_manager.clone(),
             CommandCapability::GitProject => self.git_project.clone(),
+            CommandCapability::GitRefresh => self.git_refresh.clone(),
             CommandCapability::PersistentSession => self.persistent_session.clone(),
         }
     }
 }
 
-/// Coarse state shared by syntax and language-server rows.
+/// Coarse state shared by optional-service rows.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ServiceState {
     Ready,
@@ -270,6 +272,7 @@ mod tests {
             lsp_manager: CommandAvailability::Available,
             lsp_document: CommandAvailability::Unavailable("no configured server".to_owned()),
             git_project: CommandAvailability::Unavailable("not a Git repository".to_owned()),
+            git_refresh: CommandAvailability::Unavailable("not a Git repository".to_owned()),
             persistent_session: CommandAvailability::Unavailable(
                 PERSISTENT_SESSION_UNSUPPORTED_REASON.to_owned(),
             ),

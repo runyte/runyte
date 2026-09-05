@@ -159,7 +159,10 @@ pub fn key_hint_description(row: &KeyHintRow) -> String {
                 crate::command::CommandCapability::LspDocument
                 | crate::command::CommandCapability::LspManager,
             ) => " no LSP",
-            Some(crate::command::CommandCapability::GitProject) => " no Git",
+            Some(
+                crate::command::CommandCapability::GitProject
+                | crate::command::CommandCapability::GitRefresh,
+            ) => " no Git",
             Some(crate::command::CommandCapability::PersistentSession) => " persistent only",
             None => " unavailable",
         },
@@ -638,6 +641,7 @@ mod tests {
             git_project: CommandAvailability::Unavailable(
                 "Git repository discovery failed".to_owned(),
             ),
+            git_refresh: CommandAvailability::Available,
             persistent_session: CommandAvailability::Unavailable(
                 "needs workspace.mode: persistent".to_owned(),
             ),
@@ -804,6 +808,7 @@ mod tests {
                 "the active file is not attached".to_owned(),
             ),
             git_project: CommandAvailability::Unavailable("not a Git repository".to_owned()),
+            git_refresh: CommandAvailability::Unavailable("not a Git repository".to_owned()),
             persistent_session: CommandAvailability::Available,
         };
         let mut hints = KeyHintState::default();
@@ -851,6 +856,7 @@ mod tests {
             lsp_manager: CommandAvailability::Available,
             lsp_document: CommandAvailability::Available,
             git_project: CommandAvailability::Available,
+            git_refresh: CommandAvailability::Available,
             persistent_session,
         };
         let manager_row = |capabilities: &AppCapabilitySnapshot| {
