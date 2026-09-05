@@ -1495,9 +1495,11 @@ still reaches the program running there.
 `.runyte/` is not tracked by Git, so a pasted image travels with the working
 copy rather than with the commit. A document that will be read from another
 clone needs its images moved somewhere the repository carries, and the links
-updated to match. A path holding a space or a parenthesis is written in angle
-brackets, `[Image 1](<My Notes/a (copy).png>)`, which is the only spelling that
-survives being read back.
+updated to match. The cache is scratch: it holds what recent pastes needed,
+nothing undertakes to keep a file there, and a document expected to outlive
+the session should not point into it. A path holding a space or a parenthesis
+is written in angle brackets, `[Image 1](<My Notes/a (copy).png>)`, which is
+the only spelling that survives being read back.
 
 A yank ends the gesture that chose the text. `y` and `Y` return Normal mode and
 collapse every range to a caret on the last character copied, keeping one caret

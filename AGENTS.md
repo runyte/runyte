@@ -57,12 +57,14 @@ Keep repository development context and runtime workspace state separate:
   and durable project decisions belong here.
 - `.runyte/` is Git-ignored editor runtime state used by the optional
   persistent session host and its local transport/lock files.
-- `.runyte/cache/images/` is the one exception: images pasted with `Ctrl-v`
-  are kept there, and a tracked document may hold a link into it. That content
-  is therefore not disposable the way the rest of `.runyte/` is, and it is not
-  committed with the document that refers to it, so a clone of the repository
-  resolves those links only if the directory is carried across by hand.
-  Anything else durable a reader would miss belongs in the project proper.
+- `.runyte/cache/images/` holds images pasted with `Ctrl-v`. They exist to
+  compose a prompt for an AI agent in the current session, or one resumed a
+  day or two later, and they are scratch rather than project content. A
+  tracked document must not depend on one: the directory is not committed, so
+  a clone resolves nothing in it, and a file there may be gone by the time
+  anyone looks. Nothing in the repository should be written expecting these
+  images to survive. They are as disposable as the rest of `.runyte/`, and
+  anything durable a reader would miss belongs in the project proper instead.
 - Never put runtime state under `context/`.
 - Never put credentials, secrets, private model reasoning, or unrestricted
   tool output in tracked context.
