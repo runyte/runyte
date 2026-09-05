@@ -823,13 +823,13 @@ A session outlives the pane showing it. `Space t q` shows the pane's buffer
 again and leaves the program running; so does opening a file in that pane or
 closing the split. `Space t t` (`:terminals`) lists stable running and exited
 sessions with their state, user name, child-title detail, safe directory,
-unread output, and bell activity; picking a running session shows it here,
-while picking an exited one opens its retained output in Normal/review mode. If
-that session is already visible in another pane, it moves here and the old pane
-reveals its underlying buffer—one PTY is never resized by two visible panes.
-`Space t r`
-(`:terminal-rename <name>`) names the active session,
-`:terminal-show <id|name>` targets one deterministically,
+unread output, and bell activity. Running sessions come first in identity
+order and the exited ones follow, dimmed. Picking a running session shows it
+here, while picking an exited one opens its retained output in Normal/review
+mode. If that session is already visible in another pane, it moves here and
+the old pane reveals its underlying buffer—one PTY is never resized by two
+visible panes. `Space t r` (`:terminal-rename <name>`) names the active
+session, `:terminal-show <id|name>` targets one deterministically,
 and child termination stays explicit: type `exit` in the child, or choose Close
 from the terminal manager's Tab menu. An exited session remains listed and
 searchable until Close removes it and its retained output. Duplicate names are
