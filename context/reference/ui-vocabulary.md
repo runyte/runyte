@@ -372,10 +372,13 @@ launch carried.
 
 ## Workspace LSP permission
 
-The first-open LSP permission question is a **choice overlay** with a preview
-that names the canonical workspace root and explains that language servers
-may execute project code. It reuses the shared choice rows, selection marker,
-preview, and dismissal behavior. `:lsp-trust` opens the same surface later.
+The first-open LSP permission question is a **choice overlay** whose column
+header names the canonical workspace root. Its preview explains that language
+servers may execute project code, the scope of permission, and how to change
+the decision later. Choice explanations use a bold heading and short paragraphs
+with the same inset from the divider, wrapping to at most 72 cells. It reuses
+the shared choice rows, selection marker, preview, and dismissal behavior.
+`:lsp-trust` opens the same surface later.
 The persistent host owns both the decision and overlay; attached clients
 render its existing semantic snapshot. This permission governs language
 servers and does not claim to sandbox all workspace features.

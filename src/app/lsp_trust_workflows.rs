@@ -42,24 +42,24 @@ impl App {
         if self.settings_view.is_some() {
             self.cancel_settings_picker();
         }
-        let explanation = format!(
-            "Workspace: {}\n\nLanguage servers may execute code from this project with your permissions.\n\nThis choice applies to every configured language server in this exact workspace. Editing and syntax highlighting work with LSP disabled.\n\nEscape leaves the current permission unchanged.",
-            self.project_root.display()
-        );
+        let explanation = "Language servers may execute code from this project with your permissions.\n\n\
+            Permission covers every configured language server in this exact workspace.\n\n\
+            Editing and syntax highlighting remain available with LSP disabled.\n\n\
+            You can change this decision later with :lsp-trust.";
         self.list = Some(
             ListPicker::new(
                 "Run language servers for this workspace?",
                 vec![
                     PickerItem::new("Keep LSP disabled", "Remember this decision", 0)
-                        .with_preview(&explanation),
+                        .with_preview(explanation),
                     PickerItem::new(
                         "Allow LSP once",
                         "Until this editor or persistent host stops",
                         1,
                     )
-                    .with_preview(&explanation),
+                    .with_preview(explanation),
                     PickerItem::new("Always allow LSP", "Remember for this exact workspace", 2)
-                        .with_preview(&explanation),
+                        .with_preview(explanation),
                 ],
             )
             .with_column_header(
@@ -68,7 +68,7 @@ impl App {
                 "",
             )
             .as_choice("apply permission")
-            .with_preview("Workspace permission"),
+            .with_preview("Before you allow LSP"),
         );
         self.list_actions = vec![
             ListAction::LspTrust {
