@@ -30,6 +30,12 @@ originals for recovery, and ownership-aware temporary-copy cleanup. These
 mitigations are implemented with Linux regression tests and canonical coverage
 at 91.67%; native macOS validation remains pending in the active plan.
 
+Implementation commit: `6a1bd25` — `Prevent filesystem-plan overwrites and
+preserve rollback originals`. Deterministic collision and recovery tests are
+in `src/fs_plan/tests/mod.rs`; editor recovery and notification tests are in
+`src/app/tests/navigation_and_files.rs`. The original integration regressions
+remain in `tests/fs_plan.rs`.
+
 This scope supersedes the earlier rejection of narrow patches only for those
 independently testable data-loss protections. It does not claim to resolve
 symlink confinement or source replacement races. The broader capability

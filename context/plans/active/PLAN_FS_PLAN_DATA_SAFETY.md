@@ -246,6 +246,9 @@ unrecoverable or depend on a later UI commit to expose retained originals.
 
 ### Implementation record
 
+Implementation commit: `6a1bd25` — `Prevent filesystem-plan overwrites and
+preserve rollback originals`.
+
 `src/fs_plan/platform.rs` provides exclusive rename on Linux and macOS with no
 overwriting fallback. `src/fs_plan/staging.rs` owns restrictive, exclusively
 created staging directories, validates artifact identities, probes filesystem
