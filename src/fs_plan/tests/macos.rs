@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: MPL-2.0
 
 use super::*;
-use std::{ffi::CStr, fs::File, os::fd::AsRawFd, os::unix::fs::PermissionsExt, process::Command};
+use std::{
+    cell::RefCell, ffi::CStr, fs::File, os::fd::AsRawFd, os::unix::fs::PermissionsExt,
+    process::Command, rc::Rc,
+};
 
 fn set_attribute(file: &File, name: &CStr, bytes: &[u8]) {
     // SAFETY: the descriptor, C string and byte slice remain valid for the
