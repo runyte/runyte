@@ -1006,7 +1006,8 @@ Press `?` in an explorer to toggle file details before every existing entry:
 permissions, owner, group, human-readable size, and modification time. These
 columns are presentation-only; the filename remains the row's only editable
 text. A symlink keeps its read-only `→ target` hint after the filename. The
-toggle follows that explorer through refreshes and directory navigation.
+setting is `editor.explorer_details`, so it is saved and every open explorer
+shows the same thing.
 In a narrow pane, horizontal scrolling moves through the details first and
 then through the filename, so no column is permanently clipped. Entries from
 other years show the year in place of the time.
@@ -1919,15 +1920,35 @@ the editable projection refuse to open, because such a name cannot be
 distinguished safely from the explorer's row syntax. New rows are held to the
 same boundary before a confirmation opens.
 
-Dotfiles start out listed or not according to `editor.show_hidden_files`, and
-`.` flips that for the session without writing it to `config.yaml`. Because
-the preference is one value, `.` re-reads every clean explorer rather than
-only the active pane. A listing without its dotfiles is also planned without
-them: an entry it never showed is neither deleted for being absent from the
-text nor reported as a change when it appears, and a name colliding with one
-still stops the plan instead of overwriting it. An explorer holding unsaved
-edits refuses the toggle, since re-reading would discard text that has not
-been through a write plan.
+Three settings decide how an explorer shows a directory, and `Tab` offers all
+of them: `editor.show_hidden_files` lists dotfiles or leaves them out,
+`editor.explorer_details` shows the detail columns described above, and
+`editor.explorer_sort` sets the order rows appear in. They are ordinary
+settings, so `Space o o` reaches them too, and choosing one here writes it to
+`config.yaml`: a listing you set up once stays that way in the next session.
+Because a setting is one value, a change re-reads every clean explorer rather
+than only the active pane. `.` and `?` remain direct toggles for the first
+two.
+
+If the value cannot be saved — no configuration file was loaded, or the file
+uses a construct Runyte will not patch — the change still applies to this
+session and the status line says it was not written.
+
+A listing without its dotfiles is also planned without them: an entry it never
+showed is neither deleted for being absent from the text nor reported as a
+change when it appears, and a name colliding with one still stops the plan
+instead of overwriting it. An explorer holding unsaved edits refuses a change
+to the dotfile or order settings, since re-reading would discard text that has
+not been through a write plan; details only prefix the rows already listed, so
+`?` keeps working there.
+
+Directories are grouped before files in every order. `name` sorts A to Z and
+`name_descending` Z to A; `modified` puts the oldest first and
+`modified_descending` the newest; `size` puts the smallest first and
+`size_descending` the largest. A directory's own length describes how its
+entries are stored rather than how much they hold, so a size order leaves
+directories in name order instead of pretending otherwise. Entries sharing a
+key keep their name order, so nothing shifts between one redraw and the next.
 
 A symlink is listed under its own name, followed by a muted `→ target` hint
 showing what it points at, exactly as the link stores it. The hint is not part
@@ -3107,6 +3128,8 @@ editor:
   scroll_offset: 3
   motion_repeat_multiplier: 2 # held cursor motions; 1 retains terminal/Helix speed
   show_hidden_files: false # explorer, finder, and workspace search; . toggles it in an explorer
+  explorer_sort: name # name/modified/size, each also _descending; directories group first
+  explorer_details: false # ls -l columns before each explorer row; ? toggles it in an explorer
   soft_wrap: false
   render_whitespace: false # show · for spaces, → for tabs, and ↵ for line endings
   zen_width: 100 # maximum text width while :zen is active; editable in :config's popup

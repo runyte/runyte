@@ -10,7 +10,7 @@
 
 use runyte::{
     command::GrammarKind,
-    config::{Config, WorkspaceMode},
+    config::{Config, ExplorerSort, WorkspaceMode},
     settings::{SettingId, SettingRegistry, SettingType, SettingValue},
 };
 
@@ -43,6 +43,15 @@ fn other_value(setting: SettingId, current: &SettingValue, config: &Config) -> S
                     .expect("a second workspace mode"),
             )
         }
+        (SettingType::ExplorerSort, SettingValue::ExplorerSort(value)) => {
+            SettingValue::ExplorerSort(
+                ExplorerSort::ALL
+                    .iter()
+                    .copied()
+                    .find(|candidate| candidate != value)
+                    .expect("a second explorer order"),
+            )
+        }
         (SettingType::Theme, SettingValue::Text(value)) => SettingValue::Text(
             setting
                 .allowed_values(config)
@@ -67,6 +76,7 @@ fn wrong_typed_value(setting: SettingId) -> SettingValue {
         | SettingType::Integer { .. }
         | SettingType::Theme
         | SettingType::WorkspaceMode
+        | SettingType::ExplorerSort
         | SettingType::Text => SettingValue::Boolean(true),
     }
 }
@@ -200,6 +210,13 @@ fn only_the_enumerated_setting_types_offer_values_to_choose_from() {
                     .map(ToString::to_string)
                     .collect::<Vec<_>>();
                 assert_eq!(allowed, modes, "{key}");
+            }
+            SettingType::ExplorerSort => {
+                let orders = ExplorerSort::ALL
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>();
+                assert_eq!(allowed, orders, "{key}");
             }
             SettingType::Theme => {
                 assert!(!allowed.is_empty(), "{key} offered no theme");

@@ -1328,9 +1328,10 @@ fn deleting_a_directory_cannot_invalidate_a_nested_pending_move() {
     set_cursor(&mut app, 1, 0);
     press(&mut app, 'x');
     press(&mut app, 'd');
-    let child_buffer = Buffer::open_directory(&child, true).unwrap();
+    let child_buffer = Buffer::open_directory(&child, ListingView::default()).unwrap();
     let transfer = child_buffer.directory_transfer_at(0).unwrap().unwrap();
-    let mut destination_buffer = Buffer::open_directory(&destination, true).unwrap();
+    let mut destination_buffer =
+        Buffer::open_directory(&destination, ListingView::default()).unwrap();
     assert!(destination_buffer.apply(&Transaction::insert(0, "note.txt\n")));
     destination_buffer
         .assign_directory_transfers(0, &[transfer], TransferMode::Move)
@@ -1369,9 +1370,10 @@ fn renaming_a_directory_cannot_invalidate_a_nested_pending_move() {
         source_start + "source".len(),
         "renamed",
     )));
-    let child_buffer = Buffer::open_directory(&child, true).unwrap();
+    let child_buffer = Buffer::open_directory(&child, ListingView::default()).unwrap();
     let transfer = child_buffer.directory_transfer_at(0).unwrap().unwrap();
-    let mut destination_buffer = Buffer::open_directory(&destination, true).unwrap();
+    let mut destination_buffer =
+        Buffer::open_directory(&destination, ListingView::default()).unwrap();
     assert!(destination_buffer.apply(&Transaction::insert(0, "note.txt\n")));
     destination_buffer
         .assign_directory_transfers(0, &[transfer], TransferMode::Move)

@@ -668,7 +668,7 @@ mod tests {
                 CommandId::Editor(_) => None,
             }))
             .collect::<Vec<_>>();
-        assert_eq!(targets.len(), 294, "the command inventory changed");
+        assert_eq!(targets.len(), 295, "the command inventory changed");
         for target in targets {
             let mut row = KeyHintRow {
                 sequence: KeySequence::default(),

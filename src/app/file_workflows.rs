@@ -14,6 +14,10 @@ use super::{
     external_open, fs, open_or_new_at_identity, parse_buffer, path_token_bounds,
     resolved_operation_path, trailing_whitespace_changes,
 };
+use crate::{
+    directory_buffer::ListingView,
+    settings::{SettingId, SettingValue},
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum ReloadDispatch {
@@ -302,62 +306,171 @@ impl App {
     /// text, since re-reading would discard edits that never reached a write
     /// plan, and the active one refuses the toggle outright rather than
     /// silently disagreeing with the preference it just changed.
+    /// The view every explorer is currently asked to project.
+    pub(super) fn listing_view(&self) -> ListingView {
+        ListingView::from_config(&self.config.editor)
+    }
+
     pub(super) fn toggle_hidden_files(&mut self) -> Result<()> {
-        let active = self.active().buffer;
-        // The binding is explorer-scoped, but the command palette reaches every
-        // command by name from any view.
-        anyhow::ensure!(
-            self.buffers[active].is_directory(),
-            "hidden files can only be shown or hidden in an explorer"
-        );
-        anyhow::ensure!(
-            !self.buffers[active].dirty,
-            "explorer has unsaved edits; write or refresh them before changing hidden files"
-        );
-        let show_hidden = !self.config.editor.show_hidden_files;
-        self.config.editor.show_hidden_files = show_hidden;
-        let listings = std::iter::once(active)
-            .chain((0..self.buffers.len()).filter(|buffer| {
-                *buffer != active
-                    && self.buffers[*buffer].is_directory()
-                    && !self.buffers[*buffer].dirty
-            }))
-            .collect::<Vec<_>>();
-        for buffer in listings {
-            self.reload_directory_buffer(buffer)?;
-        }
-        self.status(if show_hidden {
-            "showing hidden files"
-        } else {
-            "hiding hidden files"
-        });
-        Ok(())
+        let showing = self.config.editor.show_hidden_files;
+        self.change_explorer_setting(
+            SettingId::EditorShowHiddenFiles,
+            SettingValue::Boolean(!showing),
+        )
     }
 
     pub(super) fn toggle_directory_details(&mut self) -> Result<()> {
-        let buffer = self.active().buffer;
+        let showing = self.config.editor.explorer_details;
+        self.change_explorer_setting(
+            SettingId::EditorExplorerDetails,
+            SettingValue::Boolean(!showing),
+        )
+    }
+
+    /// Applies one explorer setting, saves it, and brings every listing up to
+    /// date.
+    ///
+    /// The three explorer keys are shortcuts to settings rather than a state
+    /// of their own, so each goes through here and each is written to the
+    /// configuration file. A save that fails does not withhold the change:
+    /// `persist_setting` refuses a document it cannot patch safely and there
+    /// may be no configuration path at all, neither of which is a reason to
+    /// leave an explorer showing something other than what was asked for. The
+    /// setting applies to this session and the status line says it was not
+    /// saved.
+    pub(super) fn change_explorer_setting(
+        &mut self,
+        setting: SettingId,
+        value: SettingValue,
+    ) -> Result<()> {
+        let active = self.active().buffer;
+        // The bindings are explorer-scoped, but the command palette reaches
+        // every command by name from any view.
         anyhow::ensure!(
-            self.buffers[buffer].is_directory(),
-            "file details can only be shown or hidden in an explorer"
+            self.buffers[active].is_directory(),
+            "{} can only be changed in an explorer",
+            setting.descriptor().title.to_lowercase()
         );
-        let shown = self.buffers[buffer].toggle_directory_details()?;
-        for pane in self.panes.values_mut().filter(|pane| pane.buffer == buffer) {
-            pane.row_prefix_scroll = 0;
+        // Hidden files and the sort order re-read and re-project the listing,
+        // which would discard edited rows. Details are a prefix over the rows
+        // already present, so they remain available on a modified explorer.
+        if setting != SettingId::EditorExplorerDetails {
+            anyhow::ensure!(
+                !self.buffers[active].dirty,
+                "explorer has unsaved edits; write or refresh them before changing {}",
+                setting.descriptor().title.to_lowercase()
+            );
         }
-        self.status(if shown {
-            "showing file details"
-        } else {
-            "hiding file details"
-        });
+        setting.apply(&value, &mut self.config)?;
+        let saved = self.save_explorer_setting(setting, &value);
+        self.refresh_listings(Some(active))?;
+        let unsaved = match saved {
+            Ok(()) => String::new(),
+            Err(reason) => format!(" · not saved: {reason}"),
+        };
+        self.status(format!("{}: {value}{unsaved}", setting.descriptor().title));
+        Ok(())
+    }
+
+    /// Offers the listing orders as a flat list, marking the one in force.
+    ///
+    /// One row per value rather than a setting to enter and then a value to
+    /// choose: the explorer's other two settings are booleans that the
+    /// contextual menu toggles outright, so this list has one thing to say and
+    /// says all of it at once. The row already in use is marked, which makes
+    /// the list readable as the current state rather than only as a menu.
+    pub(super) fn choose_explorer_order(&mut self) -> Result<()> {
+        let active = self.active().buffer;
+        anyhow::ensure!(
+            self.buffers[active].is_directory(),
+            "the listing order can only be chosen in an explorer"
+        );
+        let setting = SettingId::EditorExplorerSort;
+        let effective = setting.configured_value(&self.config);
+        let saved = setting.configured_value(&self.persisted_config);
+        let values = self.setting_values(setting);
+        let mut selected = 0;
+        let items = values
+            .iter()
+            .enumerate()
+            .map(|(index, value)| {
+                let detail = if *value == effective {
+                    selected = index;
+                    "in use"
+                } else if *value == saved {
+                    "saved"
+                } else {
+                    "choice"
+                };
+                PickerItem::new(value.to_string(), detail, index)
+            })
+            .collect();
+        self.list_actions = values
+            .into_iter()
+            .map(|value| ListAction::ExplorerSetting { setting, value })
+            .collect();
+        let mut picker = ListPicker::new(setting.descriptor().key, items).as_choice("to save");
+        picker.selected = selected;
+        self.settings_view = None;
+        self.list = Some(picker);
+        Ok(())
+    }
+
+    /// Writes an explorer setting to the configuration file, reporting why not
+    /// rather than failing the change.
+    fn save_explorer_setting(
+        &mut self,
+        setting: SettingId,
+        value: &SettingValue,
+    ) -> Result<(), String> {
+        let Some(path) = self.config_path.clone() else {
+            return Err("no configuration file is loaded".to_owned());
+        };
+        match crate::settings::persist_setting(&path, setting, value) {
+            Ok(updated) => {
+                self.persisted_config = updated;
+                self.refresh_settings_buffers();
+                Ok(())
+            }
+            Err(error) => Err(error.to_string()),
+        }
+    }
+
+    /// Brings every explorer into line with the configured view.
+    ///
+    /// `first` is refreshed before the rest so the pane being looked at
+    /// settles first. A dirty listing is not re-read: re-projecting it would
+    /// throw away edits that have not been applied yet.
+    pub(super) fn refresh_listings(&mut self, first: Option<usize>) -> Result<()> {
+        let view = self.listing_view();
+        let listings = first
+            .into_iter()
+            .chain((0..self.buffers.len()).filter(|buffer| Some(*buffer) != first))
+            .filter(|buffer| self.buffers[*buffer].is_directory())
+            .collect::<Vec<_>>();
+        for buffer in listings {
+            if self.buffers[buffer].dirty {
+                // Details do not re-read the listing, so a modified explorer
+                // still follows that half of the view.
+                self.buffers[buffer].set_directory_details(view.details)?;
+            } else {
+                self.reload_directory_buffer(buffer)?;
+            }
+            // Showing or hiding the details changes the width of the row
+            // prefix, which the panes on this buffer may be scrolled into.
+            for pane in self.panes.values_mut().filter(|pane| pane.buffer == buffer) {
+                pane.row_prefix_scroll = 0;
+            }
+        }
         Ok(())
     }
 
     pub(super) fn reload_directory_buffer(&mut self, buffer: usize) -> Result<()> {
-        let show_hidden = self.config.editor.show_hidden_files;
+        let view = self.listing_view();
         self.buffers
             .get_mut(buffer)
             .ok_or_else(|| anyhow::anyhow!("directory buffer is gone"))?
-            .reload_directory(show_hidden)?;
+            .reload_directory(view)?;
         self.settle_reloaded_directory(buffer);
         Ok(())
     }
@@ -433,7 +546,7 @@ impl App {
         }
         Ok(PaneDirectory::New(Box::new(Buffer::open_directory(
             path,
-            self.config.editor.show_hidden_files,
+            self.listing_view(),
         )?)))
     }
 
@@ -492,7 +605,7 @@ impl App {
                 // The re-read the entering branch below would have done, taken
                 // while the buffer is still a local value with nothing
                 // referring to it.
-                buffer.reload_directory(self.config.editor.show_hidden_files)?;
+                buffer.reload_directory(self.listing_view())?;
                 let buffer_id = self.adopt_directory_buffer(*buffer);
                 self.settle_reloaded_directory(buffer_id);
                 self.active_mut().directory_buffer = Some(buffer_id);
@@ -519,7 +632,8 @@ impl App {
             self.status(message);
             return Ok(None);
         }
-        self.buffers[buffer_id].retarget_directory(path, self.config.editor.show_hidden_files)?;
+        let view = self.listing_view();
+        self.buffers[buffer_id].retarget_directory(path, view)?;
         self.clear_syntax_history(buffer_id);
         self.stale_syntax.remove(&buffer_id);
         self.syntax[buffer_id] = None;
@@ -609,21 +723,18 @@ impl App {
             self.ask_for_external_program(path);
             return Ok(());
         } else {
-            let buffer = match open_or_new_at_identity(
-                &path,
-                &requested_identity,
-                self.config.editor.show_hidden_files,
-            ) {
-                Ok(buffer) => buffer,
-                Err(error) if error.is::<crate::buffer::BinaryFileError>() => {
-                    // The file changed after the bounded probe, or binary
-                    // bytes appeared beyond it. The final read owns the
-                    // classification and must still use the external opener.
-                    self.ask_for_external_program(path);
-                    return Ok(());
-                }
-                Err(error) => return Err(error),
-            };
+            let buffer =
+                match open_or_new_at_identity(&path, &requested_identity, self.listing_view()) {
+                    Ok(buffer) => buffer,
+                    Err(error) if error.is::<crate::buffer::BinaryFileError>() => {
+                        // The file changed after the bounded probe, or binary
+                        // bytes appeared beyond it. The final read owns the
+                        // classification and must still use the external opener.
+                        self.ask_for_external_program(path);
+                        return Ok(());
+                    }
+                    Err(error) => return Err(error),
+                };
             self.syntax.push(parse_buffer(&buffer, &self.registry));
             self.buffers.push(buffer);
             // A newly opened file is the one moment its staged text has to be
@@ -842,8 +953,7 @@ impl App {
                 !external_open::looks_binary(path),
                 "binary files cannot be opened through the workspace protocol"
             );
-            let buffer =
-                open_or_new_at_identity(path, identity, self.config.editor.show_hidden_files)?;
+            let buffer = open_or_new_at_identity(path, identity, self.listing_view())?;
             let syntax = parse_buffer(&buffer, &self.registry);
             prepared.push(Prepared::Staged(staged.len()));
             staged.push((path.clone(), identity.clone(), buffer, syntax));

@@ -8,6 +8,7 @@
 //! delete-and-create plan and in-place edits remain renames.
 
 use std::{
+    cmp::Ordering,
     collections::{HashMap, HashSet},
     fs,
     path::{Component, Path, PathBuf},
@@ -21,12 +22,38 @@ use anyhow::{Context, Result, ensure};
 use chrono::{DateTime, Datelike, Local};
 
 use crate::{
+    config::ExplorerSort,
     fs_plan::{
         DesiredEntry, DirectorySnapshot, EntryDetailFields, EntryId, EntryKind, FsPlan,
         SnapshotEntry, SourceFingerprint, TransferMode,
     },
     row_hints::{RowHints, display_cells},
 };
+
+/// How an explorer is asked to project a directory.
+///
+/// These three travel together because every entry point that reads a
+/// directory needs all of them, and because they are the whole of what the
+/// configuration says about a listing. Nothing here changes what the listing
+/// is responsible for except `show_hidden`, which decides which entries the
+/// baseline holds and therefore what a plan may act on.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct ListingView {
+    pub show_hidden: bool,
+    pub sort: ExplorerSort,
+    pub details: bool,
+}
+
+impl ListingView {
+    /// The view the configuration asks for.
+    pub fn from_config(editor: &crate::config::EditorConfig) -> Self {
+        Self {
+            show_hidden: editor.show_hidden_files,
+            sort: editor.explorer_sort,
+            details: editor.explorer_details,
+        }
+    }
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DirectoryTransfer {
@@ -74,20 +101,24 @@ struct RawDetails {
 }
 
 impl DirectoryBuffer {
-    /// Projects `root` as text, listing dotfiles only when `show_hidden`.
+    /// Projects `root` as text under `view`.
     ///
     /// Hidden entries are left out of the baseline as well as the text, so a
     /// row missing from the listing is not read as a deletion when the plan
-    /// is built.
-    pub fn open(root: PathBuf, show_hidden: bool) -> Result<(Self, String)> {
+    /// is built. The sort order is applied here rather than to the baseline
+    /// read: entry identities are assigned in the snapshot's own name order
+    /// and compared against a second read in that same order, so reordering
+    /// belongs to the projection, where `row_origins` already carries identity
+    /// independently of where a row sits.
+    pub fn open(root: PathBuf, view: ListingView) -> Result<(Self, String)> {
         let root = fs::canonicalize(&root)
             .with_context(|| format!("failed to resolve directory {}", root.display()))?;
-        let baseline = DirectorySnapshot::read_with(&root, show_hidden)?;
-        let text = render_snapshot(&baseline)?;
-        let mut row_origins = baseline
-            .entries()
+        let baseline = DirectorySnapshot::read_with(&root, view.show_hidden)?;
+        let order = sorted_rows(baseline.entries(), view.sort);
+        let text = render_snapshot(&baseline, &order)?;
+        let mut row_origins = order
             .iter()
-            .map(|entry| Some(RowOrigin::Snapshot(entry.id)))
+            .map(|row| Some(RowOrigin::Snapshot(baseline.entries()[*row].id)))
             .collect::<Vec<_>>();
         if !row_origins.is_empty() {
             row_origins.push(None);
@@ -100,6 +131,9 @@ impl DirectoryBuffer {
             details: None,
             hints: RowHints::default(),
         };
+        if view.details {
+            directory.details = Some(directory.build_details());
+        }
         directory.refresh_hints(&text);
         Ok((directory, text))
     }
@@ -305,13 +339,18 @@ impl DirectoryBuffer {
             .collect()
     }
 
-    /// Toggles presentation-only `ls -l` style fields before each filename.
-    pub fn toggle_details(&mut self, text: &str) -> bool {
-        if self.details.take().is_some() {
-            self.refresh_hints(text);
+    /// Shows or hides presentation-only `ls -l` style fields before each
+    /// filename, reporting whether anything changed.
+    ///
+    /// Whether they are shown is configuration rather than something this
+    /// listing decides, so this sets a state rather than inverting one: two
+    /// explorers asked for the same thing must end up alike however they
+    /// started.
+    pub fn set_details(&mut self, shown: bool, text: &str) -> bool {
+        if shown == self.details.is_some() {
             return false;
         }
-        self.details = Some(self.build_details());
+        self.details = shown.then(|| self.build_details());
         self.refresh_hints(text);
         true
     }
@@ -585,12 +624,8 @@ impl DirectoryBuffer {
         self.refresh_hints(after);
     }
 
-    pub fn reload(&mut self, show_hidden: bool) -> Result<String> {
-        let details_shown = self.details_shown();
-        let (mut fresh, text) = Self::open(self.root.clone(), show_hidden)?;
-        if details_shown {
-            fresh.toggle_details(&text);
-        }
+    pub fn reload(&mut self, view: ListingView) -> Result<String> {
+        let (fresh, text) = Self::open(self.root.clone(), view)?;
         *self = fresh;
         Ok(text)
     }
@@ -922,11 +957,62 @@ fn group_name(_gid: u32) -> Option<String> {
     None
 }
 
-fn render_snapshot(snapshot: &DirectorySnapshot) -> Result<String> {
-    let mut lines = snapshot
-        .entries()
+/// The rows of `entries`, in the order `sort` asks for.
+///
+/// The snapshot arrives in name order, so a row's index is its name key and an
+/// ascending name sort has nothing of its own to compare. Every order sorts
+/// stably and falls back to that index, which makes the name the tiebreak
+/// between entries of equal size or equal modification time without a second
+/// key having to say so.
+fn sorted_rows(entries: &[SnapshotEntry], sort: ExplorerSort) -> Vec<usize> {
+    let mut rows = (0..entries.len()).collect::<Vec<_>>();
+    rows.sort_by(|left, right| {
+        let (first, second) = (
+            entries[*left].detail_fields(),
+            entries[*right].detail_fields(),
+        );
+        let directory = |fields: &EntryDetailFields| matches!(fields.kind, EntryKind::Directory);
+        // `true` orders after `false`, so comparing the right against the left
+        // is what puts directories first.
+        directory(&second)
+            .cmp(&directory(&first))
+            .then_with(|| compare_by(sort, (*left, &first), (*right, &second)))
+            .then_with(|| left.cmp(right))
+    });
+    rows
+}
+
+fn compare_by(
+    sort: ExplorerSort,
+    left: (usize, &EntryDetailFields),
+    right: (usize, &EntryDetailFields),
+) -> Ordering {
+    let (left_row, left_fields) = left;
+    let (right_row, right_fields) = right;
+    match sort {
+        ExplorerSort::Name => Ordering::Equal,
+        ExplorerSort::NameDescending => right_row.cmp(&left_row),
+        ExplorerSort::Modified => left_fields.modified_nanos.cmp(&right_fields.modified_nanos),
+        ExplorerSort::ModifiedDescending => {
+            right_fields.modified_nanos.cmp(&left_fields.modified_nanos)
+        }
+        // A directory's own length says how its entries are stored rather than
+        // how much they hold, so it is not the number this order is about.
+        // Directories keep their name order under either direction.
+        ExplorerSort::Size | ExplorerSort::SizeDescending
+            if matches!(left_fields.kind, EntryKind::Directory) =>
+        {
+            Ordering::Equal
+        }
+        ExplorerSort::Size => left_fields.len.cmp(&right_fields.len),
+        ExplorerSort::SizeDescending => right_fields.len.cmp(&left_fields.len),
+    }
+}
+
+fn render_snapshot(snapshot: &DirectorySnapshot, order: &[usize]) -> Result<String> {
+    let mut lines = order
         .iter()
-        .map(SnapshotEntry::display_name)
+        .map(|row| snapshot.entries()[*row].display_name())
         .collect::<Result<Vec<_>>>()?;
     if lines.is_empty() {
         return Ok(String::new());

@@ -250,6 +250,67 @@ impl fmt::Display for WorkspaceMode {
     }
 }
 
+/// The order an explorer lists a directory's entries in.
+///
+/// Directories are grouped before files in every order. A directory's size is
+/// its own bookkeeping rather than the size of what it holds, so a size order
+/// leaves directories in name order instead of pretending otherwise; a
+/// modification time means the same thing for both, so a time order applies to
+/// both.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum ExplorerSort {
+    #[default]
+    Name,
+    NameDescending,
+    Modified,
+    ModifiedDescending,
+    Size,
+    SizeDescending,
+}
+
+impl ExplorerSort {
+    pub const ALL: &'static [Self] = &[
+        Self::Name,
+        Self::NameDescending,
+        Self::Modified,
+        Self::ModifiedDescending,
+        Self::Size,
+        Self::SizeDescending,
+    ];
+
+    /// How the order is named to a reader.
+    ///
+    /// The configuration spelling says which field is sorted on and in which
+    /// direction, which is what a file has to record. "Descending" is not what
+    /// a reader is choosing between, though: the question is whether the
+    /// newest or the oldest entry comes first, so the label answers that
+    /// instead and each field says it in its own terms.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Name => "name, A to Z",
+            Self::NameDescending => "name, Z to A",
+            Self::Modified => "modified, oldest first",
+            Self::ModifiedDescending => "modified, newest first",
+            Self::Size => "size, smallest first",
+            Self::SizeDescending => "size, largest first",
+        }
+    }
+}
+
+impl fmt::Display for ExplorerSort {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Name => "name",
+            Self::NameDescending => "name_descending",
+            Self::Modified => "modified",
+            Self::ModifiedDescending => "modified_descending",
+            Self::Size => "size",
+            Self::SizeDescending => "size_descending",
+        })
+    }
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(default)]
 pub struct EditorConfig {
@@ -262,6 +323,11 @@ pub struct EditorConfig {
     /// Number of cursor motions dispatched for one held-key repeat event.
     pub motion_repeat_multiplier: usize,
     pub show_hidden_files: bool,
+    /// Order an explorer lists a directory's entries in.
+    pub explorer_sort: ExplorerSort,
+    /// Show the mode, owner, size, and modification time beside each explorer
+    /// row.
+    pub explorer_details: bool,
     pub soft_wrap: bool,
     /// Draw visible markers for spaces, tabs, and line terminators.
     pub render_whitespace: bool,
@@ -766,6 +832,8 @@ impl Default for EditorConfig {
             scroll_offset: 3,
             motion_repeat_multiplier: 2,
             show_hidden_files: false,
+            explorer_sort: ExplorerSort::Name,
+            explorer_details: false,
             soft_wrap: false,
             render_whitespace: false,
             zen_width: 100,

@@ -2239,15 +2239,14 @@ impl App {
             } else {
                 existing
             };
-            let mut staged =
-                match buffer_id {
-                    Some(buffer_id) => self.buffers[buffer_id].clone(),
-                    None => open_or_new(&path, self.config.editor.show_hidden_files).map_err(
-                        |error| DocumentEditFailure::OpenFile {
-                            error: error.to_string(),
-                        },
-                    )?,
-                };
+            let mut staged = match buffer_id {
+                Some(buffer_id) => self.buffers[buffer_id].clone(),
+                None => open_or_new(&path, self.listing_view()).map_err(|error| {
+                    DocumentEditFailure::OpenFile {
+                        error: error.to_string(),
+                    }
+                })?,
+            };
             if staged.is_read_only() {
                 return Err(DocumentEditFailure::ReadOnly { path });
             }
@@ -3583,6 +3582,14 @@ impl App {
             self.persist_selected_setting(setting, value);
             return Ok(());
         }
+        if let Some(ListAction::ExplorerSetting { setting, value }) = chosen {
+            self.list = None;
+            self.list_actions.clear();
+            if let Err(error) = self.change_explorer_setting(setting, value) {
+                self.action_failed(error.to_string());
+            }
+            return Ok(());
+        }
         if let Some(ListAction::TutorialMotionHints(hints)) = chosen {
             self.choose_tutorial_motion_hints(hints);
             return Ok(());
@@ -3625,7 +3632,7 @@ impl App {
                     self.should_quit = true;
                 }
             }
-            Some(ListAction::SettingValue { .. }) => {
+            Some(ListAction::SettingValue { .. }) | Some(ListAction::ExplorerSetting { .. }) => {
                 unreachable!("settings actions return before closing the shared picker")
             }
             None => {}

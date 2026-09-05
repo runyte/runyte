@@ -662,7 +662,8 @@ fn draw_setting_prompt(frame: &mut Frame<'_>, app: &TuiApp<'_>, editor_area: Rec
         crate::settings::SettingType::Grammar
         | crate::settings::SettingType::Boolean
         | crate::settings::SettingType::Theme
-        | crate::settings::SettingType::WorkspaceMode => "choice".to_owned(),
+        | crate::settings::SettingType::WorkspaceMode
+        | crate::settings::SettingType::ExplorerSort => "choice".to_owned(),
     };
     let show_error = app.status_error && !app.displayed_status_message().is_empty();
     let area = to_tui_rect(setting_popup_area(editor_area));

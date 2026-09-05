@@ -299,7 +299,7 @@ mod tests {
     use std::{fs, time::SystemTime};
 
     use super::*;
-    use crate::buffer::Buffer;
+    use crate::{buffer::Buffer, directory_buffer::ListingView};
 
     #[tokio::test]
     async fn registration_produces_one_complete_generation_tagged_observation() {
@@ -348,7 +348,7 @@ mod tests {
         ));
         fs::create_dir_all(&directory).unwrap();
         fs::write(directory.join("a.txt"), "a").unwrap();
-        let buffer = Buffer::open_directory(&directory, false).unwrap();
+        let buffer = Buffer::open_directory(&directory, ListingView::default()).unwrap();
         let request = buffer.file_observation_request(4).unwrap();
         assert!(request.target.is_directory());
         fs::write(directory.join("b.txt"), "b").unwrap();

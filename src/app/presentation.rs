@@ -1777,7 +1777,8 @@ impl App {
                         SettingType::Grammar
                         | SettingType::Boolean
                         | SettingType::Theme
-                        | SettingType::WorkspaceMode => setting.descriptor().key.to_owned(),
+                        | SettingType::WorkspaceMode
+                        | SettingType::ExplorerSort => setting.descriptor().key.to_owned(),
                     },
                     _ => format!("{:?}", self.prompt_kind),
                 };

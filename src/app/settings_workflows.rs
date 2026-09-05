@@ -12,7 +12,9 @@ use super::{
     outcome_clause, persist_setting, registry_failure_summary, render_settings_page,
     startup_status,
 };
-use crate::{buffer::GeneratedViewIdentity, content_alignment::ContentAlignment};
+use crate::{
+    buffer::GeneratedViewIdentity, config::ExplorerSort, content_alignment::ContentAlignment,
+};
 
 impl App {
     /// Returns a complete optional-service report without starting a provider
@@ -290,7 +292,7 @@ impl App {
         self.refresh_notification_buffers();
     }
 
-    fn refresh_settings_buffers(&mut self) {
+    pub(super) fn refresh_settings_buffers(&mut self) {
         let rendered = self.settings_buffer();
         for index in 0..self.buffers.len() {
             if self.buffers[index].is_settings() {
@@ -326,6 +328,11 @@ impl App {
                 .iter()
                 .copied()
                 .map(SettingValue::WorkspaceMode)
+                .collect(),
+            SettingType::ExplorerSort => ExplorerSort::ALL
+                .iter()
+                .copied()
+                .map(SettingValue::ExplorerSort)
                 .collect(),
             SettingType::Integer { minimum, maximum } => {
                 (minimum..=maximum).map(SettingValue::Integer).collect()
@@ -463,6 +470,7 @@ impl App {
             SettingValue::Boolean(_)
             | SettingValue::Integer(_)
             | SettingValue::WorkspaceMode(_)
+            | SettingValue::ExplorerSort(_)
             | SettingValue::Text(_) => {}
         }
         self.status(format!(
@@ -569,7 +577,15 @@ impl App {
             SettingValue::Boolean(_)
             | SettingValue::Integer(_)
             | SettingValue::WorkspaceMode(_)
+            | SettingValue::ExplorerSort(_)
             | SettingValue::Text(_) => {}
+        }
+        // An explorer setting changed from this page has to reach the open
+        // listings just as the explorer's own keys do.
+        if SettingId::EXPLORER.contains(&setting)
+            && let Err(error) = self.refresh_listings(None)
+        {
+            self.action_failed(error.to_string());
         }
         self.settings_view = None;
         self.list = None;

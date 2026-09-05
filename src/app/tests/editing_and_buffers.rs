@@ -1680,9 +1680,9 @@ fn buffer_picker_uses_directory_names_and_paths() {
     let outside = fixture.join("external");
     fs::create_dir_all(&inside).unwrap();
     fs::create_dir_all(&outside).unwrap();
-    let project_buffer = Buffer::open_directory(&project, false).unwrap();
-    let inside_buffer = Buffer::open_directory(&inside, false).unwrap();
-    let outside_buffer = Buffer::open_directory(&outside, false).unwrap();
+    let project_buffer = Buffer::open_directory(&project, ListingView::default()).unwrap();
+    let inside_buffer = Buffer::open_directory(&inside, ListingView::default()).unwrap();
+    let outside_buffer = Buffer::open_directory(&outside, ListingView::default()).unwrap();
 
     assert_eq!(
         buffer_picker_columns(&project_buffer, &project, false),

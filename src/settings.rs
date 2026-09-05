@@ -20,8 +20,8 @@ use std::{
 use crate::{
     command::GrammarKind,
     config::{
-        Config, DEFAULT_THEME, MAX_GIT_REFRESH_INTERVAL_SECONDS, MAX_IDLE_RETIREMENT_MINUTES,
-        WorkspaceMode,
+        Config, DEFAULT_THEME, ExplorerSort, MAX_GIT_REFRESH_INTERVAL_SECONDS,
+        MAX_IDLE_RETIREMENT_MINUTES, WorkspaceMode,
     },
 };
 
@@ -44,6 +44,8 @@ pub enum SettingId {
     EditorScrollOffset,
     EditorMotionRepeatMultiplier,
     EditorShowHiddenFiles,
+    EditorExplorerSort,
+    EditorExplorerDetails,
     EditorSoftWrap,
     EditorRenderWhitespace,
     EditorZenWidth,
@@ -70,6 +72,7 @@ pub enum SettingValue {
     Boolean(bool),
     Integer(usize),
     WorkspaceMode(WorkspaceMode),
+    ExplorerSort(ExplorerSort),
     Text(String),
 }
 
@@ -83,6 +86,7 @@ pub enum SettingType {
     },
     Theme,
     WorkspaceMode,
+    ExplorerSort,
     /// An unrestricted string entered directly rather than chosen from a list.
     Text,
 }
@@ -178,6 +182,24 @@ const DESCRIPTORS: &[SettingDescriptor] = &[
         key: "editor.show_hidden_files",
         title: "Hidden files",
         description: "Show dotfiles in the explorer, finder, and search",
+        value_type: SettingType::Boolean,
+        preview: PreviewPolicy::Immediate,
+        persistence: PersistencePolicy::ConfigFile,
+    },
+    SettingDescriptor {
+        id: SettingId::EditorExplorerSort,
+        key: "editor.explorer_sort",
+        title: "Explorer order",
+        description: "Order an explorer lists entries in, directories first",
+        value_type: SettingType::ExplorerSort,
+        preview: PreviewPolicy::Immediate,
+        persistence: PersistencePolicy::ConfigFile,
+    },
+    SettingDescriptor {
+        id: SettingId::EditorExplorerDetails,
+        key: "editor.explorer_details",
+        title: "Explorer details",
+        description: "Show mode, owner, size, and time beside each row",
         value_type: SettingType::Boolean,
         preview: PreviewPolicy::Immediate,
         persistence: PersistencePolicy::ConfigFile,
@@ -366,6 +388,8 @@ impl SettingId {
         Self::EditorScrollOffset,
         Self::EditorMotionRepeatMultiplier,
         Self::EditorShowHiddenFiles,
+        Self::EditorExplorerSort,
+        Self::EditorExplorerDetails,
         Self::EditorSoftWrap,
         Self::EditorRenderWhitespace,
         Self::EditorZenWidth,
@@ -383,6 +407,18 @@ impl SettingId {
         Self::LspEnable,
         Self::GitRefreshIntervalSeconds,
         Self::NotificationsHistoryLimit,
+    ];
+
+    /// The settings an explorer's own keys and its `Tab` list change, in the
+    /// order that list offers them.
+    ///
+    /// They are grouped here rather than recognised one at a time because
+    /// every one of them has to reach the open listings when it changes,
+    /// whoever changed it.
+    pub const EXPLORER: &'static [Self] = &[
+        Self::EditorShowHiddenFiles,
+        Self::EditorExplorerDetails,
+        Self::EditorExplorerSort,
     ];
 
     pub fn descriptor(self) -> &'static SettingDescriptor {
@@ -436,6 +472,8 @@ impl SettingId {
             Self::NotificationsHistoryLimit => {
                 SettingValue::Integer(config.notifications.history_limit)
             }
+            Self::EditorExplorerSort => SettingValue::ExplorerSort(config.editor.explorer_sort),
+            Self::EditorExplorerDetails => SettingValue::Boolean(config.editor.explorer_details),
             Self::WorkspaceMode => SettingValue::WorkspaceMode(config.workspace.mode),
             Self::WorkspaceIdleRetirementMinutes => {
                 SettingValue::Integer(config.workspace.idle_retirement_minutes)
@@ -460,6 +498,9 @@ impl SettingId {
             SettingType::WorkspaceMode => {
                 WorkspaceMode::ALL.iter().map(ToString::to_string).collect()
             }
+            SettingType::ExplorerSort => {
+                ExplorerSort::ALL.iter().map(ToString::to_string).collect()
+            }
             SettingType::Integer { .. } | SettingType::Text => Vec::new(),
         }
     }
@@ -472,7 +513,8 @@ impl SettingId {
         match (self.descriptor().value_type, value) {
             (SettingType::Grammar, SettingValue::Grammar(_))
             | (SettingType::Boolean, SettingValue::Boolean(_))
-            | (SettingType::WorkspaceMode, SettingValue::WorkspaceMode(_)) => Ok(()),
+            | (SettingType::WorkspaceMode, SettingValue::WorkspaceMode(_))
+            | (SettingType::ExplorerSort, SettingValue::ExplorerSort(_)) => Ok(()),
             (SettingType::Integer { minimum, maximum }, SettingValue::Integer(value)) => {
                 if (minimum..=maximum).contains(value) {
                     Ok(())
@@ -560,6 +602,12 @@ impl SettingId {
             (Self::NotificationsHistoryLimit, SettingValue::Integer(value)) => {
                 config.notifications.history_limit = *value;
             }
+            (Self::EditorExplorerSort, SettingValue::ExplorerSort(value)) => {
+                config.editor.explorer_sort = *value;
+            }
+            (Self::EditorExplorerDetails, SettingValue::Boolean(value)) => {
+                config.editor.explorer_details = *value;
+            }
             (Self::WorkspaceMode, SettingValue::WorkspaceMode(value)) => {
                 config.workspace.mode = *value;
             }
@@ -582,6 +630,7 @@ impl fmt::Display for SettingType {
             }
             Self::Theme => formatter.write_str("a theme name"),
             Self::WorkspaceMode => formatter.write_str("a workspace mode"),
+            Self::ExplorerSort => formatter.write_str("an explorer order"),
             Self::Text => formatter.write_str("text"),
         }
     }
@@ -594,6 +643,7 @@ impl fmt::Display for SettingValue {
             Self::Boolean(value) => value.fmt(formatter),
             Self::Integer(value) => value.fmt(formatter),
             Self::WorkspaceMode(value) => value.fmt(formatter),
+            Self::ExplorerSort(value) => formatter.write_str(value.label()),
             Self::Text(value) => formatter.write_str(value),
         }
     }
@@ -1175,6 +1225,7 @@ fn yaml_scalar(value: &SettingValue) -> String {
         SettingValue::Boolean(value) => value.to_string(),
         SettingValue::Integer(value) => value.to_string(),
         SettingValue::WorkspaceMode(value) => value.to_string(),
+        SettingValue::ExplorerSort(value) => value.to_string(),
         SettingValue::Text(value) => format!("'{}'", value.replace('\'', "''")),
     }
 }

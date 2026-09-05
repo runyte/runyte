@@ -36,7 +36,7 @@ use crate::{
     content_alignment::{ContentAlignment, ContentLayout},
     diff::{Alignment, Side},
     diff_view::{DiffSession, DiffSide, MAX_DIFF_BYTES},
-    directory_buffer::DirectoryTransfer,
+    directory_buffer::{DirectoryTransfer, ListingView},
     directory_listing::DirectoryListings,
     external_open::{self, ProgramCache},
     file_picker::{
@@ -3058,7 +3058,7 @@ impl App {
             targets,
             &working_directory,
             &registry,
-            config.editor.show_hidden_files,
+            ListingView::from_config(&config.editor),
             startup,
         )?;
         let registry_errors = registry.errors();
@@ -3390,6 +3390,15 @@ enum ListAction {
     CodeAction(usize),
     Buffer(usize),
     SettingValue {
+        setting: SettingId,
+        value: SettingValue,
+    },
+    /// One explorer setting's value, chosen from the explorer's own list.
+    ///
+    /// Separate from `SettingValue` because it takes the explorer's path: it
+    /// carries no preview to roll back, it must reach every open listing, and
+    /// a configuration file that cannot be written does not withhold it.
+    ExplorerSetting {
         setting: SettingId,
         value: SettingValue,
     },
@@ -4224,10 +4233,10 @@ fn quote_path_hint(value: &str, preferred_quote: Option<char>, directory: bool) 
     (format!("{quote}{escaped}{quote}"), directory)
 }
 
-fn open_or_new(path: &Path, show_hidden: bool) -> Result<Buffer> {
+fn open_or_new(path: &Path, view: ListingView) -> Result<Buffer> {
     let path = absolute(path.to_path_buf())?;
     if path.is_dir() {
-        Buffer::open_directory(&path, show_hidden)
+        Buffer::open_directory(&path, view)
     } else if path.exists() {
         Buffer::open(&path)
     } else {
@@ -4241,9 +4250,9 @@ fn open_or_new(path: &Path, show_hidden: bool) -> Result<Buffer> {
 fn open_or_new_at_identity(
     path: &Path,
     expected_identity: &Path,
-    show_hidden: bool,
+    view: ListingView,
 ) -> Result<Buffer> {
-    let buffer = open_or_new(path, show_hidden)?;
+    let buffer = open_or_new(path, view)?;
     ensure!(
         crate::path_safety::path_identity(path)?.as_path() == expected_identity,
         "{} changed its resolved identity while it was being opened; retry the open",
@@ -4286,7 +4295,7 @@ fn open_launch_targets(
     targets: Vec<LaunchTarget>,
     working_directory: &Path,
     registry: &Registry,
-    show_hidden: bool,
+    view: ListingView,
     startup: &mut StartupTrace,
 ) -> Result<OpenedLaunchTargets> {
     let mut buffers = Vec::new();
@@ -4317,7 +4326,7 @@ fn open_launch_targets(
             continue;
         }
 
-        let buffer = match open_or_new_at_identity(&path, &identity, show_hidden) {
+        let buffer = match open_or_new_at_identity(&path, &identity, view) {
             Ok(buffer) => buffer,
             Err(error) if error.is::<BinaryFileError>() => {
                 ensure!(

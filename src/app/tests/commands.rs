@@ -111,7 +111,7 @@ fn a_file_open_rejects_a_symlink_identity_changed_after_preflight() {
     fs::remove_file(&alias).unwrap();
     symlink(&second, &alias).unwrap();
 
-    let error = open_or_new_at_identity(&alias, &expected, false).unwrap_err();
+    let error = open_or_new_at_identity(&alias, &expected, ListingView::default()).unwrap_err();
 
     assert!(error.to_string().contains("changed its resolved identity"));
     fs::remove_dir_all(directory).unwrap();

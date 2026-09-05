@@ -2319,6 +2319,30 @@ fn build_keymap(bindings: Vec<Binding>) -> Keymap {
             "unstage",
             ColonCommand::GitUnstageHunk,
         ),
+        // An explorer's contextual actions are the three settings that decide
+        // how it shows a directory. They are buffer-wide because none of them
+        // is about the row under the cursor, and they sit here rather than on
+        // scoped keys of their own because `Tab` is already how a view offers
+        // what it can do. The first two are direct toggles bound to `.` and
+        // `?` as well; the order has six values and opens its own list.
+        ContextAction::buffer(
+            BindingScope::Directory,
+            Key::char('h'),
+            "hidden",
+            EditorCommand::ToggleHiddenFiles,
+        ),
+        ContextAction::buffer(
+            BindingScope::Directory,
+            Key::char('d'),
+            "details",
+            EditorCommand::ToggleDirectoryDetails,
+        ),
+        ContextAction::buffer(
+            BindingScope::Directory,
+            Key::char('o'),
+            "order",
+            EditorCommand::ChooseExplorerOrder,
+        ),
     ];
     Keymap::with_namespaces(bindings, namespaces)
         .expect("the built-in keymap must not contain duplicate bindings")
@@ -2641,6 +2665,7 @@ mod tests {
             BindingScope::GitWorktrees,
             BindingScope::GitStash,
             BindingScope::Diff,
+            BindingScope::Directory,
         ] {
             for action in default_keymap().context_actions(scope) {
                 assert!(

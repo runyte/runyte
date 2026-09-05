@@ -20,7 +20,7 @@ use anyhow::{Context, Result, bail, ensure};
 
 use crate::{
     content_alignment::{ContentAlignment, ContentLayout},
-    directory_buffer::{DirectoryBuffer, DirectoryTransfer},
+    directory_buffer::{DirectoryBuffer, DirectoryTransfer, ListingView},
     fs_plan::{DirectoryListing, FsPlan, TransferMode},
     notification::{NOTIFICATIONS_BUFFER_NAME, NotificationDocument, NotificationRow},
     row_hints::{RowHints, display_cells},
@@ -1900,8 +1900,8 @@ impl Buffer {
         self.clear_external_file_state();
     }
 
-    pub fn open_directory(path: &Path, show_hidden: bool) -> Result<Self> {
-        let (directory, contents) = DirectoryBuffer::open(path.to_path_buf(), show_hidden)?;
+    pub fn open_directory(path: &Path, view: ListingView) -> Result<Self> {
+        let (directory, contents) = DirectoryBuffer::open(path.to_path_buf(), view)?;
         let text = Text::from_str(&contents);
         Ok(Self {
             longest_line: text.longest_line_bytes(),
@@ -3126,13 +3126,13 @@ impl Buffer {
             .map_or(0, DirectoryBuffer::detail_prefix_width)
     }
 
-    pub fn toggle_directory_details(&mut self) -> Result<bool> {
+    pub fn set_directory_details(&mut self, shown: bool) -> Result<bool> {
         let text = self.text.to_string();
         Ok(self
             .directory
             .as_mut()
             .context("buffer is not a directory")?
-            .toggle_details(&text))
+            .set_details(shown, &text))
     }
 
     pub fn directory_details_shown(&self) -> bool {
@@ -3168,12 +3168,12 @@ impl Buffer {
             .unwrap_or_default()
     }
 
-    pub fn reload_directory(&mut self, show_hidden: bool) -> Result<()> {
+    pub fn reload_directory(&mut self, view: ListingView) -> Result<()> {
         let text = self
             .directory
             .as_mut()
             .context("buffer is not a directory")?
-            .reload(show_hidden)?;
+            .reload(view)?;
         self.text = Text::from_str(&text);
         self.undo.clear();
         self.redo.clear();
@@ -3246,13 +3246,9 @@ impl Buffer {
     /// keeps one explorer however far it walks. Undo history is dropped with
     /// the old listing: the two directories share no text, and an undo across
     /// the boundary would restore entries that were never in this one.
-    pub fn retarget_directory(&mut self, path: &Path, show_hidden: bool) -> Result<()> {
+    pub fn retarget_directory(&mut self, path: &Path, view: ListingView) -> Result<()> {
         ensure!(self.is_directory(), "buffer is not a directory");
-        let details_shown = self.directory_details_shown();
-        let (mut directory, contents) = DirectoryBuffer::open(path.to_path_buf(), show_hidden)?;
-        if details_shown {
-            directory.toggle_details(&contents);
-        }
+        let (directory, contents) = DirectoryBuffer::open(path.to_path_buf(), view)?;
         self.directory = Some(directory);
         self.path = Some(path.to_path_buf());
         self.text = Text::from_str(&contents);
@@ -3326,7 +3322,7 @@ mod tests {
             format!("[file] {}", path.display())
         );
         assert_eq!(
-            Buffer::open_directory(&directory, false)
+            Buffer::open_directory(&directory, ListingView::default())
                 .unwrap()
                 .pane_title(),
             format!("[explorer] {}", directory.display())
@@ -3390,7 +3386,7 @@ mod tests {
             ("file", Buffer::open(&path).unwrap(), true, true),
             (
                 "directory",
-                Buffer::open_directory(&directory, false).unwrap(),
+                Buffer::open_directory(&directory, ListingView::default()).unwrap(),
                 true,
                 false,
             ),

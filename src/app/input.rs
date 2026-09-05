@@ -2812,13 +2812,14 @@ impl App {
                 )),
             }
         }
+        let view = self.listing_view();
         for index in reload {
             self.forget_directory_view(index);
             self.forget_directory_jumps(index);
             let refresh = if index == initiating_buffer && completed {
                 self.buffers[index].accept_directory_plan(self.config.editor.show_hidden_files)
             } else {
-                self.buffers[index].reload_directory(self.config.editor.show_hidden_files)
+                self.buffers[index].reload_directory(view)
             };
             match refresh {
                 Ok(()) => {
@@ -3767,6 +3768,7 @@ impl App {
             Command::RefreshDirectory => self.refresh_directory()?,
             Command::ToggleHiddenFiles => self.toggle_hidden_files()?,
             Command::ToggleDirectoryDetails => self.toggle_directory_details()?,
+            Command::ChooseExplorerOrder => self.choose_explorer_order()?,
             Command::SplitVertical => self.split_window(Axis::Horizontal)?,
             Command::SplitHorizontal => self.split_window(Axis::Vertical)?,
             Command::Save => self.save(None, false)?,
@@ -3935,7 +3937,8 @@ impl App {
                         SettingType::Grammar
                         | SettingType::Boolean
                         | SettingType::Theme
-                        | SettingType::WorkspaceMode => {
+                        | SettingType::WorkspaceMode
+                        | SettingType::ExplorerSort => {
                             self.action_failed("this setting must be chosen from its list");
                             return Ok(());
                         }

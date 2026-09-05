@@ -2373,11 +2373,13 @@ mod tests {
 
         let snapshot = prepared_snapshot(&mut app, 100, 12);
         let rows = &snapshot.pane(0).unwrap().rows;
-        let SnapshotRow::Text(file) = &rows[0] else {
-            panic!("file row is text");
-        };
-        let SnapshotRow::Text(nested) = &rows[1] else {
+        // Directories group before files in every listing order, so `nested/`
+        // leads however it sorts against `file.txt` by name.
+        let SnapshotRow::Text(nested) = &rows[0] else {
             panic!("directory row is text");
+        };
+        let SnapshotRow::Text(file) = &rows[1] else {
+            panic!("file row is text");
         };
         assert!(file.runs.iter().all(|run| !matches!(
             run.kind,
@@ -2397,7 +2399,7 @@ mod tests {
         app.handle_key(crate::input::KeyStroke::char('?')).unwrap();
         let snapshot = prepared_snapshot(&mut app, 100, 12);
         let pane = snapshot.pane(0).unwrap();
-        let SnapshotRow::Text(file) = &pane.rows[0] else {
+        let SnapshotRow::Text(file) = &pane.rows[1] else {
             panic!("file row is text");
         };
         assert!(matches!(

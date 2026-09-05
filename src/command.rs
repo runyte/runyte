@@ -672,6 +672,7 @@ editor_commands! {
     RefreshDirectory => ("refresh-directory", "Reload the directory from disk"),
     ToggleHiddenFiles => ("toggle-hidden-files", "Show or hide dotfiles in the explorer"),
     ToggleDirectoryDetails => ("toggle-directory-details", "Show or hide file details in the explorer"),
+    ChooseExplorerOrder => ("choose-explorer-order", "Choose the order the explorer lists entries in"),
     OpenChangedFile => ("open-changed-file", "Open the file on this line"),
     StageAllChangedFiles => ("stage-all-changed-files", "Stage every changed file"),
     CheckoutBranch => ("checkout-branch", "Check out this branch locally"),
@@ -1081,6 +1082,7 @@ impl EditorCommand {
             | Self::RefreshDirectory
             | Self::ToggleHiddenFiles
             | Self::ToggleDirectoryDetails
+            | Self::ChooseExplorerOrder
             | Self::Save
             | Self::ForceSave
             | Self::NewBuffer
