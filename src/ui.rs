@@ -1108,19 +1108,29 @@ fn draw_snapshot_overlay(
             Some(OverlayPreview::Unavailable(error)) => vec![Line::from(error.clone())],
             Some(OverlayPreview::Empty) | None => vec![Line::from("No preview")],
         };
-        frame.render_widget(
-            Paragraph::new(preview)
-                .block(Block::default().borders(Borders::LEFT).title(format!(
-                    " {} ",
-                    overlay.preview_title.as_deref().unwrap_or("Preview")
-                )))
-                .style(
-                    Style::default()
-                        .fg(theme.muted)
-                        .bg(theme.overlay_background),
-                ),
-            columns[1],
-        );
+        if overlay.purpose == crate::snapshot::OverlayPurpose::Choice {
+            draw_choice_explanation(
+                frame,
+                theme,
+                columns[1],
+                overlay.preview_title.as_deref().unwrap_or("Preview"),
+                preview,
+            );
+        } else {
+            frame.render_widget(
+                Paragraph::new(preview)
+                    .block(Block::default().borders(Borders::LEFT).title(format!(
+                        " {} ",
+                        overlay.preview_title.as_deref().unwrap_or("Preview")
+                    )))
+                    .style(
+                        Style::default()
+                            .fg(theme.muted)
+                            .bg(theme.overlay_background),
+                    ),
+                columns[1],
+            );
+        }
     }
     if let Some(cursor) = overlay.query_cursor.filter(|_| query_height > 0) {
         let cells = overlay
@@ -1136,6 +1146,43 @@ fn draw_snapshot_overlay(
             .min(inner.right().saturating_sub(1));
         frame.set_cursor_position(ScreenPosition::new(x, inner.y));
     }
+}
+
+/// Choice previews explain a decision in prose. Keep their heading and body
+/// aligned, and wrap to a readable measure independently of the terminal width.
+fn draw_choice_explanation(
+    frame: &mut Frame<'_>,
+    theme: &TuiTheme,
+    area: TuiRect,
+    title: &str,
+    lines: Vec<Line<'_>>,
+) {
+    let block = Block::default()
+        .borders(Borders::LEFT)
+        .border_style(Style::default().fg(theme.muted));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    let content = TuiRect::new(
+        inner.x.saturating_add(1),
+        inner.y,
+        inner.width.saturating_sub(2).min(72),
+        inner.height,
+    );
+    let mut text = vec![
+        Line::styled(title, Style::default().bold()),
+        Line::default(),
+    ];
+    text.extend(lines);
+    frame.render_widget(
+        Paragraph::new(text)
+            .style(
+                Style::default()
+                    .fg(theme.foreground)
+                    .bg(theme.overlay_background),
+            )
+            .wrap(Wrap { trim: false }),
+        content,
+    );
 }
 
 /// Draws the presentation-neutral hint rows carried by an attached frame with
@@ -3255,16 +3302,26 @@ fn draw_list(frame: &mut Frame<'_>, app: &TuiApp<'_>, editor_area: Rect) {
                 )
             },
         );
-        frame.render_widget(
-            Paragraph::new(preview)
-                .block(
-                    Block::default()
-                        .borders(Borders::LEFT)
-                        .title(format!(" {} ", picker.preview_title().unwrap_or("Preview"))),
-                )
-                .style(Style::default().fg(app.theme.foreground)),
-            columns[1],
-        );
+        if picker.purpose == crate::picker::ListPurpose::Choice {
+            draw_choice_explanation(
+                frame,
+                &app.theme,
+                columns[1],
+                picker.preview_title().unwrap_or("Preview"),
+                preview,
+            );
+        } else {
+            frame.render_widget(
+                Paragraph::new(preview)
+                    .block(
+                        Block::default()
+                            .borders(Borders::LEFT)
+                            .title(format!(" {} ", picker.preview_title().unwrap_or("Preview"))),
+                    )
+                    .style(Style::default().fg(app.theme.foreground)),
+                columns[1],
+            );
+        }
     }
     if app.buffer_action_menu.is_some() {
         draw_buffer_actions(frame, app, editor_area);

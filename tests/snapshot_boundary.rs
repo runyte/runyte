@@ -117,6 +117,85 @@ fn attached(host: &mut WorkspaceHost) -> Vec<String> {
     lines(terminal.backend().buffer())
 }
 
+#[test]
+fn lsp_permission_explanation_aligns_and_wraps_in_both_frontends() {
+    let project = TempProject::new("lsp-explanation");
+    let mut app = App::new_in_project(Config::default(), None, project.path()).unwrap();
+    app.configure_lsp_trust(Some(project.path().join("trust")));
+    let expected = app
+        .list
+        .as_ref()
+        .unwrap()
+        .selected_preview()
+        .unwrap()
+        .to_owned();
+    let mut host = WorkspaceHost::new(app);
+
+    for width in [90, 120, 240] {
+        for persistent in [false, true] {
+            let mut terminal = Terminal::new(TestBackend::new(width, 24)).unwrap();
+            terminal
+                .draw(|frame| {
+                    if persistent {
+                        let published = host.prepare_frame(ui::frame_geometry(frame.area()));
+                        ui::render_host_frame_exact_colors_for_test(frame, &published);
+                    } else {
+                        let app = host.app_mut();
+                        let prepared = app.prepare_view(ui::frame_geometry(frame.area()));
+                        let snapshot = app.snapshot(&prepared);
+                        ui::render_exact_colors_for_test(
+                            frame,
+                            app,
+                            &snapshot,
+                            &KeyHintState::default(),
+                        );
+                    }
+                })
+                .unwrap();
+            let buffer = terminal.backend().buffer();
+            let screen = lines(buffer);
+            let heading = row_of(&screen, "Before you allow LSP");
+            let column = screen[heading].chars().position(|c| c == 'B').unwrap();
+            assert!(
+                buffer[(column as u16, heading as u16)]
+                    .modifier
+                    .contains(ratatui::style::Modifier::BOLD)
+            );
+            assert_eq!(buffer[(column as u16 - 2, heading as u16)].symbol(), "│");
+            assert_eq!(buffer[(column as u16 - 1, heading as u16)].symbol(), " ");
+            let first = row_of(&screen, "Language servers");
+            assert_eq!(first, heading + 2, "leave a blank row after the heading");
+            assert!(
+                screen[first]
+                    .chars()
+                    .skip(column)
+                    .collect::<String>()
+                    .starts_with("Language servers")
+            );
+
+            let body = screen
+                .iter()
+                .enumerate()
+                .skip(first)
+                .take_while(|(row, _)| buffer[(column as u16 - 2, *row as u16)].symbol() == "│")
+                .map(|(_, line)| {
+                    line.chars()
+                        .skip(column)
+                        .take(72.min(width as usize - column - 1))
+                        .collect::<String>()
+                })
+                .map(|line| line.trim_end_matches([' ', '│']).trim().to_owned())
+                .collect::<Vec<_>>();
+            assert_eq!(
+                body.join(" ").split_whitespace().collect::<Vec<_>>(),
+                expected.split_whitespace().collect::<Vec<_>>(),
+                "the complete explanation must be readable at width {width}, persistent={persistent}:\n{}",
+                screen.join("\n")
+            );
+        }
+    }
+}
+
 /// The screen row a row of the overlay stands on.
 fn row_of(screen: &[String], needle: &str) -> usize {
     screen
