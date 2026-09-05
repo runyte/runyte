@@ -229,8 +229,8 @@ impl App {
         };
         let git_project = if !self.has_git() {
             CommandAvailability::Unavailable("no `git` executable was found".to_owned())
-        } else if let Some(error) = self.git_state.discovery_error() {
-            CommandAvailability::Unavailable(format!("Git repository discovery failed: {error}"))
+        } else if let Some(message) = self.git_state.discovery_failure_message() {
+            CommandAvailability::Unavailable(message)
         } else if self.git.repository().is_some() {
             CommandAvailability::Available
         } else if self.git_state.discovery_complete() {
@@ -240,11 +240,20 @@ impl App {
                 "Git repository discovery is still in progress".to_owned(),
             )
         };
+        let git_refresh = if self.has_git()
+            && self.git_state.discovery_complete()
+            && self.git_state.discovery_error().is_some()
+        {
+            CommandAvailability::Available
+        } else {
+            git_project.clone()
+        };
         AppCapabilitySnapshot {
             syntax,
             lsp_manager,
             lsp_document,
             git_project,
+            git_refresh,
             persistent_session: persistent_session_availability(
                 cfg!(unix),
                 self.persistent_session,

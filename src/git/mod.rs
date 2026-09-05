@@ -66,15 +66,17 @@ pub type Result<T> = std::result::Result<T, GitError>;
 /// Why a Git call could not answer.
 ///
 /// The variants exist so callers can decide without reading text.
-/// [`GitError::Unavailable`] means every Git surface should degrade to absent
-/// rather than report a failure; the rest are real errors worth showing.
+/// [`GitError::Unavailable`] means the provider or its child could not be
+/// started or used. During discovery this is a failure, never authoritative
+/// repository absence; only a successful `Ok(None)` answers that question.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum GitError {
     /// No usable `git` executable, or one that could not be started.
     Unavailable { detail: String },
     /// The path exists but no repository owns it.
     NotARepository { path: PathBuf },
-    /// Git ran and refused.
+    /// The child exited unsuccessfully. A signal alone does not prove that
+    /// the child reached the Git executable before it was terminated.
     Failed {
         command: String,
         code: Option<i32>,
@@ -118,7 +120,8 @@ pub enum GitError {
 }
 
 impl GitError {
-    /// Whether this means "there is no Git here" rather than "Git failed".
+    /// Whether the provider or its child was unavailable. This does not prove
+    /// that a directory is outside a repository.
     pub const fn is_unavailable(&self) -> bool {
         matches!(self, Self::Unavailable { .. })
     }

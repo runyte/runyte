@@ -1911,7 +1911,7 @@ cancellation keys.
 | `Ctrl-h/j/k/l` | Move between panes without a prefix, when `editor.fast_pane_keys` is on |
 | `Space o o` | Open the typed settings menu |
 | `Space o t` | Preview and save a theme in `config.yaml`; `Tab` narrows to the dark or light ones |
-| `Space o s` | Inspect syntax and LSP service health |
+| `Space o s` | Inspect syntax, LSP, and Git service health |
 | `Ctrl-s`, `:write`, or `:save` | Save |
 | `:diff-disk` | Compare the active file buffer with a fresh immutable disk snapshot |
 | `:diff-this` (`:difft`, `:dt`) | Mark this buffer, or compare it with the one marked before it |
@@ -2609,6 +2609,23 @@ in the `Tab` action menus of the branch list and changed-file list as `p` and
 
 Git discovery, reads, mutations, hooks, pull, and push run on the bounded Git
 service, so editing and rendering continue while they are queued or running.
+If repository discovery fails, `:git-refresh` makes one new discovery attempt
+in the background. Further invocations are unavailable until it finishes.
+There are no automatic discovery retries: launch failures, signal exits,
+permissions, and configuration errors all wait for an explicit retry. Each
+of discovery's three local Git reads has a 30-second deadline and bounded
+output. A signal exit does not establish whether the child reached Git.
+
+The status line shows discovery failure with a `:git-refresh` hint, and changes
+to `retrying discovery` during a retry. Other Git commands remain unavailable;
+their palette reasons and the `git` row in `:service-health` retain the last
+diagnostic while the retry runs. A new failure replaces that diagnostic;
+successful discovery clears it and either refreshes the repository or reports
+that the project is not in a Git repository. That authoritative absence does
+not offer a retry. Failure notifications remain in the bounded notification
+history. Persistent sessions retain the discovery state and notifications
+across detach and reattach; reattaching does not start another attempt.
+
 Long-running mutations temporarily replace the normal status row with the
 action, its target, elapsed time, cancellation hint, and a rotating `- \ | /`
 bar at the right edge. This is a general TUI progress surface rather than part
@@ -2855,7 +2872,7 @@ are enabled.
 :git-index              review everything staged for the next commit
 :git-log                open the Git log, or refresh it from its first page
 :git-search-commits     fuzzy-search commits by message, ID, author, or date with a full-message preview
-:git-refresh            re-read branch, changed files, and changed lines from Git
+:git-refresh            refresh Git state or retry failed repository discovery
 :git-stage              stage the active file, or every file selected in the list
 :git-stage-hunk         stage the exact hunk under the cursor
 :git-stage-lines        stage the supported saved source-line selection
@@ -3179,7 +3196,8 @@ left untouched. A failed save also rolls back any live preview while keeping
 the choice popup open for correction or retry.
 
 `Space o s` or `:service-health` opens a read-only snapshot of syntax registry
-failures, the active document's LSP configuration and attachment, and the
+failures, the active document's LSP configuration and attachment, Git repository
+discovery (including a retained failure or pending retry), and the
 diagnostic log's owner role, level, resolved path, and any failure. The
 report probes paths only and remains useful when every optional service is
 absent. In persistent mode its `log` row describes the host that owns the

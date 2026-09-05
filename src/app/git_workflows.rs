@@ -47,7 +47,7 @@ pub(super) struct GitWorkflowState {
     /// The typed discovery failure kept distinct from an authoritative
     /// non-repository result. Command discovery exposes this text so a failed
     /// Git worker cannot masquerade as ordinary capability absence.
-    discovery_error: Option<String>,
+    discovery_error: Option<crate::git::GitError>,
     generation: RepositoryGeneration,
     head_oid: Option<String>,
     progress: HashMap<GitRequestId, GitServiceProgress>,
@@ -182,8 +182,18 @@ impl GitWorkflowState {
         self.discovery_complete
     }
 
-    pub(super) fn discovery_error(&self) -> Option<&str> {
-        self.discovery_error.as_deref()
+    pub(super) fn discovery_error(&self) -> Option<&crate::git::GitError> {
+        self.discovery_error.as_ref()
+    }
+
+    pub(super) fn discovery_failure_message(&self) -> Option<String> {
+        self.discovery_error.as_ref().map(|error| {
+            if self.discovery_complete {
+                format!("Git repository discovery failed: {error}; use :git-refresh to retry")
+            } else {
+                format!("Git repository discovery retry is in progress; last failure: {error}")
+            }
+        })
     }
 
     pub(super) fn status_counts(&self) -> &[Option<crate::git::CountColumns>] {
@@ -276,7 +286,7 @@ impl App {
         };
         let (repository, discovery_error) = match provider.discover(&project_root) {
             Ok(repository) => (repository, None),
-            Err(error) => (None, Some(error.to_string())),
+            Err(error) => (None, Some(error)),
         };
         tracker.attach(repository);
         let _ = tracker.refresh_status(provider);
@@ -300,9 +310,23 @@ impl App {
         self.ports.git = None;
         self.git_state.discovery_complete = false;
         self.git_state.discovery_error = None;
-        let _ = self.request_git(GitOperation::Discover {
-            start: self.project_root.clone(),
-        });
+        self.request_git_discovery();
+    }
+
+    /// One explicit attempt, with no timer or retry loop. Keep the last
+    /// diagnostic while the worker is answering; only an answer replaces it.
+    fn request_git_discovery(&mut self) -> bool {
+        if self
+            .request_git(GitOperation::Discover {
+                start: self.project_root.clone(),
+            })
+            .is_some()
+        {
+            self.git_state.discovery_complete = false;
+            true
+        } else {
+            false
+        }
     }
 
     pub(super) fn has_git(&self) -> bool {
@@ -319,6 +343,7 @@ impl App {
         action: Option<u64>,
     ) -> Option<GitRequestId> {
         let service = self.ports.git_service.as_ref()?;
+        let discovering = matches!(operation, GitOperation::Discover { .. });
         match service.try_submit(operation) {
             Ok(id) => {
                 if let Some(action) = action {
@@ -327,7 +352,22 @@ impl App {
                 Some(id)
             }
             Err(error) => {
-                self.error_from("Git", "Git operation failed", error.to_string());
+                if discovering {
+                    self.git_state.discovery_complete = true;
+                    // A full or disconnected queue must not leave discovery
+                    // pending forever or erase the failure being retried.
+                    self.git_state
+                        .discovery_error
+                        .get_or_insert_with(|| error.clone());
+                }
+                let message = if discovering {
+                    format!(
+                        "Git repository discovery could not be queued: {error}; use :git-refresh to retry"
+                    )
+                } else {
+                    error.to_string()
+                };
+                self.error_from("Git", "Git operation failed", message);
                 None
             }
         }
@@ -754,7 +794,7 @@ impl App {
                         };
                         if matches!(&operation, GitOperation::Discover { .. }) {
                             self.git_state.discovery_complete = true;
-                            self.git_state.discovery_error = Some(error.to_string());
+                            self.git_state.discovery_error = Some(error.clone());
                         }
                         if let GitOperation::PreparePartial { selection, .. } = &operation
                             && let (Some((buffer, _)), Some(guard)) =
@@ -763,7 +803,9 @@ impl App {
                         {
                             self.forget_partial_guard(index, guard.id(), true);
                         }
-                        let message = if operation.refreshes_ambient_snapshot() {
+                        let message = if matches!(operation, GitOperation::Discover { .. }) {
+                            self.git_state.discovery_failure_message().unwrap()
+                        } else if operation.refreshes_ambient_snapshot() {
                             self.git_state.snapshot_stale = true;
                             format!("{error}; showing the last known Git state")
                         } else {
@@ -861,9 +903,17 @@ impl App {
         let (request, state) = completion;
         match response {
             GitResponse::Discovered(repository) => {
+                let retried = self.git_state.discovery_error.is_some();
                 self.git_state.discovery_complete = true;
                 self.git_state.discovery_error = None;
                 self.git.attach(repository.clone());
+                if retried {
+                    self.status(if repository.is_some() {
+                        "Git repository discovered; refreshing Git in the background"
+                    } else {
+                        "this project is not in a Git repository"
+                    });
+                }
                 if let Some(repository) = repository {
                     let spec = self.git_refresh_spec(&repository);
                     let _ = self.request_git(GitOperation::Refresh { repository, spec });
@@ -1560,6 +1610,19 @@ impl App {
 
     /// The branch and outstanding-change summary for the status line.
     pub fn git_summary(&self) -> Option<String> {
+        if self.has_git()
+            && !self.git_state.discovery_complete
+            && (self.git.repository().is_none() || self.git_state.discovery_error.is_some())
+        {
+            return Some(if self.git_state.discovery_error.is_some() {
+                "git · retrying discovery".to_owned()
+            } else {
+                "git · discovering repository".to_owned()
+            });
+        }
+        if self.git_state.discovery_error.is_some() {
+            return Some("git · discovery failed · :git-refresh".to_owned());
+        }
         let mut summary = match self.git.summary() {
             Some(summary) => summary,
             None if !self.git_state.progress.is_empty() => "git".to_owned(),
@@ -5709,12 +5772,28 @@ impl App {
     /// measured against, and no buffer changes when it happens.
     pub(super) fn refresh_git(&mut self) {
         if self.ports.git_service.is_some() {
-            if self.request_git_refresh() {
-                self.status("refreshing Git in the background");
-            } else {
+            if !self.git_state.discovery_complete
+                && (self.git.repository().is_none() || self.git_state.discovery_error.is_some())
+            {
+                self.action_failed("Git repository discovery is still in progress");
+            } else if self.git_state.discovery_error.is_some() {
+                if self.request_git_discovery() {
+                    self.status("retrying Git repository discovery in the background");
+                }
+            } else if self.git.repository().is_none() {
                 self.action_failed("this project is not in a Git repository");
+            } else if self.request_git_refresh() {
+                self.status("refreshing Git in the background");
             }
             return;
+        }
+        // Synchronous providers are injected by the test facade only.
+        if self.git_state.discovery_error.is_some() {
+            self.attach_repository();
+            if let Some(message) = self.git_state.discovery_failure_message() {
+                self.error_from("Git", "Git operation failed", message);
+                return;
+            }
         }
         let Some((tracker, provider)) = self.git_ports() else {
             self.action_failed("no `git` executable was found");

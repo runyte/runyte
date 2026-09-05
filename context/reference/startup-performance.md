@@ -61,6 +61,14 @@ happens on the monitor thread and forwards nothing when the listing is
 unchanged, so it does not wake the editor. The fixtures below open a document
 rather than an explorer, so this work is not in the measurements either.
 
+## Git discovery recovery
+
+Failed repository discovery can be retried explicitly through `:git-refresh`.
+It uses the existing asynchronous Git service, adds no timer or automatic
+retry, and allows only one discovery attempt at a time. Each of the three
+discovery reads now uses the existing 30-second local-read deadline and output
+bound. Startup and idle measurements below have not been rerun for this change.
+
 ## LSP permission startup change
 
 Workspace startup now performs a bounded read of one exact-root permission

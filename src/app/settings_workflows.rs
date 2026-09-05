@@ -95,6 +95,24 @@ impl App {
         };
         entries.push(ServiceHealthEntry::new("lsp", lsp_state, lsp_detail));
 
+        let git_state = if !self.has_git() {
+            ServiceState::Unavailable
+        } else if self.git_state.discovery_error().is_some() {
+            ServiceState::Degraded
+        } else if self.git.repository().is_some() {
+            ServiceState::Ready
+        } else {
+            ServiceState::Idle
+        };
+        entries.push(ServiceHealthEntry::new(
+            "git",
+            git_state,
+            self.command_capabilities()
+                .git_project
+                .reason()
+                .unwrap_or("repository discovery succeeded"),
+        ));
+
         entries.push(self.logging_health());
         ServiceHealthSnapshot { entries }
     }
