@@ -381,7 +381,17 @@ impl App {
         }
         let mut items = Vec::new();
         let mut actions = Vec::new();
-        for session in self.terminals.iter() {
+        // Running sessions come first because they are the ones that can still
+        // be typed into; an exited screen is history, so it sinks to the end
+        // and is dimmed there rather than hidden. Identity order is kept
+        // within each group, so a terminal never moves except when its own
+        // child exits.
+        let ordered = self
+            .terminals
+            .iter()
+            .filter(|session| session.live())
+            .chain(self.terminals.iter().filter(|session| !session.live()));
+        for session in ordered {
             let mut detail = format!(
                 "#{} · {} · {}",
                 session.id(),
@@ -408,7 +418,8 @@ impl App {
             }
             items.push(
                 PickerItem::new(session.display_name(), detail, actions.len())
-                    .with_preview(terminal_preview(session)),
+                    .with_preview(terminal_preview(session))
+                    .dimmed(!session.live()),
             );
             actions.push(ListAction::Terminal(session.id()));
         }

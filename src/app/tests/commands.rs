@@ -3773,3 +3773,52 @@ fn the_terminal_list_describes_each_session_and_says_so_when_there_are_none() {
 
     fs::remove_dir_all(root).unwrap();
 }
+
+/// A terminal that can still be typed into is worth more of the reader's
+/// attention than one whose child is gone, so the list groups by that before
+/// it honours identity order.
+#[test]
+fn the_terminal_list_puts_running_sessions_first_and_dims_the_exited_ones() {
+    let root = temporary("terminal-list-order");
+    fs::create_dir_all(&root).unwrap();
+    let root = root.canonicalize().unwrap();
+    let mut app = App::new(Config::default(), None).unwrap();
+
+    let mut opened = Vec::new();
+    for _ in 0..4 {
+        app.open_terminal_at(Some("/bin/cat".to_owned()), root.clone());
+        opened.push(app.active_terminal().expect("a terminal opened"));
+        app.leave_terminal();
+    }
+    // The two oldest sessions exit, so identity order alone would put them at
+    // the top of the list.
+    for id in [opened[0], opened[1]] {
+        app.apply_terminal_output(TerminalOutput::Exited { id, code: None });
+    }
+
+    app.open_terminal_list();
+    let list = app.list.as_ref().expect("the list opened");
+    assert_eq!(
+        app.list_actions
+            .iter()
+            .map(|action| match action {
+                ListAction::Terminal(id) => *id,
+                other => panic!("{other:?} is not a terminal row"),
+            })
+            .collect::<Vec<_>>(),
+        vec![opened[2], opened[3], opened[0], opened[1]],
+        "running sessions come first, and identity order survives inside each group"
+    );
+    let states = list
+        .items
+        .iter()
+        .map(|item| (item.detail.contains("running"), item.is_dimmed()))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        states,
+        vec![(true, false), (true, false), (false, true), (false, true)],
+        "only the exited rows are dimmed"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
