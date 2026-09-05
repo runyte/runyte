@@ -6,43 +6,29 @@ use runyte::{
     log::{Level, Logger, MAX_LOG_BYTES, Role, Settings, Sink, previous_path},
     lsp_trust::TrustStore,
     pasted_image::{self, ImageFormat},
+    test_support::TestRuntimeRoot,
 };
 use std::{
     fs,
     os::unix::fs::{PermissionsExt, symlink},
     path::PathBuf,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::Duration,
 };
 
-struct Sandbox(PathBuf);
-impl Sandbox {
-    fn new() -> Self {
-        let root = std::env::temp_dir().join(format!(
-            "runyte-security-{}-{}",
-            std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        fs::create_dir(&root).unwrap();
-        Self(root.canonicalize().unwrap())
-    }
-}
-impl Drop for Sandbox {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.0);
-    }
+fn sandbox() -> TestRuntimeRoot {
+    // Parallel tests can observe the same clock tick. The shared allocator
+    // claims a directory exclusively and retains ownership through cleanup.
+    TestRuntimeRoot::new("security").unwrap()
 }
 const PNG: &[u8] = b"\x89PNG\r\n\x1a\nsafe regression fixture";
 
 #[test]
 fn image_storage_refuses_links_and_corrupt_existing_content() {
-    let sandbox = Sandbox::new();
-    let state = sandbox.0.join("state");
+    let sandbox = sandbox();
+    let state = sandbox.join("state");
     let directory = pasted_image::cache_directory(&state);
     fs::create_dir_all(&directory).unwrap();
-    let victim = sandbox.0.join("victim");
+    let victim = sandbox.join("victim");
     fs::write(&victim, "original").unwrap();
     let name = pasted_image::file_name(PNG, ImageFormat::Png);
     // The former predictable temporary leaf must never be opened for writing.
@@ -76,10 +62,10 @@ fn image_storage_refuses_links_and_corrupt_existing_content() {
 
 #[test]
 fn image_and_log_storage_refuse_symlinked_parents() {
-    let sandbox = Sandbox::new();
-    let outside = sandbox.0.join("outside");
+    let sandbox = sandbox();
+    let outside = sandbox.join("outside");
     fs::create_dir(&outside).unwrap();
-    let state = sandbox.0.join("state");
+    let state = sandbox.join("state");
     symlink(&outside, &state).unwrap();
     assert!(pasted_image::store(&state, PNG, ImageFormat::Png).is_err());
     assert!(
@@ -95,10 +81,10 @@ fn image_and_log_storage_refuse_symlinked_parents() {
 #[test]
 fn logs_refuse_symlinks_hardlinks_and_fifos_without_modifying_targets() {
     use std::{ffi::CString, os::unix::ffi::OsStrExt};
-    let sandbox = Sandbox::new();
-    let victim = sandbox.0.join("victim");
+    let sandbox = sandbox();
+    let victim = sandbox.join("victim");
     fs::write(&victim, b"untouched").unwrap();
-    let path = sandbox.0.join("host.log");
+    let path = sandbox.join("host.log");
     for hard in [false, true] {
         if hard {
             fs::hard_link(&victim, &path).unwrap();
@@ -116,8 +102,8 @@ fn logs_refuse_symlinks_hardlinks_and_fifos_without_modifying_targets() {
 
 #[test]
 fn log_rotation_uses_held_directory_and_file_and_private_atomic_backup() {
-    let sandbox = Sandbox::new();
-    let state = sandbox.0.join("state");
+    let sandbox = sandbox();
+    let state = sandbox.join("state");
     fs::create_dir(&state).unwrap();
     let path = state.join("host.log");
     let logger = Logger::start(
@@ -125,12 +111,12 @@ fn log_rotation_uses_held_directory_and_file_and_private_atomic_backup() {
         Sink::exclusive_file(&path),
     )
     .unwrap();
-    let moved = sandbox.0.join("moved");
+    let moved = sandbox.join("moved");
     fs::rename(&state, &moved).unwrap();
-    let outside = sandbox.0.join("outside");
+    let outside = sandbox.join("outside");
     fs::create_dir(&outside).unwrap();
     symlink(&outside, &state).unwrap();
-    let victim = sandbox.0.join("victim");
+    let victim = sandbox.join("victim");
     fs::write(&victim, "original").unwrap();
     symlink(&victim, previous_path(&moved.join("host.log"))).unwrap();
     for _ in 0..5 {
@@ -155,12 +141,12 @@ fn log_rotation_uses_held_directory_and_file_and_private_atomic_backup() {
 
 #[test]
 fn lsp_decisions_are_private_exact_workspace_records() {
-    let sandbox = Sandbox::new();
-    let project = sandbox.0.join("project");
+    let sandbox = sandbox();
+    let project = sandbox.join("project");
     fs::create_dir(&project).unwrap();
     let nested = project.join("nested");
     fs::create_dir(&nested).unwrap();
-    let storage = sandbox.0.join("user/trust");
+    let storage = sandbox.join("user/trust");
     let store = TrustStore::new(Some(storage.clone()), &project).unwrap();
     assert_eq!(store.load().unwrap(), None);
     assert!(
@@ -182,7 +168,7 @@ fn lsp_decisions_are_private_exact_workspace_records() {
             .unwrap(),
         None
     );
-    let alias = sandbox.0.join("alias");
+    let alias = sandbox.join("alias");
     symlink(&project, &alias).unwrap();
     assert_eq!(
         TrustStore::new(Some(storage.clone()), &alias)
@@ -212,7 +198,7 @@ fn lsp_decisions_are_private_exact_workspace_records() {
     fs::write(&record, b"invalid").unwrap();
     assert!(store.load().is_err());
     fs::remove_file(&record).unwrap();
-    let victim = sandbox.0.join("victim");
+    let victim = sandbox.join("victim");
     fs::write(&victim, b"untouched").unwrap();
     symlink(&victim, &record).unwrap();
     assert!(store.load().is_err());
