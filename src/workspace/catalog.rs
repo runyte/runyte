@@ -1432,10 +1432,10 @@ mod tests {
     #[test]
     fn abbreviated_ids_stay_six_characters_while_they_tell_workspaces_apart() {
         let ids = [
-            "96ceecd6a1f66da1b4ef385dbb62328a",
-            "7862cb247950d6d2435bd7545273d79f",
-            "22b80e1b3b4ca1b84282af9e467983de",
-            "d4db0b5604ea856609369870185fc36a",
+            "658471a65ca7c48244bef5867d3e80bc",
+            "fe973e03d42260785cd4cb9386a8168d",
+            "b98d692c4574a80e508cf6fa38e6f27a",
+            "3ab49e5b3d4fc8cc6600e204dd5a571e",
         ];
 
         assert_eq!(abbreviated_id_width(ids), ABBREVIATED_WORKSPACE_ID);
@@ -1465,8 +1465,8 @@ mod tests {
     #[test]
     fn an_abbreviated_id_still_resolves_to_the_row_it_was_printed_from() {
         let ids = [
-            "96ceecd6a1f66da1b4ef385dbb62328a",
-            "7862cb247950d6d2435bd7545273d79f",
+            "658471a65ca7c48244bef5867d3e80bc",
+            "fe973e03d42260785cd4cb9386a8168d",
         ];
         let width = abbreviated_id_width(ids);
         let rows = ids

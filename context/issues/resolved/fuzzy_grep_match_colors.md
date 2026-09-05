@@ -51,7 +51,7 @@ line boundary.
 ## Report
 
 Fuzzy grep showed matching substrings as coloured text. A screenshot showed a
-query for `arendt` whose matching author text used the accent foreground.
+query for `example` whose matching author text used the accent foreground.
 
 Direct, one-to-one substring matches should use the primary-selection colour,
 and non-contiguous fuzzy matches should use the secondary-selection colour,

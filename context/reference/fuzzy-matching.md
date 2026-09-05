@@ -52,7 +52,7 @@ does not change when Runyte's source does.
 
 ## Result set, 2026-09-04
 
-AMD Ryzen AI 9 365, 20 cores, 27 GB, Linux 7.1.9-200.fc44.x86_64, rustc 1.97.1,
+AMD Ryzen AI 9 365, 20 cores, 27 GB, Linux 7.1, rustc 1.97.1,
 release profile. Runyte 0.1.10, fzf 0.74.2, `--scheme=path`. Fifteen samples
 per cell, median reported.
 

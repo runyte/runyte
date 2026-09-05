@@ -76,10 +76,10 @@ which predates this change.
 ```
 ID                                NAME             DIRECTORY                        STATE    UNSAVED  TERMINALS  WAITING  TUI
 --------------------------------  ---------------  -------------------------------  -------  -------  ---------  -------  ---
-96ceecd6a1f66da1b4ef385dbb62328a  runyte           /home/user/code/runyte           running  0        0          0        no
-7862cb247950d6d2435bd7545273d79f  runyte-terminal  /home/user/code/runyte-terminal  stopped
-22b80e1b3b4ca1b84282af9e467983de  user             /home/user                       stopped
-d4db0b5604ea856609369870185fc36a  runyte-dev       /home/user/code/runyte-dev       stopped
+658471a65ca7c48244bef5867d3e80bc  runyte           /home/user/code/runyte           running  0        0          0        no
+fe973e03d42260785cd4cb9386a8168d  runyte-terminal  /home/user/code/runyte-terminal  stopped
+b98d692c4574a80e508cf6fa38e6f27a  user             /home/user                       stopped
+3ab49e5b3d4fc8cc6600e204dd5a571e  runyte-dev       /home/user/code/runyte-dev       stopped
 ```
 
 On a narrow terminal, such as one half of a split, the output wrapped. More

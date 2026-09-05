@@ -36,7 +36,7 @@ The following commit was displayed in Runyte:
 
 ```text
 commit bdf63a7bea5eff7ac84b96d7feb6c341f80a6035
-Author: Krzysztof Arendt
+Author: Example Author
 Author-time: 1786687978
 Parents: 3d5f19bd45808db9713543cc2a54d7b8f356486b
 

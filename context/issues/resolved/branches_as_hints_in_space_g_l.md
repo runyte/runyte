@@ -70,23 +70,23 @@ renders.
 `Space g l` shows Git commits, for example:
 
 ```
-ddf57b3a02c6  2026-08-18  Krzysztof Arendt  New issue: less space g commands (HEAD -> dev)
-a4c5532baf09  2026-08-18  Krzysztof Arendt  Merge: noisy error notifications (main)
-7af27c9e7009  2026-08-18  Krzysztof Arendt  Resolve noisy error notifications issue (fix-a67698a0acff16516)
-6b12c75b2032  2026-08-18  Krzysztof Arendt  Gate optional LSP requests on advertised capabilities; stop retaining No binding
-9c67b7818502  2026-08-18  Krzysztof Arendt  Merge: error text in the interaction line
-5327edc52fc8  2026-08-18  Krzysztof Arendt  Resolve interaction-line message issue (fix-a1c7f915a284d7967)
-86ae080051c7  2026-08-18  Krzysztof Arendt  Carry a failed or unavailable action's message onto the interaction line
-782299235b49  2026-08-18  Krzysztof Arendt  Merge: --cwd-file is an exposed implementation detail
-26c3b7bb133c  2026-08-18  Krzysztof Arendt  Resolve cwd_file_is_an_exposed_implementation_detail (fix-a5cc54060a9afc8c9)
-99b0e958bd70  2026-08-18  Krzysztof Arendt  Stop documenting --cwd-file as an option anyone should pass by hand
-387286623e3d  2026-08-18  Krzysztof Arendt  Report unsupported language-server requests
-71cd06191220  2026-08-18  Krzysztof Arendt  Report command, keybinding, and completion cleanups
-da6934f36aa6  2026-08-18  Krzysztof Arendt  Merge branch 'dev' (origin/main, origin/HEAD)
-318ff70c8df0  2026-08-18  Krzysztof Arendt  Merge branch 'editor-fixes'
-c8431c0b9edc  2026-08-18  Krzysztof Arendt  Resolve background syntax reparse issue
-00227ebe161f  2026-08-18  Krzysztof Arendt  Move syntax reparsing off the input path
-8158b30463d9  2026-08-17  Krzysztof Arendt  Resolve default workspace names issue (editor-fixes)
+ddf57b3a02c6  2026-08-18  Example Author  New issue: less space g commands (HEAD -> dev)
+a4c5532baf09  2026-08-18  Example Author  Merge: noisy error notifications (main)
+7af27c9e7009  2026-08-18  Example Author  Resolve noisy error notifications issue (fix-a67698a0acff16516)
+6b12c75b2032  2026-08-18  Example Author  Gate optional LSP requests on advertised capabilities; stop retaining No binding
+9c67b7818502  2026-08-18  Example Author  Merge: error text in the interaction line
+5327edc52fc8  2026-08-18  Example Author  Resolve interaction-line message issue (fix-a1c7f915a284d7967)
+86ae080051c7  2026-08-18  Example Author  Carry a failed or unavailable action's message onto the interaction line
+782299235b49  2026-08-18  Example Author  Merge: --cwd-file is an exposed implementation detail
+26c3b7bb133c  2026-08-18  Example Author  Resolve cwd_file_is_an_exposed_implementation_detail (fix-a5cc54060a9afc8c9)
+99b0e958bd70  2026-08-18  Example Author  Stop documenting --cwd-file as an option anyone should pass by hand
+387286623e3d  2026-08-18  Example Author  Report unsupported language-server requests
+71cd06191220  2026-08-18  Example Author  Report command, keybinding, and completion cleanups
+da6934f36aa6  2026-08-18  Example Author  Merge branch 'dev' (origin/main, origin/HEAD)
+318ff70c8df0  2026-08-18  Example Author  Merge branch 'editor-fixes'
+c8431c0b9edc  2026-08-18  Example Author  Resolve background syntax reparse issue
+00227ebe161f  2026-08-18  Example Author  Move syntax reparsing off the input path
+8158b30463d9  2026-08-17  Example Author  Resolve default workspace names issue (editor-fixes)
 ```
 
 Some commit titles are appended with the information which branch sits on

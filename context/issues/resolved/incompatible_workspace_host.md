@@ -86,9 +86,9 @@ project rather than from the registry.
 user@host:~/code/runyte$ ru -l
 ID                                NAME  DIRECTORY                           STATE    DIRTY  TUI
 --------------------------------  ----  ----------------------------------  -------  -----  ---
-96ceecd6a1f66da1b4ef385dbb62328a  -     /home/user/code/runyte              stopped  0      no
-d4db0b5604ea856609369870185fc36a  -     /home/user/code/runyte-dev          stopped  0      no
-cac6da14997dd69e4bdb8b58cc816907  -     /home/user/code/runyte-host-client  stopped  0      no
+658471a65ca7c48244bef5867d3e80bc  -     /home/user/code/runyte              stopped  0      no
+3ab49e5b3d4fc8cc6600e204dd5a571e  -     /home/user/code/runyte-dev          stopped  0      no
+bd9c7816e7aff88b40932e999f8c2337  -     /home/user/code/runyte-host-client  stopped  0      no
 user@host:~/code/runyte$ git merge editor-fixes
 Already up to date.
 user@host:~/code/runyte$ git merge editor-fixes
@@ -102,7 +102,7 @@ The problem had occurred before.
 
 The host behind it was a detached process from an earlier build, still running
 against protocol 9 with its executable already replaced on disk, holding
-`$XDG_RUNTIME_DIR/runyte/96ceecd6a1f66da1b4ef385dbb62328a/`. It was absent from
+`$XDG_RUNTIME_DIR/runyte/658471a65ca7c48244bef5867d3e80bc/`. It was absent from
 both host registries. The error's advice to restart the host named no way to do
 so: `--list-workspaces` did not show it, and `--shutdown-workspace` failed with
 the same protocol error, leaving `kill` as the only remaining exit.

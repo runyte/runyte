@@ -94,6 +94,12 @@ first-person framing, personal paths, and opinions about the implementation
 process. An empty file is a placeholder whose report has not been written yet;
 ask for it instead of guessing.
 
+Sanitizing a path is not finished until the identifiers derived from it are
+sanitized too. A workspace ID is the unsalted SHA-256 of the project root, so
+publishing one beside a redacted path hands a reader the preimage to confirm.
+Recompute such values from the redacted path rather than keeping the originals,
+in tests and fixtures as much as in prose.
+
 Resolving an issue takes two commits:
 
 1. The change itself, with its tests and any `README.md` or

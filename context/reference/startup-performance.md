@@ -64,9 +64,9 @@ rather than an explorer, so this work is not in the measurements either.
 ## 2026-09-05 — readiness, loading, and syntax
 
 Machine: AMD Ryzen AI 9 365, 10 cores / 20 hardware threads, approximately
-27 GiB RAM visible to the OS, Linux 7.1.9-200.fc44.x86_64, btrfs. Measurements ran
-outside the filesystem/process sandbox after compilation and tests finished.
-Ordinary desktop applications remained running.
+27 GiB RAM visible to the OS, Linux 7.1, btrfs. Measurements ran outside the
+filesystem/process sandbox after compilation and tests finished. Ordinary
+desktop applications remained running.
 
 - Neovim 0.12.4, packaged executable.
 - Helix 25.07.1 (`a05c151b`), packaged executable for readiness.
@@ -187,7 +187,7 @@ the resolved `first_frame_and_benchmark_breadth` issue.
 - helix: `helix 25.07.1 (a05c151b)`
 - runyte: `runyte 0.1.6`
 
-Machine: AMD Ryzen AI 9 365, 20 threads, 27 GB, Linux 7.1.9, btrfs.
+Machine: AMD Ryzen AI 9 365, 20 threads, 27 GB, Linux 7.1, btrfs.
 
 Parser availability was rechecked inside the isolated environment. Neovim
 reported an active tree-sitter highlighter and `filetype=lua`; Helix reported
@@ -299,7 +299,7 @@ personal settings and plugins.
 - helix: `helix 25.07.1 (a05c151b)`
 - runyte: `runyte 0.1.4`, release build from `41cb0bf`
 
-Machine: AMD Ryzen AI 9 365, 20 threads, 27 GB, Linux 7.1.9, btrfs.
+Machine: AMD Ryzen AI 9 365, 20 threads, 27 GB, Linux 7.1, btrfs.
 
 ### Startup
 
