@@ -187,8 +187,7 @@ impl OwnedTree {
         } else if file_type.is_file() {
             let mut source = File::open(source)?;
             let mut target = self.create_file(target)?;
-            io::copy(&mut source, &mut target)?;
-            target.set_permissions(metadata.permissions())?;
+            super::platform::copy_file(&mut source, &mut target)?;
         } else {
             return Err(io::Error::other("unsupported copy source"));
         }

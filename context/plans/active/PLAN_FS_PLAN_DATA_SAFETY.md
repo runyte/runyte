@@ -258,6 +258,22 @@ records originals and artifacts requiring attention; application reconciliation
 preserves unsaved source buffers and reports partial or recoverable failures
 through ERROR notifications.
 
+The macOS regular-file copy backend uses `fcopyfile` with
+`COPYFILE_DATA | COPYFILE_METADATA` on the opened source and exclusively
+created destination handles. This preserves resource forks, extended
+attributes, ACLs, and native metadata behavior that the initial stream-copy
+implementation lost relative to `std::fs::copy`. Native copy errors propagate
+without a data-only fallback, and no later permission update changes the copied
+ACL. The backend does not attempt APFS cloning; that performance optimization
+is separate from metadata preservation.
+
+`src/fs_plan/tests/macos.rs` covers metadata-preserving copies of regular files
+and nested files, publication collisions with distinct competing metadata,
+and native error propagation. These tests require native macOS execution.
+`file_copy_uses_owned_handles_after_destination_name_is_replaced` in
+`src/fs_plan/tests/mod.rs` checks on Unix that data and permission updates stay
+on the owned descriptor when its pathname is replaced.
+
 The implementation keeps the original plan scheduler and deletion order.
 Recovery diagnostics remain subject to the existing notification storage and
 retention bounds. Staging itself is never swept automatically. No new bindings,
@@ -269,8 +285,9 @@ requires unrestricted local IPC: the sandbox rejected the unchanged Git
 pipe-finalizer test with `Operation not permitted` and stalled a workspace
 transport test; the suite passed outside that sandbox. The canonical
 `cargo llvm-cov --locked --workspace` run passed with 91.67% total line coverage
-(105,713 lines, 8,805 uncovered), above the enforced 89% floor. Native macOS
-tests and coverage remain required before moving this plan to `completed/`.
+(105,716 lines, 8,806 uncovered, including the macOS copy-backend follow-up),
+above the enforced 89% floor. Native macOS tests and coverage remain required
+before moving this plan to `completed/`.
 
 New deterministic regressions live in `src/fs_plan/tests/mod.rs`, including
 `move_publication_collision_restores_original`,

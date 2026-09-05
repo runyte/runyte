@@ -3,6 +3,9 @@
 use super::*;
 use std::{io, sync::atomic::Ordering};
 
+#[cfg(target_os = "macos")]
+mod macos;
+
 struct TempDir(PathBuf);
 impl TempDir {
     fn new() -> Self {
@@ -635,4 +638,43 @@ fn mixed_plan_reports_deletion_before_later_collision_in_both_modes() {
             "concurrent destination"
         );
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn file_copy_uses_owned_handles_after_destination_name_is_replaced() {
+    use std::{fs::File, os::unix::fs::PermissionsExt};
+
+    let dir = TempDir::new();
+    let source_path = dir.join("source");
+    let target_path = dir.join("target");
+    let owned_path = dir.join("owned-destination");
+    fs::write(&source_path, "source bytes").unwrap();
+    fs::set_permissions(&source_path, fs::Permissions::from_mode(0o640)).unwrap();
+    let mut source = File::open(&source_path).unwrap();
+    let mut target = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&target_path)
+        .unwrap();
+    fs::rename(&target_path, &owned_path).unwrap();
+    fs::write(&target_path, "replacement bytes").unwrap();
+    fs::set_permissions(&target_path, fs::Permissions::from_mode(0o600)).unwrap();
+
+    platform::copy_file(&mut source, &mut target).unwrap();
+
+    assert_eq!(fs::read_to_string(&owned_path).unwrap(), "source bytes");
+    assert_eq!(
+        fs::metadata(&owned_path).unwrap().permissions().mode() & 0o777,
+        0o640
+    );
+    assert_eq!(
+        fs::read_to_string(&target_path).unwrap(),
+        "replacement bytes"
+    );
+    assert_eq!(
+        fs::metadata(&target_path).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+    assert_eq!(fs::read_to_string(&source_path).unwrap(), "source bytes");
 }

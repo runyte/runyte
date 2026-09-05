@@ -1,8 +1,43 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Exclusive installation of a directory entry. This is not path confinement.
+//! Exclusive entry installation and copying through owned file handles.
+//! This is not path confinement.
 
-use std::{io, path::Path};
+use std::{fs::File, io, path::Path};
+
+/// Copy into an already exclusively created regular file. Never reopen its
+/// pathname: publication and cleanup still own this exact destination handle.
+#[cfg(target_os = "macos")]
+pub(super) fn copy_file(source: &mut File, target: &mut File) -> io::Result<()> {
+    use std::os::fd::AsRawFd;
+
+    // Match std::fs::copy's macOS metadata behavior, including resource forks,
+    // extended attributes and ACLs. Setting permission bits after this call
+    // could change the copied ACL, so native copying owns that step too.
+    // SAFETY: both File values keep valid descriptors alive throughout the
+    // call. A null state requests copyfile's internally managed default state.
+    // No callback, pathname, or descriptor ownership is transferred.
+    let result = unsafe {
+        libc::fcopyfile(
+            source.as_raw_fd(),
+            target.as_raw_fd(),
+            std::ptr::null_mut(),
+            libc::COPYFILE_DATA | libc::COPYFILE_METADATA,
+        )
+    };
+    if result == 0 {
+        Ok(())
+    } else {
+        // Do not silently retry a metadata failure as a data-only copy.
+        Err(io::Error::last_os_error())
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub(super) fn copy_file(source: &mut File, target: &mut File) -> io::Result<()> {
+    io::copy(source, target)?;
+    target.set_permissions(source.metadata()?.permissions())
+}
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub(super) fn rename_noreplace(source: &Path, target: &Path) -> io::Result<()> {
