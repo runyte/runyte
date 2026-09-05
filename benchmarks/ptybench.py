@@ -103,6 +103,11 @@ def _spawn(argv: list[str], env: dict[str, str], cwd: str | None) -> tuple[int, 
 
 def _reap(pid: int) -> None:
     try:
+        # A caller may already have collected the exit status. Check ownership
+        # before signalling, so a recycled PID can never be killed here.
+        reaped, _ = os.waitpid(pid, os.WNOHANG)
+        if reaped:
+            return
         os.kill(pid, signal.SIGKILL)
         os.waitpid(pid, 0)
     except (ProcessLookupError, ChildProcessError):

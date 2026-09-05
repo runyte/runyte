@@ -63,6 +63,12 @@ class MedianStartupTests(unittest.TestCase):
 
 
 class QuitValidityTests(unittest.TestCase):
+    def test_cleanup_does_not_signal_an_already_reaped_pid(self) -> None:
+        with mock.patch("ptybench.os.waitpid", side_effect=ChildProcessError):
+            with mock.patch("ptybench.os.kill") as kill:
+                ptybench._reap(123)
+        kill.assert_not_called()
+
     def test_exit_before_the_quit_command_is_not_a_quit_sample(self) -> None:
         result = ptybench.measure_startup(
             [sys.executable, "-c", "pass"], {}, b"DOC"

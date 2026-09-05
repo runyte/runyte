@@ -1,0 +1,29 @@
+--- a/helix-view/src/document.rs
++++ b/helix-view/src/document.rs
+@@ -1,4 +1,8 @@
+ use anyhow::{anyhow, bail, Error};
++
++mod benchmark_probe {
++    include!("benchmark_probe.rs");
++}
+ use arc_swap::access::DynAccess;
+ use arc_swap::ArcSwap;
+ use futures_util::future::BoxFuture;
+@@ -777,12 +781,17 @@
+         let loader = syn_loader.load();
+         let mut doc = Self::from(rope, Some((encoding, has_bom)), config, syn_loader);
+ 
++        benchmark_probe::mark("file_loaded");
+         // set the path and try detecting the language
+         doc.set_path(Some(path));
+         if detect_language {
+             doc.detect_language(&loader);
+         }
+ 
++        if doc.syntax.is_some() {
++            benchmark_probe::mark("syntax_ready");
++        }
++
+         doc.editor_config = editor_config;
+         doc.detect_indent_and_line_ending();
+ 
