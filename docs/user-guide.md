@@ -992,6 +992,28 @@ child directory does not stale the explorer. If an operation fails midway, an
 ERROR notification names the failed operation and every operation already
 applied.
 
+On Linux and macOS, installing a move, rename, or copy refuses to overwrite
+an entry that appeared after the plan was checked. Creation and rollback also
+require an empty destination name, including when the competing entry is a
+dangling symlink. A filesystem that cannot provide exclusive rename is refused
+for operations that need it; Runyte does not fall back to overwriting rename.
+
+If rollback finds that an original name has been recreated, both entries are
+preserved. The ERROR notification gives the original path and the absolute
+location of the retained original inside a `.runyte-move-…` staging directory.
+Inspect both entries before restoring the retained one to an available name.
+These staging directories can hold the only remaining copy of a file; Runyte
+does not automatically delete them on exit or when another plan runs. Failed
+copy cleanup can similarly retain a `.runyte-copy-…` directory, with its path
+reported in the notification. Refresh the explorer before preparing another
+plan after a conflict.
+
+These protections prevent destination collisions; they do not make a whole
+plan atomic. Earlier operations, including confirmed deletions, may already
+have completed. Concurrent replacement of a parent directory or a source
+entry, changes during recursive operations, and native trash path races remain
+outside these guarantees.
+
 An explorer is monitored the same way an ordinary file is. When another
 process adds, removes, or renames an entry directly below the directory it
 shows, every pane showing that explorer gains `[STALE]`. The listing itself is

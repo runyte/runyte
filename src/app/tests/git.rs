@@ -5006,6 +5006,7 @@ fn an_explorer_move_reconciles_git_with_monitoring_disabled() {
         files: Vec::new(),
     });
     let report = ApplyReport {
+        recovery: Vec::new(),
         applied: vec![FsOperation::Rename {
             from: PathBuf::from("before.rs"),
             to: PathBuf::from("after.rs"),
@@ -5045,6 +5046,7 @@ fn a_partial_explorer_report_retries_one_async_post_change_barrier() {
     app.attach_git_service(service);
     fs::rename(&before, &after).unwrap();
     let report = ApplyReport {
+        recovery: Vec::new(),
         applied: vec![FsOperation::Rename {
             from: PathBuf::from("before.rs"),
             to: PathBuf::from("after.rs"),
@@ -5243,6 +5245,7 @@ fn explorer_moves_outside_git_boundaries_are_not_batched_as_staged_reads() {
     fs::rename(&first, &outside_workspace).unwrap();
     fs::rename(&second, &outside_repository).unwrap();
     let report = ApplyReport {
+        recovery: Vec::new(),
         applied: vec![
             FsOperation::Rename {
                 from: first,

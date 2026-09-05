@@ -26,8 +26,9 @@ The [filesystem-plan data-safety plan](../../plans/active/PLAN_FS_PLAN_DATA_SAFE
 records the 2026-09-05 decision to implement a narrower set of guarantees:
 atomic destination collision protection during staging and publication,
 rollback that preserves concurrently recreated source entries and retains
-originals for recovery, and ownership-aware temporary-copy cleanup. The plan
-is active; implementation has not started.
+originals for recovery, and ownership-aware temporary-copy cleanup. These
+mitigations are implemented with Linux regression tests and canonical coverage
+at 91.67%; native macOS validation remains pending in the active plan.
 
 This scope supersedes the earlier rejection of narrow patches only for those
 independently testable data-loss protections. It does not claim to resolve

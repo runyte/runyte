@@ -8,7 +8,7 @@ use std::{
 
 use runyte::fs_plan::{
     DeletionMode, DesiredEntry, DirectorySnapshot, EntryKind, FsOperation, FsPlan,
-    SourceFingerprint, TransferMode,
+    SourceFingerprint, TransferMode, TrashBackend,
 };
 
 static NEXT_DIR: AtomicU64 = AtomicU64::new(1);
@@ -34,6 +34,13 @@ impl TempDir {
 impl Drop for TempDir {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+struct TestTrash<F>(F);
+impl<F: Fn(&Path) -> anyhow::Result<()> + Send + Sync> TrashBackend for TestTrash<F> {
+    fn delete(&self, path: &Path) -> anyhow::Result<()> {
+        (self.0)(path)
     }
 }
 
@@ -416,34 +423,45 @@ fn changes_below_a_nested_directory_stale_a_confirmed_recursive_delete() {
 #[test]
 fn a_partial_failure_reports_exactly_what_was_applied() {
     let directory = TempDir::new("partial");
+    fs::write(directory.path().join("removed"), "removed").unwrap();
     let snapshot = DirectorySnapshot::read(directory.path()).unwrap();
     let plan = FsPlan::build(
         directory.path().to_path_buf(),
         snapshot,
         vec![
             DesiredEntry::create("a-created", EntryKind::File),
-            DesiredEntry::create("z".repeat(300), EntryKind::File),
+            DesiredEntry::create("z", EntryKind::File),
         ],
     )
     .unwrap();
-
-    let error = plan.apply(DeletionMode::Permanent).unwrap_err();
-
+    let trash = TestTrash(|path: &Path| {
+        fs::remove_file(path)?;
+        fs::write(directory.path().join("z"), "concurrent entry")?;
+        Ok(())
+    });
+    let error = plan
+        .apply_with_trash(DeletionMode::Trash, &trash)
+        .unwrap_err();
     assert_eq!(
         error.report.applied,
-        vec![FsOperation::Create {
-            path: PathBuf::from("a-created"),
-            kind: EntryKind::File,
-        }]
+        vec![
+            FsOperation::Delete {
+                path: PathBuf::from("removed"),
+                kind: EntryKind::File
+            },
+            FsOperation::Create {
+                path: PathBuf::from("a-created"),
+                kind: EntryKind::File
+            },
+        ]
     );
-    assert!(
-        error
-            .to_string()
-            .contains(&format!("create {}", "z".repeat(300)))
-    );
-    assert!(error.to_string().contains("applied: create a-created"));
+    assert!(error.to_string().contains("create z"));
+    assert!(error.to_string().contains("create a-created"));
     assert!(directory.path().join("a-created").is_file());
-    assert!(!directory.path().join("z".repeat(300)).exists());
+    assert_eq!(
+        fs::read_to_string(directory.path().join("z")).unwrap(),
+        "concurrent entry"
+    );
 }
 
 #[cfg(unix)]
@@ -454,19 +472,20 @@ fn a_dangling_symlink_is_restored_when_a_later_plan_step_fails() {
     let directory = TempDir::new("dangling-symlink-rollback");
     let link = directory.path().join("link");
     symlink("missing-target", &link).unwrap();
+    fs::write(directory.path().join("z-deleted"), "delete me").unwrap();
     let snapshot = DirectorySnapshot::read(directory.path()).unwrap();
     let entry = snapshot.entries().first().unwrap();
     let plan = FsPlan::build(
         directory.path().to_path_buf(),
         snapshot.clone(),
-        vec![
-            DesiredEntry::existing(entry, "renamed-link"),
-            DesiredEntry::create("z".repeat(300), EntryKind::File),
-        ],
+        vec![DesiredEntry::existing(entry, "renamed-link")],
     )
     .unwrap();
 
-    let error = plan.apply(DeletionMode::Permanent).unwrap_err();
+    let trash = TestTrash(|_: &Path| anyhow::bail!("injected trash failure"));
+    let error = plan
+        .apply_with_trash(DeletionMode::Trash, &trash)
+        .unwrap_err();
 
     assert!(error.report.applied.is_empty());
     assert_eq!(fs::read_link(&link).unwrap(), Path::new("missing-target"));

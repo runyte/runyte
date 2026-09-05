@@ -660,6 +660,7 @@ fn filesystem_rename_reopens_the_same_language_at_a_savable_new_path() {
 
     fs::rename(&old_path, &new_path).unwrap();
     let report = ApplyReport {
+        recovery: Vec::new(),
         applied: vec![FsOperation::Rename {
             from: PathBuf::from("old.sh"),
             to: PathBuf::from("new.sh"),
@@ -729,6 +730,7 @@ fn filesystem_rename_reinfers_language_before_future_changes() {
 
     fs::rename(&old_path, &new_path).unwrap();
     let report = ApplyReport {
+        recovery: Vec::new(),
         applied: vec![FsOperation::Rename {
             from: PathBuf::from("script.sh"),
             to: PathBuf::from("script.go"),

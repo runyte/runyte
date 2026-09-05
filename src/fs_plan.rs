@@ -13,11 +13,53 @@ use std::{
     fmt,
     fs::{self, OpenOptions},
     path::{Component, Path, PathBuf},
-    sync::atomic::{AtomicU64, Ordering},
+    sync::atomic::AtomicU64,
     time::UNIX_EPOCH,
 };
 
 use anyhow::{Context, Result, anyhow, bail, ensure};
+
+mod platform;
+mod staging;
+#[cfg(test)]
+mod tests;
+
+use staging::{Identity, OwnedTree, StagedMove};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum IoStep {
+    Allocate,
+    Probe,
+    Stage,
+    Publish,
+    Restore,
+    CopyEntry,
+    Cleanup,
+}
+
+#[cfg(test)]
+type IoHook = Box<dyn FnMut(IoStep, &Path, &Path) -> std::io::Result<()>>;
+
+#[derive(Default)]
+struct ApplyIo {
+    #[cfg(test)]
+    hook: Option<IoHook>,
+}
+
+impl ApplyIo {
+    fn before(&mut self, _step: IoStep, _source: &Path, _target: &Path) -> std::io::Result<()> {
+        #[cfg(test)]
+        if let Some(hook) = &mut self.hook {
+            hook(_step, _source, _target)?;
+        }
+        Ok(())
+    }
+
+    fn rename(&mut self, step: IoStep, source: &Path, target: &Path) -> std::io::Result<()> {
+        self.before(step, source, target)?;
+        platform::rename_noreplace(source, target)
+    }
+}
 
 static NEXT_TEMP: AtomicU64 = AtomicU64::new(1);
 
@@ -587,6 +629,26 @@ impl TrashBackend for SystemTrash {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ApplyReport {
     pub applied: Vec<FsOperation>,
+    pub recovery: Vec<RecoveryEntry>,
+}
+
+/// Why an artifact was retained after filesystem-plan application.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RecoveryKind {
+    Original,
+    Copy,
+    Staging,
+}
+
+/// Recovery locations are absolute and never automatically swept or deleted.
+/// A missing/substituted artifact is reported here too; `reason` explains why
+/// its identity could not be established, rather than promising it survived.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RecoveryEntry {
+    pub original: PathBuf,
+    pub retained: PathBuf,
+    pub kind: RecoveryKind,
+    pub reason: String,
 }
 
 impl ApplyReport {
@@ -600,11 +662,31 @@ impl ApplyReport {
                 .join(", "),
         }
     }
+
+    pub fn recovery_summary(&self) -> String {
+        self.recovery
+            .iter()
+            .map(|entry| {
+                format!(
+                    "recovery for {} at {} ({}): {}",
+                    entry.original.display(),
+                    entry.retained.display(),
+                    match entry.kind {
+                        RecoveryKind::Original => "original entry",
+                        RecoveryKind::Copy => "copy staging",
+                        RecoveryKind::Staging => "staging directory",
+                    },
+                    entry.reason
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(" · ")
+    }
 }
 
 #[derive(Debug)]
 pub struct ApplyError {
-    pub report: ApplyReport,
+    pub report: Box<ApplyReport>,
     pub failed: Option<FsOperation>,
     message: String,
 }
@@ -612,9 +694,9 @@ pub struct ApplyError {
 impl ApplyError {
     fn new(report: ApplyReport, failed: Option<FsOperation>, error: impl fmt::Display) -> Self {
         Self {
-            report,
+            report: Box::new(report),
             failed,
-            message: error.to_string(),
+            message: format!("{error:#}"),
         }
     }
 }
@@ -636,7 +718,11 @@ impl fmt::Display for ApplyError {
                 self.message,
                 self.report.summary()
             )
+        }?;
+        if !self.report.recovery.is_empty() {
+            write!(formatter, " · {}", self.report.recovery_summary())?;
         }
+        Ok(())
     }
 }
 
@@ -906,6 +992,15 @@ impl FsPlan {
         deletion: DeletionMode,
         trash: &dyn TrashBackend,
     ) -> Result<ApplyReport, ApplyError> {
+        self.apply_with_io(deletion, trash, &mut ApplyIo::default())
+    }
+
+    fn apply_with_io(
+        &self,
+        deletion: DeletionMode,
+        trash: &dyn TrashBackend,
+        io: &mut ApplyIo,
+    ) -> Result<ApplyReport, ApplyError> {
         for (source, expected) in &self.transfer_sources {
             let absolute = self.root.join(source);
             let current = SourceFingerprint::capture(&absolute)
@@ -937,6 +1032,9 @@ impl FsPlan {
             .map_err(|error| ApplyError::new(ApplyReport::default(), None, error))?;
 
         let mut report = ApplyReport::default();
+        if let Err(error) = self.preflight_rename_support(&mut report, io) {
+            return Err(ApplyError::new(report, None, error));
+        }
         let moves = self
             .operations
             .iter()
@@ -945,21 +1043,32 @@ impl FsPlan {
             .collect::<Vec<_>>();
         let mut staged = Vec::new();
         for operation in &moves {
-            let source = operation.staged_source().expect("move source");
-            let temporary = match self.temporary_path() {
-                Ok(temporary) => temporary,
-                Err(error) => {
-                    let cleanup = rollback_staged(&self.root, &staged);
-                    let message = combine_error(error, cleanup);
-                    return Err(ApplyError::new(report, Some(operation.clone()), message));
+            let original = lexical_normalize(
+                &self
+                    .root
+                    .join(operation.staged_source().expect("move source")),
+            );
+            let result = (|| -> Result<StagedMove> {
+                let identity = Identity::read(&original)?;
+                let tree = OwnedTree::allocate(&self.root, "move", io)?;
+                if let Err(error) = io.rename(IoStep::Stage, &original, &tree.payload()) {
+                    tree.cleanup_report(&original, RecoveryKind::Staging, &mut report, io);
+                    return Err(error.into());
                 }
-            };
-            if let Err(error) = fs::rename(self.root.join(source), self.root.join(&temporary)) {
-                let cleanup = rollback_staged(&self.root, &staged);
-                let message = combine_error(error, cleanup);
-                return Err(ApplyError::new(report, Some(operation.clone()), message));
+                Ok(StagedMove {
+                    operation: operation.clone(),
+                    original,
+                    tree,
+                    identity,
+                })
+            })();
+            match result {
+                Ok(entry) => staged.push(entry),
+                Err(error) => {
+                    rollback_staged(&staged, &mut report, io);
+                    return Err(ApplyError::new(report, Some(operation.clone()), error));
+                }
             }
-            staged.push((operation.clone(), temporary));
         }
 
         for operation in self
@@ -971,9 +1080,8 @@ impl FsPlan {
                 unreachable!();
             };
             if let Err(error) = delete_path(&self.root.join(path), *kind, deletion, trash) {
-                let cleanup = rollback_staged(&self.root, &staged);
-                let message = combine_error(error, cleanup);
-                return Err(ApplyError::new(report, Some(operation.clone()), message));
+                rollback_staged(&staged, &mut report, io);
+                return Err(ApplyError::new(report, Some(operation.clone()), error));
             }
             report.applied.push(operation.clone());
         }
@@ -988,9 +1096,7 @@ impl FsPlan {
             .iter()
             .filter(|operation| matches!(operation, FsOperation::Create { .. }))
             .map(|operation| PendingStep::Create(operation.clone()))
-            .chain(staged.iter().map(|(operation, temporary)| {
-                PendingStep::Finalize(operation.clone(), temporary.clone())
-            }))
+            .chain(staged.iter().cloned().map(PendingStep::Finalize))
             .collect::<Vec<_>>();
         let mut unfinalized = staged.clone();
         while !pending.is_empty() {
@@ -1019,19 +1125,28 @@ impl FsPlan {
                         };
                         (operation, result)
                     }
-                    PendingStep::Finalize(operation, temporary) => {
-                        let target = operation.target().expect("move target");
-                        let result = fs::rename(self.root.join(temporary), self.root.join(target));
-                        (operation, result)
+                    PendingStep::Finalize(staged) => {
+                        let target = self
+                            .root
+                            .join(staged.operation.target().expect("move target"));
+                        let result = staged.check().and_then(|()| {
+                            io.rename(IoStep::Publish, &staged.tree.payload(), &target)
+                        });
+                        (&staged.operation, result)
                     }
                 };
                 if let Err(error) = result {
-                    let cleanup = rollback_staged(&self.root, &unfinalized);
-                    let message = combine_error(error, cleanup);
-                    return Err(ApplyError::new(report, Some(operation.clone()), message));
+                    rollback_staged(&unfinalized, &mut report, io);
+                    return Err(ApplyError::new(report, Some(operation.clone()), error));
                 }
-                if let PendingStep::Finalize(finalized, _) = &step {
-                    unfinalized.retain(|(candidate, _)| candidate != finalized);
+                if let PendingStep::Finalize(finalized) = &step {
+                    unfinalized.retain(|candidate| candidate.operation != finalized.operation);
+                    finalized.tree.cleanup_report(
+                        &finalized.original,
+                        RecoveryKind::Staging,
+                        &mut report,
+                        io,
+                    );
                 }
                 report.applied.push(operation.clone());
                 progressed = true;
@@ -1041,12 +1156,9 @@ impl FsPlan {
                     .first()
                     .map(|step| step.target().display().to_string())
                     .unwrap_or_default();
-                let cleanup = rollback_staged(&self.root, &unfinalized);
-                let message = combine_error(
-                    std::io::Error::other(format!(
-                        "no parent directory for {blocked}; reopen the directory before applying"
-                    )),
-                    cleanup,
+                rollback_staged(&unfinalized, &mut report, io);
+                let message = format!(
+                    "no parent directory for {blocked}; reopen the directory before applying"
                 );
                 return Err(ApplyError::new(report, None, message));
             }
@@ -1061,10 +1173,22 @@ impl FsPlan {
             let FsOperation::Copy { from, to, .. } = operation else {
                 unreachable!();
             };
-            if let Err(error) = copy_path(&self.root.join(from), &self.root.join(to)) {
+            if let Err(error) = copy_path(
+                &lexical_normalize(&self.root.join(from)),
+                &lexical_normalize(&self.root.join(to)),
+                &mut report,
+                io,
+            ) {
                 return Err(ApplyError::new(report, Some(operation.clone()), error));
             }
             report.applied.push(operation.clone());
+        }
+        if !report.recovery.is_empty() {
+            return Err(ApplyError::new(
+                report,
+                None,
+                "filesystem operations completed with retained staging artifacts",
+            ));
         }
         Ok(report)
     }
@@ -1121,7 +1245,11 @@ impl FsPlan {
                     bail!("target already exists: {}", target.display());
                 }
                 Ok(_) => {}
-                Err(_) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    return Err(error)
+                        .with_context(|| format!("failed to inspect target {}", target.display()));
+                }
             }
         }
         let final_directory_targets = self
@@ -1196,24 +1324,100 @@ impl FsPlan {
         }
     }
 
-    fn temporary_path(&self) -> Result<PathBuf> {
+    fn preflight_rename_support(&self, report: &mut ApplyReport, io: &mut ApplyIo) -> Result<()> {
+        let mut parents = HashSet::new();
+        let mut move_sources = Vec::new();
+        let mut move_targets = Vec::new();
+        for operation in &self.operations {
+            match operation {
+                FsOperation::Rename { from, to, .. } | FsOperation::Move { from, to, .. } => {
+                    parents.insert(self.root.clone());
+                    let parent = self.existing_target_parent(to)?;
+                    parents.insert(parent.clone());
+                    move_sources.push(self.root.join(from));
+                    move_targets.push(parent);
+                }
+                FsOperation::Copy { to, .. } => {
+                    parents.insert(self.existing_target_parent(to)?);
+                }
+                _ => (),
+            }
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            if !move_sources.is_empty() {
+                let device = fs::metadata(&self.root)?.dev();
+                for source in &move_sources {
+                    ensure!(
+                        fs::symlink_metadata(source)?.dev() == device,
+                        "cross-filesystem move is unsupported: {}",
+                        source.display()
+                    );
+                }
+                for parent in &move_targets {
+                    ensure!(
+                        fs::metadata(parent)?.dev() == device,
+                        "cross-filesystem move is unsupported: {}",
+                        parent.display()
+                    );
+                }
+            }
+        }
+        let mut parents = parents.into_iter().collect::<Vec<_>>();
+        parents.sort();
+        for parent in parents {
+            staging::probe(&parent, report, io).with_context(|| {
+                format!("cannot safely install entries in {}", parent.display())
+            })?;
+            ensure!(
+                report.recovery.is_empty(),
+                "could not clean filesystem capability probe"
+            );
+        }
+        Ok(())
+    }
+
+    fn existing_target_parent(&self, target: &Path) -> Result<PathBuf> {
+        // Resolve directories produced by this plan back to their existing
+        // locations before probing. Longest target prefix wins. The mapping
+        // is simultaneous, so a rename cycle is resolved exactly once.
+        let mut parent = target.parent().unwrap_or(Path::new("")).to_path_buf();
+        if let Some((from, to)) = self
+            .operations
+            .iter()
+            .filter_map(|op| match op {
+                FsOperation::Rename {
+                    from,
+                    to,
+                    kind: EntryKind::Directory,
+                }
+                | FsOperation::Move {
+                    from,
+                    to,
+                    kind: EntryKind::Directory,
+                } if parent.starts_with(to) => Some((from, to)),
+                _ => None,
+            })
+            .max_by_key(|(_, to)| to.components().count())
+        {
+            parent = from.join(parent.strip_prefix(to)?);
+        }
+        let mut absolute = lexical_normalize(&self.root.join(parent));
         loop {
-            let value = NEXT_TEMP.fetch_add(1, Ordering::Relaxed);
-            let candidate = PathBuf::from(format!(".runyte-move-{}-{value}", std::process::id()));
-            let absolute = self.root.join(&candidate);
             match fs::symlink_metadata(&absolute) {
+                Ok(metadata) => {
+                    ensure!(
+                        metadata.is_dir() && !metadata.file_type().is_symlink(),
+                        "target parent is not a real directory: {}",
+                        absolute.display()
+                    );
+                    return Ok(absolute);
+                }
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                    return Ok(candidate);
+                    ensure!(absolute.pop(), "no existing target parent");
                 }
-                Ok(_) => {}
-                Err(error) => {
-                    return Err(error).with_context(|| {
-                        format!(
-                            "failed to inspect temporary move path {}",
-                            absolute.display()
-                        )
-                    });
-                }
+                Err(error) => return Err(error.into()),
             }
         }
     }
@@ -1306,85 +1510,30 @@ fn delete_path(
     }
 }
 
-fn copy_path(source: &Path, target: &Path) -> Result<()> {
-    match fs::symlink_metadata(target) {
-        Ok(_) => bail!("target already exists: {}", target.display()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => {
-            return Err(error)
-                .with_context(|| format!("failed to inspect copy target {}", target.display()));
-        }
+fn copy_path(
+    source: &Path,
+    target: &Path,
+    report: &mut ApplyReport,
+    io: &mut ApplyIo,
+) -> Result<()> {
+    let parent = target.parent().context("copy target has no parent")?;
+    let mut tree = OwnedTree::allocate(parent, "copy", io)?;
+    let temporary = tree.payload();
+    let result = tree
+        .copy_entry(source, &temporary, io)
+        .and_then(|()| tree.check_root())
+        .and_then(|()| io.rename(IoStep::Publish, &temporary, target));
+    if result.is_ok() {
+        tree.published();
     }
-    let temporary = temporary_copy_path(target)?;
-    if let Err(error) = copy_entry(source, &temporary) {
-        let cleanup = remove_copy(&temporary)
-            .err()
-            .map(|cleanup| cleanup.to_string());
-        bail!("{}", combine_error(error, cleanup));
-    }
-    if let Err(error) = fs::rename(&temporary, target) {
-        let cleanup = remove_copy(&temporary)
-            .err()
-            .map(|cleanup| cleanup.to_string());
-        bail!("{}", combine_error(error, cleanup));
-    }
-    Ok(())
-}
-
-fn temporary_copy_path(target: &Path) -> Result<PathBuf> {
-    let parent = target
-        .parent()
-        .with_context(|| format!("copy target has no parent: {}", target.display()))?;
-    loop {
-        let value = NEXT_TEMP.fetch_add(1, Ordering::Relaxed);
-        let candidate = parent.join(format!(".runyte-copy-{}-{value}", std::process::id()));
-        match fs::symlink_metadata(&candidate) {
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(candidate),
-            Ok(_) => {}
-            Err(error) => {
-                return Err(error).with_context(|| {
-                    format!(
-                        "failed to inspect temporary copy path {}",
-                        candidate.display()
-                    )
-                });
-            }
-        }
-    }
-}
-
-fn copy_entry(source: &Path, target: &Path) -> Result<()> {
-    let metadata = fs::symlink_metadata(source)
-        .with_context(|| format!("failed to inspect copy source {}", source.display()))?;
-    let file_type = metadata.file_type();
-    if file_type.is_symlink() {
-        let link = fs::read_link(source)
-            .with_context(|| format!("failed to read link {}", source.display()))?;
-        create_symlink(source, &link, target)?;
-    } else if file_type.is_dir() {
-        fs::create_dir(target)
-            .with_context(|| format!("failed to create directory {}", target.display()))?;
-        for entry in fs::read_dir(source)
-            .with_context(|| format!("failed to read directory {}", source.display()))?
-        {
-            let entry =
-                entry.with_context(|| format!("failed to read entry in {}", source.display()))?;
-            copy_entry(&entry.path(), &target.join(entry.file_name()))?;
-        }
-        fs::set_permissions(target, metadata.permissions())
-            .with_context(|| format!("failed to copy permissions to {}", target.display()))?;
-    } else if file_type.is_file() {
-        fs::copy(source, target).with_context(|| {
-            format!(
-                "failed to copy {} to {}",
-                source.display(),
-                target.display()
-            )
-        })?;
-    } else {
-        bail!("unsupported copy source: {}", source.display());
-    }
-    Ok(())
+    tree.cleanup_report(source, RecoveryKind::Copy, report, io);
+    result.with_context(|| {
+        format!(
+            "failed to copy {} to {}",
+            source.display(),
+            target.display()
+        )
+    })
 }
 
 #[cfg(unix)]
@@ -1411,20 +1560,6 @@ fn create_symlink(_source: &Path, _link: &Path, target: &Path) -> Result<()> {
     )
 }
 
-fn remove_copy(path: &Path) -> Result<()> {
-    match fs::symlink_metadata(path) {
-        Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {
-            fs::remove_dir_all(path)
-                .with_context(|| format!("failed to remove temporary copy {}", path.display()))
-        }
-        Ok(_) => fs::remove_file(path)
-            .with_context(|| format!("failed to remove temporary copy {}", path.display())),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(error)
-            .with_context(|| format!("failed to inspect temporary copy {}", path.display())),
-    }
-}
-
 /// One step of the interleaved create/finalize phase of [`FsPlan::apply`].
 ///
 /// Both variants are ordered by the same rule — the parent directory of the
@@ -1432,7 +1567,7 @@ fn remove_copy(path: &Path) -> Result<()> {
 #[derive(Clone, Debug)]
 enum PendingStep {
     Create(FsOperation),
-    Finalize(FsOperation, PathBuf),
+    Finalize(StagedMove),
 }
 
 impl PendingStep {
@@ -1441,44 +1576,13 @@ impl PendingStep {
         match self {
             Self::Create(FsOperation::Create { path, .. }) => path,
             Self::Create(_) => unreachable!("only creates are queued as create steps"),
-            Self::Finalize(operation, _) => operation.target().expect("move target"),
+            Self::Finalize(staged) => staged.operation.target().expect("move target"),
         }
     }
 }
 
-fn rollback_staged(root: &Path, staged: &[(FsOperation, PathBuf)]) -> Option<String> {
-    let mut failures = Vec::new();
-    for (operation, temporary) in staged.iter().rev() {
-        let Some(source) = operation.staged_source() else {
-            continue;
-        };
-        let temporary = root.join(temporary);
-        match fs::symlink_metadata(&temporary) {
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
-            Ok(_) => {}
-            Err(error) => {
-                failures.push(format!(
-                    "could not inspect staged {} at {}: {error}",
-                    source.display(),
-                    temporary.display()
-                ));
-                continue;
-            }
-        }
-        if let Err(error) = fs::rename(&temporary, root.join(source)) {
-            failures.push(format!(
-                "could not restore {} from {}: {error}",
-                source.display(),
-                temporary.display()
-            ));
-        }
-    }
-    (!failures.is_empty()).then(|| failures.join("; "))
-}
-
-fn combine_error(error: impl fmt::Display, cleanup: Option<String>) -> String {
-    match cleanup {
-        Some(cleanup) => format!("{error}; cleanup incomplete: {cleanup}"),
-        None => error.to_string(),
+fn rollback_staged(staged: &[StagedMove], report: &mut ApplyReport, io: &mut ApplyIo) {
+    for entry in staged.iter().rev() {
+        entry.restore(report, io);
     }
 }

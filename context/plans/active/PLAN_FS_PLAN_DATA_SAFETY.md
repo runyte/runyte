@@ -1,8 +1,10 @@
 # Filesystem-plan data safety
 
-Status: active design; implementation has not started
+Status: active implementation; Linux validated, native macOS validation pending
 
 Created: 2026-09-05
+
+Implementation started: 2026-09-05
 
 Related issue: [Filesystem-plan symlink races](../../issues/deferred/fs_plan_symlink_race.md)
 
@@ -221,15 +223,17 @@ collision; preserve accurate reporting rather than promising reversibility.
 
 ## Delivery order
 
-- [ ] **1. Atomic operations and deterministic race seams.** Add the platform
+- [x] **1. Atomic operations and deterministic race seams.** Add the platform
   primitive, support/error policy, and a private per-application test hook or
   injected internal operations boundary. Test actual OS collision behavior on
   both supported platforms. Avoid a public testing API or global mutable hook.
-- [ ] **2. Move staging, publication, and recovery.** Add owned staging records,
+  Implementation and Linux checks are complete; native macOS execution remains
+  part of the final validation milestone.
+- [x] **2. Move staging, publication, and recovery.** Add owned staging records,
   exclusive rename at every move/rollback site, structured retained-original
   reporting, and minimum editor integration. Include rename-cycle regression
   coverage. This is the highest-priority user-data protection milestone.
-- [ ] **3. Copy ownership and cleanup.** Replace overwriting copy creation,
+- [x] **3. Copy ownership and cleanup.** Replace overwriting copy creation,
   publish exclusively, and make cleanup preserve ambiguous artifacts. Cover
   nested copies and links. Complete target metadata error handling.
 - [ ] **4. Editor validation and documentation.** Test partial-application
@@ -239,6 +243,45 @@ collision; preserve accurate reporting rather than promising reversibility.
 Each implementation commit includes its behavior tests. Milestones 2 and 3
 must each ship a complete failure path; do not temporarily make failed moves
 unrecoverable or depend on a later UI commit to expose retained originals.
+
+### Implementation record
+
+`src/fs_plan/platform.rs` provides exclusive rename on Linux and macOS with no
+overwriting fallback. `src/fs_plan/staging.rs` owns restrictive, exclusively
+created staging directories, validates artifact identities, probes filesystem
+support, and conservatively cleans copied artifacts. `FsPlan` uses these
+operations for staging, publication, and rollback. `ApplyReport::recovery`
+records originals and artifacts requiring attention; application reconciliation
+preserves unsaved source buffers and reports partial or recoverable failures
+through ERROR notifications.
+
+The implementation keeps the original plan scheduler and deletion order.
+Recovery diagnostics remain subject to the existing notification storage and
+retention bounds. Staging itself is never swept automatically. No new bindings,
+native-trash replacement, or confinement guarantee were introduced.
+
+Linux validation on 2026-09-05 passed `cargo fmt --check`,
+`cargo clippy --all-targets -- -D warnings`, and `cargo test`. The full suite
+requires unrestricted local IPC: the sandbox rejected the unchanged Git
+pipe-finalizer test with `Operation not permitted` and stalled a workspace
+transport test; the suite passed outside that sandbox. The canonical
+`cargo llvm-cov --locked --workspace` run passed with 91.67% total line coverage
+(105,713 lines, 8,805 uncovered), above the enforced 89% floor. Native macOS
+tests and coverage remain required before moving this plan to `completed/`.
+
+New deterministic regressions live in `src/fs_plan/tests/mod.rs`, including
+`move_publication_collision_restores_original`,
+`rollback_conflict_preserves_both_files_and_restores_other_originals`,
+`copy_creation_collision_is_not_truncated_or_cleaned`,
+`cleanup_retains_unexpected_children_and_original_failure`, and
+`unsupported_rename_is_detected_before_mixed_plan_deletes`.
+`src/app/tests/navigation_and_files.rs` adds
+`filesystem_recovery_keeps_unsaved_source_and_replacement_protected` and
+`filesystem_confirmation_retains_recovery_paths_in_an_error_notification`.
+The existing partial-application and dangling-symlink rollback tests in
+`tests/fs_plan.rs` now inject interference through a temporary trash backend:
+invalid filenames are correctly rejected during preflight and no longer
+exercise application failure.
 
 ## Acceptance tests
 

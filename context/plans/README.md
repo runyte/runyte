@@ -15,7 +15,8 @@ Active work:
 
 - [Filesystem-plan data safety](active/PLAN_FS_PLAN_DATA_SAFETY.md): atomic
   destination collision protection, safe rollback, and recoverable staging
-  on Linux and macOS. The design is recorded; implementation has not started.
+  on Linux and macOS. Implementation, Linux tests, and Linux coverage are
+  complete; native macOS validation remains pending.
   Full hostile-process filesystem confinement remains deferred.
 
 No plan is currently proposed.

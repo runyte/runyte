@@ -2687,7 +2687,11 @@ impl App {
                     message.push_str(" · ");
                     message.push_str(&warning);
                 }
-                self.action_failed(message);
+                if !error.report.recovery.is_empty() || !error.report.applied.is_empty() {
+                    self.error_from("Filesystem", "Filesystem plan needs recovery", message);
+                } else {
+                    self.action_failed(message);
+                }
             }
         }
     }
@@ -2703,6 +2707,21 @@ impl App {
         let mut affected_directories = HashSet::new();
         let mut deleted_paths = Vec::new();
         let mut moved_sources = HashSet::new();
+        for recovery in &report.recovery {
+            if let Some(parent) = recovery.original.parent() {
+                affected_directories.insert(parent.to_path_buf());
+            }
+            if recovery.kind == crate::fs_plan::RecoveryKind::Original {
+                // The old path may now belong to a different file. Leave open
+                // text and its accepted disk baseline intact; ordinary save
+                // conflict checks must still compare against that baseline.
+                warnings.push(format!(
+                    "original at {} requires recovery; retained location {}",
+                    recovery.original.display(),
+                    recovery.retained.display()
+                ));
+            }
+        }
         for operation in &report.applied {
             match operation {
                 FsOperation::Create { path, .. } | FsOperation::Copy { to: path, .. } => {
