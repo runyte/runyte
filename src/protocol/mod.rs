@@ -162,7 +162,9 @@ use crate::workspace::{
 /// travel as a vector indexed by scope, so a peer built before the scope
 /// existed reads every entry after it by one place and would paint namespaces,
 /// numbers, and the rest in the colours of their neighbours.
-pub const VERSION: u32 = 48;
+/// Version 49 requires host-owned workspace LSP permission. An older host
+/// can start project-aware servers without asking and cannot honor revocation.
+pub const VERSION: u32 = 49;
 pub const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const MAX_PATHS: usize = 32;
 pub const MAX_PATH_BYTES: usize = 32 * 1024;
@@ -939,7 +941,7 @@ mod tests {
 
     #[test]
     fn protocol_version_and_request_bounds_are_explicit() {
-        assert_eq!(VERSION, 48);
+        assert_eq!(VERSION, 49);
         let oversized_command = ClientRequest::Invoke {
             command: CommandRequest {
                 name: "open".to_owned(),

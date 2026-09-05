@@ -119,7 +119,7 @@ impl Script {
 /// was told.
 struct Harness {
     handle: LspHandle,
-    events: mpsc::Receiver<LspEvent>,
+    events: runyte::lsp::LspEvents,
     /// Every message the client sent, in order.
     sent: Arc<Mutex<Vec<Value>>>,
 }
@@ -376,6 +376,7 @@ async fn a_language_server_that_cannot_start_is_stopped_with_an_actionable_reaso
     let mut configuration = config();
     configuration.servers.get_mut("rust").unwrap().command = missing.clone();
     let (handle, mut events) = spawn(configuration, root.clone());
+    handle.set_allowed(true);
 
     assert!(handle.send(LspCommand::Ensure {
         language: "rust".to_owned()
@@ -1587,6 +1588,7 @@ async fn rust_analyzer_answers_a_real_goto_definition() {
     let file = root.join("src/lsp/diagnostics.rs");
     let text = std::fs::read_to_string(&file).unwrap();
     let (handle, mut events) = runyte::lsp::spawn(LspConfig::default(), root);
+    handle.set_allowed(true);
     assert!(handle.send(LspCommand::Ensure {
         language: "rust".to_owned()
     }));
@@ -1880,4 +1882,185 @@ async fn flat_workspace_symbols_keep_their_container_and_drop_unopenable_uris() 
         PathBuf::from("/tmp/runyte-lsp/a.rs")
     );
     assert_eq!(symbols[0].location.range.start.line, 4);
+}
+
+#[tokio::test]
+async fn workspace_permission_blocks_every_launch_path_and_rechecks_after_revocation() {
+    let (launched, mut launches) = mpsc::unbounded_channel();
+    let launch: Launch = Box::new(move |language, _, _, _, _| {
+        launched.send(language.to_owned()).unwrap();
+        Err("intentional launch failure".to_owned())
+    });
+    let mut settings = config();
+    let definition = settings.servers.values().next().unwrap().clone();
+    settings.servers.insert("custom".to_owned(), definition);
+    let (handle, _events) = runyte::lsp::spawn_with_permission(
+        settings,
+        PathBuf::from("/tmp/runyte-lsp"),
+        launch,
+        false,
+    );
+    handle.send(LspCommand::Ensure {
+        language: "rust".to_owned(),
+    });
+    handle.send(LspCommand::Ensure {
+        language: "custom".to_owned(),
+    });
+    open(&handle);
+    handle.send(LspCommand::Restart(None));
+    assert!(
+        tokio::time::timeout(Duration::from_millis(30), launches.recv())
+            .await
+            .is_err()
+    );
+    handle.set_allowed(true);
+    handle.send(LspCommand::Ensure {
+        language: "custom".to_owned(),
+    });
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(2), launches.recv())
+            .await
+            .unwrap()
+            .unwrap(),
+        "custom"
+    );
+    handle.set_allowed(false);
+    handle.send(LspCommand::Ensure {
+        language: "rust".to_owned(),
+    });
+    handle.send(LspCommand::Restart(None));
+    assert!(
+        tokio::time::timeout(Duration::from_millis(30), launches.recv())
+            .await
+            .is_err()
+    );
+    // Even a deny/allow pair coalesced by the watch channel clears failed
+    // server state, so stale manager state cannot override the new decision.
+    handle.set_allowed(true);
+    handle.send(LspCommand::Ensure {
+        language: "custom".to_owned(),
+    });
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(2), launches.recv())
+            .await
+            .unwrap()
+            .unwrap(),
+        "custom"
+    );
+    handle.send(LspCommand::Shutdown);
+}
+
+#[tokio::test]
+async fn revocation_closes_a_running_server_even_when_immediately_reapproved() {
+    use tokio::io::AsyncReadExt;
+    let (started, mut starts) = mpsc::unbounded_channel();
+    let (closed, mut closes) = mpsc::unbounded_channel();
+    let launch: Launch = Box::new(move |language, generation, _, _, inbox| {
+        let (reader, server_writer) = tokio::io::duplex(PIPE);
+        let (mut server_reader, writer) = tokio::io::duplex(PIPE);
+        let connection = transport::connect(language.to_owned(), generation, reader, writer, inbox);
+        started.send(generation).unwrap();
+        let closed = closed.clone();
+        tokio::spawn(async move {
+            let mut bytes = Vec::new();
+            server_reader.read_to_end(&mut bytes).await.unwrap();
+            drop(server_writer);
+            closed.send(generation).unwrap();
+        });
+        Ok(connection)
+    });
+    let (handle, _events) = runyte::lsp::spawn_with_permission(
+        config(),
+        PathBuf::from("/tmp/runyte-lsp"),
+        launch,
+        true,
+    );
+    handle.send(LspCommand::Ensure {
+        language: "rust".to_owned(),
+    });
+    let first = tokio::time::timeout(Duration::from_secs(2), starts.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    handle.set_allowed(false);
+    handle.set_allowed(true);
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(2), closes.recv())
+            .await
+            .unwrap()
+            .unwrap(),
+        first
+    );
+    handle.send(LspCommand::Ensure {
+        language: "rust".to_owned(),
+    });
+    let next = tokio::time::timeout(Duration::from_secs(2), starts.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_ne!(first, next, "reapproval starts a fresh server generation");
+    handle.set_allowed(false);
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(2), closes.recv())
+            .await
+            .unwrap()
+            .unwrap(),
+        next
+    );
+    handle.send(LspCommand::Shutdown);
+}
+
+#[tokio::test]
+async fn revocation_discards_queued_ready_and_edits_before_reapproval_events() {
+    for nonblocking in [false, true] {
+        let script = Script::default()
+            .push(json!({
+                "jsonrpc": "2.0", "id": 42, "method": "workspace/applyEdit",
+                "params": {"edit": {"changes": {
+                    "file:///tmp/runyte-lsp/a.rs": [{
+                        "range": {"start": {"line": 0, "character": 0},
+                                  "end": {"line": 0, "character": 0}},
+                        "newText": "retired server edit"
+                    }]
+                }}}
+            }))
+            .push(json!({
+                "jsonrpc": "2.0", "id": 99, "method": "runyte/testBarrier"
+            }));
+        let mut harness = harness(script);
+        assert!(harness.handle.send(LspCommand::Ensure {
+            language: "rust".to_owned(),
+        }));
+        // This wire reply follows the queued Ready and ApplyEdit. Leave both
+        // in the host queue until after revocation and immediate reapproval.
+        harness.wait_for_sent(|message| message["id"] == 99).await;
+        harness.handle.set_allowed(false);
+        harness.handle.set_allowed(true);
+        if nonblocking {
+            assert!(matches!(
+                harness.events.try_recv(),
+                Err(mpsc::error::TryRecvError::Empty)
+            ));
+        }
+        assert!(harness.handle.send(LspCommand::Ensure {
+            language: "rust".to_owned(),
+        }));
+        let LspEvent::Ready { generation, .. } = harness.next().await else {
+            panic!("only the newly approved server may become ready");
+        };
+        assert_eq!(generation, 2, "the queued Ready belongs to generation 1");
+        let LspEvent::ApplyEdit {
+            generation: edit_generation,
+            id,
+            edits,
+            ..
+        } = harness.next().await
+        else {
+            panic!("the newly approved server can still send edits");
+        };
+        assert_eq!(edit_generation, generation);
+        assert_eq!(id, json!(42));
+        assert_eq!(edits.len(), 1);
+        assert!(harness.handle.send(LspCommand::Shutdown));
+    }
 }

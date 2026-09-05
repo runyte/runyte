@@ -11,7 +11,8 @@ server:
    heading and place every language entry below it.
 3. Exit and reopen standalone Runyte. For a persistent session, use
    `runyte --session-restart [WORKSPACE]` and repeat any non-default
-   `--config PATH`. Then open a file in that language and run `:lsp-status`.
+   `--config PATH`. Then open a file in that language, approve workspace LSP execution in the
+   first-open prompt (or `:lsp-trust`), and run `:lsp-status`.
    `:service-health` reports whether the active document has a configured and
    attached server. A launch failure appears in `:lsp-status` after the first
    start attempt and in the notification center. `:lsp-restart <language>`

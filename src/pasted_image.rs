@@ -16,8 +16,7 @@
 //! whatever appeared in it.
 
 use std::{
-    fs,
-    io::{self, Write},
+    fs, io,
     path::{Path, PathBuf},
 };
 
@@ -112,10 +111,9 @@ pub fn file_name(bytes: &[u8], format: ImageFormat) -> String {
 /// Writes `bytes` into the workspace image cache and returns the file's path.
 ///
 /// An image already stored under the same name is left exactly as it is: the
-/// name is the hash of the content, so a file that is already there already
-/// holds these bytes, and rewriting it would only put a torn file where a
-/// whole one was. The write goes to a temporary neighbour first and is then
-/// renamed, so a paste interrupted partway through leaves no half-written
+/// bytes and file identity are checked before reuse. A mismatched or linked
+/// entry is refused rather than trusted because of its name. The write goes
+/// to a temporary neighbour first and is then renamed, so a paste interrupted partway through leaves no half-written
 /// image behind a name that claims to be complete.
 pub fn store(state_root: &Path, bytes: &[u8], format: ImageFormat) -> io::Result<PathBuf> {
     if bytes.len() > MAX_IMAGE_BYTES {
@@ -125,34 +123,20 @@ pub fn store(state_root: &Path, bytes: &[u8], format: ImageFormat) -> io::Result
         ));
     }
     let directory = cache_directory(state_root);
-    fs::create_dir_all(&directory)?;
+    let storage = crate::private_storage::Directory::open(&directory, true)?;
     discard_abandoned_writes(&directory);
     let path = directory.join(file_name(bytes, format));
-    if path.exists() {
-        return Ok(path);
-    }
-    let pending = directory.join(format!(
-        ".{}.{}",
-        path.file_name().unwrap_or_default().to_string_lossy(),
-        std::process::id()
-    ));
-    let write = (|| -> io::Result<()> {
-        let mut file = fs::File::create(&pending)?;
-        file.write_all(bytes)?;
-        file.sync_all()
-    })();
-    if let Err(error) = write {
-        let _ = fs::remove_file(&pending);
-        return Err(error);
-    }
-    if let Err(error) = fs::rename(&pending, &path) {
-        let _ = fs::remove_file(&pending);
-        // Another paste of the same image may have completed its own rename in
-        // between, which is the outcome this wanted anyway.
-        if !path.exists() {
-            return Err(error);
+    match storage.read(path.file_name().unwrap(), MAX_IMAGE_BYTES) {
+        Ok(existing) if existing == bytes => return Ok(path),
+        Ok(_) => {
+            return Err(io::Error::other(
+                "image cache entry does not match its content hash",
+            ));
         }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
     }
+    storage.atomic_write(path.file_name().unwrap(), bytes)?;
     Ok(path)
 }
 
@@ -172,6 +156,9 @@ const ABANDONED_WRITE_AGE: std::time::Duration = std::time::Duration::from_secs(
 /// once it is far too old to belong to a live write: a sweep that guessed
 /// would be deleting somebody's file.
 fn discard_abandoned_writes(directory: &Path) {
+    let Ok(storage) = crate::private_storage::Directory::open(directory, true) else {
+        return;
+    };
     let Ok(entries) = fs::read_dir(directory) else {
         return;
     };
@@ -192,14 +179,22 @@ fn discard_abandoned_writes(directory: &Path) {
                     .is_ok_and(|age| age > ABANDONED_WRITE_AGE)
             });
         if abandoned {
-            let _ = fs::remove_file(entry.path());
+            let _ = storage.remove(&entry.file_name());
         }
     }
 }
 
 /// Whether a name is one this module writes an unfinished image under:
-/// `.<hash>.<extension>.<pid>`.
+/// `.runyte-write-<pid>-<sequence>`, or a legacy `.<hash>.<extension>.<pid>`.
 fn is_pending_name(name: &str) -> bool {
+    if let Some(rest) = name.strip_prefix(".runyte-write-") {
+        return rest.split_once('-').is_some_and(|(pid, sequence)| {
+            !pid.is_empty()
+                && !sequence.is_empty()
+                && pid.bytes().all(|byte| byte.is_ascii_digit())
+                && sequence.bytes().all(|byte| byte.is_ascii_digit())
+        });
+    }
     let Some(rest) = name.strip_prefix('.') else {
         return false;
     };

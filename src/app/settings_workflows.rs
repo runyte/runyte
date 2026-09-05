@@ -58,6 +58,11 @@ impl App {
         let language = self.language_of(buffer_id);
         let (lsp_state, lsp_detail) = if !self.config.lsp.enable {
             (ServiceState::Disabled, "disabled in settings".to_owned())
+        } else if !self.lsp_workspace_allowed {
+            (
+                ServiceState::Disabled,
+                "disabled for this workspace; use :lsp-trust".to_owned(),
+            )
         } else if !self.ports.has_lsp() {
             (
                 ServiceState::Unavailable,

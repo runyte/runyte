@@ -33,6 +33,8 @@ impl TestSandbox {
     fn new() -> Self {
         let runtime = TestRuntimeRoot::new("persist").unwrap();
         let cache = runtime.create_private_dir("cache").unwrap();
+        fs::create_dir_all(cache.join("runyte")).unwrap();
+        fs::write(cache.join("runyte/config.yaml"), "lsp:\n  enable: false\n").unwrap();
         Self { runtime, cache }
     }
 
@@ -47,6 +49,7 @@ impl TestSandbox {
     fn runyte(&self, executable: impl AsRef<std::ffi::OsStr>) -> Command {
         let mut command = Command::new(executable);
         command
+            .env("XDG_CONFIG_HOME", self.cache_dir())
             .env(
                 "RUNYTE_ALL_HOSTS_DIR",
                 self.runtime.join("runyte/all-hosts"),
@@ -65,6 +68,7 @@ impl TestSandbox {
         description: &'static str,
     ) -> HostStartup {
         HostStartup::new(executable, description)
+            .with_env("XDG_CONFIG_HOME", self.cache_dir())
             .with_env("XDG_RUNTIME_DIR", self.runtime_dir())
             .with_env(
                 "RUNYTE_ALL_HOSTS_DIR",
@@ -1982,6 +1986,7 @@ async fn racing_starts_for_one_workspace_both_reach_the_winning_host() {
         sandbox
             .host_startup(env!("CARGO_BIN_EXE_runyte"), "raced")
             .with_env("XDG_CACHE_HOME", sandbox.cache_dir())
+            .with_env("XDG_CONFIG_HOME", sandbox.cache_dir())
     };
 
     let (first, second) = tokio::join!(
@@ -2109,7 +2114,8 @@ async fn detached_host_keeps_the_requested_editor_directory_below_the_project_ro
     let startup = sandbox
         .host_startup(env!("CARGO_BIN_EXE_runyte"), "nested")
         .with_working_directory(&nested)
-        .with_env("XDG_CACHE_HOME", sandbox.cache_dir());
+        .with_env("XDG_CACHE_HOME", sandbox.cache_dir())
+        .with_env("XDG_CONFIG_HOME", sandbox.cache_dir());
     if let Err(error) = start_detached_host(&endpoint, startup).await {
         if format!("{error:#}").contains("Operation not permitted") {
             fs::remove_dir_all(root).unwrap();
@@ -2245,7 +2251,8 @@ async fn detached_host_serves_a_project_it_could_not_have_discovered() {
     assert!(!root.join(".runyte").exists());
     let startup = sandbox
         .host_startup(env!("CARGO_BIN_EXE_runyte"), "undiscoverable")
-        .with_env("XDG_CACHE_HOME", sandbox.cache_dir());
+        .with_env("XDG_CACHE_HOME", sandbox.cache_dir())
+        .with_env("XDG_CONFIG_HOME", sandbox.cache_dir());
     if let Err(error) = start_detached_host(&endpoint, startup).await {
         if format!("{error:#}").contains("Operation not permitted") {
             fs::remove_dir_all(root).unwrap();
@@ -2354,5 +2361,130 @@ async fn quit_here_reports_its_directory_to_a_handoff_capable_client() {
     // The response performs the client-owned handoff, then the ordinary quit
     // lifecycle ends the clean persistent session.
     assert!(child.0.take().unwrap().wait().unwrap().success());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn first_open_lsp_choice_is_host_owned_and_refusal_survives_restart() {
+    use std::os::unix::fs::symlink;
+    let sandbox = TestSandbox::new();
+    let root = project();
+    fs::write(root.join("main.rs"), "fn main() {}\n").unwrap();
+    let server = sandbox.runtime.join("language-server");
+    symlink(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("src/fixtures/stand-in"),
+        &server,
+    )
+    .unwrap();
+    // The checked-in stand-in sources <invoked-name>.behavior.
+    fs::write(
+        sandbox.runtime.join("language-server.behavior"),
+        "printf started > lsp-started\nexit 1\n",
+    )
+    .unwrap();
+    let config = sandbox.runtime.join("lsp.yaml");
+    fs::write(
+        &config,
+        format!(
+            "lsp:\n  enable: true\n  rust:\n    command: {}\n",
+            server.display()
+        ),
+    )
+    .unwrap();
+    let endpoint = LocalEndpoint::discover_with_runtime(
+        &root.join(".runyte"),
+        &root,
+        Some(sandbox.runtime_dir()),
+    )
+    .unwrap();
+    for first_visit in [true, false] {
+        let process = sandbox
+            .bundled_runyte()
+            .args(["--serve", "--config"])
+            .arg(&config)
+            .arg("main.rs")
+            .current_dir(&root)
+            .env("XDG_RUNTIME_DIR", sandbox.runtime_dir())
+            .env("XDG_CACHE_HOME", sandbox.cache_dir())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut child = ChildGuard(Some(process));
+        assert!(wait_for_endpoint(&mut child, &endpoint).await);
+        let mut client = LocalClient::connect(&endpoint, geometry(), true)
+            .await
+            .unwrap();
+        assert!(matches!(
+            response(&mut client).await,
+            HostResponse::Welcome { .. }
+        ));
+        let initial = response(&mut client).await;
+        let frame =
+            wait_for_editor_frame(&mut client, initial, "workspace LSP permission", |frame| {
+                frame
+                    .overlays
+                    .iter()
+                    .any(|overlay| overlay.title == "Run language servers for this workspace?")
+                    == first_visit
+            })
+            .await;
+        assert!(!root.join("lsp-started").exists());
+        if first_visit {
+            assert_eq!(
+                frame
+                    .overlays
+                    .iter()
+                    .find(|overlay| overlay.title.starts_with("Run language servers"))
+                    .unwrap()
+                    .selected,
+                Some(0)
+            );
+            let answer = send_input(&mut client, KeyStroke::plain(KeyCode::Enter)).await;
+            wait_for_editor_frame(&mut client, answer, "remembered LSP refusal", |frame| {
+                frame.overlays.is_empty()
+            })
+            .await;
+        }
+        // Detaching and reattaching retains the host's denied permission.
+        detach(&mut client, "LSP permission detach").await;
+        let (mut client, _) = connect_interactive_when_available(&endpoint, geometry()).await;
+        let initial = response(&mut client).await;
+        wait_for_editor_frame(&mut client, initial, "reattached LSP refusal", |frame| {
+            frame.overlays.is_empty()
+        })
+        .await;
+        assert!(!root.join("lsp-started").exists());
+        if !first_visit {
+            // A later, explicit temporary grant starts the configured process.
+            for ch in ":lsp-trust".chars() {
+                let _ = send_input(&mut client, KeyStroke::plain(KeyCode::Char(ch))).await;
+            }
+            let opened = send_input(&mut client, KeyStroke::plain(KeyCode::Enter)).await;
+            wait_for_editor_frame(&mut client, opened, "LSP permission command", |frame| {
+                frame
+                    .overlays
+                    .iter()
+                    .any(|o| o.title.starts_with("Run language servers"))
+            })
+            .await;
+            let _ = send_input(&mut client, KeyStroke::plain(KeyCode::Down)).await;
+            let granted = send_input(&mut client, KeyStroke::plain(KeyCode::Enter)).await;
+            wait_for_editor_frame(
+                &mut client,
+                granted,
+                "LSP process launch after approval",
+                |_| root.join("lsp-started").exists(),
+            )
+            .await;
+        }
+        shutdown(&mut client, ClientRequest::Shutdown).await;
+        let status = tokio::task::spawn_blocking(move || child.0.take().unwrap().wait())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(status.success());
+    }
     fs::remove_dir_all(root).unwrap();
 }

@@ -62,11 +62,14 @@ fn test_cache_dir() -> &'static Path {
     CACHE
         .get_or_init(|| {
             test_runtime_dir();
-            TEST_RUNTIME
+            let cache = TEST_RUNTIME
                 .get()
                 .unwrap()
                 .create_private_dir("cache")
-                .unwrap()
+                .unwrap();
+            fs::create_dir_all(cache.join("runyte")).unwrap();
+            fs::write(cache.join("runyte/config.yaml"), "lsp:\n  enable: false\n").unwrap();
+            cache
         })
         .as_path()
 }
@@ -79,6 +82,7 @@ fn bundled_runyte() -> Command {
 
 fn isolate_runyte_children(command: &mut Command) {
     command
+        .env("XDG_CONFIG_HOME", test_cache_dir())
         .env(
             "RUNYTE_ALL_HOSTS_DIR",
             test_runtime_dir().join("runyte/all-hosts"),
@@ -4034,7 +4038,11 @@ impl Drop for RecentsLock {
 fn default_config(root: &Path) -> PathBuf {
     let name = root.file_name().unwrap().to_string_lossy();
     let path = test_runtime_dir().join(format!("{name}.yaml"));
-    fs::write(&path, "workspace:\n  state: .runyte\n").unwrap();
+    fs::write(
+        &path,
+        "workspace:\n  state: .runyte\nlsp:\n  enable: false\n",
+    )
+    .unwrap();
     path
 }
 

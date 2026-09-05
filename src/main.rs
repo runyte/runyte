@@ -47,7 +47,7 @@ use runyte::{
     launch::{LaunchArguments, LaunchMode, LaunchTarget},
     log::{self as diagnostic_log, Level as LogLevel, Role as LogRole},
     log_debug, log_error, log_info, log_trace, log_warn,
-    lsp::{self, LspCommand, LspEvent, LspHandle},
+    lsp::{self, LspCommand, LspHandle},
     notification::{NotificationDraft, NotificationSeverity},
     project_root,
     startup::{StartupPhase, StartupTrace},
@@ -4441,7 +4441,7 @@ struct HostServices {
     syntax_events: SyntaxEvents,
     git_events: Option<tokio::sync::mpsc::Receiver<GitServiceEvent>>,
     language_servers: LspHandle,
-    lsp_events: tokio::sync::mpsc::Receiver<LspEvent>,
+    lsp_events: lsp::LspEvents,
     file_picker_events: tokio::sync::mpsc::Receiver<runyte::file_picker::FilePickerEvent>,
     workspace_search_events:
         tokio::sync::mpsc::Receiver<runyte::workspace_search::WorkspaceSearchEvent>,
@@ -4479,6 +4479,7 @@ fn start_host_services(
     } else {
         None
     };
+    app.configure_lsp_trust(runyte::external_open::cache_root().map(|root| root.join("lsp-trust")));
     let (language_servers, lsp_events) =
         lsp::spawn(app.config.lsp.clone(), app.project_root.clone());
     startup.mark(StartupPhase::LspManagerSpawned);

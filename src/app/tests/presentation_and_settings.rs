@@ -2061,6 +2061,7 @@ fn restart_required_setting_is_saved_without_claiming_a_live_transition() {
     disabled_config.lsp.enable = false;
     let mut disabled = App::new(disabled_config, None).unwrap();
     let (disabled_handle, _disabled_commands) = crate::lsp::command_channel();
+    disabled.lsp_workspace_allowed = true;
     disabled.attach_lsp(disabled_handle);
     assert_eq!(
         disabled.effective_setting_value(SettingId::LspEnable),

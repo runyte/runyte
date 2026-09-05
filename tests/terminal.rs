@@ -272,6 +272,11 @@ fn a_git_merge_wait_editor_exiting_inside_a_terminal_returns_to_its_shell() {
         let sandbox = TestRuntimeRoot::new("nested-editor").unwrap();
         let project = sandbox.create_private_dir("project").unwrap();
         let cache = sandbox.create_private_dir("cache").unwrap();
+        // The nested editor fixture has already declined language-server execution.
+        runyte::lsp_trust::TrustStore::new(Some(cache.join("runyte/lsp-trust")), &project)
+            .unwrap()
+            .save(false)
+            .unwrap();
         let git = |arguments: &[&str]| {
             assert!(
                 Command::new("git")

@@ -38,12 +38,14 @@ pub mod launch;
 pub mod layout;
 pub mod log;
 pub mod lsp;
+pub mod lsp_trust;
 pub mod manual;
 pub mod markdown;
 pub mod notification;
 pub mod pasted_image;
 pub mod path_safety;
 pub mod picker;
+mod private_storage;
 #[cfg(unix)]
 pub mod process_group;
 pub mod project_root;

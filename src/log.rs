@@ -22,8 +22,8 @@
 
 use std::{
     fmt::{self, Display, Write as _},
-    fs::{self, File, OpenOptions},
-    io::Write,
+    fs::{self, File},
+    io::{Read, Seek, SeekFrom, Write},
     panic::PanicHookInfo,
     path::{Path, PathBuf},
     sync::{
@@ -311,15 +311,15 @@ impl Logger {
     pub fn start(settings: Settings, sink: Sink) -> Result<Self, String> {
         let (path, mut destination) = match sink {
             Sink::File { path, exclusive } => {
-                let file = open_log_file(&path, exclusive)?;
+                let (file, directory) = open_log_file(&path, exclusive)?;
                 let size = file.metadata().map(|metadata| metadata.len()).unwrap_or(0);
                 (
                     Some(path.clone()),
                     Destination::File {
                         file,
+                        directory,
                         path,
                         size,
-                        exclusive,
                     },
                 )
             }
@@ -440,7 +440,7 @@ enum Destination {
         file: File,
         path: PathBuf,
         size: u64,
-        exclusive: bool,
+        directory: crate::private_storage::Directory,
     },
     Writer(Box<dyn Write + Send>),
 }
@@ -452,11 +452,11 @@ impl Destination {
                 file,
                 path,
                 size,
-                exclusive,
+                directory,
             } => {
                 let bytes = line.as_bytes();
                 if *size > 0 && *size + bytes.len() as u64 > MAX_LOG_BYTES {
-                    rotate(file, path, *exclusive)?;
+                    rotate(file, path, directory)?;
                     *size = 0;
                 }
                 file.write_all(bytes)?;
@@ -517,55 +517,52 @@ fn record_failure(failure: &Mutex<Option<String>>, result: std::io::Result<()>) 
     }
 }
 
-fn open_log_file(path: &Path, exclusive: bool) -> Result<File, String> {
-    if let Some(parent) = path.parent()
-        && !parent.as_os_str().is_empty()
-    {
-        fs::create_dir_all(parent).map_err(|error| {
-            format!(
-                "cannot create the diagnostic log directory {}: {error}",
-                parent.display()
-            )
-        })?;
-    }
-    let mut file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
+fn open_log_file(
+    path: &Path,
+    exclusive: bool,
+) -> Result<(File, crate::private_storage::Directory), String> {
+    let open = || -> std::io::Result<_> {
+        let parent = path
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or(Path::new("."));
+        let directory = crate::private_storage::Directory::open(parent, false)?;
+        let name = path
+            .file_name()
+            .ok_or_else(|| std::io::Error::other("log path has no file name"))?;
+        let file = directory.append(name)?;
+        Ok((file, directory))
+    };
+    let (mut file, directory) = open()
         .map_err(|error| format!("cannot open the diagnostic log {}: {error}", path.display()))?;
     if exclusive {
         claim_ownership(&file, path)?;
     }
-    // A file inherited from an earlier process of the same identity is
-    // rotated here rather than left to grow: rotation is owned by whichever
-    // process owns the file, and a host that restarts often would otherwise
-    // never reach the in-flight bound.
-    let size = file.metadata().map(|metadata| metadata.len()).unwrap_or(0);
-    if size >= MAX_LOG_BYTES {
-        rotate(&mut file, path, exclusive).map_err(|error| {
+    if file.metadata().map_err(|e| e.to_string())?.len() >= MAX_LOG_BYTES {
+        rotate(&mut file, path, &directory).map_err(|error| {
             format!(
                 "cannot rotate the diagnostic log {}: {error}",
                 path.display()
             )
         })?;
     }
-    Ok(file)
+    Ok((file, directory))
 }
 
-/// Moves the active file aside and reopens an empty one in its place.
-fn rotate(file: &mut File, path: &Path, exclusive: bool) -> std::io::Result<()> {
-    let _ = file.flush();
-    if exclusive {
-        // Keep the locked inode at the active path. Replacing the descriptor
-        // would create a window in which another process could lock the new
-        // file between its creation and our re-lock attempt.
-        fs::copy(path, previous_path(path))?;
-        file.set_len(0)?;
-    } else {
-        fs::rename(path, previous_path(path))?;
-        *file = OpenOptions::new().create(true).append(true).open(path)?;
-    }
-    Ok(())
+/// Copies the held file into a private atomic backup, then clears the same
+/// inode. Neither source nor destination is reopened through an ambient path,
+/// and an explicit log keeps its ownership lock throughout rotation.
+fn rotate(
+    file: &mut File,
+    path: &Path,
+    directory: &crate::private_storage::Directory,
+) -> std::io::Result<()> {
+    file.flush()?;
+    file.seek(SeekFrom::Start(0))?;
+    let mut bytes = Vec::new();
+    file.take(MAX_LOG_BYTES).read_to_end(&mut bytes)?;
+    directory.atomic_write(previous_path(path).file_name().unwrap(), &bytes)?;
+    file.set_len(0)
 }
 
 /// Takes the advisory exclusive lock that makes process-owned rotation true.
@@ -635,6 +632,9 @@ fn try_lock_exclusive(_file: &File) -> std::io::Result<bool> {
 /// A live owner is never touched. On Unix that is checked directly; elsewhere
 /// the platform refuses to delete an open file, which has the same effect.
 pub fn prune_standalone_logs(directory: &Path, own_pid: u32, retain: usize) -> usize {
+    let Ok(storage) = crate::private_storage::Directory::open(directory, false) else {
+        return 0;
+    };
     let Ok(entries) = fs::read_dir(directory) else {
         return 0;
     };
@@ -661,10 +661,13 @@ pub fn prune_standalone_logs(directory: &Path, own_pid: u32, retain: usize) -> u
     stale.sort_by_key(|entry| std::cmp::Reverse(entry.0));
     let mut removed = 0;
     for (_, path) in stale.into_iter().skip(retain) {
-        if fs::remove_file(&path).is_ok() {
+        if storage.remove(path.file_name().unwrap()).is_ok() {
             removed += 1;
         }
-        if fs::remove_file(previous_path(&path)).is_ok() {
+        if storage
+            .remove(previous_path(&path).file_name().unwrap())
+            .is_ok()
+        {
             removed += 1;
         }
     }

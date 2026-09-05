@@ -30,6 +30,7 @@ pub(super) fn rust_app(text: &str) -> (App, PathBuf, tokio::sync::mpsc::Receiver
     app.buffers[0].apply(&Transaction::insert(0, text));
     app.buffers[0].dirty = false;
     let (handle, queue) = crate::lsp::command_channel();
+    app.lsp_workspace_allowed = true;
     app.attach_lsp(handle);
     (app, path, queue)
 }
@@ -492,6 +493,7 @@ fn extensionless_shebang_edits_switch_syntax_and_lsp_without_cross_language_chan
     assert_eq!(syntax_language_name(&app, buffer_id), None);
 
     let (handle, mut queue) = crate::lsp::command_channel();
+    app.lsp_workspace_allowed = true;
     app.attach_lsp(handle);
     assert!(drain(&mut queue).is_empty());
     ready_language(&mut app, "bash", Encoding::Utf8);
@@ -576,6 +578,7 @@ fn a_fixed_shell_extension_keeps_one_language_document_when_the_shebang_changes(
     assert_eq!(syntax_language_name(&app, buffer_id), Some("bash"));
 
     let (handle, mut queue) = crate::lsp::command_channel();
+    app.lsp_workspace_allowed = true;
     app.attach_lsp(handle);
     ready_language(&mut app, "bash", Encoding::Utf8);
     drain(&mut queue);
@@ -654,6 +657,7 @@ fn filesystem_rename_reopens_the_same_language_at_a_savable_new_path() {
     let mut app = App::new(Config::default(), Some(old_path.clone())).unwrap();
     let buffer_id = app.active().buffer;
     let (handle, mut queue) = crate::lsp::command_channel();
+    app.lsp_workspace_allowed = true;
     app.attach_lsp(handle);
     ready_language(&mut app, "bash", Encoding::Utf8);
     drain(&mut queue);
@@ -722,6 +726,7 @@ fn filesystem_rename_reinfers_language_before_future_changes() {
     let mut app = App::new(Config::default(), Some(old_path.clone())).unwrap();
     let buffer_id = app.active().buffer;
     let (handle, mut queue) = crate::lsp::command_channel();
+    app.lsp_workspace_allowed = true;
     app.attach_lsp(handle);
     ready_language(&mut app, "bash", Encoding::Utf8);
     ready_language(&mut app, "go", Encoding::Utf8);
@@ -840,6 +845,7 @@ fn reload_retires_an_extensionless_document_when_its_shebang_disappears() {
     let buffer_id = app.active().buffer;
     assert_eq!(syntax_language_name(&app, buffer_id), Some("bash"));
     let (handle, mut queue) = crate::lsp::command_channel();
+    app.lsp_workspace_allowed = true;
     app.attach_lsp(handle);
     ready_language(&mut app, "bash", Encoding::Utf8);
     drain(&mut queue);
@@ -872,6 +878,7 @@ fn save_as_closes_the_old_path_before_recomputing_language_identity() {
     let mut app = App::new(Config::default(), Some(old_path.clone())).unwrap();
     let buffer_id = app.active().buffer;
     let (handle, mut queue) = crate::lsp::command_channel();
+    app.lsp_workspace_allowed = true;
     app.attach_lsp(handle);
     ready_language(&mut app, "bash", Encoding::Utf8);
     drain(&mut queue);
@@ -905,6 +912,7 @@ fn save_as_reopens_a_stable_language_at_the_new_document_uri() {
     fs::write(&old_path, "echo stable\n").unwrap();
     let mut app = App::new(Config::default(), Some(old_path.clone())).unwrap();
     let (handle, mut queue) = crate::lsp::command_channel();
+    app.lsp_workspace_allowed = true;
     app.attach_lsp(handle);
     ready_language(&mut app, "bash", Encoding::Utf8);
     drain(&mut queue);
@@ -942,6 +950,7 @@ fn failed_save_as_preserves_syntax_and_the_open_lsp_document() {
     let mut app = App::new(Config::default(), Some(old_path.clone())).unwrap();
     let buffer_id = app.active().buffer;
     let (handle, mut queue) = crate::lsp::command_channel();
+    app.lsp_workspace_allowed = true;
     app.attach_lsp(handle);
     ready_language(&mut app, "bash", Encoding::Utf8);
     drain(&mut queue);
@@ -3134,6 +3143,7 @@ fn word_completion_is_replaced_by_a_language_response_but_never_opens_over_one()
     let handle = crate::word_index::spawn();
     app.attach_word_index(handle.clone());
     let (lsp_handle, _queue) = crate::lsp::command_channel();
+    app.lsp_workspace_allowed = true;
     app.attach_lsp(lsp_handle);
     app.prepare_view(word_completion_geometry());
     handle.flush();
@@ -3585,6 +3595,7 @@ fn late_language_responses_do_not_replace_an_active_path_completion() {
     fs::write(&active, "").unwrap();
     let mut app = App::new_in_project(Config::default(), Some(active), &root).unwrap();
     let (handle, _queue) = crate::lsp::command_channel();
+    app.lsp_workspace_allowed = true;
     app.attach_lsp(handle);
     ready(&mut app, Encoding::Utf8);
     press(&mut app, 'i');
@@ -3974,6 +3985,7 @@ fn service_health_distinguishes_every_language_server_state_a_buffer_can_be_in()
     disabled_config.lsp.enable = false;
     let mut disabled = App::new(disabled_config, None).unwrap();
     let (handle, _queue) = crate::lsp::command_channel();
+    disabled.lsp_workspace_allowed = true;
     disabled.attach_lsp(handle);
     assert_eq!(
         lsp_health(&disabled),
@@ -4005,6 +4017,7 @@ fn service_health_distinguishes_every_language_server_state_a_buffer_can_be_in()
         app.buffers[0].path = Some(temporary("script.py"));
         app.buffers[0].kind = crate::buffer::BufferKind::File;
         let (handle, queue) = crate::lsp::command_channel();
+        app.lsp_workspace_allowed = true;
         app.attach_lsp(handle);
         (app, queue)
     };
@@ -4057,4 +4070,135 @@ fn service_health_reports_syntax_ready_only_once_the_active_buffer_has_a_tree() 
             "active buffer parsed successfully".to_owned(),
         )
     );
+}
+
+#[test]
+fn workspace_lsp_permission_gates_all_servers_and_remembers_both_answers() {
+    let root = temporary("workspace-permission");
+    let project = root.join("project");
+    let storage = root.join("private/trust");
+    std::fs::create_dir_all(&project).unwrap();
+    let mut app = App::new(Config::default(), None).unwrap();
+    app.project_root = project.clone();
+    app.buffers[0].path = Some(project.join("main.rs"));
+    app.buffers[0].kind = BufferKind::File;
+    app.configure_lsp_trust(Some(storage.clone()));
+    assert!(!app.lsp_workspace_allowed);
+    let overlays = app.overlay_snapshots();
+    let choice = overlays
+        .iter()
+        .find(|overlay| overlay.kind == crate::snapshot::OverlayKind::ResultList)
+        .unwrap();
+    assert_eq!(
+        choice.message.as_deref(),
+        Some("LSP may execute project code")
+    );
+    assert!(
+        choice
+            .column_header
+            .as_ref()
+            .unwrap()
+            .label
+            .contains(project.to_str().unwrap())
+    );
+    assert!(
+        app.list
+            .as_ref()
+            .unwrap()
+            .title
+            .contains("Run language servers")
+    );
+    assert!(
+        app.list
+            .as_ref()
+            .unwrap()
+            .selected_preview()
+            .unwrap()
+            .contains("may execute code")
+    );
+    let (handle, mut commands) = crate::lsp::command_channel();
+    app.attach_lsp(handle);
+    assert!(commands.try_recv().is_err());
+    assert!(!app.lsp_send(LspCommand::Ensure {
+        language: "custom".to_owned()
+    }));
+    assert!(commands.try_recv().is_err());
+    // Esc dismisses the question without granting permission or persisting.
+    app.handle_list_key(KeyStroke::plain(KeyCode::Escape))
+        .unwrap();
+    assert!(!app.lsp_workspace_allowed);
+    assert_eq!(app.lsp_trust.as_ref().unwrap().load().unwrap(), None);
+    app.open_lsp_trust();
+    // Enter chooses the conservative initial row and remembers the refusal.
+    app.handle_list_key(KeyStroke::plain(KeyCode::Enter))
+        .unwrap();
+    assert!(!app.lsp_workspace_allowed);
+    assert!(app.list.is_none());
+    assert_eq!(app.lsp_trust.as_ref().unwrap().load().unwrap(), Some(false));
+    app.configure_lsp_trust(Some(storage.clone()));
+    assert!(app.list.is_none());
+    // The palette command remains available while the LSP manager is denied.
+    for character in ":lsp-trust".chars() {
+        app.handle_key(KeyStroke::plain(KeyCode::Char(character)))
+            .unwrap();
+    }
+    app.handle_key(KeyStroke::plain(KeyCode::Enter)).unwrap();
+    assert!(
+        app.list
+            .as_ref()
+            .is_some_and(|list| list.title.starts_with("Run language servers")),
+        "status: {}; mode: {:?}; command: {}",
+        app.status,
+        app.mode,
+        app.command
+    );
+    // Temporary approval removes any durable decision.
+    app.list.as_mut().unwrap().selected = 1;
+    app.handle_list_key(KeyStroke::plain(KeyCode::Enter))
+        .unwrap();
+    assert!(app.lsp_workspace_allowed);
+    assert!(matches!(commands.try_recv(), Ok(LspCommand::Ensure { .. })));
+    assert_eq!(app.lsp_trust.as_ref().unwrap().load().unwrap(), None);
+    app.open_lsp_trust();
+    app.list.as_mut().unwrap().selected = 2;
+    app.handle_list_key(KeyStroke::plain(KeyCode::Enter))
+        .unwrap();
+    assert_eq!(app.lsp_trust.as_ref().unwrap().load().unwrap(), Some(true));
+    app.configure_lsp_trust(Some(storage.clone()));
+    assert!(app.lsp_workspace_allowed);
+    assert!(app.list.is_none());
+    app.choose_lsp_trust(true, false);
+    assert_eq!(app.lsp_trust.as_ref().unwrap().load().unwrap(), None);
+    app.open_lsp_trust();
+    app.handle_list_key(KeyStroke::plain(KeyCode::Enter))
+        .unwrap();
+    assert!(!app.lsp_workspace_allowed);
+    assert!(app.lsp_documents.is_empty());
+    assert!(app.lsp_servers.is_empty());
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn workspace_lsp_permission_fails_closed_without_storage_and_respects_configuration() {
+    let root = temporary("workspace-permission-unavailable");
+    std::fs::create_dir_all(&root).unwrap();
+    let mut app = App::new(Config::default(), None).unwrap();
+    app.project_root = root.clone();
+    app.configure_lsp_trust(None);
+    app.choose_lsp_trust(true, true);
+    assert!(!app.lsp_workspace_allowed);
+    assert!(app.list.is_some());
+    app.choose_lsp_trust(true, false);
+    assert!(app.lsp_workspace_allowed);
+    app.choose_lsp_trust(false, true);
+    assert!(
+        !app.lsp_workspace_allowed,
+        "failed persistence still revokes this host"
+    );
+    app.config.lsp.enable = false;
+    app.list = None;
+    app.configure_lsp_trust(None);
+    assert!(app.list.is_none());
+    assert!(!app.lsp_workspace_allowed);
+    std::fs::remove_dir_all(root).unwrap();
 }

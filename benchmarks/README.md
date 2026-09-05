@@ -32,6 +32,14 @@ benchmarks/.work/venv/bin/python benchmarks/startup.py --runs 10 \
   --json benchmarks/.work/startup-samples.json
 ```
 
+To check the first-open readiness path against a built editor, including the
+isolated configuration and whole-file save verification for text and Lua:
+
+```sh
+RUNYTE_BENCH_BINARY=target/release/runyte benchmarks/.work/venv/bin/python \
+  -m unittest discover -s benchmarks -p test_startup.py
+```
+
 The JSON retains every measured sample and binary hashes. The Markdown report
 gives median and min–max; an incomplete sample invalidates that cell and makes
 the command fail. One warm-up per editor, fixture, and measurement mode is
@@ -326,9 +334,12 @@ this stagger.
 
 Editors run with isolated `XDG_CONFIG_HOME`, `XDG_CACHE_HOME`, `XDG_STATE_HOME`,
 `XDG_DATA_HOME`, and `HOME` directories under `.work/`, so no personal
-configuration, plugins, cache, or state can enter the measurement. Version
-probes use the same environment and run from the fixture directory, keeping any
-diagnostic file out of the repository root. Neovim additionally runs with
+configuration, plugins, cache, or state can enter the measurement. The shared
+setup writes a Runyte configuration with `lsp.enable: false`, so readiness,
+internal milestones, quit, and idle runs require no workspace permission
+answer and start no language servers. Syntax highlighting remains enabled.
+Version probes use the same environment and run from the fixture directory,
+keeping any diagnostic file out of the repository root. Neovim additionally runs with
 `-n -i NONE` so swap and shada are explicitly outside the startup and quit
 measurements. Packaged editor runtimes and grammars remain available; a result
 set must still confirm parser availability as described above.

@@ -159,6 +159,11 @@ def prepare() -> dict[str, Path]:
         EMPTY_HOME,
     ):
         directory.mkdir(parents=True, exist_ok=True)
+    # Keep editor readiness independent of workspace permission prompts and
+    # installed language servers. Syntax highlighting stays enabled.
+    runyte_config = EMPTY_CONFIG / "runyte"
+    runyte_config.mkdir(exist_ok=True)
+    (runyte_config / "config.yaml").write_text("lsp:\n  enable: false\n")
     paths = fixtures.ensure(FIXTURES)
     if not (FIXTURES / ".git").exists():
         subprocess.run(

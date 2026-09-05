@@ -867,6 +867,47 @@ pub enum LspEvent {
     },
 }
 
+/// Host event queue that discards events from revoked permission epochs.
+/// Filtering at receipt covers every event kind, including a queued `Ready`
+/// followed by server-initiated edits after a rapid revoke/reapprove cycle.
+pub struct LspEvents {
+    queue: mpsc::Receiver<(u64, LspEvent)>,
+    approval: tokio::sync::watch::Receiver<(bool, u64)>,
+}
+
+impl LspEvents {
+    fn accepts(&self, epoch: u64) -> bool {
+        let (allowed, current) = *self.approval.borrow();
+        allowed && current == epoch
+    }
+
+    pub async fn recv(&mut self) -> Option<LspEvent> {
+        while let Some((epoch, event)) = self.queue.recv().await {
+            if self.accepts(epoch) {
+                return Some(event);
+            }
+        }
+        None
+    }
+
+    pub fn try_recv(&mut self) -> Result<LspEvent, mpsc::error::TryRecvError> {
+        loop {
+            let (epoch, event) = self.queue.try_recv()?;
+            if self.accepts(epoch) {
+                return Ok(event);
+            }
+        }
+    }
+}
+
+/// The epoch is advanced only after the manager has retired its old servers.
+/// Reading the current host permission when emitting would mislabel events
+/// produced by in-flight work during a revocation.
+struct EventSender {
+    queue: mpsc::Sender<(u64, LspEvent)>,
+    epoch: u64,
+}
+
 /// The editor's non-blocking view of the manager.
 #[derive(Clone, Debug)]
 pub struct LspHandle {
@@ -874,9 +915,23 @@ pub struct LspHandle {
     /// Reserved for workspace-edit acknowledgements, so ordinary request and
     /// notification bursts cannot starve protocol replies.
     controls: Option<mpsc::Sender<LspCommand>>,
+    permission: Option<tokio::sync::watch::Sender<(bool, u64)>>,
 }
 
 impl LspHandle {
+    /// Changes host-owned workspace authorization independently of a full
+    /// command queue. Revocation wakes the manager and stops all servers.
+    pub fn set_allowed(&self, allowed: bool) {
+        if let Some(permission) = &self.permission {
+            permission.send_modify(|state| {
+                state.0 = allowed;
+                if !allowed {
+                    state.1 = state.1.wrapping_add(1);
+                }
+            });
+        }
+    }
+
     /// Queues a command. Returns `false` when the manager has stopped or its
     /// queue is full; callers surface that as a status message rather than
     /// waiting, because waiting is the one thing the render path may not do.
@@ -922,9 +977,10 @@ fn process_launcher() -> Launch {
     })
 }
 
-/// Starts the manager. Must be called inside a Tokio runtime.
-pub fn spawn(config: LspConfig, root: PathBuf) -> (LspHandle, mpsc::Receiver<LspEvent>) {
-    spawn_with(config, root, process_launcher())
+/// Starts a denied manager. The owning host must call `set_allowed(true)`
+/// after workspace approval. Must be called inside a Tokio runtime.
+pub fn spawn(config: LspConfig, root: PathBuf) -> (LspHandle, LspEvents) {
+    spawn_with_permission(config, root, process_launcher(), false)
 }
 
 /// A handle wired to a caller-owned queue instead of a manager.
@@ -937,31 +993,49 @@ pub fn command_channel() -> (LspHandle, mpsc::Receiver<LspCommand>) {
         LspHandle {
             commands,
             controls: None,
+            permission: None,
         },
         queue,
     )
 }
 
 /// Starts the manager against a caller-supplied way of reaching servers.
-pub fn spawn_with(
+pub fn spawn_with(config: LspConfig, root: PathBuf, launch: Launch) -> (LspHandle, LspEvents) {
+    spawn_with_permission(config, root, launch, true)
+}
+
+/// Starts an injected manager with an explicit initial workspace permission.
+pub fn spawn_with_permission(
     config: LspConfig,
     root: PathBuf,
     launch: Launch,
-) -> (LspHandle, mpsc::Receiver<LspEvent>) {
+    allowed: bool,
+) -> (LspHandle, LspEvents) {
+    let (permission, approval) = tokio::sync::watch::channel((allowed, 0));
     let (command_tx, command_rx) = mpsc::channel(COMMAND_CAPACITY);
     let (control_tx, control_rx) = mpsc::channel(
         COMMAND_CAPACITY + GLOBAL_INCOMING_REQUEST_CAPACITY + GLOBAL_PENDING_CAPACITY,
     );
     let (event_tx, event_rx) = mpsc::channel(EVENT_CAPACITY);
     tokio::spawn(run_manager(
-        config, root, launch, command_rx, control_rx, event_tx,
+        config,
+        root,
+        launch,
+        command_rx,
+        control_rx,
+        event_tx,
+        approval.clone(),
     ));
     (
         LspHandle {
             commands: command_tx,
             controls: Some(control_tx),
+            permission: Some(permission),
         },
-        event_rx,
+        LspEvents {
+            queue: event_rx,
+            approval,
+        },
     )
 }
 
@@ -1098,13 +1172,15 @@ impl Server {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_manager(
     config: LspConfig,
     root: PathBuf,
     mut launch: Launch,
     mut commands: mpsc::Receiver<LspCommand>,
     mut controls: mpsc::Receiver<LspCommand>,
-    events: mpsc::Sender<LspEvent>,
+    events: mpsc::Sender<(u64, LspEvent)>,
+    mut approval: tokio::sync::watch::Receiver<(bool, u64)>,
 ) {
     let (inbox_tx, mut inbox) = mpsc::channel::<(String, u64, Incoming)>(EVENT_CAPACITY);
     let mut servers: HashMap<String, Server> = HashMap::new();
@@ -1114,11 +1190,30 @@ async fn run_manager(
     let mut failed: HashMap<String, String> = HashMap::new();
     let mut early_cancels = HashSet::new();
     let mut max_request_token = None;
+    let mut events = EventSender {
+        queue: events,
+        epoch: approval.borrow().1,
+    };
 
     loop {
         tokio::select! {
             biased;
+            changed = approval.changed() => {
+                if changed.is_err() { break; }
+                let (allowed, epoch) = *approval.borrow_and_update();
+                let revoked = epoch != events.epoch;
+                if !allowed || revoked {
+                    // Drop protocol state before awaiting child shutdown, so
+                    // queued replies from the old generation cannot be used.
+                    let stopped = std::mem::take(&mut servers);
+                    failed.clear();
+                    early_cancels.clear();
+                    for (_, server) in stopped { server.connection.stop().await; }
+                }
+                events.epoch = epoch;
+            }
             Some(command) = controls.recv() => {
+                if !approval.borrow().0 { continue; }
                 handle_command(
                     command,
                     &config,
@@ -1140,6 +1235,7 @@ async fn run_manager(
                 if matches!(command, LspCommand::Shutdown) {
                     break;
                 }
+                if !approval.borrow().0 { continue; }
                 handle_command(
                     command,
                     &config,
@@ -1185,7 +1281,7 @@ async fn graceful_stop_server(
     servers: &mut HashMap<String, Server>,
     failed: &mut HashMap<String, String>,
     inbox: &mut mpsc::Receiver<(String, u64, Incoming)>,
-    events: &mpsc::Sender<LspEvent>,
+    events: &EventSender,
 ) {
     let Some(server) = servers.get_mut(language) else {
         return;
@@ -1272,7 +1368,7 @@ async fn handle_command(
     incoming: &mut mpsc::Receiver<(String, u64, Incoming)>,
     early_cancels: &mut HashSet<u64>,
     max_request_token: &mut Option<u64>,
-    events: &mpsc::Sender<LspEvent>,
+    events: &EventSender,
 ) {
     match command {
         LspCommand::Shutdown => {}
@@ -1619,7 +1715,7 @@ async fn ensure_server(
     failed: &mut HashMap<String, String>,
     next_generation: &mut u64,
     inbox: &mpsc::Sender<(String, u64, Incoming)>,
-    events: &mpsc::Sender<LspEvent>,
+    events: &EventSender,
 ) -> bool {
     if servers.contains_key(language) {
         return true;
@@ -1912,7 +2008,7 @@ async fn handle_incoming(
     incoming: Incoming,
     servers: &mut HashMap<String, Server>,
     failed: &mut HashMap<String, String>,
-    events: &mpsc::Sender<LspEvent>,
+    events: &EventSender,
 ) {
     if servers
         .get(language)
@@ -1960,7 +2056,7 @@ async fn stop_server(
     message: String,
     servers: &mut HashMap<String, Server>,
     failed: &mut HashMap<String, String>,
-    events: &mpsc::Sender<LspEvent>,
+    events: &EventSender,
 ) {
     let Some(server) = servers.remove(language) else {
         return;
@@ -1997,7 +2093,7 @@ async fn handle_message(
     message: Value,
     servers: &mut HashMap<String, Server>,
     failed: &mut HashMap<String, String>,
-    events: &mpsc::Sender<LspEvent>,
+    events: &EventSender,
 ) {
     let method = message.get("method");
     let id = message.get("id").cloned();
@@ -2046,7 +2142,7 @@ async fn handle_server_request(
     message: &Value,
     id: Value,
     servers: &mut HashMap<String, Server>,
-    events: &mpsc::Sender<LspEvent>,
+    events: &EventSender,
 ) -> Result<(), String> {
     let method = message.get("method").and_then(Value::as_str).unwrap_or("");
     let params = message.get("params").cloned().unwrap_or(Value::Null);
@@ -2182,7 +2278,7 @@ async fn handle_server_request(
     }
 }
 
-async fn handle_notification(language: &str, message: &Value, events: &mpsc::Sender<LspEvent>) {
+async fn handle_notification(language: &str, message: &Value, events: &EventSender) {
     let method = message.get("method").and_then(Value::as_str).unwrap_or("");
     let params = message.get("params").cloned().unwrap_or(Value::Null);
     match method {
@@ -2240,7 +2336,7 @@ async fn handle_response(
     id: &Value,
     servers: &mut HashMap<String, Server>,
     failed: &mut HashMap<String, String>,
-    events: &mpsc::Sender<LspEvent>,
+    events: &EventSender,
 ) {
     let Some(id) = id.as_i64() else { return };
     let Some(server) = servers.get_mut(language) else {
@@ -2332,7 +2428,7 @@ async fn finish_initialize(
     language: &str,
     result: Value,
     server: &mut Server,
-    events: &mpsc::Sender<LspEvent>,
+    events: &EventSender,
 ) -> Result<(), String> {
     let initialized: InitializeResult =
         serde_json::from_value(result).map_err(|error| error.to_string())?;
@@ -2906,8 +3002,8 @@ fn completion_kind(kind: Option<lsp_types::CompletionItemKind>) -> &'static str 
     }
 }
 
-async fn emit(events: &mpsc::Sender<LspEvent>, event: LspEvent) {
-    let _ = events.send(event).await;
+async fn emit(events: &EventSender, event: LspEvent) {
+    let _ = events.queue.send((events.epoch, event)).await;
 }
 
 #[cfg(test)]
@@ -3233,6 +3329,7 @@ mod tests {
         let handle = LspHandle {
             commands,
             controls: Some(controls),
+            permission: None,
         };
         assert!(handle.send(LspCommand::Status));
         assert!(handle.send(LspCommand::Cancel { token: 7 }));

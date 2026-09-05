@@ -61,6 +61,18 @@ happens on the monitor thread and forwards nothing when the listing is
 unchanged, so it does not wake the editor. The fixtures below open a document
 rather than an explorer, so this work is not in the measurements either.
 
+## LSP permission startup change
+
+Workspace startup now performs a bounded read of one exact-root permission
+record before attaching language services. The manager starts denied and
+cannot launch a server until the owning host grants permission. An undecided
+workspace with LSP enabled opens a choice overlay. No polling timer is added.
+The measurements below predate this change and have not been rerun; readiness
+benchmarks now explicitly disable LSP in their isolated configuration while
+keeping syntax highlighting enabled. This applies to both `startup.py` and
+`run.py` through their shared setup, including instrumented launches. The
+first-open choice overlay therefore cannot intercept measurement keystrokes.
+
 ## 2026-09-05 — readiness, loading, and syntax
 
 Machine: AMD Ryzen AI 9 365, 10 cores / 20 hardware threads, approximately

@@ -195,6 +195,9 @@ and the order of the push. Do not infer any of those from the commit history.
   panes, or drawing.
 - `src/hash.rs`: small stable SHA-256 utility used by core persistence and
   identity code.
+- `src/private_storage.rs`: descriptor-relative private runtime files for logs,
+  pasted images, and LSP permission records.
+- `src/lsp_trust.rs`: bounded, per-user, exact-workspace LSP permission records.
 - `src/path_safety.rs`: canonical project-path containment checks shared by
   editor integrations.
 - `src/pasted_image.rs`: where an image pasted from the clipboard is kept and
