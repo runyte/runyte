@@ -3213,6 +3213,7 @@ fn applied_explorer_moves_retarget_files_and_refresh_other_explorers() {
 
     fs::rename(&old, &new).unwrap();
     let report = ApplyReport {
+        recovery: Vec::new(),
         applied: vec![FsOperation::Rename {
             from: PathBuf::from("child/old.txt"),
             to: PathBuf::from("child/new.txt"),

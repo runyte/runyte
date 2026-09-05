@@ -2894,3 +2894,98 @@ fn a_spent_claim_does_not_reveal_the_terminal_under_a_later_buffer() {
     );
     fs::remove_dir_all(directory).unwrap();
 }
+
+#[test]
+fn filesystem_recovery_keeps_unsaved_source_and_replacement_protected() {
+    use crate::fs_plan::{RecoveryEntry, RecoveryKind};
+
+    let directory = temporary("filesystem-recovery-buffer");
+    fs::create_dir_all(&directory).unwrap();
+    let original = directory.join("notes.txt");
+    let retained = directory.join("retained-original");
+    fs::write(&original, "baseline\n").unwrap();
+    let mut app = App::new(Config::default(), Some(original.clone())).unwrap();
+    let buffer = app.active().buffer;
+    app.apply_to_buffer(buffer, &Transaction::insert(0, "local "));
+    fs::rename(&original, &retained).unwrap();
+    fs::write(&original, "concurrent replacement\n").unwrap();
+    let report = ApplyReport {
+        applied: Vec::new(),
+        recovery: vec![RecoveryEntry {
+            original: original.clone(),
+            retained: retained.clone(),
+            kind: RecoveryKind::Original,
+            reason: "original destination was recreated".to_owned(),
+        }],
+    };
+
+    let warning = app
+        .reconcile_applied_filesystem(&directory, buffer, &report, false)
+        .unwrap();
+    assert!(warning.contains(&retained.display().to_string()));
+    assert_eq!(
+        app.buffers[buffer].path.as_deref(),
+        Some(original.as_path())
+    );
+    assert_eq!(app.buffers[buffer].to_string(), "local baseline\n");
+    assert!(app.buffers[buffer].dirty);
+    app.save(None, false).unwrap();
+    assert!(app.status.contains("changed on disk"), "{}", app.status);
+    assert_eq!(
+        fs::read_to_string(&original).unwrap(),
+        "concurrent replacement\n"
+    );
+    assert_eq!(fs::read_to_string(&retained).unwrap(), "baseline\n");
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn filesystem_confirmation_retains_recovery_paths_in_an_error_notification() {
+    struct RecreateThenFail(PathBuf);
+    impl crate::fs_plan::TrashBackend for RecreateThenFail {
+        fn delete(&self, _: &Path) -> Result<()> {
+            fs::write(&self.0, "replacement")?;
+            anyhow::bail!("injected trash failure")
+        }
+    }
+    let directory = temporary("filesystem-recovery-notification");
+    fs::create_dir_all(&directory).unwrap();
+    let source = directory.join("a");
+    fs::write(&source, "original").unwrap();
+    fs::write(directory.join("z-delete"), "delete me").unwrap();
+    let snapshot = crate::fs_plan::DirectorySnapshot::read(&directory).unwrap();
+    let desired = vec![crate::fs_plan::DesiredEntry::existing(
+        &snapshot.entries()[0],
+        "renamed",
+    )];
+    let plan = FsPlan::build(directory.clone(), snapshot, desired).unwrap();
+    let mut app = App::new(Config::default(), Some(directory.clone())).unwrap();
+    app.set_trash_backend(Box::new(RecreateThenFail(source.clone())));
+    app.fs_confirmation = Some(FsConfirmation {
+        buffer: app.active().buffer,
+        plan,
+        selected: 0,
+    });
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert!(app.fs_confirmation.is_none());
+    assert_eq!(app.unread_notification_counts().errors, 1);
+    assert!(app.status.contains("injected trash failure"));
+    assert!(app.status.contains(".runyte-move-"));
+    assert!(app.status.contains(&source.display().to_string()));
+    assert_eq!(fs::read_to_string(&source).unwrap(), "replacement");
+    let staging = fs::read_dir(&directory)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| {
+            path.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with(".runyte-move-")
+        })
+        .unwrap();
+    assert_eq!(
+        fs::read_to_string(staging.join("entry")).unwrap(),
+        "original"
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
