@@ -21,9 +21,9 @@ It replaces the marker with an equal-width space run while retaining the exact
 leading and separator whitespace, so nested items and markers of different
 lengths align under their first content character. The calculation remains
 part of the existing pre-edit, single-transaction multicursor path. A typed
-`editor.smart_newline` setting was added to YAML and the settings picker; it is
-enabled by default, while disabling it deliberately makes Enter insert an
-unindented newline.
+`editor.smart_newline` setting was added to YAML and the settings picker. It
+was initially enabled by default; it is now disabled by default and can be
+enabled to request the syntax- and list-aware behavior.
 
 A later review found that accepting any case-insensitive run of Roman-numeral
 letters also mistook words such as `civil.` and `mix.` for markers. The detector

@@ -2235,12 +2235,18 @@ fn remaining_multi_selection_bindings_use_regex_and_rotate_contents() {
     assert_eq!(text(&app), "a2 a1 b");
 }
 
+fn smart_newline_config() -> Config {
+    let mut config = Config::default();
+    config.editor.smart_newline = true;
+    config
+}
+
 #[test]
 fn syntax_newline_indentation_is_one_pre_edit_multi_caret_transaction() {
     let path = temporary("syntax-indent.rs");
     let original = "fn outer() {\n    if ready {\n    }\n}\n";
     fs::write(&path, original).unwrap();
-    let mut app = App::new(Config::default(), Some(path.clone())).unwrap();
+    let mut app = App::new(smart_newline_config(), Some(path.clone())).unwrap();
     app.mode = Mode::Insert;
     let first = app.buffers[0].line_to_offset(0) + app.buffers[0].line_len(0);
     let second = app.buffers[0].line_to_offset(1) + app.buffers[0].line_len(1);
@@ -2265,7 +2271,7 @@ fn smart_newline_preserves_crlf_and_uses_its_syntax_indent() {
     let path = temporary("syntax-indent-crlf.rs");
     let original = "fn outer() {\r\n    if ready {\r\n    }\r\n}\r\n";
     fs::write(&path, original).unwrap();
-    let mut app = App::new(Config::default(), Some(path.clone())).unwrap();
+    let mut app = App::new(smart_newline_config(), Some(path.clone())).unwrap();
     app.mode = Mode::Insert;
     let caret = app.buffers[0].line_to_offset(1) + app.buffers[0].line_len(1);
     app.replace_active_selection(Selection::point(caret));
@@ -2286,7 +2292,7 @@ fn smart_newline_uses_the_required_make_recipe_tab() {
     let path = temporary("syntax-indent.mk");
     let original = "all:\n";
     fs::write(&path, original).unwrap();
-    let mut app = App::new(Config::default(), Some(path.clone())).unwrap();
+    let mut app = App::new(smart_newline_config(), Some(path.clone())).unwrap();
     app.mode = Mode::Insert;
     let caret = app.buffers[0].line_len(0);
     app.replace_active_selection(Selection::point(caret));
@@ -2303,7 +2309,7 @@ fn smart_newline_uses_the_required_make_recipe_tab() {
 fn syntax_newline_mid_line_and_unterminated_eof_degrade_without_losing_prefix() {
     let path = temporary("syntax-indent-positions.rs");
     fs::write(&path, "fn outer() {\n    let value = 1;\n    tail").unwrap();
-    let mut app = App::new(Config::default(), Some(path.clone())).unwrap();
+    let mut app = App::new(smart_newline_config(), Some(path.clone())).unwrap();
     app.mode = Mode::Insert;
 
     let middle = app.buffers[0].line_to_offset(1) + 7;
@@ -2329,7 +2335,7 @@ fn syntax_newline_multiline_selection_uses_normalized_insertion_row_in_both_dire
     let path = temporary("syntax-indent-selection.rs");
     let original = "fn outer() {\n    one();\n        two();\n}\n";
     fs::write(&path, original).unwrap();
-    let mut app = App::new(Config::default(), Some(path.clone())).unwrap();
+    let mut app = App::new(smart_newline_config(), Some(path.clone())).unwrap();
     app.mode = Mode::Insert;
     let from = app.buffers[0].line_to_offset(1) + 4;
     let to = app.buffers[0].line_to_offset(2) + 8;
@@ -2383,7 +2389,7 @@ fn smart_newline_aligns_list_continuations_under_their_content() {
         ("        + nested", "          "),
         ("            a. nested", "               "),
     ] {
-        let mut app = App::new(Config::default(), None).unwrap();
+        let mut app = App::new(smart_newline_config(), None).unwrap();
         seed(&mut app, line);
         app.mode = Mode::Insert;
         app.replace_active_selection(Selection::point(app.active_buffer().len_chars()));
@@ -2396,7 +2402,7 @@ fn smart_newline_aligns_list_continuations_under_their_content() {
 
 #[test]
 fn smart_newline_keeps_following_continuation_lines_aligned() {
-    let mut app = App::new(Config::default(), None).unwrap();
+    let mut app = App::new(smart_newline_config(), None).unwrap();
     seed(&mut app, "10285. numbered");
     app.mode = Mode::Insert;
     app.replace_active_selection(Selection::point(app.active_buffer().len_chars()));
@@ -2416,7 +2422,7 @@ fn smart_newline_ignores_prose() {
         "mix. ingredients",
         "IIV. invalid",
     ] {
-        let mut app = App::new(Config::default(), None).unwrap();
+        let mut app = App::new(smart_newline_config(), None).unwrap();
         seed(&mut app, prose);
         app.mode = Mode::Insert;
         app.replace_active_selection(Selection::point(app.active_buffer().len_chars()));

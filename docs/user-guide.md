@@ -2804,8 +2804,9 @@ requests it. On list items beginning with `-`, `*`, `+`, a decimal number, a
 single letter, or a canonical uppercase Roman numeral followed by `.`, it
 instead aligns the next line under the first content character, including at
 nested indentation.
-Set `editor.smart_newline` to `false` to preserve only the row's existing
-leading indentation, without list alignment or an added syntax level.
+Set `editor.smart_newline` to `true` to enable syntax indentation and list
+alignment. By default, Enter preserves only the row's existing leading
+indentation.
 Unsupported, malformed, oversized, and unterminated-final-line cases retain
 the exact prefix and never block newline insertion. Syntax folds
 are pane-local: two panes may collapse different regions of one shared buffer,
@@ -3208,7 +3209,7 @@ editor:
   grammar: runyte # `helix` is accepted as a compatibility alias
   line_numbers: true
   tab_width: 4
-  smart_newline: true # add syntax indentation and align list continuations
+  smart_newline: false # true adds syntax indentation and aligns list continuations
   scroll_offset: 3
   motion_repeat_multiplier: 2 # held cursor motions; 1 retains terminal/Helix speed
   show_hidden_files: false # explorer, finder, and workspace search; . toggles it in an explorer
