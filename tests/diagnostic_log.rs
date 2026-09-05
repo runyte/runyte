@@ -97,6 +97,11 @@ fn project(name: &str) -> Project {
     let root = owner.join("project");
     fs::create_dir_all(root.join(".runyte")).unwrap();
     fs::write(root.join("note.txt"), "base\n").unwrap();
+    // These logging fixtures start with an explicitly remembered refusal.
+    runyte::lsp_trust::TrustStore::new(Some(test_cache_dir(&root).join("runyte/lsp-trust")), &root)
+        .unwrap()
+        .save(false)
+        .unwrap();
     Project {
         root: root.canonicalize().unwrap(),
         _owner: owner,
@@ -939,6 +944,11 @@ async fn no_document_clipboard_terminal_or_environment_value_reaches_a_record() 
     const SERVER_STDERR: &str = "SECRETonSERVERstderr";
 
     let root = project("redaction");
+    // This test deliberately launches its own failure fixture to test stderr redaction.
+    runyte::lsp_trust::TrustStore::new(Some(test_cache_dir(&root).join("runyte/lsp-trust")), &root)
+        .unwrap()
+        .save(true)
+        .unwrap();
     fs::write(root.join("note.txt"), format!("{IN_FILE}\n")).unwrap();
     // A "language server" that dies immediately with a secret on its stderr.
     // A real one is not needed: what matters is that the stderr tail the

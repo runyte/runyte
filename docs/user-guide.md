@@ -142,6 +142,37 @@ in [Configuration](#configuration), so a theme can recolour them.
 
 ### Language servers
 
+The first time a workspace opens with LSP enabled in configuration, Runyte
+asks whether language servers may run there. The default choice is **Keep LSP
+disabled**; **Allow LSP once** lasts until the standalone editor or persistent
+host stops, and **Always allow LSP** remembers approval for that exact
+workspace. Escape dismisses the question without changing permission; on a
+first visit, LSP remains disabled. Editing, search, and syntax highlighting
+continue to work.
+
+Language servers can execute project code, including build scripts and
+plugins, with your permissions. Approval applies to every configured server,
+including custom definitions. It is permission to run those tools, not a
+security assessment or sandbox for the project. Future code changes in the
+same workspace remain covered by a remembered approval.
+
+`:lsp-trust` reopens the choices, including revocation. Disabling LSP there
+stops this host's servers and clears their editor state; it cannot undo code
+already executed. A persistent host owns the permission, so a client cannot
+bypass it by detaching and reattaching. Other already-running editors retain
+their own current decision until changed or restarted.
+
+Remembered approvals and refusals live in private `lsp-trust/` storage beneath
+Runyte's per-user platform cache, outside the project and `.runyte/`. Clearing
+that cache makes Runyte ask again. Records use the canonical workspace root:
+symlink aliases share a decision, but nested workspaces, other worktrees, and
+clones in other directories do not inherit it. If a decision cannot be read,
+Runyte keeps LSP disabled and asks again. If it cannot be saved, a permanent
+grant fails. **Allow LSP once** needs no new storage, but it removes an older
+remembered decision first; failure to remove that decision leaves the choice
+pending. The next launch asks again after a one-time grant. Globally disabling
+`lsp.enable` suppresses the question and prevents approval from starting LSP.
+
 `rust-analyzer` is configured out of the box. For another language, install
 the server executable so that it is on `PATH`, then add it directly below
 `lsp` in the configuration file. A server that is not installed, that crashes,
@@ -1481,6 +1512,11 @@ machine with no helper that can hand one over, or one whose display server is
 not answering — pastes text instead, exactly as `Space c p` does, so `Ctrl-v`
 stays useful wherever an ordinary paste works.
 
+On Linux and macOS, image-cache directories and images are private (`0700`
+and `0600`). Symlinked storage paths, hard-linked entries, and existing files
+whose bytes disagree with their content-hash name are refused. Temporary
+writes use exclusively created files and atomic publication.
+
 A clipboard offering text *as well as* a picture counts as holding text.
 Copying a range of spreadsheet cells or a formatted passage attaches a rendered
 bitmap so that a "paste as picture" command has something to use, and taking
@@ -2817,6 +2853,7 @@ are enabled.
 :help [topic]           open the general manual, optionally at a named section (alias: ?)
 :log-open               open the diagnostic log owned by the process that
                         holds this workspace
+:lsp-trust              choose workspace permission to run language servers
 :lsp-restart [language] restart stopped language servers
 :lsp-status             report language server state
 :notifications          open retained notification history (alias: not)
@@ -2943,6 +2980,13 @@ still reaches you through the ordinary surfaces whether or not a record was
 written.
 
 ### Who owns the log
+
+On Linux and macOS, logs are created with owner-only permissions (`0600`).
+Runtime writes reject symlinked parent directories, symlinked file targets,
+hard-linked files, and special files such as FIFOs. Rotation uses the opened
+file and directory even if their original pathnames change. A refused default
+log is reported without preventing editing; an unusable explicit `--log`
+continues to fail startup.
 
 Log ownership follows editor-state ownership.
 

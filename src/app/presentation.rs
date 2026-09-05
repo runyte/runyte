@@ -1445,6 +1445,15 @@ impl App {
                 selected,
                 None,
             );
+            if self
+                .list_actions
+                .iter()
+                .any(|action| matches!(action, super::ListAction::LspTrust { .. }))
+            {
+                // The execution warning must remain visible when a narrow
+                // pane cannot show the optional preview column.
+                snapshot.message = Some("LSP may execute project code".to_owned());
+            }
             snapshot.purpose = match picker.purpose {
                 ListPurpose::Picker => OverlayPurpose::Picker,
                 ListPurpose::Choice => OverlayPurpose::Choice,

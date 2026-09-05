@@ -2,6 +2,7 @@
 
 """Behavior checks for readiness evidence and instrumented milestone reports."""
 
+import os
 import sys
 import tempfile
 import unittest
@@ -126,6 +127,26 @@ while True:
         with mock.patch.object(startup, "TIMEOUT", 0.4):
             with self.assertRaises(TimeoutError):
                 self.run_editor("original")
+
+
+@unittest.skipUnless(os.environ.get("RUNYTE_BENCH_BINARY"),
+                     "set RUNYTE_BENCH_BINARY to a built Runyte executable")
+class RunyteReadinessTests(unittest.TestCase):
+    def test_first_open_with_empty_storage_accepts_and_saves_the_edit(self):
+        binary = str(Path(os.environ["RUNYTE_BENCH_BINARY"]).resolve())
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            replacements = {name: root / name.lower() for name in (
+                "FIXTURES", "EMPTY_CONFIG", "EMPTY_CACHE", "EMPTY_STATE",
+                "EMPTY_DATA", "EMPTY_HOME",
+            )}
+            with mock.patch.multiple(startup.baseline, **replacements):
+                fixtures = startup.baseline.prepare()
+                for name in ("short.txt", "short.lua"):
+                    with self.subTest(fixture=name):
+                        result = startup.measure(
+                            [binary], startup.baseline.environment(), fixtures[name])
+                        self.assertGreater(result["ready_to_edit"], 0)
 
 
 if __name__ == "__main__":

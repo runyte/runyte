@@ -148,6 +148,7 @@ impl App {
     /// Separate from `App::new` because spawning the manager needs a Tokio
     /// runtime, and the editor must remain constructible without one.
     pub fn attach_lsp(&mut self, handle: LspHandle) {
+        handle.set_allowed(self.lsp_workspace_allowed);
         self.ports.attach_lsp(handle);
         for buffer_id in 0..self.buffers.len() {
             self.lsp_touch(buffer_id);
@@ -165,7 +166,10 @@ impl App {
     /// Makes sure a buffer's server is starting, and opens the document once
     /// the handshake has settled.
     pub(super) fn lsp_touch(&mut self, buffer_id: usize) -> bool {
-        if !self.ports.has_lsp() || self.closed_buffers.contains(&buffer_id) {
+        if !self.lsp_workspace_allowed
+            || !self.ports.has_lsp()
+            || self.closed_buffers.contains(&buffer_id)
+        {
             return false;
         }
         let desired = self.language_of(buffer_id).zip(
@@ -273,6 +277,12 @@ impl App {
     }
 
     pub(super) fn lsp_send(&mut self, command: LspCommand) -> bool {
+        if !self.lsp_workspace_allowed {
+            self.mark_unavailable(
+                "LSP is disabled for this workspace; use :lsp-trust to change permission",
+            );
+            return false;
+        }
         self.flush_lsp_replies();
         match self.ports.send_lsp(command) {
             Some(true) => true,
@@ -1363,6 +1373,9 @@ impl App {
 
     /// Applies an editor event from the language-server manager.
     pub fn apply_lsp_event(&mut self, event: LspEvent) {
+        if !self.lsp_workspace_allowed {
+            return;
+        }
         match event {
             LspEvent::Ready {
                 language,
@@ -3574,6 +3587,10 @@ impl App {
 
     fn activate_list_selection(&mut self) -> Result<()> {
         let chosen = self.selected_list_action();
+        if let Some(ListAction::LspTrust { allowed, remember }) = chosen {
+            self.choose_lsp_trust(allowed, remember);
+            return Ok(());
+        }
         if self.settings_view.is_some() && chosen.is_none() {
             self.action_failed("no matching setting choice · clear the filter or press Esc");
             return Ok(());
@@ -3602,6 +3619,9 @@ impl App {
         self.list = None;
         self.buffer_action_menu = None;
         match chosen {
+            Some(ListAction::LspTrust { .. }) => {
+                unreachable!("permission choices are handled before closing the list")
+            }
             Some(ListAction::Jump(location)) => self.jump_to(&location)?,
             Some(ListAction::OpenPath(path)) => self.open_file(path)?,
             Some(ListAction::CodeAction(index)) => self.run_code_action(index),

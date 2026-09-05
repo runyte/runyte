@@ -47,6 +47,10 @@ over anything, jump anywhere, and switching between Git worktrees.
 See the [full user guide](docs/user-guide.md) for behavior, limits, and the
 complete command reference.
 
+On first opening a workspace, Runyte asks whether language servers may run
+project code. Editing and syntax highlighting work with LSP disabled;
+`:lsp-trust` changes the workspace permission later.
+
 Runyte can be configured through YAML, but its built-in features are designed
 to work together without requiring a personal configuration or plugin stack.
 It does not currently support plugins.

@@ -87,6 +87,7 @@ pub enum ColonCommand {
     GitWorktrees,
     Grammar,
     LogOpen,
+    LspTrust,
     LspRestart,
     LspStatus,
     Notifications,
@@ -246,6 +247,7 @@ impl ColonCommand {
         Self::GitUnstage,
         Self::GitWorktrees,
         Self::Grammar,
+        Self::LspTrust,
         Self::LspRestart,
         Self::LogOpen,
         Self::LspStatus,
@@ -288,7 +290,9 @@ impl ColonCommand {
             Self::DiffThis | Self::DiffDisk | Self::DiffOff | Self::Notifications | Self::Path => {
                 CommandCategory::View
             }
-            Self::Format | Self::LspRestart | Self::LspStatus => CommandCategory::Language,
+            Self::Format | Self::LspTrust | Self::LspRestart | Self::LspStatus => {
+                CommandCategory::Language
+            }
             Self::GitBranches
             | Self::GitBlame
             | Self::GitBlameFile
@@ -1815,6 +1819,14 @@ pub const COMMANDS: &[CommandSpec] = &[
         NoArguments
     ),
     spec!(
+        ColonId(Colon::LspTrust),
+        "lsp-trust",
+        [],
+        "lsp-trust",
+        "Choose LSP permission for this workspace",
+        NoArguments
+    ),
+    spec!(
         ColonId(Colon::LspRestart),
         "lsp-restart",
         [],
@@ -2351,6 +2363,7 @@ fn valid_colon_parameters(command: ColonCommand, parameters: &InvocationParamete
             | Colon::GitWorktrees
             | Colon::LogOpen
             | Colon::LspStatus
+            | Colon::LspTrust
             | Colon::Notifications
             | Colon::Path
             | Colon::ServiceHealth
@@ -2689,6 +2702,7 @@ fn invocation_from_parts(
                 | ColonCommand::GitWorktrees
                 | ColonCommand::LogOpen
                 | ColonCommand::LspStatus
+                | ColonCommand::LspTrust
                 | ColonCommand::Notifications
                 | ColonCommand::Path
                 | ColonCommand::ServiceHealth

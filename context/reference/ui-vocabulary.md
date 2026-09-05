@@ -369,3 +369,13 @@ level, the resolved path, and any logger initialization or write failure. In
 persistent mode those are host facts, so a newly attached client sees how the
 process holding its workspace is actually logging rather than the flags its own
 launch carried.
+
+## Workspace LSP permission
+
+The first-open LSP permission question is a **choice overlay** with a preview
+that names the canonical workspace root and explains that language servers
+may execute project code. It reuses the shared choice rows, selection marker,
+preview, and dismissal behavior. `:lsp-trust` opens the same surface later.
+The persistent host owns both the decision and overlay; attached clients
+render its existing semantic snapshot. This permission governs language
+servers and does not claim to sandbox all workspace features.

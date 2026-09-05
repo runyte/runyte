@@ -422,3 +422,13 @@ manager's remaining keys stay inside its overlay.
   search, and selection-filter prompts carry their flavour in the `PromptKind`
   variant, so the label follows the command that opened it without a second
   piece of state to keep in step.
+
+## Workspace LSP permission
+
+`:lsp-trust` is an added, command-only identity in the Language category. It
+opens the same choice overlay shown on first opening an undecided workspace:
+Keep LSP disabled, Allow LSP once, and Always allow LSP. Enter applies the
+selected row; Escape and the effective leader dismiss without granting new
+permission. The initial selection is Keep LSP disabled. Existing LSP bindings
+retain their identities and report missing workspace permission through the
+shared availability registry. No new default keybinding is assigned.

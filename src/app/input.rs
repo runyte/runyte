@@ -188,6 +188,10 @@ impl App {
         };
         let lsp_manager = if !self.config.lsp.enable {
             CommandAvailability::Unavailable("language servers are disabled in settings".to_owned())
+        } else if !self.lsp_workspace_allowed {
+            CommandAvailability::Unavailable(
+                "LSP is disabled for this workspace; use :lsp-trust".to_owned(),
+            )
         } else if !self.ports.has_lsp() {
             CommandAvailability::Unavailable("language-server manager is not attached".to_owned())
         } else {
@@ -199,6 +203,9 @@ impl App {
             ),
             Some(_) if !self.config.lsp.enable => CommandAvailability::Unavailable(
                 "language servers are disabled in settings".to_owned(),
+            ),
+            Some(_) if !self.lsp_workspace_allowed => CommandAvailability::Unavailable(
+                "LSP is disabled for this workspace; use :lsp-trust".to_owned(),
             ),
             Some(language) if !self.config.lsp.servers.contains_key(&language) => {
                 CommandAvailability::Unavailable(format!(
@@ -5035,6 +5042,10 @@ impl App {
                     Some(grammar) => self.select_grammar(grammar),
                     None => self.status(format!("active grammar: {}", self.grammar.kind())),
                 }
+                Ok(())
+            }
+            (Colon::LspTrust, InvocationParameters::None) => {
+                self.open_lsp_trust();
                 Ok(())
             }
             (Colon::LspRestart, InvocationParameters::OptionalText(language)) => {

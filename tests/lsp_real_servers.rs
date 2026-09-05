@@ -24,7 +24,6 @@ use runyte::{
     },
     text::Text,
 };
-use tokio::sync::mpsc;
 
 static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(0);
 
@@ -185,6 +184,7 @@ async fn smoke(spec: ServerSpec) {
         servers,
     };
     let (handle, mut events) = runyte::lsp::spawn(config, project.root().to_owned());
+    handle.set_allowed(true);
 
     assert!(handle.send(LspCommand::Ensure {
         language: spec.language.to_owned(),
@@ -452,7 +452,7 @@ fn labels(signatures: &[runyte::lsp::SignatureLine]) -> Vec<&str> {
 
 async fn exercise_extended(
     handle: &runyte::lsp::LspHandle,
-    events: &mut mpsc::Receiver<LspEvent>,
+    events: &mut runyte::lsp::LspEvents,
     spec: &ServerSpec,
     path: &Path,
     original: &str,
@@ -835,7 +835,7 @@ fn ranges_overlap(left: LspRange, right: LspRange) -> bool {
 }
 
 async fn wait_for_diagnostics(
-    events: &mut mpsc::Receiver<LspEvent>,
+    events: &mut runyte::lsp::LspEvents,
     spec: &ServerSpec,
     path: &Path,
     accept: impl Fn(&Vec<Diagnostic>) -> bool,
@@ -954,7 +954,7 @@ fn print_matrix(spec: &ServerSpec, capabilities: &Capabilities) {
 /// [`request_until`] uses to wait a server out.
 async fn request_once(
     handle: &runyte::lsp::LspHandle,
-    events: &mut mpsc::Receiver<LspEvent>,
+    events: &mut runyte::lsp::LspEvents,
     spec: &ServerSpec,
     path: &Path,
     token: u64,
@@ -995,7 +995,7 @@ fn enabled(flag: &str) -> bool {
 
 async fn wait_until_ready(
     language: &str,
-    events: &mut mpsc::Receiver<LspEvent>,
+    events: &mut runyte::lsp::LspEvents,
 ) -> (Encoding, Capabilities) {
     tokio::time::timeout(READY_TIMEOUT, async {
         loop {
@@ -1019,7 +1019,7 @@ async fn wait_until_ready(
 #[allow(clippy::too_many_arguments)]
 async fn request_until<T>(
     handle: &runyte::lsp::LspHandle,
-    events: &mut mpsc::Receiver<LspEvent>,
+    events: &mut runyte::lsp::LspEvents,
     spec: &ServerSpec,
     path: &Path,
     first_token: u64,

@@ -731,6 +731,7 @@ fn lsp_edit_of_an_offscreen_broken_language_merges_failure_with_outer_success() 
     let path = directory.join("offscreen.rs");
     fs::write(&path, "fn target() {}\n").unwrap();
     let mut app = app_with_broken_rust_registry();
+    app.lsp_workspace_allowed = true;
     app.apply_lsp_event(LspEvent::Ready {
         language: "rust".into(),
         generation: 1,

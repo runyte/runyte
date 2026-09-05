@@ -264,6 +264,7 @@ mod file_workflows;
 mod git_workflows;
 mod input;
 mod language_workflows;
+mod lsp_trust_workflows;
 mod movement;
 mod picker_workflows;
 mod presentation;
@@ -2847,6 +2848,8 @@ pub struct App {
     /// closed immediate predecessor from an older surviving pane. Pane swap
     /// needs that distinction so it can refuse rather than silently fall back.
     previously_focused_pane: Option<usize>,
+    lsp_trust: Option<crate::lsp_trust::TrustStore>,
+    lsp_workspace_allowed: bool,
     lsp_servers: HashMap<String, ServerState>,
     lsp_documents: HashMap<usize, DocumentState>,
     lsp_requests: HashMap<u64, TrackedRequest>,
@@ -3285,6 +3288,8 @@ impl App {
             pane_opened_at: HashMap::from([(0, 1)]),
             pane_activated_at: HashMap::from([(0, 1)]),
             previously_focused_pane: None,
+            lsp_trust: None,
+            lsp_workspace_allowed: false,
             lsp_servers: HashMap::new(),
             lsp_documents: HashMap::new(),
             lsp_requests: HashMap::new(),
@@ -3385,6 +3390,10 @@ fn outcome_clause(outcome: &str, message: &str) -> String {
 /// What a picker row stands for.
 #[derive(Clone, Debug)]
 enum ListAction {
+    LspTrust {
+        allowed: bool,
+        remember: bool,
+    },
     Jump(crate::lsp::Location),
     OpenPath(PathBuf),
     CodeAction(usize),
