@@ -312,6 +312,7 @@ pending, the status row keeps a rotating spinner directly beside
 
 ### Documentation
 
+- [Frequently asked questions](docs/faq.md)
 - [User guide and complete feature reference](docs/user-guide.md)
 - [Keybindings and command reference](docs/user-guide.md#key-bindings)
 - [Configuration](docs/user-guide.md#configuration)
