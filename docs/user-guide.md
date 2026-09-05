@@ -1445,6 +1445,7 @@ context; scoped explorer keys are documented under
 | `Ctrl-o` / `Ctrl-i`; `Alt-o` / `Alt-i` | Jump backward / forward through every navigation point; jump backward / forward to another buffer |
 | `Tab` | Open contextual actions for the selection or row under the caret |
 | `Ctrl-s` | Save |
+| `Ctrl-v` | Paste the system clipboard, storing an image in the workspace and writing a numbered Markdown link to it; also bound in Insert mode |
 | `:` | Open the command palette |
 | `\|` | Shell pipe (reserved but unsupported) |
 | `<n>` before a command | Repeat a motion or countable command |
@@ -1465,6 +1466,38 @@ same content can be pasted over one range after another, and a multi-selection
 from a search replaces every match at once. `P` never replaces: it stays the
 way to reach the start of a selection without giving up what is selected.
 `Space c p` and `Space c P` follow the same rule from the system clipboard.
+
+`Ctrl-v` is the paste key an image arrives on, in Normal, Select, Insert, and
+Replace alike. A terminal cannot draw a picture, so a clipboard holding one is
+stored under `.runyte/cache/images/` in the workspace and the document is given
+a numbered Markdown link to it, such as
+`[Image 1](.runyte/cache/images/1f0a2b3c4d5e6f70.png)`. The file is named by
+the hash of its own content, so pasting the same screenshot twice costs one
+file, and the number continues past the highest `[Image N]` the document
+already holds rather than counting how many it has. `?` renders that link as
+**Image 1** alone, without the path. A clipboard holding no image — or a
+machine with no helper that can hand one over, or one whose display server is
+not answering — pastes text instead, exactly as `Space c p` does, so `Ctrl-v`
+stays useful wherever an ordinary paste works.
+
+A clipboard offering text *as well as* a picture counts as holding text.
+Copying a range of spreadsheet cells or a formatted passage attaches a rendered
+bitmap so that a "paste as picture" command has something to use, and taking
+that bitmap would leave `Ctrl-v` unable to paste the text actually selected. A
+copied picture looks different: an image with no text beside it, which is what
+a screenshot tool and a browser's "Copy Image" both produce. If `Ctrl-v` pastes
+text where an image was expected, this rule is why, and the source is
+advertising a text form of what was copied. Once the clipboard has said it
+holds an image, failing to fetch it is reported rather than quietly pasting
+text in its place. `Ctrl-v` is deliberately unbound inside a terminal, where it
+still reaches the program running there.
+
+`.runyte/` is not tracked by Git, so a pasted image travels with the working
+copy rather than with the commit. A document that will be read from another
+clone needs its images moved somewhere the repository carries, and the links
+updated to match. A path holding a space or a parenthesis is written in angle
+brackets, `[Image 1](<My Notes/a (copy).png>)`, which is the only spelling that
+survives being read back.
 
 A yank ends the gesture that chose the text. `y` and `Y` return Normal mode and
 collapse every range to a caret on the last character copied, keeping one caret
@@ -1499,6 +1532,7 @@ The direct editing keys shared by Insert and Replace modes are:
 | `Ctrl-x` | Ask the language server for completions |
 | `Ctrl-c` | Comment or uncomment the lines holding the carets |
 | `Ctrl-s` | Save |
+| `Ctrl-v` | Paste the system clipboard, storing an image in the workspace and writing a numbered Markdown link to it |
 | `Ctrl-w` then a pane suffix | Move to another pane without first leaving Insert or Replace mode |
 
 Backspace or Shift-Backspace in Replace mode retraces the current overwrite

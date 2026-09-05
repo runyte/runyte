@@ -720,11 +720,37 @@ fn inline(source: &str, base: Option<Scope>, palette: Palette) -> Vec<Piece> {
             }),
             '[' | '!' => link(&characters, index).map(|parsed| {
                 flush(&mut pieces, &mut plain, base);
-                pieces.extend(inline(&parsed.text, Some(palette.link_text), palette));
-                // A link's destination is something a reader can act on; an
-                // image's is a file this terminal will not be showing, and
+                // A link's destination is something a reader can act on; a
+                // picture's is a file this terminal will not be showing, and
                 // printing it buries the description that stands in for it.
-                if !parsed.image && !parsed.url.is_empty() {
+                // Both spellings of a picture are read the same way: `!` says
+                // so outright, and a plain link at an image file is one too,
+                // which is how a pasted `[Image 1](…/1f0a.png)` reads as
+                // `Image 1` rather than as its cache path.
+                let picture = parsed.image || names_an_image(&parsed.url);
+                // The description is all that survives, so it is emphasised
+                // rather than left looking like the prose around it: bold is
+                // what stands in for a picture that cannot be drawn.
+                let scope = if picture {
+                    palette.bold
+                } else {
+                    palette.link_text
+                };
+                if picture && parsed.text.is_empty() {
+                    // `![](diagram.png)` describes itself with nothing at all.
+                    // Dropping the destination too would leave the page with
+                    // no trace that a picture is here, so the file name stands
+                    // in for the description nobody wrote. It is pushed
+                    // whole rather than read as inline markup, because it is a
+                    // file name and a `*` in one is part of the name.
+                    pieces.push(Piece {
+                        text: destination_name(&parsed.url).to_owned(),
+                        scope: Some(scope),
+                    });
+                } else {
+                    pieces.extend(inline(&parsed.text, Some(scope), palette));
+                }
+                if !picture && !parsed.url.is_empty() {
                     pieces.push(Piece {
                         text: format!(" ({})", parsed.url),
                         scope: Some(palette.link_url),
@@ -918,25 +944,89 @@ fn link(characters: &[char], index: usize) -> Option<ParsedLink> {
     if characters.get(close + 1) != Some(&'(') {
         return None;
     }
-    let end = characters[close + 2..]
-        .iter()
-        .take(INLINE_SCAN_LIMIT)
-        .position(|value| *value == ')')
-        .map(|offset| close + 2 + offset)?;
+    let open = close + 2;
+    let scan_from = |from: usize, wanted: char| {
+        characters[from..]
+            .iter()
+            .take(INLINE_SCAN_LIMIT)
+            .position(|value| *value == wanted)
+            .map(|offset| from + offset)
+    };
+    // A destination wrapped in angle brackets ends at its closing bracket, so
+    // a space or a parenthesis inside it is part of the path rather than the
+    // end of the link. That is the only spelling a path containing either can
+    // be written in, and the one Runyte writes when it has to.
+    //
+    // The bracket has to be closed by the link itself: `>` must be followed
+    // immediately by the `)`, and no second `<` may appear inside. Without
+    // both, `[a](<x.png) and 5 > 3 (done)` would find the `>` of a comparison
+    // further along the line and swallow everything up to a later `)` as one
+    // enormous destination. A `<` that does not close this way is not a
+    // bracketed destination and not a link, which is what CommonMark says too.
+    let (url, end) = if characters.get(open) == Some(&'<') {
+        let bracket = scan_from(open + 1, '>')?;
+        if characters.get(bracket + 1) != Some(&')') || characters[open + 1..bracket].contains(&'<')
+        {
+            return None;
+        }
+        (
+            characters[open + 1..bracket].iter().collect::<String>(),
+            bracket + 1,
+        )
+    } else {
+        let end = scan_from(open, ')')?;
+        let target = characters[open..end].iter().collect::<String>();
+        // A title after the destination is help for a mouse that is not here.
+        let url = target
+            .split_once(char::is_whitespace)
+            .map_or(target.as_str(), |(url, _)| url)
+            .trim()
+            .to_owned();
+        (url, end)
+    };
     let text = characters[start + 1..close].iter().collect::<String>();
-    let target = characters[close + 2..end].iter().collect::<String>();
-    // A title after the destination is help for a mouse that is not here.
-    let url = target
-        .split_once(char::is_whitespace)
-        .map_or(target.as_str(), |(url, _)| url)
-        .trim()
-        .to_owned();
     Some(ParsedLink {
         text,
         url,
         image,
         length: end + 1 - index,
     })
+}
+
+/// File extensions a link destination is read as a picture by.
+const IMAGE_EXTENSIONS: &[&str] = &[
+    "apng", "avif", "bmp", "gif", "ico", "jpeg", "jpg", "png", "svg", "tif", "tiff", "webp",
+];
+
+/// The final path segment of a link destination.
+///
+/// A query or fragment belongs to the request rather than to the name, and
+/// sits after the extension it would otherwise hide.
+fn destination_name(url: &str) -> &str {
+    url.split(['?', '#'])
+        .next()
+        .unwrap_or(url)
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(url)
+}
+
+/// Whether a link destination names an image file.
+///
+/// This is the extension and nothing else. Reading the file to find out would
+/// make rendering a page depend on what is on disk, and a destination that is
+/// a URL is not on this disk at all; a name ending in `.png` is the only thing
+/// both cases share.
+fn names_an_image(url: &str) -> bool {
+    let Some((stem, extension)) = destination_name(url).rsplit_once('.') else {
+        return false;
+    };
+    // A bare `.png` is a hidden file named for the format, not a picture
+    // called nothing at all.
+    !stem.is_empty()
+        && IMAGE_EXTENSIONS
+            .iter()
+            .any(|known| extension.eq_ignore_ascii_case(known))
 }
 
 /// A bare `<https://…>` link.
@@ -1077,6 +1167,119 @@ mod tests {
     fn a_task_list_keeps_its_state_in_the_marker_column() {
         let rendered = render("- [ ] open\n- [x] done\n");
         assert_eq!(rendered.text(), "• ☐ open\n• ☑ done\n");
+    }
+
+    /// A pasted image is a plain link at a file this terminal cannot draw, so
+    /// the page keeps the description and drops the cache path that would
+    /// otherwise be most of the line.
+    #[test]
+    fn a_link_to_an_image_shows_only_its_description() {
+        let rendered = render("Look at [Image 1](.runyte/cache/images/1f0a2b.png) here.\n");
+        assert_eq!(rendered.text(), "Look at Image 1 here.\n");
+        assert_eq!(scoped(&rendered, "markup.bold"), ["Image 1"]);
+        assert_eq!(scoped(&rendered, "markup.link.url"), [] as [&str; 0]);
+
+        // The `!` spelling of the same picture reads identically.
+        assert_eq!(render("![Image 1](a/b.png)\n").text(), "Image 1\n");
+        assert_eq!(
+            scoped(&render("![Image 1](a/b.png)\n"), "markup.bold"),
+            ["Image 1"]
+        );
+
+        // A destination that merely lives beside images is still a link.
+        let rendered = render("[notes](.runyte/cache/images/readme.md)\n");
+        assert_eq!(rendered.text(), "notes (.runyte/cache/images/readme.md)\n");
+        assert_eq!(scoped(&rendered, "markup.link.text"), ["notes"]);
+    }
+
+    /// A picture nobody described would otherwise render as nothing at all,
+    /// leaving the page with no trace that one is there.
+    #[test]
+    fn a_picture_with_no_description_falls_back_to_its_file_name() {
+        let rendered = render("![](diagrams/flow.png)\n");
+        assert_eq!(rendered.text(), "flow.png\n");
+        assert_eq!(scoped(&rendered, "markup.bold"), ["flow.png"]);
+
+        // The same holds for the plain-link spelling Runyte itself writes.
+        assert_eq!(render("[](a/b/shot.jpeg)\n").text(), "shot.jpeg\n");
+
+        // A described picture is unaffected.
+        assert_eq!(render("![a plan](diagrams/flow.png)\n").text(), "a plan\n");
+    }
+
+    /// A destination in angle brackets ends at its bracket, which is the only
+    /// way to write a path holding a space or a parenthesis — and the spelling
+    /// Runyte writes when a pasted image lands under such a path.
+    #[test]
+    fn an_angle_bracketed_destination_may_hold_spaces_and_parentheses() {
+        let rendered = render("[Image 1](<My Notes/a (copy).png>)\n");
+        assert_eq!(rendered.text(), "Image 1\n");
+        assert_eq!(scoped(&rendered, "markup.bold"), ["Image 1"]);
+
+        // Whatever `pasted_image::destination` writes, this reads back: it
+        // percent-encodes both brackets precisely so the wrapper it emits
+        // survives the rule above.
+        let written = crate::pasted_image::destination("odd<name/a (1).png");
+        let rendered = render(&format!("[Image 1]({written})\n"));
+        assert_eq!(rendered.text(), "Image 1\n");
+        assert_eq!(scoped(&rendered, "markup.bold"), ["Image 1"]);
+
+        // The same brackets around an ordinary link show the destination
+        // without them.
+        let rendered = render("[the guide](<My Docs/user guide.md>)\n");
+        assert_eq!(rendered.text(), "the guide (My Docs/user guide.md)\n");
+        assert_eq!(
+            scoped(&rendered, "markup.link.url"),
+            [" (My Docs/user guide.md)"]
+        );
+
+        // An opening bracket that never closes is not a link at all.
+        assert_eq!(
+            render("[a](<unclosed.png)\n").text(),
+            "[a](<unclosed.png)\n"
+        );
+
+        // Nor is one whose `>` is a comparison further along the line. The
+        // bracket has to be closed by the link itself, or a stray `>` would
+        // swallow the rest of the line as one enormous destination.
+        for literal in [
+            "[a](<x.png) and 5 > 3 (done)\n",
+            // A second `<` inside means the first never opened a destination.
+            "[a](<x <y>.png)\n",
+            // A title after a bracketed destination is not something this
+            // reads, so the whole construct stays as its own source.
+            "[a](<x.png> \"a title\")\n",
+        ] {
+            assert_eq!(render(literal).text(), literal, "{literal}");
+        }
+    }
+
+    #[test]
+    fn an_image_destination_is_recognised_by_its_name_alone() {
+        for image in [
+            "a.png",
+            "A.PNG",
+            "./deep/path/shot.jpeg",
+            "https://example.com/a.webp?width=10",
+            "https://example.com/a.svg#top",
+            "C:\\pictures\\a.bmp",
+        ] {
+            assert!(names_an_image(image), "{image} should read as a picture");
+        }
+        for other in [
+            "",
+            "docs/user-guide.md",
+            "https://example.com/",
+            "a.png.md",
+            // A hidden file named for a format is not a picture called
+            // nothing at all.
+            ".png",
+            "images/.webp",
+            // The extension has to be the whole final segment.
+            "notpng",
+        ] {
+            assert!(!names_an_image(other), "{other} should read as a link");
+        }
     }
 
     #[test]

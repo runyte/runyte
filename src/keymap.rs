@@ -1109,6 +1109,13 @@ fn built_in_bindings() -> Vec<Binding> {
         // Ctrl-s was Runyte's original save shortcut. Helix assigns it to
         // save_selection; Runyte retains the global save compatibility key.
         modal(Key::ctrl('s'), Command::Save),
+        // The key every other program pastes with, and the only way an image
+        // reaches a document. It is bound in Insert as well as in the modal
+        // modes because a picture is pasted while writing the paragraph that
+        // introduces it, not after leaving it. Terminal Insert is deliberately
+        // untouched, so Ctrl-v still reaches the child program running there.
+        modal(Key::ctrl('v'), Command::ClipboardPaste),
+        insert(Key::ctrl('v'), Command::ClipboardPaste),
         modal(Key::ctrl('o'), Command::JumpBackward),
         // Alt rather than Ctrl-Shift: without a disambiguating keyboard
         // protocol, Ctrl-O and Ctrl-o arrive as the same control byte.

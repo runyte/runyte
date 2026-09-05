@@ -978,6 +978,213 @@ fn pasted_text_reaches_an_open_picker_and_list_rather_than_the_buffer() {
     fs::remove_dir_all(root).unwrap();
 }
 
+/// A clipboard that can hold a picture as well as text, so a paste key can be
+/// asked what it does with each.
+struct ImageClipboard {
+    image: Option<Vec<u8>>,
+    text: String,
+    /// Set when reading an image fails the way a broken display server does,
+    /// which must not read as an absent image.
+    refuse_image: bool,
+}
+
+impl ImageClipboard {
+    fn holding(image: &[u8]) -> Self {
+        Self {
+            image: Some(image.to_vec()),
+            text: String::new(),
+            refuse_image: false,
+        }
+    }
+
+    fn text(text: &str) -> Self {
+        Self {
+            image: None,
+            text: text.to_owned(),
+            refuse_image: false,
+        }
+    }
+}
+
+impl SystemClipboard for ImageClipboard {
+    fn read(&mut self) -> Result<String> {
+        Ok(self.text.clone())
+    }
+
+    fn write(&mut self, text: &str) -> Result<()> {
+        self.text = text.to_owned();
+        Ok(())
+    }
+
+    fn read_image(&mut self) -> Result<Option<Vec<u8>>> {
+        if self.refuse_image {
+            anyhow::bail!("no clipboard helper");
+        }
+        Ok(self.image.clone())
+    }
+}
+
+fn png(tail: &str) -> Vec<u8> {
+    let mut bytes = b"\x89PNG\r\n\x1a\n".to_vec();
+    bytes.extend_from_slice(tail.as_bytes());
+    bytes
+}
+
+/// `Ctrl-v` is the only way a picture reaches a document, and what it writes
+/// is an ordinary Markdown link: the bytes go into the workspace under a name
+/// taken from their own content, and the document gets a numbered reference to
+/// that file.
+#[test]
+fn ctrl_v_stores_a_clipboard_image_and_writes_a_numbered_link() {
+    let fixture = temporary("clipboard-image-paste");
+    let project = fixture.join("project");
+    let notes = project.join("notes.md");
+    fs::create_dir_all(&project).unwrap();
+    fs::write(&notes, "").unwrap();
+    let mut app = App::new_in_project(Config::default(), Some(notes), &project).unwrap();
+
+    let first = png("first");
+    app.set_system_clipboard(Box::new(ImageClipboard::holding(&first)));
+    press(&mut app, 'i');
+    key(&mut app, KeyCode::Char('v'), Modifiers::CONTROL);
+
+    let first_name = crate::pasted_image::file_name(&first, crate::pasted_image::ImageFormat::Png);
+    assert_eq!(
+        text(&app),
+        format!("[Image 1](.runyte/cache/images/{first_name})")
+    );
+    let stored = project.join(".runyte/cache/images").join(&first_name);
+    assert_eq!(
+        fs::read(&stored).unwrap(),
+        first,
+        "the bytes reached the workspace"
+    );
+
+    // A second picture continues the numbering and gets a name of its own.
+    let second = png("second");
+    app.set_system_clipboard(Box::new(ImageClipboard::holding(&second)));
+    key(&mut app, KeyCode::Char('v'), Modifiers::CONTROL);
+    let second_name =
+        crate::pasted_image::file_name(&second, crate::pasted_image::ImageFormat::Png);
+    assert_ne!(second_name, first_name);
+    assert_eq!(
+        text(&app),
+        format!(
+            "[Image 1](.runyte/cache/images/{first_name})[Image 2](.runyte/cache/images/{second_name})"
+        )
+    );
+
+    // The same key pastes text when that is what the clipboard holds, which is
+    // what lets one key be the paste key.
+    app.set_system_clipboard(Box::new(ImageClipboard::text(" and prose")));
+    key(&mut app, KeyCode::Char('v'), Modifiers::CONTROL);
+    assert!(text(&app).ends_with(" and prose"), "{}", text(&app));
+
+    // The rendered page keeps the description and drops the cache path.
+    key(&mut app, KeyCode::Escape, Modifiers::NONE);
+    press(&mut app, '?');
+    let rendered = text(&app);
+    assert!(rendered.contains("Image 1"), "{rendered}");
+    assert!(rendered.contains("Image 2"), "{rendered}");
+    assert!(!rendered.contains(".runyte"), "{rendered}");
+    let buffer = app.active().buffer;
+    let spans = app.highlights(buffer, 0, app.buffers[buffer].len_chars());
+    assert!(
+        spans.iter().any(|span| span.scope.name() == "markup.bold"),
+        "the reference is emphasised on the page"
+    );
+
+    fs::remove_dir_all(fixture).unwrap();
+}
+
+/// Numbering continues from the document rather than from a counter the
+/// editor keeps, so a file reopened in a later session does not restart at
+/// one.
+#[test]
+fn image_numbering_continues_from_what_the_document_already_holds() {
+    let fixture = temporary("clipboard-image-numbering");
+    let project = fixture.join("project");
+    let notes = project.join("notes.md");
+    fs::create_dir_all(&project).unwrap();
+    fs::write(&notes, "[Image 4](old.png)\n").unwrap();
+    let mut app = App::new_in_project(Config::default(), Some(notes), &project).unwrap();
+
+    app.set_system_clipboard(Box::new(ImageClipboard::holding(&png("late"))));
+    press(&mut app, 'G');
+    press(&mut app, 'i');
+    key(&mut app, KeyCode::Char('v'), Modifiers::CONTROL);
+
+    assert!(text(&app).contains("[Image 5]("), "{}", text(&app));
+    fs::remove_dir_all(fixture).unwrap();
+}
+
+/// A read-only view refuses before anything is written, so a refused paste
+/// cannot leave a file in the workspace that nothing points at.
+#[test]
+fn a_refused_image_paste_stores_nothing() {
+    let fixture = temporary("clipboard-image-refused");
+    let project = fixture.join("project");
+    let notes = project.join("notes.md");
+    fs::create_dir_all(&project).unwrap();
+    fs::write(&notes, "# Title\n").unwrap();
+    let mut app = App::new_in_project(Config::default(), Some(notes), &project).unwrap();
+    app.set_system_clipboard(Box::new(ImageClipboard::holding(&png("refused"))));
+
+    // The rendered page is read-only, and so is every generated view.
+    press(&mut app, '?');
+    assert!(app.active_buffer().is_read_only());
+    key(&mut app, KeyCode::Char('v'), Modifiers::CONTROL);
+
+    assert!(
+        !crate::pasted_image::cache_directory(&app.state_root).exists(),
+        "a refused paste created the image cache"
+    );
+    fs::remove_dir_all(fixture).unwrap();
+}
+
+/// Bytes that are not a picture Runyte can name are refused rather than stored
+/// under a guessed extension.
+#[test]
+fn an_unrecognised_clipboard_image_is_refused() {
+    let fixture = temporary("clipboard-image-unknown");
+    let project = fixture.join("project");
+    let notes = project.join("notes.md");
+    fs::create_dir_all(&project).unwrap();
+    fs::write(&notes, "").unwrap();
+    let mut app = App::new_in_project(Config::default(), Some(notes), &project).unwrap();
+    app.set_system_clipboard(Box::new(ImageClipboard::holding(b"not a picture")));
+
+    press(&mut app, 'i');
+    key(&mut app, KeyCode::Char('v'), Modifiers::CONTROL);
+
+    assert_eq!(text(&app), "");
+    assert!(!crate::pasted_image::cache_directory(&app.state_root).exists());
+    fs::remove_dir_all(fixture).unwrap();
+}
+
+/// A clipboard that fails while being asked for an image is reported rather
+/// than quietly pasting whatever text happens to be behind it.
+#[test]
+fn a_failing_image_read_is_reported() {
+    let fixture = temporary("clipboard-image-failure");
+    let project = fixture.join("project");
+    let notes = project.join("notes.md");
+    fs::create_dir_all(&project).unwrap();
+    fs::write(&notes, "").unwrap();
+    let mut app = App::new_in_project(Config::default(), Some(notes), &project).unwrap();
+    app.set_system_clipboard(Box::new(ImageClipboard {
+        image: None,
+        text: "stale text".to_owned(),
+        refuse_image: true,
+    }));
+
+    press(&mut app, 'i');
+    key(&mut app, KeyCode::Char('v'), Modifiers::CONTROL);
+
+    assert_eq!(text(&app), "", "a failed read pasted text anyway");
+    fs::remove_dir_all(fixture).unwrap();
+}
+
 pub(super) struct MemoryClipboard(pub(super) Arc<Mutex<String>>);
 
 impl SystemClipboard for MemoryClipboard {

@@ -3881,6 +3881,7 @@ impl App {
             Command::ClipboardPasteAfter => self.clipboard_paste(false),
             Command::ClipboardPasteBefore => self.clipboard_paste(true),
             Command::ClipboardYank => self.clipboard_yank(),
+            Command::ClipboardPaste => self.clipboard_paste_any(),
             Command::ShellPipe => {
                 self.action_failed(format!(
                     "{} is not available",

@@ -57,6 +57,12 @@ Keep repository development context and runtime workspace state separate:
   and durable project decisions belong here.
 - `.runyte/` is Git-ignored editor runtime state used by the optional
   persistent session host and its local transport/lock files.
+- `.runyte/cache/images/` is the one exception: images pasted with `Ctrl-v`
+  are kept there, and a tracked document may hold a link into it. That content
+  is therefore not disposable the way the rest of `.runyte/` is, and it is not
+  committed with the document that refers to it, so a clone of the repository
+  resolves those links only if the directory is carried across by hand.
+  Anything else durable a reader would miss belongs in the project proper.
 - Never put runtime state under `context/`.
 - Never put credentials, secrets, private model reasoning, or unrestricted
   tool output in tracked context.
@@ -183,6 +189,10 @@ and the order of the push. Do not infer any of those from the commit history.
   identity code.
 - `src/path_safety.rs`: canonical project-path containment checks shared by
   editor integrations.
+- `src/pasted_image.rs`: where an image pasted from the clipboard is kept and
+  what the document calls it — the workspace cache directory, the name taken
+  from the image's own content hash, and the numbered `[Image N](…)` reference.
+  Knows nothing about buffers, panes, or the clipboard the bytes came from.
 - `src/diff.rs`: the one line diff. Two slices of lines in, a run-by-run
   correspondence out, plus the aligned row space in which matching lines sit
   level. Knows nothing about Git, buffers, or panes; the Git gutter and the

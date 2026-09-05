@@ -2,6 +2,10 @@
 
 //! Search traversal, macros, clipboard actions, undo, and viewport scrolling.
 
+use std::path::Path;
+
+use crate::pasted_image::ImageFormat;
+
 // Application-module dependencies:
 use super::{
     App, BindingScope, BindingTarget, DEFAULT_MACRO_REGISTER, EditorCommand, InputGrammar,
@@ -54,6 +58,99 @@ impl App {
                 self.error_from("Clipboard", "Clipboard operation failed", error.to_string())
             }
         }
+    }
+
+    /// Pastes whatever the system clipboard holds, preferring an image.
+    ///
+    /// This is the one key that can bring a picture into a document. A
+    /// terminal cannot draw one, so the image is stored in the workspace and
+    /// the document is given a numbered Markdown reference to it; the rendered
+    /// page then shows that reference as its description alone.
+    ///
+    /// A clipboard holding no image, or one this platform has no helper to
+    /// hand an image over with, falls through to the ordinary system-clipboard
+    /// text paste. That is what makes this *the* paste key rather than a
+    /// second, differently-shaped one a reader has to choose between before
+    /// knowing what they copied.
+    pub(super) fn clipboard_paste_any(&mut self) {
+        match self.ports.clipboard().read_image() {
+            Ok(Some(bytes)) => self.paste_clipboard_image(&bytes),
+            Ok(None) => self.clipboard_paste(false),
+            Err(error) => {
+                self.error_from("Clipboard", "Clipboard operation failed", error.to_string())
+            }
+        }
+    }
+
+    /// Stores a clipboard image in the workspace and writes its reference.
+    ///
+    /// The refusals come before the write: a buffer that will not take the
+    /// reference must not leave a file behind in `.runyte` that nothing points
+    /// at.
+    fn paste_clipboard_image(&mut self, bytes: &[u8]) {
+        if let Some(reason) = self.active_buffer().read_only_reason() {
+            self.action_failed(reason);
+            return;
+        }
+        if self.active_buffer().is_directory() {
+            self.action_failed("a directory listing does not hold images");
+            return;
+        }
+        let Some(format) = ImageFormat::detect(bytes) else {
+            self.action_failed("the system clipboard image is in an unrecognised format");
+            return;
+        };
+        let stored = match crate::pasted_image::store(&self.state_root, bytes, format) {
+            Ok(path) => path,
+            Err(error) => {
+                self.error_from(
+                    "Clipboard",
+                    "Cannot store the pasted image",
+                    error.to_string(),
+                );
+                return;
+            }
+        };
+        let target = self.image_reference_target(&stored);
+        let number = crate::pasted_image::next_number(self.active_buffer().lines());
+        let reference = crate::pasted_image::reference(number, &target);
+        // Insert and Replace put the reference where the caret is, exactly as
+        // typing it would. The modal modes go through the register paste so
+        // that a bare caret pastes after itself and a selection is replaced,
+        // which is what every other paste in this editor does.
+        if matches!(self.mode, Mode::Insert | Mode::Replace) {
+            self.insert_text(&reference);
+        } else {
+            self.paste_register(
+                &Register {
+                    text: reference,
+                    linewise: false,
+                    directory: None,
+                },
+                false,
+            );
+        }
+        self.status(format!("pasted Image {number} as {target}"));
+    }
+
+    /// How a stored image is spelled in the document that refers to it.
+    ///
+    /// Project-relative rather than relative to the document: a scratchpad has
+    /// no directory of its own for a link to be relative to, and these
+    /// documents are written to be handed to tools that resolve paths from the
+    /// workspace root. A state root configured outside the project has no
+    /// relative spelling and keeps its absolute one, so both spellings go
+    /// through the same normalisation rather than only the one that is usually
+    /// taken.
+    fn image_reference_target(&self, stored: &Path) -> String {
+        let path = stored
+            .strip_prefix(&self.project_root)
+            .unwrap_or(stored)
+            .to_string_lossy()
+            // Markdown separates path segments with `/` on every platform, and
+            // an absolute Windows destination is a path like any other.
+            .replace('\\', "/");
+        crate::pasted_image::destination(&path)
     }
 
     /// The key that both starts and finishes an unnamed recording.

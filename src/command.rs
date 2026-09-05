@@ -791,6 +791,7 @@ editor_commands! {
     ClipboardPasteAfter => ("clipboard-paste-after", "Paste from the system clipboard"),
     ClipboardPasteBefore => ("clipboard-paste-before", "Paste before from the system clipboard"),
     ClipboardYank => ("clipboard-yank", "Yank to the system clipboard"),
+    ClipboardPaste => ("clipboard-paste", "Paste an image or text from the clipboard"),
     SelectRegister => ("select-register", "Select a register"),
     RecordMacro => ("record-macro", "Record a macro named by the next key"),
     RecordDefaultMacro => ("record-default-macro", "Record the default macro, or stop recording"),
@@ -825,6 +826,7 @@ impl EditorCommand {
                 | Self::PasteBefore
                 | Self::ClipboardPasteAfter
                 | Self::ClipboardPasteBefore
+                | Self::ClipboardPaste
                 | Self::Indent
                 | Self::Unindent
                 | Self::ToggleComments
@@ -1107,9 +1109,10 @@ impl EditorCommand {
             | Self::RenameSymbol
             | Self::CodeAction
             | Self::MatchBracket => CommandCategory::Language,
-            Self::ClipboardPasteAfter | Self::ClipboardPasteBefore | Self::ClipboardYank => {
-                CommandCategory::Clipboard
-            }
+            Self::ClipboardPasteAfter
+            | Self::ClipboardPasteBefore
+            | Self::ClipboardPaste
+            | Self::ClipboardYank => CommandCategory::Clipboard,
             Self::SelectRegister
             | Self::RecordMacro
             | Self::RecordDefaultMacro

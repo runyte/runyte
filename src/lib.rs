@@ -41,6 +41,7 @@ pub mod lsp;
 pub mod manual;
 pub mod markdown;
 pub mod notification;
+pub mod pasted_image;
 pub mod path_safety;
 pub mod picker;
 #[cfg(unix)]
