@@ -9,8 +9,16 @@ Plans are grouped by their relationship to the current editor:
 - `superseded/` contains plans whose unfinished work was replaced by a later
   decision.
 
-Empty lifecycle directories are omitted and created only when needed. No plan
-is currently active or proposed.
+Empty lifecycle directories are omitted and created only when needed.
+
+Active work:
+
+- [Filesystem-plan data safety](active/PLAN_FS_PLAN_DATA_SAFETY.md): atomic
+  destination collision protection, safe rollback, and recoverable staging
+  on Linux and macOS. The design is recorded; implementation has not started.
+  Full hostile-process filesystem confinement remains deferred.
+
+No plan is currently proposed.
 
 Completed plans are decision records, not a second user guide. Current behavior
 belongs in `README.md`, `docs/user-guide.md`, the source, and the relevant file

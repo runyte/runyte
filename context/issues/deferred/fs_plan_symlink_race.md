@@ -19,3 +19,20 @@ An attempted localized fix showed that pinning only the root or parent directory
 Fixing this correctly requires a broader capability-based, platform-specific filesystem layer rather than additional checks inside `FsPlan`. That layer needs stable directory capabilities, descriptor- or handle-relative component walks, atomic no-replace publication, exact-object staging and rollback, recursive operations that never follow substituted entries, and a safe platform trash abstraction. Unsupported platforms must have an explicit product policy instead of silently falling back to ambient paths or losing core explorer behavior.
 
 The issue is deferred until that filesystem capability boundary is designed. A narrow patch is not being retained because it would either leave exploitable check/use windows or introduce substantial editor regressions, particularly for trash deletion and non-Linux platforms.
+
+## Scoped data-safety work
+
+The [filesystem-plan data-safety plan](../../plans/active/PLAN_FS_PLAN_DATA_SAFETY.md)
+records the 2026-09-05 decision to implement a narrower set of guarantees:
+atomic destination collision protection during staging and publication,
+rollback that preserves concurrently recreated source entries and retains
+originals for recovery, and ownership-aware temporary-copy cleanup. The plan
+is active; implementation has not started.
+
+This scope supersedes the earlier rejection of narrow patches only for those
+independently testable data-loss protections. It does not claim to resolve
+symlink confinement or source replacement races. The broader capability
+boundary, including native trash and recursive operations under hostile
+substitution, remains deferred. Completion of the data-safety plan must leave
+this issue deferred and record the implemented mitigations and remaining
+limitations here.
