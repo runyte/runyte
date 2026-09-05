@@ -1,6 +1,6 @@
 # Filesystem-plan data safety
 
-Status: active implementation; Linux validated, native macOS validation pending
+Status: completed 2026-09-05; Linux and native macOS validated
 
 Created: 2026-09-05
 
@@ -227,8 +227,7 @@ collision; preserve accurate reporting rather than promising reversibility.
   primitive, support/error policy, and a private per-application test hook or
   injected internal operations boundary. Test actual OS collision behavior on
   both supported platforms. Avoid a public testing API or global mutable hook.
-  Implementation and Linux checks are complete; native macOS execution remains
-  part of the final validation milestone.
+  Implementation and native Linux/macOS checks are complete.
 - [x] **2. Move staging, publication, and recovery.** Add owned staging records,
   exclusive rename at every move/rollback site, structured retained-original
   reporting, and minimum editor integration. Include rename-cycle regression
@@ -236,7 +235,7 @@ collision; preserve accurate reporting rather than promising reversibility.
 - [x] **3. Copy ownership and cleanup.** Replace overwriting copy creation,
   publish exclusively, and make cleanup preserve ambiguous artifacts. Cover
   nested copies and links. Complete target metadata error handling.
-- [ ] **4. Editor validation and documentation.** Test partial-application
+- [x] **4. Editor validation and documentation.** Test partial-application
   reconciliation and recoverable errors, document the exact guarantees in
   `docs/user-guide.md`, and complete Linux/macOS validation and coverage checks.
 
@@ -269,7 +268,8 @@ is separate from metadata preservation.
 
 `src/fs_plan/tests/macos.rs` covers metadata-preserving copies of regular files
 and nested files, publication collisions with distinct competing metadata,
-and native error propagation. These tests require native macOS execution.
+and native error propagation. These tests passed on native macOS during
+milestone 4 validation.
 `file_copy_uses_owned_handles_after_destination_name_is_replaced` in
 `src/fs_plan/tests/mod.rs` checks on Unix that data and permission updates stay
 on the owned descriptor when its pathname is replaced.
@@ -286,8 +286,29 @@ pipe-finalizer test with `Operation not permitted` and stalled a workspace
 transport test; the suite passed outside that sandbox. The canonical
 `cargo llvm-cov --locked --workspace` run passed with 91.67% total line coverage
 (105,716 lines, 8,806 uncovered, including the macOS copy-backend follow-up),
-above the enforced 89% floor. Native macOS tests and coverage remain required
-before moving this plan to `completed/`.
+above the enforced 89% floor.
+
+Native macOS validation on 2026-09-05 passed `cargo fmt --check`,
+`cargo clippy --all-targets -- -D warnings`, `cargo test`, and the canonical
+`cargo llvm-cov --locked --workspace` command. The host was macOS 26.6.2,
+`aarch64-apple-darwin`, with Rust 1.97.1 and `cargo-llvm-cov` 0.9.0, at base
+commit `61cb882` plus the milestone 4 test and documentation changes. Both
+test runs passed 2,918 tests, with 33 existing ignored tests. They ran outside
+the sandbox because it denies Unix-socket operations: the LSP persistent-host
+test failed on that denial, and other host tests can return early for it.
+The unrestricted run exercises those paths instead of accepting sandbox skips.
+Total line coverage was 91.60% (106,514 lines, 8,947 uncovered), above the
+unchanged 89% floor. `src/fs_plan/platform.rs` reached 100% line coverage.
+The platform backend includes the metadata-preservation follow-up `a1f363b`
+and macOS test-import correction `1b2f26d`.
+
+The first native suite run also exposed two path-completion test assertions
+that required an entire absolute temporary path to fit in a fixed 120-column
+viewport. The macOS temporary-directory prefix exceeded that space.
+`the_finder_path_assistance_is_titled_for_the_finder_and_carries_no_query_of_its_own`
+and `a_hint_row_shows_the_entry_name_while_tab_still_completes_the_whole_spelling`
+in `tests/path_completion.rs` now size their viewport for the path's display
+width. No production behavior changed for milestone 4.
 
 New deterministic regressions live in `src/fs_plan/tests/mod.rs`, including
 `move_publication_collision_restores_original`,
@@ -298,6 +319,13 @@ New deterministic regressions live in `src/fs_plan/tests/mod.rs`, including
 `src/app/tests/navigation_and_files.rs` adds
 `filesystem_recovery_keeps_unsaved_source_and_replacement_protected` and
 `filesystem_confirmation_retains_recovery_paths_in_an_error_notification`.
+Milestone 4 extends the former to a partial report containing a completed
+rename alongside a retained original: only the completed rename retargets its
+open buffer, both unsaved file texts and the initiating explorer's edits
+survive, and saving the retained original's buffer refuses the replacement on
+disk. The latter forces two rollback conflicts and checks that both original
+and retained paths remain in the notification buffer after another action
+replaces the interaction-line summary.
 The existing partial-application and dangling-symlink rollback tests in
 `tests/fs_plan.rs` now inject interference through a temporary trash backend:
 invalid filenames are correctly rejected during preflight and no longer
@@ -358,10 +386,10 @@ test-created executable or touch personal trash, caches, or configuration.
 
 ## Completion and remaining deferral
 
-This plan is complete when all four milestones and acceptance tests pass on
-the supported platforms and the user guide explains collision behavior,
-retained originals, and partial application. Then move the plan to
-`completed/` and update the plan index and the deferred issue's incoming link.
+All four milestones are complete. Native Linux and macOS validation passed,
+and the user guide explains collision behavior, retained originals, recovery
+notifications, and partial application. This plan is retained in `completed/`;
+the plan index and the deferred issue link to this record.
 
 Keep `fs_plan_symlink_race.md` in `issues/deferred/`, recording implemented
 mitigations and their commit references without marking the full issue

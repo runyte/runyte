@@ -1032,6 +1032,8 @@ for operations that need it; Runyte does not fall back to overwriting rename.
 If rollback finds that an original name has been recreated, both entries are
 preserved. The ERROR notification gives the original path and the absolute
 location of the retained original inside a `.runyte-move-…` staging directory.
+The notification buffer keeps these recovery details after the interaction-line
+message changes, subject to the notification history and size limits.
 Inspect both entries before restoring the retained one to an available name.
 These staging directories can hold the only remaining copy of a file; Runyte
 does not automatically delete them on exit or when another plan runs. Failed

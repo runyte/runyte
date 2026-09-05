@@ -11,15 +11,7 @@ Plans are grouped by their relationship to the current editor:
 
 Empty lifecycle directories are omitted and created only when needed.
 
-Active work:
-
-- [Filesystem-plan data safety](active/PLAN_FS_PLAN_DATA_SAFETY.md): atomic
-  destination collision protection, safe rollback, and recoverable staging
-  on Linux and macOS. Implementation, Linux tests, and Linux coverage are
-  complete; native macOS validation remains pending.
-  Full hostile-process filesystem confinement remains deferred.
-
-No plan is currently proposed.
+No plan is currently active or proposed.
 
 Completed plans are decision records, not a second user guide. Current behavior
 belongs in `README.md`, `docs/user-guide.md`, the source, and the relevant file
@@ -28,6 +20,10 @@ current sources take precedence.
 
 The retained completed records cover:
 
+- [Filesystem-plan data safety](completed/PLAN_FS_PLAN_DATA_SAFETY.md): atomic
+  destination collision protection, safe rollback, and recoverable staging,
+  validated on native Linux and macOS. Full hostile-process filesystem
+  confinement remains deferred;
 - `PLAN_KEY_REMAPPING.md`: a bounded `keys` section that remaps default
   bindings, advertised aliases, and the application and window prefixes into
   the one keymap read by dispatch and every live teaching surface;

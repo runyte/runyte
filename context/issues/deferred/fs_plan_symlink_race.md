@@ -22,19 +22,22 @@ The issue is deferred until that filesystem capability boundary is designed. A n
 
 ## Scoped data-safety work
 
-The [filesystem-plan data-safety plan](../../plans/active/PLAN_FS_PLAN_DATA_SAFETY.md)
+The [filesystem-plan data-safety plan](../../plans/completed/PLAN_FS_PLAN_DATA_SAFETY.md)
 records the 2026-09-05 decision to implement a narrower set of guarantees:
 atomic destination collision protection during staging and publication,
 rollback that preserves concurrently recreated source entries and retains
 originals for recovery, and ownership-aware temporary-copy cleanup. These
-mitigations are implemented with Linux regression tests and canonical coverage
-at 91.67%; native macOS validation remains pending in the active plan.
+mitigations are implemented and validated on native Linux and macOS, with
+canonical total line coverage at 91.67% and 91.60% respectively. The scoped
+plan completed on 2026-09-05; the broader issue remains deferred.
 
 Implementation commit: `6a1bd25` — `Prevent filesystem-plan overwrites and
 preserve rollback originals`. Deterministic collision and recovery tests are
 in `src/fs_plan/tests/mod.rs`; editor recovery and notification tests are in
 `src/app/tests/navigation_and_files.rs`. The original integration regressions
 remain in `tests/fs_plan.rs`.
+The macOS metadata-preserving copy follow-up is `a1f363b`; its native tests
+include the import correction `1b2f26d` and passed during final validation.
 
 This scope supersedes the earlier rejection of narrow patches only for those
 independently testable data-loss protections. It does not claim to resolve

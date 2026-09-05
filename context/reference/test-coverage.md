@@ -41,6 +41,35 @@ days, and fails below 89% total line coverage. The floor is deliberately below
 the observed baseline because conditional Linux and macOS code changes both the
 instrumented denominator and the paths available to a run on one platform.
 
+## 2026-09-05 — macOS
+
+Measured with `cargo-llvm-cov` 0.9.0 and Rust 1.97.1 on
+`aarch64-apple-darwin`, macOS 26.6.2, at base commit `61cb882` plus the
+filesystem-plan milestone 4 test and documentation changes. The canonical
+`cargo llvm-cov --locked --workspace` command passed all 2,918 non-ignored
+tests; 33 tests remained ignored by their existing declarations.
+
+| Measure | Covered | Total | Coverage |
+| --- | ---: | ---: | ---: |
+| Lines | 97,567 | 106,514 | 91.60% |
+| Functions | 9,082 | 9,826 | 92.43% |
+| Regions | 151,475 | 166,283 | 91.09% |
+
+This completes native macOS validation for the
+[filesystem-plan data-safety plan](../plans/completed/PLAN_FS_PLAN_DATA_SAFETY.md).
+The native tests exercised exclusive rename collisions, resource forks,
+extended attributes, ACLs, copy errors, and recovery behavior.
+`src/fs_plan/platform.rs` reached 100% line coverage (22 of 22 lines), and
+`src/fs_plan/staging.rs` reached 97.18% (172 of 177 lines).
+The editor regressions also verify partial reconciliation with unsaved buffers
+and multiple recovery locations retained in the notification buffer.
+
+The full suite and coverage ran outside the sandbox so Unix-socket tests
+executed without sandbox denials or early returns. Two path-completion tests
+were adjusted to fit the platform's longer absolute temporary paths in their
+test viewports; production rendering was unchanged. The enforced 89% floor
+and README badge remain unchanged.
+
 ## 2026-09-04 — Linux
 
 Measured with `cargo-llvm-cov` 0.9.0 and Rust 1.97.1 on

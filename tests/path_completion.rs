@@ -638,7 +638,12 @@ fn the_finder_path_assistance_is_titled_for_the_finder_and_carries_no_query_of_i
     let typed = format!("{}/f", root.display());
 
     let mut app = finder_path_prompt(&root, &typed);
-    let drawn = standalone_screen(&mut app, 120, 24);
+    // This assertion needs the complete path, including macOS's long
+    // per-user temporary-directory prefix, to fit on the interaction line.
+    let width = u16::try_from(unicode_width::UnicodeWidthStr::width(typed.as_str()) + 64)
+        .unwrap()
+        .max(120);
+    let drawn = standalone_screen(&mut app, width, 24);
     let (_, _, _, rows) = hint_box(&drawn);
 
     assert!(
@@ -672,7 +677,11 @@ fn a_hint_row_shows_the_entry_name_while_tab_still_completes_the_whole_spelling(
     let typed = format!("{}/f", root.display());
 
     let mut app = finder_path_prompt(&root, &typed);
-    let drawn = standalone_screen(&mut app, 120, 24);
+    // Keep the resolved-path detail visible even with a long temporary root.
+    let width = u16::try_from(unicode_width::UnicodeWidthStr::width(typed.as_str()) + 64)
+        .unwrap()
+        .max(120);
+    let drawn = standalone_screen(&mut app, width, 24);
     let (_, _, _, rows) = hint_box(&drawn);
 
     let folder = rows
@@ -691,7 +700,7 @@ fn a_hint_row_shows_the_entry_name_while_tab_still_completes_the_whole_spelling(
     // Where the typed spelling is relative, the resolved path does say
     // something the name does not, and the detail column keeps it.
     let mut relative = finder_path_prompt(&root, "f");
-    let relative = standalone_screen(&mut relative, 120, 24);
+    let relative = standalone_screen(&mut relative, width, 24);
     let (_, _, _, relative_rows) = hint_box(&relative);
     let folder = relative_rows
         .iter()

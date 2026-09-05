@@ -2903,14 +2903,29 @@ fn filesystem_recovery_keeps_unsaved_source_and_replacement_protected() {
     fs::create_dir_all(&directory).unwrap();
     let original = directory.join("notes.txt");
     let retained = directory.join("retained-original");
+    let moved = directory.join("moved.txt");
+    let installed = directory.join("installed.txt");
     fs::write(&original, "baseline\n").unwrap();
+    fs::write(&moved, "moved baseline\n").unwrap();
     let mut app = App::new(Config::default(), Some(original.clone())).unwrap();
     let buffer = app.active().buffer;
     app.apply_to_buffer(buffer, &Transaction::insert(0, "local "));
+    app.open_file(moved.clone()).unwrap();
+    let moved_buffer = app.active().buffer;
+    app.apply_to_buffer(moved_buffer, &Transaction::insert(0, "local "));
+    app.open_file(directory.clone()).unwrap();
+    let explorer = app.active().buffer;
+    app.apply_to_buffer(explorer, &Transaction::insert(0, "pending.txt\n"));
+    let directory_edits = app.buffers[explorer].to_string();
+    fs::rename(&moved, &installed).unwrap();
     fs::rename(&original, &retained).unwrap();
     fs::write(&original, "concurrent replacement\n").unwrap();
     let report = ApplyReport {
-        applied: Vec::new(),
+        applied: vec![FsOperation::Rename {
+            from: PathBuf::from("moved.txt"),
+            to: PathBuf::from("installed.txt"),
+            kind: EntryKind::File,
+        }],
         recovery: vec![RecoveryEntry {
             original: original.clone(),
             retained: retained.clone(),
@@ -2920,15 +2935,31 @@ fn filesystem_recovery_keeps_unsaved_source_and_replacement_protected() {
     };
 
     let warning = app
-        .reconcile_applied_filesystem(&directory, buffer, &report, false)
+        .reconcile_applied_filesystem(&directory, explorer, &report, false)
         .unwrap();
     assert!(warning.contains(&retained.display().to_string()));
+    assert!(warning.contains("refresh before retrying"));
+    assert_eq!(app.buffers[explorer].to_string(), directory_edits);
+    assert!(app.buffers[explorer].dirty);
+    assert!(!directory.join("pending.txt").exists());
+    assert_eq!(
+        app.buffers[moved_buffer].path.as_deref(),
+        Some(installed.as_path())
+    );
+    assert_eq!(
+        app.buffers[moved_buffer].to_string(),
+        "local moved baseline\n"
+    );
+    assert!(app.buffers[moved_buffer].dirty);
+    assert_eq!(fs::read_to_string(&installed).unwrap(), "moved baseline\n");
     assert_eq!(
         app.buffers[buffer].path.as_deref(),
         Some(original.as_path())
     );
     assert_eq!(app.buffers[buffer].to_string(), "local baseline\n");
     assert!(app.buffers[buffer].dirty);
+    app.open_file(original.clone()).unwrap();
+    assert_eq!(app.active().buffer, buffer);
     app.save(None, false).unwrap();
     assert!(app.status.contains("changed on disk"), "{}", app.status);
     assert_eq!(
@@ -2941,26 +2972,33 @@ fn filesystem_recovery_keeps_unsaved_source_and_replacement_protected() {
 
 #[test]
 fn filesystem_confirmation_retains_recovery_paths_in_an_error_notification() {
-    struct RecreateThenFail(PathBuf);
+    struct RecreateThenFail(Vec<PathBuf>);
     impl crate::fs_plan::TrashBackend for RecreateThenFail {
         fn delete(&self, _: &Path) -> Result<()> {
-            fs::write(&self.0, "replacement")?;
+            for path in &self.0 {
+                fs::write(path, "replacement")?;
+            }
             anyhow::bail!("injected trash failure")
         }
     }
     let directory = temporary("filesystem-recovery-notification");
     fs::create_dir_all(&directory).unwrap();
     let source = directory.join("a");
+    let second_source = directory.join("b");
     fs::write(&source, "original").unwrap();
+    fs::write(&second_source, "second original").unwrap();
     fs::write(directory.join("z-delete"), "delete me").unwrap();
     let snapshot = crate::fs_plan::DirectorySnapshot::read(&directory).unwrap();
-    let desired = vec![crate::fs_plan::DesiredEntry::existing(
-        &snapshot.entries()[0],
-        "renamed",
-    )];
+    let desired = vec![
+        crate::fs_plan::DesiredEntry::existing(&snapshot.entries()[0], "renamed"),
+        crate::fs_plan::DesiredEntry::existing(&snapshot.entries()[1], "second-renamed"),
+    ];
     let plan = FsPlan::build(directory.clone(), snapshot, desired).unwrap();
     let mut app = App::new(Config::default(), Some(directory.clone())).unwrap();
-    app.set_trash_backend(Box::new(RecreateThenFail(source.clone())));
+    app.set_trash_backend(Box::new(RecreateThenFail(vec![
+        source.clone(),
+        second_source.clone(),
+    ])));
     app.fs_confirmation = Some(FsConfirmation {
         buffer: app.active().buffer,
         plan,
@@ -2973,19 +3011,39 @@ fn filesystem_confirmation_retains_recovery_paths_in_an_error_notification() {
     assert!(app.status.contains(".runyte-move-"));
     assert!(app.status.contains(&source.display().to_string()));
     assert_eq!(fs::read_to_string(&source).unwrap(), "replacement");
-    let staging = fs::read_dir(&directory)
+    assert_eq!(fs::read_to_string(&second_source).unwrap(), "replacement");
+    assert!(!directory.join("renamed").exists());
+    assert!(!directory.join("second-renamed").exists());
+    let staging: Vec<_> = fs::read_dir(&directory)
         .unwrap()
         .map(|entry| entry.unwrap().path())
-        .find(|path| {
+        .filter(|path| {
             path.file_name()
                 .unwrap()
                 .to_string_lossy()
                 .starts_with(".runyte-move-")
         })
-        .unwrap();
-    assert_eq!(
-        fs::read_to_string(staging.join("entry")).unwrap(),
-        "original"
-    );
+        .collect();
+    assert_eq!(staging.len(), 2);
+    let mut retained_text: Vec<_> = staging
+        .iter()
+        .map(|path| fs::read_to_string(path.join("entry")).unwrap())
+        .collect();
+    retained_text.sort();
+    assert_eq!(retained_text, ["original", "second original"]);
+
+    // Recovery locations remain inspectable after another action replaces
+    // the interaction-line summary.
+    app.status("subsequent action");
+    app.execute_command("notifications").unwrap();
+    let notification = app.active_buffer().to_string();
+    assert!(notification.contains("ERROR"));
+    assert!(notification.contains("injected trash failure"));
+    for path in [&source, &second_source] {
+        assert!(notification.contains(&path.display().to_string()));
+    }
+    for path in staging {
+        assert!(notification.contains(&path.join("entry").display().to_string()));
+    }
     fs::remove_dir_all(directory).unwrap();
 }
