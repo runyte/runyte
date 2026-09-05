@@ -246,6 +246,7 @@ fn write_candidates() -> &'static [Candidate] {
 /// produce it; the rest are accepted in whatever form the clipboard already
 /// holds so that an image copied out of a browser is stored as it is rather
 /// than re-encoded on the way in.
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 const IMAGE_TYPES: &[&str] = &[
     "image/png",
     "image/webp",
