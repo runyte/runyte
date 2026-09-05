@@ -118,45 +118,85 @@ Full-size versions are on the
 
 ## Performance
 
-The benchmark opens generated documents at 500, 5,000, and 50,000 lines. Each
-size is written twice with byte-identical content: no editor assigns a language
-to the `.txt` file, while the `.lua` file enables one Tree-sitter Lua grammar in
-Neovim, Helix, and Runyte.
+Runyte aims for top-notch performance in everyday editing. To check progress,
+we benchmark startup, quitting, and idle cost against Neovim and Helix, and the
+finder's fuzzy path matching against fzf. These measurements cover specific
+tasks; they do not establish an overall fastest editor.
 
-The startup comparison reports **first document content emitted** in
-milliseconds: time from immediately before process launch until a shared token
-from the first document line is emitted in the raw terminal stream. Each result
-is the median of 10 runs in a 120×40 pseudo-terminal with an empty editor
-configuration and isolated home and XDG storage.
+### Editor
 
-This is a common output event, not proof that the terminal has presented the
-whole screen, input is accepted, highlighting is complete, or background work
-has finished. The first terminal byte is excluded from the comparison because
-it can be an invisible terminal query, terminal setup, a loading presentation,
-or document drawing depending on the editor. Runyte's raw first byte was 4–5 ms
-in this result set, but the harness cannot infer what that byte represents.
-Runyte separately draws `Opening workspace…` before it emits document content.
+The startup comparison measures readiness to edit: time from process launch
+until one inserted space appears in the document. After timing ends, the
+harness saves to a temporary path and verifies the whole file to confirm that
+the edit was accepted. Each editor opens the same generated documents at 500,
+5,000, and 50,000 lines, with no language assigned for `.txt` and Tree-sitter
+Lua enabled for `.lua`.
 
-| Fixture | LOC | Size | Neovim | Helix | Runyte |
+Results below are median milliseconds from ten launches after a warm-up, with
+isolated configuration and storage, measured on September 5, 2026 on an AMD
+Ryzen AI 9 365 running Linux (Neovim 0.12.4, Helix 25.07.1, Runyte 0.1.10).
+
+| Fixture | Lines | Size | Neovim (ms) | Helix (ms) | Runyte (ms) |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| `short.txt` | 0.5k | 17 kB | 19 | 17 | 6 |
-| `medium.txt` | 5k | 171 kB | 21 | 21 | 8 |
-| `long.txt` | 50k | 1.7 MB | 23 | 21 | 15 |
-| `short.lua` | 0.5k | 17 kB | 33 | 27 | 14 |
-| `medium.lua` | 5k | 171 kB | 27 | 48 | 28 |
-| `long.lua` | 50k | 1.7 MB | 28 | 215 | 176 |
+| `short.txt` | 500 | 17 kB | 22.5 | 29.7 | 15.1 |
+| `medium.txt` | 5,000 | 171 kB | 23.3 | 31.6 | 15.5 |
+| `long.txt` | 50,000 | 1.7 MB | 25.3 | 31.1 | 23.0 |
+| `short.lua` | 500 | 17 kB | 41.0 | 34.7 | 21.2 |
+| `medium.lua` | 5,000 | 171 kB | 32.0 | 53.1 | 32.7 |
+| `long.lua` | 50,000 | 1.7 MB | 32.2 | 295.7 | 157.5 |
 
-Runyte does not emit document text until its complete highlighted editor frame.
-That is not assumed for Neovim or Helix: in particular, this result shows
-Neovim emitting the `long.lua` marker well before the later drawing quiet used
-by the old benchmark. The table therefore compares one exact output event, not
-editor readiness, completed parsing, or overall editor performance.
+The benchmark reports file loading and syntax completion separately: Neovim
+can display an edit before its initial parse finishes, while Runyte prepares
+syntax before showing document text. These timings cover one edit near the
+start of each file. Small differences need to be read alongside the ranges
+in the [detailed results](context/reference/startup-performance.md).
 
-Absolute values are machine-specific. See the
-[benchmark methodology](benchmarks/README.md) for how each fixture is measured
-and [startup performance](context/reference/startup-performance.md) for the
-machine, versions, comparative quit time, and repeated idle cost behind this
-result set.
+In the August 31, 2026 measurements (Runyte 0.1.6, Neovim 0.12.4, Helix
+25.07.1), Runyte quit in 4–28 ms, Neovim in 2–6 ms, and Helix in
+4–22 ms across these fixtures. With a Lua document open in a Git repository,
+all three had a median idle CPU reading of 0.00% and no screen writes across
+five ten-second windows; Runyte's CPU readings ranged from 0.00% to 0.10%.
+
+### Finder
+
+The finder's path scoring uses one thread for up to 2,048 candidates and
+multiple threads for larger candidate sets when multiple cores are available.
+This depends on how many candidates are being scored, not how many characters
+you type. The final sort uses one thread. The benchmark's standalone Runyte
+filter uses single-threaded scoring and sorting, so its timings do not measure
+the complete interactive finder.
+
+The table below compares complete command-line filters on the same 10,000
+paths, including process startup, reading input, matching, sorting, and writing
+results. Values are median milliseconds from 15 runs on September 4, 2026,
+using Runyte 0.1.10 and fzf 0.74.2 on an AMD Ryzen AI 9 365 running Linux.
+fzf's default matching uses multiple threads; the last column limits it with
+`GOMAXPROCS=1`.
+
+| Query | Runyte filter (one thread) | fzf (default threading) | fzf (one thread) |
+| --- | ---: | ---: | ---: |
+| Empty | 3.2 | 6.0 | 5.7 |
+| `s` | 10.1 | 8.9 | 10.7 |
+| `src` | 8.2 | 7.1 | 9.5 |
+| `fpr` | 3.4 | 5.1 | 4.9 |
+| `keymap` | 3.1 | 4.9 | 4.1 |
+| `file_picker.rs` | 2.8 | 4.8 | 3.9 |
+| `src/parser` | 3.4 | 5.0 | 4.9 |
+| `parser test` | 4.0 | 6.2 | 11.7 |
+| `zzqx` (no match) | 2.2 | 4.5 | 3.8 |
+
+Neither leads on every query with default threading. Multi-term queries also
+have different semantics: Runyte requires terms in the typed order; fzf does
+not. Separately, the Runyte filter's in-memory ranking took 0.9–7.9 ms at
+10,000 paths, rising to 49.3 ms for `s` at 100,000 paths. Those ranking-only
+figures exclude input/output and cannot be compared directly with fzf's
+whole-process timings. Neither measurement includes filesystem discovery,
+previews, or drawing.
+
+All timings are specific to the recorded machine and versions. Read more in
+the [benchmark methodology](benchmarks/README.md), the
+[startup, quit, and idle results](context/reference/startup-performance.md),
+and the [fuzzy matching results](context/reference/fuzzy-matching.md).
 
 ## Installation
 

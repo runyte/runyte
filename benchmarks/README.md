@@ -1,9 +1,11 @@
 # Benchmarks
 
-Two independent harnesses, each measuring Runyte against a program people
-already use, so that a change in Runyte's numbers can be separated from a
-change in the machine.
+Independent harnesses measure Runyte against programs people already use, so
+that a change in Runyte's numbers can be separated from a change in the machine.
 
+- **`startup.py`** — demonstrated readiness to edit on ordinary editor binaries,
+  plus file-loaded and syntax-ready milestones in separate instrumented runs.
+  This supplies the README's editor comparison.
 - **`run.py`** — when a terminal editor first emits shared document content,
   how long it then takes to quit, and what it costs while sitting idle, with
   Neovim and Helix measured the same way. Recorded in
@@ -14,8 +16,114 @@ change in the machine.
   [`context/reference/fuzzy-matching.md`](../context/reference/fuzzy-matching.md).
   Its own section is [below](#fuzzy-matching-against-fzf).
 
-Both generate their inputs from a fixed seed into `.work/`, which is ignored by
-Git. Deleting `.work/` is safe; the next run rebuilds everything in it.
+The harnesses generate their inputs from a fixed seed into `.work/`, which is
+ignored by Git. Deleting `.work/` is safe; the next run rebuilds everything in it.
+
+Recorded startup samples are retained under [`results/`](results/) so the
+published medians and ranges can be checked without repeating a timing run.
+
+# Startup milestones
+
+```sh
+python3 -m venv benchmarks/.work/venv
+benchmarks/.work/venv/bin/pip install -r benchmarks/requirements.txt
+cargo build --release --locked
+benchmarks/.work/venv/bin/python benchmarks/startup.py --runs 10 \
+  --json benchmarks/.work/startup-samples.json
+```
+
+The JSON retains every measured sample and binary hashes. The Markdown report
+gives median and min–max; an incomplete sample invalidates that cell and makes
+the command fail. One warm-up per editor, fixture, and measurement mode is
+discarded. Editor order rotates each round to reduce fixed-order bias. These
+are warm-cache launches, not cold-boot disk measurements. Run on an otherwise
+idle machine, after builds finish; background compilation can dominate these
+small timings. Do not discard slow successful samples.
+
+All three milestones start immediately before the PTY fork, but readiness and
+internal milestones come from **separate processes**. They must not be
+subtracted from each other as if they were stages of one recorded launch.
+
+| Milestone | Completion evidence |
+| --- | --- |
+| File loaded | The complete decoded document is in the editor's native text buffer. Neovim reports `BufReadPost`; Helix reports after constructing `Document` from the loaded rope; Runyte reports `InitialBufferOpened`. |
+| Syntax ready | The initial whole-document Lua parse has completed. Neovim's normal parse returns or calls its completion callback with an error-free root reaching the fixture's final newline; Helix has successfully constructed `Syntax`; Runyte's initial `parse_buffer` returns a syntax value. Plain text is reported as not applicable. |
+| Ready to edit | After the first document line appears, the harness sends `i` followed by one space. At the recorded starting position of `local function scan_0`, it must now see ` local function scan_0`. It waits for any synchronized-update frame to end, then records the timestamp. |
+
+Readiness uses the normal editor binaries with no internal probes. The harness
+does not wait for terminal silence or syntax completion before typing. After
+the timed interval, it saves to a temporary path, verifies that the result is
+exactly the original **whole file** with one leading space, and requires a
+successful quit. An echoed key, status message, unchanged buffer, truncated
+file, or crash cannot pass verification. The original fixture is never saved
+over. Save and quit costs are outside the readiness value; `run.py` still
+measures quitting an unchanged document separately.
+
+This is demonstrated editing readiness for one insertion near the start of a
+file, including the harness's screen decoding and input/output round trip. The
+single whitespace edit keeps Lua valid, triggers no additional grammar, and
+avoids accumulating the cost of multiple typed characters. It does not
+identify the earliest instant the editor could have accepted queued
+input, test every editing command, or measure physical terminal presentation.
+Syntax readiness means a completed parse, not highlighting every off-screen
+line, language-server readiness, or absence of later background work. The Lua
+fixtures trigger no injected languages.
+
+## Instrumented file-loading and parsing measurements
+
+The Neovim probe is loaded with `--cmd` in internal runs only. It observes the
+normal parser's synchronous return or asynchronous completion callback without
+requesting a parse or changing that choice. It obtains the Lua parser at
+`BufReadPost`, so probe initialization and callback overhead are part of the
+instrumented result.
+
+Helix and Runyte need disposable release builds. The supplied patches add only
+milestone observations; they are not changes to the distributed editors. The
+Helix patch is based on `a05c151b` (25.07.1); the Runyte patch is based on this
+repository's `8c0bcba` source. Recheck the observation sites if either patch
+needs adapting to a later source revision.
+
+From the Runyte repository root, with a Helix checkout available:
+
+```sh
+mkdir -p benchmarks/.work/runyte-probe benchmarks/.work/helix-probe
+git archive 8c0bcba | tar -x -C benchmarks/.work/runyte-probe
+git -C /path/to/helix archive a05c151b | tar -x -C benchmarks/.work/helix-probe
+git apply --directory=benchmarks/.work/runyte-probe benchmarks/runyte-milestones.patch
+git apply --directory=benchmarks/.work/helix-probe benchmarks/helix-milestones.patch
+cp benchmarks/milestone_probe.rs benchmarks/.work/runyte-probe/src/benchmark_probe.rs
+cp benchmarks/milestone_probe.rs benchmarks/.work/helix-probe/helix-view/src/benchmark_probe.rs
+cargo +1.97.1 build --manifest-path benchmarks/.work/runyte-probe/Cargo.toml \
+  --release --locked --features startup-timing
+HELIX_DISABLE_AUTO_GRAMMAR_BUILD=1 cargo +1.97.1 build \
+  --manifest-path benchmarks/.work/helix-probe/Cargo.toml --release --locked
+benchmarks/.work/venv/bin/python benchmarks/startup.py --runs 10 \
+  --runyte-probe benchmarks/.work/runyte-probe/target/release/runyte \
+  --helix-probe benchmarks/.work/helix-probe/target/release/hx \
+  --helix-runtime /path/to/installed/helix/runtime \
+  --json benchmarks/.work/startup-samples.json
+```
+
+Use fresh extraction directories. The runtime must match the Helix source and
+contain its Lua grammar and queries; the recorded Linux run used
+`/usr/lib64/helix/runtime`. The same runtime is used for stock and instrumented
+Helix. Without a probe build, internal cells say unavailable; first text is
+never substituted. Missing Lua syntax events fail rather than becoming zero.
+
+Internal events contain timestamps on the shared system wall clock, captured
+before appending to a fresh temporary event file. The harness compares elapsed
+wall and monotonic time and rejects a clock jump greater than 5 ms. File-loaded
+event I/O and probe code add overhead before the syntax event; these are
+instrumented application timings, not isolated parser microbenchmarks. Stock
+and probe builds can also differ because of compiler or packaging choices.
+Record their source revisions, build profiles, runtime, compiler, and hashes
+with the result. Use stock-binary readiness for the README comparison.
+
+Verification:
+
+```sh
+benchmarks/.work/venv/bin/python -m unittest discover -s benchmarks
+```
 
 # Startup, quit and idle
 
@@ -265,10 +373,12 @@ writing a different number of result lines.
 
 **runyte rank only** is ranking alone, timed inside the process across
 `--repeat` passes and reported as their median. It excludes process start,
-reading standard input and writing the answer. This is the column that
-corresponds to what the editor actually does: the picker's candidates are
-already in memory from its own scanner, so a keystroke costs the ranking pass
-and nothing around it.
+reading standard input and writing the answer. This isolates scoring and
+sorting on candidates already in memory. It is not the editor's query-to-results
+latency: the example ranks sequentially, while the editor's `rank_entries` can
+divide scoring across available cores above 2,048 candidates. The editor sorts
+the merged results on one thread and also coordinates discovery, query updates,
+and presentation.
 
 Reading the two together also says what is not being measured. Where the
 whole-process figures are close but the rank-only figure is much smaller, most
@@ -276,9 +386,10 @@ of both numbers is input handling, and the standard-input path being compared
 there is the example's, not the editor's.
 
 **fzf, one thread** is the same fzf run under `GOMAXPROCS=1`. fzf matches on
-every available core; Runyte ranks on one background worker. Without that row a
-reader cannot tell how much of a difference is the algorithm and how much is
-core count.
+available cores; the Runyte benchmark filter scores and sorts on one thread.
+This column controls matching parallelism; it does not isolate algorithm cost
+from process startup, input/output, sorting, or differences in matching
+semantics. The editor's parallel scoring is not exercised by this benchmark.
 
 `FZF_DEFAULT_OPTS`, `FZF_DEFAULT_OPTS_FILE` and `FZF_DEFAULT_COMMAND` are
 removed from the environment. Any of them can change fzf's scheme, tiebreak or

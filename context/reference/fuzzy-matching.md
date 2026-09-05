@@ -21,10 +21,12 @@ match. Where the two disagree, one of them is answering the query better; which
 one is a judgement about paths, and the disagreement tables below are what that
 judgement is made from.
 
-**`runyte rank only` is the column that corresponds to the editor.** It is the
-ranking pass alone, median of several passes inside one process. The picker's
-candidates are already in memory from its own scanner, so a keystroke costs
-that pass and nothing around it.
+**`runyte rank only` measures the example's sequential scoring and sorting.**
+It is the median of several passes on candidates already in memory, excluding
+process startup and input/output. The editor's `rank_entries` can score more
+than 2,048 candidates across available cores, then sort the merged results on
+one thread. The example does not exercise that parallel path or measure the
+finder's query-to-results latency.
 
 **The whole-process columns are two CLI filters, not two editors.** They
 include process start, reading the corpus from standard input, and writing the
@@ -39,8 +41,10 @@ per cell rather than seven. Read a difference of a millisecond or two at
 100,000 candidates as noise unless a rebuild reproduces it.
 
 **fzf matches on every core.** The `fzf, one thread` column is the same run
-under `GOMAXPROCS=1`. Runyte ranks on one background worker, so that column is
-the like-for-like one and the default-fzf column is what a person gets.
+under `GOMAXPROCS=1`. The Runyte benchmark filter scores and sorts on one
+thread. This controls matching parallelism, while the default-fzf column
+measures its ordinary configuration. Neither comparison isolates algorithm
+cost, and multi-term matching semantics differ as described below.
 
 Absolute values are machine-specific and are not comparable between result sets
 taken on different hardware. The corpus is generated from a fixed seed, so it
@@ -98,9 +102,9 @@ Milliseconds.
 | two terms | `parser test` | 20.9 | 13.8 | 25.8 | 59.6 |
 | no match | `zzqx` | 13.9 | 5.0 | 14.0 | 16.7 |
 
-Ranking is not what a picker keystroke is spent on at the sizes a picker is
-normally opened at. At 10,000 candidates every query ranks in under 8 ms and
-most in under 2 ms, well inside a frame. The cost is carried by the number of
+At 10,000 candidates every tested query ranks in under 8 ms in the sequential
+example, and most in under 2 ms. These are component timings, not measured
+interactive response times. The cost is carried by the number of
 candidates that match rather than the number scanned: `s` and `src`, which
 match 93% and 39% of the corpus, are several times the rest, because a rejected
 candidate leaves the filter before it is ever scored.

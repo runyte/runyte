@@ -1,0 +1,2 @@
+# Unified patch context represents blank source lines with one space.
+benchmarks/*-milestones.patch whitespace=-blank-at-eol,-blank-at-eof
