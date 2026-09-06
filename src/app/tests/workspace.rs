@@ -2360,6 +2360,67 @@ fn a_digit_attaches_to_a_numbered_session_from_the_manager() {
 
 #[cfg(unix)]
 #[test]
+fn leader_digits_jump_without_opening_the_manager_in_both_modal_modes() {
+    let (mut app, root, roots) = numbered_sessions("session-direct-number");
+    key(&mut app, KeyCode::Escape, Modifiers::NONE);
+    app.workspace_rows[0].number = None;
+    for mode in [Mode::Normal, Mode::Select] {
+        for number in 1..=9 {
+            app.mode = mode;
+            app.workspace_rows[1].number = Some(number);
+            // The displayed number is authoritative even when it differs
+            // from the row index or the command's numeric count.
+            press(&mut app, ' ');
+            assert!(app.list.is_none());
+            press(&mut app, char::from(b'0' + number));
+            let request = app.take_workspace_switch().unwrap();
+            assert_eq!(request.selector, roots[1]);
+            assert!(request.running_only);
+            assert!(app.list.is_none());
+        }
+    }
+    app.mode = Mode::Normal;
+    app.workspace_rows[0].number = Some(1);
+    press(&mut app, ' ');
+    press(&mut app, '1');
+    assert_eq!(app.take_workspace_switch().unwrap().selector, roots[0]);
+    press(&mut app, ' ');
+    press(&mut app, '2');
+    assert!(app.take_workspace_switch().is_none());
+    assert!(app.status.contains("no session is numbered 2"));
+    app.workspace_rows[1].running = false;
+    press(&mut app, ' ');
+    press(&mut app, '9');
+    assert!(
+        app.take_workspace_switch().is_none(),
+        "stopped rows never start"
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn direct_session_bindings_follow_the_leader_and_require_persistent_mode() {
+    let config = Config {
+        keys: Some(serde_yaml::from_str("leader: Ctrl-x\n").unwrap()),
+        ..Config::default()
+    };
+    let mut app = App::new(config, None).unwrap();
+    key(&mut app, KeyCode::Char('x'), Modifiers::CONTROL);
+    press(&mut app, '4');
+    assert!(app.take_workspace_switch().is_none());
+    assert!(app.status.contains("persistent"), "{}", app.status);
+    assert!(app.list.is_none());
+    assert!(matches!(
+        app.keymap.lookup(Mode::Normal, &crate::keymap::KeySequence::from([
+            crate::keymap::Key::ctrl('x'), crate::keymap::Key::char('4'),
+        ])),
+        crate::keymap::Lookup::Exact(binding)
+            if binding.target == crate::keymap::BindingTarget::Editor(EditorCommand::Session4)
+    ));
+}
+
+#[cfg(unix)]
+#[test]
 fn space_closes_the_session_manager_instead_of_filtering() {
     let (mut app, root, _roots) = numbered_sessions("session-space-close");
 

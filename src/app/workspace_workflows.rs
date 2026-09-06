@@ -1161,6 +1161,37 @@ impl App {
         Ok(())
     }
 
+    /// Shared numbered-session action for the leader and the session manager.
+    pub(super) fn attach_numbered_session(&mut self, digit: char) {
+        if !self.persistent_session {
+            self.action_failed("attaching sessions needs workspace.mode: persistent");
+            return;
+        }
+        #[cfg(unix)]
+        {
+            let Some(number) = digit.to_digit(10).map(|number| number as u8) else {
+                return;
+            };
+            let Some(path) = self
+                .workspace_rows
+                .iter()
+                .find(|row| row.running && row.number == Some(number))
+                .map(|row| row.project_root.clone())
+            else {
+                self.action_failed(format!("no session is numbered {number}"));
+                return;
+            };
+            self.list = None;
+            self.session_action_menu = None;
+            if self.request_workspace_switch(path) {
+                self.workspace_switch.as_mut().unwrap().running_only = true;
+                self.should_quit = true;
+            }
+        }
+        #[cfg(not(unix))]
+        let _ = digit;
+    }
+
     pub(super) fn previous_persistent_session(&mut self) {
         if self.request_workspace_switch(self.project_root.clone()) {
             let request = self.workspace_switch.as_mut().unwrap();

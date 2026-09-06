@@ -775,6 +775,15 @@ editor_commands! {
     OpenNavigator => ("open-navigator", "Navigate open buffers and terminals"),
     PreviousDestination => ("previous-destination", "Return to the previous destination in this pane"),
     PreviousSession => ("previous-session", "Return to the previously visited persistent session"),
+    Session1 => ("session-1", "Attach to persistent session 1"),
+    Session2 => ("session-2", "Attach to persistent session 2"),
+    Session3 => ("session-3", "Attach to persistent session 3"),
+    Session4 => ("session-4", "Attach to persistent session 4"),
+    Session5 => ("session-5", "Attach to persistent session 5"),
+    Session6 => ("session-6", "Attach to persistent session 6"),
+    Session7 => ("session-7", "Attach to persistent session 7"),
+    Session8 => ("session-8", "Attach to persistent session 8"),
+    Session9 => ("session-9", "Attach to persistent session 9"),
     NextRunningSession => ("next-running-session", "Visit the next running persistent session"),
     PreviousRunningSession => ("previous-running-session", "Visit the previous running persistent session"),
     OpenSessionDirectory => ("open-session-directory", "Open a directory as a persistent session"),
@@ -874,6 +883,15 @@ impl EditorCommand {
     pub const fn capability(self) -> Option<CommandCapability> {
         match self {
             Self::PreviousSession
+            | Self::Session1
+            | Self::Session2
+            | Self::Session3
+            | Self::Session4
+            | Self::Session5
+            | Self::Session6
+            | Self::Session7
+            | Self::Session8
+            | Self::Session9
             | Self::NextRunningSession
             | Self::PreviousRunningSession
             | Self::OpenSessionDirectory
@@ -1107,6 +1125,15 @@ impl EditorCommand {
             | Self::OpenNavigator
             | Self::PreviousDestination
             | Self::PreviousSession
+            | Self::Session1
+            | Self::Session2
+            | Self::Session3
+            | Self::Session4
+            | Self::Session5
+            | Self::Session6
+            | Self::Session7
+            | Self::Session8
+            | Self::Session9
             | Self::NextRunningSession
             | Self::PreviousRunningSession
             | Self::OpenSessionDirectory
@@ -1349,6 +1376,15 @@ pub const COMMANDS: &[CommandSpec] = &[
         "previous-session",
         NoArguments
     ),
+    editor_spec!(Editor::Session1, "session-1", [], "session-1", NoArguments),
+    editor_spec!(Editor::Session2, "session-2", [], "session-2", NoArguments),
+    editor_spec!(Editor::Session3, "session-3", [], "session-3", NoArguments),
+    editor_spec!(Editor::Session4, "session-4", [], "session-4", NoArguments),
+    editor_spec!(Editor::Session5, "session-5", [], "session-5", NoArguments),
+    editor_spec!(Editor::Session6, "session-6", [], "session-6", NoArguments),
+    editor_spec!(Editor::Session7, "session-7", [], "session-7", NoArguments),
+    editor_spec!(Editor::Session8, "session-8", [], "session-8", NoArguments),
+    editor_spec!(Editor::Session9, "session-9", [], "session-9", NoArguments),
     editor_spec!(
         Editor::NextRunningSession,
         "next-running-session",
@@ -2677,6 +2713,15 @@ fn invocation_from_parts(
             | (EditorCommand::OpenNavigator, ParsedArgument::None)
             | (EditorCommand::PreviousDestination, ParsedArgument::None)
             | (EditorCommand::PreviousSession, ParsedArgument::None)
+            | (EditorCommand::Session1, ParsedArgument::None)
+            | (EditorCommand::Session2, ParsedArgument::None)
+            | (EditorCommand::Session3, ParsedArgument::None)
+            | (EditorCommand::Session4, ParsedArgument::None)
+            | (EditorCommand::Session5, ParsedArgument::None)
+            | (EditorCommand::Session6, ParsedArgument::None)
+            | (EditorCommand::Session7, ParsedArgument::None)
+            | (EditorCommand::Session8, ParsedArgument::None)
+            | (EditorCommand::Session9, ParsedArgument::None)
             | (EditorCommand::NextRunningSession, ParsedArgument::None)
             | (EditorCommand::PreviousRunningSession, ParsedArgument::None)
             | (EditorCommand::OpenSessionDirectory, ParsedArgument::None)

@@ -190,8 +190,19 @@ fn prefix_popup_is_readable_at_standard_and_wide_sizes() {
             default_keymap(),
         );
 
-        let screen = render(width, height, &mut app, &hints);
+        let mut screen = render(width, height, &mut app, &hints);
         assert!(screen.contains("Keys: Space"));
+        assert!(screen.contains("session 1"));
+        // The leader includes nine direct session destinations. On a narrow
+        // terminal, later namespaces remain readable by scrolling.
+        for _ in 0..hint_metrics(&app, &hints).2.len() {
+            hints.observe(
+                KeyStroke::plain(KeyCode::Down),
+                Mode::Normal,
+                default_keymap(),
+            );
+            screen.push_str(&render(width, height, &mut app, &hints));
+        }
         assert!(screen.contains("Clipboard ›"));
         assert!(screen.contains("Language (LSP) ›"));
         assert!(screen.contains("Terminals ›"));
@@ -335,16 +346,13 @@ fn the_last_prefix_row_is_reachable_at_the_smallest_supported_size() {
     );
     assert!(!render(80, 24, &mut app, &hints).contains("Syntax (Tree-sitter) ›"));
 
-    hints.observe(
-        stroke(KeyCode::Down, Modifiers::NONE),
-        Mode::Normal,
-        default_keymap(),
-    );
-    hints.observe(
-        stroke(KeyCode::Down, Modifiers::NONE),
-        Mode::Normal,
-        default_keymap(),
-    );
+    for _ in 0..hint_metrics(&app, &hints).2.len() {
+        hints.observe(
+            KeyStroke::plain(KeyCode::Down),
+            Mode::Normal,
+            default_keymap(),
+        );
+    }
     assert!(render(80, 24, &mut app, &hints).contains("Syntax (Tree-sitter) ›"));
 }
 
@@ -686,9 +694,10 @@ fn repeated_arrow_scroll_saturates_at_the_rendered_end() {
         Mode::Normal,
         default_keymap(),
     );
-    assert!(render(40, 10, &mut app, &hints).contains("1-6/19"));
+    let total = hint_metrics(&app, &hints).2.len();
+    assert!(render(40, 10, &mut app, &hints).contains(&format!("1-6/{total}")));
 
-    for _ in 0..30 {
+    for _ in 0..total + 10 {
         assert_eq!(
             hints.observe(
                 stroke(KeyCode::Down, Modifiers::NONE),
@@ -698,8 +707,8 @@ fn repeated_arrow_scroll_saturates_at_the_rendered_end() {
             HintEventResult::Consumed
         );
     }
-    assert_eq!(hints.scroll_offset(), 13);
-    assert!(render(40, 10, &mut app, &hints).contains("14-19/19"));
+    assert_eq!(hints.scroll_offset(), total - 6);
+    assert!(render(40, 10, &mut app, &hints).contains(&format!("{}-{total}/{total}", total - 5)));
 
     assert_eq!(
         hints.observe(
@@ -709,8 +718,12 @@ fn repeated_arrow_scroll_saturates_at_the_rendered_end() {
         ),
         HintEventResult::Consumed
     );
-    assert_eq!(hints.scroll_offset(), 12);
-    assert!(render(40, 10, &mut app, &hints).contains("13-18/19"));
+    assert_eq!(hints.scroll_offset(), total - 7);
+    assert!(render(40, 10, &mut app, &hints).contains(&format!(
+        "{}-{}/{total}",
+        total - 6,
+        total - 1
+    )));
 }
 
 #[test]

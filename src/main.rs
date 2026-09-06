@@ -136,9 +136,9 @@ use runyte::workspace::transport::{
 #[cfg(unix)]
 use runyte::workspace::{
     WorkspaceService, abbreviated_id_width, clear_stopped_sessions, ensure_recent_workspace,
-    known_workspaces, known_workspaces_all_namespaces, record_recent_workspace,
-    record_workspace_activity, rename_known_workspace, resolve_known_workspace,
-    resolve_known_workspace_from_directory,
+    known_workspaces, known_workspaces_all_namespaces, known_workspaces_for_navigation,
+    record_recent_workspace, record_workspace_activity, rename_known_workspace,
+    resolve_known_workspace, resolve_known_workspace_from_directory,
 };
 
 fn main() -> Result<()> {
@@ -3361,6 +3361,7 @@ async fn run_workspace_switcher(
     let mut history = AttachmentHistory::default();
     let mut parent_handoff: Option<ParentHandoff> = None;
     let mut pending_visit = None;
+    let mut quit_returns: Option<std::collections::VecDeque<LocalEndpoint>> = None;
     loop {
         let attachment = tokio::select! {
             attachment = run_attached(&current, &mut terminal, &mut terminal_events, &mut geometry,
@@ -3376,6 +3377,18 @@ async fn run_workspace_switcher(
             };
             let _ = complete_parent_handoff(&handoff, Some(error)).await;
         }
+        // The session we just closed cannot recover a refused attachment.
+        // Try the remaining live destinations without restarting any host.
+        if let Some(candidates) = quit_returns.as_mut()
+            && matches!(&attachment, Err(_) | Ok(AttachOutcome::Refused(_)))
+        {
+            if let Some(target) = candidates.pop_front() {
+                current = target;
+                continue;
+            }
+            return Ok(());
+        }
+        quit_returns = None;
         let Some(outcome) =
             recover_switched_attachment(attachment, &mut current, &mut previous, &mut notice)?
         else {
@@ -3383,6 +3396,21 @@ async fn run_workspace_switcher(
         };
         match outcome {
             AttachOutcome::Detached => return Ok(()),
+            AttachOutcome::Quit => {
+                let closed = current.project_root().to_owned();
+                history.forget(&closed);
+                previous = None;
+                let mut candidates = quit_return_targets(
+                    &closed,
+                    &history,
+                    known_workspaces_for_navigation(&config.workspace.state).await?,
+                );
+                let Some(target) = candidates.pop_front() else {
+                    return Ok(());
+                };
+                current = target;
+                quit_returns = Some(candidates);
+            }
             AttachOutcome::Switch {
                 mut selector,
                 working_directory,
@@ -3442,23 +3470,64 @@ async fn run_workspace_switcher(
 #[cfg(unix)]
 #[derive(Default)]
 struct AttachmentHistory {
-    current: Option<LocalEndpoint>,
     previous: Option<LocalEndpoint>,
+    recent: Vec<LocalEndpoint>,
 }
 #[cfg(unix)]
 impl AttachmentHistory {
     fn attached(&mut self, endpoint: &LocalEndpoint) -> Option<PathBuf> {
-        if self
-            .current
-            .as_ref()
-            .is_none_or(|current| current.project_root() != endpoint.project_root())
-        {
-            self.previous = self.current.replace(endpoint.clone());
+        self.recent
+            .retain(|entry| entry.project_root() != endpoint.project_root());
+        self.recent.push(endpoint.clone());
+        if self.recent.len() > 256 {
+            self.recent.remove(0);
         }
+        self.update();
         self.previous
             .as_ref()
             .map(|endpoint| endpoint.project_root().to_owned())
     }
+
+    fn forget(&mut self, root: &Path) {
+        self.recent.retain(|entry| entry.project_root() != root);
+        self.update();
+    }
+
+    fn update(&mut self) {
+        self.previous = self.recent.iter().rev().nth(1).cloned();
+    }
+}
+
+/// Prefer this TUI's successful visits, then the catalog's recent activity.
+/// Resolve only registered hosts; stopped history must never be restarted.
+#[cfg(unix)]
+fn quit_return_targets(
+    closed: &Path,
+    history: &AttachmentHistory,
+    mut rows: Vec<runyte::workspace::WorkspaceRow>,
+) -> std::collections::VecDeque<LocalEndpoint> {
+    rows.retain(|row| {
+        row.running
+            && row.project_root != closed
+            && row.incompatible_protocol.is_none()
+            && row.interactive_attached != Some(true)
+    });
+    rows.sort_by_key(|row| {
+        std::cmp::Reverse((
+            history
+                .recent
+                .iter()
+                .position(|entry| entry.project_root() == row.project_root),
+            row.last_active_unix_seconds,
+        ))
+    });
+    rows.into_iter()
+        .filter_map(|row| {
+            resolve_registered_host_from_directory(&row.project_root, closed)
+                .ok()
+                .map(|host| host.endpoint().clone())
+        })
+        .collect()
 }
 
 #[cfg(unix)]
@@ -3673,7 +3742,7 @@ async fn attach_for_wait(
         Err(attachment_error) => {
             recover_wait_after_lifecycle_loss(control, token, false, attachment_error).await
         }
-        Ok(AttachOutcome::Detached) => Ok(()),
+        Ok(AttachOutcome::Detached | AttachOutcome::Quit) => Ok(()),
         Ok(AttachOutcome::Switch { .. }) => {
             anyhow::bail!("wait request cannot switch workspaces")
         }
@@ -3772,6 +3841,8 @@ async fn prefer_wait_lifecycle_error(
 enum AttachOutcome {
     /// The person is finished with this client.
     Detached,
+    /// The host stopped; continue in another running persistent session.
+    Quit,
     /// The editor asked to move to another workspace.
     Switch {
         selector: std::path::PathBuf,
@@ -4092,7 +4163,7 @@ async fn run_attached(
                     }
                     Some(HostResponse::ShuttingDown) => {
                         anyhow::ensure!(wait_token.is_none(), "wait request ended before completion");
-                        break;
+                        return Ok(AttachOutcome::Quit);
                     }
                     None => {
                         anyhow::bail!("workspace host disconnected without ending the attachment");

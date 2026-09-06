@@ -4512,6 +4512,117 @@ async fn relative_workspace_attach_uses_editor_cwd_and_keeps_one_client_process(
     fs::remove_dir_all(root).unwrap();
 }
 
+/// Closing sessions unwinds successful visits in the same TUI, even when
+/// several visits share a catalog timestamp. Detach still exits immediately.
+#[tokio::test]
+async fn quitting_last_panes_returns_through_successful_sessions_and_detach_exits() {
+    let root = project();
+    let runtime = TestRuntimeRoot::new("quit-return").unwrap();
+    let cache = runtime.create_private_dir("cache").unwrap();
+    let roots = ["first", "second", "third"].map(|name| root.join(name));
+    let mut hosts = Vec::new();
+    let mut controls = Vec::new();
+    for (index, directory) in roots.iter().enumerate() {
+        fs::create_dir_all(directory.join(".runyte")).unwrap();
+        git(directory, &["init", "--quiet"]);
+        let filename = format!("session-{index}-ready.txt");
+        fs::write(directory.join(&filename), "ready\n").unwrap();
+        let endpoint = LocalEndpoint::discover_with_runtime(
+            &directory.join(".runyte"),
+            directory,
+            Some(runtime.path()),
+        )
+        .unwrap();
+        let child = bundled_runyte()
+            .args(["--serve", &filename])
+            .current_dir(directory)
+            .env("XDG_RUNTIME_DIR", runtime.path())
+            .env("XDG_CACHE_HOME", &cache)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let Some(host) = wait_for_host_start(child, &endpoint).await else {
+            drop(hosts);
+            fs::remove_dir_all(root).unwrap();
+            return;
+        };
+        controls.push(connect_control(&endpoint).await);
+        hosts.push(host);
+    }
+    let (client, mut terminal) = spawn_in_pty(
+        bundled_runyte()
+            .arg("--persistent")
+            .current_dir(&roots[0])
+            .env("XDG_RUNTIME_DIR", runtime.path())
+            .env("XDG_CACHE_HOME", &cache),
+    );
+    let mut client = ChildGuard(Some(client));
+    let output = capture_terminal_output(&terminal);
+    for index in 0..3 {
+        if index > 0 {
+            type_colon_command(
+                &mut terminal,
+                &format!("session-attach {}", roots[index].display()),
+            );
+        }
+        wait_for_interactive_attachment(
+            &mut controls[index],
+            client.0.as_mut().unwrap(),
+            None,
+            "visiting each session",
+            Some(&output),
+        )
+        .await;
+        wait_for_terminal_screen(&output, &format!("session-{index}-ready.txt")).await;
+    }
+    for index in (1..3).rev() {
+        type_colon_command(&mut terminal, "q");
+        wait_for_interactive_attachment(
+            &mut controls[index - 1],
+            client.0.as_mut().unwrap(),
+            None,
+            "returning after closing the last pane",
+            Some(&output),
+        )
+        .await;
+        wait_for_terminal_screen(&output, &format!("session-{}-ready.txt", index - 1)).await;
+        assert!(wait_child(hosts[index].0.as_mut().unwrap()).await.success());
+        hosts[index].0.take().unwrap().wait().unwrap();
+    }
+    type_colon_command(&mut terminal, "detach");
+    assert!(wait_child(client.0.as_mut().unwrap()).await.success());
+    client.0.take().unwrap().wait().unwrap();
+    assert!(hosts[0].0.as_mut().unwrap().try_wait().unwrap().is_none());
+
+    // With no other running session, quitting the remaining one exits.
+    let (client, mut terminal) = spawn_in_pty(
+        bundled_runyte()
+            .arg("--persistent")
+            .current_dir(&roots[0])
+            .env("XDG_RUNTIME_DIR", runtime.path())
+            .env("XDG_CACHE_HOME", &cache),
+    );
+    let mut client = ChildGuard(Some(client));
+    let output = capture_terminal_output(&terminal);
+    wait_for_interactive_attachment(
+        &mut controls[0],
+        client.0.as_mut().unwrap(),
+        None,
+        "reattaching after explicit detach",
+        Some(&output),
+    )
+    .await;
+    wait_for_terminal_screen(&output, "session-0-ready.txt").await;
+    type_colon_command(&mut terminal, "q");
+    assert!(wait_child(client.0.as_mut().unwrap()).await.success());
+    client.0.take().unwrap().wait().unwrap();
+    assert!(wait_child(hosts[0].0.as_mut().unwrap()).await.success());
+    hosts[0].0.take().unwrap().wait().unwrap();
+    fs::remove_dir_all(root).unwrap();
+}
+
 fn parent_shell_quote(value: &Path) -> String {
     format!("'{}'", value.to_string_lossy().replace('\'', "'\\''"))
 }

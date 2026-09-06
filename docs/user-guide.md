@@ -340,8 +340,11 @@ detached internally by Runyte remain independent of the launcher and continue
 serving after it returns.
 
 `:quit` closes the active pane; from the last pane it stops a clean persistent
-session and disconnects the TUI. `:quit-all` requests the same shutdown
-regardless of pane count. Quit refuses unsaved buffers and live terminal
+session and returns the TUI to the previously visited running session.
+If that session is unavailable, Runyte tries other running sessions in recent-visit
+order, skipping occupied or incompatible hosts. It returns to the shell when
+none can accept the TUI. `:quit-all` requests the same shutdown and return
+regardless of pane count. `:quit-here` always returns to the shell. Quit refuses unsaved buffers and live terminal
 children; a `!` form may discard unsaved buffers but still never terminates a
 terminal. `:detach` is the explicit leave-it-running operation: it immediately
 disconnects the TUI while retaining every pane, buffer, unsaved edit, and
@@ -601,9 +604,14 @@ useful as identity.
 
 Sessions carry a number from `1` to `9`, shown in the manager's first column.
 Pressing that digit in the manager attaches to its session directly, so
-`Space Space 1` reaches the first session as one gesture. The digit is a
-shortcut only while the manager's filter is empty: Runyte's default names are
-`runyte`, `runyte-2`, `runyte-3`, and project paths routinely contain digits,
+`Space Space 1` reaches the first session as one gesture. In Normal and Select
+modes, `Space 1` through `Space 9` jump to the same numbered sessions without
+opening the manager. These bindings follow `keys.leader` and can be remapped
+as `session-1` through `session-9`. A missing number reports an error; numbered
+shortcuts never restart a stopped session or take over an occupied TUI.
+Inside the manager, the digit is a shortcut only while its filter is empty:
+Runyte's default names are `runyte`, `runyte-2`, `runyte-3`, and project paths
+routinely contain digits,
 so once anything has been typed a digit is ordinary filter text. Clearing the
 filter, with Delete or by backspacing to empty, arms the shortcut again. A
 workspace whose name or path begins with a digit therefore cannot be filtered
@@ -639,7 +647,8 @@ by a swap is not unpinned that way and may be numbered again automatically. A
 stopped row's menu has no Renumber: there is no digit on it to change.
 A standalone workspace owns no persistent host, so the whole `session`
 namespace is inert there rather than a set of commands that each refuse.
-`Space Space` greys out in the key-hint popup and `:session-list`,
+`Space Space` and `Space 1`–`Space 9` grey out in the key-hint popup, and
+`:session-list`,
 `:session-attach`, `:session-stop`, and `:session-rename`
 grey out in the command palette, exactly as `Space l` and `Space x` do without
 a language server or a parser. Invoking one anyway answers
@@ -1980,6 +1989,7 @@ cancellation keys.
 | `g f` | Open the selected path, or the complete path under the cursor; choose between matches beside the active file/explorer and at the project root |
 | `Space e` | Open the active buffer's directory as an editable explorer; from a file, select that file |
 | `Space E` | Open the working directory (controlled by `:cd`) as an editable explorer |
+| `Space 1`–`Space 9` | Attach directly to the numbered persistent session without opening the manager |
 | `Space Space` | Open the persistent-session manager (`:session-list`, `:sl`); another `Space` closes it while the filter is empty, `1`-`9` attach to a numbered session then too, and `Tab` shows the selected row's actions |
 | `Space f` or `Space / f` | Open the Finder over files, buffers, and terminals by name or content; `Tab` switches modes and `Ctrl-t` toggles preview |
 | `Space / a` | The same Finder over every file, ignore files not consulted |
@@ -2020,8 +2030,8 @@ cancellation keys.
 | `:resize-bottom +/- N` | Grow or shrink the active pane at its bottom edge by `N` terminal cells |
 | `:close[!]` or `:c[!]` | Close the active buffer in place; `!` explicitly discards unsaved text; terminals are refused |
 | `:window-close` or `:wc` | Close the active pane, but refuse the last pane |
-| `:quit[!]` or `:q[!]` | Close the active pane and its uniquely displayed buffer; from the last pane, exit standalone or stop the persistent session with unsaved-change protection |
-| `:quit-all[!]` or `:qa[!]` | Exit standalone or stop the persistent session regardless of pane count, with unsaved-change protection; never terminate terminals |
+| `:quit[!]` or `:q[!]` | Close the active pane and its uniquely displayed buffer; from the last pane, exit standalone or stop the persistent session and return to a previous running session, with unsaved-change protection |
+| `:quit-all[!]` or `:qa[!]` | Exit standalone or stop the persistent session and return to a previous running session regardless of pane count, with unsaved-change protection; never terminate terminals |
 | `:quit-here[!]` or `:qh[!]` | Quit and let the shell wrapper change to the active explorer/file directory |
 
 Panes are reached from `Space w` or its `Ctrl-w` compatibility alias, both of
@@ -3036,6 +3046,7 @@ are enabled.
                         on disk (aliases: w!, save!)
 :write-quit             save, then close the pane or quit from the last one (alias: wq)
 :write-buffer-close     save and close the buffer in place (alias: wbc)
+:session-1 … :session-9 attach directly to the numbered running persistent session
 :session-list           open the session manager (persistent mode; alias: sl)
 :session-attach WORKSPACE
                         attach to another workspace's persistent session
@@ -3067,8 +3078,8 @@ protection and changes the shell to the active explorer directory or the
 active file's parent. A pathless view uses the last explorer directory visited
 in that pane, then falls back to the working directory controlled by `:cd`.
 `:quit-here!` or `:qh!` is the explicit force variant. Normal `:quit` from the
-last pane and `:quit-all` leave the shell directory unchanged: use `:q`/`:qa`
-when you want to stay where Runyte was launched, and `:qh` when you want the
+last pane and `:quit-all` leave the shell directory unchanged and return to
+another running persistent session when possible. Use `:qh` when you want the
 shell to follow your navigation.
 
 For Bash or Zsh, add this to the shell configuration:

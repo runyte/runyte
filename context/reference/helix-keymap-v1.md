@@ -390,9 +390,12 @@ projection; keyboard overlays retain input ownership while open.
 | Completion `Ctrl-n`/`Ctrl-p`, arrows, Tab, Escape | navigate/accept/dismiss | direct popup action | Implemented · Deviation | Overlay handler, like the file picker and text prompts. Only Tab accepts, for every source: a completion popup can open on its own (Language after `.`/`:`, Path after `/`, Word for any three-character prefix), so Enter is kept a plain newline everywhere rather than risk swallowing one. Escape dismisses an automatic Word popup and returns to Normal mode in the same press; Language and Path popups retain dismiss-only behavior outside the explorer. The popup titles itself "LSP Complete" for a language-server response and "Complete" otherwise. |
 
 The session manager is reached by `Space Space` and by `:session-list`
-(`:sl`); see its row above. The compatibility review found no other
-unreserved default sequence that should displace a Helix binding, so the
-manager's remaining keys stay inside its overlay.
+(`:sl`); see its row above. Runyte also adds `Space 1` through `Space 9` to
+attach to the same numbered running sessions without opening the manager.
+These Normal/Select bindings share its digit lookup, require persistent mode,
+follow the configured leader, and have remappable `session-1` through
+`session-9` identities. Missing numbers report an error. Numbered shortcuts
+never restart stopped sessions or take over an occupied attachment.
 
 ## Architectural notes
 
@@ -462,3 +465,11 @@ The session manager reserves Ctrl-o for directory opening, Ctrl-e for the
 selected session's on-demand inventory, and Ctrl-g for Git worktree management.
 Printable characters remain filter input. Explorer Tab includes the buffer-wide
 `Open persistent session here` action, independent of selected rows.
+
+Closing the last pane with `:q` stops a clean persistent session and returns
+the TUI to the previous available running session. `:qa` uses the same return
+regardless of pane count; `:wq` inherits it for ordinary files. Unsaved-buffer,
+live-terminal, and pending-wait guards remain in force. Successful attachment
+history takes priority over catalog activity; stopped, incompatible, and
+occupied sessions are skipped. With no available destination, the TUI exits.
+`:detach` and shell-directory handoff through `:qh` always return to the shell.

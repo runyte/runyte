@@ -2736,32 +2736,6 @@ impl App {
             .is_some_and(|list| list.title.starts_with("Sessions") && list.filter.is_empty())
     }
 
-    /// Attaches to the session a digit names, from the session manager.
-    #[cfg(unix)]
-    fn attach_numbered_session(&mut self, digit: char) {
-        let Some(number) = digit.to_digit(10).map(|number| number as u8) else {
-            return;
-        };
-        let Some(path) = self
-            .workspace_rows
-            .iter()
-            .find(|row| row.number == Some(number))
-            .map(|row| row.project_root.clone())
-        else {
-            self.action_failed(format!("no session is numbered {number}"));
-            return;
-        };
-        if !self.persistent_session {
-            self.action_failed("attaching sessions needs workspace.mode: persistent");
-            return;
-        }
-        self.list = None;
-        self.session_action_menu = None;
-        if self.request_workspace_switch(path) {
-            self.should_quit = true;
-        }
-    }
-
     #[cfg(unix)]
     fn open_session_actions(&mut self) {
         let Some(ListAction::Workspace(row)) = self.selected_list_action() else {

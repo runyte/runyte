@@ -647,6 +647,21 @@ pub async fn known_workspaces(state: &Path) -> Result<Vec<WorkspaceRow>> {
     refresh(&registry_roots(), recent_file().as_deref(), state, None).await
 }
 
+/// Reads lifecycle and visit information for navigation without collecting
+/// Git details for every workspace merely to choose the next attachment.
+pub async fn known_workspaces_for_navigation(state: &Path) -> Result<Vec<WorkspaceRow>> {
+    refresh_options(
+        &registry_roots(),
+        recent_file().as_deref(),
+        state,
+        None,
+        true,
+        false,
+        true,
+    )
+    .await
+}
+
 /// Enumerates the current namespace's recent history together with every live
 /// host in the explicit owner-wide inventory.
 ///

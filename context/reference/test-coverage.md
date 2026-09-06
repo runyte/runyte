@@ -77,6 +77,17 @@ Regression coverage includes
 `src/workspace/catalog.rs`, and editor-command preservation in
 `src/terminal/pty.rs`. Formatting and warnings-as-errors Clippy passed too.
 
+A further Linux run at base `7890c21` plus the quit-return and direct numbered
+session bindings passed 2,967 tests, with 31 ignored. Canonical line coverage
+was 91.54% (100,107 of 109,359 lines), above the unchanged 89% floor. Coverage
+includes closing three persistent sessions through one real PTY, returning in
+successful-visit order, explicit detach retaining its host, quitting the last
+remaining session, all nine direct bindings in Normal/Select, missing numbers,
+leader remapping, and scrolling the expanded hint menu. The ordinary suite,
+formatting, and warnings-as-errors Clippy passed. Tests again removed the
+invoking terminal's `RUNYTE_PARENT_CONTEXT` and ran outside the sandbox;
+native macOS validation of this follow-up remains to be run.
+
 ## 2026-09-05 — macOS
 
 Measured with `cargo-llvm-cov` 0.9.0 and Rust 1.97.1 on
