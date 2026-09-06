@@ -21,6 +21,7 @@ pub enum ManualTopic {
     Regex,
     FilesAndBuffers,
     Workspace,
+    PersistentSessions,
     Git,
     LanguageServers,
     Configuration,
@@ -37,6 +38,7 @@ impl ManualTopic {
         Self::Regex,
         Self::FilesAndBuffers,
         Self::Workspace,
+        Self::PersistentSessions,
         Self::Git,
         Self::LanguageServers,
         Self::Configuration,
@@ -53,6 +55,7 @@ impl ManualTopic {
             Self::Regex => "regex",
             Self::FilesAndBuffers => "files-and-buffers",
             Self::Workspace => "workspace",
+            Self::PersistentSessions => "sessions",
             Self::Git => "git",
             Self::LanguageServers => "language-servers",
             Self::Configuration => "configuration",
@@ -70,6 +73,14 @@ impl ManualTopic {
             Self::Regex => &["regex", "regexp", "regular-expressions"],
             Self::FilesAndBuffers => &["files", "buffers", "files-and-buffers", "panes"],
             Self::Workspace => &["workspace", "workspace-search"],
+            Self::PersistentSessions => &[
+                "session",
+                "sessions",
+                "persistent",
+                "persistent-sessions",
+                "attach",
+                "detach",
+            ],
             Self::Git => &["git"],
             Self::LanguageServers => &["lsp", "language-server", "language-servers"],
             Self::Configuration => &["config", "configuration", "settings"],
@@ -87,6 +98,7 @@ impl ManualTopic {
             Self::Regex => "Regular expressions",
             Self::FilesAndBuffers => "Files, buffers, and panes",
             Self::Workspace => "Workspace search",
+            Self::PersistentSessions => "Persistent sessions",
             Self::Git => "Git",
             Self::LanguageServers => "Language servers",
             Self::Configuration => "Configuration",
@@ -121,6 +133,9 @@ impl ManualTopic {
             }
             Self::Workspace => {
                 "{binding:Space / s} searches workspace text as a case-insensitive literal and {binding:Space / /} searches with a regular expression. Results open one retained [workspace search] special buffer.\n\nWorkspace results are a query-time snapshot. Enter follows the typed file, line, and column represented by a result row; the clean result buffer remains available while it is among the eight most recently active special buffers. Unsaved open buffers are authoritative over their on-disk files, but rerunning the command is required to refresh the result set.\n\nWorkspace matching is line-scoped, reads UTF-8 text files no larger than 4 MiB, skips symlinks and internal directories, respects the hidden-file setting, and retains at most 10,000 results."
+            }
+            Self::PersistentSessions => {
+                "A workspace is one project directory and its editor scope, and persistent mode gives that workspace a local host process of its own. The host owns the editor state and a client TUI displays it, so open and unsaved buffers, selections, registers, syntax state, diagnostics, Git projections, language-server processes, and terminal sessions all outlive the TUI disconnecting. Standalone mode, the default, keeps the same state inside the TUI process itself and loses it on exit. Persistent sessions are available only on Unix, and one host accepts one interactive TUI at a time.\n\nrunyte --persistent, spelled runyte -a for attach, starts the current project's session when it is not already running and connects to it. workspace.mode: persistent makes a bare runyte do the same, and --standalone overrides that setting for one launch. Naming a workspace attaches from anywhere: runyte --persistent [WORKSPACE] accepts the abbreviated ID a listing shows, any other unambiguous ID prefix, the session name, or the project directory, and every lifecycle command takes that same selector. :detach disconnects the TUI and leaves the session running; it needs no force form because it discards nothing. :quit from the last pane, and :quit-all from any pane, stop the session instead, and both refuse while the host holds unsaved buffers, live terminal children, or pending --wait requests.\n\nThe session strip is one row above the editor area listing the running sessions in the manager's order. workspace.session_strip is `auto`, which shows the strip once more than one session is running, `always`, or `hidden`; explicit zen presentation hides it either way. Each entry carries its manager number, when it has one, and its session name, with the current session emphasized. A strip too narrow for every entry keeps the current one visible and reports how many it omitted as a trailing count.\n\nAn entry may carry one attention marker and never more than one: `!` when a terminal in that session rang the bell, `·` when it has unread terminal output, and `?` when its health is unknown. Bell outranks unread, which outranks unknown health, so a session that is both ringing and unread shows only `!`. Unread and bell follow the terminals' own viewing rules, and output counts as seen only when a frame carrying it actually reaches an attached TUI: a detached host therefore accumulates unread output even for terminals its retained panes would be showing, and entering a session does not acknowledge the terminals it keeps hidden. `?` means Runyte could not confirm that session's state on its last observation, because the health request went unanswered, the host speaks an incompatible protocol version, or the discovery scan itself failed. It does not mean the session stopped. Nothing else appears in the strip: paths, branches, ages, and counts belong to the manager.\n\n{binding:Shift-Left} and {binding:Shift-Right} visit the previous and next running session in manager order, including unnumbered ones and wrapping at both ends. They are remappable exceptions to child input in Insert and Terminal Insert, and they never start a stopped session or take an attachment another TUI already holds. {binding:Ctrl-w a} (:previous-session) alternates between the last two successful attachments, and a failed switch leaves that history intact. If an outer tmux consumes the shifted arrows, release those tmux bindings so Runyte receives them.\n\n{binding:Space Space} opens the session manager over running and recently visited sessions, with No., Name, Branch, Path, Last active, and Status columns. While its filter is empty, 1 to 9 attach to the session holding that number and another bare {prefix:Space} closes it; once anything is typed those digits are ordinary filter text. Ctrl-t toggles the preview, Tab opens the selected row's actions, Ctrl-o opens another directory as a session, Ctrl-g reaches the Git worktree workflow, and Ctrl-e inspects the selected session's open destinations. Status reads QUIET only when a compatible running host owns at least one live terminal and every one of them has completed no output line for two minutes; it describes terminal output rather than job completion, and stopped, terminal-free, and incompatible rows leave it empty.\n\n{binding:Space n} opens the Navigator over the destinations already open in the session, its buffers and running terminals, with no filesystem scan; {binding:Space f} remains the Finder. From a terminal running inside a session, runyte -a switches the outer TUI to that shell's directory and runyte --wait edits a file in the parent session, returning only once every requested buffer is closed or completed. Outside the editor, runyte --session-list, --session-stop, --session-restart, --session-stop-all, and --session-clean manage sessions directly, and --force makes a refused loss of protected state explicit. A host writes host.log rather than a standalone log, so changing its verbosity means restarting it with runyte --session-restart [WORKSPACE] and repeating any non-default --config PATH."
             }
             Self::Git => {
                 "{prefix:Space g} opens Git navigation and refresh commands. The changed-file list, branches, worktrees, log, blame, stashes, and diffs are typed editor views rather than terminal output. Open {binding:Space ?} in any of those views for its exact row actions and keys.\n\nGit reads and mutations run through Runyte's Git service boundary. Mutations are ordered per repository, and stale results are rejected rather than applied to newer editor or repository state. Cancellation stops waiting and reconciles state; it does not claim rollback.\n\nThe changed-file list distinguishes staged content from unstaged working-tree content. A commit takes the index shown by its Staged section, and writing the generated commit-message buffer performs the commit."
@@ -199,7 +214,9 @@ pub(crate) fn render_document_for(keymap: &Keymap) -> HelpDocument {
         ":help <topic>",
         ":lsp-restart [language]",
         ":notifications",
+        ":previous-session",
         ":service-health",
+        ":quit-all",
         ":tutorial",
         ":settings",
         ":log-open",
@@ -223,6 +240,9 @@ pub(crate) fn render_document_for(keymap: &Keymap) -> HelpDocument {
         "/",
         "Alt-o/Alt-i",
         "Ctrl-o/Ctrl-i",
+        "Ctrl-e",
+        "Ctrl-g",
+        "Ctrl-o",
         "Ctrl-t",
         "Escape",
         "Enter",
@@ -253,11 +273,22 @@ pub(crate) fn render_document_for(keymap: &Keymap) -> HelpDocument {
     for literal in [
         "editor.mouse",
         "lsp.servers.<language>",
+        "workspace.mode: persistent",
+        "workspace.session_strip",
         "rust-analyzer",
         "--config PATH",
         "--log PATH",
         "--keep-index",
         "--persistent",
+        "--standalone",
+        "--session-stop-all",
+        "--session-restart",
+        "--session-clean",
+        "--session-stop",
+        "--session-list",
+        "--force",
+        "--wait",
+        "QUIET",
         "[WORKSPACE]",
         "[explorer]",
         "[RO]",
@@ -405,6 +436,69 @@ mod tests {
             ManualTopic::resolve("clipboard"),
             Some(ManualTopic::MouseAndClipboard)
         );
+    }
+
+    #[test]
+    fn persistent_session_topic_documents_the_strip_markers_and_the_whole_lifecycle() {
+        let rendered = render();
+        let sessions = rendered
+            .chars()
+            .skip(topic_offset(&rendered, ManualTopic::PersistentSessions))
+            .collect::<String>();
+        let sessions = sessions.split("\nGIT\n").next().unwrap();
+
+        // The strip has room for one character of signal, so the legend and
+        // its precedence are the part of this topic nothing else states.
+        for required in [
+            "`!` when a terminal in that session rang the bell",
+            "`·` when it has unread terminal output",
+            "`?` when its health is unknown",
+            "Bell outranks unread, which outranks unknown health",
+            "It does not mean the session stopped.",
+        ] {
+            assert!(sessions.contains(required), "missing {required:?}");
+        }
+
+        for required in [
+            "runyte --persistent",
+            "--standalone",
+            ":detach",
+            ":quit-all",
+            "workspace.session_strip",
+            ":previous-session",
+            "QUIET",
+            "runyte --wait",
+            "--session-clean",
+            "host.log",
+        ] {
+            assert!(sessions.contains(required), "missing {required:?}");
+        }
+
+        for alias in ["sessions", "persistent", "attach", "detach"] {
+            assert_eq!(
+                ManualTopic::resolve(alias),
+                Some(ManualTopic::PersistentSessions)
+            );
+        }
+    }
+
+    #[test]
+    fn strip_markers_render_as_code_rather_than_as_prose_punctuation() {
+        let rendered = render_document();
+        let code_at = |needle: &str| {
+            let byte = rendered.text().find(needle).unwrap();
+            // Step past the opening delimiter onto the marker itself.
+            let offset = rendered.text()[..byte].chars().count() + 1;
+            rendered
+                .spans()
+                .iter()
+                .find(|span| span.from <= offset && span.to > offset)
+                .map(|span| span.scope.name())
+        };
+
+        for marker in ["`!`", "`·`", "`?`"] {
+            assert_eq!(code_at(marker), Some("markup.raw"), "{marker}");
+        }
     }
 
     #[test]

@@ -715,7 +715,9 @@ Shift-Left/Right, release or change those tmux bindings so Runyte receives them.
 The **session strip** sits above the editor area. `workspace.session_strip` accepts
 `auto` (show with multiple running sessions), `always`, or `hidden`. Zen hides
 it. Entries retain manager numbering and names; overflow keeps the current
-entry visible and reports the number omitted. Unread output and bells follow
+entry visible and reports the number omitted. An entry carries at most one
+attention marker, in this order of precedence: `!` for a terminal bell, `·` for
+unread terminal output, and `?` for unknown health. Unread output and bells follow
 the terminals' viewing rules: entering a persistent session does not acknowledge
 its hidden terminals. Unknown health is distinct from stopped; `QUIET` in the
 manager still describes completed-line output, not job completion.
@@ -1480,10 +1482,11 @@ hiding the rest of the layout; an ordinary pane carries neither tag.
 In the Runyte grammar, `Space ?` opens contextual help for the current buffer
 type. `:help` and its `:?` alias instead open the general Runyte manual;
 `:help <topic>` opens the same manual at a section such as
-`:help regex`, `:help search`, `:help mouse`, `:help git`, or `:help lsp`. Both
-kinds of help are ordinary read-only buffers, so they scroll, search, split,
-and close with their scoped `q`, `:c`, or `Space b c`. Nothing is truncated to
-fit the window, and opening one kind of help does not overwrite the other.
+`:help regex`, `:help search`, `:help mouse`, `:help git`, `:help sessions`,
+or `:help lsp`. Both kinds of help are ordinary read-only buffers, so they
+scroll, search, split, and close with their scoped `q`, `:c`, or `Space b c`.
+Nothing is truncated to fit the window, and opening one kind of help does not
+overwrite the other.
 
 The about page and both kinds of help use one semantic colour schema. Section
 titles, commands, keybindings, file paths, web links, and technical examples

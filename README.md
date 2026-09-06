@@ -315,7 +315,7 @@ pending, the status row keeps a rotating spinner directly beside
 - <kbd>Space</kbd> <kbd>?</kbd> opens contextual help for the current buffer
   type.
 - `:help` opens the general manual, and `:help <topic>` jumps to a topic such
-  as `git`, `search`, `mouse`, or `lsp`.
+  as `git`, `search`, `mouse`, `sessions`, or `lsp`.
 
 ### Documentation
 
