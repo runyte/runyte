@@ -666,17 +666,19 @@ fn draw_session_strip(frame: &mut Frame<'_>, theme: &TuiTheme, snapshot: &Editor
             let number = entry
                 .number
                 .map_or_else(String::new, |number| format!("{number} "));
+            // Every entry carries a marker, quiet included, so a session's
+            // width never changes with its state and the names stay put.
             format!(
-                " {number}{}{} ",
+                " {number}{} {} ",
                 entry.name,
-                if entry.bell {
-                    " !"
+                if entry.health_unknown {
+                    '?'
+                } else if entry.bell {
+                    '!'
                 } else if entry.unread {
-                    " ·"
-                } else if entry.health_unknown {
-                    " ?"
+                    '+'
                 } else {
-                    ""
+                    '·'
                 }
             )
         })
@@ -694,8 +696,13 @@ fn draw_session_strip(frame: &mut Frame<'_>, theme: &TuiTheme, snapshot: &Editor
         return;
     };
     let width = usize::from(area.width);
+    // The count of omitted entries elides rather than adds: `+` is an entry's
+    // own unread marker, so a strip ending in `+3` would read as a session
+    // named 3 with new output. The reserve measures the exact string the
+    // trailing span will draw, in cells rather than bytes.
+    let omitted = |hidden: usize| format!(" …{hidden}");
     let reserve = if labels.len() > 1 {
-        format!(" +{}", labels.len() - 1).len()
+        UnicodeWidthStr::width(omitted(labels.len() - 1).as_str())
     } else {
         0
     };
@@ -739,7 +746,7 @@ fn draw_session_strip(frame: &mut Frame<'_>, theme: &TuiTheme, snapshot: &Editor
         })
         .collect();
     let trailing = (hidden > 0 && !narrow)
-        .then(|| Span::styled(format!(" +{hidden}"), Style::default().fg(theme.muted)));
+        .then(|| Span::styled(omitted(hidden), Style::default().fg(theme.muted)));
     frame.render_widget(
         Paragraph::new(fit_row_with_trailing(spans, trailing, width, None)),
         area,
@@ -8719,7 +8726,9 @@ mod tests {
             .map(|cell| cell.symbol())
             .collect::<String>();
         assert!(row.contains("current"), "{row}");
-        assert!(row.contains("+4"), "{row}");
+        // The omitted count elides; a `+` here would be an entry's unread
+        // marker, and 4 would read as the name it belongs to.
+        assert!(row.contains("…4") && !row.contains("+4"), "{row}");
         for width in [1, 2, 3, 5] {
             snapshot.geometry.editor.width = width;
             let mut terminal = Terminal::new(TestBackend::new(width, 5)).unwrap();
@@ -8728,8 +8737,8 @@ mod tests {
                 .unwrap();
             assert_eq!(terminal.backend().buffer().content[0].symbol(), "c");
         }
-        snapshot.geometry.editor.width = 53;
-        let mut terminal = Terminal::new(TestBackend::new(53, 5)).unwrap();
+        snapshot.geometry.editor.width = 63;
+        let mut terminal = Terminal::new(TestBackend::new(63, 5)).unwrap();
         terminal
             .draw(|frame| draw_session_strip(frame, &theme, &snapshot))
             .unwrap();
@@ -8738,12 +8747,67 @@ mod tests {
             .buffer()
             .content
             .iter()
-            .take(53)
+            .take(63)
             .map(|cell| cell.symbol())
             .collect::<String>();
         assert!(
-            row.contains("session-0") && row.contains("current") && !row.contains('+'),
+            row.contains("session-0") && row.contains("current") && !row.contains('…'),
             "{row}"
         );
+    }
+
+    #[test]
+    fn session_strip_marks_every_state_in_one_column_of_equal_width() {
+        use crate::snapshot::{SessionStripEntry, SessionStripSnapshot};
+        let mut app = App::new(crate::config::Config::default(), None).unwrap();
+        let geometry = frame_geometry(TuiRect::new(0, 0, 48, 5));
+        let prepared = app.prepare_view(geometry);
+        let mut snapshot = app.snapshot(&prepared);
+        snapshot.geometry.editor.y = 1;
+        snapshot.geometry.editor.height -= 1;
+        // Each row also carries the states the marker it wins over would
+        // have claimed, so the order is read off the strip rather than
+        // assumed from the fields.
+        let states = [
+            (false, false, false),
+            (true, true, true),
+            (false, true, true),
+            (false, true, false),
+        ];
+        snapshot.session_strip = Some(SessionStripSnapshot {
+            entries: states
+                .iter()
+                .enumerate()
+                .map(
+                    |(index, &(health_unknown, unread, bell))| SessionStripEntry {
+                        name: format!("s{index}"),
+                        number: None,
+                        current: index == 0,
+                        health_unknown,
+                        unread,
+                        bell,
+                    },
+                )
+                .collect(),
+        });
+        let theme = TuiTheme::with_color_depth(&snapshot.theme, TerminalColorDepth::TrueColor);
+        let mut terminal = Terminal::new(TestBackend::new(48, 5)).unwrap();
+        terminal
+            .draw(|frame| draw_session_strip(frame, &theme, &snapshot))
+            .unwrap();
+        let row = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .take(48)
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        // A quiet session is marked like every other one, so the four entries
+        // occupy the same cells whatever they are doing.
+        assert!(row.starts_with(" s0 · "), "{row}");
+        assert!(row.contains(" s1 ? "), "{row}");
+        assert!(row.contains(" s2 ! "), "{row}");
+        assert!(row.contains(" s3 + "), "{row}");
     }
 }

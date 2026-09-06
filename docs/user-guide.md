@@ -724,12 +724,14 @@ Shift-Left/Right, release or change those tmux bindings so Runyte receives them.
 The **session strip** sits above the editor area. `workspace.session_strip` accepts
 `auto` (show with multiple running sessions), `always`, or `hidden`. Zen hides
 it. Entries retain manager numbering and names; overflow keeps the current
-entry visible and reports the number omitted. An entry carries at most one
-attention marker, in this order of precedence: `!` for a terminal bell, `·` for
-unread terminal output, and `?` for unknown health. Unread output and bells follow
-the terminals' viewing rules: entering a persistent session does not acknowledge
-its hidden terminals. Unknown health is distinct from stopped; `QUIET` in the
-manager still describes completed-line output, not job completion.
+entry visible and reports the number omitted as a trailing `…N`. Every entry
+carries exactly one state marker, so a name occupies the same cells whatever
+its session is doing: `?` for unknown health, `!` for a terminal bell, `+` for
+unread terminal output, and `·` for a quiet session, in that order of
+precedence. Unread output and bells follow the terminals' viewing rules:
+entering a persistent session does not acknowledge its hidden terminals.
+Unknown health is distinct from stopped; `QUIET` in the manager still
+describes completed-line output, not job completion.
 Every attachment refreshes the session list asynchronously, including when
 returning to a host whose cached list predates a newly started session.
 

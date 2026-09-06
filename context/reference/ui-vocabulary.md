@@ -389,11 +389,14 @@ The **session strip** is one optional global row above the editor area; panes
 and overlays remain inside the editor area and the two bottom global lines
 retain their roles. `workspace.session_strip` is `auto`, `always`, or `hidden`;
 zen hides it. Entries are running persistent-session identities in manager
-order, with optional number, stable name, current emphasis and a count of
-omitted entries. Unnumbered hosts remain eligible. Unread and bell attention
-follow terminal viewing acknowledgments; unknown health does not mean stopped.
-One entry renders at most one attention marker, `!` for a bell before `·` for
-unread output before `?` for unknown health.
+order, with optional number, stable name, current emphasis and a trailing
+`…N` count of omitted entries, which elides rather than adds so that it stays
+distinct from an entry's own `+` marker. Unnumbered hosts remain eligible.
+Unread and bell attention follow terminal viewing acknowledgments; unknown
+health does not mean stopped.
+Every entry renders exactly one state marker, keeping entry widths stable
+across state changes: `?` for unknown health before `!` for a bell before `+`
+for unread output before `·` for a quiet session.
 Attachment requests a fresh asynchronous observation instead of waiting for
 the host's retained polling deadline. Cached rows remain while it runs, and
 an older in-flight observation cannot replace them after reattachment.
