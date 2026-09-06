@@ -41,6 +41,42 @@ days, and fails below 89% total line coverage. The floor is deliberately below
 the observed baseline because conditional Linux and macOS code changes both the
 instrumented denominator and the paths available to a run on one platform.
 
+## 2026-09-06 — Linux, session navigation
+
+Measured with `cargo-llvm-cov` 0.9.0 and Rust 1.97.1 on
+`x86_64-unknown-linux-gnu`, Linux 7.1.13, at base commit `9750cd0` plus the
+session-navigation implementation. The canonical
+`cargo llvm-cov --locked --workspace` command passed all 2,959 non-ignored
+tests; 31 tests retained their existing ignored declarations. The ordinary
+`cargo test` run, `cargo fmt --check`, and warnings-as-errors Clippy also passed.
+
+| Measure | Covered | Total | Coverage |
+| --- | ---: | ---: | ---: |
+| Lines | 99,788 | 109,110 | 91.46% |
+| Functions | 9,294 | 10,073 | 92.27% |
+| Regions | 154,757 | 170,047 | 91.01% |
+
+Tests and coverage ran outside the filesystem sandbox so local sockets, PTYs,
+parent-terminal handoffs, and outer-TUI switching executed normally. Coverage
+includes mixed destination focus/history, stale selection handling, strip
+geometry, asynchronous directory/inventory navigation, and parent external-editor
+completion/cancellation. The enforced 89% floor and README badge are unchanged.
+Native macOS validation of this change remains to be run; this Linux measurement
+does not supersede the macOS baseline below.
+
+A follow-up Linux run covering attachment-triggered session observation and
+inherited external-editor commands passed all 2,962 non-ignored tests, with
+31 ignored. Canonical line coverage was 91.52% (99,927 of 109,188 lines), above
+the unchanged 89% floor. The test environment removed the invoking terminal's
+`RUNYTE_PARENT_CONTEXT` so unrelated CLI fixtures did not address that host;
+test-owned persistent terminals supplied their own parent context normally.
+Regression coverage includes
+`reattachment_refreshes_session_strip_before_the_periodic_observation` and
+`integrated_parent_wait_save_routes_return_to_same_live_terminal` in
+`tests/local_protocol.rs`, the in-flight observation replacement test in
+`src/workspace/catalog.rs`, and editor-command preservation in
+`src/terminal/pty.rs`. Formatting and warnings-as-errors Clippy passed too.
+
 ## 2026-09-05 — macOS
 
 Measured with `cargo-llvm-cov` 0.9.0 and Rust 1.97.1 on

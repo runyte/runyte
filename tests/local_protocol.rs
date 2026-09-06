@@ -1527,6 +1527,10 @@ async fn start_host_opening(
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
+    wait_for_host_start(child, endpoint).await
+}
+
+async fn wait_for_host_start(child: Child, endpoint: &LocalEndpoint) -> Option<ChildGuard> {
     let mut child = ChildGuard(Some(child));
     let deadline = Instant::now() + ASYNC_STATE_TIMEOUT;
     loop {
@@ -2705,6 +2709,7 @@ async fn persistent_worktree_switch_detaches_to_a_new_root_without_retargeting_t
             HostResponse::SwitchWorkspace {
                 selector_bytes,
                 working_directory_bytes,
+                ..
             } => {
                 assert_eq!(decode_path(working_directory_bytes), root);
                 break decode_path(selector_bytes);
@@ -4502,4 +4507,547 @@ async fn relative_workspace_attach_uses_editor_cwd_and_keeps_one_client_process(
     assert!(source_host.0.take().unwrap().wait().unwrap().success());
     assert!(linked_host.0.take().unwrap().wait().unwrap().success());
     fs::remove_dir_all(root).unwrap();
+}
+
+fn parent_shell_quote(value: &Path) -> String {
+    format!("'{}'", value.to_string_lossy().replace('\'', "'\\''"))
+}
+
+#[tokio::test]
+async fn reattachment_refreshes_session_strip_before_the_periodic_observation() {
+    let storage = TestRuntimeRoot::new("strip-reattach").unwrap();
+    let runtime = storage.create_private_dir("runtime").unwrap();
+    let cache = storage.create_private_dir("cache").unwrap();
+    let config = storage
+        .create_private_dir("config")
+        .unwrap()
+        .join("config.yaml");
+    fs::write(
+        &config,
+        "lsp:\n  enable: false\nworkspace:\n  session_strip: always\n",
+    )
+    .unwrap();
+    let mut hosts = Vec::new();
+    let mut endpoints = Vec::new();
+
+    for count in 1..=3 {
+        let root = storage
+            .create_private_dir(format!("project-{count}"))
+            .unwrap();
+        let endpoint =
+            LocalEndpoint::discover_with_runtime(&root.join(".runyte"), &root, Some(&runtime))
+                .unwrap();
+        let child = bundled_runyte()
+            .arg("--serve")
+            .arg("--project-root")
+            .arg(&root)
+            .arg("--config")
+            .arg(&config)
+            .current_dir(&root)
+            .env("XDG_RUNTIME_DIR", &runtime)
+            .env("XDG_CACHE_HOME", &cache)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let Some(host) = wait_for_host_start(child, &endpoint).await else {
+            return;
+        };
+        hosts.push(host);
+        endpoints.push(endpoint);
+
+        // Visit every host, then return through them again while their normal
+        // 15-second observation deadline is still in the future.
+        for endpoint in endpoints.iter().chain(endpoints.iter().rev()) {
+            let mut client = LocalClient::connect(endpoint, tui_geometry(), true)
+                .await
+                .unwrap();
+            assert!(matches!(
+                response(&mut client).await,
+                HostResponse::Welcome { .. }
+            ));
+            tokio::time::timeout(Duration::from_secs(5), async {
+                loop {
+                    if let Some(HostResponse::Frame { frame }) = client.recv().await.unwrap()
+                        && let Some(strip) = frame.editor.session_strip
+                        && strip.entries.len() == count
+                        && strip.entries.iter().filter(|entry| entry.current).count() == 1
+                        && strip.entries.iter().all(|entry| entry.number.is_some())
+                    {
+                        break;
+                    }
+                }
+            })
+            .await
+            .expect("reattachment kept a stale strip until its periodic refresh");
+            client.send(&ClientRequest::Detach).await.unwrap();
+            assert!(matches!(
+                semantic_response(&mut client).await,
+                HostResponse::Detached { .. }
+            ));
+        }
+    }
+    for (endpoint, host) in endpoints.iter().zip(&mut hosts) {
+        shutdown(&mut connect_control(endpoint).await).await;
+        wait_child(host.0.as_mut().unwrap()).await;
+    }
+}
+
+async fn invoke_parent_test_command(
+    client: &mut LocalClient,
+    name: &str,
+    argument: Option<String>,
+) {
+    let deadline = Instant::now() + ASYNC_STATE_TIMEOUT;
+    loop {
+        let frame = resynchronized_frame(client, "preparing parent request command").await;
+        let mut command =
+            CommandRequest::at(name, frame.id, frame.active_buffer, frame.active_revision);
+        command.argument = argument.clone();
+        client
+            .send(&ClientRequest::Invoke { command })
+            .await
+            .unwrap();
+        match semantic_response(client).await {
+            HostResponse::CommandResult { outcome } => {
+                assert!(
+                    !matches!(
+                        outcome,
+                        runyte::protocol::CommandOutcome::UserError(_)
+                            | runyte::protocol::CommandOutcome::Unavailable(_)
+                    ),
+                    "{name}: {outcome:?}"
+                );
+                return;
+            }
+            HostResponse::Error { message } if message.starts_with("stale editor frame:") => {
+                assert!(
+                    Instant::now() < deadline,
+                    "parent command stayed stale: {message}"
+                );
+            }
+            response => panic!("parent command {name} failed: {response:?}"),
+        }
+    }
+}
+
+async fn parent_wait_pending(control: &mut LocalClient) {
+    let deadline = Instant::now() + ASYNC_STATE_TIMEOUT;
+    loop {
+        control.send(&ClientRequest::Health).await.unwrap();
+        match response(control).await {
+            HostResponse::Health {
+                pending_wait_requests: 1,
+                ..
+            } => return,
+            HostResponse::Health { .. } => {}
+            response => panic!("expected parent wait health: {response:?}"),
+        }
+        assert!(
+            Instant::now() < deadline,
+            "integrated parent wait did not arrive"
+        );
+        tokio::time::sleep(ASYNC_STATE_POLL_INTERVAL).await;
+    }
+}
+
+async fn parent_shell_result(path: &Path) -> String {
+    let deadline = Instant::now() + ASYNC_STATE_TIMEOUT;
+    loop {
+        if let Ok(value) = fs::read_to_string(path)
+            && !value.is_empty()
+        {
+            return value;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "parent CLI did not return to its shell: {}",
+            path.display()
+        );
+        tokio::time::sleep(ASYNC_STATE_POLL_INTERVAL).await;
+    }
+}
+
+#[tokio::test]
+async fn integrated_parent_wait_save_routes_return_to_same_live_terminal() {
+    for route in ["wq", "wbc", "write-then-quit", "q", "q!"] {
+        let root = project();
+        let outside = project();
+        let prompt = outside.join("prompt.txt");
+        fs::write(&prompt, "original\n").unwrap();
+        let result_path = root.join("parent-result");
+        let endpoint = LocalEndpoint::discover_with_runtime(
+            &root.join(".runyte"),
+            &root,
+            Some(test_runtime_dir()),
+        )
+        .unwrap();
+        let child = bundled_runyte()
+            .args(["--serve", "other.txt"])
+            .current_dir(&root)
+            .env("XDG_RUNTIME_DIR", test_runtime_dir())
+            .env("XDG_CACHE_HOME", test_cache_dir())
+            .env("EDITOR", env!("CARGO_BIN_EXE_runyte"))
+            .env("VISUAL", env!("CARGO_BIN_EXE_runyte"))
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let Some(mut host) = wait_for_host_start(child, &endpoint).await else {
+            return;
+        };
+        let mut interactive = LocalClient::connect(&endpoint, tui_geometry(), true)
+            .await
+            .unwrap();
+        assert!(matches!(
+            response(&mut interactive).await,
+            HostResponse::Welcome { .. }
+        ));
+        let _ = next_idle_frame(&mut interactive).await;
+        let editor = match route {
+            "wq" => "$EDITOR".to_owned(),
+            "wbc" => "$VISUAL".to_owned(),
+            _ => format!(
+                "{} --wait",
+                parent_shell_quote(Path::new(env!("CARGO_BIN_EXE_runyte")))
+            ),
+        };
+        let script = format!(
+            "cd {}; {} {}; printf '%s' $? > {}; exec /bin/cat",
+            parent_shell_quote(&outside),
+            editor,
+            parent_shell_quote(&prompt),
+            parent_shell_quote(&result_path)
+        );
+        invoke_parent_test_command(
+            &mut interactive,
+            "terminal",
+            Some(format!(
+                "/bin/sh -c {}",
+                parent_shell_quote(Path::new(&script))
+            )),
+        )
+        .await;
+        let mut control = connect_control(&endpoint).await;
+        parent_wait_pending(&mut control).await;
+        assert!(
+            !result_path.exists(),
+            "request completed before its edit: {route}"
+        );
+        control.send(&ClientRequest::ListBuffers).await.unwrap();
+        let HostResponse::Buffers { buffers } = response(&mut control).await else {
+            panic!("expected buffers")
+        };
+        let buffer = buffers
+            .into_iter()
+            .find(|buffer| {
+                buffer.path_bytes.clone().map(decode_path).as_deref() == Some(prompt.as_path())
+            })
+            .unwrap();
+        wait_for_frame(
+            &mut interactive,
+            "waiting for parent prompt activation",
+            |frame| frame.active_buffer == buffer.id,
+        )
+        .await;
+        if route != "q" {
+            control
+                .send(&ClientRequest::ApplyTransaction {
+                    buffer: buffer.id,
+                    expected: buffer.revision,
+                    changes: vec![TransportChange {
+                        from: 0,
+                        to: 0,
+                        text: "edited ".to_owned(),
+                    }],
+                })
+                .await
+                .unwrap();
+            assert!(matches!(
+                response(&mut control).await,
+                HostResponse::TransactionApplied { .. }
+            ));
+        }
+        if route == "write-then-quit" {
+            invoke_parent_test_command(&mut interactive, "w", None).await;
+            assert!(
+                !result_path.exists(),
+                ":w alone must keep the parent caller waiting"
+            );
+            invoke_parent_test_command(&mut interactive, "q", None).await;
+        } else {
+            invoke_parent_test_command(&mut interactive, route, None).await;
+        }
+        control.send(&ClientRequest::Health).await.unwrap();
+        let completed_health = response(&mut control).await;
+        assert!(
+            matches!(
+                completed_health,
+                HostResponse::Health {
+                    pending_wait_requests: 0,
+                    ..
+                }
+            ),
+            "route {route} did not complete its request: {completed_health:?}"
+        );
+        let _ = resynchronized_frame(&mut interactive, "draining parent completion frame").await;
+        let result = parent_shell_result(&result_path).await;
+        assert_eq!(result == "0", route != "q!", "route {route}: {result}");
+        assert_eq!(
+            fs::read_to_string(&prompt).unwrap(),
+            if matches!(route, "q" | "q!") {
+                "original\n"
+            } else {
+                "edited original\n"
+            }
+        );
+        let frame = wait_for_frame(
+            &mut interactive,
+            "restoring originating parent terminal",
+            |frame| {
+                frame
+                    .editor
+                    .panes
+                    .iter()
+                    .any(|pane| pane.active && pane.terminal.is_some())
+            },
+        )
+        .await;
+        assert_eq!(
+            frame.editor.panes.len(),
+            1,
+            "completion closed or split the parent pane"
+        );
+        control.send(&ClientRequest::Health).await.unwrap();
+        assert!(matches!(
+            response(&mut control).await,
+            HostResponse::Health {
+                pending_wait_requests: 0,
+                live_terminals: 1,
+                interactive_attached: true,
+                ..
+            }
+        ));
+        control.send(&ClientRequest::ForceShutdown).await.unwrap();
+        assert!(matches!(
+            response(&mut control).await,
+            HostResponse::ShuttingDown
+        ));
+        wait_child(host.0.as_mut().unwrap()).await;
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(outside).unwrap();
+    }
+}
+
+#[tokio::test]
+async fn integrated_parent_attach_reports_completion_only_after_outer_acknowledgment() {
+    let root = project();
+    let destination = project();
+    let result_path = root.join("attach-result");
+    let endpoint = LocalEndpoint::discover_with_runtime(
+        &root.join(".runyte"),
+        &root,
+        Some(test_runtime_dir()),
+    )
+    .unwrap();
+    let Some(mut host) = start_host(&root, &endpoint).await else {
+        return;
+    };
+    let mut interactive = LocalClient::connect(&endpoint, tui_geometry(), true)
+        .await
+        .unwrap();
+    let _ = response(&mut interactive).await;
+    let _ = next_idle_frame(&mut interactive).await;
+    let script = format!(
+        "cd {}; {} -a; printf '%s' $? > {}; exec /bin/cat",
+        parent_shell_quote(&destination),
+        parent_shell_quote(Path::new(env!("CARGO_BIN_EXE_runyte"))),
+        parent_shell_quote(&result_path)
+    );
+    invoke_parent_test_command(
+        &mut interactive,
+        "terminal",
+        Some(format!(
+            "/bin/sh -c {}",
+            parent_shell_quote(Path::new(&script))
+        )),
+    )
+    .await;
+    let HostResponse::ParentSwitchWorkspace {
+        selector,
+        directory,
+        receipt,
+    } = semantic_response(&mut interactive).await
+    else {
+        panic!("integrated command did not request an outer attachment")
+    };
+    assert_eq!(decode_path(selector), destination);
+    assert_eq!(decode_path(directory), destination);
+    assert!(
+        !result_path.exists(),
+        "queued handoff claimed completed attachment"
+    );
+    let mut control = connect_control(&endpoint).await;
+    control.send(&ClientRequest::Health).await.unwrap();
+    assert!(matches!(
+        response(&mut control).await,
+        HostResponse::Health {
+            live_terminals: 1,
+            interactive_attached: false,
+            ..
+        }
+    ));
+    control
+        .send(&ClientRequest::ParentHandoffResult {
+            receipt: receipt.clone(),
+            error: None,
+        })
+        .await
+        .unwrap();
+    assert!(matches!(
+        response(&mut control).await,
+        HostResponse::ParentAttached
+    ));
+    assert_eq!(parent_shell_result(&result_path).await, "0");
+    control
+        .send(&ClientRequest::ParentHandoffResult {
+            receipt,
+            error: None,
+        })
+        .await
+        .unwrap();
+    assert!(
+        matches!(response(&mut control).await, HostResponse::Error { .. }),
+        "duplicate completion must be rejected"
+    );
+    control.send(&ClientRequest::ForceShutdown).await.unwrap();
+    let _ = response(&mut control).await;
+    wait_child(host.0.as_mut().unwrap()).await;
+    fs::remove_dir_all(root).unwrap();
+    fs::remove_dir_all(destination).unwrap();
+}
+
+#[tokio::test]
+async fn integrated_attach_switches_real_outer_tui_and_returns_to_original_shell() {
+    let root = project();
+    let destination = project();
+    fs::write(root.join("source-ready.txt"), "source\n").unwrap();
+    fs::write(destination.join("destination-ready.txt"), "destination\n").unwrap();
+    let source_endpoint = LocalEndpoint::discover_with_runtime(
+        &root.join(".runyte"),
+        &root,
+        Some(test_runtime_dir()),
+    )
+    .unwrap();
+    let destination_endpoint = LocalEndpoint::discover_with_runtime(
+        &destination.join(".runyte"),
+        &destination,
+        Some(test_runtime_dir()),
+    )
+    .unwrap();
+    let Some(mut source_host) =
+        start_host_opening(&root, &source_endpoint, Some("source-ready.txt")).await
+    else {
+        return;
+    };
+    let Some(mut destination_host) = start_host_opening(
+        &destination,
+        &destination_endpoint,
+        Some("destination-ready.txt"),
+    )
+    .await
+    else {
+        return;
+    };
+    let mut source = connect_control(&source_endpoint).await;
+    let mut target = connect_control(&destination_endpoint).await;
+    let (switcher, mut terminal) = spawn_in_pty(
+        bundled_runyte()
+            .arg("--persistent")
+            .current_dir(&root)
+            .env("XDG_RUNTIME_DIR", test_runtime_dir())
+            .env("XDG_CACHE_HOME", test_cache_dir()),
+    );
+    let mut switcher = ChildGuard(Some(switcher));
+    let client_pid = switcher.0.as_ref().unwrap().id();
+    let output = capture_terminal_output(&terminal);
+    wait_for_interactive_attachment(
+        &mut source,
+        switcher.0.as_mut().unwrap(),
+        None,
+        "initial parent attachment",
+        Some(&output),
+    )
+    .await;
+    wait_for_terminal_screen(&output, "source-ready.txt").await;
+    let result = root.join("parent-attach-result");
+    let before_pid = root.join("shell-before");
+    let after_pid = root.join("shell-after");
+    let script = format!(
+        "cd {}; printf '%s' \"$$\" > {}; {} -a; printf '%s' $? > {}; printf '%s' \"$$\" > {}; printf 'PARENT_SHELL_RETURNED\\n'; pwd; while IFS= read -r line; do printf 'parent-echo:%s\\n' \"$line\"; done",
+        parent_shell_quote(&destination),
+        parent_shell_quote(&before_pid),
+        parent_shell_quote(Path::new(env!("CARGO_BIN_EXE_runyte"))),
+        parent_shell_quote(&result),
+        parent_shell_quote(&after_pid)
+    );
+    type_colon_command(
+        &mut terminal,
+        &format!(
+            "terminal /bin/sh -c {}",
+            parent_shell_quote(Path::new(&script))
+        ),
+    );
+    wait_for_interactive_attachment(
+        &mut target,
+        switcher.0.as_mut().unwrap(),
+        None,
+        "integrated runyte -a",
+        Some(&output),
+    )
+    .await;
+    wait_for_terminal_screen(&output, "destination-ready.txt").await;
+    assert_eq!(parent_shell_result(&result).await, "0");
+    assert_eq!(
+        fs::read_to_string(&before_pid).unwrap(),
+        fs::read_to_string(&after_pid).unwrap(),
+        "the original shell was replaced"
+    );
+    type_colon_command(&mut terminal, "previous-session");
+    wait_for_interactive_attachment(
+        &mut source,
+        switcher.0.as_mut().unwrap(),
+        None,
+        "previous successful attachment",
+        Some(&output),
+    )
+    .await;
+    wait_for_terminal_screen(&output, "PARENT_SHELL_RETURNED").await;
+    std::io::Write::write_all(&mut terminal, b"same-shell\r").unwrap();
+    std::io::Write::flush(&mut terminal).unwrap();
+    wait_for_terminal_screen(&output, "parent-echo:same-shell").await;
+    assert_eq!(switcher.0.as_ref().unwrap().id(), client_pid);
+    source.send(&ClientRequest::Health).await.unwrap();
+    assert!(matches!(
+        response(&mut source).await,
+        HostResponse::Health {
+            live_terminals: 1,
+            interactive_attached: true,
+            ..
+        }
+    ));
+    // The behavior assertions are complete. End the test-owned TUI before
+    // stopping its host: a live switcher can recover a forced host loss by
+    // reattaching its previous workspace, which is deliberately still alive.
+    switcher.0.as_mut().unwrap().kill().unwrap();
+    let _ = wait_child(switcher.0.as_mut().unwrap()).await;
+    source.send(&ClientRequest::ForceShutdown).await.unwrap();
+    let _ = response(&mut source).await;
+    shutdown(&mut target).await;
+    wait_child(source_host.0.as_mut().unwrap()).await;
+    wait_child(destination_host.0.as_mut().unwrap()).await;
+    fs::remove_dir_all(root).unwrap();
+    fs::remove_dir_all(destination).unwrap();
 }

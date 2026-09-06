@@ -21,7 +21,7 @@ use crate::{
     command::GrammarKind,
     config::{
         Config, DEFAULT_THEME, ExplorerSort, MAX_GIT_REFRESH_INTERVAL_SECONDS,
-        MAX_IDLE_RETIREMENT_MINUTES, WorkspaceMode,
+        MAX_IDLE_RETIREMENT_MINUTES, SessionStripVisibility, WorkspaceMode,
     },
 };
 
@@ -58,6 +58,7 @@ pub enum SettingId {
     EditorFastPaneKeys,
     EditorCommandModeDim,
     WorkspaceMode,
+    SessionStrip,
     WorkspaceIdleRetirementMinutes,
     Theme,
     LspEnable,
@@ -72,6 +73,7 @@ pub enum SettingValue {
     Boolean(bool),
     Integer(usize),
     WorkspaceMode(WorkspaceMode),
+    SessionStrip(SessionStripVisibility),
     ExplorerSort(ExplorerSort),
     Text(String),
 }
@@ -86,6 +88,7 @@ pub enum SettingType {
     },
     Theme,
     WorkspaceMode,
+    SessionStrip,
     ExplorerSort,
     /// An unrestricted string entered directly rather than chosen from a list.
     Text,
@@ -322,6 +325,15 @@ const DESCRIPTORS: &[SettingDescriptor] = &[
         persistence: PersistencePolicy::ConfigFile,
     },
     SettingDescriptor {
+        id: SettingId::SessionStrip,
+        key: "workspace.session_strip",
+        title: "Session strip",
+        description: "Show running persistent sessions automatically, always, or never",
+        value_type: SettingType::SessionStrip,
+        preview: PreviewPolicy::Immediate,
+        persistence: PersistencePolicy::ConfigFile,
+    },
+    SettingDescriptor {
         id: SettingId::WorkspaceIdleRetirementMinutes,
         key: "workspace.idle_retirement_minutes",
         title: "Workspace idle retirement",
@@ -402,6 +414,7 @@ impl SettingId {
         Self::EditorFastPaneKeys,
         Self::EditorCommandModeDim,
         Self::WorkspaceMode,
+        Self::SessionStrip,
         Self::WorkspaceIdleRetirementMinutes,
         Self::Theme,
         Self::LspEnable,
@@ -475,6 +488,7 @@ impl SettingId {
             Self::EditorExplorerSort => SettingValue::ExplorerSort(config.editor.explorer_sort),
             Self::EditorExplorerDetails => SettingValue::Boolean(config.editor.explorer_details),
             Self::WorkspaceMode => SettingValue::WorkspaceMode(config.workspace.mode),
+            Self::SessionStrip => SettingValue::SessionStrip(config.workspace.session_strip),
             Self::WorkspaceIdleRetirementMinutes => {
                 SettingValue::Integer(config.workspace.idle_retirement_minutes)
             }
@@ -495,6 +509,10 @@ impl SettingId {
                 .filter(|name| config.resolve_theme(name).is_ok())
                 .map(str::to_owned)
                 .collect(),
+            SettingType::SessionStrip => SessionStripVisibility::ALL
+                .iter()
+                .map(ToString::to_string)
+                .collect(),
             SettingType::WorkspaceMode => {
                 WorkspaceMode::ALL.iter().map(ToString::to_string).collect()
             }
@@ -514,6 +532,7 @@ impl SettingId {
             (SettingType::Grammar, SettingValue::Grammar(_))
             | (SettingType::Boolean, SettingValue::Boolean(_))
             | (SettingType::WorkspaceMode, SettingValue::WorkspaceMode(_))
+            | (SettingType::SessionStrip, SettingValue::SessionStrip(_))
             | (SettingType::ExplorerSort, SettingValue::ExplorerSort(_)) => Ok(()),
             (SettingType::Integer { minimum, maximum }, SettingValue::Integer(value)) => {
                 if (minimum..=maximum).contains(value) {
@@ -608,6 +627,9 @@ impl SettingId {
             (Self::EditorExplorerDetails, SettingValue::Boolean(value)) => {
                 config.editor.explorer_details = *value;
             }
+            (Self::SessionStrip, SettingValue::SessionStrip(value)) => {
+                config.workspace.session_strip = *value;
+            }
             (Self::WorkspaceMode, SettingValue::WorkspaceMode(value)) => {
                 config.workspace.mode = *value;
             }
@@ -630,6 +652,7 @@ impl fmt::Display for SettingType {
             }
             Self::Theme => formatter.write_str("a theme name"),
             Self::WorkspaceMode => formatter.write_str("a workspace mode"),
+            Self::SessionStrip => formatter.write_str("a session-strip visibility"),
             Self::ExplorerSort => formatter.write_str("an explorer order"),
             Self::Text => formatter.write_str("text"),
         }
@@ -643,6 +666,7 @@ impl fmt::Display for SettingValue {
             Self::Boolean(value) => value.fmt(formatter),
             Self::Integer(value) => value.fmt(formatter),
             Self::WorkspaceMode(value) => value.fmt(formatter),
+            Self::SessionStrip(value) => value.fmt(formatter),
             Self::ExplorerSort(value) => formatter.write_str(value.label()),
             Self::Text(value) => formatter.write_str(value),
         }
@@ -1225,6 +1249,7 @@ fn yaml_scalar(value: &SettingValue) -> String {
         SettingValue::Boolean(value) => value.to_string(),
         SettingValue::Integer(value) => value.to_string(),
         SettingValue::WorkspaceMode(value) => value.to_string(),
+        SettingValue::SessionStrip(value) => value.to_string(),
         SettingValue::ExplorerSort(value) => value.to_string(),
         SettingValue::Text(value) => format!("'{}'", value.replace('\'', "''")),
     }

@@ -2544,6 +2544,13 @@ impl App {
 
     /// Handles a key while a result picker is open.
     pub(super) fn handle_list_key(&mut self, key: KeyStroke) -> Result<()> {
+        if self.navigator_open() && self.navigator_selection_lost {
+            if matches!(key.code, KeyCode::Enter | KeyCode::Tab) {
+                self.action_failed("selected destination closed; select a destination again");
+                return Ok(());
+            }
+            self.navigator_selection_lost = false;
+        }
         if self.terminal_action_menu.is_some() {
             return self.handle_terminal_action_key(key);
         }
@@ -2553,6 +2560,29 @@ impl App {
         }
         if self.buffer_action_menu.is_some() {
             return self.handle_buffer_action_key(key);
+        }
+        if self
+            .list
+            .as_ref()
+            .is_some_and(|list| list.title.starts_with("Sessions"))
+            && key.modifiers.contains(Modifiers::CONTROL)
+        {
+            match key.code {
+                KeyCode::Char('o') => {
+                    self.open_session_directory_chooser();
+                    return Ok(());
+                }
+                KeyCode::Char('e') => {
+                    self.open_session_inventory();
+                    return Ok(());
+                }
+                KeyCode::Char('g') => {
+                    self.list = None;
+                    self.open_git_worktrees();
+                    return Ok(());
+                }
+                _ => {}
+            }
         }
         if self
             .list
@@ -2602,12 +2632,21 @@ impl App {
                 preview_changed = true;
             }
             (KeyCode::Tab, _) => {
+                if let Some(ListAction::Destination(destination)) = self.selected_list_action() {
+                    self.open_navigator_actions(destination);
+                    return Ok(());
+                }
                 #[cfg(unix)]
                 if matches!(self.selected_list_action(), Some(ListAction::Workspace(_))) {
                     self.open_session_actions();
                     return Ok(());
                 }
-                if matches!(self.selected_list_action(), Some(ListAction::Terminal(_))) {
+                if self
+                    .list
+                    .as_ref()
+                    .is_some_and(|list| list.title == "Terminals")
+                    || matches!(self.selected_list_action(), Some(ListAction::Terminal(_)))
+                {
                     self.open_terminal_actions();
                     return Ok(());
                 }
@@ -2851,9 +2890,22 @@ impl App {
     }
 
     fn open_terminal_actions(&mut self) {
-        let Some(ListAction::Terminal(id)) = self.selected_list_action() else {
-            return;
+        let id = match self.selected_list_action() {
+            Some(ListAction::Terminal(id)) => id,
+            _ => {
+                self.terminal_action_menu = Some(TerminalActionMenu {
+                    id: super::TerminalId::from_raw(0),
+                    actions: vec![TerminalAction::Create, TerminalAction::CloseExited],
+                    selected: 0,
+                    close_armed: false,
+                });
+                return;
+            }
         };
+        self.open_terminal_actions_for(id);
+    }
+
+    pub(super) fn open_terminal_actions_for(&mut self, id: super::TerminalId) {
         if self.terminals.get(id).is_none() {
             self.action_failed("that terminal is gone");
             return;
@@ -2865,6 +2917,8 @@ impl App {
                 TerminalAction::Rename,
                 TerminalAction::Close,
                 TerminalAction::Create,
+                TerminalAction::CloseExited,
+                TerminalAction::OpenSessionDirectory,
             ],
             selected: 0,
             close_armed: false,
@@ -2904,8 +2958,18 @@ impl App {
                     self.status("closing ends this hidden live process; press Enter again");
                     return Ok(());
                 }
+                if action == TerminalAction::CloseExited
+                    && !self.terminals.iter().any(|terminal| !terminal.live())
+                {
+                    self.status("no exited terminals to close");
+                    return Ok(());
+                }
                 self.terminal_action_menu = None;
                 match action {
+                    TerminalAction::CloseExited => self.close_exited_terminals(),
+                    TerminalAction::OpenSessionDirectory => {
+                        self.attach_terminal_reported_directory(id)
+                    }
                     TerminalAction::Show => {
                         self.list = None;
                         self.show_terminal(id);
@@ -2914,8 +2978,11 @@ impl App {
                         self.open_listed_terminal_rename_prompt(id);
                     }
                     TerminalAction::Close => {
+                        let navigator = self.navigator_open();
                         self.close_terminal_id(id);
-                        if self.terminals.is_empty() {
+                        if navigator {
+                            self.refresh_navigator();
+                        } else if self.terminals.is_empty() {
                             self.list = None;
                         } else {
                             self.open_terminal_list();
@@ -3164,7 +3231,7 @@ impl App {
         });
     }
 
-    fn available_buffer_actions(&self, buffer: usize) -> Vec<BufferAction> {
+    pub(super) fn available_buffer_actions(&self, buffer: usize) -> Vec<BufferAction> {
         let Some(buffer_state) = self.buffers.get(buffer) else {
             return Vec::new();
         };
@@ -3197,6 +3264,11 @@ impl App {
 
     fn run_buffer_action(&mut self, buffer: usize, action: BufferAction) -> Result<()> {
         match action {
+            BufferAction::BringHere => {
+                self.list = None;
+                self.buffer_action_menu = None;
+                self.visit_destination(super::OpenDestination::Buffer(buffer), true);
+            }
             BufferAction::Save => {
                 self.buffer_action_menu = None;
                 self.save_buffer(buffer, None, false)?;
@@ -3217,6 +3289,10 @@ impl App {
     }
 
     fn refresh_buffer_picker(&mut self) {
+        if self.navigator_open() {
+            self.refresh_navigator();
+            return;
+        }
         let Some(picker) = self
             .list
             .as_ref()
@@ -3625,6 +3701,9 @@ impl App {
             Some(ListAction::Jump(location)) => self.jump_to(&location)?,
             Some(ListAction::OpenPath(path)) => self.open_file(path)?,
             Some(ListAction::CodeAction(index)) => self.run_code_action(index),
+            Some(ListAction::Destination(destination)) => {
+                self.visit_open_destination(destination);
+            }
             Some(ListAction::Buffer(buffer)) => self.switch_buffer(buffer),
             Some(ListAction::SyntaxOutline { buffer, target }) => {
                 self.jump_to_syntax_outline(buffer, target)

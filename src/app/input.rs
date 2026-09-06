@@ -73,6 +73,36 @@ impl App {
     /// A terminal in Insert mode owns every key its child could want, so a key
     /// only reaches Runyte when something above names it. `Ctrl-w` is named
     /// there permanently; these four join it exactly while the option is on.
+    fn is_persistent_navigation_key(&self, key: KeyStroke) -> bool {
+        if !self.persistent_session {
+            return false;
+        }
+        let navigation = |binding: &crate::keymap::Binding| {
+            matches!(
+                binding.target,
+                crate::keymap::BindingTarget::Editor(
+                    EditorCommand::NextRunningSession
+                        | EditorCommand::PreviousRunningSession
+                        | EditorCommand::PreviousSession
+                )
+            )
+        };
+        match self
+            .keymap
+            .lookup_in(self.mode, self.key_binding_scope(), &KeySequence::from(key))
+        {
+            crate::keymap::Lookup::Exact(binding) => navigation(binding),
+            crate::keymap::Lookup::Prefix(bindings) => {
+                bindings.iter().any(|binding| navigation(binding))
+            }
+            crate::keymap::Lookup::ExactAndPrefix {
+                exact,
+                continuations,
+            } => navigation(exact) || continuations.iter().any(|binding| navigation(binding)),
+            crate::keymap::Lookup::NoMatch => false,
+        }
+    }
+
     fn is_fast_pane_key(&self, key: KeyStroke) -> bool {
         self.config.editor.fast_pane_keys && crate::keymap::is_fast_pane_key(key)
     }
@@ -510,6 +540,10 @@ impl App {
         };
         if result.is_ok() {
             self.retire_detached_ephemeral_buffers();
+            if !overlay_owns_input {
+                self.note_destination_activation();
+            }
+            self.refresh_navigator();
         }
         if result.is_ok()
             && recordable
@@ -1168,6 +1202,13 @@ impl App {
     }
 
     fn handle_key_stroke(&mut self, mut key: KeyStroke) -> Result<()> {
+        if self.session_inventory_open() {
+            return self.handle_session_inventory_key(key);
+        }
+        if self.session_directory_chooser_open() {
+            return self.handle_session_directory_key(key);
+        }
+        self.refresh_navigator();
         // The effective leader opens most application surfaces, so the same
         // key closes a modal overlay that already owns input. Route it through Escape
         // instead of clearing state here: settings previews, confirmations,
@@ -1267,6 +1308,7 @@ impl App {
             && !is_terminal_normal_key(key)
             && key.canonical_for_binding() != self.keymap.window_prefix()
             && !self.is_fast_pane_key(key)
+            && !self.is_persistent_navigation_key(key)
         {
             return self.handle_terminal_key(id, key);
         }
@@ -1387,6 +1429,10 @@ impl App {
             } else {
                 self.refresh_file_picker_preview();
             }
+            return Ok(());
+        }
+        if self.session_directory_chooser_open() {
+            self.insert_session_directory_text(text);
             return Ok(());
         }
         if self.list.is_some() {
@@ -3891,6 +3937,13 @@ impl App {
             Command::JumpBackwardBuffer => self.jump_in(true, true),
             Command::JumpForwardBuffer => self.jump_in(false, true),
             Command::NewBuffer => self.open_scratch_buffer(),
+            Command::OpenNavigator => self.open_navigator(),
+            Command::PreviousDestination => self.previous_destination(),
+            Command::PreviousSession => self.previous_persistent_session(),
+            Command::NextRunningSession => self.cycle_persistent_session(true),
+            Command::PreviousRunningSession => self.cycle_persistent_session(false),
+            Command::OpenSessionDirectory => self.open_session_directory_chooser(),
+            Command::OpenExplorerSession => self.open_explorer_session(),
             Command::OpenBufferPicker => self.open_buffer_picker(),
             Command::GlobalSearch => {
                 self.open_prompt(PromptKind::GlobalSearch(SearchMode::Insensitive))
@@ -3972,6 +4025,7 @@ impl App {
                         SettingType::Grammar
                         | SettingType::Boolean
                         | SettingType::Theme
+                        | SettingType::SessionStrip
                         | SettingType::WorkspaceMode
                         | SettingType::ExplorerSort => {
                             self.action_failed("this setting must be chosen from its list");
@@ -4589,6 +4643,8 @@ impl App {
             return Ok(CommandOutcome::UserError(self.status.clone()));
         }
         self.retire_detached_ephemeral_buffers();
+        self.note_destination_activation();
+        self.refresh_navigator();
         let outcome = before.outcome(self, hint);
         Ok(outcome)
     }
@@ -5163,7 +5219,11 @@ impl App {
                 let buffer = self.active().buffer;
                 let commit_message = self.buffers[buffer].is_commit_message();
                 self.save(None, false)?;
-                if !commit_message && self.active().buffer == buffer && !self.status_error {
+                if !commit_message
+                    && self.active().buffer == buffer
+                    && !self.status_error
+                    && !self.complete_parent_wait(false)
+                {
                     self.close_active_buffer(false);
                 }
                 Ok(())

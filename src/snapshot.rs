@@ -38,6 +38,23 @@ pub struct EditorSnapshot {
     pub mode: Mode,
     pub panes: Vec<PaneSnapshot>,
     pub status: StatusSnapshot,
+    pub session_strip: Option<SessionStripSnapshot>,
+}
+
+/// Running persistent sessions in catalog order; this contains no remote text.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SessionStripSnapshot {
+    pub entries: Vec<SessionStripEntry>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SessionStripEntry {
+    pub name: String,
+    pub number: Option<u8>,
+    pub current: bool,
+    pub health_unknown: bool,
+    pub unread: bool,
+    pub bell: bool,
 }
 
 /// An owned, presentation-neutral description of an application overlay.
@@ -567,6 +584,7 @@ impl App {
             });
         EditorSnapshot {
             geometry: prepared.geometry,
+            session_strip: self.session_strip_snapshot(),
             theme: self.theme.clone(),
             mode: self.mode,
             panes,

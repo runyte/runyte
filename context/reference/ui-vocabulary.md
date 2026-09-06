@@ -382,3 +382,32 @@ the shared choice rows, selection marker, preview, and dismissal behavior.
 The persistent host owns both the decision and overlay; attached clients
 render its existing semantic snapshot. This permission governs language
 servers and does not claim to sandbox all workspace features.
+
+## Session strip and Navigator
+
+The **session strip** is one optional global row above the editor area; panes
+and overlays remain inside the editor area and the two bottom global lines
+retain their roles. `workspace.session_strip` is `auto`, `always`, or `hidden`;
+zen hides it. Entries are running persistent-session identities in manager
+order, with optional number, stable name, current emphasis and a count of
+omitted entries. Unnumbered hosts remain eligible. Unread and bell attention
+follow terminal viewing acknowledgments; unknown health does not mean stopped.
+Attachment requests a fresh asynchronous observation instead of waiting for
+the host's retained polling deadline. Cached rows remain while it runs, and
+an older in-flight observation cannot replace them after reattachment.
+
+The **Navigator** is a picker overlay titled `Navigator`, described as `Open
+buffers and terminals`, with workspace/session context. It holds only already
+open resource identities, including scratch and retained special buffers and
+running terminals. Its opening recent-activation order remains stable until
+closed. Terminal output does not reorder it, and the picker does not extend
+special-buffer lifetime. Structural labels and `[+]`, `[STALE]`, `[RO]` follow
+pane vocabulary; transient pane references describe visibility.
+
+Enter focuses an already-visible destination, preferring the active pane then
+the most recently activated pane. Otherwise it uses the active pane. A Tab
+**Bring into active pane** action is explicit; one PTY never gains two views.
+A resource that closes while selected cannot redirect a pending Enter to a
+replacement row. The session manager's selected-host inventory is a separate
+navigable choose-one surface with enter/back interaction and explicit loading,
+stopped, unsupported and failed states, rather than actions inside a preview.

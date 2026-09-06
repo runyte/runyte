@@ -1002,6 +1002,13 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
         return Ok(());
     }
 
+    #[cfg(unix)]
+    if matches!(arguments.mode, LaunchMode::Persistent | LaunchMode::Wait)
+        && let Some(context) = runyte::workspace::parent::ParentContext::from_environment()?
+    {
+        return run_parent_request(&arguments, context, supervising_parent.as_ref()).await;
+    }
+
     // The documented shell function adds `--cwd-file` to every invocation.
     // Modes without a directory-handoff-capable editor accept it and leave the
     // file untouched so session management remains transparent to the wrapper.
@@ -1927,6 +1934,11 @@ async fn run_host_server(
     let mut termination = TerminationSignals::new()?;
     host.enable_persistent_session();
     let mut server = LocalServer::bind(&endpoint).await?;
+    host.app_mut()
+        .terminals
+        .set_parent_launch(runyte::workspace::parent::ParentLaunch::new(
+            endpoint.metadata(),
+        )?);
     log_info!(
         "host",
         "persistent session published";
@@ -1938,6 +1950,10 @@ async fn run_host_server(
     let mut idle_tick = tokio::time::interval(Duration::from_secs(1));
     idle_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut active: Option<AttachedClient> = None;
+    let mut peer_processes = std::collections::HashMap::new();
+    let mut control_attachments = std::collections::HashMap::new();
+    let mut parent_switches: std::collections::HashMap<String, (u64, Instant)> =
+        std::collections::HashMap::new();
     let mut controls: std::collections::HashMap<u64, runyte::workspace::transport::ResponseSender> =
         std::collections::HashMap::new();
     let mut control_wait_tokens: std::collections::HashMap<u64, Vec<WaitToken>> =
@@ -1970,7 +1986,8 @@ async fn run_host_server(
                     anyhow::bail!("workspace host listener stopped unexpectedly");
                 };
                 match event {
-                    ServerEvent::Connected { id, geometry, interactive, directory_handoff, responses } => {
+                    ServerEvent::Connected { id, peer_process, geometry, interactive, directory_handoff, responses } => {
+                        peer_processes.insert(id, peer_process);
                         if interactive && active.is_some() {
                             log_warn!(
                                 "client",
@@ -2032,6 +2049,7 @@ async fn run_host_server(
                             host_version: env!("CARGO_PKG_VERSION").to_owned(),
                         }).is_ok() {
                             log_debug!("client", "control client attached"; "connection" => id);
+                            control_attachments.insert(id, active.as_ref().map(|client| client.id));
                             controls.insert(id, responses);
                             control_wait_tokens.insert(id, Vec::new());
                         }
@@ -2043,7 +2061,49 @@ async fn run_host_server(
                             continue;
                         }
                         if control {
-                            if matches!(request, ClientRequest::Shutdown) {
+                            if let ClientRequest::ParentAttach { terminal, capability, selector, directory } = &request {
+                                let terminal = runyte::terminal::TerminalId::from_raw(*terminal);
+                                let valid = active.as_ref().is_some_and(|client| control_attachments.get(&id).copied().flatten() == Some(client.id)) && host.app().active_terminal() == Some(terminal) && host.parent_request_ready()
+                                    && host.app().terminals.validates_parent(terminal, capability, peer_processes.get(&id).copied().flatten());
+                                if !valid || !parent_switches.is_empty() {
+                                    send_control_response(&mut controls, id, HostResponse::Error { message:
+                                        "parent attachment is stale, detached, busy, or not owned by this terminal; return to its session and dismiss any overlay".to_owned() });
+                                } else {
+                                    let receipt = runyte::hash::sha256_hex(format!("{}:{}:{:?}", capability, id, Instant::now()).as_bytes());
+                                    parent_switches.insert(receipt.clone(), (id, Instant::now()));
+                                    send_active_response(&mut active, HostResponse::ParentSwitchWorkspace {
+                                        selector: selector.clone(), directory: directory.clone(), receipt: receipt.clone() });
+                                    if active.is_none() {
+                                        parent_switches.remove(&receipt);
+                                        send_control_response(&mut controls, id, HostResponse::Error { message:
+                                            "outer TUI could not receive the attachment request; reconnect it before retrying".to_owned() });
+                                    }
+                                    active = None;
+                                    last_detached = Instant::now();
+                                }
+                            } else if let ClientRequest::ParentHandoffResult { receipt, error } = &request {
+                                if let Some((child, _)) = parent_switches.remove(receipt) {
+                                    let response = error.as_ref().map_or(HostResponse::ParentAttached,
+                                        |message| HostResponse::Error { message: message.clone() });
+                                    send_control_response(&mut controls, child, response);
+                                    send_control_response(&mut controls, id, HostResponse::ParentAttached);
+                                } else {
+                                    send_control_response(&mut controls, id, HostResponse::Error { message: "parent handoff expired or already completed".to_owned() });
+                                }
+                            } else if let ClientRequest::ParentWait { terminal, capability, paths } = &request {
+                                let terminal = runyte::terminal::TerminalId::from_raw(*terminal);
+                                let result = if active.as_ref().is_some_and(|client| control_attachments.get(&id).copied().flatten() == Some(client.id)) && host.app().terminals.validates_parent(terminal, capability,
+                                    peer_processes.get(&id).copied().flatten()) {
+                                    host.create_parent_wait_request(terminal, paths.iter().cloned().map(decode_path).collect())
+                                } else { Err(anyhow::anyhow!("parent editing context is stale or detached; return to the owning persistent session")) };
+                                let response = result.map_or_else(|error| HostResponse::Error { message: error.to_string() }, |(token,buffers)| {
+                                    let token: WaitToken = token.into();
+                                    control_wait_tokens.entry(id).or_default().push(token);
+                                    HostResponse::WaitCreated { token, buffers: buffers.into_iter().map(Into::into).collect(), interactive_attached: true }
+                                });
+                                changed |= matches!(response, HostResponse::WaitCreated { .. });
+                                send_control_response(&mut controls, id, response);
+                            } else if matches!(request, ClientRequest::Shutdown) {
                                 let protected = host.protected_state();
                                 if !protected.is_empty() {
                                     send_control_response(
@@ -2098,6 +2158,7 @@ async fn run_host_server(
                                 send_control_response(&mut controls, id, reply.response);
                                 changed |= reply.publish_frame;
                             }
+
                         } else if let ClientRequest::AttachWait { token } = request {
                             let response = match host.wait_status(token.into()) {
                                 Some(status) => {
@@ -2236,7 +2297,12 @@ async fn run_host_server(
                             | ClientRequest::WaitStatus { .. }
                             | ClientRequest::CompleteWaitBuffer { .. }
                             | ClientRequest::CancelWait { .. }
-                            | ClientRequest::RenameHost { .. } => {}
+                            | ClientRequest::RenameHost { .. }
+                            | ClientRequest::DestinationInventory
+                            | ClientRequest::VisitDestination { .. }
+                            | ClientRequest::ParentAttach { .. }
+                            | ClientRequest::ParentWait { .. }
+                            | ClientRequest::ParentHandoffResult { .. } => {}
                             }
                         }
                     }
@@ -2270,6 +2336,8 @@ async fn run_host_server(
                         );
                     }
                     ServerEvent::Disconnected { id } => {
+                        peer_processes.remove(&id);
+                        control_attachments.remove(&id);
                         let control = controls.remove(&id).is_some()
                             || control_wait_tokens.contains_key(&id);
                         for token in control_wait_tokens.remove(&id).unwrap_or_default() {
@@ -2362,8 +2430,12 @@ async fn run_host_server(
             }
             event = receive_workspace_event(&mut services.workspace_events) => {
                 if let Some(event) = event {
+                    let observation = matches!(&event, HostEvent::Workspace(runyte::workspace::WorkspaceEvent::Observed { .. }));
+                    let before = observation.then(|| (host.app().session_strip_snapshot(), host.app().status.clone(), host.app().status_error,
+                        host.app().workspace_number, host.app().overlay_snapshots()));
                     host.apply_event(event);
-                    changed = true;
+                    changed = !observation || before != Some((host.app().session_strip_snapshot(), host.app().status.clone(), host.app().status_error,
+                        host.app().workspace_number, host.app().overlay_snapshots()));
                 }
             }
             event = async {
@@ -2382,7 +2454,7 @@ async fn run_host_server(
                 services.file_monitor.sync(host.file_monitor_requests());
                 services.git_monitor.sync(host.git_monitor_repository());
                 changed = host.refresh_git_if_due(Instant::now());
-                changed |= host.refresh_session_activity();
+                if active.is_some() { changed |= host.refresh_session_activity(); }
             }
             _ = idle_tick.tick() => {
                 if let Some(supervisor) = supervising_parent.as_ref()
@@ -2478,6 +2550,16 @@ async fn run_host_server(
                 log_warn!("host", "terminated by a signal"; "signal" => signal);
                 received_signal = Some(signal);
                 shutting_down = true;
+            }
+        }
+        let expired = parent_switches
+            .iter()
+            .filter(|(_, (_, started))| started.elapsed() >= Duration::from_secs(30))
+            .map(|(receipt, _)| receipt.clone())
+            .collect::<Vec<_>>();
+        for receipt in expired {
+            if let Some((child, _)) = parent_switches.remove(&receipt) {
+                send_control_response(&mut controls, child, HostResponse::Error { message: "parent attachment did not finish within 30 seconds; inspect the outer TUI before retrying".to_owned() });
             }
         }
         // Lifecycle requests may be completed by a background service rather
@@ -2754,6 +2836,8 @@ fn is_workspace_request(request: &ClientRequest) -> bool {
         ClientRequest::Invoke { .. }
             | ClientRequest::Health
             | ClientRequest::SessionPreview
+            | ClientRequest::DestinationInventory
+            | ClientRequest::VisitDestination { .. }
             | ClientRequest::ListBuffers
             | ClientRequest::ReadBuffer { .. }
             | ClientRequest::OpenBuffers { .. }
@@ -2783,7 +2867,19 @@ fn workspace_response_publishes_frame(response: &HostResponse) -> bool {
             | HostResponse::Saved { .. }
             | HostResponse::Closed { .. }
             | HostResponse::WaitCreated { .. }
+            | HostResponse::DestinationVisitResult { .. }
     )
+}
+
+#[cfg(unix)]
+fn bounded_destination_label(value: &str) -> String {
+    let mut end = value
+        .len()
+        .min(runyte::protocol::MAX_DESTINATION_LABEL_BYTES);
+    while !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    value[..end].to_owned()
 }
 
 #[cfg(unix)]
@@ -2810,7 +2906,82 @@ fn handle_workspace_request(
             live_terminals: host.protected_state().live_terminals,
             terminal_sessions: host.app().terminals.len(),
             terminal_line_activity_unix_seconds: host.terminal_line_activity_unix_seconds(),
+            unread_terminals: host
+                .app()
+                .terminals
+                .iter()
+                .filter(|terminal| terminal.unread_activity())
+                .count(),
+            terminal_bell: host.app().terminals.iter().any(|terminal| terminal.bell()),
         }),
+        ClientRequest::DestinationInventory => {
+            let entries = host.app().open_destination_inventory();
+            let truncated = entries.len() > runyte::protocol::MAX_DESTINATIONS;
+            Ok(HostResponse::DestinationInventory {
+                incarnation: host.incarnation().to_owned(),
+                truncated,
+                entries: entries
+                    .into_iter()
+                    .take(runyte::protocol::MAX_DESTINATIONS)
+                    .map(|entry| {
+                        let destination = match entry.destination {
+                            runyte::app::OpenDestination::Buffer(index) => {
+                                runyte::protocol::OpenDestination::Buffer(index as u64 + 1)
+                            }
+                            runyte::app::OpenDestination::Terminal(id) => {
+                                runyte::protocol::OpenDestination::Terminal(id.get())
+                            }
+                        };
+                        runyte::protocol::OpenDestinationEntry {
+                            destination,
+                            label: bounded_destination_label(&entry.label),
+                            detail: bounded_destination_label(&entry.detail),
+                        }
+                    })
+                    .collect(),
+            })
+        }
+        ClientRequest::VisitDestination {
+            incarnation,
+            destination,
+        } => {
+            if !allow_invoke {
+                Err(anyhow::anyhow!(
+                    "visiting a destination requires the interactive attachment"
+                ))
+            } else {
+                let destination = match destination {
+                    runyte::protocol::OpenDestination::Buffer(id) => usize::try_from(id)
+                        .ok()
+                        .and_then(|id| id.checked_sub(1))
+                        .map(runyte::app::OpenDestination::Buffer),
+                    runyte::protocol::OpenDestination::Terminal(id) => {
+                        Some(runyte::app::OpenDestination::Terminal(
+                            runyte::terminal::TerminalId::from_raw(id),
+                        ))
+                    }
+                };
+                let error = if incarnation != host.incarnation() {
+                    Some(
+                        "the persistent host was replaced; its restored layout is unchanged"
+                            .to_owned(),
+                    )
+                } else if !destination
+                    .is_some_and(|destination| host.app_mut().visit_open_destination(destination))
+                {
+                    Some(
+                        "the selected resource is no longer open; the restored layout is unchanged"
+                            .to_owned(),
+                    )
+                } else {
+                    None
+                };
+                if let Some(message) = &error {
+                    host.report_host_error(message.clone());
+                }
+                Ok(HostResponse::DestinationVisitResult { error })
+            }
+        }
         ClientRequest::SessionPreview => Ok(HostResponse::SessionPreview {
             preview: host.session_preview().into(),
         }),
@@ -3054,6 +3225,7 @@ fn complete_attached_waits(host: &mut WorkspaceHost, active: &mut Option<Attache
 
 #[cfg(unix)]
 fn finish_attached_detach(host: &mut WorkspaceHost, active: &mut Option<AttachedClient>) {
+    host.cancel_parent_waits("outer TUI detached before the external edit completed");
     complete_attached_waits(host, active);
     detach_client(active, None);
 }
@@ -3126,6 +3298,21 @@ fn switch_attached_workspace(
         HostResponse::SwitchWorkspace {
             selector_bytes: encode_path(&request.selector),
             working_directory_bytes: encode_path(&request.working_directory),
+            running_only: request.running_only,
+            previous_session: request.previous_session,
+            visit: request
+                .visit
+                .map(|visit| runyte::protocol::DestinationVisit {
+                    incarnation: visit.incarnation,
+                    destination: match visit.destination {
+                        runyte::app::OpenDestination::Buffer(index) => {
+                            runyte::protocol::OpenDestination::Buffer(index as u64 + 1)
+                        }
+                        runyte::app::OpenDestination::Terminal(id) => {
+                            runyte::protocol::OpenDestination::Terminal(id.get())
+                        }
+                    },
+                }),
         },
     );
     *active = None;
@@ -3166,31 +3353,29 @@ async fn run_workspace_switcher(
     let mut termination = TerminationSignals::new()?;
     let _terminal = TerminalGuard::enter(mouse_enabled)?;
     let mut terminal = Terminal::new(CrosstermBackend::new(stdout()))?;
-    // Probe the terminal before the event stream exists. Where `TIOCGWINSZ` is
-    // unavailable Crossterm falls back to asking the terminal for its cursor
-    // position, and an event reader would consume the reply.
     let mut geometry = current_frame_geometry()?;
     let mut terminal_events = AttachedTerminalEvents::stream();
     let mut current = endpoint;
-    // Where to fall back to when a destination turns out to be unreachable.
     let mut previous: Option<LocalEndpoint> = None;
     let mut notice: Option<String> = None;
+    let mut history = AttachmentHistory::default();
+    let mut parent_handoff: Option<ParentHandoff> = None;
+    let mut pending_visit = None;
     loop {
         let attachment = tokio::select! {
-            attachment = run_attached(
-                &current,
-                &mut terminal,
-                &mut terminal_events,
-                &mut geometry,
-                AttachOptions {
-                    wait_token: None,
-                    cwd_file,
-                    notice: notice.take(),
-                    color_depth,
-                },
-            ) => attachment,
+            attachment = run_attached(&current, &mut terminal, &mut terminal_events, &mut geometry,
+                AttachOptions { wait_token: None, cwd_file, notice: notice.take(), color_depth,
+                    history: Some(&mut history), parent_handoff: Some(&mut parent_handoff), visit: pending_visit.take() }) => attachment,
             signal = termination.recv() => return Err(terminated(signal)),
         };
+        if let Some(handoff) = parent_handoff.take() {
+            let error = match &attachment {
+                Err(error) => format!("{error:#}"),
+                Ok(AttachOutcome::Refused(message)) => message.clone(),
+                _ => "destination attachment ended before its first frame".to_owned(),
+            };
+            let _ = complete_parent_handoff(&handoff, Some(error)).await;
+        }
         let Some(outcome) =
             recover_switched_attachment(attachment, &mut current, &mut previous, &mut notice)?
         else {
@@ -3199,32 +3384,107 @@ async fn run_workspace_switcher(
         match outcome {
             AttachOutcome::Detached => return Ok(()),
             AttachOutcome::Switch {
-                selector,
+                mut selector,
                 working_directory,
+                running_only,
+                previous_session,
+                parent_receipt,
+                visit,
             } => {
-                let prepared = prepare_switch_target(
-                    &selector,
-                    &working_directory,
-                    &current,
-                    config,
-                    config_path,
-                )
-                .await;
+                if let Some(receipt) = parent_receipt {
+                    parent_handoff = Some(ParentHandoff {
+                        source: current.clone(),
+                        receipt,
+                    });
+                }
+                if previous_session {
+                    let Some(previous_session) = history.previous.as_ref() else {
+                        notice = Some("No previous persistent session".to_owned());
+                        continue;
+                    };
+                    selector = previous_session.project_root().to_owned();
+                }
+                let prepared = if running_only {
+                    resolve_registered_host_from_directory(&selector, &working_directory)
+                        .map(|host| (host.project_root != current.project_root()).then(|| host.endpoint().clone()))
+                        .context("the destination persistent session is no longer available; it was not restarted")
+                } else {
+                    prepare_switch_target(
+                        &selector,
+                        &working_directory,
+                        &current,
+                        config,
+                        config_path,
+                    )
+                    .await
+                };
+                if let Err(error) = &prepared
+                    && let Some(handoff) = parent_handoff.take()
+                {
+                    let _ = complete_parent_handoff(&handoff, Some(format!("{error:#}"))).await;
+                }
+                if prepared.is_ok() {
+                    pending_visit = visit;
+                }
                 apply_prepared_switch(prepared, &mut current, &mut previous, &mut notice);
             }
             AttachOutcome::Refused(message) => match previous.take() {
-                // A destination we reached for is busy. Go back where we were
-                // and say so, rather than ending the session.
                 Some(source) => {
                     current = source;
                     notice = Some(message);
                 }
-                // Refused on the very first attachment: there is nowhere to
-                // return to, so this is the ordinary attach failure.
                 None => anyhow::bail!(message),
             },
         }
     }
+}
+
+#[cfg(unix)]
+#[derive(Default)]
+struct AttachmentHistory {
+    current: Option<LocalEndpoint>,
+    previous: Option<LocalEndpoint>,
+}
+#[cfg(unix)]
+impl AttachmentHistory {
+    fn attached(&mut self, endpoint: &LocalEndpoint) -> Option<PathBuf> {
+        if self
+            .current
+            .as_ref()
+            .is_none_or(|current| current.project_root() != endpoint.project_root())
+        {
+            self.previous = self.current.replace(endpoint.clone());
+        }
+        self.previous
+            .as_ref()
+            .map(|endpoint| endpoint.project_root().to_owned())
+    }
+}
+
+#[cfg(unix)]
+struct ParentHandoff {
+    source: LocalEndpoint,
+    receipt: String,
+}
+
+#[cfg(unix)]
+async fn complete_parent_handoff(handoff: &ParentHandoff, error: Option<String>) -> Result<()> {
+    tokio::time::timeout(Duration::from_secs(3), async {
+        let mut control = connect_control(&handoff.source).await?;
+        control
+            .send(&ClientRequest::ParentHandoffResult {
+                receipt: handoff.receipt.clone(),
+                error: error.map(|error| bounded_destination_label(&error)),
+            })
+            .await?;
+        match control.recv().await? {
+            Some(HostResponse::ParentAttached) => Ok(()),
+            Some(HostResponse::Error { message }) => anyhow::bail!(message),
+            _ => anyhow::bail!("owning host did not acknowledge parent handoff completion"),
+        }
+    })
+    .await
+    .context("owning host did not acknowledge parent handoff completion")?
 }
 
 #[cfg(unix)]
@@ -3388,6 +3648,9 @@ async fn attach_for_wait(
                 cwd_file: None,
                 notice: None,
                 color_depth,
+                history: None,
+                parent_handoff: None,
+                visit: None,
             },
         ) => (attachment, true),
     };
@@ -3513,6 +3776,10 @@ enum AttachOutcome {
     Switch {
         selector: std::path::PathBuf,
         working_directory: std::path::PathBuf,
+        running_only: bool,
+        previous_session: bool,
+        parent_receipt: Option<String>,
+        visit: Option<runyte::protocol::DestinationVisit>,
     },
     /// The destination already has an interactive TUI. Routine once switching is
     /// a keystroke, so it is an outcome rather than a failure.
@@ -3560,6 +3827,9 @@ struct AttachOptions<'a> {
     cwd_file: Option<&'a Path>,
     notice: Option<String>,
     color_depth: ui::TerminalColorDepth,
+    history: Option<&'a mut AttachmentHistory>,
+    parent_handoff: Option<&'a mut Option<ParentHandoff>>,
+    visit: Option<runyte::protocol::DestinationVisit>,
 }
 
 /// Runs one attachment to completion, drawing into a terminal it does not own.
@@ -3581,6 +3851,9 @@ async fn run_attached(
         cwd_file,
         notice,
         color_depth,
+        history,
+        parent_handoff,
+        visit,
     } = options;
     let mut client =
         BufferedLocalClient::connect_with_handoff(endpoint, *geometry, cwd_file.is_some()).await?;
@@ -3619,6 +3892,29 @@ async fn run_attached(
         Some(response) => anyhow::bail!("workspace host sent no initial frame: {response:?}"),
         None => anyhow::bail!("workspace host disconnected before its initial frame"),
     };
+    if let Some(visit) = visit {
+        client
+            .send(&ClientRequest::VisitDestination {
+                incarnation: visit.incarnation,
+                destination: visit.destination,
+            })
+            .await?;
+    }
+    if let Some(history) = history {
+        history.attached(endpoint);
+    }
+    if let Some(parent_handoff) = parent_handoff
+        && let Some(handoff) = parent_handoff.take()
+        && let Err(error) = complete_parent_handoff(&handoff, None).await
+    {
+        client
+            .send(&ClientRequest::Notify {
+                message: format!(
+                    "Attached, but the originating shell could not be notified: {error:#}"
+                ),
+            })
+            .await?;
+    }
     if let Some(token) = wait_token {
         client.send(&ClientRequest::AttachWait { token }).await?;
         loop {
@@ -3804,6 +4100,9 @@ async fn run_attached(
                     Some(HostResponse::SwitchWorkspace {
                         selector_bytes,
                         working_directory_bytes,
+                        running_only,
+                        previous_session,
+                        visit,
                     }) => {
                         anyhow::ensure!(
                             wait_token.is_none(),
@@ -3812,10 +4111,19 @@ async fn run_attached(
                         return Ok(AttachOutcome::Switch {
                             selector: decode_path(selector_bytes),
                             working_directory: decode_path(working_directory_bytes),
+                            running_only,
+                            previous_session,
+                            parent_receipt: None,
+                            visit,
                         });
                     }
                     Some(HostResponse::Refused { message } | HostResponse::Error { message }) => {
                         anyhow::bail!(message);
+                    }
+                    Some(HostResponse::ParentSwitchWorkspace { selector, directory, receipt }) => {
+                        anyhow::ensure!(wait_token.is_none(), "a wait-owned attachment cannot switch persistent sessions");
+                        return Ok(AttachOutcome::Switch { selector: decode_path(selector), working_directory: decode_path(directory),
+                            running_only: false, previous_session: false, parent_receipt: Some(receipt), visit: None });
                     }
                     Some(HostResponse::Welcome { .. }) => {}
                     Some(_) => {}
@@ -3911,6 +4219,94 @@ fn apply_terminal_damage(
 }
 
 #[cfg(unix)]
+async fn run_parent_request(
+    arguments: &LaunchArguments,
+    context: runyte::workspace::parent::ParentContext,
+    launching_parent: Option<&HostSupervisor>,
+) -> Result<()> {
+    let endpoint = LocalEndpoint::from_parent_metadata(&decode_path(context.metadata)).context(
+        "Runyte parent context is stale; return to its persistent session or open a fresh terminal",
+    )?;
+    let directory = std::env::current_dir()?;
+    let mut control = tokio::time::timeout(Duration::from_secs(3), connect_control(&endpoint))
+        .await
+        .context("owning Runyte host did not answer")??;
+    if arguments.mode == LaunchMode::Persistent {
+        let selector = arguments
+            .workspace_selector
+            .as_deref()
+            .unwrap_or(&directory);
+        control
+            .send(&ClientRequest::ParentAttach {
+                terminal: context.terminal,
+                capability: context.capability,
+                selector: encode_path(selector),
+                directory: encode_path(&directory),
+            })
+            .await?;
+        match tokio::time::timeout(Duration::from_secs(32), control.recv())
+            .await
+            .context(
+                "parent attachment did not complete; inspect the outer TUI before retrying",
+            )?? {
+            Some(HostResponse::ParentAttached) => return Ok(()),
+            Some(HostResponse::Error { message } | HostResponse::Refused { message }) => {
+                anyhow::bail!(message)
+            }
+            _ => anyhow::bail!(
+                "owning host lost the attachment handoff; no nested editor was started"
+            ),
+        }
+    }
+    let mut termination = TerminationSignals::new()?;
+    let mut terminal_loss = TerminalLoss::new()?;
+    let paths = arguments
+        .targets
+        .iter()
+        .map(|target| {
+            if target.path.is_absolute() {
+                target.path.clone()
+            } else {
+                directory.join(&target.path)
+            }
+        })
+        .map(|path| encode_path(&path))
+        .collect();
+    control
+        .send(&ClientRequest::ParentWait {
+            terminal: context.terminal,
+            capability: context.capability,
+            paths,
+        })
+        .await?;
+    let token = match tokio::time::timeout(Duration::from_secs(3), control.recv())
+        .await
+        .context("parent editor did not accept the request")??
+    {
+        Some(HostResponse::WaitCreated { token, .. }) => token,
+        Some(HostResponse::Error { message } | HostResponse::Refused { message }) => {
+            anyhow::bail!(message)
+        }
+        _ => anyhow::bail!("owning host did not create an external editor request"),
+    };
+    let outcome = wait_for_completion(
+        &mut control,
+        &endpoint,
+        false,
+        token,
+        &mut termination,
+        &mut terminal_loss,
+        launching_parent.context("parent wait launch has no lifecycle watcher")?,
+        true,
+    )
+    .await;
+    if outcome.is_err() {
+        let _ = control.send(&ClientRequest::CancelWait { token }).await;
+    }
+    outcome
+}
+
+#[cfg(unix)]
 async fn run_wait(
     endpoint: LocalEndpoint,
     targets: Vec<LaunchTarget>,
@@ -3995,6 +4391,7 @@ async fn run_wait(
             &mut termination,
             &mut terminal_loss,
             launching_parent,
+            false,
         )
         .await
     } else {
@@ -4248,6 +4645,7 @@ async fn resolve_lifecycle_endpoint(
 }
 
 #[cfg(unix)]
+#[allow(clippy::too_many_arguments)]
 async fn wait_for_completion(
     client: &mut LocalClient,
     endpoint: &LocalEndpoint,
@@ -4256,6 +4654,7 @@ async fn wait_for_completion(
     termination: &mut TerminationSignals,
     terminal_loss: &mut TerminalLoss,
     launching_parent: &HostSupervisor,
+    parent_routed: bool,
 ) -> Result<()> {
     let mut test_status_barrier =
         std::env::var_os("RUNYTE_TEST_WAIT_STATUS_BARRIER").map(PathBuf::from);
@@ -4280,7 +4679,11 @@ async fn wait_for_completion(
                 }
                 return recover_wait_after_lifecycle_loss(client, token, true, error).await;
             }
-            response = client.recv() => response?,
+            response = async {
+                if parent_routed { tokio::time::timeout(Duration::from_secs(3), client.recv()).await
+                    .context("owning host stopped answering the parent wait request")? }
+                else { client.recv().await }
+            } => response?,
         };
         match response {
             Some(HostResponse::WaitState {
@@ -4290,7 +4693,7 @@ async fn wait_for_completion(
             }) if response_token == token => match status {
                 WaitStatus::Completed => return Ok(()),
                 WaitStatus::Cancelled { reason } => anyhow::bail!(reason),
-                WaitStatus::Pending { .. } if !interactive_attached => {
+                WaitStatus::Pending { .. } if !interactive_attached && !parent_routed => {
                     return attach_for_wait(
                         endpoint,
                         mouse_enabled,
@@ -6253,5 +6656,132 @@ mod tests {
 
         assert!(target.is_file());
         fs::remove_dir_all(root).unwrap();
+    }
+    #[cfg(unix)]
+    #[test]
+    fn successful_attachment_history_ignores_preparation_and_repeated_attachments() {
+        let source = runyte::workspace::transport::LocalEndpoint::new(
+            Path::new("/tmp/runyte-history-source-state"),
+            Path::new("/tmp/runyte-history-source"),
+        )
+        .unwrap();
+        let target = runyte::workspace::transport::LocalEndpoint::new(
+            Path::new("/tmp/runyte-history-target-state"),
+            Path::new("/tmp/runyte-history-target"),
+        )
+        .unwrap();
+        let mut history = super::AttachmentHistory::default();
+        assert_eq!(history.attached(&source), None);
+        let mut current = source.clone();
+        let mut recovery = None;
+        let mut notice = None;
+        super::apply_prepared_switch(
+            Ok(Some(target.clone())),
+            &mut current,
+            &mut recovery,
+            &mut notice,
+        );
+        assert!(
+            history.previous.is_none(),
+            "preparing a destination is not a successful attachment"
+        );
+        assert_eq!(
+            history.attached(&target),
+            Some(source.project_root().to_owned())
+        );
+        assert_eq!(
+            history.attached(&target),
+            Some(source.project_root().to_owned())
+        );
+        assert_eq!(
+            history.attached(&source),
+            Some(target.project_root().to_owned())
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn destination_inventory_is_identity_only_and_visits_require_current_host_and_interactive_role()
+    {
+        let app = App::new(Config::default(), None).unwrap();
+        let mut host = WorkspaceHost::new(app);
+        let current = host.active().buffer;
+        let response = super::handle_workspace_request(
+            &mut host,
+            runyte::protocol::ClientRequest::DestinationInventory,
+            false,
+            false,
+        )
+        .unwrap()
+        .response;
+        let HostResponse::DestinationInventory {
+            incarnation,
+            entries,
+            truncated,
+        } = response
+        else {
+            panic!("expected inventory")
+        };
+        assert!(!truncated);
+        assert!(!entries.is_empty());
+        let destination = entries[0].destination;
+        let response = super::handle_workspace_request(
+            &mut host,
+            runyte::protocol::ClientRequest::VisitDestination {
+                incarnation: incarnation.clone(),
+                destination,
+            },
+            false,
+            false,
+        )
+        .unwrap()
+        .response;
+        assert!(matches!(response, HostResponse::Error { .. }));
+        let response = super::handle_workspace_request(
+            &mut host,
+            runyte::protocol::ClientRequest::VisitDestination {
+                incarnation: "0".repeat(64),
+                destination,
+            },
+            true,
+            true,
+        )
+        .unwrap()
+        .response;
+        assert!(matches!(
+            response,
+            HostResponse::DestinationVisitResult { error: Some(_) }
+        ));
+        assert_eq!(host.active().buffer, current);
+        let response = super::handle_workspace_request(
+            &mut host,
+            runyte::protocol::ClientRequest::VisitDestination {
+                incarnation: incarnation.clone(),
+                destination: runyte::protocol::OpenDestination::Buffer(u64::MAX),
+            },
+            true,
+            true,
+        )
+        .unwrap()
+        .response;
+        assert!(matches!(
+            response,
+            HostResponse::DestinationVisitResult { error: Some(_) }
+        ));
+        let response = super::handle_workspace_request(
+            &mut host,
+            runyte::protocol::ClientRequest::VisitDestination {
+                incarnation,
+                destination,
+            },
+            true,
+            true,
+        )
+        .unwrap()
+        .response;
+        assert!(matches!(
+            response,
+            HostResponse::DestinationVisitResult { error: None }
+        ));
     }
 }

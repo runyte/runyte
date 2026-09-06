@@ -347,6 +347,11 @@ impl App {
                 .into_iter()
                 .map(SettingValue::Text)
                 .collect(),
+            SettingType::SessionStrip => crate::config::SessionStripVisibility::ALL
+                .iter()
+                .copied()
+                .map(SettingValue::SessionStrip)
+                .collect(),
             SettingType::WorkspaceMode => WorkspaceMode::ALL
                 .iter()
                 .copied()
@@ -493,6 +498,7 @@ impl App {
             SettingValue::Boolean(_)
             | SettingValue::Integer(_)
             | SettingValue::WorkspaceMode(_)
+            | SettingValue::SessionStrip(_)
             | SettingValue::ExplorerSort(_)
             | SettingValue::Text(_) => {}
         }
@@ -600,6 +606,7 @@ impl App {
             SettingValue::Boolean(_)
             | SettingValue::Integer(_)
             | SettingValue::WorkspaceMode(_)
+            | SettingValue::SessionStrip(_)
             | SettingValue::ExplorerSort(_)
             | SettingValue::Text(_) => {}
         }
@@ -680,6 +687,9 @@ impl App {
     /// workflow rather than a document that makes sense hidden: leaving its
     /// view cancels it, with force required when authored text would be lost.
     pub(super) fn request_view_quit(&mut self, force: bool) {
+        if self.complete_parent_wait(force) {
+            return;
+        }
         let buffer = self.active().buffer;
         if self.quit_to_covered_terminal(force) {
             return;

@@ -13,6 +13,8 @@ mod host;
 mod identity;
 #[cfg(unix)]
 pub mod lifecycle;
+#[cfg(unix)]
+pub mod parent;
 mod service;
 #[cfg(unix)]
 pub mod transport;
@@ -22,8 +24,8 @@ pub use buffers::{
 };
 #[cfg(unix)]
 pub use catalog::{
-    ABBREVIATED_WORKSPACE_ID, MAX_WORKSPACE_NUMBER, RecordedWorkspace, WorkspaceEvent,
-    WorkspaceRow, WorkspaceService, WorkspaceServiceHandle, abbreviated_id_width,
+    ABBREVIATED_WORKSPACE_ID, DestinationInventory, MAX_WORKSPACE_NUMBER, RecordedWorkspace,
+    WorkspaceEvent, WorkspaceRow, WorkspaceService, WorkspaceServiceHandle, abbreviated_id_width,
     clear_stopped_sessions, ensure_recent_workspace, known_workspaces,
     known_workspaces_all_namespaces, record_recent_workspace, record_workspace_activity,
     recorded_workspace_number, rename_known_workspace, resolve_known_workspace,

@@ -425,6 +425,7 @@ pub struct TerminalSession {
     user_name: Option<String>,
     directory: PathBuf,
     initial_directory: PathBuf,
+    reported_directory: Option<PathBuf>,
     created_at: SystemTime,
     last_activity: SystemTime,
     /// Creation or the latest semantic completed-line activity, whichever is
@@ -490,6 +491,11 @@ impl TerminalSession {
 
     pub fn initial_directory(&self) -> &Path {
         &self.initial_directory
+    }
+
+    #[cfg(unix)]
+    pub fn process_id(&self) -> Option<u32> {
+        self.pty.as_ref().map(pty::Pty::process_id)
     }
 
     pub fn created_at(&self) -> SystemTime {
@@ -1116,6 +1122,10 @@ impl TerminalSession {
         self.bell = false;
     }
 
+    pub fn reported_directory(&self) -> Option<&Path> {
+        self.reported_directory.as_deref()
+    }
+
     pub fn directory(&self) -> &std::path::Path {
         &self.directory
     }
@@ -1323,6 +1333,7 @@ impl TerminalSession {
         if let Some(report) = self.emulator.take_directory_report()
             && let Some(directory) = validated_osc7_directory(&report)
         {
+            self.reported_directory = Some(directory.clone());
             self.directory = directory;
         }
         self.bell |= self.emulator.take_bell();
@@ -2169,6 +2180,8 @@ pub struct TerminalSessions {
     events: TerminalEventSender,
     receiver: Option<TerminalEvents>,
     default_colors: DefaultColors,
+    #[cfg(unix)]
+    parent_launch: Option<crate::workspace::parent::ParentLaunch>,
 }
 
 impl Default for TerminalSessions {
@@ -2201,6 +2214,8 @@ impl TerminalSessions {
             events: TerminalEventSender(Arc::clone(&shared)),
             receiver: Some(TerminalEvents(shared)),
             default_colors: DefaultColors::default(),
+            #[cfg(unix)]
+            parent_launch: None,
         }
     }
 
@@ -2304,6 +2319,29 @@ impl TerminalSessions {
             .max()
     }
 
+    #[cfg(unix)]
+    pub fn set_parent_launch(&mut self, context: crate::workspace::parent::ParentLaunch) {
+        self.parent_launch = Some(context);
+    }
+
+    #[cfg(unix)]
+    pub fn validates_parent(&self, id: TerminalId, capability: &str, peer: Option<u32>) -> bool {
+        self.parent_launch
+            .as_ref()
+            .is_some_and(|launch| launch.validates(id, capability))
+            && self
+                .get(id)
+                .filter(|terminal| terminal.live())
+                .is_some_and(|terminal| {
+                    let Some((peer, process)) = peer.zip(terminal.process_id()) else {
+                        return false;
+                    };
+                    // The PTY child calls setsid before exec. Descendants retain
+                    // that session; a copied environment in another PTY does not.
+                    unsafe { libc::getsid(peer as libc::pid_t) == process as libc::pid_t }
+                })
+    }
+
     /// Starts a child on a new pseudoterminal.
     #[cfg(unix)]
     pub fn open(
@@ -2318,12 +2356,14 @@ impl TerminalSessions {
         events.register(id);
         let columns = columns.max(1);
         let rows = rows.max(1);
-        let child = match pty::Pty::spawn(
+        let parent_context = self.parent_launch.as_ref().map(|launch| launch.context(id));
+        let child = match pty::Pty::spawn_in_context(
             &request.program,
             &request.arguments,
             &request.directory,
             columns as u16,
             rows as u16,
+            parent_context.as_deref(),
             move |event| {
                 let message = match event {
                     pty::PtyEvent::Output(bytes) => TerminalOutput::Bytes { id, bytes },
@@ -2351,6 +2391,7 @@ impl TerminalSessions {
                 user_name: None,
                 directory: request.directory.clone(),
                 initial_directory: request.directory,
+                reported_directory: None,
                 created_at: SystemTime::now(),
                 last_activity: SystemTime::now(),
                 last_completed_line_activity: SystemTime::now(),
@@ -2551,6 +2592,7 @@ mod tests {
             user_name: None,
             directory: PathBuf::from("/"),
             initial_directory: PathBuf::from("/"),
+            reported_directory: None,
             created_at: SystemTime::now(),
             last_activity: SystemTime::now(),
             last_completed_line_activity: SystemTime::now(),

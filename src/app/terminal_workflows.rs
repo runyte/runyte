@@ -218,6 +218,7 @@ impl App {
         }
         let (columns, rows) = self.pane_cells(pane_id);
         let pane = self.panes.get_mut(&pane_id).unwrap();
+        pane.remember_destination(super::OpenDestination::Terminal(id));
         pane.terminal = Some(id);
         // A pane showing a terminal has nothing left to uncover.
         pane.covered_terminal = None;
@@ -238,6 +239,7 @@ impl App {
         };
         self.push_jump();
         if let Some(pane) = self.panes.get_mut(&self.active_pane) {
+            pane.remember_destination(super::OpenDestination::Buffer(pane.buffer));
             pane.terminal = None;
         }
         self.mode = Mode::Normal;
@@ -379,6 +381,10 @@ impl App {
             ));
             return;
         }
+        self.rebuild_terminal_list();
+    }
+
+    pub(super) fn rebuild_terminal_list(&mut self) {
         let mut items = Vec::new();
         let mut actions = Vec::new();
         // Running sessions come first because they are the ones that can still
@@ -557,6 +563,7 @@ impl App {
         self.terminals.apply(output);
         if ended {
             self.finish_terminal(id);
+            self.refresh_navigator();
             return;
         }
         let visible = self.panes.values().any(|pane| pane.terminal == Some(id));
@@ -612,7 +619,22 @@ impl App {
             self.mode = Mode::Normal;
         }
         if manager_open {
+            let filter = self
+                .list
+                .as_ref()
+                .map(|list| list.filter.clone())
+                .unwrap_or_default();
+            let selected = match self.selected_list_action() {
+                Some(ListAction::Terminal(id)) => Some(id),
+                _ => None,
+            };
+            let menu = self.terminal_action_menu.take();
             self.open_terminal_list();
+            if let Some(list) = &mut self.list {
+                list.filter = filter;
+                list.selected = selected.and_then(|id| list.visible_indices().iter().position(|index| matches!(self.list_actions.get(list.items[*index].index), Some(ListAction::Terminal(found)) if *found == id))).unwrap_or(0);
+            }
+            self.terminal_action_menu = menu;
         }
         self.note_terminal_finder_change(id);
         self.status(message);

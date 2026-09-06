@@ -44,6 +44,7 @@ pub struct PickerItem {
     /// whose host is not running. The row still filters, selects, and acts
     /// exactly like any other; only its weight changes.
     dimmed: bool,
+    resource: Option<crate::finder::ResourceItem>,
 }
 
 /// Non-selectable column labels drawn above a list's rows.
@@ -71,6 +72,7 @@ impl PickerItem {
             preview: None,
             tag: None,
             dimmed: false,
+            resource: None,
         }
     }
 
@@ -89,7 +91,17 @@ impl PickerItem {
             preview: None,
             tag: None,
             dimmed: false,
+            resource: None,
         }
+    }
+
+    pub fn with_resource(mut self, resource: crate::finder::ResourceItem) -> Self {
+        self.resource = Some(resource);
+        self
+    }
+
+    pub fn resource(&self) -> Option<&crate::finder::ResourceItem> {
+        self.resource.as_ref()
     }
 
     pub fn with_preview(mut self, preview: impl Into<String>) -> Self {
@@ -328,7 +340,13 @@ impl ListPicker {
             .enumerate()
             .filter(|(_, item)| in_group(item))
             .filter_map(|(index, item)| {
-                matcher.score(&item.search).map(|(score, _)| (index, score))
+                if let Some(resource) = &item.resource {
+                    resource
+                        .navigation_match(&query)
+                        .map(|(score, _)| (index, score))
+                } else {
+                    matcher.score(&item.search).map(|(score, _)| (index, score))
+                }
             })
             .collect::<Vec<_>>();
         if !query.is_empty() {
@@ -359,7 +377,20 @@ impl ListPicker {
         self.emphasis(preview)
     }
 
+    pub fn item_detail_emphasis(&self, item: &PickerItem) -> Vec<usize> {
+        if item.resource.is_some() {
+            self.emphasis(&item.detail)
+        } else {
+            Vec::new()
+        }
+    }
+
     pub fn item_label_emphasis(&self, item: &PickerItem) -> Vec<usize> {
+        if let Some(resource) = &item.resource {
+            return resource
+                .navigation_match(&self.filter)
+                .map_or_else(Vec::new, |(_, positions)| positions);
+        }
         self.emphasis(&item.label)
     }
 

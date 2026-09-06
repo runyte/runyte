@@ -264,6 +264,7 @@ impl App {
     /// This is the only frame lifecycle step allowed to mutate view state.
     /// Rendering consumes the returned owned values and an immutable `App`.
     pub fn prepare_view(&mut self, geometry: FrameGeometry) -> PreparedView {
+        let geometry = self.reserve_session_strip(geometry);
         self.pace_picker_progress();
         self.flush_lsp_replies();
         self.sync_word_index();
@@ -1420,8 +1421,9 @@ impl App {
                     let mut row = row(item.index, item.label.clone(), item.detail.clone());
                     row.trailing_detail = item.trailing_detail.clone();
                     row.dimmed = item.is_dimmed();
-                    if picker.has_preview() {
+                    if picker.has_preview() || item.resource().is_some() {
                         row.emphasis = picker.item_label_emphasis(item);
+                        row.detail_emphasis = picker.item_detail_emphasis(item);
                     }
                     row
                 })
@@ -1616,11 +1618,39 @@ impl App {
                 menu.actions
                     .iter()
                     .map(|action| {
-                        row(
+                        let mut result = row(
                             action.label().to_ascii_lowercase(),
                             action.label(),
                             action.description(),
-                        )
+                        );
+                        if *action == super::TerminalAction::Show && self.navigator_open() {
+                            result.label = "Bring into active pane".to_owned();
+                        }
+                        if *action == super::TerminalAction::CloseExited
+                            && !self.terminals.iter().any(|terminal| !terminal.live())
+                        {
+                            result.available = false;
+                            result.detail = "No exited terminals to close".to_owned();
+                        }
+                        if *action == super::TerminalAction::OpenSessionDirectory {
+                            let reason = if !self.persistent_session {
+                                Some("Needs workspace.mode: persistent")
+                            } else if self
+                                .terminals
+                                .get(menu.id)
+                                .and_then(|terminal| terminal.reported_directory())
+                                .is_none()
+                            {
+                                Some("Terminal has not reported a validated directory (OSC 7)")
+                            } else {
+                                None
+                            };
+                            if let Some(reason) = reason {
+                                result.available = false;
+                                result.detail = reason.to_owned();
+                            }
+                        }
+                        result
                     })
                     .collect(),
                 Some(menu.selected),
@@ -1786,6 +1816,7 @@ impl App {
                         SettingType::Grammar
                         | SettingType::Boolean
                         | SettingType::Theme
+                        | SettingType::SessionStrip
                         | SettingType::WorkspaceMode
                         | SettingType::ExplorerSort => setting.descriptor().key.to_owned(),
                     },

@@ -10,7 +10,7 @@
 
 use runyte::{
     command::GrammarKind,
-    config::{Config, ExplorerSort, WorkspaceMode},
+    config::{Config, ExplorerSort, SessionStripVisibility, WorkspaceMode},
     settings::{SettingId, SettingRegistry, SettingType, SettingValue},
 };
 
@@ -34,6 +34,13 @@ fn other_value(setting: SettingId, current: &SettingValue, config: &Config) -> S
                 .find(|candidate| candidate != value)
                 .unwrap_or(*value),
         ),
+        (SettingType::SessionStrip, SettingValue::SessionStrip(value)) => {
+            SettingValue::SessionStrip(if *value == SessionStripVisibility::Always {
+                SessionStripVisibility::Hidden
+            } else {
+                SessionStripVisibility::Always
+            })
+        }
         (SettingType::WorkspaceMode, SettingValue::WorkspaceMode(value)) => {
             SettingValue::WorkspaceMode(
                 WorkspaceMode::ALL
@@ -75,6 +82,7 @@ fn wrong_typed_value(setting: SettingId) -> SettingValue {
         SettingType::Grammar
         | SettingType::Integer { .. }
         | SettingType::Theme
+        | SettingType::SessionStrip
         | SettingType::WorkspaceMode
         | SettingType::ExplorerSort
         | SettingType::Text => SettingValue::Boolean(true),
@@ -204,6 +212,7 @@ fn only_the_enumerated_setting_types_offer_values_to_choose_from() {
                     .collect::<Vec<_>>();
                 assert_eq!(allowed, names, "{key}");
             }
+            SettingType::SessionStrip => assert_eq!(allowed, ["auto", "always", "hidden"], "{key}"),
             SettingType::WorkspaceMode => {
                 let modes = WorkspaceMode::ALL
                     .iter()

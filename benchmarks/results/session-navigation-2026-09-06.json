@@ -1,0 +1,140 @@
+{
+  "binary": "target/release/runyte",
+  "results": {
+    "one": [
+      {
+        "cold_start_ms": 32.82174500009205,
+        "attachment_ms": 4.812867000055121,
+        "cpu_percent": 0.0,
+        "screen_writes": 0,
+        "screen_bytes": 0,
+        "observed_processes": 2,
+        "window_seconds": 16.00007288400002
+      },
+      {
+        "cold_start_ms": 32.58504900031767,
+        "attachment_ms": 5.22045799971238,
+        "cpu_percent": 0.0,
+        "screen_writes": 0,
+        "screen_bytes": 0,
+        "observed_processes": 2,
+        "window_seconds": 16.000091753000106
+      },
+      {
+        "cold_start_ms": 32.574629000009736,
+        "attachment_ms": 5.598771999757446,
+        "cpu_percent": 0.0,
+        "screen_writes": 0,
+        "screen_bytes": 0,
+        "observed_processes": 2,
+        "window_seconds": 16.00006593199987
+      }
+    ],
+    "several": [
+      {
+        "cold_start_ms": 32.97206000024744,
+        "attachment_ms": 6.338906000110001,
+        "cpu_percent": 0.062499711415395134,
+        "screen_writes": 0,
+        "screen_bytes": 0,
+        "observed_processes": 4,
+        "window_seconds": 16.000073877999966
+      },
+      {
+        "cold_start_ms": 33.547210000051564,
+        "attachment_ms": 6.128131999957986,
+        "cpu_percent": 0.06249965126757113,
+        "screen_writes": 0,
+        "screen_bytes": 0,
+        "observed_processes": 4,
+        "window_seconds": 16.000089275999926
+      },
+      {
+        "cold_start_ms": 33.32137000006696,
+        "attachment_ms": 5.728346999603673,
+        "cpu_percent": 0.18749858159667182,
+        "screen_writes": 0,
+        "screen_bytes": 0,
+        "observed_processes": 4,
+        "window_seconds": 16.000121037999634
+      }
+    ],
+    "hidden": [
+      {
+        "cold_start_ms": 33.47896000013861,
+        "attachment_ms": 6.352374000016425,
+        "cpu_percent": 0.0,
+        "screen_writes": 0,
+        "screen_bytes": 0,
+        "observed_processes": 4,
+        "window_seconds": 16.00008803300034
+      },
+      {
+        "cold_start_ms": 33.77871000020605,
+        "attachment_ms": 6.552836999617284,
+        "cpu_percent": 0.062499628451427536,
+        "screen_writes": 0,
+        "screen_bytes": 0,
+        "observed_processes": 4,
+        "window_seconds": 16.000095117
+      },
+      {
+        "cold_start_ms": 33.35689999994429,
+        "attachment_ms": 6.365689000176644,
+        "cpu_percent": 0.06249963352167983,
+        "screen_writes": 0,
+        "screen_bytes": 0,
+        "observed_processes": 4,
+        "window_seconds": 16.000093819000085
+      }
+    ],
+    "remote-noisy": [
+      {
+        "cold_start_ms": 33.19820800015805,
+        "attachment_ms": 5.814445999931195,
+        "cpu_percent": 0.31249855799493514,
+        "screen_writes": 0,
+        "screen_bytes": 0,
+        "observed_processes": 4,
+        "window_seconds": 16.00007383100001
+      },
+      {
+        "cold_start_ms": 33.30677399981141,
+        "attachment_ms": 6.550824999976612,
+        "cpu_percent": 0.24999898026978246,
+        "screen_writes": 0,
+        "screen_bytes": 0,
+        "observed_processes": 4,
+        "window_seconds": 16.000065263000124
+      },
+      {
+        "cold_start_ms": 33.11120899979869,
+        "attachment_ms": 6.622927000080381,
+        "cpu_percent": 0.24999924233041904,
+        "screen_writes": 0,
+        "screen_bytes": 0,
+        "observed_processes": 4,
+        "window_seconds": 16.000048491000143
+      }
+    ]
+  },
+  "binary_sha256": "910bb00fda4be18e8711faf325a869344771da50fdc30c64047dd184d26e992c",
+  "base_commit": "9750cd0",
+  "source": "working tree with session-navigation implementation",
+  "date": "2026-09-06",
+  "machine": {
+    "cpu": "AMD Ryzen AI 9 365",
+    "logical_cpus": 20,
+    "os": "Linux 7.1.13-200.fc44.x86_64",
+    "rust": "1.97.1"
+  },
+  "method": {
+    "runs_per_scenario": 3,
+    "pty_columns": 120,
+    "pty_rows": 40,
+    "settle_seconds": 32,
+    "window_seconds": 16,
+    "lsp_enabled": false,
+    "cpu_scope": "own user and system CPU of attached TUI plus persistent hosts, excluding terminal children"
+  }
+}

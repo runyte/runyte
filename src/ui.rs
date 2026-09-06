@@ -595,6 +595,7 @@ fn render_editor_frame(
     let global_status_line_area = to_tui_rect(snapshot.geometry.status);
     let interaction_line_area = to_tui_rect(snapshot.geometry.message);
 
+    draw_session_strip(frame, &app.theme, snapshot);
     for pane in &snapshot.panes {
         draw_pane(frame, &app.theme, snapshot.mode, pane);
     }
@@ -649,6 +650,102 @@ fn render_editor_frame(
     }
 }
 
+fn draw_session_strip(frame: &mut Frame<'_>, theme: &TuiTheme, snapshot: &EditorSnapshot) {
+    let Some(strip) = &snapshot.session_strip else {
+        return;
+    };
+    let editor = snapshot.geometry.editor;
+    if editor.y == snapshot.geometry.screen.y || editor.width == 0 {
+        return;
+    }
+    let area = TuiRect::new(editor.x, editor.y - 1, editor.width, 1);
+    let labels = strip
+        .entries
+        .iter()
+        .map(|entry| {
+            let number = entry
+                .number
+                .map_or_else(String::new, |number| format!("{number} "));
+            format!(
+                " {number}{}{} ",
+                entry.name,
+                if entry.bell {
+                    " !"
+                } else if entry.unread {
+                    " ·"
+                } else if entry.health_unknown {
+                    " ?"
+                } else {
+                    ""
+                }
+            )
+        })
+        .collect::<Vec<_>>();
+    let widths = labels
+        .iter()
+        .map(|label| UnicodeWidthStr::width(label.as_str()))
+        .collect::<Vec<_>>();
+    let Some(current) = strip
+        .entries
+        .iter()
+        .position(|entry| entry.current)
+        .or_else(|| (!labels.is_empty()).then_some(0))
+    else {
+        return;
+    };
+    let width = usize::from(area.width);
+    let reserve = if labels.len() > 1 {
+        format!(" +{}", labels.len() - 1).len()
+    } else {
+        0
+    };
+    let all_fit = widths.iter().sum::<usize>() <= width;
+    // Identity wins on tiny terminals. An overflow count cannot replace the
+    // current session, and padding must not consume its only available cell.
+    let narrow = !all_fit && widths[current] + reserve > width;
+    let budget = if all_fit {
+        width
+    } else {
+        width.saturating_sub(reserve)
+    };
+    let mut start = if all_fit { 0 } else { current };
+    let mut end = if all_fit { labels.len() } else { current + 1 };
+    let mut used = widths[current];
+    if !all_fit && !narrow {
+        while start > 0 && used + widths[start - 1] <= budget {
+            start -= 1;
+            used += widths[start];
+        }
+        while end < labels.len() && used + widths[end] <= budget {
+            used += widths[end];
+            end += 1;
+        }
+    }
+    let hidden = labels.len() - (end - start);
+    let spans = (start..end)
+        .map(|index| {
+            Span::styled(
+                if narrow {
+                    labels[index].trim_start().to_owned()
+                } else {
+                    labels[index].clone()
+                },
+                if strip.entries[index].current {
+                    Style::default().fg(theme.accent).bg(theme.selection).bold()
+                } else {
+                    Style::default().fg(theme.muted)
+                },
+            )
+        })
+        .collect();
+    let trailing = (hidden > 0 && !narrow)
+        .then(|| Span::styled(format!(" +{hidden}"), Style::default().fg(theme.muted)));
+    frame.render_widget(
+        Paragraph::new(fit_row_with_trailing(spans, trailing, width, None)),
+        area,
+    );
+}
+
 fn draw_setting_prompt(frame: &mut Frame<'_>, app: &TuiApp<'_>, editor_area: Rect) {
     let PromptKind::SettingValue(setting) = app.prompt_kind else {
         return;
@@ -662,6 +759,7 @@ fn draw_setting_prompt(frame: &mut Frame<'_>, app: &TuiApp<'_>, editor_area: Rec
         crate::settings::SettingType::Grammar
         | crate::settings::SettingType::Boolean
         | crate::settings::SettingType::Theme
+        | crate::settings::SettingType::SessionStrip
         | crate::settings::SettingType::WorkspaceMode
         | crate::settings::SettingType::ExplorerSort => "choice".to_owned(),
     };
@@ -738,6 +836,7 @@ fn render_attached_frame(
     color_depth: TerminalColorDepth,
 ) {
     let theme = TuiTheme::with_color_depth(&snapshot.editor.theme, color_depth);
+    draw_session_strip(frame, &theme, &snapshot.editor);
     for pane in &snapshot.editor.panes {
         draw_pane(frame, &theme, snapshot.editor.mode, pane);
     }
@@ -6876,6 +6975,8 @@ mod tests {
         app.apply_workspace_event(crate::workspace::WorkspaceEvent::Refreshed {
             generation: 1,
             result: Ok(vec![crate::workspace::WorkspaceRow {
+                unread_terminals: None,
+                terminal_bell: None,
                 number: None,
                 last_active_unix_seconds: None,
                 id: "aaaaaaaaaaaaaaaa".to_owned(),
@@ -6943,6 +7044,8 @@ mod tests {
         app.apply_workspace_event(crate::workspace::WorkspaceEvent::Refreshed {
             generation: 1,
             result: Ok(vec![crate::workspace::WorkspaceRow {
+                unread_terminals: None,
+                terminal_bell: None,
                 number: Some(1),
                 last_active_unix_seconds: None,
                 id: "aaaaaaaaaaaaaaaa".to_owned(),
@@ -7026,6 +7129,8 @@ mod tests {
             generation: 1,
             result: Ok(vec![
                 crate::workspace::WorkspaceRow {
+                    unread_terminals: None,
+                    terminal_bell: None,
                     number: None,
                     last_active_unix_seconds: None,
                     id: "aaaaaaaaaaaaaaaa".to_owned(),
@@ -7050,6 +7155,8 @@ mod tests {
                     missing_directory: false,
                 },
                 crate::workspace::WorkspaceRow {
+                    unread_terminals: None,
+                    terminal_bell: None,
                     number: None,
                     last_active_unix_seconds: Some(now - 5 * 24 * 60 * 60 + 30),
                     id: "bbbbbbbbbbbbbbbb".to_owned(),
@@ -7110,6 +7217,8 @@ mod tests {
             generation: 1,
             result: Ok(vec![
                 crate::workspace::WorkspaceRow {
+                    unread_terminals: None,
+                    terminal_bell: None,
                     number: None,
                     last_active_unix_seconds: None,
                     id: "aaaaaaaaaaaaaaaa".to_owned(),
@@ -7128,6 +7237,8 @@ mod tests {
                     missing_directory: false,
                 },
                 crate::workspace::WorkspaceRow {
+                    unread_terminals: None,
+                    terminal_bell: None,
                     number: None,
                     last_active_unix_seconds: None,
                     id: "bbbbbbbbbbbbbbbb".to_owned(),
@@ -7154,9 +7265,9 @@ mod tests {
         terminal
             .draw(|frame| render_test_frame(frame, &mut app, &hints))
             .unwrap();
-        // Located by the row the name is drawn on rather than by the glyph
-        // alone: the status line carries the real project path, which is not
-        // this test's to choose.
+        // Locate the name inside the bordered manager. The same session name
+        // also appears in the global strip, whose subdued styling is a
+        // different semantic surface from the running manager row.
         let cells = terminal.backend().buffer().content.clone();
         let row_colors = |name: &str| {
             let row = cells
@@ -7166,6 +7277,7 @@ mod tests {
                         .map(|cell| cell.symbol())
                         .collect::<String>()
                         .contains(name)
+                        && row.iter().any(|cell| cell.symbol() == "│")
                 })
                 .unwrap_or_else(|| panic!("{name} should be listed"));
             let symbols = row
@@ -8567,5 +8679,71 @@ mod tests {
         assert_eq!(labels.label_at(6), Some(('s', LabelPart::Immediate)));
         assert_eq!(labels.label_at(12), Some(('d', LabelPart::Immediate)));
         assert_eq!(labels.label_at(13), None);
+    }
+    #[test]
+    fn session_strip_overflow_keeps_current_and_counts_unnumbered_sessions() {
+        use crate::snapshot::{SessionStripEntry, SessionStripSnapshot};
+        let mut app = App::new(crate::config::Config::default(), None).unwrap();
+        let geometry = frame_geometry(TuiRect::new(0, 0, 22, 5));
+        let prepared = app.prepare_view(geometry);
+        let mut snapshot = app.snapshot(&prepared);
+        snapshot.geometry.editor.y = 1;
+        snapshot.geometry.editor.height -= 1;
+        snapshot.session_strip = Some(SessionStripSnapshot {
+            entries: (0..5)
+                .map(|index| SessionStripEntry {
+                    name: if index == 4 {
+                        "current".to_owned()
+                    } else {
+                        format!("session-{index}")
+                    },
+                    number: None,
+                    current: index == 4,
+                    health_unknown: false,
+                    unread: false,
+                    bell: false,
+                })
+                .collect(),
+        });
+        let theme = TuiTheme::with_color_depth(&snapshot.theme, TerminalColorDepth::TrueColor);
+        let mut terminal = Terminal::new(TestBackend::new(22, 5)).unwrap();
+        terminal
+            .draw(|frame| draw_session_strip(frame, &theme, &snapshot))
+            .unwrap();
+        let row = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .take(22)
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(row.contains("current"), "{row}");
+        assert!(row.contains("+4"), "{row}");
+        for width in [1, 2, 3, 5] {
+            snapshot.geometry.editor.width = width;
+            let mut terminal = Terminal::new(TestBackend::new(width, 5)).unwrap();
+            terminal
+                .draw(|frame| draw_session_strip(frame, &theme, &snapshot))
+                .unwrap();
+            assert_eq!(terminal.backend().buffer().content[0].symbol(), "c");
+        }
+        snapshot.geometry.editor.width = 53;
+        let mut terminal = Terminal::new(TestBackend::new(53, 5)).unwrap();
+        terminal
+            .draw(|frame| draw_session_strip(frame, &theme, &snapshot))
+            .unwrap();
+        let row = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .take(53)
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(
+            row.contains("session-0") && row.contains("current") && !row.contains('+'),
+            "{row}"
+        );
     }
 }

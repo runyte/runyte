@@ -325,6 +325,18 @@ impl LocalEndpoint {
         })
     }
 
+    pub fn from_parent_metadata(path: &Path) -> Result<Self> {
+        verify_private(path, false)?;
+        let metadata = read_endpoint_metadata(path, "parent host endpoint")?;
+        let endpoint = Self::from_registered(&metadata, path)?;
+        ensure!(
+            endpoint.metadata() == path,
+            "parent context does not identify the host endpoint"
+        );
+        endpoint.verify_for_connect()?;
+        Ok(endpoint)
+    }
+
     fn from_registered(metadata: &EndpointMetadata, registration: &Path) -> Result<Self> {
         let project_root = decode_path(metadata.project_root_bytes.clone());
         let socket = decode_path(metadata.socket_bytes.clone());
@@ -1608,6 +1620,7 @@ fn is_stale_endpoint_error(error: &anyhow::Error) -> bool {
 pub enum ServerEvent {
     Connected {
         id: u64,
+        peer_process: Option<u32>,
         geometry: FrameGeometry,
         interactive: bool,
         /// Whether this client can hand a `:quit-here` directory to its shell.
@@ -1703,6 +1716,7 @@ fn is_final_response(response: &HostResponse) -> bool {
         HostResponse::Detached { .. }
             | HostResponse::ShuttingDown
             | HostResponse::SwitchWorkspace { .. }
+            | HostResponse::ParentSwitchWorkspace { .. }
     )
 }
 
@@ -1905,7 +1919,9 @@ impl LocalServer {
                 let project_root_bytes = project_root_bytes.clone();
                 tokio::spawn(async move {
                     let _permit = permit;
-                    let _ = serve_connection(id, stream, events, project_root_bytes).await;
+                    let peer_process = socket_peer_process(&stream);
+                    let _ = serve_connection(id, stream, events, project_root_bytes, peer_process)
+                        .await;
                 });
             }
         });
@@ -2285,11 +2301,45 @@ fn wait_for_socket_readable(descriptor: std::os::fd::RawFd) -> io::Result<()> {
     }
 }
 
+fn socket_peer_process(stream: &UnixStream) -> Option<u32> {
+    #[cfg(target_os = "linux")]
+    {
+        stream
+            .peer_cred()
+            .ok()?
+            .pid()
+            .and_then(|pid| u32::try_from(pid).ok())
+    }
+    #[cfg(target_os = "macos")]
+    {
+        use std::os::fd::AsRawFd;
+        let mut process: libc::pid_t = 0;
+        let mut length = std::mem::size_of_val(&process) as libc::socklen_t;
+        // LOCAL_PEERPID is kernel-authenticated; no protocol field supplies it.
+        let result = unsafe {
+            libc::getsockopt(
+                stream.as_raw_fd(),
+                libc::SOL_LOCAL,
+                libc::LOCAL_PEERPID,
+                (&mut process as *mut libc::pid_t).cast(),
+                &mut length,
+            )
+        };
+        (result == 0).then(|| u32::try_from(process).ok()).flatten()
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    {
+        let _ = stream;
+        None
+    }
+}
+
 async fn serve_connection<S>(
     id: u64,
     stream: S,
     events: mpsc::Sender<ServerEvent>,
     expected_project_root: Vec<u8>,
+    peer_process: Option<u32>,
 ) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin,
@@ -2395,6 +2445,7 @@ where
     events
         .send(ServerEvent::Connected {
             id,
+            peer_process,
             geometry: geometry.into(),
             interactive,
             directory_handoff,
@@ -2501,15 +2552,20 @@ fn request_allowed_for_role(request: &ClientRequest, role: ClientRole) -> bool {
         ClientRequest::Hello { .. } => false,
         ClientRequest::Input { .. }
         | ClientRequest::Invoke { .. }
+        | ClientRequest::VisitDestination { .. }
         | ClientRequest::Notify { .. }
         | ClientRequest::AttachWait { .. }
         | ClientRequest::Pointer { .. }
         | ClientRequest::Resize { .. }
         | ClientRequest::Resynchronize
         | ClientRequest::Detach => role == ClientRole::Interactive,
-        ClientRequest::RenameHost { .. } => role == ClientRole::Control,
+        ClientRequest::RenameHost { .. }
+        | ClientRequest::ParentAttach { .. }
+        | ClientRequest::ParentWait { .. }
+        | ClientRequest::ParentHandoffResult { .. } => role == ClientRole::Control,
         ClientRequest::Health
         | ClientRequest::SessionPreview
+        | ClientRequest::DestinationInventory
         | ClientRequest::ListBuffers
         | ClientRequest::ReadBuffer { .. }
         | ClientRequest::OpenBuffers { .. }
@@ -3922,6 +3978,7 @@ mod tests {
                 host_stream,
                 events,
                 project_root.clone(),
+                None,
             ));
             let (reader, mut writer) = tokio::io::split(stream);
             write_message(
@@ -4073,6 +4130,8 @@ mod tests {
                 live_terminals: 0,
                 terminal_sessions: 0,
                 terminal_line_activity_unix_seconds: None,
+                unread_terminals: 0,
+                terminal_bell: false,
             })
             .await
             .unwrap();

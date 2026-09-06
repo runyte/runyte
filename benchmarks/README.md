@@ -10,6 +10,16 @@ that a change in Runyte's numbers can be separated from a change in the machine.
   how long it then takes to quit, and what it costs while sitting idle, with
   Neovim and Helix measured the same way. Recorded in
   [`context/reference/startup-performance.md`](../context/reference/startup-performance.md).
+- **`session_navigation.py`** — persistent attachment and unchanged-screen cost
+  with one or several sessions, a hidden strip, and noisy output in another
+  session. It uses the same fixed PTY geometry and capability replies, isolated
+  temporary configuration/storage, a 32-second observation warm-up, and at least
+  one complete 15-second discovery interval per idle window. CPU sums the TUI
+  and persistent hosts; noisy child CPU is excluded. Cold host start ends at
+  the initial About pane's first output; warm attachment ends at the restored
+  document's first output. These are presentation timings, not editing-readiness
+  or syntax-completion measurements. Run after builds/tests finish:
+  `python3 benchmarks/session_navigation.py --runs 3 --json /tmp/session-navigation.json`.
 - **`fuzzy.py`** — what the picker's fuzzy path ranking costs and whether it
   puts the same candidates at the top of the list as fzf, on the same
   candidates. Recorded in

@@ -686,7 +686,7 @@ fn repeated_arrow_scroll_saturates_at_the_rendered_end() {
         Mode::Normal,
         default_keymap(),
     );
-    assert!(render(40, 10, &mut app, &hints).contains("1-6/18"));
+    assert!(render(40, 10, &mut app, &hints).contains("1-6/19"));
 
     for _ in 0..30 {
         assert_eq!(
@@ -698,8 +698,8 @@ fn repeated_arrow_scroll_saturates_at_the_rendered_end() {
             HintEventResult::Consumed
         );
     }
-    assert_eq!(hints.scroll_offset(), 12);
-    assert!(render(40, 10, &mut app, &hints).contains("13-18/18"));
+    assert_eq!(hints.scroll_offset(), 13);
+    assert!(render(40, 10, &mut app, &hints).contains("14-19/19"));
 
     assert_eq!(
         hints.observe(
@@ -709,8 +709,8 @@ fn repeated_arrow_scroll_saturates_at_the_rendered_end() {
         ),
         HintEventResult::Consumed
     );
-    assert_eq!(hints.scroll_offset(), 11);
-    assert!(render(40, 10, &mut app, &hints).contains("12-17/18"));
+    assert_eq!(hints.scroll_offset(), 12);
+    assert!(render(40, 10, &mut app, &hints).contains("13-18/19"));
 }
 
 #[test]

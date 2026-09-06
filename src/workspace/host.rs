@@ -256,6 +256,8 @@ pub struct WorkspaceHost {
     next_git_retry: Option<Instant>,
     next_wait_token: u64,
     wait_requests: HashMap<WaitToken, WaitRequest>,
+    parent_wait_origins: HashMap<WaitToken, crate::terminal::TerminalId>,
+    incarnation: String,
     wait_order: VecDeque<WaitToken>,
 }
 
@@ -326,6 +328,10 @@ impl WorkspaceHost {
             next_git_retry: None,
             next_wait_token: 1,
             wait_requests: HashMap::new(),
+            parent_wait_origins: HashMap::new(),
+            incarnation: crate::hash::sha256_hex(
+                format!("{}:{:?}", std::process::id(), std::time::SystemTime::now()).as_bytes(),
+            ),
             wait_order: VecDeque::new(),
         }
     }
@@ -685,6 +691,102 @@ impl WorkspaceHost {
         Ok((token, buffers))
     }
 
+    pub fn incarnation(&self) -> &str {
+        &self.incarnation
+    }
+
+    pub fn parent_request_ready(&self) -> bool {
+        !self.app.has_input_overlay()
+            && self.app.mode != crate::command::Mode::Command
+            && self.app.pending_sequence().is_empty()
+            && self.app.pending_count().is_none()
+    }
+
+    pub fn create_parent_wait_request(
+        &mut self,
+        terminal: crate::terminal::TerminalId,
+        paths: Vec<PathBuf>,
+    ) -> Result<(WaitToken, Vec<BufferId>)> {
+        anyhow::ensure!(
+            self.app
+                .terminals
+                .get(terminal)
+                .is_some_and(|terminal| terminal.live()),
+            "the originating terminal is no longer running"
+        );
+        anyhow::ensure!(
+            self.parent_request_ready(),
+            "finish or dismiss the current overlay before opening an external editor request"
+        );
+        anyhow::ensure!(
+            self.app.parent_wait_origin_available(terminal),
+            "originating terminal is no longer visible"
+        );
+        let (token, buffers) = self.create_wait_request(paths, false)?;
+        if let Err(error) = self.app.begin_parent_wait(
+            terminal,
+            &buffers
+                .iter()
+                .filter_map(|buffer| buffer.index())
+                .collect::<Vec<_>>(),
+        ) {
+            self.cancel_wait(
+                token,
+                "parent edit could not open in its originating terminal",
+            )?;
+            return Err(error);
+        }
+        self.parent_wait_origins.insert(token, terminal);
+        self.refresh_parent_wait_buffers();
+        Ok((token, buffers))
+    }
+
+    pub fn is_parent_wait(&self, token: WaitToken) -> bool {
+        self.parent_wait_origins.contains_key(&token)
+    }
+
+    pub fn cancel_parent_waits(&mut self, reason: &str) {
+        let tokens = self.parent_wait_origins.keys().copied().collect::<Vec<_>>();
+        for token in tokens {
+            let _ = self.cancel_wait(token, reason);
+        }
+        self.refresh_parent_wait_buffers();
+    }
+
+    fn refresh_parent_wait_buffers(&mut self) {
+        let parent_buffers = self
+            .parent_wait_origins
+            .keys()
+            .filter_map(|token| self.wait_requests.get(token))
+            .filter(|request| matches!(request.status, WaitStatus::Pending { .. }))
+            .flat_map(|request| {
+                request
+                    .buffers
+                    .iter()
+                    .filter(|buffer| !request.completed.contains(buffer))
+            })
+            .filter_map(|buffer| buffer.index())
+            .collect::<HashSet<_>>();
+        let mut counts = HashMap::new();
+        for request in self
+            .wait_requests
+            .values()
+            .filter(|request| matches!(request.status, WaitStatus::Pending { .. }))
+        {
+            for index in request
+                .buffers
+                .iter()
+                .filter(|buffer| !request.completed.contains(buffer))
+                .filter_map(|buffer| buffer.index())
+            {
+                if parent_buffers.contains(&index) {
+                    *counts.entry(index).or_insert(0) += 1;
+                }
+            }
+        }
+        self.app.set_parent_wait_buffers(counts);
+    }
+
     pub fn wait_status(&self, token: WaitToken) -> Option<WaitStatus> {
         self.wait_requests
             .get(&token)
@@ -765,10 +867,51 @@ impl WorkspaceHost {
                 reason: reason.into(),
             };
         }
+        self.refresh_parent_wait_buffers();
         Ok(())
     }
 
     pub fn reconcile_wait_requests(&mut self) {
+        // Cancel/complete explicit parent edits before ordinary closed-buffer
+        // reconciliation, so a forced cancellation can never become success.
+        for (index, cancel) in self.app.take_parent_wait_actions() {
+            let buffer = BufferId::from_index(index);
+            let tokens = self
+                .parent_wait_origins
+                .keys()
+                .filter(|token| {
+                    self.wait_requests.get(token).is_some_and(|request| {
+                        request.buffers.contains(&buffer)
+                            && matches!(request.status, WaitStatus::Pending { .. })
+                    })
+                })
+                .copied()
+                .collect::<Vec<_>>();
+            for token in tokens {
+                if cancel {
+                    let _ = self.cancel_wait(token, "external editor request cancelled with :q!");
+                } else {
+                    let _ = self.complete_wait_buffer(token, buffer);
+                }
+            }
+        }
+        let lost = self
+            .parent_wait_origins
+            .iter()
+            .filter(|(_, terminal)| {
+                self.app
+                    .terminals
+                    .get(**terminal)
+                    .is_none_or(|terminal| !terminal.live())
+            })
+            .map(|(token, _)| *token)
+            .collect::<Vec<_>>();
+        for token in lost {
+            let _ = self.cancel_wait(
+                token,
+                "external editor request lost its originating terminal",
+            );
+        }
         for request in self.wait_requests.values_mut() {
             if !matches!(request.status, WaitStatus::Pending { .. }) {
                 continue;
@@ -784,6 +927,7 @@ impl WorkspaceHost {
             }
             update_wait_status(request);
         }
+        self.refresh_parent_wait_buffers();
     }
 
     pub fn cancel_all_waits(&mut self, reason: &str) {
@@ -810,6 +954,7 @@ impl WorkspaceHost {
                 .remove(index)
                 .expect("wait order index came from the same deque");
             self.wait_requests.remove(&token);
+            self.parent_wait_origins.remove(&token);
         }
     }
 
@@ -1057,9 +1202,12 @@ impl WorkspaceHost {
                 actual: actual_revision,
             });
         }
-        self.app
+        let outcome = self
+            .app
             .execute(invocation)
-            .map_err(|error| BufferRequestError::Refused(error.to_string()))
+            .map_err(|error| BufferRequestError::Refused(error.to_string()));
+        self.reconcile_wait_requests();
+        outcome
     }
 
     pub fn execute(&mut self, command: HostCommand) -> Result<HostInputOutcome> {
@@ -1114,7 +1262,11 @@ impl WorkspaceHost {
         output: crate::terminal::TerminalOutput,
         observed: bool,
     ) {
+        let exited = matches!(output, crate::terminal::TerminalOutput::Exited { .. });
         self.app.apply_terminal_output_observed(output, observed);
+        if exited {
+            self.reconcile_wait_requests();
+        }
     }
 
     pub fn mark_visible_terminals_viewed(&mut self) {
@@ -2685,5 +2837,102 @@ mod tests {
         assert!(host.buffer_metadata()[scratch].dirty);
         assert_eq!(host.unsaved_buffers(), 0);
         assert!(host.may_retire_idle());
+    }
+    #[cfg(unix)]
+    #[test]
+    fn parent_wait_multi_file_completion_and_detach_cancellation_retain_origin() {
+        let root = std::env::temp_dir().join(format!(
+            "runyte-parent-wait-{}-{}",
+            std::process::id(),
+            unique_test_id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let first = root.join("first.txt");
+        let second = root.join("second.txt");
+        std::fs::write(&first, "first").unwrap();
+        std::fs::write(&second, "second").unwrap();
+        let mut host = host();
+        let terminal = host
+            .app
+            .terminals
+            .open(
+                crate::terminal::TerminalRequest {
+                    program: "/bin/cat".into(),
+                    arguments: vec![],
+                    directory: root.clone(),
+                    label: "parent".to_owned(),
+                },
+                80,
+                24,
+            )
+            .unwrap();
+        host.app
+            .panes
+            .get_mut(&host.app.active_pane)
+            .unwrap()
+            .terminal = Some(terminal);
+        let (token, buffers) = host
+            .create_parent_wait_request(terminal, vec![first.clone(), second])
+            .unwrap();
+        assert!(host.is_parent_wait(token));
+        host.complete_wait_buffer(token, buffers[0]).unwrap();
+        assert!(
+            matches!(host.wait_status(token), Some(WaitStatus::Pending { remaining, .. }) if remaining == vec![buffers[1]])
+        );
+        host.complete_wait_buffer(token, buffers[1]).unwrap();
+        assert_eq!(host.wait_status(token), Some(WaitStatus::Completed));
+        let (cancelled, _) = host
+            .create_parent_wait_request(terminal, vec![first])
+            .unwrap();
+        host.cancel_parent_waits("outer TUI detached");
+        assert!(
+            matches!(host.wait_status(cancelled), Some(WaitStatus::Cancelled { reason }) if reason == "outer TUI detached")
+        );
+        assert!(host.app.terminals.get(terminal).unwrap().live());
+        assert_eq!(host.app.panes.len(), 1);
+        drop(host);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn refused_parent_wait_does_not_open_files_or_abandon_command_input() {
+        let mut host = host();
+        let terminal = host
+            .app
+            .terminals
+            .open(
+                crate::terminal::TerminalRequest {
+                    program: "/bin/cat".into(),
+                    arguments: vec![],
+                    directory: std::env::temp_dir(),
+                    label: "parent".to_owned(),
+                },
+                80,
+                24,
+            )
+            .unwrap();
+        let buffers = host.app.buffers.len();
+        let path = std::env::temp_dir().join("runyte-refused-parent-prompt.txt");
+        assert!(
+            host.create_parent_wait_request(terminal, vec![path.clone()])
+                .is_err()
+        );
+        assert_eq!(host.app.buffers.len(), buffers);
+        host.app
+            .panes
+            .get_mut(&host.app.active_pane)
+            .unwrap()
+            .terminal = Some(terminal);
+        host.app.mode = crate::command::Mode::Command;
+        host.app.command = "session-rename pending".to_owned();
+        assert!(!host.parent_request_ready());
+        assert!(
+            host.create_parent_wait_request(terminal, vec![path])
+                .is_err()
+        );
+        assert_eq!(host.app.buffers.len(), buffers);
+        assert_eq!(host.app.command, "session-rename pending");
+        assert_eq!(host.app.mode, crate::command::Mode::Command);
     }
 }

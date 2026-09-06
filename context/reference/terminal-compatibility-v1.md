@@ -99,3 +99,35 @@ The adaptation is client-owned. A persistent session host keeps exact RGB in
 its semantic snapshots and local protocol frames, so clients attached through
 different terminals render the same workspace at their own supported depth.
 Detection performs no terminal query and adds no first-frame round trip.
+
+## Parent navigation and external editors
+
+Terminal Insert reserves the remappable persistent-session previous/next
+bindings (Shift-Left/Right by default) in persistent mode after overlays have
+had their input. The effective window prefix also reaches Navigator (`n`) and
+previous destination (`p`); canceling the Navigator resumes child input without
+capturing terminal review. Space remains ordinary child input.
+
+PTY launch supplies a private parent context. A parent-routed `runyte -a`
+requires a live originating terminal, validated host capability and kernel peer
+process ownership, and the current interactive context. Its exact destination
+comes from the invoking process's working directory, without OSC 7. The old
+host retains the reply until attachment succeeds or fails; queued is not
+completed. Stale/standalone/detached parent contexts fail instead of launching
+a nested editor. The editor-side directory action separately requires a
+validated OSC 7 report and never infers a directory from prompt text.
+
+Parent `runyte --wait` routes files to the owning host even from another cwd.
+Explicit request ownership gives `:wq`, `:wbc` and `:w` then `:q` equivalent
+save-and-return behavior. Bare clean quit completes without writing; dirty quit
+and failed saves protect the request. Forced quit cancels with a nonzero result,
+subject to shared-buffer protection. Switching persistent sessions leaves the
+wait pending; explicit detach and caller loss cancel it without taking over the
+child's PTY. Ordinary external waits retain their existing lifecycle.
+
+Persistent PTY launches append `--wait` to inherited `EDITOR` and `VISUAL`
+commands that contain only a Runyte executable name or path. Explicit arguments
+and other editor commands are preserved, as is standalone PTY behavior. The
+change applies at terminal creation; existing children retain their environment.
+This makes external-editor calls using a bare Runyte configuration use the
+parent wait lifecycle without changing ordinary CLI file-opening semantics.

@@ -441,6 +441,8 @@ impl App {
     }
 
     pub fn note_frontend_attached(&mut self) {
+        #[cfg(unix)]
+        self.refresh_sessions_on_attachment();
         let Some(state) = self.tutorial.as_mut() else {
             return;
         };

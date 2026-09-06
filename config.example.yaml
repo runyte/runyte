@@ -31,6 +31,8 @@ git:
 # transport and lock files. Keep this ignored. `root` is the original spelling
 # and is still accepted.
 workspace:
+  # Running persistent sessions: auto (more than one), always, or hidden.
+  session_strip: auto
   state: .runyte
   # standalone is the default. persistent makes a bare `runyte` start or reuse
   # this project's host and attach to it.

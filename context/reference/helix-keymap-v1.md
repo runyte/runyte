@@ -442,3 +442,23 @@ selected row; Escape and the effective leader dismiss without granting new
 permission. The initial selection is Keep LSP disabled. Existing LSP bindings
 retain their identities and report missing workspace permission through the
 shared availability registry. No new default keybinding is assigned.
+
+## Session and destination navigation
+
+Runyte adds `Space n` as a complete Navigator binding, with `Ctrl-w n` in all
+editor modes and Terminal Insert. Both read the shared registry; `keys.leader`
+and `keys.window` change dispatch, help and hints together. `Ctrl-w p` returns
+to the previous open buffer/terminal in the active pane. `Ctrl-w a` returns to
+the previously visited persistent session. These are deliberate Runyte additions.
+
+Shift-Left/Right cycle running persistent sessions in manager order in
+Normal/Select and Insert/Replace, including Terminal Insert. Persistent-mode
+capability gates them; their remapped exact bindings are terminal-forwarding
+exceptions. Overlays and confirmations still own input first. `Space n` stays
+literal child input in Terminal Insert. An outer tmux binding can consume these
+arrows before Runyte sees them and must be released or changed separately.
+
+The session manager reserves Ctrl-o for directory opening, Ctrl-e for the
+selected session's on-demand inventory, and Ctrl-g for Git worktree management.
+Printable characters remain filter input. Explorer Tab includes the buffer-wide
+`Open persistent session here` action, independent of selected rows.

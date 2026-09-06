@@ -96,6 +96,10 @@ impl std::fmt::Debug for Pty {
 }
 
 impl Pty {
+    pub fn process_id(&self) -> u32 {
+        self.child.id()
+    }
+
     /// Runs `program` with `arguments` on a new pseudoterminal.
     ///
     /// `events` receives everything the child writes and, once, its exit.
@@ -107,6 +111,19 @@ impl Pty {
         rows: u16,
         events: impl Fn(PtyEvent) + Send + 'static,
     ) -> io::Result<Self> {
+        Self::spawn_in_context(program, arguments, directory, columns, rows, None, events)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn spawn_in_context(
+        program: &OsStr,
+        arguments: &[String],
+        directory: &Path,
+        columns: u16,
+        rows: u16,
+        parent_context: Option<&str>,
+        events: impl Fn(PtyEvent) + Send + 'static,
+    ) -> io::Result<Self> {
         Self::spawn_with_checkpoints(
             program,
             arguments,
@@ -114,10 +131,12 @@ impl Pty {
             columns,
             rows,
             events,
+            parent_context,
             |_, _| Ok(()),
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn spawn_with_checkpoints(
         program: &OsStr,
         arguments: &[String],
@@ -125,6 +144,7 @@ impl Pty {
         columns: u16,
         rows: u16,
         events: impl Fn(PtyEvent) + Send + 'static,
+        parent_context: Option<&str>,
         mut checkpoint: impl FnMut(SpawnCheckpoint, u32) -> io::Result<()>,
     ) -> io::Result<Self> {
         let (master, slave) = open_pair(columns, rows)?;
@@ -143,6 +163,21 @@ impl Pty {
         command.env("COLORTERM", "truecolor");
         command.env_remove("TERM_PROGRAM");
         command.env_remove("TERM_PROGRAM_VERSION");
+        command.env_remove(crate::workspace::parent::ENVIRONMENT);
+        if let Some(context) = parent_context {
+            command.env(crate::workspace::parent::ENVIRONMENT, context);
+            for name in ["EDITOR", "VISUAL"] {
+                if let Some(value) = std::env::var_os(name)
+                    && let Some(editor) = parent_editor_command(&value)
+                {
+                    command.env(name, editor);
+                }
+            }
+        } else {
+            // Standalone terminals carry a recognized, incompatible context,
+            // so explicit parent operations fail instead of nesting a TUI.
+            command.env(crate::workspace::parent::ENVIRONMENT, "standalone");
+        }
         // Nothing below runs in the parent: `pre_exec` is on the child side of
         // the fork, where only async-signal-safe calls are allowed. Opening the
         // already-open slave here becomes the controlling terminal only after
@@ -268,6 +303,19 @@ impl Pty {
             Ok(None) => None,
             Err(_) => Some(None),
         }
+    }
+}
+
+/// A bare Runyte editor command needs the wait lifecycle when its caller is
+/// inside a persistent terminal. Explicit arguments and other editors remain
+/// the caller's configuration; ordinary CLI file opens keep their semantics.
+fn parent_editor_command(value: &std::ffi::OsStr) -> Option<String> {
+    let value = value.to_str()?;
+    let words = shlex::split(value)?;
+    if words.len() == 1 && Path::new(&words[0]).file_name()? == "runyte" {
+        Some(format!("{value} --wait"))
+    } else {
+        None
     }
 }
 
@@ -412,6 +460,28 @@ mod tests {
         time::{Duration, Instant},
     };
 
+    #[test]
+    fn persistent_external_editor_adapts_only_bare_runyte_commands() {
+        for value in ["runyte", " /usr/bin/runyte ", "'/path with spaces/runyte'"] {
+            assert_eq!(
+                parent_editor_command(value.as_ref()),
+                Some(format!("{value} --wait"))
+            );
+        }
+        for value in [
+            "",
+            "vim",
+            "ru",
+            "runyte --wait",
+            "runyte --standalone",
+            "runyte --config custom.yaml",
+            "env runyte",
+            "'runyte",
+        ] {
+            assert_eq!(parent_editor_command(value.as_ref()), None, "{value}");
+        }
+    }
+
     /// A running child, everything it has written so far, and whether it has
     /// ended. The `Pty` comes back so the caller keeps it alive: dropping one
     /// kills its child.
@@ -483,6 +553,7 @@ mod tests {
                 40,
                 10,
                 |_| {},
+                None,
                 move |checkpoint, pid| {
                     if checkpoint == failed_at {
                         *captured_pid.lock().unwrap() = Some(pid);

@@ -2209,6 +2209,7 @@ impl App {
             self.previously_focused_pane = Some(self.active_pane);
         }
         self.active_pane = pane;
+        self.note_destination_activation();
     }
 
     /// Gives a pointer press ownership of its pane without carrying document
@@ -2226,7 +2227,7 @@ impl App {
         }
     }
 
-    fn pane_focus_rank(&self, pane: usize) -> (bool, u64, u64, usize) {
+    pub(super) fn pane_focus_rank(&self, pane: usize) -> (bool, u64, u64, usize) {
         let activated = self.pane_activated_at.get(&pane).copied();
         (
             activated.is_some(),

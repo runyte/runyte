@@ -83,6 +83,8 @@ pub fn abbreviated_id_width<'a>(ids: impl IntoIterator<Item = &'a str>) -> usize
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WorkspaceRow {
+    pub unread_terminals: Option<usize>,
+    pub terminal_bell: Option<bool>,
     pub id: String,
     pub name: Option<String>,
     /// The digit that selects this workspace in the session manager, when it
@@ -150,6 +152,17 @@ enum WorkspaceRequest {
         generation: u64,
     },
     Poll,
+    Observe {
+        attention: bool,
+    },
+    DirectoryWorktrees {
+        generation: u64,
+        path: PathBuf,
+    },
+    Inventory {
+        generation: u64,
+        path: PathBuf,
+    },
     Inspect {
         generation: u64,
         path: PathBuf,
@@ -180,6 +193,18 @@ enum WorkspaceRequest {
 
 #[derive(Debug)]
 pub enum WorkspaceEvent {
+    DirectoryWorktrees {
+        generation: u64,
+        result: Result<Vec<PathBuf>, String>,
+    },
+    Inventory {
+        generation: u64,
+        path: PathBuf,
+        result: Result<DestinationInventory, String>,
+    },
+    Observed {
+        result: Result<Vec<WorkspaceRow>, String>,
+    },
     Refreshed {
         generation: u64,
         result: Result<Vec<WorkspaceRow>, String>,
@@ -192,7 +217,7 @@ pub enum WorkspaceEvent {
     Inspected {
         generation: u64,
         path: PathBuf,
-        result: Result<Option<WorkspaceRow>, String>,
+        result: Box<Result<Option<WorkspaceRow>, String>>,
     },
     Previewed {
         generation: u64,
@@ -229,6 +254,13 @@ pub enum WorkspaceEvent {
     },
 }
 
+#[derive(Clone, Debug)]
+pub struct DestinationInventory {
+    pub incarnation: String,
+    pub entries: Vec<crate::protocol::OpenDestinationEntry>,
+    pub truncated: bool,
+}
+
 #[derive(Clone)]
 pub struct WorkspaceServiceHandle {
     requests: mpsc::Sender<WorkspaceRequest>,
@@ -242,9 +274,35 @@ struct WorkspacePreviewRequest {
 }
 
 impl WorkspaceServiceHandle {
+    pub fn try_directory_worktrees(
+        &self,
+        generation: u64,
+        path: PathBuf,
+    ) -> Result<(), &'static str> {
+        self.requests
+            .try_send(WorkspaceRequest::DirectoryWorktrees { generation, path })
+            .map_err(|_| "session service is unavailable or busy")
+    }
+
+    pub fn try_inventory(&self, generation: u64, path: PathBuf) -> Result<(), &'static str> {
+        self.requests
+            .try_send(WorkspaceRequest::Inventory { generation, path })
+            .map_err(|_| "session service is unavailable or busy")
+    }
+
     pub fn try_refresh(&self, generation: u64) -> Result<(), &'static str> {
         self.requests
             .try_send(WorkspaceRequest::Refresh { generation })
+            .map_err(|error| match error {
+                mpsc::error::TrySendError::Full(_) => "session service queue is full",
+                mpsc::error::TrySendError::Closed(_) => "session service is unavailable",
+            })
+    }
+
+    /// Quiet strip observation: one bounded request, with no Git metadata work.
+    pub fn try_observe(&self, attention: bool) -> Result<(), &'static str> {
+        self.requests
+            .try_send(WorkspaceRequest::Observe { attention })
             .map_err(|error| match error {
                 mpsc::error::TrySendError::Full(_) => "session service queue is full",
                 mpsc::error::TrySendError::Closed(_) => "session service is unavailable",
@@ -402,6 +460,61 @@ impl WorkspaceService {
                             .await
                             .map_err(|error| format!("{error:#}")),
                     },
+                    WorkspaceRequest::DirectoryWorktrees { generation, path } => {
+                        let result = tokio::task::spawn_blocking(move || {
+                            use crate::git::GitProvider;
+                            let git = crate::git::GitCliProvider::new("git");
+                            match git.discover(&path).map_err(|error| error.to_string())? {
+                                Some(repository) => git
+                                    .worktrees(&repository)
+                                    .map(|rows| {
+                                        rows.into_iter()
+                                            .filter(|row| !row.bare && !row.missing)
+                                            .map(|row| row.path)
+                                            .take(256)
+                                            .collect()
+                                    })
+                                    .map_err(|error| error.to_string()),
+                                None => Ok(Vec::new()),
+                            }
+                        })
+                        .await
+                        .map_err(|error| error.to_string())
+                        .and_then(|result| result);
+                        WorkspaceEvent::DirectoryWorktrees { generation, result }
+                    }
+                    WorkspaceRequest::Inventory { generation, path } => {
+                        let result = read_destination_inventory(&path, &state, runtime.as_deref())
+                            .await
+                            .map_err(|error| format!("{error:#}"));
+                        WorkspaceEvent::Inventory {
+                            generation,
+                            path,
+                            result,
+                        }
+                    }
+                    WorkspaceRequest::Observe { attention } => WorkspaceEvent::Observed {
+                        result: match tokio::time::timeout(
+                            Duration::from_secs(2),
+                            refresh_options(
+                                &roots,
+                                recents.as_deref(),
+                                &state,
+                                runtime.as_deref(),
+                                false,
+                                false,
+                                attention,
+                            ),
+                        )
+                        .await
+                        {
+                            Ok(result) => result.map_err(|error| format!("{error:#}")),
+                            Err(_) => {
+                                Err("session observation timed out; host health is unknown"
+                                    .to_owned())
+                            }
+                        },
+                    },
                     WorkspaceRequest::Poll => WorkspaceEvent::Polled {
                         result: refresh(&roots, recents.as_deref(), &state, runtime.as_deref())
                             .await
@@ -419,7 +532,7 @@ impl WorkspaceService {
                         WorkspaceEvent::Inspected {
                             generation,
                             path,
-                            result,
+                            result: Box::new(result),
                         }
                     }
                     WorkspaceRequest::Stop {
@@ -674,6 +787,27 @@ async fn refresh_with_name_persistence(
     runtime: Option<&Path>,
     persist_host_names: bool,
 ) -> Result<Vec<WorkspaceRow>> {
+    refresh_options(
+        roots,
+        recents,
+        state,
+        runtime,
+        persist_host_names,
+        true,
+        true,
+    )
+    .await
+}
+
+async fn refresh_options(
+    roots: &[PathBuf],
+    recents: Option<&Path>,
+    state: &Path,
+    runtime: Option<&Path>,
+    persist_host_names: bool,
+    describe_git: bool,
+    attention: bool,
+) -> Result<Vec<WorkspaceRow>> {
     let scan_roots = roots.to_vec();
     let recent_path = recents.map(Path::to_path_buf);
     let (hosts, mut remembered) = tokio::task::spawn_blocking(move || {
@@ -691,7 +825,7 @@ async fn refresh_with_name_persistence(
     let openable = listable_recents(remembered.clone());
     let mut rows = Vec::with_capacity(hosts.len());
     for host in hosts {
-        rows.push(inspect_host(host).await);
+        rows.push(inspect_host_with_attention(host, attention).await);
     }
     apply_recent_names(&mut rows, &remembered);
     for RecentEntry {
@@ -718,6 +852,8 @@ async fn refresh_with_name_persistence(
             continue;
         }
         rows.push(WorkspaceRow {
+            unread_terminals: None,
+            terminal_bell: None,
             id,
             name,
             number: None,
@@ -745,7 +881,9 @@ async fn refresh_with_name_persistence(
     let described = tokio::task::spawn_blocking(move || {
         for row in &mut rows {
             row.missing_directory = !row.project_root.is_dir();
-            row.git = read_workspace_git_facts(&row.project_root);
+            if describe_git {
+                row.git = read_workspace_git_facts(&row.project_root);
+            }
         }
         rows
     })
@@ -905,6 +1043,8 @@ async fn published_row(
     let host = endpoint.published_host().ok().flatten()?;
     if !host.speaks_current_protocol() {
         return Some(WorkspaceRow {
+            unread_terminals: None,
+            terminal_bell: None,
             id: host.id,
             // Nothing can ask a host of another protocol anything, so its
             // buffer counts stay unknown rather than being reported as zero.
@@ -928,6 +1068,8 @@ async fn published_row(
     }
     let inspection = inspect_endpoint(&endpoint).await;
     Some(WorkspaceRow {
+        unread_terminals: None,
+        terminal_bell: None,
         id: host.id,
         name: host.name.or(name),
         number: None,
@@ -988,6 +1130,8 @@ async fn inspect_workspace_target(
         .and_then(|entry| entry.number);
     if !host.speaks_current_protocol() {
         return Ok(Some(WorkspaceRow {
+            unread_terminals: None,
+            terminal_bell: None,
             id: host.id,
             name: host.name,
             number,
@@ -1008,6 +1152,8 @@ async fn inspect_workspace_target(
     }
     let inspection = inspect_endpoint_strict(&endpoint).await?;
     Ok(Some(WorkspaceRow {
+        unread_terminals: None,
+        terminal_bell: None,
         id: host.id,
         name: host.name,
         number,
@@ -1027,6 +1173,69 @@ async fn inspect_workspace_target(
     }))
 }
 
+fn validate_destination_inventory(
+    incarnation: String,
+    entries: Vec<crate::protocol::OpenDestinationEntry>,
+    truncated: bool,
+) -> Result<DestinationInventory> {
+    use crate::protocol::{MAX_DESTINATION_LABEL_BYTES, MAX_DESTINATIONS, OpenDestination};
+    anyhow::ensure!(
+        incarnation.len() == 64 && incarnation.bytes().all(|byte| byte.is_ascii_hexdigit()),
+        "invalid host incarnation in destination inventory"
+    );
+    anyhow::ensure!(
+        entries.len() <= MAX_DESTINATIONS,
+        "destination inventory exceeds its entry limit"
+    );
+    let mut identities = std::collections::BTreeSet::new();
+    for entry in &entries {
+        anyhow::ensure!(
+            entry.label.len() <= MAX_DESTINATION_LABEL_BYTES
+                && entry.detail.len() <= MAX_DESTINATION_LABEL_BYTES,
+            "destination inventory label exceeds its byte limit"
+        );
+        let identity = match entry.destination {
+            OpenDestination::Buffer(id) => (0, id),
+            OpenDestination::Terminal(id) => (1, id),
+        };
+        anyhow::ensure!(
+            identity.1 > 0 && identities.insert(identity),
+            "destination inventory contains an invalid or duplicate resource identity"
+        );
+    }
+    Ok(DestinationInventory {
+        incarnation,
+        entries,
+        truncated,
+    })
+}
+
+async fn read_destination_inventory(
+    path: &Path,
+    state: &Path,
+    runtime: Option<&Path>,
+) -> Result<DestinationInventory> {
+    tokio::time::timeout(Duration::from_secs(2), async {
+        let endpoint = published_endpoint(path, state, runtime)?;
+        let mut client = connect_control(&endpoint).await?;
+        client.send(&ClientRequest::DestinationInventory).await?;
+        match client.recv().await? {
+            Some(HostResponse::DestinationInventory {
+                incarnation,
+                entries,
+                truncated,
+            }) => validate_destination_inventory(incarnation, entries, truncated),
+            Some(HostResponse::Refused { message } | HostResponse::Error { message }) => {
+                anyhow::bail!(message)
+            }
+            Some(_) => anyhow::bail!("this host does not support destination inventories"),
+            None => anyhow::bail!("host closed before returning its destinations"),
+        }
+    })
+    .await
+    .context("destination inventory timed out")?
+}
+
 /// Resolves the endpoint a project root publishes, the same way a connecting
 /// client resolves it.
 fn published_endpoint(
@@ -1043,9 +1252,11 @@ fn published_endpoint(
     }
 }
 
-async fn inspect_host(host: RegisteredHost) -> WorkspaceRow {
+async fn inspect_host_with_attention(host: RegisteredHost, attention: bool) -> WorkspaceRow {
     if !host.speaks_current_protocol() {
         return WorkspaceRow {
+            unread_terminals: None,
+            terminal_bell: None,
             id: host.id,
             name: host.name,
             number: None,
@@ -1064,8 +1275,14 @@ async fn inspect_host(host: RegisteredHost) -> WorkspaceRow {
             missing_directory: false,
         };
     }
-    let inspection = inspect_endpoint(host.endpoint()).await;
+    let inspection = if attention {
+        inspect_endpoint(host.endpoint()).await
+    } else {
+        HostInspection::default()
+    };
     WorkspaceRow {
+        unread_terminals: inspection.unread_terminals,
+        terminal_bell: inspection.terminal_bell,
         id: host.id,
         name: host.name,
         number: None,
@@ -1093,6 +1310,8 @@ async fn inspect_host(host: RegisteredHost) -> WorkspaceRow {
 /// the same host would refuse to stop.
 #[derive(Default)]
 struct HostInspection {
+    unread_terminals: Option<usize>,
+    terminal_bell: Option<bool>,
     unsaved_buffers: Option<usize>,
     open_buffers: Option<usize>,
     pending_wait_requests: Option<usize>,
@@ -1152,6 +1371,8 @@ async fn inspect_endpoint(endpoint: &LocalEndpoint) -> HostInspection {
         let mut client = connect_control(endpoint).await?;
         client.send(&ClientRequest::Health).await?;
         if let Some(HostResponse::Health {
+            unread_terminals,
+            terminal_bell,
             interactive_attached: attached,
             unsaved_buffers: unsaved,
             open_buffers,
@@ -1162,6 +1383,8 @@ async fn inspect_endpoint(endpoint: &LocalEndpoint) -> HostInspection {
             ..
         }) = client.recv().await?
         {
+            result.unread_terminals = Some(unread_terminals);
+            result.terminal_bell = Some(terminal_bell);
             result.interactive_attached = Some(attached);
             result.unsaved_buffers = Some(unsaved);
             result.open_buffers = Some(open_buffers);
@@ -1472,6 +1695,8 @@ mod tests {
         let rows = ids
             .iter()
             .map(|id| WorkspaceRow {
+                unread_terminals: None,
+                terminal_bell: None,
                 id: (*id).to_owned(),
                 name: None,
                 number: None,
@@ -1587,6 +1812,8 @@ mod tests {
                         if let Some(responses) = clients.get(&id) {
                             let _ = responses
                                 .send(HostResponse::Health {
+                                    unread_terminals: 0,
+                                    terminal_bell: false,
                                     protocol: PROTOCOL_VERSION,
                                     pid: std::process::id(),
                                     interactive_attached: false,
@@ -1746,6 +1973,8 @@ mod tests {
                         if let Some(responses) = clients.get(&id) {
                             let _ = responses
                                 .send(HostResponse::Health {
+                                    unread_terminals: 0,
+                                    terminal_bell: false,
                                     protocol: PROTOCOL_VERSION,
                                     pid: std::process::id(),
                                     interactive_attached: false,
@@ -2506,6 +2735,8 @@ mod tests {
         let explicit_root = PathBuf::from("/workspace/explicit");
         let mut rows = vec![
             WorkspaceRow {
+                unread_terminals: None,
+                terminal_bell: None,
                 id: "11111111111111111111111111111111".to_owned(),
                 name: None,
                 number: None,
@@ -2524,6 +2755,8 @@ mod tests {
                 missing_directory: false,
             },
             WorkspaceRow {
+                unread_terminals: None,
+                terminal_bell: None,
                 id: "22222222222222222222222222222222".to_owned(),
                 name: Some("chosen".to_owned()),
                 number: None,
@@ -2608,6 +2841,8 @@ mod tests {
         let id_target = id_target.canonicalize().unwrap();
         let rows = vec![
             WorkspaceRow {
+                unread_terminals: None,
+                terminal_bell: None,
                 id: "11111111111111111111111111111111".to_owned(),
                 name: None,
                 number: None,
@@ -2626,6 +2861,8 @@ mod tests {
                 missing_directory: false,
             },
             WorkspaceRow {
+                unread_terminals: None,
+                terminal_bell: None,
                 id: "22222222222222222222222222222222".to_owned(),
                 name: Some("archive".to_owned()),
                 number: None,
@@ -2644,6 +2881,8 @@ mod tests {
                 missing_directory: false,
             },
             WorkspaceRow {
+                unread_terminals: None,
+                terminal_bell: None,
                 id: "abcdef0123456789abcdef0123456789".to_owned(),
                 name: None,
                 number: None,
@@ -2707,6 +2946,8 @@ mod tests {
         let first = first.canonicalize().unwrap();
         let snapshot = read_recents(Some(&path)).unwrap();
         let stale_rows = vec![WorkspaceRow {
+            unread_terminals: None,
+            terminal_bell: None,
             id: "11111111111111111111111111111111".to_owned(),
             name: Some("named-first".to_owned()),
             number: None,
@@ -2753,6 +2994,8 @@ mod tests {
         let workspace = workspace.canonicalize().unwrap();
         let snapshot = read_recents(Some(&path)).unwrap();
         let stale_rows = vec![WorkspaceRow {
+            unread_terminals: None,
+            terminal_bell: None,
             id: "11111111111111111111111111111111".to_owned(),
             name: Some("stale-inspection".to_owned()),
             number: None,
@@ -3030,6 +3273,8 @@ mod tests {
         // while a stopped row with nothing left to open stays out of one.
         let entries = read_recents(Some(&path)).unwrap();
         let mut rows = vec![WorkspaceRow {
+            unread_terminals: None,
+            terminal_bell: None,
             id: "aaaaaaaaaaaaaaaa".to_owned(),
             name: Some("vanishing".to_owned()),
             number: None,
@@ -3094,6 +3339,8 @@ mod tests {
     /// One listing row, in whatever running state the numbering is about.
     fn numbering_row(project_root: &Path, running: bool) -> WorkspaceRow {
         WorkspaceRow {
+            unread_terminals: None,
+            terminal_bell: None,
             id: "aaaaaaaaaaaaaaaa".to_owned(),
             name: None,
             number: None,
@@ -4439,4 +4686,119 @@ fn validate_persisted_path(bytes: &[u8], description: &str) -> Result<()> {
     );
     anyhow::ensure!(!bytes.contains(&0), "{description} contains a null byte");
     Ok(())
+}
+
+#[cfg(test)]
+mod destination_inventory_tests {
+    use super::*;
+    use crate::protocol::{
+        MAX_DESTINATION_LABEL_BYTES, MAX_DESTINATIONS, OpenDestination, OpenDestinationEntry,
+    };
+
+    #[tokio::test]
+    async fn reattachment_replaces_an_observation_started_before_it() {
+        let root = crate::test_support::TestRuntimeRoot::new("reattach-observation").unwrap();
+        let registry = root.create_private_dir("registry").unwrap();
+        let runtime = root.create_private_dir("runtime").unwrap();
+        let (service, mut events) = WorkspaceService::spawn_with(
+            vec![registry],
+            None,
+            PathBuf::from(".runyte"),
+            None,
+            Some(runtime),
+        );
+        let mut app = crate::app::App::new(crate::config::Config::default(), None).unwrap();
+        app.enable_persistent_session();
+        app.attach_workspace_service(service);
+        app.note_frontend_attached();
+        let stale = tokio::time::timeout(Duration::from_secs(3), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(matches!(stale, WorkspaceEvent::Observed { .. }));
+        // The old response is already queued when the same frontend returns.
+        // It must prompt a fresh scan instead of consuming the new deadline.
+        app.note_frontend_attached();
+        app.apply_workspace_event(stale);
+        let fresh = tokio::time::timeout(Duration::from_secs(3), events.recv())
+            .await
+            .expect("no replacement scan after reattachment")
+            .unwrap();
+        assert!(matches!(fresh, WorkspaceEvent::Observed { .. }));
+        app.apply_workspace_event(fresh);
+        assert!(
+            events.try_recv().is_err(),
+            "replacement scans must coalesce"
+        );
+    }
+
+    #[tokio::test]
+    async fn navigation_service_keeps_discovery_and_failures_inside_explicit_runtime_scope() {
+        let root = crate::test_support::TestRuntimeRoot::new("navigation-service").unwrap();
+        let project = root.create_private_dir("project").unwrap();
+        let registry = root.create_private_dir("registry").unwrap();
+        let runtime = root.create_private_dir("runtime").unwrap();
+        let (service, mut events) = WorkspaceService::spawn_with(
+            vec![registry],
+            None,
+            PathBuf::from(".runyte"),
+            None,
+            Some(runtime),
+        );
+        service.try_observe(false).unwrap();
+        let event = tokio::time::timeout(Duration::from_secs(3), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(matches!(event,WorkspaceEvent::Observed { result:Ok(rows) } if rows.is_empty()));
+        service.try_directory_worktrees(7, project.clone()).unwrap();
+        let event = tokio::time::timeout(Duration::from_secs(3), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            matches!(event,WorkspaceEvent::DirectoryWorktrees {generation:7,result:Ok(rows)} if rows.is_empty())
+        );
+        service.try_inventory(8, project.clone()).unwrap();
+        let event = tokio::time::timeout(Duration::from_secs(3), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            matches!(event,WorkspaceEvent::Inventory {generation:8,path,result:Err(_)} if path==project)
+        );
+    }
+
+    #[test]
+    fn received_inventory_rejects_invalid_and_duplicate_identities_and_oversized_rows() {
+        let entry = OpenDestinationEntry {
+            destination: OpenDestination::Buffer(1),
+            label: "notes".to_owned(),
+            detail: String::new(),
+        };
+        assert!(validate_destination_inventory("a".repeat(64), vec![entry.clone()], false).is_ok());
+        assert!(validate_destination_inventory("a".repeat(63), vec![], false).is_err());
+        assert!(
+            validate_destination_inventory(
+                "a".repeat(64),
+                vec![entry.clone(), entry.clone()],
+                false
+            )
+            .is_err()
+        );
+        assert!(
+            validate_destination_inventory(
+                "a".repeat(64),
+                vec![entry.clone(); MAX_DESTINATIONS + 1],
+                true
+            )
+            .is_err()
+        );
+        let mut zero = entry.clone();
+        zero.destination = OpenDestination::Buffer(0);
+        assert!(validate_destination_inventory("a".repeat(64), vec![zero], false).is_err());
+        let mut oversized = entry;
+        oversized.detail = "x".repeat(MAX_DESTINATION_LABEL_BYTES + 1);
+        assert!(validate_destination_inventory("a".repeat(64), vec![oversized], false).is_err());
+    }
 }

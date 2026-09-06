@@ -164,7 +164,9 @@ use crate::workspace::{
 /// numbers, and the rest in the colours of their neighbours.
 /// Version 49 requires host-owned workspace LSP permission. An older host
 /// can start project-aware servers without asking and cannot honor revocation.
-pub const VERSION: u32 = 49;
+/// Version 50 adds session navigation, authenticated parent-terminal requests,
+/// and bounded destination inventories.
+pub const VERSION: u32 = 50;
 pub const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const MAX_PATHS: usize = 32;
 pub const MAX_PATH_BYTES: usize = 32 * 1024;
@@ -447,6 +449,26 @@ pub enum ClientRequest {
     },
     Health,
     SessionPreview,
+    DestinationInventory,
+    VisitDestination {
+        incarnation: String,
+        destination: OpenDestination,
+    },
+    ParentAttach {
+        terminal: u64,
+        capability: String,
+        selector: Vec<u8>,
+        directory: Vec<u8>,
+    },
+    ParentWait {
+        terminal: u64,
+        capability: String,
+        paths: Vec<Vec<u8>>,
+    },
+    ParentHandoffResult {
+        receipt: String,
+        error: Option<String>,
+    },
     ListBuffers,
     ReadBuffer {
         buffer: BufferId,
@@ -498,6 +520,31 @@ pub enum ClientRequest {
     Detach,
     Shutdown,
     ForceShutdown,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct DestinationVisit {
+    pub incarnation: String,
+    pub destination: OpenDestination,
+}
+
+pub const MAX_DESTINATIONS: usize = 1024;
+pub const MAX_DESTINATION_LABEL_BYTES: usize = 4096;
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "kind", content = "id", rename_all = "kebab-case")]
+pub enum OpenDestination {
+    Buffer(u64),
+    Terminal(u64),
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct OpenDestinationEntry {
+    pub destination: OpenDestination,
+    pub label: String,
+    pub detail: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -741,10 +788,66 @@ impl ClientRequest {
                     && !name.chars().any(char::is_control),
                 "host name is invalid",
             ),
+            Self::ParentAttach {
+                terminal,
+                capability,
+                selector,
+                directory,
+            } => {
+                validate_parent_identity(*terminal, capability)?;
+                require(
+                    !selector.is_empty()
+                        && selector.len() <= MAX_PATH_BYTES
+                        && !directory.is_empty()
+                        && directory.len() <= MAX_PATH_BYTES,
+                    "parent attachment path exceeds the protocol limit",
+                )
+            }
+            Self::ParentWait {
+                terminal,
+                capability,
+                paths,
+            } => {
+                validate_parent_identity(*terminal, capability)?;
+                require(
+                    !paths.is_empty()
+                        && paths.len() <= MAX_PATHS
+                        && paths
+                            .iter()
+                            .all(|path| !path.is_empty() && path.len() <= MAX_PATH_BYTES),
+                    "parent wait requires 1 to 32 bounded paths",
+                )
+            }
+            Self::ParentHandoffResult { receipt, error } => require(
+                receipt.len() == 64
+                    && error
+                        .as_ref()
+                        .is_none_or(|error| error.len() <= MAX_NOTIFICATION_BYTES),
+                "parent handoff result exceeds its protocol limit",
+            ),
+            Self::VisitDestination {
+                incarnation,
+                destination,
+            } => require(
+                incarnation.len() == 64
+                    && match destination {
+                        OpenDestination::Buffer(id) | OpenDestination::Terminal(id) => *id > 0,
+                    },
+                "destination identity is invalid",
+            ),
             Self::Resize { geometry } => geometry.validate(),
             _ => Ok(()),
         }
     }
+}
+
+fn validate_parent_identity(terminal: u64, capability: &str) -> Result<(), String> {
+    require(
+        terminal > 0
+            && capability.len() == 64
+            && capability.bytes().all(|byte| byte.is_ascii_hexdigit()),
+        "parent terminal identity is invalid",
+    )
 }
 
 fn require(condition: bool, message: &str) -> Result<(), String> {
@@ -818,7 +921,25 @@ pub enum HostResponse {
     SwitchWorkspace {
         selector_bytes: Vec<u8>,
         working_directory_bytes: Vec<u8>,
+        running_only: bool,
+        previous_session: bool,
+        visit: Option<DestinationVisit>,
     },
+    ParentSwitchWorkspace {
+        selector: Vec<u8>,
+        directory: Vec<u8>,
+        receipt: String,
+    },
+    ParentAttached,
+    DestinationInventory {
+        incarnation: String,
+        entries: Vec<OpenDestinationEntry>,
+        truncated: bool,
+    },
+    DestinationVisitResult {
+        error: Option<String>,
+    },
+
     Error {
         message: String,
     },
@@ -843,6 +964,8 @@ pub enum HostResponse {
         /// Latest creation/completed-line baseline among live terminals, in
         /// whole Unix seconds. `None` means this host has no live terminal.
         terminal_line_activity_unix_seconds: Option<u64>,
+        unread_terminals: usize,
+        terminal_bell: bool,
     },
     SessionPreview {
         preview: SessionPreview,
@@ -941,7 +1064,7 @@ mod tests {
 
     #[test]
     fn protocol_version_and_request_bounds_are_explicit() {
-        assert_eq!(VERSION, 49);
+        assert_eq!(VERSION, 50);
         let oversized_command = ClientRequest::Invoke {
             command: CommandRequest {
                 name: "open".to_owned(),
@@ -1318,5 +1441,78 @@ mod tests {
             host_version: CLIENT_VERSION.to_owned(),
         };
         assert!(validate_welcome(&response, false).is_err());
+    }
+    #[test]
+    fn parent_requests_and_destination_visits_enforce_scalar_bounds() {
+        let request = ClientRequest::ParentAttach {
+            terminal: 1,
+            capability: "a".repeat(64),
+            selector: b"/tmp/next".to_vec(),
+            directory: b"/tmp".to_vec(),
+        };
+        assert!(request.validate().is_ok());
+        let ClientRequest::ParentAttach {
+            terminal,
+            capability,
+            selector,
+            directory,
+        } = request
+        else {
+            unreachable!()
+        };
+        assert!(
+            ClientRequest::ParentAttach {
+                terminal: 0,
+                capability: capability.clone(),
+                selector: selector.clone(),
+                directory: directory.clone()
+            }
+            .validate()
+            .is_err()
+        );
+        assert!(
+            ClientRequest::ParentAttach {
+                terminal,
+                capability: "not-a-capability".to_owned(),
+                selector,
+                directory
+            }
+            .validate()
+            .is_err()
+        );
+        assert!(
+            ClientRequest::ParentWait {
+                terminal,
+                capability: capability.clone(),
+                paths: vec![vec![b'a']; MAX_PATHS + 1]
+            }
+            .validate()
+            .is_err()
+        );
+        assert!(
+            ClientRequest::ParentWait {
+                terminal,
+                capability,
+                paths: vec![b"/tmp/prompt".to_vec()]
+            }
+            .validate()
+            .is_ok()
+        );
+        assert!(
+            ClientRequest::VisitDestination {
+                incarnation: "a".repeat(64),
+                destination: OpenDestination::Buffer(0)
+            }
+            .validate()
+            .is_err()
+        );
+        assert!(
+            ClientRequest::ParentHandoffResult {
+                receipt: "a".repeat(64),
+                error: Some("x".repeat(MAX_NOTIFICATION_BYTES + 1))
+            }
+            .validate()
+            .is_err()
+        );
     }
 }

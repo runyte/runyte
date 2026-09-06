@@ -1,6 +1,6 @@
 # Session and open-destination navigation
 
-Status: proposed; awaiting final UX review before implementation.
+Status: completed 2026-09-06; Linux validated, native macOS validation unverified.
 
 Created: 2026-09-06
 
@@ -16,8 +16,8 @@ Keep the editor central: add one quiet global row and use temporary overlays
 for detailed navigation. Avoid a permanent sidebar or a second row of tabs for
 every open buffer and terminal.
 
-This document proposes behavior. It does not change the current user guide or
-authorize implementation before final review.
+Implementation follows the recommended defaults below. Current behavior is
+recorded in the user guide and reference documents as each step is verified.
 
 ## Navigation model
 
@@ -554,8 +554,7 @@ Storage tests use temporary roots and checked-in executable fixtures.
 
 The proposed direction is a session strip plus a transient local Navigator,
 with `Space n` and `Ctrl-w n`, fuzzy identity matching, and visible ways to open
-another directory as a persistent session. Confirm these remaining defaults
-before implementing the affected behavior:
+another directory as a persistent session. The implementation adopts these defaults:
 
 1. Focus an already-visible destination's pane, with bringing it into the active
    pane as an explicit action.
@@ -569,3 +568,35 @@ before implementing the affected behavior:
 5. Settle the selected-session inventory's layout and enter/back interaction.
 6. Confirm the external-editor cancellation counterpart (`:q!` cancels with a
    nonzero result) and behavior when the outer TUI explicitly detaches.
+
+Implementation decisions (2026-09-06): focus visible destinations; freeze recent
+activation order while the Navigator is open; keep mixed history per pane;
+use `Ctrl-w p` for previous destination and `Ctrl-w a` for previous persistent
+session; use `Ctrl-o` in the manager for directory opening, `Ctrl-g` for
+worktrees, and `Ctrl-e` for destination inventory with Escape to return.
+Strip visibility defaults to `auto`, zen hides it, and terminal unread/bell
+markers follow existing viewing acknowledgment. Explicit detach cancels parent
+external-editor waits with a nonzero result and retains their buffers;
+persistent-session switching leaves those waits pending.
+
+## Implementation and validation
+
+The implementation covers all four delivery steps: local Navigator and exited
+terminal cleanup; the persistent-session strip, cycling, and successful-attachment
+history; directory opening and parent-terminal attachment/external-editor routes;
+and bounded remote destination inventories with revalidation after attachment.
+Current bindings and behavior are documented in `docs/user-guide.md` and the
+keymap, UI vocabulary, and terminal compatibility references.
+
+Three subagents reviewed architecture, navigation, and the integrated behavior.
+Their comments, diagnoses, and fixes are retained in
+[the implementation review](../../reviews/session_navigation.md).
+Linux validation passes `cargo fmt --check`, warnings-as-errors Clippy, and all
+2,959 non-ignored tests. Canonical workspace coverage is 91.46%, above the
+enforced 89% floor; see [the coverage register](../../reference/test-coverage.md).
+Native macOS validation remains unverified in the available Linux environment.
+
+The [performance register](../../reference/startup-performance.md) includes
+three release samples each for one host, three hosts, a hidden strip, and noisy
+remote terminal output. All 12 settled idle windows have zero screen writes;
+median warm attachment is 5.22–6.55 ms and editor CPU is 0.00–0.25%.

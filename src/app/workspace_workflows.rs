@@ -3,7 +3,7 @@
 //! Persistent-session discovery, selection, preview, and lifecycle requests.
 
 // Application-module dependencies:
-use super::{App, PathBuf, WorkspaceSwitchRequest};
+use super::{App, InputGrammar, PathBuf, WorkspaceSwitchRequest};
 #[cfg(unix)]
 use super::{
     ListAction, ListPicker, PickerItem, WorkspaceEvent, WorkspaceServiceHandle,
@@ -22,11 +22,152 @@ impl App {
     #[cfg(unix)]
     pub fn apply_workspace_event(&mut self, event: WorkspaceEvent) {
         match event {
+            WorkspaceEvent::DirectoryWorktrees { generation, result } => {
+                if generation == self.session_navigation.generation
+                    && self.session_directory_chooser_open()
+                    && let Ok(roots) = result
+                {
+                    self.session_navigation.worktrees = roots;
+                    self.refresh_session_directory_chooser();
+                }
+            }
+            WorkspaceEvent::Inventory {
+                generation,
+                path,
+                result,
+            } => {
+                if !self
+                    .session_navigation
+                    .inventory
+                    .as_ref()
+                    .is_some_and(|inventory| {
+                        inventory.generation == generation && inventory.path == path
+                    })
+                {
+                    return;
+                }
+                match result {
+                    Ok(inventory) => {
+                        let items = inventory
+                            .entries
+                            .iter()
+                            .enumerate()
+                            .map(|(index, entry)| {
+                                super::PickerItem::new(
+                                    entry.label.clone(),
+                                    entry.detail.clone(),
+                                    index,
+                                )
+                            })
+                            .collect();
+                        self.list = Some(
+                            super::ListPicker::fuzzy(
+                                if inventory.truncated {
+                                    "Session destinations · first 1024"
+                                } else {
+                                    "Session destinations"
+                                },
+                                items,
+                            )
+                            .as_manager(
+                                "attach and visit",
+                                "Escape",
+                                "back",
+                            ),
+                        );
+                        let state = self.session_navigation.inventory.as_mut().unwrap();
+                        state.incarnation = Some(inventory.incarnation);
+                        state.entries = inventory.entries;
+                        if state.entries.is_empty() {
+                            self.list = Some(
+                                super::ListPicker::new(
+                                    "Session destinations",
+                                    vec![super::PickerItem::new(
+                                        "No open destinations",
+                                        "Escape returns to sessions",
+                                        0,
+                                    )],
+                                )
+                                .as_report(),
+                            );
+                        }
+                    }
+                    Err(error) => {
+                        self.list = Some(
+                            super::ListPicker::new(
+                                "Session destinations · unavailable",
+                                vec![super::PickerItem::new(
+                                    error,
+                                    "Escape returns to sessions",
+                                    0,
+                                )],
+                            )
+                            .as_report(),
+                        )
+                    }
+                }
+            }
+            WorkspaceEvent::Observed { result } => {
+                self.session_navigation.observation_pending = false;
+                if std::mem::take(&mut self.session_navigation.observation_invalidated) {
+                    // This scan began before the current attachment. Keep the
+                    // retained rows until a scan of the new context finishes.
+                    self.observe_session_strip();
+                    return;
+                }
+                match result {
+                    Ok(mut rows) => {
+                        self.session_navigation.health_unknown = false;
+                        for row in &mut rows {
+                            row.git = self
+                                .workspace_rows
+                                .iter()
+                                .find(|old| old.project_root == row.project_root)
+                                .and_then(|old| old.git.clone());
+                        }
+                        let manager_open = self
+                            .list
+                            .as_ref()
+                            .is_some_and(|picker| picker.title.starts_with("Sessions"));
+                        if !manager_open && self.session_navigation.inventory.is_none() {
+                            self.workspace_rows = rows;
+                            if let Some(row) = self
+                                .workspace_rows
+                                .iter()
+                                .find(|row| row.project_root == self.project_root)
+                            {
+                                self.note_workspace_number(row.number);
+                            }
+                        }
+                        if self.session_directory_chooser_open() {
+                            self.refresh_session_directory_chooser();
+                        }
+                        if let Some(next) = self.session_navigation.pending_cycle.take()
+                            && self.workspace_rows.iter().any(|row| row.running)
+                        {
+                            self.cycle_persistent_session(next);
+                        }
+                    }
+                    Err(error) => {
+                        self.session_navigation.health_unknown = true;
+                        for row in &mut self.workspace_rows {
+                            if row.running {
+                                row.interactive_attached = None;
+                            }
+                        }
+                        if self.session_navigation.pending_cycle.take().is_some() {
+                            self.action_failed(format!(
+                                "cannot discover running sessions: {error}"
+                            ));
+                        }
+                    }
+                }
+            }
             WorkspaceEvent::Inspected {
                 generation,
                 path,
                 result,
-            } => self.finish_worktree_session_check(generation, path, result),
+            } => self.finish_worktree_session_check(generation, path, *result),
             WorkspaceEvent::Refreshed { generation, result } => {
                 if generation != self.workspace_generation {
                     return;
@@ -297,6 +438,9 @@ impl App {
         self.workspace_switch = Some(WorkspaceSwitchRequest {
             selector: path,
             working_directory: self.working_directory.clone(),
+            running_only: false,
+            previous_session: false,
+            visit: None,
         });
         true
     }
@@ -470,6 +614,7 @@ impl App {
     pub(crate) fn refresh_workspace_activity(&mut self) -> bool {
         let changed = self.refresh_workspace_activity_at(session_activity_now());
         self.poll_workspace_statuses_at(std::time::Instant::now());
+        self.observe_session_strip();
         changed
     }
 
@@ -741,4 +886,606 @@ fn session_activity_now() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |duration| duration.as_secs())
+}
+
+/// UI observation is independent from manager request generations and does not
+/// retain documents, terminals, or remote contents.
+#[derive(Default)]
+pub(super) struct SessionNavigationState {
+    observation_pending: bool,
+    observation_invalidated: bool,
+    next_observation: Option<std::time::Instant>,
+    health_unknown: bool,
+    directory: Option<SessionDirectoryChooser>,
+    pending_cycle: Option<bool>,
+    generation: u64,
+    worktrees: Vec<PathBuf>,
+    inventory: Option<SessionInventory>,
+}
+
+struct SessionInventory {
+    path: PathBuf,
+    generation: u64,
+    saved_picker: super::ListPicker,
+    incarnation: Option<String>,
+    entries: Vec<crate::protocol::OpenDestinationEntry>,
+}
+
+struct SessionDirectoryChooser {
+    root: PathBuf,
+    query: String,
+    paths: Vec<PathBuf>,
+    previous_mode: super::Mode,
+}
+
+impl App {
+    pub(super) fn session_directory_chooser_open(&self) -> bool {
+        self.session_navigation.directory.is_some()
+    }
+
+    pub(super) fn open_session_directory_chooser(&mut self) {
+        if self.reject_unavailable_persistent_session(cfg!(unix), true) {
+            return;
+        }
+        if !self.persistent_session {
+            self.action_failed("opening a persistent session needs workspace.mode: persistent");
+            return;
+        }
+        self.session_navigation.directory = Some(SessionDirectoryChooser {
+            root: self.working_directory.clone(),
+            query: String::new(),
+            paths: Vec::new(),
+            previous_mode: self.mode,
+        });
+        self.session_action_menu = None;
+        self.grammar.reset();
+        self.session_navigation.generation = self.session_navigation.generation.wrapping_add(1);
+        self.session_navigation.worktrees.clear();
+        #[cfg(unix)]
+        if let Some(service) = self.ports.workspace_service.as_ref() {
+            let _ = service.try_directory_worktrees(
+                self.session_navigation.generation,
+                self.project_root.clone(),
+            );
+        }
+        self.refresh_session_directory_chooser();
+    }
+
+    pub(super) fn insert_session_directory_text(&mut self, text: &str) {
+        if let Some(chooser) = self.session_navigation.directory.as_mut() {
+            chooser.query.push_str(text);
+            self.rebuild_session_directory_chooser();
+        }
+    }
+
+    fn refresh_session_directory_chooser(&mut self) {
+        let selected = self
+            .list
+            .as_ref()
+            .and_then(|picker| picker.selected_item())
+            .and_then(|item| {
+                self.session_navigation
+                    .directory
+                    .as_ref()?
+                    .paths
+                    .get(item.index)
+            })
+            .cloned();
+        self.rebuild_session_directory_chooser();
+        if let Some(path) = selected {
+            let index = self
+                .session_navigation
+                .directory
+                .as_ref()
+                .and_then(|chooser| {
+                    chooser
+                        .paths
+                        .iter()
+                        .position(|candidate| candidate == &path)
+                });
+            if let (Some(index), Some(picker)) = (index, self.list.as_mut())
+                && let Some(selected) = picker
+                    .visible_indices()
+                    .iter()
+                    .position(|visible| picker.items[*visible].index == index)
+            {
+                picker.selected = selected;
+            }
+        }
+    }
+
+    fn rebuild_session_directory_chooser(&mut self) {
+        use super::{ListPicker, PickerItem};
+        let Some(chooser) = self.session_navigation.directory.as_ref() else {
+            return;
+        };
+        let mut root = chooser.root.clone();
+        let query = chooser.query.clone();
+        let mut filter = query.clone();
+        if query.contains('/') || query.starts_with('~') {
+            let expanded = if query == "~" || query.starts_with("~/") {
+                self.home_directory
+                    .as_ref()
+                    .map(|home| home.join(query.trim_start_matches('~').trim_start_matches('/')))
+                    .unwrap_or_else(|| PathBuf::from(&query))
+            } else {
+                PathBuf::from(&query)
+            };
+            let absolute = if expanded.is_absolute() {
+                expanded
+            } else {
+                root.join(expanded)
+            };
+            if query.ends_with('/') || query == "~" {
+                root = absolute;
+                filter.clear();
+            } else if let Some(parent) = absolute.parent() {
+                root = parent.to_path_buf();
+                filter = absolute
+                    .file_name()
+                    .map_or_else(String::new, |name| name.to_string_lossy().into_owned());
+            }
+        }
+        let mut paths = vec![root.clone()];
+        let mut labels = vec!["Open this directory".to_owned()];
+        if let Some(parent) = root.parent() {
+            paths.push(parent.to_path_buf());
+            labels.push(".. · parent directory".to_owned());
+        }
+        if let Some(entries) = self.path_listings.borrow_mut().read(&root) {
+            for entry in entries.iter().filter(|entry| entry.is_directory).take(256) {
+                paths.push(root.join(&entry.name));
+                labels.push(format!("{}/", entry.name));
+            }
+        }
+        #[cfg(unix)]
+        if query.is_empty() {
+            for row in &self.workspace_rows {
+                if !paths.contains(&row.project_root) {
+                    paths.push(row.project_root.clone());
+                    labels.push(format!("{} · recent root", row.display_name()));
+                }
+            }
+            for path in &self.session_navigation.worktrees {
+                if !paths.contains(path) {
+                    paths.push(path.clone());
+                    labels.push("Git worktree".to_owned());
+                }
+            }
+        }
+        let items = paths
+            .iter()
+            .zip(labels)
+            .enumerate()
+            .map(|(index, (path, label))| PickerItem::new(label, path.display().to_string(), index))
+            .collect();
+        let mut picker = ListPicker::fuzzy(format!("Open directory · {}", root.display()), items)
+            .as_manager("open persistent session", "Tab", "browse directory");
+        picker.filter = filter;
+        self.list = Some(picker);
+        self.list_actions.clear();
+        self.session_navigation.directory.as_mut().unwrap().paths = paths;
+    }
+
+    pub(super) fn handle_session_directory_key(
+        &mut self,
+        key: super::KeyStroke,
+    ) -> super::Result<()> {
+        use super::{KeyCode, Modifiers};
+        let control = key.modifiers.contains(Modifiers::CONTROL);
+        match (key.code, control) {
+            (KeyCode::Escape, _) | (KeyCode::Char('c'), true) => {
+                let chooser = self.session_navigation.directory.take().unwrap();
+                self.mode = chooser.previous_mode;
+                self.list = None;
+            }
+            (KeyCode::Up, _) | (KeyCode::Char('p'), true) | (KeyCode::BackTab, _) => {
+                if let Some(picker) = self.list.as_mut() {
+                    picker.up();
+                }
+            }
+            (KeyCode::Down, _) | (KeyCode::Char('n'), true) => {
+                if let Some(picker) = self.list.as_mut() {
+                    picker.down();
+                }
+            }
+            (KeyCode::PageUp, _) | (KeyCode::Char('u'), true) => {
+                if let Some(picker) = self.list.as_mut() {
+                    picker.page_up(10);
+                }
+            }
+            (KeyCode::PageDown, _) | (KeyCode::Char('d'), true) => {
+                if let Some(picker) = self.list.as_mut() {
+                    picker.page_down(10);
+                }
+            }
+            (KeyCode::Home, _) => {
+                if let Some(picker) = self.list.as_mut() {
+                    picker.first();
+                }
+            }
+            (KeyCode::End, _) => {
+                if let Some(picker) = self.list.as_mut() {
+                    picker.last();
+                }
+            }
+            (KeyCode::Tab, _) | (KeyCode::Enter, _) => {
+                let path = self
+                    .list
+                    .as_ref()
+                    .and_then(|picker| picker.selected_item())
+                    .and_then(|item| {
+                        self.session_navigation
+                            .directory
+                            .as_ref()?
+                            .paths
+                            .get(item.index)
+                    })
+                    .cloned();
+                if let Some(path) = path {
+                    if !path.is_dir() {
+                        self.action_failed("that directory is no longer available");
+                        return Ok(());
+                    }
+                    if key.code == KeyCode::Tab {
+                        let chooser = self.session_navigation.directory.as_mut().unwrap();
+                        chooser.root = path;
+                        chooser.query.clear();
+                        self.rebuild_session_directory_chooser();
+                    } else if self.request_workspace_switch(path) {
+                        self.session_navigation.directory = None;
+                        self.list = None;
+                    }
+                }
+            }
+            (KeyCode::Backspace, _) => {
+                self.session_navigation
+                    .directory
+                    .as_mut()
+                    .unwrap()
+                    .query
+                    .pop();
+                self.rebuild_session_directory_chooser();
+            }
+            (KeyCode::Char(character), false) if !key.modifiers.contains(Modifiers::ALT) => {
+                self.session_navigation
+                    .directory
+                    .as_mut()
+                    .unwrap()
+                    .query
+                    .push(character);
+                self.rebuild_session_directory_chooser();
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    pub(super) fn previous_persistent_session(&mut self) {
+        if self.request_workspace_switch(self.project_root.clone()) {
+            let request = self.workspace_switch.as_mut().unwrap();
+            request.previous_session = true;
+            request.running_only = true;
+        }
+    }
+
+    pub(super) fn cycle_persistent_session(&mut self, next: bool) {
+        #[cfg(unix)]
+        {
+            if !self.persistent_session {
+                self.action_failed("session navigation needs workspace.mode: persistent");
+                return;
+            }
+            let roots = self
+                .workspace_rows
+                .iter()
+                .filter(|row| row.running)
+                .map(|row| row.project_root.clone())
+                .collect::<Vec<_>>();
+            if roots.is_empty() {
+                if self.ports.workspace_service.is_none() {
+                    self.action_failed("session service is unavailable");
+                    return;
+                }
+                self.session_navigation.pending_cycle = Some(next);
+                self.session_navigation.next_observation = None;
+                self.observe_session_strip();
+                return;
+            }
+            if roots.len() == 1 && roots[0] == self.project_root {
+                return;
+            }
+            let current = roots.iter().position(|root| root == &self.project_root);
+            let index = match (current, next) {
+                (Some(index), true) => (index + 1) % roots.len(),
+                (Some(index), false) => (index + roots.len() - 1) % roots.len(),
+                (None, true) => 0,
+                (None, false) => roots.len() - 1,
+            };
+            if self.request_workspace_switch(roots[index].clone()) {
+                self.workspace_switch.as_mut().unwrap().running_only = true;
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = next;
+            self.action_failed("persistent sessions are unavailable on this platform");
+        }
+    }
+
+    #[cfg(unix)]
+    pub(super) fn refresh_sessions_on_attachment(&mut self) {
+        self.session_navigation.next_observation = None;
+        self.session_navigation.observation_invalidated =
+            self.session_navigation.observation_pending;
+        self.next_workspace_status_poll = std::time::Instant::now();
+        self.refresh_workspace_activity();
+    }
+
+    #[cfg(unix)]
+    fn observe_session_strip(&mut self) {
+        let now = std::time::Instant::now();
+        if !self.persistent_session
+            || self
+                .list
+                .as_ref()
+                .is_some_and(|picker| picker.title.starts_with("Sessions"))
+            || self.session_navigation.observation_pending
+            || self
+                .session_navigation
+                .next_observation
+                .is_some_and(|next| now < next)
+        {
+            return;
+        }
+        self.session_navigation.next_observation = Some(now + std::time::Duration::from_secs(15));
+        if let Some(service) = self.ports.workspace_service.as_ref() {
+            self.session_navigation.observation_pending = service
+                .try_observe(self.session_strip_snapshot().is_some())
+                .is_ok();
+        }
+    }
+
+    pub(super) fn reserve_session_strip(
+        &self,
+        mut geometry: super::FrameGeometry,
+    ) -> super::FrameGeometry {
+        if self.session_strip_snapshot().is_some() && geometry.editor.height > 0 {
+            geometry.editor.y = geometry.editor.y.saturating_add(1);
+            geometry.editor.height -= 1;
+        }
+        geometry
+    }
+
+    pub fn session_strip_snapshot(&self) -> Option<crate::snapshot::SessionStripSnapshot> {
+        #[cfg(unix)]
+        {
+            use crate::{
+                config::SessionStripVisibility,
+                snapshot::{SessionStripEntry, SessionStripSnapshot},
+            };
+            if !self.persistent_session
+                || self.config.workspace.session_strip == SessionStripVisibility::Hidden
+                || self
+                    .maximized
+                    .is_some_and(|view| view.view == super::MaximizedView::Zen)
+            {
+                return None;
+            }
+            let mut entries = self
+                .workspace_rows
+                .iter()
+                .filter(|row| row.running)
+                .map(|row| SessionStripEntry {
+                    name: row.display_name(),
+                    number: row.number,
+                    current: row.project_root == self.project_root,
+                    unread: row.unread_terminals.is_some_and(|count| count > 0),
+                    bell: row.terminal_bell.unwrap_or(false),
+                    health_unknown: self.session_navigation.health_unknown
+                        || row.incompatible_protocol.is_some()
+                        || row.interactive_attached.is_none(),
+                })
+                .collect::<Vec<_>>();
+            if !entries.iter().any(|entry| entry.current) {
+                entries.push(SessionStripEntry {
+                    name: self.project_root.file_name().map_or_else(
+                        || self.project_root.display().to_string(),
+                        |name| name.to_string_lossy().into_owned(),
+                    ),
+                    number: self.workspace_number,
+                    current: true,
+                    unread: false,
+                    bell: false,
+                    health_unknown: false,
+                });
+            }
+            if self.config.workspace.session_strip == SessionStripVisibility::Auto
+                && entries.len() < 2
+            {
+                return None;
+            }
+            Some(SessionStripSnapshot { entries })
+        }
+        #[cfg(not(unix))]
+        {
+            None
+        }
+    }
+}
+
+impl App {
+    pub(super) fn session_inventory_open(&self) -> bool {
+        self.session_navigation.inventory.is_some()
+    }
+
+    pub(super) fn open_session_inventory(&mut self) {
+        #[cfg(unix)]
+        {
+            let Some(ListAction::Workspace(index)) = self.selected_list_action() else {
+                return;
+            };
+            let Some(row) = self.workspace_rows.get(index).cloned() else {
+                return;
+            };
+            let Some(saved_picker) = self.list.take() else {
+                return;
+            };
+            self.session_navigation.generation = self.session_navigation.generation.wrapping_add(1);
+            let generation = self.session_navigation.generation;
+            self.session_navigation.inventory = Some(SessionInventory {
+                path: row.project_root.clone(),
+                generation,
+                saved_picker,
+                incarnation: None,
+                entries: Vec::new(),
+            });
+            self.session_action_menu = None;
+            let message = if !row.running {
+                "This session is stopped"
+            } else if row.incompatible_protocol.is_some() {
+                "This host uses an unsupported protocol"
+            } else {
+                "Loading open destinations…"
+            };
+            self.list = Some(
+                ListPicker::new(
+                    "Session destinations",
+                    vec![PickerItem::new(message, "Escape returns to sessions", 0)],
+                )
+                .as_report(),
+            );
+            if row.running && row.incompatible_protocol.is_none() {
+                let result = self
+                    .ports
+                    .workspace_service
+                    .as_ref()
+                    .ok_or("session service is unavailable")
+                    .and_then(|service| service.try_inventory(generation, row.project_root));
+                if let Err(error) = result {
+                    self.list = Some(
+                        ListPicker::new(
+                            "Session destinations · unavailable",
+                            vec![PickerItem::new(error, "Escape returns to sessions", 0)],
+                        )
+                        .as_report(),
+                    );
+                }
+            }
+        }
+        #[cfg(not(unix))]
+        self.action_failed("persistent sessions are unavailable on this platform");
+    }
+
+    pub(super) fn handle_session_inventory_key(
+        &mut self,
+        key: super::KeyStroke,
+    ) -> super::Result<()> {
+        use super::{KeyCode, Modifiers};
+        let control = key.modifiers.contains(Modifiers::CONTROL);
+        match (key.code, control) {
+            (KeyCode::Escape, _) | (KeyCode::Char('c'), true) => {
+                let inventory = self.session_navigation.inventory.take().unwrap();
+                self.list = Some(inventory.saved_picker);
+                #[cfg(unix)]
+                {
+                    self.rebuild_workspace_picker();
+                    if let Some(index) = self
+                        .workspace_rows
+                        .iter()
+                        .position(|row| row.project_root == inventory.path)
+                        && let Some(picker) = self.list.as_mut()
+                        && let Some(selected) = picker
+                            .visible_indices()
+                            .iter()
+                            .position(|visible| picker.items[*visible].index == index)
+                    {
+                        picker.selected = selected;
+                    }
+                    self.request_selected_workspace_preview();
+                }
+            }
+            (KeyCode::Up, _) | (KeyCode::Char('p'), true) | (KeyCode::BackTab, _) => {
+                if let Some(picker) = self.list.as_mut() {
+                    picker.up();
+                }
+            }
+            (KeyCode::Down, _) | (KeyCode::Char('n'), true) => {
+                if let Some(picker) = self.list.as_mut() {
+                    picker.down();
+                }
+            }
+            (KeyCode::PageUp, _) | (KeyCode::Char('u'), true) => {
+                if let Some(picker) = self.list.as_mut() {
+                    picker.page_up(10);
+                }
+            }
+            (KeyCode::PageDown, _) | (KeyCode::Char('d'), true) => {
+                if let Some(picker) = self.list.as_mut() {
+                    picker.page_down(10);
+                }
+            }
+            (KeyCode::Home, _) => {
+                if let Some(picker) = self.list.as_mut() {
+                    picker.first();
+                }
+            }
+            (KeyCode::End, _) => {
+                if let Some(picker) = self.list.as_mut() {
+                    picker.last();
+                }
+            }
+            (KeyCode::Enter, _) => {
+                let inventory = self.session_navigation.inventory.as_ref().unwrap();
+                let selected = self
+                    .list
+                    .as_ref()
+                    .and_then(|picker| picker.selected_item())
+                    .and_then(|item| inventory.entries.get(item.index));
+                if let (Some(entry), Some(incarnation)) = (selected, inventory.incarnation.clone())
+                {
+                    let destination = match entry.destination {
+                        crate::protocol::OpenDestination::Buffer(id) => {
+                            let Some(index) = id
+                                .checked_sub(1)
+                                .and_then(|index| usize::try_from(index).ok())
+                            else {
+                                self.action_failed("invalid destination identity");
+                                return Ok(());
+                            };
+                            super::OpenDestination::Buffer(index)
+                        }
+                        crate::protocol::OpenDestination::Terminal(id) => {
+                            super::OpenDestination::Terminal(super::TerminalId::from_raw(id))
+                        }
+                    };
+                    let path = inventory.path.clone();
+                    if self.request_workspace_switch(path) {
+                        let request = self.workspace_switch.as_mut().unwrap();
+                        request.running_only = true;
+                        request.visit = Some(super::DestinationVisit {
+                            incarnation,
+                            destination,
+                        });
+                        self.session_navigation.inventory = None;
+                        self.list = None;
+                    }
+                }
+            }
+            (KeyCode::Backspace, _) => {
+                if let Some(picker) = self.list.as_mut() {
+                    picker.pop_filter();
+                }
+            }
+            (KeyCode::Char(character), false) if !key.modifiers.contains(Modifiers::ALT) => {
+                if let Some(picker) = self.list.as_mut()
+                    && picker.purpose != super::ListPurpose::Report
+                {
+                    picker.push_filter(character);
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
 }

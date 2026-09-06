@@ -224,6 +224,7 @@ pub struct WorkspaceConfig {
     #[serde(alias = "root")]
     pub state: PathBuf,
     pub mode: WorkspaceMode,
+    pub session_strip: SessionStripVisibility,
     /// Minutes a clean host with no client or wait request remains alive.
     /// Zero disables automatic retirement.
     pub idle_retirement_minutes: usize,
@@ -235,6 +236,30 @@ pub enum WorkspaceMode {
     #[default]
     Standalone,
     Persistent,
+}
+
+/// Visibility of the running persistent-session navigation row.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum SessionStripVisibility {
+    #[default]
+    Auto,
+    Always,
+    Hidden,
+}
+
+impl SessionStripVisibility {
+    pub const ALL: &'static [Self] = &[Self::Auto, Self::Always, Self::Hidden];
+}
+
+impl fmt::Display for SessionStripVisibility {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Auto => "auto",
+            Self::Always => "always",
+            Self::Hidden => "hidden",
+        })
+    }
 }
 
 impl WorkspaceMode {
@@ -817,6 +842,7 @@ impl Default for WorkspaceConfig {
         Self {
             state: PathBuf::from(".runyte"),
             mode: WorkspaceMode::Standalone,
+            session_strip: SessionStripVisibility::Auto,
             idle_retirement_minutes: 1440,
         }
     }

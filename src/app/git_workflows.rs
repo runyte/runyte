@@ -78,7 +78,7 @@ pub(super) struct GitWorkflowState {
     /// acts on and the columns its Git annotations occupy. Replaced whenever
     /// the list's text is.
     branch_rows: Vec<crate::git::BranchRow>,
-    worktree_rows: Vec<GeneralWorktreeRow>,
+    pub(super) worktree_rows: Vec<GeneralWorktreeRow>,
     /// Commits on the page currently displayed, not the whole loaded history.
     log_rows: Vec<CommitSummary>,
     log_next: Option<LogCursor>,

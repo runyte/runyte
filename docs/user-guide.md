@@ -679,6 +679,95 @@ child retires after
 `workspace.idle_retirement_minutes` (1440 by default); zero disables
 retirement. `--session-list` prints the same running/stopped inventory.
 
+### Session and destination navigation
+
+`Space n` opens the **Navigator**, a fuzzy picker of already-open buffers and
+running terminal sessions. `Ctrl-w n` is the same action in editor modes and
+Terminal Insert, and follows `keys.window` remapping. `Space n` remains child
+input in Terminal Insert. No filesystem scan or content search runs here;
+`Space f` remains the Finder. Exited terminals stay in `Space t t`, whose Tab
+menu offers **Close all exited terminals** without touching live children.
+
+The Navigator includes scratch and retained special buffers once per identity,
+shows their modification markers and visible panes, and opens in recent
+activation order with the current destination selected. That order stays fixed
+while filtering. Names, paths, terminal titles and launch commands match fuzzily;
+matched characters are emphasized. Arrows, Ctrl-p/Ctrl-n and paging select;
+Enter visits; Tab offers resource actions. Printable j, k and q filter.
+Escape, Ctrl-c or the effective leader with an empty query cancel. Cancellation
+from Terminal Insert resumes child input; visiting a document enters Normal,
+and visiting a live terminal resumes Insert unless it has captured review.
+
+Visiting a destination already visible focuses its pane. **Bring into active
+pane** explicitly places it here instead. A PTY always has one live view.
+`Ctrl-w p` (`:previous-destination`) returns to the previous open destination
+in this pane, skipping closed resources and exited terminals.
+
+In persistent mode, Shift-Left and Shift-Right visit the previous/next running
+persistent session in manager order, including unnumbered sessions and wrapping
+at the ends. They work in Insert and Terminal Insert as remappable exceptions
+to child input, subject to existing overlays and confirmations. They never
+start a stopped session or force an occupied attachment. `Ctrl-w a`
+(`:previous-session`) alternates between the last two successful attachments;
+failed switches leave that history intact. If an outer tmux consumes
+Shift-Left/Right, release or change those tmux bindings so Runyte receives them.
+
+The **session strip** sits above the editor area. `workspace.session_strip` accepts
+`auto` (show with multiple running sessions), `always`, or `hidden`. Zen hides
+it. Entries retain manager numbering and names; overflow keeps the current
+entry visible and reports the number omitted. Unread output and bells follow
+the terminals' viewing rules: entering a persistent session does not acknowledge
+its hidden terminals. Unknown health is distinct from stopped; `QUIET` in the
+manager still describes completed-line output, not job completion.
+Every attachment refreshes the session list asynchronously, including when
+returning to a host whose cached list predates a newly started session.
+
+The session manager (`Space Space`) offers Ctrl-o **Open directory…**, Ctrl-g
+for the existing Git worktree workflow, and Ctrl-e to inspect the selected
+running session's open destinations. Escape returns from that inventory.
+Choosing an inventory resource attaches and revalidates its identity; a resource
+closed meanwhile leaves the restored layout intact and reports the loss.
+
+The directory chooser offers recent roots, sibling worktrees, typed paths and
+directory browsing. **Open this directory** selects the shown root; descending
+into a child is a separate action. Explorer Tab offers **Open persistent session
+here** for its currently browsed directory even when empty. A terminal's action
+menu can open its last validated OSC 7 directory; absent reporting is explained.
+These routes initialize or reuse the exact directory's persistent session and
+retain the source host and terminal processes. Worktree creation is explicit.
+
+Inside an integrated terminal, `cd ../worktree` followed by `runyte -a` switches
+the outer TUI to that exact working directory. Relative arguments resolve from
+the invoking shell's directory. The CLI returns to the original shell, without
+starting a nested TUI; switching back returns to that shell. The route validates
+the owning host, terminal and caller and reports completed attachment or its
+error. Stale, detached or standalone parent contexts produce an actionable error.
+Outside integrated terminals, ordinary launch behavior is unchanged.
+
+Programs in an integrated terminal can use
+`EDITOR='runyte --wait'` and `VISUAL='runyte --wait'`. Their requested files open
+as ordinary buffers in the parent persistent session, even from another working
+directory or under a temporary path. The origin terminal is temporarily covered.
+For these explicitly owned request buffers, `:wq`, `:wbc`, and separately `:w`
+then `:q` save and finish the edit while preserving the pane and live terminal.
+`:w` alone keeps the request pending. Clean `:q` completes without writing;
+dirty `:q` protects unsaved edits. Save failures leave the edit open. `:q!`
+cancels with a nonzero caller result and discards unsaved changes unless another
+pending request shares them; an earlier explicit save remains on disk.
+
+New persistent terminals add `--wait` to inherited `EDITOR` and `VISUAL` values
+that name bare `runyte` (including a quoted executable path). Other editors and
+commands with explicit arguments keep their configuration. Existing shells or
+programs keep their old environment: set both variables to `runyte --wait`
+before restarting an external-editor caller, or open a new terminal. Ordinary
+`runyte <file>` shell commands retain their normal launch behavior.
+
+The caller resumes after every requested file completes. Navigation and splits
+retain request ownership; unrelated buffers retain ordinary quit semantics.
+Switching persistent sessions keeps the request pending in its host. Explicit
+detach or caller loss cancels parent requests; buffers are retained and no
+nested TUI takes over the originating terminal.
+
 ### Git
 
 When the project is a Git working tree, the status line carries the branch and
@@ -1460,6 +1549,7 @@ context; scoped explorer keys are documented under
 
 | Key | Action |
 | --- | --- |
+| `Shift-Left` / `Shift-Right` | Visit the previous / next running persistent session (persistent mode) |
 | `h` / `j` / `k` / `l`; `Left` / `Down` / `Up` / `Right` | Move left, down, up, right |
 | `w` / `b` / `e` | Next word / previous word / word end |
 | `W` / `B` / `E` | Long-word variants |
@@ -1584,6 +1674,7 @@ The direct editing keys shared by Insert and Replace modes are:
 
 | Key | Action |
 | --- | --- |
+| `Shift-Left` / `Shift-Right` | Visit the previous / next running persistent session (persistent mode) |
 | `Esc` / `Ctrl-\` (`Ctrl-4` on legacy terminals) | Return to Normal mode |
 | `Backspace` / `Shift-Backspace`; `Delete` | Delete the previous / next character |
 | `Alt-Backspace` / `Alt-Delete` | Delete the previous / next word |

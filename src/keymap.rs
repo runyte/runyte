@@ -1223,6 +1223,35 @@ fn built_in_bindings() -> Vec<Binding> {
             Command::OpenWorkingDirectoryExplorer,
         ),
         primary_modal([Key::char(' '), Key::char(' ')], ColonCommand::SessionList),
+        modal([Key::char(' '), Key::char('n')], Command::OpenNavigator),
+        modal([Key::ctrl('w'), Key::char('n')], Command::OpenNavigator),
+        insert([Key::ctrl('w'), Key::char('n')], Command::OpenNavigator),
+        modal(
+            [Key::ctrl('w'), Key::char('p')],
+            Command::PreviousDestination,
+        ),
+        insert(
+            [Key::ctrl('w'), Key::char('p')],
+            Command::PreviousDestination,
+        ),
+        modal([Key::ctrl('w'), Key::char('a')], Command::PreviousSession),
+        insert([Key::ctrl('w'), Key::char('a')], Command::PreviousSession),
+        modal(
+            KeyStroke::new(KeyCode::Left, Modifiers::SHIFT),
+            Command::PreviousRunningSession,
+        ),
+        insert(
+            KeyStroke::new(KeyCode::Left, Modifiers::SHIFT),
+            Command::PreviousRunningSession,
+        ),
+        modal(
+            KeyStroke::new(KeyCode::Right, Modifiers::SHIFT),
+            Command::NextRunningSession,
+        ),
+        insert(
+            KeyStroke::new(KeyCode::Right, Modifiers::SHIFT),
+            Command::NextRunningSession,
+        ),
         modal([Key::char(' '), Key::char('?')], Command::ShowHelp),
         // Buffers. `Space b b` repeats the namespace letter the way `Space m m`
         // does: the most-reached-for thing in a group is spelled with the group
@@ -2318,6 +2347,12 @@ fn build_keymap(bindings: Vec<Binding>) -> Keymap {
             Key::char('u'),
             "unstage",
             ColonCommand::GitUnstageHunk,
+        ),
+        ContextAction::buffer(
+            BindingScope::Directory,
+            Key::char('s'),
+            "session",
+            EditorCommand::OpenExplorerSession,
         ),
         // An explorer's contextual actions are the three settings that decide
         // how it shows a directory. They are buffer-wide because none of them

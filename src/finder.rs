@@ -107,6 +107,27 @@ impl ResourceItem {
         }
     }
 
+    /// Identity matching for the local Navigator shares name fields with the
+    /// Finder, with path-aware scoring only for actual filesystem paths.
+    pub fn navigation_match(&self, query: &str) -> Option<(i64, Vec<usize>)> {
+        let mut matcher = FuzzyMatcher::for_lines(query);
+        let mut best = self
+            .fields
+            .iter()
+            .filter_map(|field| matcher.score(field).map(|(score, _)| score))
+            .max();
+        if let Some(path) = &self.path {
+            let mut paths = FuzzyMatcher::new(query);
+            if let Some((score, _)) = paths.score(&path.to_string_lossy()) {
+                best = Some(best.map_or(score, |best| best.max(score)));
+            }
+        }
+        let positions = matcher
+            .score(&self.label)
+            .map_or_else(Vec::new, |(_, positions)| positions);
+        best.map(|score| (score, positions))
+    }
+
     /// A content row ranks only its decoded text. Its source label is identity,
     /// not an accidental second content candidate.
     pub fn content(

@@ -81,6 +81,52 @@ keeping syntax highlighting enabled. This applies to both `startup.py` and
 `run.py` through their shared setup, including instrumented launches. The
 first-open choice overlay therefore cannot intercept measurement keystrokes.
 
+## 2026-09-06 — persistent session navigation
+
+Release build from base `9750cd0` plus the session-navigation implementation,
+Rust 1.97.1, AMD Ryzen AI 9 365 (20 logical CPUs), Linux 7.1.13. The full binary
+hash and individual samples are in
+[`session-navigation-2026-09-06.json`](../../benchmarks/results/session-navigation-2026-09-06.json).
+Builds, tests, and coverage had finished before measurement.
+
+The new `benchmarks/session_navigation.py` uses a 120×40 PTY, temporary
+configuration and workspace roots, disabled LSP, and three samples per scenario.
+Cold startup ends at the initial About pane's first output from the last newly
+started host. Warm attachment ends at a unique content token in a restored
+one-line text document, beyond the styled caret character. These measure visible
+output, not demonstrated editing readiness or completed syntax parsing, and are
+not directly comparable to the standalone readiness table below.
+
+The attached TUI settles for 32 seconds, covering discovery and the following
+attention observation, before a 16-second idle window. CPU sums each editor
+process's own user and system time: the attached TUI plus one or three hosts.
+It excludes terminal children and is expressed as a percentage of one logical
+CPU. Screen writes count PTY reads containing output, with byte totals retained
+in the sample file. Zero reads establishes zero output independently of read
+chunk boundaries.
+
+| Scenario | Cold start, median | Warm attach, median | Editor CPU, median | Screen writes, each sample |
+| --- | ---: | ---: | ---: | --- |
+| One host, automatic strip | 32.59 ms | 5.22 ms | 0.00% | 0, 0, 0 |
+| Three hosts, automatic strip | 33.32 ms | 6.13 ms | 0.06% | 0, 0, 0 |
+| Three hosts, hidden strip | 33.48 ms | 6.37 ms | 0.06% | 0, 0, 0 |
+| Three hosts, remote noisy terminal | 33.20 ms | 6.55 ms | 0.25% | 0, 0, 0 |
+
+The noisy case writes a line every 20 ms in another host's terminal. Its host
+still consumes and emulates that output, explaining editor CPU above the quiet
+cases, while the attached editor emits no unchanged frames. Automatic strip
+discovery runs asynchronously every 15 seconds without Git; scalar requests are
+bounded and coalesced. Hidden/zen presentation skips attention-only reads, and
+detached hosts do not run strip observation. The hidden and quiet medians are
+within the timer tick's resolution; these three-sample runs establish a baseline,
+not a measured improvement over earlier code. Native macOS was not measured.
+
+The subsequent reattachment fix also requests one asynchronous observation on
+each successful frontend attachment, bypassing the retained 15-second deadline.
+An in-flight scan from before that attachment is replaced after it completes;
+the cached rows remain until the new result arrives. The idle interval and
+detached-host behavior are unchanged. The measurements above predate this fix.
+
 ## 2026-09-05 — readiness, loading, and syntax
 
 Machine: AMD Ryzen AI 9 365, 10 cores / 20 hardware threads, approximately

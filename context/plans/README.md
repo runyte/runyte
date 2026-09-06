@@ -11,14 +11,6 @@ Plans are grouped by their relationship to the current editor:
 
 Empty lifecycle directories are omitted and created only when needed.
 
-No plan is currently active.
-
-Proposed work awaiting review:
-
-- [Session and open-destination navigation](proposed/PLAN_SESSION_NAVIGATION.md):
-  a minimal persistent-session strip, direct session switching, a unified
-  Navigator for open buffers and terminals, and directory-based session opening.
-
 Completed plans are decision records, not a second user guide. Current behavior
 belongs in `README.md`, `docs/user-guide.md`, the source, and the relevant file
 under `context/reference/`. When those disagree with a historical plan, the
@@ -26,6 +18,9 @@ current sources take precedence.
 
 The retained completed records cover:
 
+- [Session and open-destination navigation](completed/PLAN_SESSION_NAVIGATION.md):
+  the persistent-session strip, mixed Navigator, directory opening, parent-terminal
+  handoffs and external-editor waits, and remote destination inventories;
 - [Filesystem-plan data safety](completed/PLAN_FS_PLAN_DATA_SAFETY.md): atomic
   destination collision protection, safe rollback, and recoverable staging,
   validated on native Linux and macOS. Full hostile-process filesystem

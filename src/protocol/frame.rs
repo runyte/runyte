@@ -197,6 +197,7 @@ impl TerminalDamageFrame {
             || base.editor.geometry != next.editor.geometry
             || base.editor.theme != next.editor.theme
             || base.editor.mode != next.editor.mode
+            || base.editor.session_strip != next.editor.session_strip
             || base.editor.panes.len() != next.editor.panes.len()
         {
             return None;
@@ -344,12 +345,75 @@ impl TryFrom<HostFrame> for CoreHostFrame {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct SessionStripEntry {
+    pub name: String,
+    pub number: Option<u8>,
+    pub current: bool,
+    pub health_unknown: bool,
+    pub unread: bool,
+    pub bell: bool,
+}
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct SessionStripSnapshot {
+    pub entries: Vec<SessionStripEntry>,
+}
+impl From<core::SessionStripSnapshot> for SessionStripSnapshot {
+    fn from(value: core::SessionStripSnapshot) -> Self {
+        Self {
+            entries: value
+                .entries
+                .into_iter()
+                .take(1024)
+                .map(|entry| SessionStripEntry {
+                    name: entry.name.chars().take(256).collect(),
+                    number: entry.number,
+                    current: entry.current,
+                    health_unknown: entry.health_unknown,
+                    unread: entry.unread,
+                    bell: entry.bell,
+                })
+                .collect(),
+        }
+    }
+}
+impl TryFrom<SessionStripSnapshot> for core::SessionStripSnapshot {
+    type Error = String;
+    fn try_from(value: SessionStripSnapshot) -> Result<Self, String> {
+        if value.entries.len() > 1024
+            || value.entries.iter().any(|entry| {
+                entry.name.len() > 1024
+                    || entry
+                        .number
+                        .is_some_and(|number| !(1..=9).contains(&number))
+            })
+        {
+            return Err("session strip exceeds protocol limits".to_owned());
+        }
+        Ok(Self {
+            entries: value
+                .entries
+                .into_iter()
+                .map(|entry| core::SessionStripEntry {
+                    name: entry.name,
+                    number: entry.number,
+                    current: entry.current,
+                    health_unknown: entry.health_unknown,
+                    unread: entry.unread,
+                    bell: entry.bell,
+                })
+                .collect(),
+        })
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct EditorSnapshot {
     pub geometry: FrameGeometry,
     pub theme: Theme,
     pub mode: Mode,
     pub panes: Vec<PaneSnapshot>,
     pub status: StatusSnapshot,
+    pub session_strip: Option<SessionStripSnapshot>,
 }
 
 impl From<core::EditorSnapshot> for EditorSnapshot {
@@ -360,6 +424,7 @@ impl From<core::EditorSnapshot> for EditorSnapshot {
             mode: value.mode.into(),
             panes: value.panes.into_iter().map(Into::into).collect(),
             status: value.status.into(),
+            session_strip: value.session_strip.map(Into::into),
         }
     }
 }
@@ -377,6 +442,7 @@ impl TryFrom<EditorSnapshot> for core::EditorSnapshot {
                 .map(TryInto::try_into)
                 .collect::<Result<_, _>>()?,
             status: value.status.into(),
+            session_strip: value.session_strip.map(TryInto::try_into).transpose()?,
         })
     }
 }
@@ -589,6 +655,7 @@ mod tests {
             active_buffer: BufferId(1),
             active_revision: BufferRevision(1),
             editor: EditorSnapshot {
+                session_strip: None,
                 geometry: FrameGeometry::default(),
                 theme: theme.into(),
                 mode: Mode::Normal,
@@ -643,6 +710,28 @@ mod tests {
             },
             overlays: Vec::new(),
         }
+    }
+
+    #[test]
+    fn changed_session_strip_requires_full_frame_even_when_terminal_rows_match() {
+        let mut base = terminal_frame(1, 1, 'x');
+        base.editor.session_strip = Some(SessionStripSnapshot {
+            entries: vec![SessionStripEntry {
+                name: "main".to_owned(),
+                number: Some(1),
+                current: true,
+                health_unknown: false,
+                unread: false,
+                bell: false,
+            }],
+        });
+        let mut next = base.clone();
+        next.id = FrameId::from_raw(2);
+        next.editor.session_strip.as_mut().unwrap().entries[0].unread = true;
+        assert!(TerminalDamageFrame::between(&base, &next).is_none());
+        let wire = serde_json::to_vec(&next).unwrap();
+        let decoded: HostFrame = serde_json::from_slice(&wire).unwrap();
+        assert_eq!(decoded.editor.session_strip, next.editor.session_strip);
     }
 
     #[test]

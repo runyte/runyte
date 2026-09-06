@@ -266,6 +266,7 @@ mod input;
 mod language_workflows;
 mod lsp_trust_workflows;
 mod movement;
+mod navigation_workflows;
 mod picker_workflows;
 mod presentation;
 mod prompt_editing;
@@ -420,6 +421,20 @@ impl MaximizedView {
     }
 }
 
+/// Stable identity of an already-open resource in this workspace host.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum OpenDestination {
+    Buffer(usize),
+    Terminal(TerminalId),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OpenDestinationEntry {
+    pub destination: OpenDestination,
+    pub label: String,
+    pub detail: String,
+}
+
 #[derive(Clone, Debug)]
 pub struct Pane {
     pub buffer: usize,
@@ -428,6 +443,7 @@ pub struct Pane {
     /// Buffer fallback is view-local: closing a shared buffer can reveal a
     /// different predecessor in each pane without coupling it to jumps.
     buffer_history: Vec<usize>,
+    destination_history: Vec<OpenDestination>,
     /// The live terminal this pane shows instead of its buffer, if any.
     ///
     /// A terminal is not a document — no rope, no undo, no disk state — so it
@@ -495,6 +511,7 @@ impl Pane {
         Self {
             buffer,
             buffer_history: Vec::new(),
+            destination_history: Vec::new(),
             terminal: None,
             covered_terminal: None,
             selection: Selection::point(0),
@@ -515,6 +532,7 @@ impl Pane {
     }
 
     fn retarget(&mut self, buffer: usize) {
+        self.remember_destination(OpenDestination::Buffer(buffer));
         // Even retargeting to the buffer already named leaves the terminal:
         // asking for a document is asking to stop looking at a terminal.
         self.terminal = None;
@@ -527,6 +545,21 @@ impl Pane {
             self.row_prefix_scroll = 0;
             self.syntax_history.clear();
             self.folds.clear();
+        }
+    }
+
+    fn destination(&self) -> OpenDestination {
+        self.terminal.map_or(
+            OpenDestination::Buffer(self.buffer),
+            OpenDestination::Terminal,
+        )
+    }
+
+    fn remember_destination(&mut self, next: OpenDestination) {
+        let current = self.destination();
+        if current != next {
+            self.destination_history.retain(|item| *item != current);
+            self.destination_history.push(current);
         }
     }
 
@@ -1724,6 +1757,7 @@ pub struct FsConfirmation {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BufferAction {
+    BringHere,
     Save,
     Discard,
     Close,
@@ -1732,6 +1766,7 @@ pub enum BufferAction {
 impl BufferAction {
     pub fn label(self) -> &'static str {
         match self {
+            Self::BringHere => "Bring into active pane",
             Self::Save => "Save",
             Self::Discard => "Discard changes",
             Self::Close => "Close",
@@ -1826,6 +1861,8 @@ struct SessionActionMenu {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum TerminalAction {
+    CloseExited,
+    OpenSessionDirectory,
     Show,
     Rename,
     Close,
@@ -1835,6 +1872,8 @@ enum TerminalAction {
 impl TerminalAction {
     fn label(self) -> &'static str {
         match self {
+            Self::CloseExited => "Close all exited terminals",
+            Self::OpenSessionDirectory => "Open this terminal's directory as persistent session",
             Self::Show => "Show",
             Self::Rename => "Rename",
             Self::Close => "Close",
@@ -1844,6 +1883,8 @@ impl TerminalAction {
 
     fn description(self) -> &'static str {
         match self {
+            Self::CloseExited => "Remove retained output of every exited terminal",
+            Self::OpenSessionDirectory => "Attach to the last validated reported directory",
             Self::Show => "Show this session in the active pane",
             Self::Rename => "Name this session",
             Self::Close => "End and forget this session",
@@ -2514,8 +2555,17 @@ const SPECIAL_BUFFER_RETENTION_LIMIT: usize = 8;
 /// captured directory only when interpreting the selector as a path.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WorkspaceSwitchRequest {
+    pub visit: Option<DestinationVisit>,
+    pub running_only: bool,
+    pub previous_session: bool,
     pub selector: PathBuf,
     pub working_directory: PathBuf,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DestinationVisit {
+    pub incarnation: String,
+    pub destination: OpenDestination,
 }
 
 /// What an editor-level exit means to a persistent session host.
@@ -2760,6 +2810,12 @@ pub struct App {
     git_worktree_new_branch: Option<String>,
     git_worktree_upstream: Option<String>,
     git_stash_confirmation: Option<GitStashConfirmation>,
+    session_navigation: workspace_workflows::SessionNavigationState,
+    destination_recency: Vec<OpenDestination>,
+    navigator_selection_lost: bool,
+    parent_wait_buffers: HashMap<usize, usize>,
+    parent_wait_actions: Vec<(usize, bool)>,
+    parent_wait_origins: HashMap<usize, (usize, TerminalId)>,
     workspace_switch: Option<WorkspaceSwitchRequest>,
     /// A persistent session can keep owning its buffers after a TUI detaches or
     /// switches roots. Standalone mode leaves this false because replacing its
@@ -3243,6 +3299,12 @@ impl App {
             git_worktree_new_branch: None,
             git_worktree_upstream: None,
             git_stash_confirmation: None,
+            session_navigation: Default::default(),
+            destination_recency: Vec::new(),
+            navigator_selection_lost: false,
+            parent_wait_buffers: HashMap::new(),
+            parent_wait_actions: Vec::new(),
+            parent_wait_origins: HashMap::new(),
             workspace_switch: None,
             persistent_session: false,
             #[cfg(unix)]
@@ -3390,6 +3452,7 @@ fn outcome_clause(outcome: &str, message: &str) -> String {
 /// What a picker row stands for.
 #[derive(Clone, Debug)]
 enum ListAction {
+    Destination(OpenDestination),
     LspTrust {
         allowed: bool,
         remember: bool,
@@ -3568,6 +3631,13 @@ fn session_picker_preview(
         ("Status", status),
         ("Panes", panes),
         ("Terminals", terminals),
+        ("Unread terminals", count(row.unread_terminals)),
+        (
+            "Bell",
+            row.terminal_bell
+                .map_or("-", |bell| if bell { "yes" } else { "no" })
+                .to_owned(),
+        ),
         ("Buffers", count(row.open_buffers)),
         ("Unsaved", count(row.unsaved_buffers)),
         ("Waiting", count(row.pending_wait_requests)),

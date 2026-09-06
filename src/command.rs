@@ -772,6 +772,13 @@ editor_commands! {
     GotoReferences => ("goto-references", "Go to references"),
     GotoImplementation => ("goto-implementation", "Go to implementation"),
     NewBuffer => ("new-buffer", "Open a new scratch buffer"),
+    OpenNavigator => ("open-navigator", "Navigate open buffers and terminals"),
+    PreviousDestination => ("previous-destination", "Return to the previous destination in this pane"),
+    PreviousSession => ("previous-session", "Return to the previously visited persistent session"),
+    NextRunningSession => ("next-running-session", "Visit the next running persistent session"),
+    PreviousRunningSession => ("previous-running-session", "Visit the previous running persistent session"),
+    OpenSessionDirectory => ("open-session-directory", "Open a directory as a persistent session"),
+    OpenExplorerSession => ("open-explorer-session", "Open persistent session here"),
     OpenBufferPicker => ("open-buffer-picker", "Open the buffer picker"),
     GlobalSearch => ("global-search", "Search the workspace, ignoring case"),
     GlobalSearchRegex => (
@@ -866,6 +873,11 @@ impl EditorCommand {
 
     pub const fn capability(self) -> Option<CommandCapability> {
         match self {
+            Self::PreviousSession
+            | Self::NextRunningSession
+            | Self::PreviousRunningSession
+            | Self::OpenSessionDirectory
+            | Self::OpenExplorerSession => Some(CommandCapability::PersistentSession),
             Self::ExpandSyntaxSelection
             | Self::ShrinkSyntaxSelection
             | Self::SelectSyntaxParent
@@ -1092,6 +1104,13 @@ impl EditorCommand {
             | Self::Save
             | Self::ForceSave
             | Self::NewBuffer
+            | Self::OpenNavigator
+            | Self::PreviousDestination
+            | Self::PreviousSession
+            | Self::NextRunningSession
+            | Self::PreviousRunningSession
+            | Self::OpenSessionDirectory
+            | Self::OpenExplorerSession
             | Self::OpenBufferPicker => CommandCategory::File,
             Self::SplitVertical
             | Self::SplitHorizontal
@@ -1309,6 +1328,55 @@ use CommandId::{Colon as ColonId, Editor as EditorId};
 use EditorCommand as Editor;
 
 pub const COMMANDS: &[CommandSpec] = &[
+    editor_spec!(
+        Editor::OpenNavigator,
+        "navigator",
+        [],
+        "navigator",
+        NoArguments
+    ),
+    editor_spec!(
+        Editor::PreviousDestination,
+        "previous-destination",
+        [],
+        "previous-destination",
+        NoArguments
+    ),
+    editor_spec!(
+        Editor::PreviousSession,
+        "previous-session",
+        [],
+        "previous-session",
+        NoArguments
+    ),
+    editor_spec!(
+        Editor::NextRunningSession,
+        "next-running-session",
+        [],
+        "next-running-session",
+        NoArguments
+    ),
+    editor_spec!(
+        Editor::PreviousRunningSession,
+        "previous-running-session",
+        [],
+        "previous-running-session",
+        NoArguments
+    ),
+    editor_spec!(
+        Editor::OpenSessionDirectory,
+        "open-session-directory",
+        [],
+        "open-session-directory",
+        NoArguments
+    ),
+    editor_spec!(
+        Editor::OpenExplorerSession,
+        "open-explorer-session",
+        [],
+        "open-explorer-session",
+        NoArguments
+    ),
     spec!(
         ColonId(Colon::ChangeDirectory),
         "cd",
@@ -2606,6 +2674,13 @@ fn invocation_from_parts(
             | (EditorCommand::ToggleSyntaxFold, ParsedArgument::None)
             | (EditorCommand::FoldAllSyntax, ParsedArgument::None)
             | (EditorCommand::UnfoldAllSyntax, ParsedArgument::None)
+            | (EditorCommand::OpenNavigator, ParsedArgument::None)
+            | (EditorCommand::PreviousDestination, ParsedArgument::None)
+            | (EditorCommand::PreviousSession, ParsedArgument::None)
+            | (EditorCommand::NextRunningSession, ParsedArgument::None)
+            | (EditorCommand::PreviousRunningSession, ParsedArgument::None)
+            | (EditorCommand::OpenSessionDirectory, ParsedArgument::None)
+            | (EditorCommand::OpenExplorerSession, ParsedArgument::None)
             | (EditorCommand::OpenTerminalList, ParsedArgument::None)
             | (EditorCommand::CopyTerminalOutput, ParsedArgument::None) => {
                 Ok(CommandInvocation::new(id, InvocationParameters::None))

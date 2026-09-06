@@ -290,6 +290,13 @@ Key execution, help, hints, and command descriptions all come from the same
 registry, so the documentation shown inside the editor cannot silently drift
 from what the keys do.
 
+`Space n` (or `Ctrl-w n`, including Terminal Insert) navigates open buffers and
+terminals. In persistent mode, Shift-Left/Right switches running sessions; the
+quiet session strip shows their names. `Space Space` opens the session manager,
+with Ctrl-o to open another directory. In an integrated shell, `runyte -a`
+switches the outer TUI to that shell's directory, and `runyte --wait <file>`
+edits in the parent session. See the [navigation guide](docs/user-guide.md#session-and-destination-navigation).
+
 `Space f` (or `Space / f`) opens the Finder in name mode across files, open
 buffers, and terminals; Tab switches to content mode over file lines,
 authoritative buffer text, and decoded terminal output. Buffer search stays on
