@@ -525,5 +525,178 @@ pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
             ]),
         },
     );
+    // `ocean-light` and `ocean-dark` are one palette seen from two grounds:
+    // the wave in the photograph they were drawn from, which has no warm
+    // colour anywhere in it. Deep water is the ground, the turquoise face of
+    // the wave is the accent, and foam and sky are what the palette lightens
+    // toward. The pair share a structure rather than a set of hex values —
+    // every role is the same colour seen against the opposite ground — so a
+    // change to one of them belongs in the other.
+    //
+    // Two warm colours survive that discipline because the interface cannot
+    // afford to have them blend into the water: the error red, which is also
+    // the one-key jump label `built_in_jump_labels_are_red_and_one_neon_cyan_hue`
+    // requires to be red, and the amber a warning is drawn in. Each is named
+    // once per variant so it reads as a decision rather than a leak. The Git
+    // gutter and diff grounds are the shared semantic palette every bundled
+    // theme carries, and the two-key jump labels are the shared neon cyan.
+    //
+    // The mode carets walk one hue ladder from the wave to dusk — turquoise,
+    // cyan, sky, indigo, orchid — so the five are told apart by hue without
+    // leaving the palette. Normal is unset, which leaves it on the accent
+    // turquoise; because that reads as green to `default_replace_color`'s
+    // hue test, Replace is diverted to the orchid end of the ladder rather
+    // than to a green that would answer Normal.
+    let ocean_dark_red = "#ff6b6b";
+    themes.insert(
+        "ocean-dark".into(),
+        ThemeDefinition {
+            background: "#0b1f2a".into(),
+            foreground: "#cfe6ef".into(),
+            muted: "#5b7f90".into(),
+            // Named rather than derived, and hued rather than gray: the marker
+            // is the faint grid under the text, so it keeps the ground's own
+            // blue 12 to 21 levels up from it.
+            whitespace: Some("#17323f".into()),
+            // Dimmed text has to stay legible on both selection grounds while
+            // still reading as dimmed: it clears 3.9:1 on either and sits
+            // 1.72:1 from ordinary text.
+            jump_text_muted: Some("#93b3c0".into()),
+            accent: "#1fc8b4".into(),
+            // Unset: only the branded pair splits the palette's command names
+            // off the accent, and every other bundled theme keeps one colour
+            // for both.
+            command: None,
+            cursor_normal: None,
+            cursor_insert: Some("#8fe8f5".into()),
+            cursor_replace: Some("#b98cff".into()),
+            cursor_select: Some("#4fa8f5".into()),
+            cursor_command: Some("#7d90ff".into()),
+            directory: Some("#4fa8f5".into()),
+            // The usual cool-secondary, warm-primary split has no warm half to
+            // spend here, so the pair separates by the palette's own two
+            // families instead: ordinary ranges sit on deep water blue, and
+            // the primary range takes the wave's teal, which is the one the
+            // reader is looking for. Ordinary text clears 6.2:1 on either.
+            selection: "#123f66".into(),
+            selection_primary: Some("#0d5a55".into()),
+            fuzzy_match_secondary: None,
+            fuzzy_match_primary: None,
+            status_background: "#0f2733".into(),
+            status_foreground: "#cfe6ef".into(),
+            error: ocean_dark_red.into(),
+            warning: Some("#ffd166".into()),
+            info: Some("#5fdcb0".into()),
+            jump_label_immediate: Some(ocean_dark_red.into()),
+            jump_label_primary: JUMP_LABEL_DARK_PRIMARY.into(),
+            jump_label_secondary: JUMP_LABEL_DARK_SECONDARY.into(),
+            change_added: Some(CHANGE_ADDED_DARK.into()),
+            change_modified: Some(CHANGE_MODIFIED_DARK.into()),
+            change_removed: Some(CHANGE_REMOVED_DARK.into()),
+            diff_added: Some(DIFF_ADDED_DARK.into()),
+            diff_removed: Some(DIFF_REMOVED_DARK.into()),
+            diff_changed: Some(DIFF_CHANGED_DARK.into()),
+            // Six colours besides ordinary text, assigned by how far a scope
+            // is from it: identifiers and operators stay on the foreground,
+            // comments and punctuation drop to the deep-water haze, keywords
+            // and tags take the accent turquoise, and the families that name
+            // things take the crest cyan (types), the sky (calls), and the
+            // wave's own green (strings). Literals take the orchid, which is
+            // also where the Replace caret sits. Through `syntax_theme`'s
+            // derived roles that puts Markdown's inline code and link URLs on
+            // the wave green, headings on the sky, and bold and list text on
+            // the accent.
+            syntax: syntax_theme(&[
+                ("attribute", "#1fc8b4"),
+                ("comment", "#5b7f90"),
+                ("constant", "#b98cff"),
+                ("constructor", "#4fa8f5"),
+                ("function", "#4fa8f5"),
+                ("keyword", "#1fc8b4"),
+                ("label", "#b98cff"),
+                ("namespace", "#2fd0ea"),
+                ("number", "#b98cff"),
+                ("operator", "#cfe6ef"),
+                ("property", "#cfe6ef"),
+                ("punctuation", "#5b7f90"),
+                ("string", "#5fdcb0"),
+                ("tag", "#1fc8b4"),
+                ("type", "#2fd0ea"),
+                ("variable", "#cfe6ef"),
+            ]),
+        },
+    );
+    // The same palette seen from the shallows rather than from deep water:
+    // every role keeps its hue and crosses the ground, so the foam that was
+    // the brightest thing in `ocean-dark` is the ground here and the deep
+    // water that was the ground is the text. See that theme for why the two
+    // warm colours are there and why Replace sits at the orchid end.
+    let ocean_light_red = "#b0281f";
+    themes.insert(
+        "ocean-light".into(),
+        ThemeDefinition {
+            background: "#eaf4f8".into(),
+            foreground: "#0f2b3a".into(),
+            muted: "#4f7382".into(),
+            // 14 to 27 levels off the ground, the same faint grid the dark
+            // variant draws, carried to the other side of it.
+            whitespace: Some("#cfe2ea".into()),
+            // A light ground puts dimmed text above ordinary text rather than
+            // below it, as `light` and `paper` do; the pale selections it sits
+            // on are the same ones those themes accept.
+            jump_text_muted: Some("#9fb6c0".into()),
+            accent: "#0a7a6c".into(),
+            // Unset: see `ocean-dark`.
+            command: None,
+            cursor_normal: None,
+            cursor_insert: Some("#004a6b".into()),
+            cursor_replace: Some("#7b35c4".into()),
+            cursor_select: Some("#1663c4".into()),
+            cursor_command: Some("#454ac9".into()),
+            directory: Some("#1663c4".into()),
+            // The dark variant's two grounds brought up through the ground
+            // rather than recoloured: deep water blue for ordinary ranges and
+            // the wave's teal for the primary one. Ordinary text clears 9.4:1
+            // on either.
+            selection: "#aed4ee".into(),
+            selection_primary: Some("#9fe6d6".into()),
+            fuzzy_match_secondary: None,
+            fuzzy_match_primary: None,
+            status_background: "#dbe9f0".into(),
+            status_foreground: "#0f2b3a".into(),
+            error: ocean_light_red.into(),
+            warning: Some("#8a5a00".into()),
+            info: Some("#0d6b57".into()),
+            jump_label_immediate: Some(ocean_light_red.into()),
+            jump_label_primary: JUMP_LABEL_LIGHT_PRIMARY.into(),
+            jump_label_secondary: JUMP_LABEL_LIGHT_SECONDARY.into(),
+            change_added: Some(CHANGE_ADDED_LIGHT.into()),
+            change_modified: Some(CHANGE_MODIFIED_LIGHT.into()),
+            change_removed: Some(CHANGE_REMOVED_LIGHT.into()),
+            diff_added: Some(DIFF_ADDED_LIGHT.into()),
+            diff_removed: Some(DIFF_REMOVED_LIGHT.into()),
+            diff_changed: Some(DIFF_CHANGED_LIGHT.into()),
+            // The dark variant's six, role for role, darkened to hold against
+            // a pale ground.
+            syntax: syntax_theme(&[
+                ("attribute", "#0a7a6c"),
+                ("comment", "#4f7382"),
+                ("constant", "#7b35c4"),
+                ("constructor", "#1663c4"),
+                ("function", "#1663c4"),
+                ("keyword", "#0a7a6c"),
+                ("label", "#7b35c4"),
+                ("namespace", "#00637d"),
+                ("number", "#7b35c4"),
+                ("operator", "#0f2b3a"),
+                ("property", "#0f2b3a"),
+                ("punctuation", "#4f7382"),
+                ("string", "#0d6b57"),
+                ("tag", "#0a7a6c"),
+                ("type", "#00637d"),
+                ("variable", "#0f2b3a"),
+            ]),
+        },
+    );
     themes.into_iter()
 }

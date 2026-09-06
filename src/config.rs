@@ -2062,6 +2062,8 @@ mod tests {
                 "nordbones-dark-soft",
                 "nordfox",
                 "nordfox-warm",
+                "ocean-dark",
+                "ocean-light",
                 "paper",
                 "rosebones-dark",
                 "rosebones-light",
@@ -2227,6 +2229,124 @@ mod tests {
         assert_eq!(theme.cursor_select, Color::Rgb(0x25, 0xf5, 0xb0));
         assert_eq!(theme.cursor_command, Color::Rgb(0x4d, 0x9f, 0xff));
         assert_eq!(theme.cursor_replace, Color::Rgb(0x70, 0x60, 0xff));
+    }
+
+    /// The `ocean` pair is two readings of one palette, and both halves of
+    /// that claim are worth pinning. The palette is the water: every role is
+    /// green- or blue-dominant except the two warm colours the interface
+    /// cannot afford to lose in it — the error red, which the one-key jump
+    /// label shares, and the amber of a warning — plus the Git and diff
+    /// palette every bundled theme carries. The pair is a structure rather
+    /// than a set of values: each role is the same hue seen from the opposite
+    /// ground, so its channels rank in the same order in both variants. A
+    /// later edit to one variant alone is what this is here to catch.
+    #[test]
+    fn ocean_variants_are_one_palette_seen_from_two_grounds() {
+        /// The channels of a colour ranked most to least, which is the part
+        /// of a hue that survives crossing the ground.
+        fn order(color: Color) -> [usize; 3] {
+            let (red, green, blue) = color.channels().unwrap();
+            let channels = [red, green, blue];
+            let mut ranked = [0, 1, 2];
+            ranked.sort_by_key(|index| (std::cmp::Reverse(channels[*index]), *index));
+            ranked
+        }
+
+        /// Every role the two variants mirror, in one order.
+        fn roles(theme: &Theme) -> Vec<(String, Color)> {
+            let mut roles = vec![
+                ("background", theme.background),
+                ("foreground", theme.foreground),
+                ("muted", theme.muted),
+                ("whitespace", theme.whitespace),
+                ("jump_text_muted", theme.jump_text_muted),
+                ("accent", theme.accent),
+                ("command", theme.command),
+                ("cursor_normal", theme.cursor_normal),
+                ("cursor_insert", theme.cursor_insert),
+                ("cursor_replace", theme.cursor_replace),
+                ("cursor_select", theme.cursor_select),
+                ("cursor_command", theme.cursor_command),
+                ("directory", theme.directory),
+                ("selection", theme.selection),
+                ("selection_primary", theme.selection_primary),
+                ("fuzzy_match_secondary", theme.fuzzy_match_secondary),
+                ("fuzzy_match_primary", theme.fuzzy_match_primary),
+                ("status_background", theme.status_background),
+                ("status_foreground", theme.status_foreground),
+                ("info", theme.info),
+            ]
+            .into_iter()
+            .map(|(role, color)| (role.to_owned(), color))
+            .collect::<Vec<_>>();
+            roles.extend(crate::syntax::SCOPES.iter().map(|scope| {
+                (
+                    (*scope).to_owned(),
+                    theme
+                        .syntax_color(crate::syntax::Scope::named(scope).unwrap())
+                        .unwrap(),
+                )
+            }));
+            roles
+        }
+
+        let config = Config::default();
+        let dark = config.resolve_theme("ocean-dark").unwrap();
+        let light = config.resolve_theme("ocean-light").unwrap();
+        assert_eq!(dark.appearance(), Some(ThemeAppearance::Dark));
+        assert_eq!(light.appearance(), Some(ThemeAppearance::Light));
+
+        for (variant, theme) in [("ocean-dark", &dark), ("ocean-light", &light)] {
+            for (role, color) in roles(theme) {
+                let (red, green, blue) = color.channels().unwrap();
+                assert!(
+                    green >= red && green > blue || blue >= red && blue > green,
+                    "{variant} {role} is neither green nor blue: {color:?}"
+                );
+            }
+
+            // The two warm colours, each named once and pinned here so a
+            // third cannot arrive without this test being rewritten.
+            for (role, color) in [("error", theme.error), ("warning", theme.warning)] {
+                let (red, green, blue) = color.channels().unwrap();
+                assert!(
+                    red > green && red > blue,
+                    "{variant} {role} should be the warm one it is spent on: {color:?}"
+                );
+            }
+            assert_eq!(theme.jump_label_immediate, theme.error);
+        }
+        assert_eq!(dark.error, Color::Rgb(0xff, 0x6b, 0x6b));
+        assert_eq!(dark.warning, Color::Rgb(0xff, 0xd1, 0x66));
+        assert_eq!(light.error, Color::Rgb(0xb0, 0x28, 0x1f));
+        assert_eq!(light.warning, Color::Rgb(0x8a, 0x5a, 0x00));
+
+        // The mirror itself: role for role, the same hue from the other side.
+        for ((role, deep), (mirrored, shallow)) in roles(&dark).into_iter().zip(roles(&light)) {
+            assert_eq!(role, mirrored, "the two variants list roles differently");
+            assert_eq!(
+                order(deep),
+                order(shallow),
+                "ocean {role} changes hue between the variants: {deep:?} and {shallow:?}"
+            );
+        }
+
+        // Normal is the accent turquoise, and the other carets walk from it
+        // toward dusk, so the five modes are told apart by hue alone without
+        // leaving the palette. Replace is the orchid a theme whose Normal
+        // reads as green is given, rather than a green answering Normal.
+        assert_eq!(dark.cursor_normal, dark.accent);
+        assert_eq!(dark.cursor_normal, Color::Rgb(0x1f, 0xc8, 0xb4));
+        assert_eq!(dark.cursor_insert, Color::Rgb(0x8f, 0xe8, 0xf5));
+        assert_eq!(dark.cursor_select, Color::Rgb(0x4f, 0xa8, 0xf5));
+        assert_eq!(dark.cursor_command, Color::Rgb(0x7d, 0x90, 0xff));
+        assert_eq!(dark.cursor_replace, Color::Rgb(0xb9, 0x8c, 0xff));
+        assert_eq!(light.cursor_normal, light.accent);
+        assert_eq!(light.cursor_normal, Color::Rgb(0x0a, 0x7a, 0x6c));
+        assert_eq!(light.cursor_insert, Color::Rgb(0x00, 0x4a, 0x6b));
+        assert_eq!(light.cursor_select, Color::Rgb(0x16, 0x63, 0xc4));
+        assert_eq!(light.cursor_command, Color::Rgb(0x45, 0x4a, 0xc9));
+        assert_eq!(light.cursor_replace, Color::Rgb(0x7b, 0x35, 0xc4));
     }
 
     #[test]

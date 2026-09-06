@@ -3425,7 +3425,7 @@ read from the file only; it is not written by the `[config]` buffer.
 
 
 Built-in themes are `default-dark`, `default-light`, `dark`, `light`,
-`base16`, `paper`, `gruvbox`, `matrix`,
+`base16`, `paper`, `gruvbox`, `matrix`, `ocean-dark`, `ocean-light`,
 `atom-one-light`, `github-light`, all four
 Catppuccin flavours (`latte`, `frappe`, `macchiato`, and `mocha`), and the six
 Everforest variants (`everforest-dark-hard`, `everforest-dark-medium`,
@@ -3468,6 +3468,18 @@ ones worth finding. Its two selection grounds separate by family instead of the
 usual cool-against-warm: ordinary ranges sit on deep green and the primary
 range takes the blue. Only errors and the one-key jump label are red, alongside
 the Git gutter and diff grounds every bundled theme shares.
+`ocean-dark` and `ocean-light` are one palette seen from two grounds, drawn
+from a breaking wave that has no warm colour anywhere in it: deep water is the
+ground, the turquoise face of the wave is the accent, and foam and sky are what
+the palette lightens toward. The two variants share a structure rather than a
+set of values — every role is the same hue seen from the opposite side of the
+ground — so the light one is the dark one read in the shallows rather than a
+separate palette. The mode carets walk a single ladder from the wave to dusk,
+turquoise for Normal, then cyan, sky, indigo, and the orchid Replace takes
+because the turquoise Normal already reads as green. Two warm colours survive
+the discipline because the interface cannot afford to lose them in the water:
+the error red, which the one-key jump label shares, and the amber a warning is
+drawn in, alongside the Git gutter and diff grounds every bundled theme shares.
 `default-dark` and `default-light` are Runyte's branded pair. They share red
 accents and a green Normal, red Insert, pink Select, purple Replace, and
 blue Command mode vocabulary — inverted from most other built-in themes'

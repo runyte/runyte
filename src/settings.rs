@@ -1439,6 +1439,8 @@ mod tests {
                 "nordbones-dark-soft",
                 "nordfox",
                 "nordfox-warm",
+                "ocean-dark",
+                "ocean-light",
                 "paper",
                 "rosebones-dark",
                 "rosebones-light",
