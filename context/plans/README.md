@@ -11,7 +11,13 @@ Plans are grouped by their relationship to the current editor:
 
 Empty lifecycle directories are omitted and created only when needed.
 
-No plan is currently active or proposed.
+No plan is currently active.
+
+Proposed work awaiting review:
+
+- [Session and open-destination navigation](proposed/PLAN_SESSION_NAVIGATION.md):
+  a minimal persistent-session strip, direct session switching, a unified
+  Navigator for open buffers and terminals, and directory-based session opening.
 
 Completed plans are decision records, not a second user guide. Current behavior
 belongs in `README.md`, `docs/user-guide.md`, the source, and the relevant file
