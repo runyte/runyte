@@ -48,7 +48,10 @@ impl TestSandbox {
 
     fn runyte(&self, executable: impl AsRef<std::ffi::OsStr>) -> Command {
         let mut command = Command::new(executable);
+        // Attach to the fixture's workspace, independently of the terminal
+        // from which cargo was launched.
         command
+            .env_remove(runyte::workspace::parent::ENVIRONMENT)
             .env("XDG_CONFIG_HOME", self.cache_dir())
             .env(
                 "RUNYTE_ALL_HOSTS_DIR",
@@ -2030,6 +2033,7 @@ fn persistent_launch_without_controlling_terminal_helper() {
         std::io::Error::last_os_error()
     );
     let error = Command::new(env!("CARGO_BIN_EXE_runyte"))
+        .env_remove(runyte::workspace::parent::ENVIRONMENT)
         .arg("--persistent")
         .current_dir(root)
         .exec();

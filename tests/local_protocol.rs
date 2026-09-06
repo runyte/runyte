@@ -81,7 +81,9 @@ fn bundled_runyte() -> Command {
 }
 
 fn isolate_runyte_children(command: &mut Command) {
+    // Only terminals created by the fixture may supply a parent context.
     command
+        .env_remove(runyte::workspace::parent::ENVIRONMENT)
         .env("XDG_CONFIG_HOME", test_cache_dir())
         .env(
             "RUNYTE_ALL_HOSTS_DIR",
@@ -737,6 +739,7 @@ fn wait_parent_process_helper() {
     let cache = std::env::var_os(WAIT_PARENT_HELPER_CACHE).unwrap();
     let inventory = std::env::var_os(WAIT_PARENT_HELPER_INVENTORY).unwrap();
     let mut waiter = Command::new(env!("CARGO_BIN_EXE_runyte"))
+        .env_remove(runyte::workspace::parent::ENVIRONMENT)
         .arg("--wait")
         .arg("note.txt")
         .current_dir(&root)

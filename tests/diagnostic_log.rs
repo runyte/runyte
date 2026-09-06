@@ -110,7 +110,10 @@ fn project(name: &str) -> Project {
 
 fn bundled_runyte(root: &Path) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_runyte"));
+    // Test clients address their own host even when cargo runs in an
+    // integrated terminal belonging to another Runyte instance.
     command
+        .env_remove(runyte::workspace::parent::ENVIRONMENT)
         .env(
             "RUNYTE_ALL_HOSTS_DIR",
             test_runtime_dir(root).join("runyte/all-hosts"),

@@ -56,7 +56,10 @@ fn sole_inventory_registration(root: &Path) -> PathBuf {
 
 fn cli_command(directory: &Path, runtime: &Path, cache: &Path, args: &[&str]) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_runyte"));
+    // An inherited integrated-terminal context must not redirect attachments
+    // away from the workspace owned by this fixture.
     command
+        .env_remove(runyte::workspace::parent::ENVIRONMENT)
         .args(args)
         .current_dir(directory)
         .env("XDG_RUNTIME_DIR", runtime)
