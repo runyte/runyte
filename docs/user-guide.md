@@ -3279,10 +3279,16 @@ enters another directory. All fields are optional.
 Open the registry-backed `[config]` buffer with `Space o o`, `:config`, or
 `:settings`. It is a left-aligned, read-only, searchable document: normal
 motions, selections, splits, and keybindings continue to work. Its
-80-character rows contain setting, description, and saved-value columns, with
-long content wrapped onto physical rows that retain the setting's identity.
-Enter anywhere on a setting's rows opens its value popup. Finite grammar,
-boolean, and theme values use a choice list; numeric values use a typed popup
+columns show setting, saved value, and description, in that order. Setting and
+value widths follow their content, separated by two spaces; descriptions have
+no inserted line breaks or trailing padding. Setting names use the theme's
+function colour, values its constant colour, and descriptions normal text.
+Each setting occupies one logical line. The page follows `editor.soft_wrap`:
+`Space p s` toggles ordinary pane-width visual wrapping, and horizontal scrolling
+reaches long lines when wrapping is off. Wrapped continuations use normal
+buffer layout rather than aligning beneath the description column. Enter
+anywhere on a setting's line, including a visual continuation, opens its value
+popup. Finite grammar, boolean, and theme values use a choice list; numeric values use a typed popup
 that shows and enforces the registry's minimum and maximum. Moving through an
 immediate choice previews it, Escape rolls the preview back, and Enter
 atomically patches the loaded YAML file while preserving comments, ordering,

@@ -37,29 +37,36 @@ layout intent is also carried in frontend-neutral overlay metadata, so attached
 and standalone TUI rendering agree instead of falling back to the general
 result-picker percentages.
 
-The config document now opts out of the editor-wide visual soft-wrap pass. Its
-columns are already physically wrapped to the fixed 100-cell layout; wrapping
-those padded rows again at the narrower post-gutter pane width produced an
-empty `↪` continuation after nearly every row. Normal horizontal scrolling
-remains available when the complete layout is wider than the pane. Motion,
-viewport alignment, scrolling, jump labels, and horizontal mouse scrolling
-now use that same per-pane soft-wrap decision; previously only rendering did,
-so `j` and `k` still stopped on invisible visual segments when soft wrap was
-enabled globally.
+The physically padded page originally opted out of ordinary visual soft
+wrapping because a second wrap pass produced empty continuation rows. Motion
+and rendering shared that exception so navigation could not stop on invisible
+segments.
 
-Coverage is provided by
-`settings::tests::config_page_is_one_hundred_cells_wide_and_wrapped_rows_keep_identity`
-in `src/settings.rs`,
-`app::tests::config_commands_and_binding_open_the_registry_backed_buffer`,
-`app::tests::config_vertical_motion_ignores_the_global_soft_wrap_setting`,
-`app::tests::enter_on_a_wrapped_config_continuation_opens_that_settings_choices`,
-`app::tests::hard_wrap_width_setting_uses_a_typed_prompt_and_persists_on_enter`,
-and `app::tests::git_refresh_interval_uses_a_typed_seconds_prompt_and_accepts_zero`
-in `src/app.rs`,
-`snapshot::tests::typed_setting_prompt_owns_a_popup_and_not_the_message_line`
-in `src/snapshot.rs`, and
-`ui::tests::numeric_setting_input_renders_as_a_bounded_popup` in `src/ui.rs`.
-Popup consistency is covered by
+A later presentation refinement removed fixed-width column wrapping. The page
+now orders its columns as setting, saved value, and description, sizes the first
+two from their content, and leaves each setting on one logical line. The theme's
+`function` and `constant` scopes distinguish setting names and values;
+descriptions remain normal text. `App::generated_highlights` carries those
+character-offset spans through the existing frontend snapshots and refreshes
+them with the page after a value changes. Ordinary pane-width soft wrapping,
+controlled by `Space p s`, replaces the settings-specific opt-out. Different
+panes can wrap the same document independently, and Enter on a visual
+continuation still resolves its logical row's setting identity.
+
+Current presentation coverage is provided by
+`settings_keep_complete_keys_values_and_descriptions_on_single_lines`,
+`long_unicode_values_align_by_cells_and_colour_by_character_offsets`, and
+`empty_values_and_empty_registry_leave_readable_headers_without_empty_spans`
+in `tests/settings_page.rs`. Interaction and snapshot coverage lives in
+`src/app/tests/presentation_and_settings.rs`:
+`config_commands_and_binding_open_the_registry_backed_buffer`,
+`config_navigation_follows_soft_wrap_without_rewriting_shared_text`,
+`enter_on_a_wrapped_config_continuation_opens_that_settings_choices`, and
+`config_column_colours_reach_snapshots_and_refresh_after_value_width_changes`.
+The typed editing tests in that same file include
+`hard_wrap_width_setting_uses_a_typed_prompt_and_persists_on_enter` and
+`git_refresh_interval_uses_a_typed_seconds_prompt_and_accepts_zero`.
+Popup consistency remains covered by
 `ui::tests::setting_popups_share_one_compact_fixed_size` in `src/ui.rs`.
 
 ## Report

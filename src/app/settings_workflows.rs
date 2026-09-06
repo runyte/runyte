@@ -216,18 +216,18 @@ impl App {
         }
     }
 
-    pub(super) fn settings_buffer(&self) -> Buffer {
+    fn settings_page(&self) -> crate::settings::SettingsPage {
         let values = SettingId::ALL
             .iter()
             .copied()
             .map(|setting| (setting, self.persisted_setting_label(setting)))
             .collect::<Vec<_>>();
-        let page = render_settings_page(&values);
-        Buffer::settings(&page.text, page.rows)
+        render_settings_page(&values)
     }
 
     pub(super) fn open_settings_buffer(&mut self) {
-        let rendered = self.settings_buffer();
+        let page = self.settings_page();
+        let rendered = Buffer::settings(&page.text, page.rows);
         let buffer = match self.buffers.iter().enumerate().find_map(|(index, buffer)| {
             (!self.closed_buffers.contains(&index) && buffer.is_settings()).then_some(index)
         }) {
@@ -242,6 +242,7 @@ impl App {
                 self.buffers.len() - 1
             }
         };
+        self.generated_highlights.insert(buffer, page.spans);
         self.push_jump();
         let pane = self.active_mut();
         pane.retarget(buffer);
@@ -316,10 +317,12 @@ impl App {
     }
 
     pub(super) fn refresh_settings_buffers(&mut self) {
-        let rendered = self.settings_buffer();
+        let page = self.settings_page();
+        let rendered = Buffer::settings(&page.text, page.rows);
         for index in 0..self.buffers.len() {
             if self.buffers[index].is_settings() {
                 self.buffers[index] = rendered.clone();
+                self.generated_highlights.insert(index, page.spans.clone());
                 self.normalize_buffer(index);
             }
         }

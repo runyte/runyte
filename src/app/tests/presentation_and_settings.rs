@@ -1435,11 +1435,11 @@ fn config_commands_and_binding_open_the_registry_backed_buffer() {
     app.execute_command("config").unwrap();
     assert_eq!(app.active_buffer().display_name(), "[config]");
     assert!(app.active_buffer().is_read_only());
-    assert!(!app.pane_soft_wrap(app.active_pane));
+    assert!(app.pane_soft_wrap(app.active_pane));
     let text = app.active_buffer().to_string();
     assert!(text.contains("Setting"));
     assert!(text.contains("Description"));
-    assert!(text.contains("Value"));
+    assert!(text.contains("Saved value"));
     assert!(text.contains("editor.grammar"));
     assert!(text.contains("Input grammar used for editing"));
     assert!(text.contains("commands"));
@@ -1458,6 +1458,70 @@ fn config_commands_and_binding_open_the_registry_backed_buffer() {
             .count(),
         1
     );
+}
+
+#[test]
+fn config_column_colours_reach_snapshots_and_refresh_after_value_width_changes() {
+    let mut config = Config::default();
+    config.editor.soft_wrap = false;
+    let mut app = App::new(config, None).unwrap();
+    app.open_settings_buffer();
+    let buffer = app.active().buffer;
+    for theme in ["ocean-dark", "a-very-long-saved-theme-name"] {
+        app.persisted_config.theme = Some(theme.to_owned());
+        app.refresh_settings_buffers();
+        let spans = app.highlights(buffer, 0, app.active_buffer().len_chars());
+        let coloured = spans
+            .iter()
+            .map(|span| {
+                (
+                    text(&app)
+                        .chars()
+                        .skip(span.from)
+                        .take(span.to - span.from)
+                        .collect::<String>(),
+                    span.scope.name(),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert!(coloured.contains(&("theme".to_owned(), "function")));
+        assert!(coloured.contains(&(theme.to_owned(), "constant")));
+        assert_eq!(coloured.len(), SettingId::ALL.len() * 2);
+
+        let mut geometry = prompt_test_geometry();
+        geometry.screen.width = 180;
+        geometry.editor.width = 180;
+        let prepared = app.prepare_view(geometry);
+        let snapshot = app.snapshot(&prepared);
+        let row = snapshot
+            .pane(app.active_pane)
+            .unwrap()
+            .rows
+            .iter()
+            .find_map(|row| match row {
+                crate::snapshot::SnapshotRow::Text(row) if row.document_row == 2 => Some(row),
+                _ => None,
+            })
+            .unwrap();
+        for (expected, scope_name) in [
+            ("editor.grammar", Some("function")),
+            ("runyte", Some("constant")),
+            (SettingId::EditorGrammar.descriptor().description, None),
+        ] {
+            assert!(
+                row.runs.iter().any(|run| {
+                    run.text.contains(expected)
+                        && matches!(
+                            run.kind,
+                            crate::snapshot::TextRunKind::Text { scope, .. }
+                                if scope.map(|scope| scope.name()) == scope_name
+                        )
+                }),
+                "missing {expected:?} with scope {scope_name:?}: {:?}",
+                row.runs
+            );
+        }
+    }
 }
 
 #[test]
@@ -1761,32 +1825,59 @@ fn notifications_remain_bounded_without_materializing_a_hidden_buffer() {
 }
 
 #[test]
-fn config_vertical_motion_ignores_the_global_soft_wrap_setting() {
+fn config_navigation_follows_soft_wrap_without_rewriting_shared_text() {
+    let mut config = Config::default();
+    config.editor.soft_wrap = true;
+    let mut app = App::new(config, None).unwrap();
+    app.open_settings_buffer();
+    let original = text(&app);
+    let buffer = app.active().buffer;
+    app.panes.insert(1, Pane::new(buffer));
+    app.active_mut().wrap_width = 20;
+    app.panes.get_mut(&1).unwrap().wrap_width = 160;
+    set_cursor(&mut app, 2, 0);
+
+    press(&mut app, 'j');
+    assert_eq!(cursor(&app).row, 2);
+    assert!(cursor(&app).col > 0);
+    press(&mut app, 'k');
+    assert_eq!(cursor(&app), Position::new(2, 0));
+
+    for ch in [' ', 'p', 's'] {
+        press(&mut app, ch);
+    }
+    assert!(!app.pane_soft_wrap(app.active_pane));
+    press(&mut app, 'j');
+    assert_eq!(cursor(&app), Position::new(3, 0));
+    assert_eq!(text(&app), original);
+    app.active_pane = 1;
+    for ch in [' ', 'p', 's'] {
+        press(&mut app, ch);
+    }
+    let offset = app.active_buffer().line_to_offset(2);
+    app.active_mut().replace_selection(Selection::point(offset));
+    press(&mut app, 'j');
+    assert_eq!(cursor(&app), Position::new(3, 0));
+    assert_eq!(text(&app), original);
+}
+
+#[test]
+fn enter_on_a_wrapped_config_continuation_opens_that_settings_choices() {
     let mut config = Config::default();
     config.editor.soft_wrap = true;
     let mut app = App::new(config, None).unwrap();
     app.open_settings_buffer();
     app.active_mut().wrap_width = 20;
-    set_cursor(&mut app, 2, 0);
-
-    press(&mut app, 'j');
-    assert_eq!(cursor(&app), Position::new(3, 0));
-    press(&mut app, 'k');
-    assert_eq!(cursor(&app), Position::new(2, 0));
-}
-
-#[test]
-fn enter_on_a_wrapped_config_continuation_opens_that_settings_choices() {
-    let mut app = App::new(Config::default(), None).unwrap();
-    app.open_settings_buffer();
     let rows = (0..app.active_buffer().len_lines())
         .filter(|row| {
             app.active_buffer().setting_at(*row) == Some(SettingId::EditorShowHiddenFiles)
         })
         .collect::<Vec<_>>();
-    assert!(rows.len() > 1);
-    let offset = app.active_buffer().line_to_offset(rows[1]);
-    app.active_mut().replace_selection(Selection::point(offset));
+    assert_eq!(rows.len(), 1);
+    set_cursor(&mut app, rows[0], 0);
+    press(&mut app, 'j');
+    assert_eq!(cursor(&app).row, rows[0]);
+    assert!(cursor(&app).col > 0);
 
     key(&mut app, KeyCode::Enter, Modifiers::NONE);
 

@@ -23,15 +23,12 @@ use crate::{
         Config, DEFAULT_THEME, ExplorerSort, MAX_GIT_REFRESH_INTERVAL_SECONDS,
         MAX_IDLE_RETIREMENT_MINUTES, SessionStripVisibility, WorkspaceMode,
     },
+    syntax::{Scope, Span},
 };
 
-use unicode_width::UnicodeWidthChar;
+use unicode_width::UnicodeWidthStr;
 
 pub const SETTINGS_BUFFER_NAME: &str = "[config]";
-pub const SETTINGS_PAGE_WIDTH: usize = 80;
-const SETTING_COLUMN_WIDTH: usize = 32;
-const DESCRIPTION_COLUMN_WIDTH: usize = 34;
-const VALUE_COLUMN_WIDTH: usize = 10;
 const COLUMN_GAP: &str = "  ";
 
 /// A stable identity shared by configuration discovery and persistence.
@@ -686,119 +683,71 @@ impl SettingRegistry {
     }
 }
 
-/// The text and stable per-row setting identities of the read-only config page.
+/// Plain settings text, logical-row identities, and semantic colour spans.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SettingsPage {
     pub text: String,
     pub rows: Vec<Option<SettingId>>,
+    pub spans: Vec<Span>,
 }
 
-/// Renders the setting registry as a fixed-width, frontend-neutral document.
-///
-/// Physical continuation lines keep the same identity as their first line, so
-/// a frontend can activate a wrapped setting without deriving identity from
-/// presentation columns.
+/// One logical line per setting, with content-sized name and saved-value
+/// columns. Descriptions remain unwrapped text; each pane applies ordinary
+/// visual soft wrapping independently without changing buffer coordinates.
 pub fn render_settings_page(values: &[(SettingId, String)]) -> SettingsPage {
-    let mut text = String::new();
-    let mut rows = Vec::new();
-    push_settings_row(
-        &mut text,
-        &mut rows,
-        None,
-        "Setting",
-        "Description",
-        "Value",
-    );
-    text.push_str(&"─".repeat(SETTINGS_PAGE_WIDTH));
+    let name_width = values
+        .iter()
+        .map(|(setting, _)| setting.descriptor().key.width())
+        .max()
+        .unwrap_or(0)
+        .max("Setting".width());
+    let value_width = values
+        .iter()
+        .map(|(_, value)| value.width())
+        .max()
+        .unwrap_or(0)
+        .max("Saved value".width());
+    let row_text = |name: &str, value: &str, description: &str| {
+        format!(
+            "{}{COLUMN_GAP}{}{COLUMN_GAP}{description}\n",
+            pad_cells(name, name_width),
+            pad_cells(value, value_width),
+        )
+    };
+    let mut text = row_text("Setting", "Saved value", "Description");
+    text.push_str(&"─".repeat(text.trim_end().width()));
     text.push('\n');
-    rows.push(None);
-
+    let mut rows = vec![None, None];
+    let mut spans = Vec::new();
+    let mut offset = text.chars().count();
+    let name_scope = Scope::named("function").expect("registered setting name scope");
+    let value_scope = Scope::named("constant").expect("registered setting value scope");
     for (setting, value) in values {
         let descriptor = setting.descriptor();
-        let names = wrap_cells(descriptor.key, SETTING_COLUMN_WIDTH);
-        let descriptions = wrap_cells(descriptor.description, DESCRIPTION_COLUMN_WIDTH);
-        let values = wrap_cells(value, VALUE_COLUMN_WIDTH);
-        let height = names.len().max(descriptions.len()).max(values.len());
-        for row in 0..height {
-            push_settings_row(
-                &mut text,
-                &mut rows,
-                Some(*setting),
-                names.get(row).map_or("", String::as_str),
-                descriptions.get(row).map_or("", String::as_str),
-                values.get(row).map_or("", String::as_str),
-            );
+        let row = row_text(descriptor.key, value, descriptor.description);
+        let name_end = offset + descriptor.key.chars().count();
+        spans.push(Span {
+            from: offset,
+            to: name_end,
+            scope: name_scope,
+        });
+        let value_start = name_end + name_width - descriptor.key.width() + COLUMN_GAP.len();
+        if !value.is_empty() {
+            spans.push(Span {
+                from: value_start,
+                to: value_start + value.chars().count(),
+                scope: value_scope,
+            });
         }
+        offset += row.chars().count();
+        text.push_str(&row);
+        rows.push(Some(*setting));
     }
-    SettingsPage { text, rows }
-}
-
-fn push_settings_row(
-    text: &mut String,
-    rows: &mut Vec<Option<SettingId>>,
-    setting: Option<SettingId>,
-    name: &str,
-    description: &str,
-    value: &str,
-) {
-    text.push_str(&pad_cells(name, SETTING_COLUMN_WIDTH));
-    text.push_str(COLUMN_GAP);
-    text.push_str(&pad_cells(description, DESCRIPTION_COLUMN_WIDTH));
-    text.push_str(COLUMN_GAP);
-    text.push_str(&pad_cells(value, VALUE_COLUMN_WIDTH));
-    text.push('\n');
-    rows.push(setting);
+    SettingsPage { text, rows, spans }
 }
 
 fn pad_cells(value: &str, width: usize) -> String {
-    let cells = value
-        .chars()
-        .map(|character| character.width().unwrap_or(0))
-        .sum::<usize>();
-    format!("{value}{}", " ".repeat(width.saturating_sub(cells)))
-}
-
-fn wrap_cells(value: &str, width: usize) -> Vec<String> {
-    let mut lines = Vec::new();
-    let mut line = String::new();
-    let mut line_width = 0;
-    for word in value.split_whitespace() {
-        let word_width = word
-            .chars()
-            .map(|character| character.width().unwrap_or(0))
-            .sum::<usize>();
-        if word_width <= width {
-            let gap = usize::from(!line.is_empty());
-            if line_width + gap + word_width > width {
-                lines.push(std::mem::take(&mut line));
-                line_width = 0;
-            }
-            if !line.is_empty() {
-                line.push(' ');
-                line_width += 1;
-            }
-            line.push_str(word);
-            line_width += word_width;
-            continue;
-        }
-        if !line.is_empty() {
-            lines.push(std::mem::take(&mut line));
-            line_width = 0;
-        }
-        for character in word.chars() {
-            let cells = character.width().unwrap_or(0);
-            if line_width + cells > width && !line.is_empty() {
-                lines.push(std::mem::take(&mut line));
-                line_width = 0;
-            }
-            line.push(character);
-            line_width += cells;
-        }
-    }
-    if !line.is_empty() || lines.is_empty() {
-        lines.push(line);
-    }
-    lines
+    format!("{value}{}", " ".repeat(width.saturating_sub(value.width())))
 }
 
 #[derive(Debug)]
@@ -1463,60 +1412,6 @@ mod tests {
             SettingId::EditorGrammar.allowed_values(&config),
             vec!["runyte"]
         );
-    }
-
-    #[test]
-    fn config_page_is_eighty_cells_wide_and_wrapped_rows_keep_identity() {
-        let values = SettingId::ALL
-            .iter()
-            .copied()
-            .map(|setting| {
-                (
-                    setting,
-                    setting.configured_value(&Config::default()).to_string(),
-                )
-            })
-            .collect::<Vec<_>>();
-        let page = render_settings_page(&values);
-        for line in page.text.lines() {
-            assert_eq!(
-                line.chars()
-                    .map(|character| character.width().unwrap_or(0))
-                    .sum::<usize>(),
-                SETTINGS_PAGE_WIDTH,
-                "{line:?}"
-            );
-        }
-        let wrapped = page
-            .rows
-            .iter()
-            .filter(|setting| **setting == Some(SettingId::EditorShowHiddenFiles))
-            .count();
-        assert!(wrapped > 1, "the long description was not wrapped");
-    }
-
-    #[test]
-    fn config_values_wrap_inside_the_ten_cell_value_column() {
-        assert_eq!(VALUE_COLUMN_WIDTH, 10);
-        let value_start =
-            SETTING_COLUMN_WIDTH + COLUMN_GAP.len() + DESCRIPTION_COLUMN_WIDTH + COLUMN_GAP.len();
-        let page = render_settings_page(&[(SettingId::Theme, "abcdefghijklmno".to_owned())]);
-        let value_cells = page
-            .text
-            .lines()
-            .zip(&page.rows)
-            .filter(|(_, setting)| **setting == Some(SettingId::Theme))
-            .map(|(line, _)| line.chars().skip(value_start).collect::<String>())
-            .collect::<Vec<_>>();
-
-        assert_eq!(value_cells[0], "abcdefghij");
-        assert_eq!(value_cells[1], "klmno     ");
-        assert!(page.text.lines().all(|line| {
-            line.chars()
-                .map(|character| character.width().unwrap_or(0))
-                .sum::<usize>()
-                == SETTINGS_PAGE_WIDTH
-        }));
     }
 
     #[test]
