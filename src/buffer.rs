@@ -134,8 +134,8 @@ pub enum BufferKind {
     Help,
     /// The typed setting registry rendered as a searchable document.
     ///
-    /// Every physical row keeps the setting identity it belongs to so wrapped
-    /// columns remain activatable without parsing their rendered text.
+    /// Every logical row keeps its setting identity, including when a pane
+    /// soft-wraps it, so activation never parses the rendered columns.
     Settings {
         rows: Vec<Option<SettingId>>,
     },

@@ -2544,7 +2544,7 @@ pub struct App {
     /// buffer has no known language, its parse failed, or its tree is held by
     /// `stale_syntax` while a background parse is pending.
     pub syntax: Vec<Option<DocumentSyntax>>,
-    /// Semantic colour spans for generated help pages, keyed by their stable
+    /// Semantic colour spans for generated pages, keyed by their stable
     /// buffer arena slot. These are independent of parsed document syntax and
     /// leave the underlying searchable buffer text unchanged.
     generated_highlights: HashMap<usize, Vec<Span>>,

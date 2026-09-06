@@ -89,7 +89,13 @@ them, regardless of which extensibility direction is chosen.
   colour spans for headings, commands, keys, paths, links, and technical
   literals. Those spans are presentation metadata over ordinary buffer
   character offsets: they add no markup characters, actions, or alternate
-  coordinates.
+  coordinates. The `[config]` buffer uses the same semantic spans for setting
+  names (`function`) and saved values (`constant`), with normal text for
+  descriptions. Its columns are setting, saved value, and description; the
+  first two take their content widths with two-space gaps, and descriptions
+  have no inserted line breaks or trailing padding. Each setting is one logical
+  line. Ordinary soft wrapping and horizontal scrolling apply per pane without
+  rewriting the shared document.
 - **Rendered page** — a generated read-only buffer holding a document as it is
   meant to be read rather than as it is written. `?` renders the active
   Markdown document into one and returns from it to the source; both stay open,
