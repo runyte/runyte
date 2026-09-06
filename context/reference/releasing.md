@@ -33,17 +33,17 @@ name was dropped at 0.0.10; do not reintroduce it.
 
 ## Versioning
 
-Runyte is pre-1.0. The public release line begins at 0.1.0 and routine releases
-bump the patch component: 0.1.0 becomes 0.1.1. A minor-version change requires
-an explicit compatibility or scope decision rather than happening as part of
-an ordinary release.
+Runyte is pre-1.0. The current release line begins at 0.2.0 and routine releases
+bump the patch component: 0.2.0 becomes 0.2.1. A later minor-version change
+requires an explicit compatibility or scope decision rather than happening as
+part of an ordinary release.
 
 The version is written in one place, `[package] version` in `Cargo.toml`.
 `Cargo.lock` holds a copy that Cargo rewrites for you; never hand-edit it.
 
 ## The runbook
 
-The example version below is 0.1.1. Substitute the real one.
+The example version below is 0.2.1. Substitute the real one.
 
 1. **Get onto `main` and take everything.** Releases are cut from `main`, and
    `main` must first contain the work being released.
@@ -63,16 +63,16 @@ The example version below is 0.1.1. Substitute the real one.
    change would otherwise end up inside the release commit.
 
 3. **Write the release's `Changes` notes.** Compare the release candidate with
-   the previous version tag. For 0.1.1 that range is `v0.1.0..HEAD`:
+   the previous version tag. For 0.2.1 that range is `v0.2.0..HEAD`:
 
    ```sh
-   git log --no-merges --reverse --format='%h %s' v0.1.0..HEAD
-   git diff --stat v0.1.0..HEAD
+   git log --no-merges --reverse --format='%h %s' v0.2.0..HEAD
+   git diff --stat v0.2.0..HEAD
    ```
 
    Inspect the commits and their diffs rather than deriving the notes from
    subjects alone. Write the result to
-   `/tmp/runyte-v0.1.1-CHANGES.md`, beginning with `## Changes`. It must cover
+   `/tmp/runyte-v0.2.1-CHANGES.md`, beginning with `## Changes`. It must cover
    every material user-facing feature, behavior change, fix, and performance
    improvement, call out any compatibility or migration concern, and omit
    merges, the version-only release commit, and internal work that has no
@@ -80,7 +80,7 @@ The example version below is 0.1.1. Substitute the real one.
    with a link to the full comparison:
 
    ```markdown
-   [Full comparison](https://github.com/runyte/runyte/compare/v0.1.0...v0.1.1)
+   [Full comparison](https://github.com/runyte/runyte/compare/v0.2.0...v0.2.1)
    ```
 
    Read the finished notes once against the range to catch omissions and claims
@@ -113,7 +113,7 @@ The example version below is 0.1.1. Substitute the real one.
 
    ```sh
    git add Cargo.toml Cargo.lock
-   git commit -m "Release 0.1.1"
+   git commit -m "Release 0.2.1"
    ```
 
    This comes before the dry run because `cargo publish` reads the committed
@@ -152,8 +152,8 @@ The example version below is 0.1.1. Substitute the real one.
 11. **Tag the release commit and push the tag:**
 
    ```sh
-   git tag v0.1.1
-   git push origin v0.1.1
+   git tag v0.2.1
+   git push origin v0.2.1
    ```
 
     Pushing the tag starts the `Binary release` workflow. It validates the tag
@@ -173,9 +173,9 @@ The example version below is 0.1.1. Substitute the real one.
     that note with the curated draft without changing the tag or assets:
 
     ```sh
-    gh release edit v0.1.1 \
-      --title "Runyte 0.1.1" \
-      --notes-file /tmp/runyte-v0.1.1-CHANGES.md
+    gh release edit v0.2.1 \
+      --title "Runyte 0.2.1" \
+      --notes-file /tmp/runyte-v0.2.1-CHANGES.md
     ```
 
     Open the URL printed by `gh` and verify the title, tag, comparison link,
