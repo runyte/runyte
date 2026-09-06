@@ -426,5 +426,104 @@ pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
             ]),
         },
     );
+    // A green-phosphor terminal theme: an almost-black ground with a green
+    // cast, one saturated code green, and a ladder of greens between them.
+    // Blue is spent deliberately rather than spread around — the azure that
+    // names functions, directories and Command mode, the cyan that names
+    // types, and the indigo the Replace caret is diverted to — so the few
+    // blue things on screen are the ones worth finding.
+    //
+    // Three colours are not the palette's own and cannot be: the Git gutter
+    // and diff grounds are one shared semantic palette across every bundled
+    // theme, and `built_in_jump_labels_are_red_and_one_neon_cyan_hue` requires
+    // a red one-key jump label and the shared neon cyan for the two-key pair.
+    // The red is therefore kept to exactly two roles, errors and that label,
+    // and named once here so it reads as a decision rather than a leak.
+    let matrix_red = "#ff5f52";
+    themes.insert(
+        "matrix".into(),
+        ThemeDefinition {
+            background: "#0b0f0c".into(),
+            foreground: "#b6f2c8".into(),
+            muted: "#4e8161".into(),
+            // Named rather than derived, and hued rather than gray: the
+            // marker is the faint grid under the text, so it takes the
+            // background's own green cast 16 to 27 levels up from it.
+            whitespace: Some("#1b2a1f".into()),
+            // Dimmed text has to stay legible on both selection grounds while
+            // still reading as dimmed, which the comment green is too dark to
+            // do: it lands above 5:1 on either ground and 1.74:1 against
+            // ordinary text.
+            jump_text_muted: Some("#8fb89c".into()),
+            accent: "#00ff41".into(),
+            // Unset: only the branded pair splits the palette's command names
+            // off the accent, and every other bundled theme keeps one colour
+            // for both.
+            command: None,
+            // Normal is unset so the caret is the accent green itself, which
+            // is what a phosphor terminal's cursor looked like. The rest walk
+            // the hue circle from there toward blue — lime, spring green,
+            // azure — so the four modes are told apart by hue alone without
+            // leaving the palette. Replace is the indigo the green branch of
+            // `default_replace_color` calls for; a green mode is already
+            // spoken for, so it cannot also be green.
+            cursor_normal: None,
+            cursor_insert: Some("#a8ff60".into()),
+            cursor_replace: Some("#7060ff".into()),
+            cursor_select: Some("#25f5b0".into()),
+            cursor_command: Some("#4d9fff".into()),
+            directory: Some("#4d9fff".into()),
+            // The usual cool-secondary, warm-primary split has no warm half
+            // to spend here, so the pair separates by the palette's own two
+            // families instead: ordinary ranges sit on deep green, and the
+            // primary range takes the blue, which is the one the reader is
+            // looking for. Ordinary text clears 8.8:1 on either.
+            selection: "#14432c".into(),
+            selection_primary: Some("#123a66".into()),
+            fuzzy_match_secondary: None,
+            fuzzy_match_primary: None,
+            status_background: "#0f1511".into(),
+            status_foreground: "#b6f2c8".into(),
+            error: matrix_red.into(),
+            warning: Some("#d8ff4a".into()),
+            info: Some("#25f5b0".into()),
+            jump_label_immediate: Some(matrix_red.into()),
+            jump_label_primary: JUMP_LABEL_DARK_PRIMARY.into(),
+            jump_label_secondary: JUMP_LABEL_DARK_SECONDARY.into(),
+            change_added: Some(CHANGE_ADDED_DARK.into()),
+            change_modified: Some(CHANGE_MODIFIED_DARK.into()),
+            change_removed: Some(CHANGE_REMOVED_DARK.into()),
+            diff_added: Some(DIFF_ADDED_DARK.into()),
+            diff_removed: Some(DIFF_REMOVED_DARK.into()),
+            diff_changed: Some(DIFF_CHANGED_DARK.into()),
+            // Six colours, assigned by how far a scope is from ordinary text:
+            // identifiers and operators stay on the foreground, comments and
+            // punctuation drop to the comment green, keywords and tags take
+            // the accent, and the three families that name things — calls,
+            // types, and literals — take azure, cyan, and lime. Strings take
+            // the spring green, which is also what carries Markdown's inline
+            // code and link URLs through `syntax_theme`'s derived roles;
+            // headings follow `function` into azure, and bold and list text
+            // follow `keyword` into the accent green.
+            syntax: syntax_theme(&[
+                ("attribute", "#25f5b0"),
+                ("comment", "#4e8161"),
+                ("constant", "#a8ff60"),
+                ("constructor", "#4d9fff"),
+                ("function", "#4d9fff"),
+                ("keyword", "#00ff41"),
+                ("label", "#a8ff60"),
+                ("namespace", "#2bf7ff"),
+                ("number", "#a8ff60"),
+                ("operator", "#b6f2c8"),
+                ("property", "#b6f2c8"),
+                ("punctuation", "#4e8161"),
+                ("string", "#25f5b0"),
+                ("tag", "#00ff41"),
+                ("type", "#2bf7ff"),
+                ("variable", "#b6f2c8"),
+            ]),
+        },
+    );
     themes.into_iter()
 }

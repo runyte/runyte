@@ -3425,7 +3425,7 @@ read from the file only; it is not written by the `[config]` buffer.
 
 
 Built-in themes are `default-dark`, `default-light`, `dark`, `light`,
-`base16`, `paper`, `gruvbox`,
+`base16`, `paper`, `gruvbox`, `matrix`,
 `atom-one-light`, `github-light`, all four
 Catppuccin flavours (`latte`, `frappe`, `macchiato`, and `mocha`), and the six
 Everforest variants (`everforest-dark-hard`, `everforest-dark-medium`,
@@ -3458,6 +3458,16 @@ and generated highlight colors from
 it is `nordbones-dark` with the ordinary text brought down from 10.6:1 against
 the background to 7:1, for reading at length without the glare. Its background,
 accents, and selections stay unchanged.
+`matrix` is a green-phosphor terminal theme: an almost-black ground with a
+green cast, one saturated code green for keywords and the accent, and a ladder
+of greens between them for everything else. Blue is spent deliberately rather
+than spread around — the azure that names functions, directories and Command
+mode, the cyan that names types, and the indigo the Replace caret takes because
+a green mode is already spoken for — so the few blue things on screen are the
+ones worth finding. Its two selection grounds separate by family instead of the
+usual cool-against-warm: ordinary ranges sit on deep green and the primary
+range takes the blue. Only errors and the one-key jump label are red, alongside
+the Git gutter and diff grounds every bundled theme shares.
 `default-dark` and `default-light` are Runyte's branded pair. They share red
 accents and a green Normal, red Insert, pink Select, purple Replace, and
 blue Command mode vocabulary — inverted from most other built-in themes'

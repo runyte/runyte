@@ -1860,6 +1860,7 @@ mod tests {
             "frappe",
             "gruvbox",
             "macchiato",
+            "matrix",
             "mocha",
             "nordfox",
             "nordfox-warm",
@@ -2053,6 +2054,7 @@ mod tests {
                 "latte",
                 "light",
                 "macchiato",
+                "matrix",
                 "mocha",
                 "neobones-dark",
                 "neobones-light",
@@ -2144,6 +2146,87 @@ mod tests {
         }
 
         assert_eq!(DEFAULT_THEME, "default-dark");
+    }
+
+    /// `matrix` is defined by what it refuses to spend as much as by what it
+    /// uses: an almost-black ground, greens, and blue for the few roles worth
+    /// finding. Red survives in exactly two places — errors and the one-key
+    /// jump label, which
+    /// `built_in_jump_labels_are_red_and_one_neon_cyan_hue` requires to be red
+    /// — plus the Git and diff palette every bundled theme shares. Everything
+    /// else has to be green- or blue-dominant, which is the part a later
+    /// palette edit could quietly lose.
+    #[test]
+    fn matrix_spends_only_greens_blues_and_one_red() {
+        let config = Config::default();
+        let theme = config.resolve_theme("matrix").unwrap();
+
+        let mut roles = vec![
+            ("background", theme.background),
+            ("foreground", theme.foreground),
+            ("muted", theme.muted),
+            ("whitespace", theme.whitespace),
+            ("jump_text_muted", theme.jump_text_muted),
+            ("accent", theme.accent),
+            ("command", theme.command),
+            ("cursor_normal", theme.cursor_normal),
+            ("cursor_insert", theme.cursor_insert),
+            ("cursor_replace", theme.cursor_replace),
+            ("cursor_select", theme.cursor_select),
+            ("cursor_command", theme.cursor_command),
+            ("directory", theme.directory),
+            ("selection", theme.selection),
+            ("selection_primary", theme.selection_primary),
+            ("fuzzy_match_secondary", theme.fuzzy_match_secondary),
+            ("fuzzy_match_primary", theme.fuzzy_match_primary),
+            ("warning", theme.warning),
+            ("info", theme.info),
+            ("jump_label_primary", theme.jump_label_primary),
+            ("jump_label_secondary", theme.jump_label_secondary),
+        ];
+        roles.extend(crate::syntax::SCOPES.iter().map(|scope| {
+            (
+                *scope,
+                theme
+                    .syntax_color(crate::syntax::Scope::named(scope).unwrap())
+                    .unwrap(),
+            )
+        }));
+        for (role, color) in roles {
+            let (red, green, blue) = color.channels().unwrap();
+            assert!(
+                green >= red && green > blue || blue >= red && blue > green,
+                "matrix {role} is neither green nor blue: {color:?}"
+            );
+        }
+
+        // The one red, named once and used twice.
+        assert_eq!(theme.error, Color::Rgb(0xff, 0x5f, 0x52));
+        assert_eq!(theme.jump_label_immediate, theme.error);
+
+        // An almost-black ground with a green cast rather than a neutral gray,
+        // and a marker that keeps the cast instead of turning into one.
+        for (role, color) in [
+            ("background", theme.background),
+            ("whitespace", theme.whitespace),
+        ] {
+            let (red, green, blue) = color.channels().unwrap();
+            assert!(green > red && green > blue, "matrix {role} lost its cast");
+            assert!(
+                green < 0x30,
+                "matrix {role} is no longer almost black: {color:?}"
+            );
+        }
+
+        // Normal is the accent green, and the other three modes walk from it
+        // toward blue, so the four are told apart by hue without leaving the
+        // palette. Replace is the indigo a theme with a green mode is given.
+        assert_eq!(theme.cursor_normal, theme.accent);
+        assert_eq!(theme.cursor_normal, Color::Rgb(0x00, 0xff, 0x41));
+        assert_eq!(theme.cursor_insert, Color::Rgb(0xa8, 0xff, 0x60));
+        assert_eq!(theme.cursor_select, Color::Rgb(0x25, 0xf5, 0xb0));
+        assert_eq!(theme.cursor_command, Color::Rgb(0x4d, 0x9f, 0xff));
+        assert_eq!(theme.cursor_replace, Color::Rgb(0x70, 0x60, 0xff));
     }
 
     #[test]

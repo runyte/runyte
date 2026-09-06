@@ -1431,6 +1431,7 @@ mod tests {
                 "latte",
                 "light",
                 "macchiato",
+                "matrix",
                 "mocha",
                 "neobones-dark",
                 "neobones-light",
