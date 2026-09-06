@@ -52,7 +52,7 @@ pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
     // code and link URLs (from `string`) turn purple, and bold and list text
     // (from `keyword`) turn green. That swap predates the mode retune and is
     // independent of it — syntax scopes are not mode colours.
-    let mut warning_dark_syntax = syntax_theme(&[
+    let mut ember_dark_syntax = syntax_theme(&[
         ("attribute", "#8ddb8c"),
         ("comment", "#8b8b90"),
         ("constant", "#f0a868"),
@@ -70,9 +70,9 @@ pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
         ("type", "#62d6d7"),
         ("variable", "#b9b9be"),
     ]);
-    warning_dark_syntax.insert("markup.heading".into(), "#c96870".into());
+    ember_dark_syntax.insert("markup.heading".into(), "#c96870".into());
     themes.insert(
-        "warning-dark".into(),
+        "ember-dark".into(),
         ThemeDefinition {
             // Two steps lighter than the surface's original `#16181d`: the
             // active pane sits where the inactive pane used to under the
@@ -126,10 +126,10 @@ pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
             diff_added: Some(DIFF_ADDED_DARK.into()),
             diff_removed: Some(DIFF_REMOVED_DARK.into()),
             diff_changed: Some(DIFF_CHANGED_DARK.into()),
-            syntax: warning_dark_syntax,
+            syntax: ember_dark_syntax,
         },
     );
-    let mut warning_light_syntax = syntax_theme(&[
+    let mut ember_light_syntax = syntax_theme(&[
         ("attribute", "#23733a"),
         ("comment", "#656872"),
         ("constant", "#9a5518"),
@@ -147,12 +147,12 @@ pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
         ("type", "#176d70"),
         ("variable", "#292a30"),
     ]);
-    warning_light_syntax.insert("markup.heading".into(), "#a33d49".into());
+    ember_light_syntax.insert("markup.heading".into(), "#a33d49".into());
     themes.insert(
-        "warning-light".into(),
+        "ember-light".into(),
         ThemeDefinition {
             // Two steps darker than the surface's original `#ececef`, which
-            // is the light mirror of what `warning-dark` does: the active
+            // is the light mirror of what `ember-dark` does: the active
             // pane moves toward the inactive one rather than away from it, so
             // the pair separates its panes by the same amount either way.
             background: "#dadadc".into(),
@@ -165,7 +165,7 @@ pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
             whitespace: Some("#bcbcbe".into()),
             jump_text_muted: Some("#878a92".into()),
             accent: "#a33d49".into(),
-            // See `warning-dark`: the accent keeps the pane border, and the
+            // See `ember-dark`: the accent keeps the pane border, and the
             // palette's command names are named separately so they can be
             // blue without taking the border with them.
             command: Some("#1f65a6".into()),
@@ -175,7 +175,7 @@ pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
             cursor_select: Some("#a4276f".into()),
             cursor_command: Some("#1f65a6".into()),
             directory: None,
-            // See `warning-dark`: the same pink primary and vivid blue
+            // See `ember-dark`: the same pink primary and vivid blue
             // secondary, carried down to hold their contrast against a light
             // ground instead of a dark one.
             selection: "#8fc6fb".into(),
@@ -196,7 +196,7 @@ pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
             diff_added: Some(DIFF_ADDED_LIGHT.into()),
             diff_removed: Some(DIFF_REMOVED_LIGHT.into()),
             diff_changed: Some(DIFF_CHANGED_LIGHT.into()),
-            syntax: warning_light_syntax,
+            syntax: ember_light_syntax,
         },
     );
     // `dark` and `light` are the two themes people reach for by name, so

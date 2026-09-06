@@ -99,7 +99,7 @@ const DIFF_REMOVED_LIGHT: &str = "#ffe0ee";
 const JUMP_LABEL_DARK_PRIMARY: &str = "#5fd7e7";
 const JUMP_LABEL_DARK_SECONDARY: &str = "#4ab7c6";
 const JUMP_LABEL_LIGHT_PRIMARY: &str = "#00616e";
-// Two steps darker than `#007583`, one for each step `warning-light` has
+// Two steps darker than `#007583`, one for each step `ember-light` has
 // taken toward its inactive pane: each darkening of that ground put the
 // previous value back under the 4.5:1 legibility floor against it. Every
 // other light theme keeps a lighter ground, so a darker secondary only reads
@@ -2037,6 +2037,8 @@ mod tests {
                 "base16",
                 "dark",
                 "duckbones-dark",
+                "ember-dark",
+                "ember-light",
                 "everforest-dark-hard",
                 "everforest-dark-medium",
                 "everforest-dark-soft",
@@ -2072,8 +2074,6 @@ mod tests {
                 "tokyobones-dark",
                 "tokyobones-light",
                 "vimbones-light",
-                "warning-dark",
-                "warning-light",
                 "zenbones-dark",
                 "zenbones-light",
                 "zenburned-dark",
@@ -2098,7 +2098,7 @@ mod tests {
 
         for (name, background, foreground, accent, normal, insert, replace, select, command) in [
             (
-                "warning-dark",
+                "ember-dark",
                 (0x28, 0x2a, 0x2f),
                 (0xb9, 0xb9, 0xbe),
                 (0xc9, 0x68, 0x70),
@@ -2109,7 +2109,7 @@ mod tests {
                 (0x6c, 0xb6, 0xff),
             ),
             (
-                "warning-light",
+                "ember-light",
                 (0xda, 0xda, 0xdc),
                 (0x29, 0x2a, 0x30),
                 (0xa3, 0x3d, 0x49),
@@ -2140,7 +2140,7 @@ mod tests {
         // Every other bundled theme leaves the split unmade, so the palette
         // and the borders keep answering one accent.
         for name in config.theme_names() {
-            if name.starts_with("warning-") {
+            if name.starts_with("ember-") {
                 continue;
             }
             let theme = config.resolve_theme(name).unwrap();
@@ -3571,8 +3571,8 @@ mod tests {
     fn branded_themes_use_a_pink_primary_selection_and_a_vivid_blue_secondary() {
         // `built_in_search_selection_palettes_are_legible_and_role_distinct`
         // covers the bundled themes that answer Select mode in orange, and its
-        // hue rule is why the branded pair is not in that list: `warning-dark`
-        // and `warning-light` answer it in pink instead. The same legibility
+        // hue rule is why the branded pair is not in that list: `ember-dark`
+        // and `ember-light` answer it in pink instead. The same legibility
         // and role questions still have to be asked of them, so they are asked
         // here against the pink grammar.
         fn channels(color: Color) -> (u8, u8, u8) {
@@ -3626,8 +3626,8 @@ mod tests {
 
         let config = Config::default();
         for (name, secondary, primary, select) in [
-            ("warning-dark", 0x0b3f8c, 0x5e2e4d, 0xf07ab4),
-            ("warning-light", 0x8fc6fb, 0xf2b8da, 0xa4276f),
+            ("ember-dark", 0x0b3f8c, 0x5e2e4d, 0xf07ab4),
+            ("ember-light", 0x8fc6fb, 0xf2b8da, 0xa4276f),
         ] {
             let theme = config.resolve_theme(name).unwrap();
             let rgb = |value: u32| {

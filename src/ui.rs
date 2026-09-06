@@ -5078,7 +5078,7 @@ mod tests {
             );
         }
 
-        let source = config.resolve_theme("warning-dark").unwrap();
+        let source = config.resolve_theme("ember-dark").unwrap();
         let theme = TuiTheme::with_color_depth(&source, TerminalColorDepth::Indexed);
         assert_eq!(theme.background, TuiColor::Indexed(236));
         assert_eq!(theme.inactive_background, TuiColor::Indexed(237));
@@ -5115,7 +5115,7 @@ mod tests {
     fn integrated_terminal_colors_follow_the_outer_terminal_depth() {
         use ratatui::style::Color as TuiColor;
 
-        let source = Config::default().resolve_theme("warning-dark").unwrap();
+        let source = Config::default().resolve_theme("ember-dark").unwrap();
         let cell = TerminalCell {
             foreground: crate::terminal::Color::Rgb(95, 135, 175),
             background: crate::terminal::Color::Indexed(67),
