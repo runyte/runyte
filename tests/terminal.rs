@@ -342,7 +342,7 @@ fn standalone_terminal_parent_requests_refuse_without_nesting_and_return_to_shel
 
 #[test]
 fn a_child_can_discover_the_effective_default_background() {
-    let command = r#"/bin/sh -c 'stty raw -echo; printf "\033]11;?\033\\"; answer=$(dd bs=1 count=25 2>/dev/null); expected=$(printf "\033]11;rgb:2828/2a2a/2f2f\033\\"); if [ "$answer" = "$expected" ]; then printf default-background-ok; else printf default-background-wrong; fi; cat'"#;
+    let command = r#"/bin/sh -c 'stty raw -echo; printf "\033]11;?\033\\"; answer=$(dd bs=1 count=25 2>/dev/null); expected=$(printf "\033]11;rgb:0b0b/1f1f/2a2a\033\\"); if [ "$answer" = "$expected" ]; then printf default-background-ok; else printf default-background-wrong; fi; cat'"#;
     let mut session = Session::start(command);
 
     assert!(

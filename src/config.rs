@@ -73,7 +73,7 @@ pub(crate) const MAX_GIT_REFRESH_INTERVAL_SECONDS: usize = 3_600;
 pub(crate) const MAX_IDLE_RETIREMENT_MINUTES: usize = 43_200;
 
 /// The theme Runyte starts in when nothing else has been chosen.
-pub const DEFAULT_THEME: &str = "default-dark";
+pub const DEFAULT_THEME: &str = "ocean-dark";
 
 // Git colours are deliberately shared by appearance rather than softened into
 // each palette. A Git meaning must be recognizable before the reader decodes
@@ -99,7 +99,7 @@ const DIFF_REMOVED_LIGHT: &str = "#ffe0ee";
 const JUMP_LABEL_DARK_PRIMARY: &str = "#5fd7e7";
 const JUMP_LABEL_DARK_SECONDARY: &str = "#4ab7c6";
 const JUMP_LABEL_LIGHT_PRIMARY: &str = "#00616e";
-// Two steps darker than `#007583`, one for each step `default-light` has
+// Two steps darker than `#007583`, one for each step `ember-light` has
 // taken toward its inactive pane: each darkening of that ground put the
 // previous value back under the 4.5:1 legibility floor against it. Every
 // other light theme keeps a lighter ground, so a darker secondary only reads
@@ -1860,7 +1860,9 @@ mod tests {
             "frappe",
             "gruvbox",
             "macchiato",
+            "matrix",
             "mocha",
+            "neon",
             "nordfox",
             "nordfox-warm",
             "terafox",
@@ -2035,9 +2037,9 @@ mod tests {
                 "atom-one-light",
                 "base16",
                 "dark",
-                "default-dark",
-                "default-light",
                 "duckbones-dark",
+                "ember-dark",
+                "ember-light",
                 "everforest-dark-hard",
                 "everforest-dark-medium",
                 "everforest-dark-soft",
@@ -2053,13 +2055,17 @@ mod tests {
                 "latte",
                 "light",
                 "macchiato",
+                "matrix",
                 "mocha",
                 "neobones-dark",
                 "neobones-light",
+                "neon",
                 "nordbones-dark",
                 "nordbones-dark-soft",
                 "nordfox",
                 "nordfox-warm",
+                "ocean-dark",
+                "ocean-light",
                 "paper",
                 "rosebones-dark",
                 "rosebones-light",
@@ -2087,14 +2093,14 @@ mod tests {
     }
 
     #[test]
-    fn runyte_default_themes_share_the_brand_and_mode_palette() {
+    fn runyte_branded_themes_share_the_brand_and_mode_palette() {
         let config = Config::default();
         let rgb = |(red, green, blue)| Color::Rgb(red, green, blue);
         let heading = crate::syntax::Scope::named("markup.heading").unwrap();
 
         for (name, background, foreground, accent, normal, insert, replace, select, command) in [
             (
-                "default-dark",
+                "ember-dark",
                 (0x28, 0x2a, 0x2f),
                 (0xb9, 0xb9, 0xbe),
                 (0xc9, 0x68, 0x70),
@@ -2105,7 +2111,7 @@ mod tests {
                 (0x6c, 0xb6, 0xff),
             ),
             (
-                "default-light",
+                "ember-light",
                 (0xda, 0xda, 0xdc),
                 (0x29, 0x2a, 0x30),
                 (0xa3, 0x3d, 0x49),
@@ -2136,14 +2142,541 @@ mod tests {
         // Every other bundled theme leaves the split unmade, so the palette
         // and the borders keep answering one accent.
         for name in config.theme_names() {
-            if name.starts_with("default-") {
+            if name.starts_with("ember-") {
                 continue;
             }
             let theme = config.resolve_theme(name).unwrap();
             assert_eq!(theme.command, theme.accent, "{name}");
         }
+    }
 
-        assert_eq!(DEFAULT_THEME, "default-dark");
+    /// Runyte starts in `ocean-dark`. The branded pair is named for the red
+    /// it is built on rather than for being what starts, so nothing about
+    /// which theme is the default can be read off a theme's name any more.
+    #[test]
+    fn the_startup_theme_is_ocean_dark() {
+        assert_eq!(DEFAULT_THEME, "ocean-dark");
+        let config = Config::default();
+        assert!(config.theme_names().contains(&DEFAULT_THEME));
+        assert_eq!(config.startup_theme().unwrap().0, "ocean-dark");
+    }
+
+    /// `matrix` is defined by what it refuses to spend as much as by what it
+    /// uses: an almost-black ground, greens, and blue for the few roles worth
+    /// finding. Red survives in exactly two places — errors and the one-key
+    /// jump label, which
+    /// `built_in_jump_labels_are_red_and_one_neon_cyan_hue` requires to be red
+    /// — plus the Git and diff palette every bundled theme shares. Everything
+    /// else has to be green- or blue-dominant, which is the part a later
+    /// palette edit could quietly lose.
+    #[test]
+    fn matrix_spends_only_greens_blues_and_one_red() {
+        let config = Config::default();
+        let theme = config.resolve_theme("matrix").unwrap();
+
+        let mut roles = vec![
+            ("background", theme.background),
+            ("foreground", theme.foreground),
+            ("muted", theme.muted),
+            ("whitespace", theme.whitespace),
+            ("jump_text_muted", theme.jump_text_muted),
+            ("accent", theme.accent),
+            ("command", theme.command),
+            ("cursor_normal", theme.cursor_normal),
+            ("cursor_insert", theme.cursor_insert),
+            ("cursor_replace", theme.cursor_replace),
+            ("cursor_select", theme.cursor_select),
+            ("cursor_command", theme.cursor_command),
+            ("directory", theme.directory),
+            ("selection", theme.selection),
+            ("selection_primary", theme.selection_primary),
+            ("fuzzy_match_secondary", theme.fuzzy_match_secondary),
+            ("fuzzy_match_primary", theme.fuzzy_match_primary),
+            ("warning", theme.warning),
+            ("info", theme.info),
+            ("jump_label_primary", theme.jump_label_primary),
+            ("jump_label_secondary", theme.jump_label_secondary),
+        ];
+        roles.extend(crate::syntax::SCOPES.iter().map(|scope| {
+            (
+                *scope,
+                theme
+                    .syntax_color(crate::syntax::Scope::named(scope).unwrap())
+                    .unwrap(),
+            )
+        }));
+        for (role, color) in roles {
+            let (red, green, blue) = color.channels().unwrap();
+            assert!(
+                green >= red && green > blue || blue >= red && blue > green,
+                "matrix {role} is neither green nor blue: {color:?}"
+            );
+        }
+
+        // The one red, named once and used twice.
+        assert_eq!(theme.error, Color::Rgb(0xff, 0x5f, 0x52));
+        assert_eq!(theme.jump_label_immediate, theme.error);
+
+        // An almost-black ground with a green cast rather than a neutral gray,
+        // and a marker that keeps the cast instead of turning into one.
+        for (role, color) in [
+            ("background", theme.background),
+            ("whitespace", theme.whitespace),
+        ] {
+            let (red, green, blue) = color.channels().unwrap();
+            assert!(green > red && green > blue, "matrix {role} lost its cast");
+            assert!(
+                green < 0x30,
+                "matrix {role} is no longer almost black: {color:?}"
+            );
+        }
+
+        // Normal is the accent green, and the other three modes walk from it
+        // toward blue, so the four are told apart by hue without leaving the
+        // palette. Replace is the indigo a theme with a green mode is given.
+        assert_eq!(theme.cursor_normal, theme.accent);
+        assert_eq!(theme.cursor_normal, Color::Rgb(0x00, 0xff, 0x41));
+        assert_eq!(theme.cursor_insert, Color::Rgb(0xa8, 0xff, 0x60));
+        assert_eq!(theme.cursor_select, Color::Rgb(0x25, 0xf5, 0xb0));
+        assert_eq!(theme.cursor_command, Color::Rgb(0x4d, 0x9f, 0xff));
+        assert_eq!(theme.cursor_replace, Color::Rgb(0x70, 0x60, 0xff));
+    }
+
+    /// The `ocean` pair is two readings of one palette, and every part of
+    /// that claim is worth pinning. The palette is the water: every role is
+    /// green- or blue-dominant except the two warm colours the interface
+    /// cannot afford to lose in it — the error red, which the one-key jump
+    /// label shares, and the amber of a warning — plus the Git and diff
+    /// palette every bundled theme carries. The pair is a structure rather
+    /// than a set of values: each role is the same hue at the same contrast
+    /// from its own ground, so its channels rank alike in both variants and
+    /// its distance from the ground matches. And the band that structure
+    /// spans is narrow on purpose, with ordinary text at 8.6:1 rather than
+    /// the 13:1 these palettes started at. A later edit to one variant
+    /// alone, or one that lets the glare back in, is what this is here to
+    /// catch.
+    #[test]
+    fn ocean_variants_are_one_palette_seen_from_two_grounds() {
+        fn contrast(left: Color, right: Color) -> f64 {
+            let left = left.relative_luminance().unwrap();
+            let right = right.relative_luminance().unwrap();
+            (left.max(right) + 0.05) / (left.min(right) + 0.05)
+        }
+
+        /// How far apart two colours look, rather than how far apart their
+        /// luminances are. A selection is an area of colour rather than a
+        /// glyph, and equal contrast ratios do not read as equal weight at
+        /// the two ends of the range, so this is the measure its grounds are
+        /// mirrored on. CIE76 over CIELAB, as elsewhere in this file.
+        fn perceptual_distance(left: Color, right: Color) -> f64 {
+            fn lab(color: Color) -> [f64; 3] {
+                let (red, green, blue) = color.channels().unwrap();
+                let channel = |value: u8| {
+                    let value = f64::from(value) / 255.0;
+                    if value <= 0.03928 {
+                        value / 12.92
+                    } else {
+                        ((value + 0.055) / 1.055).powf(2.4)
+                    }
+                };
+                let (red, green, blue) = (channel(red), channel(green), channel(blue));
+                let transfer = |value: f64| {
+                    if value > 0.008_856 {
+                        value.cbrt()
+                    } else {
+                        7.787 * value + 16.0 / 116.0
+                    }
+                };
+                let x = transfer((0.4124 * red + 0.3576 * green + 0.1805 * blue) / 0.95047);
+                let y = transfer(0.2126 * red + 0.7152 * green + 0.0722 * blue);
+                let z = transfer((0.0193 * red + 0.1192 * green + 0.9505 * blue) / 1.08883);
+                [116.0 * y - 16.0, 500.0 * (x - y), 200.0 * (y - z)]
+            }
+
+            let (left, right) = (lab(left), lab(right));
+            left.iter()
+                .zip(right)
+                .map(|(left, right)| (left - right).powi(2))
+                .sum::<f64>()
+                .sqrt()
+        }
+
+        /// The channels of a colour ranked most to least, which is the part
+        /// of a hue that survives crossing the ground.
+        fn order(color: Color) -> [usize; 3] {
+            let (red, green, blue) = color.channels().unwrap();
+            let channels = [red, green, blue];
+            let mut ranked = [0, 1, 2];
+            ranked.sort_by_key(|index| (std::cmp::Reverse(channels[*index]), *index));
+            ranked
+        }
+
+        /// Every role the two variants mirror, in one order. `error` is not
+        /// among them: the two reds are alarms picked to carry on their own
+        /// ground rather than to answer each other, and `jump_text_muted` is
+        /// mirrored in hue but not in contrast, for the reason given below.
+        fn roles(theme: &Theme) -> Vec<(String, Color)> {
+            let mut roles = vec![
+                ("background", theme.background),
+                ("foreground", theme.foreground),
+                ("muted", theme.muted),
+                ("whitespace", theme.whitespace),
+                ("accent", theme.accent),
+                ("command", theme.command),
+                ("cursor_normal", theme.cursor_normal),
+                ("cursor_insert", theme.cursor_insert),
+                ("cursor_replace", theme.cursor_replace),
+                ("cursor_select", theme.cursor_select),
+                ("cursor_command", theme.cursor_command),
+                ("directory", theme.directory),
+                ("selection", theme.selection),
+                ("selection_primary", theme.selection_primary),
+                ("fuzzy_match_secondary", theme.fuzzy_match_secondary),
+                ("fuzzy_match_primary", theme.fuzzy_match_primary),
+                ("status_background", theme.status_background),
+                ("status_foreground", theme.status_foreground),
+                ("info", theme.info),
+                ("warning", theme.warning),
+            ]
+            .into_iter()
+            .map(|(role, color)| (role.to_owned(), color))
+            .collect::<Vec<_>>();
+            roles.extend(crate::syntax::SCOPES.iter().map(|scope| {
+                (
+                    (*scope).to_owned(),
+                    theme
+                        .syntax_color(crate::syntax::Scope::named(scope).unwrap())
+                        .unwrap(),
+                )
+            }));
+            roles
+        }
+
+        let config = Config::default();
+        let dark = config.resolve_theme("ocean-dark").unwrap();
+        let light = config.resolve_theme("ocean-light").unwrap();
+        assert_eq!(dark.appearance(), Some(ThemeAppearance::Dark));
+        assert_eq!(light.appearance(), Some(ThemeAppearance::Light));
+
+        for (variant, theme) in [("ocean-dark", &dark), ("ocean-light", &light)] {
+            for (role, color) in roles(theme) {
+                let (red, green, blue) = color.channels().unwrap();
+                if role == "warning" {
+                    continue;
+                }
+                assert!(
+                    green >= red && green > blue || blue >= red && blue > green,
+                    "{variant} {role} is neither green nor blue: {color:?}"
+                );
+            }
+
+            // The two warm colours, each named once and pinned here so a
+            // third cannot arrive without this test being rewritten.
+            for (role, color) in [("error", theme.error), ("warning", theme.warning)] {
+                let (red, green, blue) = color.channels().unwrap();
+                assert!(
+                    red > green && red > blue,
+                    "{variant} {role} should be the warm one it is spent on: {color:?}"
+                );
+            }
+            assert_eq!(theme.jump_label_immediate, theme.error);
+
+            // The narrow band. Ordinary text carries no glare, the hued
+            // colours follow it down rather than being left above it, and
+            // comments stay legible at the bottom.
+            let text = contrast(theme.foreground, theme.background);
+            assert!(
+                (8.4..=8.8).contains(&text),
+                "{variant} text should sit near 8.6:1, not {text}"
+            );
+            for scope in ["keyword", "string", "type", "function", "number"] {
+                let scope = crate::syntax::Scope::named(scope).unwrap();
+                let hue = contrast(theme.syntax_color(scope).unwrap(), theme.background);
+                assert!(
+                    hue < text && hue >= 5.0,
+                    "{variant} {scope:?} should sit below ordinary text and stay legible: {hue}"
+                );
+            }
+            let comment = contrast(theme.muted, theme.background);
+            assert!(
+                (3.5..4.5).contains(&comment),
+                "{variant} comments should stay at the soft end of the band: {comment}"
+            );
+
+            // Ordinary text stays legible on the shared Git grounds it is
+            // drawn over, which every bundled theme has to manage. On the
+            // dark side that is also what stops the softening: Runyte's
+            // `diff_added` is light enough that 8.6:1 against the pane is
+            // very nearly all the text can give up. The light variant has
+            // room to spare against its own pale grounds and matches the
+            // dark one for symmetry rather than because it is pinned.
+            let floor = contrast(theme.foreground, theme.diff_added.unwrap());
+            assert!(
+                floor >= 4.5,
+                "{variant} text is unreadable on the shared added-row ground: {floor}"
+            );
+
+            // Dimmed text recedes behind the two-key jump labels it is drawn
+            // under, on either ground.
+            for label in [theme.jump_label_primary, theme.jump_label_secondary] {
+                assert!(
+                    contrast(label, theme.background)
+                        > contrast(theme.jump_text_muted, theme.background),
+                    "{variant} jump labels do not stand above the text they dim"
+                );
+            }
+            assert!(
+                contrast(theme.foreground, theme.jump_text_muted) >= 1.4,
+                "{variant} dimmed text is too close to ordinary text to read as dimmed"
+            );
+        }
+        assert!(
+            contrast(dark.foreground, dark.diff_added.unwrap()) < 4.6,
+            "ocean-dark text could soften further before its diff ground stops it"
+        );
+        assert_eq!(dark.error, Color::Rgb(0xff, 0x6b, 0x6b));
+        assert_eq!(dark.warning, Color::Rgb(0xde, 0xb3, 0x49));
+        assert_eq!(light.error, Color::Rgb(0xb0, 0x28, 0x1f));
+        assert_eq!(light.warning, Color::Rgb(0x5d, 0x34, 0x00));
+
+        // The mirror itself: role for role, the same hue at the same distance
+        // from the other ground.
+        for ((role, deep), (mirrored, shallow)) in roles(&dark).into_iter().zip(roles(&light)) {
+            assert_eq!(role, mirrored, "the two variants list roles differently");
+            assert_eq!(
+                order(deep),
+                order(shallow),
+                "ocean {role} changes hue between the variants: {deep:?} and {shallow:?}"
+            );
+            // The grounds are mirrored on how far they look from their own
+            // background instead, below. The fuzzy-match pair is unset in
+            // both variants and tracks the selections, so it follows them.
+            if matches!(
+                role.as_str(),
+                "background"
+                    | "selection"
+                    | "selection_primary"
+                    | "fuzzy_match_secondary"
+                    | "fuzzy_match_primary"
+            ) {
+                continue;
+            }
+            let deep = contrast(deep, dark.background);
+            let shallow = contrast(shallow, light.background);
+            assert!(
+                (deep - shallow).abs() / deep <= 0.03,
+                "ocean {role} sits {deep} from one ground and {shallow} from the other"
+            );
+        }
+
+        // The two selection grounds stand as far off their own background as
+        // their counterparts do off the other one, and the primary range is
+        // the one that stands out further in both.
+        for (role, deep, shallow) in [
+            ("selection", dark.selection, light.selection),
+            (
+                "selection_primary",
+                dark.selection_primary,
+                light.selection_primary,
+            ),
+        ] {
+            let deep = perceptual_distance(deep, dark.background);
+            let shallow = perceptual_distance(shallow, light.background);
+            assert!(
+                (deep - shallow).abs() / deep <= 0.05,
+                "ocean {role} stands {deep} off one ground and {shallow} off the other"
+            );
+        }
+        for theme in [&dark, &light] {
+            assert!(
+                perceptual_distance(theme.selection_primary, theme.background)
+                    > perceptual_distance(theme.selection, theme.background),
+                "the primary range should be the one that stands out"
+            );
+        }
+
+        // Dimmed text is the one role among the palette's colours that does
+        // not mirror its counterpart's contrast: it has to recede behind the shared jump labels, and the
+        // light ones are far softer than the dark ones, so the light variant
+        // puts it where `light` and `paper` put theirs instead.
+        assert_eq!(dark.jump_text_muted, Color::Rgb(0x7e, 0x9e, 0xaa));
+        assert_eq!(light.jump_text_muted, Color::Rgb(0x7b, 0x92, 0x9b));
+        assert_eq!(order(dark.jump_text_muted), order(light.jump_text_muted));
+
+        // Normal is the accent turquoise, and the other carets walk from it
+        // toward dusk, so the five modes are told apart by hue alone without
+        // leaving the palette. Replace is the orchid a theme whose Normal
+        // reads as green is given, rather than a green answering Normal.
+        assert_eq!(dark.cursor_normal, dark.accent);
+        assert_eq!(dark.cursor_normal, Color::Rgb(0x00, 0xb6, 0xa2));
+        assert_eq!(dark.cursor_insert, Color::Rgb(0x69, 0xc3, 0xd0));
+        assert_eq!(dark.cursor_select, Color::Rgb(0x3f, 0x9d, 0xe9));
+        assert_eq!(dark.cursor_command, Color::Rgb(0x67, 0x7d, 0xea));
+        assert_eq!(dark.cursor_replace, Color::Rgb(0xad, 0x81, 0xf3));
+        assert_eq!(light.cursor_normal, light.accent);
+        assert_eq!(light.cursor_normal, Color::Rgb(0x00, 0x59, 0x4c));
+        assert_eq!(light.cursor_insert, Color::Rgb(0x00, 0x44, 0x64));
+        assert_eq!(light.cursor_select, Color::Rgb(0x00, 0x53, 0xb1));
+        assert_eq!(light.cursor_command, Color::Rgb(0x54, 0x55, 0xd6));
+        assert_eq!(light.cursor_replace, Color::Rgb(0x74, 0x2e, 0xbd));
+    }
+
+    /// `neon` is a structure before it is a set of colours: a red frame, a
+    /// cyan interior, and one acid green for the third thing worth finding.
+    /// The parts of that a later palette edit could quietly lose are that
+    /// nothing outshines the text being read, that the crimson is allowed to
+    /// sit below the band the other hues share, and that the primary
+    /// selection stays clear of the shared deleted-row ground it was very
+    /// nearly the same colour as.
+    #[test]
+    fn neon_keeps_its_red_frame_below_a_cyan_interior() {
+        fn contrast(left: Color, right: Color) -> f64 {
+            let left = left.relative_luminance().unwrap();
+            let right = right.relative_luminance().unwrap();
+            (left.max(right) + 0.05) / (left.min(right) + 0.05)
+        }
+
+        fn perceptual_distance(left: Color, right: Color) -> f64 {
+            fn lab(color: Color) -> [f64; 3] {
+                let (red, green, blue) = color.channels().unwrap();
+                let channel = |value: u8| {
+                    let value = f64::from(value) / 255.0;
+                    if value <= 0.03928 {
+                        value / 12.92
+                    } else {
+                        ((value + 0.055) / 1.055).powf(2.4)
+                    }
+                };
+                let (red, green, blue) = (channel(red), channel(green), channel(blue));
+                let transfer = |value: f64| {
+                    if value > 0.008_856 {
+                        value.cbrt()
+                    } else {
+                        7.787 * value + 16.0 / 116.0
+                    }
+                };
+                let x = transfer((0.4124 * red + 0.3576 * green + 0.1805 * blue) / 0.95047);
+                let y = transfer(0.2126 * red + 0.7152 * green + 0.0722 * blue);
+                let z = transfer((0.0193 * red + 0.1192 * green + 0.9505 * blue) / 1.08883);
+                [116.0 * y - 16.0, 500.0 * (x - y), 200.0 * (y - z)]
+            }
+
+            let (left, right) = (lab(left), lab(right));
+            left.iter()
+                .zip(right)
+                .map(|(left, right)| (left - right).powi(2))
+                .sum::<f64>()
+                .sqrt()
+        }
+
+        let config = Config::default();
+        let theme = config.resolve_theme("neon").unwrap();
+        let scope = |name: &str| theme.syntax_color(crate::syntax::Scope::named(name).unwrap());
+        assert_eq!(theme.appearance(), Some(ThemeAppearance::Dark));
+
+        // The frame is red and carries the structure: the accent behind the
+        // pane borders, the keywords and tags, the errors, and the resting
+        // caret, which is unset so that it stays on the accent.
+        let crimson = Color::Rgb(0xff, 0x3b, 0x52);
+        assert_eq!(theme.accent, crimson);
+        assert_eq!(theme.cursor_normal, crimson);
+        assert_eq!(theme.error, crimson);
+        assert_eq!(theme.jump_label_immediate, crimson);
+        assert_eq!(scope("keyword"), Some(crimson));
+        assert_eq!(scope("tag"), Some(crimson));
+
+        // The interior is cyan and marks what a reader would act on.
+        let cyan = Color::Rgb(0x22, 0xc8, 0xbd);
+        assert_eq!(theme.directory, cyan);
+        assert_eq!(theme.cursor_insert, cyan);
+        assert_eq!(scope("function"), Some(cyan));
+        assert_eq!(
+            scope("markup.heading"),
+            Some(cyan),
+            "headings follow calls onto the cyan"
+        );
+
+        // Nothing on screen outshines the text being read.
+        let text = contrast(theme.foreground, theme.background);
+        for name in crate::syntax::SCOPES {
+            let hue = contrast(scope(name).unwrap(), theme.background);
+            assert!(hue <= text, "neon {name} outshines ordinary text: {hue}");
+        }
+
+        // The crimson is the one colour that stays below the band the rest
+        // share. A saturated red is darker than a saturated cyan, and
+        // lightening it into the band turns it pink and takes the frame with
+        // it, so it is left where it is and spent on weight instead.
+        let frame = contrast(crimson, theme.background);
+        assert!(
+            (5.0..6.0).contains(&frame),
+            "the frame should keep its red rather than being lightened: {frame}"
+        );
+        for name in ["function", "string", "type", "number"] {
+            assert!(
+                contrast(scope(name).unwrap(), theme.background) > frame,
+                "{name} should sit above the frame in the band"
+            );
+        }
+
+        // Replace is the magenta `default_replace_color` asks for once a mode
+        // reads as green, which both the cyan Insert and the acid Select do.
+        assert!(Theme::is_green_hued(theme.cursor_insert));
+        assert!(Theme::is_green_hued(theme.cursor_select));
+        assert_eq!(theme.cursor_replace, Color::Rgb(0xff, 0x4d, 0xe0));
+
+        // The primary range answers the Select caret above it, in the same
+        // acid green banked down to a ground.
+        let ranked = |color: Color| {
+            let (red, green, blue) = color.channels().unwrap();
+            let channels = [red, green, blue];
+            let mut ranked = [0, 1, 2];
+            ranked.sort_by_key(|index| (std::cmp::Reverse(channels[*index]), *index));
+            ranked
+        };
+        assert_eq!(
+            ranked(theme.selection_primary),
+            ranked(theme.cursor_select),
+            "the primary range should read as the Select caret's own colour"
+        );
+
+        // Neither ground may drift into one of the shared Git rows. A deep
+        // red primary landed three CIE76 points from the deleted row, and
+        // the acid green that replaced it has to stay off the added row for
+        // the same reason.
+        for ground in [theme.selection, theme.selection_primary] {
+            for row in [
+                theme.diff_added.unwrap(),
+                theme.diff_changed.unwrap(),
+                theme.diff_removed.unwrap(),
+            ] {
+                assert!(
+                    perceptual_distance(ground, row) >= 18.0,
+                    "a selected range and a changed line should not look alike"
+                );
+            }
+        }
+
+        // Ordinary ranges are blue, and visibly so: the first pairing was
+        // faint enough to be reported as hard to find.
+        let (red, green, blue) = theme.selection.channels().unwrap();
+        assert!(
+            blue > green && green > red,
+            "ordinary ranges should be blue"
+        );
+        assert!(
+            perceptual_distance(theme.selection, theme.background) >= 30.0,
+            "ordinary ranges disappear into the pane"
+        );
+        assert!(
+            perceptual_distance(theme.selection_primary, theme.background)
+                > perceptual_distance(theme.selection, theme.background),
+            "the primary range should be the one that stands out"
+        );
+        for ground in [theme.selection, theme.selection_primary] {
+            assert!(contrast(theme.foreground, ground) >= 4.5);
+            assert!(contrast(theme.jump_text_muted, ground) >= 3.0);
+        }
     }
 
     #[test]
@@ -3195,11 +3728,11 @@ mod tests {
     }
 
     #[test]
-    fn default_themes_use_a_pink_primary_selection_and_a_vivid_blue_secondary() {
+    fn branded_themes_use_a_pink_primary_selection_and_a_vivid_blue_secondary() {
         // `built_in_search_selection_palettes_are_legible_and_role_distinct`
         // covers the bundled themes that answer Select mode in orange, and its
-        // hue rule is why the branded pair is not in that list: `default-dark`
-        // and `default-light` answer it in pink instead. The same legibility
+        // hue rule is why the branded pair is not in that list: `ember-dark`
+        // and `ember-light` answer it in pink instead. The same legibility
         // and role questions still have to be asked of them, so they are asked
         // here against the pink grammar.
         fn channels(color: Color) -> (u8, u8, u8) {
@@ -3253,8 +3786,8 @@ mod tests {
 
         let config = Config::default();
         for (name, secondary, primary, select) in [
-            ("default-dark", 0x0b3f8c, 0x5e2e4d, 0xf07ab4),
-            ("default-light", 0x8fc6fb, 0xf2b8da, 0xa4276f),
+            ("ember-dark", 0x0b3f8c, 0x5e2e4d, 0xf07ab4),
+            ("ember-light", 0x8fc6fb, 0xf2b8da, 0xa4276f),
         ] {
             let theme = config.resolve_theme(name).unwrap();
             let rgb = |value: u32| {

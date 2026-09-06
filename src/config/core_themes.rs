@@ -52,7 +52,7 @@ pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
     // code and link URLs (from `string`) turn purple, and bold and list text
     // (from `keyword`) turn green. That swap predates the mode retune and is
     // independent of it — syntax scopes are not mode colours.
-    let mut default_dark_syntax = syntax_theme(&[
+    let mut ember_dark_syntax = syntax_theme(&[
         ("attribute", "#8ddb8c"),
         ("comment", "#8b8b90"),
         ("constant", "#f0a868"),
@@ -70,9 +70,9 @@ pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
         ("type", "#62d6d7"),
         ("variable", "#b9b9be"),
     ]);
-    default_dark_syntax.insert("markup.heading".into(), "#c96870".into());
+    ember_dark_syntax.insert("markup.heading".into(), "#c96870".into());
     themes.insert(
-        "default-dark".into(),
+        "ember-dark".into(),
         ThemeDefinition {
             // Two steps lighter than the surface's original `#16181d`: the
             // active pane sits where the inactive pane used to under the
@@ -126,10 +126,10 @@ pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
             diff_added: Some(DIFF_ADDED_DARK.into()),
             diff_removed: Some(DIFF_REMOVED_DARK.into()),
             diff_changed: Some(DIFF_CHANGED_DARK.into()),
-            syntax: default_dark_syntax,
+            syntax: ember_dark_syntax,
         },
     );
-    let mut default_light_syntax = syntax_theme(&[
+    let mut ember_light_syntax = syntax_theme(&[
         ("attribute", "#23733a"),
         ("comment", "#656872"),
         ("constant", "#9a5518"),
@@ -147,12 +147,12 @@ pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
         ("type", "#176d70"),
         ("variable", "#292a30"),
     ]);
-    default_light_syntax.insert("markup.heading".into(), "#a33d49".into());
+    ember_light_syntax.insert("markup.heading".into(), "#a33d49".into());
     themes.insert(
-        "default-light".into(),
+        "ember-light".into(),
         ThemeDefinition {
             // Two steps darker than the surface's original `#ececef`, which
-            // is the light mirror of what `default-dark` does: the active
+            // is the light mirror of what `ember-dark` does: the active
             // pane moves toward the inactive one rather than away from it, so
             // the pair separates its panes by the same amount either way.
             background: "#dadadc".into(),
@@ -165,7 +165,7 @@ pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
             whitespace: Some("#bcbcbe".into()),
             jump_text_muted: Some("#878a92".into()),
             accent: "#a33d49".into(),
-            // See `default-dark`: the accent keeps the pane border, and the
+            // See `ember-dark`: the accent keeps the pane border, and the
             // palette's command names are named separately so they can be
             // blue without taking the border with them.
             command: Some("#1f65a6".into()),
@@ -175,7 +175,7 @@ pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
             cursor_select: Some("#a4276f".into()),
             cursor_command: Some("#1f65a6".into()),
             directory: None,
-            // See `default-dark`: the same pink primary and vivid blue
+            // See `ember-dark`: the same pink primary and vivid blue
             // secondary, carried down to hold their contrast against a light
             // ground instead of a dark one.
             selection: "#8fc6fb".into(),
@@ -196,7 +196,7 @@ pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
             diff_added: Some(DIFF_ADDED_LIGHT.into()),
             diff_removed: Some(DIFF_REMOVED_LIGHT.into()),
             diff_changed: Some(DIFF_CHANGED_LIGHT.into()),
-            syntax: default_light_syntax,
+            syntax: ember_light_syntax,
         },
     );
     // `dark` and `light` are the two themes people reach for by name, so
@@ -423,6 +423,414 @@ pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
                 ("tag", "#fb4934"),
                 ("type", "#fabd2f"),
                 ("variable", "#ebdbb2"),
+            ]),
+        },
+    );
+    // A green-phosphor terminal theme: an almost-black ground with a green
+    // cast, one saturated code green, and a ladder of greens between them.
+    // Blue is spent deliberately rather than spread around — the azure that
+    // names functions, directories and Command mode, the cyan that names
+    // types, and the indigo the Replace caret is diverted to — so the few
+    // blue things on screen are the ones worth finding.
+    //
+    // Three colours are not the palette's own and cannot be: the Git gutter
+    // and diff grounds are one shared semantic palette across every bundled
+    // theme, and `built_in_jump_labels_are_red_and_one_neon_cyan_hue` requires
+    // a red one-key jump label and the shared neon cyan for the two-key pair.
+    // The red is therefore kept to exactly two roles, errors and that label,
+    // and named once here so it reads as a decision rather than a leak.
+    let matrix_red = "#ff5f52";
+    themes.insert(
+        "matrix".into(),
+        ThemeDefinition {
+            background: "#0b0f0c".into(),
+            foreground: "#b6f2c8".into(),
+            muted: "#4e8161".into(),
+            // Named rather than derived, and hued rather than gray: the
+            // marker is the faint grid under the text, so it takes the
+            // background's own green cast 16 to 27 levels up from it.
+            whitespace: Some("#1b2a1f".into()),
+            // Dimmed text has to stay legible on both selection grounds while
+            // still reading as dimmed, which the comment green is too dark to
+            // do: it lands above 5:1 on either ground and 1.74:1 against
+            // ordinary text.
+            jump_text_muted: Some("#8fb89c".into()),
+            accent: "#00ff41".into(),
+            // Unset: only the branded pair splits the palette's command names
+            // off the accent, and every other bundled theme keeps one colour
+            // for both.
+            command: None,
+            // Normal is unset so the caret is the accent green itself, which
+            // is what a phosphor terminal's cursor looked like. The rest walk
+            // the hue circle from there toward blue — lime, spring green,
+            // azure — so the four modes are told apart by hue alone without
+            // leaving the palette. Replace is the indigo the green branch of
+            // `default_replace_color` calls for; a green mode is already
+            // spoken for, so it cannot also be green.
+            cursor_normal: None,
+            cursor_insert: Some("#a8ff60".into()),
+            cursor_replace: Some("#7060ff".into()),
+            cursor_select: Some("#25f5b0".into()),
+            cursor_command: Some("#4d9fff".into()),
+            directory: Some("#4d9fff".into()),
+            // The usual cool-secondary, warm-primary split has no warm half
+            // to spend here, so the pair separates by the palette's own two
+            // families instead: ordinary ranges sit on deep green, and the
+            // primary range takes the blue, which is the one the reader is
+            // looking for. Ordinary text clears 8.8:1 on either.
+            selection: "#14432c".into(),
+            selection_primary: Some("#123a66".into()),
+            fuzzy_match_secondary: None,
+            fuzzy_match_primary: None,
+            status_background: "#0f1511".into(),
+            status_foreground: "#b6f2c8".into(),
+            error: matrix_red.into(),
+            warning: Some("#d8ff4a".into()),
+            info: Some("#25f5b0".into()),
+            jump_label_immediate: Some(matrix_red.into()),
+            jump_label_primary: JUMP_LABEL_DARK_PRIMARY.into(),
+            jump_label_secondary: JUMP_LABEL_DARK_SECONDARY.into(),
+            change_added: Some(CHANGE_ADDED_DARK.into()),
+            change_modified: Some(CHANGE_MODIFIED_DARK.into()),
+            change_removed: Some(CHANGE_REMOVED_DARK.into()),
+            diff_added: Some(DIFF_ADDED_DARK.into()),
+            diff_removed: Some(DIFF_REMOVED_DARK.into()),
+            diff_changed: Some(DIFF_CHANGED_DARK.into()),
+            // Six colours, assigned by how far a scope is from ordinary text:
+            // identifiers and operators stay on the foreground, comments and
+            // punctuation drop to the comment green, keywords and tags take
+            // the accent, and the three families that name things — calls,
+            // types, and literals — take azure, cyan, and lime. Strings take
+            // the spring green, which is also what carries Markdown's inline
+            // code and link URLs through `syntax_theme`'s derived roles;
+            // headings follow `function` into azure, and bold and list text
+            // follow `keyword` into the accent green.
+            syntax: syntax_theme(&[
+                ("attribute", "#25f5b0"),
+                ("comment", "#4e8161"),
+                ("constant", "#a8ff60"),
+                ("constructor", "#4d9fff"),
+                ("function", "#4d9fff"),
+                ("keyword", "#00ff41"),
+                ("label", "#a8ff60"),
+                ("namespace", "#2bf7ff"),
+                ("number", "#a8ff60"),
+                ("operator", "#b6f2c8"),
+                ("property", "#b6f2c8"),
+                ("punctuation", "#4e8161"),
+                ("string", "#25f5b0"),
+                ("tag", "#00ff41"),
+                ("type", "#2bf7ff"),
+                ("variable", "#b6f2c8"),
+            ]),
+        },
+    );
+    // `ocean-light` and `ocean-dark` are one palette seen from two grounds:
+    // the wave in the photograph they were drawn from, which has no warm
+    // colour anywhere in it. Deep water is the ground, the turquoise face of
+    // the wave is the accent, and foam and sky are what the palette lightens
+    // toward. The pair share a structure rather than a set of hex values:
+    // every role sits at the same contrast from its own ground as its
+    // counterpart does from the opposite one, so a change to one of them
+    // belongs in the other.
+    //
+    // The band is deliberately narrow. Ordinary text reads at 8.6:1 rather
+    // than the 13:1 the first draft of these palettes used, which is the step
+    // `terafox-soft` takes and for the same reason: long stretches of text
+    // should not be the brightest thing on a dark ground, or the darkest on a
+    // light one. It cannot soften further on either side — Runyte's shared
+    // `diff_added` ground is what ordinary text has to stay legible on, and
+    // 8.6:1 is where that floor sits. The hued colours follow the text down so
+    // the palette keeps its order: keywords and strings a step below ordinary
+    // text, calls and literals a step below those, comments at 3.9:1.
+    //
+    // Two warm colours survive that discipline because the interface cannot
+    // afford to have them blend into the water: the error red, which is also
+    // the one-key jump label `built_in_jump_labels_are_red_and_one_neon_cyan_hue`
+    // requires to be red, and the amber a warning is drawn in. Each is named
+    // once per variant so it reads as a decision rather than a leak. The Git
+    // gutter and diff grounds are the shared semantic palette every bundled
+    // theme carries, and the two-key jump labels are the shared neon cyan.
+    //
+    // The mode carets walk one hue ladder from the wave to dusk — turquoise,
+    // cyan, sky, indigo, orchid — so the five are told apart by hue without
+    // leaving the palette. Normal is unset, which leaves it on the accent
+    // turquoise; because that reads as green to `default_replace_color`'s
+    // hue test, Replace is diverted to the orchid end of the ladder rather
+    // than to a green that would answer Normal.
+    let ocean_dark_red = "#ff6b6b";
+    themes.insert(
+        "ocean-dark".into(),
+        ThemeDefinition {
+            background: "#0b1f2a".into(),
+            foreground: "#a6bdc5".into(),
+            muted: "#5b7f90".into(),
+            // Named rather than derived, and hued rather than gray: the marker
+            // is the faint grid under the text, so it keeps the ground's own
+            // blue 12 to 21 levels up from it.
+            whitespace: Some("#17323f".into()),
+            // Dimmed text sits below the neon cyan of the two-key jump labels
+            // it has to recede behind, and stays legible on both selection
+            // grounds: 5.9:1 against the ground, above 3:1 on either
+            // selection, and 1.45:1 from ordinary text.
+            jump_text_muted: Some("#7e9eaa".into()),
+            accent: "#00b6a2".into(),
+            // Unset: only the branded pair splits the palette's command names
+            // off the accent, and every other bundled theme keeps one colour
+            // for both.
+            command: None,
+            cursor_normal: None,
+            cursor_insert: Some("#69c3d0".into()),
+            cursor_replace: Some("#ad81f3".into()),
+            cursor_select: Some("#3f9de9".into()),
+            cursor_command: Some("#677dea".into()),
+            directory: Some("#3f9de9".into()),
+            // The usual cool-secondary, warm-primary split has no warm half to
+            // spend here, so the pair separates by the palette's own two
+            // families instead: ordinary ranges sit on deep water blue, and
+            // the primary range takes the wave's teal, which is the one the
+            // reader is looking for. Both are dark enough that the softened
+            // text still clears 4.5:1 on them, which is what fixes them this
+            // far below the ground rather than just off it.
+            selection: "#123f66".into(),
+            selection_primary: Some("#00524d".into()),
+            fuzzy_match_secondary: None,
+            fuzzy_match_primary: None,
+            status_background: "#0f2733".into(),
+            status_foreground: "#a6bdc5".into(),
+            error: ocean_dark_red.into(),
+            warning: Some("#deb349".into()),
+            info: Some("#34b78d".into()),
+            jump_label_immediate: Some(ocean_dark_red.into()),
+            jump_label_primary: JUMP_LABEL_DARK_PRIMARY.into(),
+            jump_label_secondary: JUMP_LABEL_DARK_SECONDARY.into(),
+            change_added: Some(CHANGE_ADDED_DARK.into()),
+            change_modified: Some(CHANGE_MODIFIED_DARK.into()),
+            change_removed: Some(CHANGE_REMOVED_DARK.into()),
+            diff_added: Some(DIFF_ADDED_DARK.into()),
+            diff_removed: Some(DIFF_REMOVED_DARK.into()),
+            diff_changed: Some(DIFF_CHANGED_DARK.into()),
+            // Six colours besides ordinary text, assigned by how far a scope
+            // is from it: identifiers and operators stay on the foreground,
+            // comments and punctuation drop to the deep-water haze, keywords
+            // and tags take the accent turquoise, and the families that name
+            // things take the crest cyan (types), the sky (calls), and the
+            // wave's own green (strings). Literals take the orchid, which is
+            // also where the Replace caret sits. Through `syntax_theme`'s
+            // derived roles that puts Markdown's inline code and link URLs on
+            // the wave green, headings on the sky, and bold and list text on
+            // the accent.
+            syntax: syntax_theme(&[
+                ("attribute", "#00b6a2"),
+                ("comment", "#5b7f90"),
+                ("constant", "#ad81f3"),
+                ("constructor", "#3f9de9"),
+                ("function", "#3f9de9"),
+                ("keyword", "#00b6a2"),
+                ("label", "#ad81f3"),
+                ("namespace", "#00b0ca"),
+                ("number", "#ad81f3"),
+                ("operator", "#a6bdc5"),
+                ("property", "#a6bdc5"),
+                ("punctuation", "#5b7f90"),
+                ("string", "#34b78d"),
+                ("tag", "#00b6a2"),
+                ("type", "#00b0ca"),
+                ("variable", "#a6bdc5"),
+            ]),
+        },
+    );
+    // The same palette seen from the shallows rather than from deep water:
+    // every role keeps its hue and its distance from the ground, and crosses
+    // that ground, so the foam that was the brightest thing in `ocean-dark` is
+    // the ground here and the deep water that was the ground is the text. The
+    // ground is a shade below the palest foam for the same reason the text is
+    // a shade above the deepest water: neither end of the pair should be the
+    // brightest thing a reader looks at for an hour. See that theme for why
+    // the two warm colours are there and why Replace sits at the orchid end.
+    let ocean_light_red = "#b0281f";
+    themes.insert(
+        "ocean-light".into(),
+        ThemeDefinition {
+            background: "#dae7ef".into(),
+            foreground: "#264050".into(),
+            muted: "#517584".into(),
+            // 20 to 29 levels off the ground, the same faint grid the dark
+            // variant draws, carried to the other side of it.
+            whitespace: Some("#bdd0db".into()),
+            // The one role that does not mirror its counterpart's contrast.
+            // Dimmed text has to recede behind the two-key jump labels, and
+            // the shared light labels are far softer than the shared dark
+            // ones, so this sits at 2.6:1 — where `light` and `paper` put
+            // theirs — rather than at the dark variant's 5.9:1.
+            jump_text_muted: Some("#7b929b".into()),
+            accent: "#00594c".into(),
+            // Unset: see `ocean-dark`.
+            command: None,
+            cursor_normal: None,
+            cursor_insert: Some("#004464".into()),
+            cursor_replace: Some("#742ebd".into()),
+            cursor_select: Some("#0053b1".into()),
+            cursor_command: Some("#5455d6".into()),
+            directory: Some("#0053b1".into()),
+            // The dark variant's two grounds carried across: deep water blue
+            // for ordinary ranges and the wave's teal for the primary one.
+            // These are the one pair mirrored on how far they look from the
+            // ground rather than on contrast against it — a selection is an
+            // area of colour, and the ratio that reads as a light touch on
+            // deep water reads as a heavy block on foam.
+            selection: "#8eb3cd".into(),
+            selection_primary: Some("#7fc4b5".into()),
+            fuzzy_match_secondary: None,
+            fuzzy_match_primary: None,
+            status_background: "#ccdde7".into(),
+            status_foreground: "#264050".into(),
+            error: ocean_light_red.into(),
+            warning: Some("#5d3400".into()),
+            info: Some("#005845".into()),
+            jump_label_immediate: Some(ocean_light_red.into()),
+            jump_label_primary: JUMP_LABEL_LIGHT_PRIMARY.into(),
+            jump_label_secondary: JUMP_LABEL_LIGHT_SECONDARY.into(),
+            change_added: Some(CHANGE_ADDED_LIGHT.into()),
+            change_modified: Some(CHANGE_MODIFIED_LIGHT.into()),
+            change_removed: Some(CHANGE_REMOVED_LIGHT.into()),
+            diff_added: Some(DIFF_ADDED_LIGHT.into()),
+            diff_removed: Some(DIFF_REMOVED_LIGHT.into()),
+            diff_changed: Some(DIFF_CHANGED_LIGHT.into()),
+            // The dark variant's six, role for role, at the same distance from
+            // this ground as they sit from the other.
+            syntax: syntax_theme(&[
+                ("attribute", "#00594c"),
+                ("comment", "#517584"),
+                ("constant", "#742ebd"),
+                ("constructor", "#0053b1"),
+                ("function", "#0053b1"),
+                ("keyword", "#00594c"),
+                ("label", "#742ebd"),
+                ("namespace", "#005670"),
+                ("number", "#742ebd"),
+                ("operator", "#264050"),
+                ("property", "#264050"),
+                ("punctuation", "#517584"),
+                ("string", "#005845"),
+                ("tag", "#00594c"),
+                ("type", "#005670"),
+                ("variable", "#264050"),
+            ]),
+        },
+    );
+    // A near-black ground under a red frame and a cyan interior, taken from
+    // the shape of a heads-up game menu rather than from a syntax palette:
+    // red draws the structure a reader looks along, cyan marks what they act
+    // on, and one acid green is spent on the third thing worth finding.
+    //
+    // Its text sits at 9.7:1 rather than the 8.6:1 the `ocean` pair uses.
+    // That is not a different decision about glare — ordinary text is very
+    // nearly the same brightness in both, and the ratio is larger only
+    // because this ground is darker. It cannot be smaller: Runyte's shared
+    // `diff_added` ground is what ordinary text has to stay legible on, and
+    // on a ground this dark that floor lands at 9.4:1 on its own. The hues
+    // stay below the text, so nothing on screen outshines what is being read.
+    //
+    // The crimson is the one colour here that cannot be brightened into the
+    // band the others share. A saturated red is simply darker than a
+    // saturated cyan, and lightening it turns it pink and takes the frame
+    // with it, so it stays at 5.3:1 and is used where its weight is wanted:
+    // borders, keywords, tags, errors, and the one-key jump label
+    // `built_in_jump_labels_are_red_and_one_neon_cyan_hue` requires to be red.
+    // The two-key labels are the shared neon cyan, which this palette was
+    // going to spend anyway.
+    let neon_crimson = "#ff3b52";
+    let neon_cyan = "#22c8bd";
+    themes.insert(
+        "neon".into(),
+        ThemeDefinition {
+            background: "#0a141a".into(),
+            foreground: "#afbec4".into(),
+            muted: "#5c7783".into(),
+            // Named rather than derived, and hued rather than gray: 12 to 20
+            // levels off the ground, keeping its blue cast.
+            whitespace: Some("#16262e".into()),
+            // Dimmed text sits below the neon cyan of the two-key jump labels
+            // it has to recede behind, stays above 3:1 on both selection
+            // grounds, and reads 1.65:1 below ordinary text.
+            jump_text_muted: Some("#7b95a0".into()),
+            accent: neon_crimson.into(),
+            // Unset: only the branded pair splits the palette's command names
+            // off the accent. The red frame keeps both here, and cyan marks
+            // what is actionable through directories and the Insert caret
+            // instead.
+            command: None,
+            // Normal is unset, so the resting caret is the frame's own red.
+            // The rest are the palette's other three colours, and Replace is
+            // the magenta `default_replace_color` asks for once a mode reads
+            // as green — which both the cyan and the acid do.
+            cursor_normal: None,
+            cursor_insert: Some(neon_cyan.into()),
+            cursor_replace: Some("#ff4de0".into()),
+            cursor_select: Some("#7fbf18".into()),
+            cursor_command: Some("#4d9fff".into()),
+            directory: Some(neon_cyan.into()),
+            // The primary range answers the Select caret above it: the caret
+            // is the acid green, and the ground under the range it marks is
+            // the same green banked down to a ground. That has to be kept
+            // clear of Runyte's shared added-row green, which is a deep
+            // green as well; the two are told apart by being at opposite
+            // ends of the greens, this one yellow and that one blue, and
+            // sit 23 CIE76 points apart because of it. The same trap cost
+            // the obvious first choice for this role: a deep red echoing the
+            // frame landed three points from the shared deleted-row ground,
+            // which would have made a selected range and a deleted line look
+            // alike.
+            //
+            // Ordinary ranges stay blue and stand well off the ground. Both
+            // are as saturated as the dimmed text drawn on them allows: that
+            // text has to clear 3:1 on either, which caps both grounds at
+            // 1.96:1 against the pane, and these sit just under it.
+            selection: "#0a4478".into(),
+            selection_primary: Some("#354a06".into()),
+            fuzzy_match_secondary: None,
+            fuzzy_match_primary: None,
+            status_background: "#0f1c24".into(),
+            status_foreground: "#afbec4".into(),
+            error: neon_crimson.into(),
+            warning: Some("#7fbf18".into()),
+            info: Some(neon_cyan.into()),
+            jump_label_immediate: Some(neon_crimson.into()),
+            jump_label_primary: JUMP_LABEL_DARK_PRIMARY.into(),
+            jump_label_secondary: JUMP_LABEL_DARK_SECONDARY.into(),
+            change_added: Some(CHANGE_ADDED_DARK.into()),
+            change_modified: Some(CHANGE_MODIFIED_DARK.into()),
+            change_removed: Some(CHANGE_REMOVED_DARK.into()),
+            diff_added: Some(DIFF_ADDED_DARK.into()),
+            diff_removed: Some(DIFF_REMOVED_DARK.into()),
+            diff_changed: Some(DIFF_CHANGED_DARK.into()),
+            // The menu's own division, read onto code: the red names the
+            // structure a reader follows — keywords and tags — and the cyan
+            // names what they would act on, which for code is the calls. The
+            // blue and the magenta carry the two remaining families, types
+            // and literals, and the acid green carries strings, which is the
+            // only place a whole span of it appears at once. Through
+            // `syntax_theme`'s derived roles that puts Markdown headings on
+            // the cyan, inline code and link URLs on the acid green, and bold
+            // and list text on the red.
+            syntax: syntax_theme(&[
+                ("attribute", "#ff4de0"),
+                ("comment", "#5c7783"),
+                ("constant", "#ff4de0"),
+                ("constructor", "#22c8bd"),
+                ("function", "#22c8bd"),
+                ("keyword", "#ff3b52"),
+                ("label", "#ff4de0"),
+                ("namespace", "#4d9fff"),
+                ("number", "#ff4de0"),
+                ("operator", "#afbec4"),
+                ("property", "#afbec4"),
+                ("punctuation", "#5c7783"),
+                ("string", "#7fbf18"),
+                ("tag", "#ff3b52"),
+                ("type", "#4d9fff"),
+                ("variable", "#afbec4"),
             ]),
         },
     );
