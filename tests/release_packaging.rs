@@ -326,9 +326,10 @@ fn cwd_file_option_still_works_though_undocumented() {
 
 #[test]
 fn documented_shell_wrapper_avoids_zsh_read_only_parameters() {
-    let readme =
-        fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md")).unwrap();
-    assert!(readme.contains("local runyte_tmp runyte_cwd runyte_exit"));
-    assert!(!readme.contains("local tmp cwd status"));
-    assert!(!readme.contains("status=$?"));
+    let guide =
+        fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("docs/user-guide.md"))
+            .unwrap();
+    assert!(guide.contains("local runyte_tmp runyte_cwd runyte_exit"));
+    assert!(!guide.contains("local tmp cwd status"));
+    assert!(!guide.contains("status=$?"));
 }
