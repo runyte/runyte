@@ -1862,6 +1862,7 @@ mod tests {
             "macchiato",
             "matrix",
             "mocha",
+            "neon",
             "nordfox",
             "nordfox-warm",
             "terafox",
@@ -2058,6 +2059,7 @@ mod tests {
                 "mocha",
                 "neobones-dark",
                 "neobones-light",
+                "neon",
                 "nordbones-dark",
                 "nordbones-dark-soft",
                 "nordfox",
@@ -2517,6 +2519,128 @@ mod tests {
         assert_eq!(light.cursor_select, Color::Rgb(0x00, 0x53, 0xb1));
         assert_eq!(light.cursor_command, Color::Rgb(0x54, 0x55, 0xd6));
         assert_eq!(light.cursor_replace, Color::Rgb(0x74, 0x2e, 0xbd));
+    }
+
+    /// `neon` is a structure before it is a set of colours: a red frame, a
+    /// cyan interior, and one acid green for the third thing worth finding.
+    /// The parts of that a later palette edit could quietly lose are that
+    /// nothing outshines the text being read, that the crimson is allowed to
+    /// sit below the band the other hues share, and that the primary
+    /// selection stays clear of the shared deleted-row ground it was very
+    /// nearly the same colour as.
+    #[test]
+    fn neon_keeps_its_red_frame_below_a_cyan_interior() {
+        fn contrast(left: Color, right: Color) -> f64 {
+            let left = left.relative_luminance().unwrap();
+            let right = right.relative_luminance().unwrap();
+            (left.max(right) + 0.05) / (left.min(right) + 0.05)
+        }
+
+        fn perceptual_distance(left: Color, right: Color) -> f64 {
+            fn lab(color: Color) -> [f64; 3] {
+                let (red, green, blue) = color.channels().unwrap();
+                let channel = |value: u8| {
+                    let value = f64::from(value) / 255.0;
+                    if value <= 0.03928 {
+                        value / 12.92
+                    } else {
+                        ((value + 0.055) / 1.055).powf(2.4)
+                    }
+                };
+                let (red, green, blue) = (channel(red), channel(green), channel(blue));
+                let transfer = |value: f64| {
+                    if value > 0.008_856 {
+                        value.cbrt()
+                    } else {
+                        7.787 * value + 16.0 / 116.0
+                    }
+                };
+                let x = transfer((0.4124 * red + 0.3576 * green + 0.1805 * blue) / 0.95047);
+                let y = transfer(0.2126 * red + 0.7152 * green + 0.0722 * blue);
+                let z = transfer((0.0193 * red + 0.1192 * green + 0.9505 * blue) / 1.08883);
+                [116.0 * y - 16.0, 500.0 * (x - y), 200.0 * (y - z)]
+            }
+
+            let (left, right) = (lab(left), lab(right));
+            left.iter()
+                .zip(right)
+                .map(|(left, right)| (left - right).powi(2))
+                .sum::<f64>()
+                .sqrt()
+        }
+
+        let config = Config::default();
+        let theme = config.resolve_theme("neon").unwrap();
+        let scope = |name: &str| theme.syntax_color(crate::syntax::Scope::named(name).unwrap());
+        assert_eq!(theme.appearance(), Some(ThemeAppearance::Dark));
+
+        // The frame is red and carries the structure: the accent behind the
+        // pane borders, the keywords and tags, the errors, and the resting
+        // caret, which is unset so that it stays on the accent.
+        let crimson = Color::Rgb(0xff, 0x3b, 0x52);
+        assert_eq!(theme.accent, crimson);
+        assert_eq!(theme.cursor_normal, crimson);
+        assert_eq!(theme.error, crimson);
+        assert_eq!(theme.jump_label_immediate, crimson);
+        assert_eq!(scope("keyword"), Some(crimson));
+        assert_eq!(scope("tag"), Some(crimson));
+
+        // The interior is cyan and marks what a reader would act on.
+        let cyan = Color::Rgb(0x22, 0xc8, 0xbd);
+        assert_eq!(theme.directory, cyan);
+        assert_eq!(theme.cursor_insert, cyan);
+        assert_eq!(scope("function"), Some(cyan));
+        assert_eq!(
+            scope("markup.heading"),
+            Some(cyan),
+            "headings follow calls onto the cyan"
+        );
+
+        // Nothing on screen outshines the text being read.
+        let text = contrast(theme.foreground, theme.background);
+        for name in crate::syntax::SCOPES {
+            let hue = contrast(scope(name).unwrap(), theme.background);
+            assert!(hue <= text, "neon {name} outshines ordinary text: {hue}");
+        }
+
+        // The crimson is the one colour that stays below the band the rest
+        // share. A saturated red is darker than a saturated cyan, and
+        // lightening it into the band turns it pink and takes the frame with
+        // it, so it is left where it is and spent on weight instead.
+        let frame = contrast(crimson, theme.background);
+        assert!(
+            (5.0..6.0).contains(&frame),
+            "the frame should keep its red rather than being lightened: {frame}"
+        );
+        for name in ["function", "string", "type", "number"] {
+            assert!(
+                contrast(scope(name).unwrap(), theme.background) > frame,
+                "{name} should sit above the frame in the band"
+            );
+        }
+
+        // Replace is the magenta `default_replace_color` asks for once a mode
+        // reads as green, which both the cyan Insert and the acid Select do.
+        assert!(Theme::is_green_hued(theme.cursor_insert));
+        assert!(Theme::is_green_hued(theme.cursor_select));
+        assert_eq!(theme.cursor_replace, Color::Rgb(0xff, 0x4d, 0xe0));
+
+        // The primary selection is deep magenta rather than the deep red the
+        // frame would suggest, because Runyte's shared deleted-row ground is
+        // a deep red too and the two would have been indistinguishable.
+        assert!(
+            perceptual_distance(theme.selection_primary, theme.diff_removed.unwrap()) >= 18.0,
+            "a selected range and a deleted line should not look alike"
+        );
+        assert!(
+            perceptual_distance(theme.selection_primary, theme.background)
+                > perceptual_distance(theme.selection, theme.background),
+            "the primary range should be the one that stands out"
+        );
+        for ground in [theme.selection, theme.selection_primary] {
+            assert!(contrast(theme.foreground, ground) >= 4.5);
+            assert!(contrast(theme.jump_text_muted, ground) >= 3.0);
+        }
     }
 
     #[test]

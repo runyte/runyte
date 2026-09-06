@@ -3426,7 +3426,7 @@ read from the file only; it is not written by the `[config]` buffer.
 
 Built-in themes are `ocean-dark` (the default) and `ocean-light`,
 `ember-dark`, `ember-light`, `dark`, `light`,
-`base16`, `paper`, `gruvbox`, `matrix`,
+`base16`, `paper`, `gruvbox`, `matrix`, `neon`,
 `atom-one-light`, `github-light`, all four
 Catppuccin flavours (`latte`, `frappe`, `macchiato`, and `mocha`), and the six
 Everforest variants (`everforest-dark-hard`, `everforest-dark-medium`,
@@ -3486,6 +3486,20 @@ because the turquoise Normal already reads as green. Two warm colours survive
 the discipline because the interface cannot afford to lose them in the water:
 the error red, which the one-key jump label shares, and the amber a warning is
 drawn in, alongside the Git gutter and diff grounds every bundled theme shares.
+`neon` is a near-black ground under a red frame and a cyan interior, taken
+from the shape of a heads-up game menu rather than from a syntax palette: red
+draws the structure a reader follows, so it colours pane borders, keywords,
+tags, errors and the resting caret; cyan marks what they would act on, so it
+colours calls, directories and the Insert caret; and one acid green is spent on
+the third thing worth finding, which for code is strings. Its text reads at
+9.7:1, which is not a different decision about glare from the `ocean` pair's
+8.6:1 — ordinary text is very nearly the same brightness in both, and the ratio
+is larger only because the ground is darker. The red is the one colour left
+below the band the others share: a saturated red is darker than a saturated
+cyan, and lightening it into that band turns it pink and takes the frame with
+it, so it keeps its weight instead. The primary selection is deep magenta
+rather than the deep red the frame would suggest, because Runyte's shared
+deleted-row ground is a deep red and the two would have looked alike.
 `ember-dark` and `ember-light` are Runyte's branded pair, named for the red
 they carry on an otherwise neutral gray ground rather than for being what
 Runyte starts in. They share red

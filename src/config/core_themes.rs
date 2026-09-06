@@ -719,5 +719,110 @@ pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
             ]),
         },
     );
+    // A near-black ground under a red frame and a cyan interior, taken from
+    // the shape of a heads-up game menu rather than from a syntax palette:
+    // red draws the structure a reader looks along, cyan marks what they act
+    // on, and one acid green is spent on the third thing worth finding.
+    //
+    // Its text sits at 9.7:1 rather than the 8.6:1 the `ocean` pair uses.
+    // That is not a different decision about glare — ordinary text is very
+    // nearly the same brightness in both, and the ratio is larger only
+    // because this ground is darker. It cannot be smaller: Runyte's shared
+    // `diff_added` ground is what ordinary text has to stay legible on, and
+    // on a ground this dark that floor lands at 9.4:1 on its own. The hues
+    // stay below the text, so nothing on screen outshines what is being read.
+    //
+    // The crimson is the one colour here that cannot be brightened into the
+    // band the others share. A saturated red is simply darker than a
+    // saturated cyan, and lightening it turns it pink and takes the frame
+    // with it, so it stays at 5.3:1 and is used where its weight is wanted:
+    // borders, keywords, tags, errors, and the one-key jump label
+    // `built_in_jump_labels_are_red_and_one_neon_cyan_hue` requires to be red.
+    // The two-key labels are the shared neon cyan, which this palette was
+    // going to spend anyway.
+    let neon_crimson = "#ff3b52";
+    let neon_cyan = "#22c8bd";
+    themes.insert(
+        "neon".into(),
+        ThemeDefinition {
+            background: "#0a141a".into(),
+            foreground: "#afbec4".into(),
+            muted: "#5c7783".into(),
+            // Named rather than derived, and hued rather than gray: 12 to 20
+            // levels off the ground, keeping its blue cast.
+            whitespace: Some("#16262e".into()),
+            // Dimmed text sits below the neon cyan of the two-key jump labels
+            // it has to recede behind, stays above 3:1 on both selection
+            // grounds, and reads 1.65:1 below ordinary text.
+            jump_text_muted: Some("#7b95a0".into()),
+            accent: neon_crimson.into(),
+            // Unset: only the branded pair splits the palette's command names
+            // off the accent. The red frame keeps both here, and cyan marks
+            // what is actionable through directories and the Insert caret
+            // instead.
+            command: None,
+            // Normal is unset, so the resting caret is the frame's own red.
+            // The rest are the palette's other three colours, and Replace is
+            // the magenta `default_replace_color` asks for once a mode reads
+            // as green — which both the cyan and the acid do.
+            cursor_normal: None,
+            cursor_insert: Some(neon_cyan.into()),
+            cursor_replace: Some("#ff4de0".into()),
+            cursor_select: Some("#7fbf18".into()),
+            cursor_command: Some("#4d9fff".into()),
+            directory: Some(neon_cyan.into()),
+            // Deep teal for ordinary ranges and deep magenta for the primary
+            // one, which is the range a reader is hunting for. The obvious
+            // choice for the primary was a deep red, echoing the frame, and
+            // it is not used: Runyte's shared `diff_removed` row is a deep
+            // red too, and the two landed three CIE76 points apart, which
+            // would have made a selected range and a deleted line look alike.
+            selection: "#14444c".into(),
+            selection_primary: Some("#591b4a".into()),
+            fuzzy_match_secondary: None,
+            fuzzy_match_primary: None,
+            status_background: "#0f1c24".into(),
+            status_foreground: "#afbec4".into(),
+            error: neon_crimson.into(),
+            warning: Some("#7fbf18".into()),
+            info: Some(neon_cyan.into()),
+            jump_label_immediate: Some(neon_crimson.into()),
+            jump_label_primary: JUMP_LABEL_DARK_PRIMARY.into(),
+            jump_label_secondary: JUMP_LABEL_DARK_SECONDARY.into(),
+            change_added: Some(CHANGE_ADDED_DARK.into()),
+            change_modified: Some(CHANGE_MODIFIED_DARK.into()),
+            change_removed: Some(CHANGE_REMOVED_DARK.into()),
+            diff_added: Some(DIFF_ADDED_DARK.into()),
+            diff_removed: Some(DIFF_REMOVED_DARK.into()),
+            diff_changed: Some(DIFF_CHANGED_DARK.into()),
+            // The menu's own division, read onto code: the red names the
+            // structure a reader follows — keywords and tags — and the cyan
+            // names what they would act on, which for code is the calls. The
+            // blue and the magenta carry the two remaining families, types
+            // and literals, and the acid green carries strings, which is the
+            // only place a whole span of it appears at once. Through
+            // `syntax_theme`'s derived roles that puts Markdown headings on
+            // the cyan, inline code and link URLs on the acid green, and bold
+            // and list text on the red.
+            syntax: syntax_theme(&[
+                ("attribute", "#ff4de0"),
+                ("comment", "#5c7783"),
+                ("constant", "#ff4de0"),
+                ("constructor", "#22c8bd"),
+                ("function", "#22c8bd"),
+                ("keyword", "#ff3b52"),
+                ("label", "#ff4de0"),
+                ("namespace", "#4d9fff"),
+                ("number", "#ff4de0"),
+                ("operator", "#afbec4"),
+                ("property", "#afbec4"),
+                ("punctuation", "#5c7783"),
+                ("string", "#7fbf18"),
+                ("tag", "#ff3b52"),
+                ("type", "#4d9fff"),
+                ("variable", "#afbec4"),
+            ]),
+        },
+    );
     themes.into_iter()
 }

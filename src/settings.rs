@@ -1435,6 +1435,7 @@ mod tests {
                 "mocha",
                 "neobones-dark",
                 "neobones-light",
+                "neon",
                 "nordbones-dark",
                 "nordbones-dark-soft",
                 "nordfox",
