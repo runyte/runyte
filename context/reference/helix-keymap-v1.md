@@ -249,7 +249,9 @@ its one command that needs a pane showing a terminal reports that itself, and
 `Space t s` is meant to be reached from a pane that is showing a document.
 
 Mouse input is grammar-independent application input rather than a hidden key
-binding table. Left click focuses/places, Shift-click extends, left drag
+binding table. Left click on a session-strip entry switches to that running
+persistent session, including unnumbered sessions, through the same guarded
+attachment path as keyboard navigation. Left click in a pane focuses/places, Shift-click extends, left drag
 selects, wheel events scroll the pane under the pointer, and a drag on a shared
 border resizes that split. Right click over any current selection runs the
 system-clipboard yank for all current selections without moving them and

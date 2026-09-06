@@ -54,6 +54,7 @@ pub mod protocol;
 pub mod row_hints;
 pub mod selection;
 pub mod service_health;
+mod session_strip;
 pub mod settings;
 pub mod snapshot;
 pub mod startup;

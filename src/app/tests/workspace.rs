@@ -3484,3 +3484,179 @@ fn session_inventory_back_restores_session_identity_after_catalog_reorder() {
     ));
     assert_eq!(app.list.as_ref().unwrap().selected, 0);
 }
+
+#[cfg(unix)]
+fn clickable_session_strip() -> (App, FrameGeometry, PointerEvent) {
+    let mut app = App::new(Config::default(), None).unwrap();
+    app.enable_persistent_session();
+    app.workspace_rows = vec![
+        navigation_row(app.project_root.clone(), true, Some(1)),
+        navigation_row(temporary("strip-stopped"), false, Some(2)),
+        navigation_row(temporary("strip-click-target"), true, None),
+    ];
+    app.workspace_rows[0].name = Some("home".to_owned());
+    app.workspace_rows[2].name = Some("界e\u{301}".to_owned());
+    let geometry = FrameGeometry {
+        screen: Rect {
+            x: 3,
+            y: 2,
+            width: 40,
+            height: 10,
+        },
+        editor: Rect {
+            x: 3,
+            y: 2,
+            width: 40,
+            height: 8,
+        },
+        status: Rect::default(),
+        message: Rect::default(),
+    };
+    let click = PointerEvent {
+        kind: PointerEventKind::Down(PointerButton::Left),
+        column: 15,
+        row: 2,
+        modifiers: Modifiers::NONE,
+    };
+    (app, geometry, click)
+}
+
+#[cfg(unix)]
+#[test]
+fn session_strip_click_selects_visible_identity_in_all_editing_modes() {
+    let (mut app, geometry, click) = clickable_session_strip();
+    let target = app.workspace_rows[2].project_root.clone();
+    let view = app.prepare_view(geometry);
+    let selection = app.active().selection.clone();
+    // " 1 home · " takes 10 cells. Every cell of " 界é · ",
+    // including both cells of 界, belongs to the unnumbered running host.
+    for mode in [Mode::Normal, Mode::Select, Mode::Insert, Mode::Replace] {
+        app.mode = mode;
+        for column in 13..20 {
+            app.handle_pointer(PointerEvent { column, ..click }, &view)
+                .unwrap();
+            let request = app.take_workspace_switch().unwrap();
+            assert_eq!(request.selector, target);
+            assert!(request.running_only);
+            assert_eq!(app.mode, mode);
+            assert_eq!(app.active().selection, selection);
+            assert!(app.pointer_drag.is_none());
+        }
+    }
+    // A catalog refresh after preparation must not retarget the visible label.
+    app.workspace_rows[2] = navigation_row(temporary("replacement-host"), true, None);
+    app.handle_pointer(click, &view).unwrap();
+    assert_eq!(app.take_workspace_switch().unwrap().selector, target);
+    assert_eq!(
+        app.snapshot(&view).session_strip.unwrap().entries[1].name,
+        "界e\u{301}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn session_strip_ignores_current_padding_other_buttons_and_owned_input() {
+    let (mut app, geometry, click) = clickable_session_strip();
+    let view = app.prepare_view(geometry);
+    for column in [2, 3, 12, 20, 42, 43] {
+        app.handle_pointer(PointerEvent { column, ..click }, &view)
+            .unwrap();
+        assert!(app.take_workspace_switch().is_none(), "column {column}");
+    }
+    for kind in [
+        PointerEventKind::Down(PointerButton::Right),
+        PointerEventKind::Down(PointerButton::Middle),
+        PointerEventKind::Up(PointerButton::Left),
+        PointerEventKind::Drag(PointerButton::Left),
+        PointerEventKind::ScrollUp,
+        PointerEventKind::ScrollDown,
+        PointerEventKind::Moved,
+    ] {
+        app.handle_pointer(PointerEvent { kind, ..click }, &view)
+            .unwrap();
+        assert!(app.take_workspace_switch().is_none());
+    }
+    app.mode = Mode::Command;
+    app.command = "write".to_owned();
+    app.handle_pointer(click, &view).unwrap();
+    assert!(app.take_workspace_switch().is_none());
+    assert_eq!(app.command, "write");
+    app.mode = Mode::Normal;
+    open_session_manager_for_refresh(&mut app);
+    app.handle_pointer(click, &view).unwrap();
+    assert!(app.take_workspace_switch().is_none());
+    assert!(app.list.is_some());
+}
+
+#[cfg(unix)]
+#[test]
+fn session_strip_overflow_clicks_only_displayed_entries() {
+    let (mut app, mut geometry, click) = clickable_session_strip();
+    let mut first = navigation_row(temporary("strip-first"), true, None);
+    first.name = Some("first".to_owned());
+    app.workspace_rows.insert(0, first);
+    geometry.editor.width = 20;
+    let view = app.prepare_view(geometry);
+    // " 1 home ·  界é ·  …1": the leading catalog entry was omitted.
+    app.handle_pointer(click, &view).unwrap();
+    assert_eq!(
+        app.take_workspace_switch().unwrap().selector,
+        app.workspace_rows[3].project_root
+    );
+    for column in 20..23 {
+        app.handle_pointer(PointerEvent { column, ..click }, &view)
+            .unwrap();
+        assert!(app.take_workspace_switch().is_none());
+    }
+    for width in [0, 1, 2, 5] {
+        geometry.editor.width = width;
+        let view = app.prepare_view(geometry);
+        for column in 3..24 {
+            app.handle_pointer(PointerEvent { column, ..click }, &view)
+                .unwrap();
+            assert!(app.take_workspace_switch().is_none());
+        }
+    }
+    app.config.workspace.session_strip = crate::config::SessionStripVisibility::Hidden;
+    assert!(app.prepare_view(geometry).session_strip.is_none());
+    app.config.workspace.session_strip = crate::config::SessionStripVisibility::Always;
+    geometry.editor.height = 0;
+    assert!(app.prepare_view(geometry).session_strip.is_none());
+}
+
+#[cfg(unix)]
+#[test]
+fn session_strip_host_rejects_clicks_from_frames_with_replaced_identities() {
+    use crate::workspace::{HostCommand, HostInputOutcome, WorkspaceHost};
+    let (app, geometry, click) = clickable_session_strip();
+    let mut host = WorkspaceHost::new(app);
+    let first = host.prepare_frame(geometry);
+    let target = host.app().workspace_rows[2].project_root.clone();
+    // Even identical labels and geometry must not make distinct hosts compatible.
+    host.app_mut().workspace_rows[2].project_root = temporary("strip-replaced-host");
+    host.prepare_frame(geometry);
+    assert_eq!(
+        host.execute(HostCommand::Pointer {
+            event: click,
+            frame: first.id,
+            repetitions: 1
+        })
+        .unwrap(),
+        HostInputOutcome::IgnoredStaleFrame
+    );
+    assert!(host.app_mut().take_workspace_switch().is_none());
+    host.app_mut().workspace_rows[2].project_root = target.clone();
+    let current = host.prepare_frame(geometry);
+    assert_eq!(
+        host.execute(HostCommand::Pointer {
+            event: click,
+            frame: current.id,
+            repetitions: 1
+        })
+        .unwrap(),
+        HostInputOutcome::Applied
+    );
+    let request = host.app_mut().take_workspace_switch().unwrap();
+    assert_eq!(request.selector, target);
+    assert!(request.running_only);
+}

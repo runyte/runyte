@@ -723,7 +723,10 @@ Shift-Left/Right, release or change those tmux bindings so Runyte receives them.
 
 The **session strip** sits above the editor area. `workspace.session_strip` accepts
 `auto` (show with multiple running sessions), `always`, or `hidden`. Zen hides
-it. Entries retain manager numbering and names; overflow keeps the current
+it. Left-click an entry to switch to that running persistent session, including
+unnumbered sessions. Clicking the current entry, empty strip space, or the
+overflow count does nothing. Prompts and overlays retain input ownership.
+Entries retain manager numbering and names; overflow keeps the current
 entry visible and reports the number omitted as a trailing `…N`. Every entry
 carries exactly one state marker, so a name occupies the same cells whatever
 its session is doing: `?` for unknown health, `!` for a terminal bell, `+` for

@@ -1277,15 +1277,39 @@ impl App {
         }
     }
 
-    pub(super) fn reserve_session_strip(
+    pub(super) fn prepare_session_strip(
         &self,
         mut geometry: super::FrameGeometry,
-    ) -> super::FrameGeometry {
-        if self.session_strip_snapshot().is_some() && geometry.editor.height > 0 {
+    ) -> (
+        super::FrameGeometry,
+        Option<crate::session_strip::PreparedSessionStrip>,
+    ) {
+        let strip = self
+            .session_strip_snapshot()
+            .filter(|_| geometry.editor.height > 0)
+            .map(|snapshot| {
+                #[cfg(unix)]
+                let targets = {
+                    let mut targets = self
+                        .workspace_rows
+                        .iter()
+                        .filter(|row| row.running)
+                        .map(|row| row.project_root.clone())
+                        .collect::<Vec<_>>();
+                    if !targets.contains(&self.project_root) {
+                        targets.push(self.project_root.clone());
+                    }
+                    targets
+                };
+                #[cfg(not(unix))]
+                let targets = Vec::new();
+                crate::session_strip::PreparedSessionStrip { snapshot, targets }
+            });
+        if strip.is_some() {
             geometry.editor.y = geometry.editor.y.saturating_add(1);
             geometry.editor.height -= 1;
         }
-        geometry
+        (geometry, strip)
     }
 
     pub fn session_strip_snapshot(&self) -> Option<crate::snapshot::SessionStripSnapshot> {

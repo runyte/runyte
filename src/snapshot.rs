@@ -584,7 +584,10 @@ impl App {
             });
         EditorSnapshot {
             geometry: prepared.geometry,
-            session_strip: self.session_strip_snapshot(),
+            session_strip: prepared
+                .session_strip
+                .as_ref()
+                .map(|strip| strip.snapshot.clone()),
             theme: self.theme.clone(),
             mode: self.mode,
             panes,

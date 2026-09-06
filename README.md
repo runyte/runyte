@@ -292,8 +292,8 @@ from what the keys do.
 
 `Space n` (or `Ctrl-w n`, including Terminal Insert) navigates open buffers and
 terminals. In persistent mode, Shift-Left/Right switches running sessions; the
-quiet session strip shows their names. `Space 1`–`Space 9` jump directly to
-numbered sessions. `Space Space` opens the session manager, with Ctrl-o to open
+quiet session strip shows their names and lets you switch with a left click.
+`Space 1`–`Space 9` jump directly to numbered sessions. `Space Space` opens the session manager, with Ctrl-o to open
 another directory. Closing the last pane with `:q` stops that persistent session
 and returns to a previous running session; `:detach` returns to the shell. In an integrated shell, `runyte -a`
 switches the outer TUI to that shell's directory, and `runyte --wait <file>`

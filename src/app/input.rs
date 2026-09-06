@@ -628,6 +628,26 @@ impl App {
                 // A pointer press cancels any modal prefix/operator/register
                 // state before it establishes a new spatial interaction.
                 self.grammar.reset();
+                if let Some(strip) = &view.session_strip
+                    && event.row.checked_add(1) == Some(view.geometry.editor.y)
+                    && event.column >= view.geometry.editor.x
+                {
+                    self.pointer_drag = None;
+                    let column = usize::from(event.column - view.geometry.editor.x);
+                    if let Some(label) = strip
+                        .snapshot
+                        .layout(view.geometry.editor.width)
+                        .entries
+                        .iter()
+                        .find(|label| label.cells.contains(&column))
+                        && let Some(path) = strip.targets.get(label.index)
+                        && path != &self.project_root
+                        && self.request_workspace_switch(path.clone())
+                    {
+                        self.workspace_switch.as_mut().unwrap().running_only = true;
+                    }
+                    return Ok(PointerOutcome::Changed);
+                }
                 if let Some((first, second, axis)) =
                     pointer_resize_pair(view, event.column, event.row)
                 {

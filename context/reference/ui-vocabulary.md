@@ -398,6 +398,11 @@ zen hides it. Entries are running persistent-session identities in manager
 order, with optional number, stable name, current emphasis and a trailing
 `…N` count of omitted entries, which elides rather than adds so that it stays
 distinct from an entry's own `+` marker. Unnumbered hosts remain eligible.
+Left-clicking a visible entry switches to its running persistent session; the
+current entry, unused space, and overflow count are inert. Prompts and overlays
+retain input ownership. Labels and hit bounds share one cell layout, and the
+prepared frame retains the target identity so refreshed rows cannot redirect
+a click.
 Unread and bell attention follow terminal viewing acknowledgments; unknown
 health does not mean stopped.
 Every entry renders exactly one state marker, keeping entry widths stable

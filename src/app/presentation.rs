@@ -257,7 +257,7 @@ impl App {
     /// This is the only frame lifecycle step allowed to mutate view state.
     /// Rendering consumes the returned owned values and an immutable `App`.
     pub fn prepare_view(&mut self, geometry: FrameGeometry) -> PreparedView {
-        let geometry = self.reserve_session_strip(geometry);
+        let (geometry, session_strip) = self.prepare_session_strip(geometry);
         self.pace_picker_progress();
         self.flush_lsp_replies();
         self.sync_word_index();
@@ -590,6 +590,7 @@ impl App {
 
         self.settle_diff_scroll(&mut prepared);
         PreparedView {
+            session_strip,
             geometry,
             panes: prepared,
         }

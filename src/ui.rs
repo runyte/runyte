@@ -659,98 +659,25 @@ fn draw_session_strip(frame: &mut Frame<'_>, theme: &TuiTheme, snapshot: &Editor
         return;
     }
     let area = TuiRect::new(editor.x, editor.y - 1, editor.width, 1);
-    let labels = strip
+    let layout = strip.layout(area.width);
+    let mut spans = layout
         .entries
-        .iter()
-        .map(|entry| {
-            let number = entry
-                .number
-                .map_or_else(String::new, |number| format!("{number} "));
-            // Every entry carries a marker, quiet included, so a session's
-            // width never changes with its state and the names stay put.
-            format!(
-                " {number}{} {} ",
-                entry.name,
-                if entry.health_unknown {
-                    '?'
-                } else if entry.bell {
-                    '!'
-                } else if entry.unread {
-                    '+'
-                } else {
-                    '·'
-                }
-            )
-        })
-        .collect::<Vec<_>>();
-    let widths = labels
-        .iter()
-        .map(|label| UnicodeWidthStr::width(label.as_str()))
-        .collect::<Vec<_>>();
-    let Some(current) = strip
-        .entries
-        .iter()
-        .position(|entry| entry.current)
-        .or_else(|| (!labels.is_empty()).then_some(0))
-    else {
-        return;
-    };
-    let width = usize::from(area.width);
-    // The count of omitted entries elides rather than adds: `+` is an entry's
-    // own unread marker, so a strip ending in `+3` would read as a session
-    // named 3 with new output. The reserve measures the exact string the
-    // trailing span will draw, in cells rather than bytes.
-    let omitted = |hidden: usize| format!(" …{hidden}");
-    let reserve = if labels.len() > 1 {
-        UnicodeWidthStr::width(omitted(labels.len() - 1).as_str())
-    } else {
-        0
-    };
-    let all_fit = widths.iter().sum::<usize>() <= width;
-    // Identity wins on tiny terminals. An overflow count cannot replace the
-    // current session, and padding must not consume its only available cell.
-    let narrow = !all_fit && widths[current] + reserve > width;
-    let budget = if all_fit {
-        width
-    } else {
-        width.saturating_sub(reserve)
-    };
-    let mut start = if all_fit { 0 } else { current };
-    let mut end = if all_fit { labels.len() } else { current + 1 };
-    let mut used = widths[current];
-    if !all_fit && !narrow {
-        while start > 0 && used + widths[start - 1] <= budget {
-            start -= 1;
-            used += widths[start];
-        }
-        while end < labels.len() && used + widths[end] <= budget {
-            used += widths[end];
-            end += 1;
-        }
-    }
-    let hidden = labels.len() - (end - start);
-    let spans = (start..end)
-        .map(|index| {
+        .into_iter()
+        .map(|label| {
             Span::styled(
-                if narrow {
-                    labels[index].trim_start().to_owned()
-                } else {
-                    labels[index].clone()
-                },
-                if strip.entries[index].current {
+                label.text,
+                if strip.entries[label.index].current {
                     Style::default().fg(theme.accent).bg(theme.selection).bold()
                 } else {
                     Style::default().fg(theme.muted)
                 },
             )
         })
-        .collect();
-    let trailing = (hidden > 0 && !narrow)
-        .then(|| Span::styled(omitted(hidden), Style::default().fg(theme.muted)));
-    frame.render_widget(
-        Paragraph::new(fit_row_with_trailing(spans, trailing, width, None)),
-        area,
-    );
+        .collect::<Vec<_>>();
+    if let Some(trailing) = layout.trailing {
+        spans.push(Span::styled(trailing, Style::default().fg(theme.muted)));
+    }
+    frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
 fn draw_setting_prompt(frame: &mut Frame<'_>, app: &TuiApp<'_>, editor_area: Rect) {

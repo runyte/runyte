@@ -377,6 +377,7 @@ impl PreparedRow {
 /// Owned result of preparing all pane viewports for one frame.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PreparedView {
+    pub(crate) session_strip: Option<crate::session_strip::PreparedSessionStrip>,
     pub geometry: FrameGeometry,
     pub panes: Vec<PreparedPane>,
 }
