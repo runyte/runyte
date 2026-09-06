@@ -3331,6 +3331,77 @@ fn session_directory_chooser_opens_exact_empty_directory_and_cancel_preserves_in
 
 #[cfg(unix)]
 #[test]
+fn session_directory_chooser_matches_beyond_the_result_limit() {
+    let root = temporary("chooser-large-directory");
+    let recent = temporary("chooser-recent-root");
+    fs::create_dir_all(&root).unwrap();
+    fs::create_dir_all(&recent).unwrap();
+    for index in 0..300 {
+        fs::create_dir(root.join(format!("destination-{index:03}"))).unwrap();
+    }
+    let mut app = App::new_in_isolated_project(
+        &root,
+        HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+            String::new(),
+        ))))),
+    )
+    .unwrap();
+    app.enable_persistent_session();
+    app.workspace_rows = vec![navigation_row(recent.clone(), true, Some(1))];
+    app.open_session_directory_chooser();
+    // Filesystem enumeration order need not follow the directory names.
+    let name = app
+        .path_listings
+        .borrow_mut()
+        .read(&root)
+        .unwrap()
+        .iter()
+        .filter(|entry| entry.is_directory)
+        .nth(299)
+        .unwrap()
+        .name
+        .clone();
+    let picker = app.list.as_ref().unwrap();
+    assert_eq!(picker.visible_indices().len(), 259);
+    assert!(
+        picker
+            .items
+            .iter()
+            .any(|item| item.detail == recent.display().to_string())
+    );
+    assert!(
+        !picker
+            .items
+            .iter()
+            .any(|item| item.label == format!("{name}/"))
+    );
+    for character in "destination-".chars() {
+        press(&mut app, character);
+    }
+    assert_eq!(app.list.as_ref().unwrap().visible_indices().len(), 256);
+    for character in name.strip_prefix("destination-").unwrap().chars() {
+        press(&mut app, character);
+    }
+    assert_eq!(
+        app.list.as_ref().unwrap().selected_item().unwrap().label,
+        format!("{name}/")
+    );
+    key(&mut app, KeyCode::Tab, Modifiers::NONE);
+    assert_eq!(
+        app.list.as_ref().unwrap().selected_item().unwrap().label,
+        "Open this directory"
+    );
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert_eq!(
+        app.take_workspace_switch().unwrap().selector,
+        root.join(name)
+    );
+    fs::remove_dir_all(root).unwrap();
+    fs::remove_dir_all(recent).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
 fn session_inventory_ignores_late_replies_and_carries_resource_identity() {
     use crate::protocol::{OpenDestination as WireDestination, OpenDestinationEntry};
     let mut app = App::new(Config::default(), None).unwrap();

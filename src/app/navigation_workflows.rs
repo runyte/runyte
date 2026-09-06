@@ -196,8 +196,9 @@ impl App {
         PickerItem::new(entry.label, entry.detail, index).with_resource(resource)
     }
 
-    /// Keep the opening order and action indices. Removing a resource cannot
-    /// make a stale selected row resolve to another resource.
+    /// Refresh metadata in the opening order with the original action indices.
+    /// Removing a resource cannot make a stale selected row resolve to another
+    /// resource.
     pub(super) fn refresh_navigator(&mut self) {
         if !self.navigator_open() {
             return;
@@ -210,10 +211,25 @@ impl App {
         let valid = self
             .open_destination_inventory()
             .into_iter()
-            .map(|entry| entry.destination)
-            .collect::<std::collections::HashSet<_>>();
+            .map(|entry| (entry.destination, entry))
+            .collect::<HashMap<_, _>>();
+        let items = self
+            .list
+            .as_ref()
+            .unwrap()
+            .items
+            .iter()
+            .filter_map(|item| {
+                let ListAction::Destination(destination) = self.list_actions.get(item.index)?
+                else {
+                    return None;
+                };
+                let entry = valid.get(destination)?;
+                Some(self.navigator_item(entry.clone(), item.index))
+            })
+            .collect();
         let picker = self.list.as_mut().unwrap();
-        picker.items.retain(|item| matches!(self.list_actions.get(item.index), Some(ListAction::Destination(destination)) if valid.contains(destination)));
+        picker.items = items;
         if selected.is_some_and(|selected| !picker.items.iter().any(|item| item.index == selected))
         {
             self.navigator_selection_lost = true;
@@ -229,14 +245,14 @@ impl App {
         if self
             .buffer_action_menu
             .as_ref()
-            .is_some_and(|menu| !valid.contains(&OpenDestination::Buffer(menu.buffer)))
+            .is_some_and(|menu| !valid.contains_key(&OpenDestination::Buffer(menu.buffer)))
         {
             self.buffer_action_menu = None;
         }
         if self
             .terminal_action_menu
             .as_ref()
-            .is_some_and(|menu| !valid.contains(&OpenDestination::Terminal(menu.id)))
+            .is_some_and(|menu| !valid.contains_key(&OpenDestination::Terminal(menu.id)))
         {
             self.terminal_action_menu = None;
         }

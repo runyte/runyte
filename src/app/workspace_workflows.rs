@@ -1032,12 +1032,14 @@ impl App {
             paths.push(parent.to_path_buf());
             labels.push(".. · parent directory".to_owned());
         }
+        let children_start = paths.len();
         if let Some(entries) = self.path_listings.borrow_mut().read(&root) {
-            for entry in entries.iter().filter(|entry| entry.is_directory).take(256) {
+            for entry in entries.iter().filter(|entry| entry.is_directory) {
                 paths.push(root.join(&entry.name));
                 labels.push(format!("{}/", entry.name));
             }
         }
+        let children = children_start..paths.len();
         #[cfg(unix)]
         if query.is_empty() {
             for row in &self.workspace_rows {
@@ -1062,6 +1064,17 @@ impl App {
         let mut picker = ListPicker::fuzzy(format!("Open directory · {}", root.display()), items)
             .as_manager("open persistent session", "Tab", "browse directory");
         picker.filter = filter;
+        // Rank the whole directory before limiting child results. Root, parent,
+        // recent-root and worktree shortcuts keep their own places.
+        let visible = picker
+            .visible_indices()
+            .into_iter()
+            .filter(|index| children.contains(index))
+            .take(256)
+            .collect::<std::collections::HashSet<_>>();
+        picker
+            .items
+            .retain(|item| !children.contains(&item.index) || visible.contains(&item.index));
         self.list = Some(picker);
         self.list_actions.clear();
         self.session_navigation.directory.as_mut().unwrap().paths = paths;

@@ -84,6 +84,87 @@ fn navigator_fuzzy_matches_open_names_and_restores_opening_order() {
 }
 
 #[test]
+fn navigator_save_refreshes_metadata_and_preserves_order_actions_and_selection() {
+    let directory = temporary("navigator-save-refresh");
+    fs::create_dir_all(&directory).unwrap();
+    for name in ["alpha.txt", "beta.txt", "gamma.txt"] {
+        fs::write(directory.join(name), "original").unwrap();
+    }
+    let mut app = App::new(Config::default(), Some(directory.join("alpha.txt"))).unwrap();
+    app.open_file(directory.join("beta.txt")).unwrap();
+    let beta = app.active().buffer;
+    app.apply_to_buffer(beta, &Transaction::insert(0, "edited "));
+    app.open_file(directory.join("gamma.txt")).unwrap();
+    app.open_navigator();
+    let original_order = app
+        .list
+        .as_ref()
+        .unwrap()
+        .items
+        .iter()
+        .map(|item| item.index)
+        .collect::<Vec<_>>();
+    let actions = |app: &App| {
+        app.list_actions
+            .iter()
+            .map(|action| match action {
+                ListAction::Destination(destination) => *destination,
+                other => panic!("unexpected action {other:?}"),
+            })
+            .collect::<Vec<_>>()
+    };
+    let original_actions = actions(&app);
+    for character in "txt".chars() {
+        press(&mut app, character);
+    }
+    let picker = app.list.as_ref().unwrap();
+    let beta_row = picker.visible_indices().iter().position(|index| {
+        matches!(app.list_actions[picker.items[*index].index], ListAction::Destination(OpenDestination::Buffer(buffer)) if buffer == beta)
+    }).unwrap();
+    for _ in 0..beta_row {
+        key(&mut app, KeyCode::Down, Modifiers::NONE);
+    }
+    assert_eq!(selected_destination(&app), OpenDestination::Buffer(beta));
+    assert!(
+        app.list
+            .as_ref()
+            .unwrap()
+            .selected_item()
+            .unwrap()
+            .label
+            .contains("[+]")
+    );
+    key(&mut app, KeyCode::Tab, Modifiers::NONE);
+    let menu = app.buffer_action_menu.as_mut().unwrap();
+    menu.selected = menu
+        .actions
+        .iter()
+        .position(|action| *action == BufferAction::Save)
+        .unwrap();
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert!(!app.buffers[beta].dirty);
+    assert_eq!(
+        fs::read_to_string(directory.join("beta.txt")).unwrap(),
+        "edited original"
+    );
+    assert!(app.navigator_open());
+    assert_eq!(selected_destination(&app), OpenDestination::Buffer(beta));
+    let picker = app.list.as_ref().unwrap();
+    assert!(!picker.selected_item().unwrap().label.contains("[+]"));
+    assert_eq!(picker.filter, "txt");
+    assert_eq!(
+        picker
+            .items
+            .iter()
+            .map(|item| item.index)
+            .collect::<Vec<_>>(),
+        original_order
+    );
+    assert_eq!(actions(&app), original_actions);
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
 fn navigator_printable_navigation_letters_filter_and_empty_space_dismisses() {
     let mut app = App::new(Config::default(), None).unwrap();
     app.open_navigator();
@@ -221,6 +302,45 @@ fn navigator_launch_command_match_highlights_visible_terminal_detail() {
             .map(|position| row.detail.chars().nth(*position).unwrap())
             .collect::<String>(),
         "cat"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn navigator_refreshes_terminal_details_and_searchable_names() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    app.open_terminal(Some("/bin/cat".to_owned()));
+    let terminal = app.active_terminal().unwrap();
+    app.open_navigator();
+    let selected_index = app.list.as_ref().unwrap().selected_item().unwrap().index;
+    app.terminals
+        .get_mut(terminal)
+        .unwrap()
+        .rename(Some("renamed-agent".to_owned()))
+        .unwrap();
+    app.apply_terminal_output(TerminalOutput::Bytes {
+        id: terminal,
+        bytes: b"\x1b]2;updated-job-title\x07".to_vec(),
+    });
+    app.refresh_navigator();
+    let item = app.list.as_ref().unwrap().selected_item().unwrap();
+    assert_eq!(item.index, selected_index);
+    assert!(item.label.contains("renamed-agent"));
+    assert!(item.detail.contains("updated-job-title"));
+    for character in "renamed-agent".chars() {
+        press(&mut app, character);
+    }
+    assert_eq!(
+        selected_destination(&app),
+        OpenDestination::Terminal(terminal)
+    );
+    key(&mut app, KeyCode::Delete, Modifiers::NONE);
+    for character in "updated-job-title".chars() {
+        press(&mut app, character);
+    }
+    assert_eq!(
+        selected_destination(&app),
+        OpenDestination::Terminal(terminal)
     );
 }
 

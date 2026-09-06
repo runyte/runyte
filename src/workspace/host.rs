@@ -700,6 +700,7 @@ impl WorkspaceHost {
             && self.app.mode != crate::command::Mode::Command
             && self.app.pending_sequence().is_empty()
             && self.app.pending_count().is_none()
+            && self.app.awaiting_character_command().is_none()
     }
 
     pub fn create_parent_wait_request(
@@ -2892,6 +2893,76 @@ mod tests {
         assert_eq!(host.app.panes.len(), 1);
         drop(host);
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn parent_wait_refuses_pending_replacement_in_another_pane() {
+        let root = std::env::temp_dir().join(format!(
+            "runyte-parent-wait-replacement-{}-{}",
+            std::process::id(),
+            unique_test_id()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let original = root.join("original.txt");
+        let requested = root.join("requested.txt");
+        fs::write(&original, "original").unwrap();
+        fs::write(&requested, "requested").unwrap();
+        let mut host = host();
+        let terminal = host
+            .app
+            .terminals
+            .open(
+                crate::terminal::TerminalRequest {
+                    program: "/bin/cat".into(),
+                    arguments: vec![],
+                    directory: root.clone(),
+                    label: "parent".to_owned(),
+                },
+                80,
+                24,
+            )
+            .unwrap();
+        let origin_pane = host.app.active_pane;
+        host.app.panes.get_mut(&origin_pane).unwrap().terminal = Some(terminal);
+        host.execute(HostCommand::Input(InputEvent::Key(KeyStroke::new(
+            crate::input::KeyCode::Char('w'),
+            Modifiers::CONTROL,
+        ))))
+        .unwrap();
+        host.execute(HostCommand::Input(InputEvent::Key(KeyStroke::char('v'))))
+            .unwrap();
+        host.open_buffer(original, true).unwrap();
+        let document_pane = host.app.active_pane;
+        let document_buffer = host.app.active().buffer;
+        let buffer_count = host.app.buffers.len();
+        host.execute(HostCommand::Input(InputEvent::Key(KeyStroke::char('r'))))
+            .unwrap();
+        assert_eq!(
+            host.app.awaiting_character_command(),
+            Some(EditorCommand::ReplaceChar)
+        );
+        assert!(!host.parent_request_ready());
+        assert!(
+            host.create_parent_wait_request(terminal, vec![requested.clone()])
+                .is_err()
+        );
+        assert_eq!(host.app.active_pane, document_pane);
+        assert_eq!(host.app.active().buffer, document_buffer);
+        assert_eq!(host.app.buffers.len(), buffer_count);
+        assert_eq!(host.app.panes[&origin_pane].terminal, Some(terminal));
+        host.execute(HostCommand::Input(InputEvent::Key(KeyStroke::char('X'))))
+            .unwrap();
+        assert_eq!(host.app.active_buffer().to_string(), "Xriginal");
+        assert_eq!(fs::read_to_string(&requested).unwrap(), "requested");
+        assert!(host.parent_request_ready());
+        let (token, _) = host
+            .create_parent_wait_request(terminal, vec![requested])
+            .unwrap();
+        assert!(host.is_parent_wait(token));
+        assert_eq!(host.app.active_buffer().to_string(), "requested");
+        drop(host);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[cfg(unix)]
