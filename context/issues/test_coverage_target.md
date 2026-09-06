@@ -4,11 +4,12 @@ Linux and macOS are Runyte's first-class platforms, and the test suite is the
 main evidence that both stay correct as the editor changes.
 
 `context/reference/test-coverage.md` records the current baselines. On
-`x86_64-unknown-linux-gnu`, `cargo-llvm-cov` 0.9.0 and Rust 1.97.1 cover 92,757
-of 101,629 lines, 8,635 of 9,378 functions, and 143,837 of 158,476 regions. The
-latest `aarch64-apple-darwin` measurement covers 92,918 of 101,875 lines, 8,647
-of 9,397 functions, and 144,039 of 158,841 regions. CI publishes the per-file
-summary, retains an HTML report, and fails below an enforced 89% line floor.
+`x86_64-unknown-linux-gnu`, `cargo-llvm-cov` 0.9.0 and Rust 1.97.1 cover 100,868
+of 110,031 lines, 9,361 of 10,115 functions, and 156,159 of 171,231 regions. The
+latest `aarch64-apple-darwin` measurement covers 97,567 of 106,514 lines, 9,082
+of 9,826 functions, and 151,475 of 166,283 regions, on a tree that has since
+moved on. CI publishes the per-file summary, retains an HTML report, and fails
+below an enforced 89% line floor.
 
 The target is above 95% line coverage, with the CI floor and the README badge
 raised to match.
@@ -270,7 +271,65 @@ After that pass the largest remaining Linux gaps by uncovered lines are
 badge stay at 89%: the macOS baseline has not been remeasured on this tree, and
 the enforced floor must hold on whichever target CI measures.
 
-The issue remains open. Linux still has 8,767 uncovered lines.
+A further pass on Linux began from a fresh same-tree measurement at commit
+`b047228`: 100,741 of 109,984 lines (91.60%), 9,351 of 10,114 functions
+(92.46%), and 155,998 of 171,182 regions (91.13%). The clean canonical result
+after the pass is 100,865 of 110,031 lines (91.67%), 9,357 of 10,115 functions
+(92.51%), and 156,162 of 171,231 regions (91.20%). Uncovered lines fell by 77
+and covered lines rose by 124; the denominator rose by 47 because two of the
+new tests extend inline `#[cfg(test)]` modules, so the reported gain is 0.07
+percentage points.
+
+Most of the pass is `tests/git_parsing.rs`, which feeds Git's machine-readable
+output straight to the parsers that own it. `tests/git_provider.rs` proves the
+provider against a real repository and can therefore only exercise what the
+installed Git chooses to write, so direct parser tests are needed for truncated, mislabelled, non-UTF-8,
+and over-ceiling output that a real repository cannot reliably produce. The new
+file covers a log record whose abbreviated id is not hexadecimal, whose author
+time is not an integer, and whose identities are not UTF-8 while its author
+name still reads leniently; a commit-search record that lost its message; a
+stash list past its ceiling and a selector nothing can be addressed by; a blame
+timezone that is not an offset, which drops the date rather than shifting it,
+and a blame past its line ceiling; worktree records separated only by their
+path fields, a field arriving before its path, an empty listing, and bare lock
+and prune markers; a workspace reached through a relative gitfile, a
+`commondir` naming its own Git directory, `origin` preferred over every other
+remote, the one-token `[remote.name]` spelling taken when there is no `origin`,
+and an oversized gitfile that reads as no facts at all; and a hunk body line
+with an unknown prefix, a hunk range starting at zero with content, an empty or
+inverted line selection, a partial selection of one hunk's new lines, and a
+patch carrying binary content.
+
+The rest covers the clipboard image paste refused by an explorer and the modal
+paste that goes through the register rather than the caret, a clipboard that
+cannot be read or written at all, the sweep of abandoned pending writes in the
+spelling `pasted_image` writes today rather than only its legacy one, the
+status parser's missing path, single status code, valueless header and ignored
+entry, and the tutorial's `reset` and `sessions` arguments.
+
+Two findings are worth keeping. `app/search_history.rs` lines 91-93 — the
+read-only refusal inside `paste_clipboard_image` — stay uncovered because an
+earlier read-only guard in command dispatch refuses first; the branch is
+defensive, and a test that reaches the refusal reaches it through that guard
+instead. And in `app/movement.rs`, `move_offset`'s vertical, page and window
+arms are unreachable: `App::motion_with_extension` routes exactly those motions through
+`move_offset_projected`, so nothing calls them. Neither was removed, since
+neither change is required to establish behavior.
+
+A review strengthened the stash and blame ceiling tests to accept exactly the
+limit and reject one more record. Its clean canonical run covered 100,868 of
+110,031 lines (91.67%), 9,361 of 10,115 functions (92.55%), and 156,159 of
+171,231 regions (91.20%). Both the ordinary and instrumented suites passed
+3,003 tests, with 31 ignored; formatting and warnings-as-errors Clippy passed.
+
+After review the largest remaining Linux gaps by uncovered lines are
+`main.rs` (839), `app/git_workflows.rs` (684), `app/input.rs` (662),
+`git/cli.rs` (405), `app/language_workflows.rs` (383),
+`workspace/catalog.rs` (354), `workspace/transport.rs` (341), `ui.rs` (321),
+`syntax/mod.rs` (294) and `input_grammar.rs` (269). The floor and the README
+badge stay at 89%.
+
+The issue remains open. Linux still has 9,163 uncovered lines.
 The above-95% target remains open.
 
 ## Current macOS baseline

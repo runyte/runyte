@@ -399,6 +399,22 @@ mod tests {
         assert!(parse(&document(&["# branch.head main", "1 .M N... 100644"])).is_err());
         assert!(parse(&document(&["# branch.head main", "x something"])).is_err());
         assert!(parse(&document(&["1 .M N... 100644 100644 100644 a b c.rs"])).is_err());
+        // Every field arrived and the path did not: the record describes a
+        // change to nothing.
+        let no_path = parse(&document(&[
+            "# branch.head main",
+            "1 .M N... 100644 100644 100644 aaaa bbbb ",
+        ]))
+        .unwrap_err();
+        assert!(no_path.contains("has no path"), "{no_path}");
+        // A single code where the two sides belong: reading it as one side
+        // would silently drop the other.
+        let one_code = parse(&document(&[
+            "# branch.head main",
+            "1 M N... 100644 100644 100644 aaaa bbbb single.rs",
+        ]))
+        .unwrap_err();
+        assert!(one_code.contains("status code pair"), "{one_code}");
         // A rename whose source record never arrived.
         assert!(
             parse(&document(&[
@@ -409,17 +425,37 @@ mod tests {
         );
     }
 
-    /// Headers a future Git might add must not stop the entries being read.
+    /// Headers a future Git might add must not stop the entries being read,
+    /// including one whose shape this parser does not recognise at all.
     #[test]
     fn unknown_headers_are_ignored() {
         let status = parse(&document(&[
             "# branch.oid 6a4f1c2d",
             "# branch.head main",
             "# stash 3",
+            "#",
+            "# valueless",
             "? stray.rs",
         ]))
         .unwrap();
 
         assert_eq!(status.files.len(), 1);
+        assert_eq!(status.head, Head::Branch("main".to_owned()));
+    }
+
+    /// Ignored paths are listed only when they are asked for, so nothing else
+    /// in the suite reaches this record type.
+    #[test]
+    fn an_ignored_path_is_read_as_ignored_on_both_sides() {
+        let status = parse(&document(&[
+            "# branch.oid 6a4f1c2d",
+            "# branch.head main",
+            "! target/debug/runyte",
+        ]))
+        .unwrap();
+
+        assert_eq!(status.files[0].path, PathBuf::from("target/debug/runyte"));
+        assert_eq!(status.files[0].index, FileState::Ignored);
+        assert_eq!(status.files[0].worktree, FileState::Ignored);
     }
 }

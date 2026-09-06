@@ -1162,6 +1162,102 @@ fn an_unrecognised_clipboard_image_is_refused() {
     fs::remove_dir_all(fixture).unwrap();
 }
 
+/// An explorer is a projection of a directory, not a document, so there is
+/// nothing in it for a link to be written into.
+#[test]
+fn an_explorer_refuses_a_pasted_image() {
+    let fixture = temporary("clipboard-image-explorer");
+    let project = fixture.join("project");
+    fs::create_dir_all(project.join("assets")).unwrap();
+    let mut app = App::new_in_project(Config::default(), None, &project).unwrap();
+    app.open_explorer(Some(project.join("assets"))).unwrap();
+    assert!(app.active_buffer().is_directory());
+    app.set_system_clipboard(Box::new(ImageClipboard::holding(&png("explorer"))));
+
+    key(&mut app, KeyCode::Char('v'), Modifiers::CONTROL);
+
+    assert!(
+        app.status.contains("does not hold images"),
+        "{}",
+        app.status
+    );
+    assert!(
+        !crate::pasted_image::cache_directory(&app.state_root).exists(),
+        "a refused paste created the image cache"
+    );
+    fs::remove_dir_all(fixture).unwrap();
+}
+
+/// In Normal mode, an image reference is pasted after a bare caret.
+#[test]
+fn a_normal_mode_image_paste_lands_after_a_bare_caret() {
+    let fixture = temporary("clipboard-image-modal");
+    let project = fixture.join("project");
+    let notes = project.join("notes.md");
+    fs::create_dir_all(&project).unwrap();
+    fs::write(&notes, "ab\n").unwrap();
+    let mut app = App::new_in_project(Config::default(), Some(notes), &project).unwrap();
+    let bytes = png("modal");
+    app.set_system_clipboard(Box::new(ImageClipboard::holding(&bytes)));
+
+    key(&mut app, KeyCode::Char('v'), Modifiers::CONTROL);
+
+    let name = crate::pasted_image::file_name(&bytes, crate::pasted_image::ImageFormat::Png);
+    assert_eq!(
+        text(&app),
+        format!("a[Image 1](.runyte/cache/images/{name})b\n"),
+        "the reference is pasted after the caret"
+    );
+    assert!(app.status.contains("pasted Image 1"), "{}", app.status);
+    assert!(!app.status_error, "a completed paste is not an error");
+    fs::remove_dir_all(fixture).unwrap();
+}
+
+/// The same key pastes text when the clipboard holds no image, so a clipboard
+/// that cannot be read at all has to report that rather than paste nothing and
+/// say nothing.
+#[test]
+fn a_clipboard_that_cannot_be_read_at_all_reports_the_failure() {
+    let fixture = temporary("clipboard-unreadable");
+    let project = fixture.join("project");
+    let notes = project.join("notes.md");
+    fs::create_dir_all(&project).unwrap();
+    fs::write(&notes, "start\n").unwrap();
+    let mut app = App::new_in_project(Config::default(), Some(notes), &project).unwrap();
+    app.set_system_clipboard(Box::new(RefusingClipboard));
+
+    key(&mut app, KeyCode::Char('v'), Modifiers::CONTROL);
+
+    assert!(app.status_error, "a refused read is an error");
+    assert!(app.status.contains("no clipboard helper"), "{}", app.status);
+    assert_eq!(text(&app), "start\n");
+    fs::remove_dir_all(fixture).unwrap();
+}
+
+/// A yank whose helper refuses says so instead of reporting a copy that never
+/// reached the system clipboard.
+#[test]
+fn a_refused_clipboard_yank_reports_the_failure_rather_than_a_copy() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    app.set_system_clipboard(Box::new(RefusingClipboard));
+    app.insert_text("copy me");
+
+    key(&mut app, KeyCode::Escape, Modifiers::NONE);
+    press(&mut app, ' ');
+    press(&mut app, 'c');
+    press(&mut app, 'y');
+
+    assert!(app.status_error, "a refused copy is an error, not a status");
+    assert!(app.status.contains("no clipboard helper"), "{}", app.status);
+    assert_eq!(
+        app.notifications
+            .entries()
+            .last()
+            .map(|notification| notification.title.as_str()),
+        Some("Clipboard operation failed")
+    );
+}
+
 /// A clipboard that fails while being asked for an image is reported rather
 /// than quietly pasting whatever text happens to be behind it.
 #[test]

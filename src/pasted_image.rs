@@ -380,9 +380,20 @@ mod tests {
 
         let abandoned = directory.join(".0123456789abcdef.png.4242");
         let recent = directory.join(".fedcba9876543210.png.4243");
+        // The spelling this module writes today, alongside the legacy one it
+        // still has to recognise.
+        let abandoned_current = directory.join(".runyte-write-4242-7");
+        let recent_current = directory.join(".runyte-write-4243-8");
         let stored = directory.join("0123456789abcdef.png");
         let unrelated = directory.join(".notes.txt.1");
-        for path in [&abandoned, &recent, &stored, &unrelated] {
+        for path in [
+            &abandoned,
+            &recent,
+            &abandoned_current,
+            &recent_current,
+            &stored,
+            &unrelated,
+        ] {
             fs::write(path, b"x").unwrap();
         }
         let old = std::time::SystemTime::now() - ABANDONED_WRITE_AGE * 2;
@@ -398,6 +409,7 @@ mod tests {
                 .unwrap();
         };
         age(&abandoned);
+        age(&abandoned_current);
         // An unrelated file is not swept whatever its age.
         age(&unrelated);
 
@@ -405,8 +417,16 @@ mod tests {
 
         assert!(!abandoned.exists(), "an abandoned write survived");
         assert!(
+            !abandoned_current.exists(),
+            "an abandoned write in the current spelling survived"
+        );
+        assert!(
             recent.exists(),
             "a write that may still be running was swept"
+        );
+        assert!(
+            recent_current.exists(),
+            "a current-spelling write that may still be running was swept"
         );
         assert!(stored.exists(), "a stored image was swept");
         assert!(
@@ -419,9 +439,16 @@ mod tests {
 
     #[test]
     fn only_this_modules_own_pending_spelling_is_recognised() {
+        assert!(is_pending_name(".runyte-write-1-0"));
+        assert!(is_pending_name(".runyte-write-99999-4242"));
         assert!(is_pending_name(".0123456789abcdef.png.1"));
         assert!(is_pending_name(".0123456789ABCDEF.webp.99999"));
         for other in [
+            ".runyte-write-1",         // no sequence
+            ".runyte-write--1",        // no process
+            ".runyte-write-1-",        // an empty sequence
+            ".runyte-write-a-1",       // the process is not a number
+            ".runyte-write-1-b",       // the sequence is not a number
             "0123456789abcdef.png.1",  // not hidden
             ".0123456789abcdef.png",   // no pid
             ".0123456789abcdef.png.a", // pid is not a number

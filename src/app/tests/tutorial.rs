@@ -472,3 +472,50 @@ fn standalone_session_lesson_states_the_real_boundary() {
     assert!(instructions.contains("runyte --persistent"));
     assert!(instructions.contains("not crash, reboot, or machine-failure storage"));
 }
+
+/// Resetting is what a second person sitting down at the same editor does,
+/// so it has to put back the question the first person already answered as
+/// well as the lesson they reached.
+#[test]
+fn tutorial_reset_returns_to_the_first_lesson_and_asks_about_motions_again() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    app.execute_command("tutorial").unwrap();
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    press(&mut app, 'i');
+    type_text(&mut app, "Hi ");
+    key(&mut app, KeyCode::Escape, Modifiers::NONE);
+    assert_eq!(app.tutorial_state().unwrap().lesson, 2);
+
+    app.execute_command("tutorial reset").unwrap();
+
+    let state = app.tutorial_state().unwrap();
+    let scratch = state.scratch_buffer;
+    assert_eq!(state.lesson, 0);
+    assert_eq!(state.motion_hints, None);
+    assert!(state.last_action.is_none());
+    assert!(app.list.is_some(), "the motion preference is asked again");
+    assert_eq!(app.buffers[scratch].to_string(), "");
+}
+
+/// The persistent-session lesson is the one that cannot be reached by
+/// working through the curriculum in a single sitting, because finishing it
+/// requires detaching and coming back. `:tutorial sessions` is how somebody
+/// returns to it, so it opens ready to be worked rather than behind the
+/// motion question.
+#[test]
+fn tutorial_sessions_opens_the_last_lesson_ready_to_be_worked() {
+    let mut app = App::new(Config::default(), None).unwrap();
+
+    app.execute_command("tutorial sessions").unwrap();
+
+    let state = app.tutorial_state().unwrap();
+    let scratch = state.scratch_buffer;
+    assert_eq!(state.lesson, crate::tutorial::LAST_LESSON);
+    assert_eq!(state.motion_hints, Some(MotionHints::Both));
+    assert!(!state.awaiting_reattach);
+    assert!(app.list.is_none(), "no motion question stands in the way");
+    assert_eq!(
+        app.buffers[scratch].to_string(),
+        "persistent tutorial token\n"
+    );
+}

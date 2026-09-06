@@ -88,6 +88,41 @@ formatting, and warnings-as-errors Clippy passed. Tests again removed the
 invoking terminal's `RUNYTE_PARENT_CONTEXT` and ran outside the sandbox;
 native macOS validation of this follow-up remains to be run.
 
+A further Linux run at base commit `b047228` plus a behavior-coverage pass over
+Git's machine-readable output, clipboard image pasting, and the tutorial's
+argument forms passed 3,003 non-ignored tests, with 31 ignored, up from 2,974.
+
+| Measure | Covered | Total | Coverage |
+| --- | ---: | ---: | ---: |
+| Lines | 100,865 | 110,031 | 91.67% |
+| Functions | 9,357 | 10,115 | 92.51% |
+| Regions | 156,162 | 171,231 | 91.20% |
+
+Against a same-tree run immediately before the added tests (100,741 of 109,984
+lines, 91.60%), uncovered lines fell by 77 and covered lines rose by 124. The
+denominator rose by 47 because two of the new tests extend inline `#[cfg(test)]`
+modules in `src/pasted_image.rs` and `src/git/status.rs`; the rest live in
+`tests/git_parsing.rs` and under `src/app/tests/`, which `cargo-llvm-cov`
+excludes. The largest direct gains were `app/search_history.rs` (15 lines),
+`git/worktree.rs` (12), `app/tutorial_workflows.rs` (10), `pasted_image.rs` (9)
+and `git/history.rs` (8, reaching one uncovered line). Three files ended two or
+three lines worse than the comparison run in concurrent paths that earlier
+passes also recorded as run-to-run variation; the figures above are the net.
+Formatting, warnings-as-errors Clippy, and the ordinary suite passed. The
+enforced 89% floor and the README badge are unchanged, and this Linux run does
+not supersede the macOS baseline below.
+
+A review run on the same toolchain and target, after strengthening the stash
+and blame ceiling tests, covered 100,868 of 110,031 lines (91.67%), 9,361 of
+10,115 functions (92.55%), and 156,159 of 171,231 regions (91.20%). The tests
+now accept exactly the maximum number of records and reject one more. Review
+also narrowed test descriptions to their assertions and corrected the motion
+dispatch function named in the issue. Both the ordinary and canonical coverage
+suites passed 3,003 tests with 31 ignored; formatting and warnings-as-errors
+Clippy passed. Runs removed `RUNYTE_PARENT_CONTEXT` and ran outside the sandbox
+so test-owned sockets and PTYs were available. The floor remains 89%; macOS
+was not remeasured.
+
 ## 2026-09-05 — macOS
 
 Measured with `cargo-llvm-cov` 0.9.0 and Rust 1.97.1 on
