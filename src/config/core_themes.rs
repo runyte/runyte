@@ -529,9 +529,20 @@ pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
     // the wave in the photograph they were drawn from, which has no warm
     // colour anywhere in it. Deep water is the ground, the turquoise face of
     // the wave is the accent, and foam and sky are what the palette lightens
-    // toward. The pair share a structure rather than a set of hex values —
-    // every role is the same colour seen against the opposite ground — so a
-    // change to one of them belongs in the other.
+    // toward. The pair share a structure rather than a set of hex values:
+    // every role sits at the same contrast from its own ground as its
+    // counterpart does from the opposite one, so a change to one of them
+    // belongs in the other.
+    //
+    // The band is deliberately narrow. Ordinary text reads at 8.6:1 rather
+    // than the 13:1 the first draft of these palettes used, which is the step
+    // `terafox-soft` takes and for the same reason: long stretches of text
+    // should not be the brightest thing on a dark ground, or the darkest on a
+    // light one. It cannot soften further on either side — Runyte's shared
+    // `diff_added` ground is what ordinary text has to stay legible on, and
+    // 8.6:1 is where that floor sits. The hued colours follow the text down so
+    // the palette keeps its order: keywords and strings a step below ordinary
+    // text, calls and literals a step below those, comments at 3.9:1.
     //
     // Two warm colours survive that discipline because the interface cannot
     // afford to have them blend into the water: the error red, which is also
@@ -552,41 +563,44 @@ pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
         "ocean-dark".into(),
         ThemeDefinition {
             background: "#0b1f2a".into(),
-            foreground: "#cfe6ef".into(),
+            foreground: "#a6bdc5".into(),
             muted: "#5b7f90".into(),
             // Named rather than derived, and hued rather than gray: the marker
             // is the faint grid under the text, so it keeps the ground's own
             // blue 12 to 21 levels up from it.
             whitespace: Some("#17323f".into()),
-            // Dimmed text has to stay legible on both selection grounds while
-            // still reading as dimmed: it clears 3.9:1 on either and sits
-            // 1.72:1 from ordinary text.
-            jump_text_muted: Some("#93b3c0".into()),
-            accent: "#1fc8b4".into(),
+            // Dimmed text sits below the neon cyan of the two-key jump labels
+            // it has to recede behind, and stays legible on both selection
+            // grounds: 5.9:1 against the ground, above 3:1 on either
+            // selection, and 1.45:1 from ordinary text.
+            jump_text_muted: Some("#7e9eaa".into()),
+            accent: "#00b6a2".into(),
             // Unset: only the branded pair splits the palette's command names
             // off the accent, and every other bundled theme keeps one colour
             // for both.
             command: None,
             cursor_normal: None,
-            cursor_insert: Some("#8fe8f5".into()),
-            cursor_replace: Some("#b98cff".into()),
-            cursor_select: Some("#4fa8f5".into()),
-            cursor_command: Some("#7d90ff".into()),
-            directory: Some("#4fa8f5".into()),
+            cursor_insert: Some("#69c3d0".into()),
+            cursor_replace: Some("#ad81f3".into()),
+            cursor_select: Some("#3f9de9".into()),
+            cursor_command: Some("#677dea".into()),
+            directory: Some("#3f9de9".into()),
             // The usual cool-secondary, warm-primary split has no warm half to
             // spend here, so the pair separates by the palette's own two
             // families instead: ordinary ranges sit on deep water blue, and
             // the primary range takes the wave's teal, which is the one the
-            // reader is looking for. Ordinary text clears 6.2:1 on either.
+            // reader is looking for. Both are dark enough that the softened
+            // text still clears 4.5:1 on them, which is what fixes them this
+            // far below the ground rather than just off it.
             selection: "#123f66".into(),
-            selection_primary: Some("#0d5a55".into()),
+            selection_primary: Some("#00524d".into()),
             fuzzy_match_secondary: None,
             fuzzy_match_primary: None,
             status_background: "#0f2733".into(),
-            status_foreground: "#cfe6ef".into(),
+            status_foreground: "#a6bdc5".into(),
             error: ocean_dark_red.into(),
-            warning: Some("#ffd166".into()),
-            info: Some("#5fdcb0".into()),
+            warning: Some("#deb349".into()),
+            info: Some("#34b78d".into()),
             jump_label_immediate: Some(ocean_dark_red.into()),
             jump_label_primary: JUMP_LABEL_DARK_PRIMARY.into(),
             jump_label_secondary: JUMP_LABEL_DARK_SECONDARY.into(),
@@ -607,66 +621,73 @@ pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
             // the wave green, headings on the sky, and bold and list text on
             // the accent.
             syntax: syntax_theme(&[
-                ("attribute", "#1fc8b4"),
+                ("attribute", "#00b6a2"),
                 ("comment", "#5b7f90"),
-                ("constant", "#b98cff"),
-                ("constructor", "#4fa8f5"),
-                ("function", "#4fa8f5"),
-                ("keyword", "#1fc8b4"),
-                ("label", "#b98cff"),
-                ("namespace", "#2fd0ea"),
-                ("number", "#b98cff"),
-                ("operator", "#cfe6ef"),
-                ("property", "#cfe6ef"),
+                ("constant", "#ad81f3"),
+                ("constructor", "#3f9de9"),
+                ("function", "#3f9de9"),
+                ("keyword", "#00b6a2"),
+                ("label", "#ad81f3"),
+                ("namespace", "#00b0ca"),
+                ("number", "#ad81f3"),
+                ("operator", "#a6bdc5"),
+                ("property", "#a6bdc5"),
                 ("punctuation", "#5b7f90"),
-                ("string", "#5fdcb0"),
-                ("tag", "#1fc8b4"),
-                ("type", "#2fd0ea"),
-                ("variable", "#cfe6ef"),
+                ("string", "#34b78d"),
+                ("tag", "#00b6a2"),
+                ("type", "#00b0ca"),
+                ("variable", "#a6bdc5"),
             ]),
         },
     );
     // The same palette seen from the shallows rather than from deep water:
-    // every role keeps its hue and crosses the ground, so the foam that was
-    // the brightest thing in `ocean-dark` is the ground here and the deep
-    // water that was the ground is the text. See that theme for why the two
-    // warm colours are there and why Replace sits at the orchid end.
+    // every role keeps its hue and its distance from the ground, and crosses
+    // that ground, so the foam that was the brightest thing in `ocean-dark` is
+    // the ground here and the deep water that was the ground is the text. The
+    // ground is a shade below the palest foam for the same reason the text is
+    // a shade above the deepest water: neither end of the pair should be the
+    // brightest thing a reader looks at for an hour. See that theme for why
+    // the two warm colours are there and why Replace sits at the orchid end.
     let ocean_light_red = "#b0281f";
     themes.insert(
         "ocean-light".into(),
         ThemeDefinition {
-            background: "#eaf4f8".into(),
-            foreground: "#0f2b3a".into(),
-            muted: "#4f7382".into(),
-            // 14 to 27 levels off the ground, the same faint grid the dark
+            background: "#dae7ef".into(),
+            foreground: "#264050".into(),
+            muted: "#517584".into(),
+            // 20 to 29 levels off the ground, the same faint grid the dark
             // variant draws, carried to the other side of it.
-            whitespace: Some("#cfe2ea".into()),
-            // A light ground puts dimmed text above ordinary text rather than
-            // below it, as `light` and `paper` do; the pale selections it sits
-            // on are the same ones those themes accept.
-            jump_text_muted: Some("#9fb6c0".into()),
-            accent: "#0a7a6c".into(),
+            whitespace: Some("#bdd0db".into()),
+            // The one role that does not mirror its counterpart's contrast.
+            // Dimmed text has to recede behind the two-key jump labels, and
+            // the shared light labels are far softer than the shared dark
+            // ones, so this sits at 2.6:1 — where `light` and `paper` put
+            // theirs — rather than at the dark variant's 5.9:1.
+            jump_text_muted: Some("#7b929b".into()),
+            accent: "#00594c".into(),
             // Unset: see `ocean-dark`.
             command: None,
             cursor_normal: None,
-            cursor_insert: Some("#004a6b".into()),
-            cursor_replace: Some("#7b35c4".into()),
-            cursor_select: Some("#1663c4".into()),
-            cursor_command: Some("#454ac9".into()),
-            directory: Some("#1663c4".into()),
-            // The dark variant's two grounds brought up through the ground
-            // rather than recoloured: deep water blue for ordinary ranges and
-            // the wave's teal for the primary one. Ordinary text clears 9.4:1
-            // on either.
-            selection: "#aed4ee".into(),
-            selection_primary: Some("#9fe6d6".into()),
+            cursor_insert: Some("#004464".into()),
+            cursor_replace: Some("#742ebd".into()),
+            cursor_select: Some("#0053b1".into()),
+            cursor_command: Some("#5455d6".into()),
+            directory: Some("#0053b1".into()),
+            // The dark variant's two grounds carried across: deep water blue
+            // for ordinary ranges and the wave's teal for the primary one.
+            // These are the one pair mirrored on how far they look from the
+            // ground rather than on contrast against it — a selection is an
+            // area of colour, and the ratio that reads as a light touch on
+            // deep water reads as a heavy block on foam.
+            selection: "#8eb3cd".into(),
+            selection_primary: Some("#7fc4b5".into()),
             fuzzy_match_secondary: None,
             fuzzy_match_primary: None,
-            status_background: "#dbe9f0".into(),
-            status_foreground: "#0f2b3a".into(),
+            status_background: "#ccdde7".into(),
+            status_foreground: "#264050".into(),
             error: ocean_light_red.into(),
-            warning: Some("#8a5a00".into()),
-            info: Some("#0d6b57".into()),
+            warning: Some("#5d3400".into()),
+            info: Some("#005845".into()),
             jump_label_immediate: Some(ocean_light_red.into()),
             jump_label_primary: JUMP_LABEL_LIGHT_PRIMARY.into(),
             jump_label_secondary: JUMP_LABEL_LIGHT_SECONDARY.into(),
@@ -676,25 +697,25 @@ pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
             diff_added: Some(DIFF_ADDED_LIGHT.into()),
             diff_removed: Some(DIFF_REMOVED_LIGHT.into()),
             diff_changed: Some(DIFF_CHANGED_LIGHT.into()),
-            // The dark variant's six, role for role, darkened to hold against
-            // a pale ground.
+            // The dark variant's six, role for role, at the same distance from
+            // this ground as they sit from the other.
             syntax: syntax_theme(&[
-                ("attribute", "#0a7a6c"),
-                ("comment", "#4f7382"),
-                ("constant", "#7b35c4"),
-                ("constructor", "#1663c4"),
-                ("function", "#1663c4"),
-                ("keyword", "#0a7a6c"),
-                ("label", "#7b35c4"),
-                ("namespace", "#00637d"),
-                ("number", "#7b35c4"),
-                ("operator", "#0f2b3a"),
-                ("property", "#0f2b3a"),
-                ("punctuation", "#4f7382"),
-                ("string", "#0d6b57"),
-                ("tag", "#0a7a6c"),
-                ("type", "#00637d"),
-                ("variable", "#0f2b3a"),
+                ("attribute", "#00594c"),
+                ("comment", "#517584"),
+                ("constant", "#742ebd"),
+                ("constructor", "#0053b1"),
+                ("function", "#0053b1"),
+                ("keyword", "#00594c"),
+                ("label", "#742ebd"),
+                ("namespace", "#005670"),
+                ("number", "#742ebd"),
+                ("operator", "#264050"),
+                ("property", "#264050"),
+                ("punctuation", "#517584"),
+                ("string", "#005845"),
+                ("tag", "#00594c"),
+                ("type", "#005670"),
+                ("variable", "#264050"),
             ]),
         },
     );

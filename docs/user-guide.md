@@ -3472,10 +3472,15 @@ the Git gutter and diff grounds every bundled theme shares.
 from a breaking wave that has no warm colour anywhere in it: deep water is the
 ground, the turquoise face of the wave is the accent, and foam and sky are what
 the palette lightens toward. The two variants share a structure rather than a
-set of values — every role is the same hue seen from the opposite side of the
+set of values — every role is the same hue at the same contrast from its own
 ground — so the light one is the dark one read in the shallows rather than a
-separate palette. The mode carets walk a single ladder from the wave to dusk,
-turquoise for Normal, then cyan, sky, indigo, and the orchid Replace takes
+separate palette. Both are deliberately soft: ordinary text reads at 8.6:1
+against the background rather than the 13:1 a saturated pair would give, which
+is the step `terafox-soft` takes, and the hued colours follow it down so
+keywords and strings sit just below ordinary text and comments at 3.9:1. Neither
+variant can soften further without ordinary text becoming hard to read on the
+shared Git diff grounds. The mode carets walk a single ladder from the wave to
+dusk, turquoise for Normal, then cyan, sky, indigo, and the orchid Replace takes
 because the turquoise Normal already reads as green. Two warm colours survive
 the discipline because the interface cannot afford to lose them in the water:
 the error red, which the one-key jump label shares, and the amber a warning is

@@ -2231,17 +2231,65 @@ mod tests {
         assert_eq!(theme.cursor_replace, Color::Rgb(0x70, 0x60, 0xff));
     }
 
-    /// The `ocean` pair is two readings of one palette, and both halves of
-    /// that claim are worth pinning. The palette is the water: every role is
+    /// The `ocean` pair is two readings of one palette, and every part of
+    /// that claim is worth pinning. The palette is the water: every role is
     /// green- or blue-dominant except the two warm colours the interface
     /// cannot afford to lose in it — the error red, which the one-key jump
     /// label shares, and the amber of a warning — plus the Git and diff
     /// palette every bundled theme carries. The pair is a structure rather
-    /// than a set of values: each role is the same hue seen from the opposite
-    /// ground, so its channels rank in the same order in both variants. A
-    /// later edit to one variant alone is what this is here to catch.
+    /// than a set of values: each role is the same hue at the same contrast
+    /// from its own ground, so its channels rank alike in both variants and
+    /// its distance from the ground matches. And the band that structure
+    /// spans is narrow on purpose, with ordinary text at 8.6:1 rather than
+    /// the 13:1 these palettes started at. A later edit to one variant
+    /// alone, or one that lets the glare back in, is what this is here to
+    /// catch.
     #[test]
     fn ocean_variants_are_one_palette_seen_from_two_grounds() {
+        fn contrast(left: Color, right: Color) -> f64 {
+            let left = left.relative_luminance().unwrap();
+            let right = right.relative_luminance().unwrap();
+            (left.max(right) + 0.05) / (left.min(right) + 0.05)
+        }
+
+        /// How far apart two colours look, rather than how far apart their
+        /// luminances are. A selection is an area of colour rather than a
+        /// glyph, and equal contrast ratios do not read as equal weight at
+        /// the two ends of the range, so this is the measure its grounds are
+        /// mirrored on. CIE76 over CIELAB, as elsewhere in this file.
+        fn perceptual_distance(left: Color, right: Color) -> f64 {
+            fn lab(color: Color) -> [f64; 3] {
+                let (red, green, blue) = color.channels().unwrap();
+                let channel = |value: u8| {
+                    let value = f64::from(value) / 255.0;
+                    if value <= 0.03928 {
+                        value / 12.92
+                    } else {
+                        ((value + 0.055) / 1.055).powf(2.4)
+                    }
+                };
+                let (red, green, blue) = (channel(red), channel(green), channel(blue));
+                let transfer = |value: f64| {
+                    if value > 0.008_856 {
+                        value.cbrt()
+                    } else {
+                        7.787 * value + 16.0 / 116.0
+                    }
+                };
+                let x = transfer((0.4124 * red + 0.3576 * green + 0.1805 * blue) / 0.95047);
+                let y = transfer(0.2126 * red + 0.7152 * green + 0.0722 * blue);
+                let z = transfer((0.0193 * red + 0.1192 * green + 0.9505 * blue) / 1.08883);
+                [116.0 * y - 16.0, 500.0 * (x - y), 200.0 * (y - z)]
+            }
+
+            let (left, right) = (lab(left), lab(right));
+            left.iter()
+                .zip(right)
+                .map(|(left, right)| (left - right).powi(2))
+                .sum::<f64>()
+                .sqrt()
+        }
+
         /// The channels of a colour ranked most to least, which is the part
         /// of a hue that survives crossing the ground.
         fn order(color: Color) -> [usize; 3] {
@@ -2252,14 +2300,16 @@ mod tests {
             ranked
         }
 
-        /// Every role the two variants mirror, in one order.
+        /// Every role the two variants mirror, in one order. `error` is not
+        /// among them: the two reds are alarms picked to carry on their own
+        /// ground rather than to answer each other, and `jump_text_muted` is
+        /// mirrored in hue but not in contrast, for the reason given below.
         fn roles(theme: &Theme) -> Vec<(String, Color)> {
             let mut roles = vec![
                 ("background", theme.background),
                 ("foreground", theme.foreground),
                 ("muted", theme.muted),
                 ("whitespace", theme.whitespace),
-                ("jump_text_muted", theme.jump_text_muted),
                 ("accent", theme.accent),
                 ("command", theme.command),
                 ("cursor_normal", theme.cursor_normal),
@@ -2275,6 +2325,7 @@ mod tests {
                 ("status_background", theme.status_background),
                 ("status_foreground", theme.status_foreground),
                 ("info", theme.info),
+                ("warning", theme.warning),
             ]
             .into_iter()
             .map(|(role, color)| (role.to_owned(), color))
@@ -2299,6 +2350,9 @@ mod tests {
         for (variant, theme) in [("ocean-dark", &dark), ("ocean-light", &light)] {
             for (role, color) in roles(theme) {
                 let (red, green, blue) = color.channels().unwrap();
+                if role == "warning" {
+                    continue;
+                }
                 assert!(
                     green >= red && green > blue || blue >= red && blue > green,
                     "{variant} {role} is neither green nor blue: {color:?}"
@@ -2315,13 +2369,67 @@ mod tests {
                 );
             }
             assert_eq!(theme.jump_label_immediate, theme.error);
-        }
-        assert_eq!(dark.error, Color::Rgb(0xff, 0x6b, 0x6b));
-        assert_eq!(dark.warning, Color::Rgb(0xff, 0xd1, 0x66));
-        assert_eq!(light.error, Color::Rgb(0xb0, 0x28, 0x1f));
-        assert_eq!(light.warning, Color::Rgb(0x8a, 0x5a, 0x00));
 
-        // The mirror itself: role for role, the same hue from the other side.
+            // The narrow band. Ordinary text carries no glare, the hued
+            // colours follow it down rather than being left above it, and
+            // comments stay legible at the bottom.
+            let text = contrast(theme.foreground, theme.background);
+            assert!(
+                (8.4..=8.8).contains(&text),
+                "{variant} text should sit near 8.6:1, not {text}"
+            );
+            for scope in ["keyword", "string", "type", "function", "number"] {
+                let scope = crate::syntax::Scope::named(scope).unwrap();
+                let hue = contrast(theme.syntax_color(scope).unwrap(), theme.background);
+                assert!(
+                    hue < text && hue >= 5.0,
+                    "{variant} {scope:?} should sit below ordinary text and stay legible: {hue}"
+                );
+            }
+            let comment = contrast(theme.muted, theme.background);
+            assert!(
+                (3.5..4.5).contains(&comment),
+                "{variant} comments should stay at the soft end of the band: {comment}"
+            );
+
+            // Ordinary text stays legible on the shared Git grounds it is
+            // drawn over, which every bundled theme has to manage. On the
+            // dark side that is also what stops the softening: Runyte's
+            // `diff_added` is light enough that 8.6:1 against the pane is
+            // very nearly all the text can give up. The light variant has
+            // room to spare against its own pale grounds and matches the
+            // dark one for symmetry rather than because it is pinned.
+            let floor = contrast(theme.foreground, theme.diff_added.unwrap());
+            assert!(
+                floor >= 4.5,
+                "{variant} text is unreadable on the shared added-row ground: {floor}"
+            );
+
+            // Dimmed text recedes behind the two-key jump labels it is drawn
+            // under, on either ground.
+            for label in [theme.jump_label_primary, theme.jump_label_secondary] {
+                assert!(
+                    contrast(label, theme.background)
+                        > contrast(theme.jump_text_muted, theme.background),
+                    "{variant} jump labels do not stand above the text they dim"
+                );
+            }
+            assert!(
+                contrast(theme.foreground, theme.jump_text_muted) >= 1.4,
+                "{variant} dimmed text is too close to ordinary text to read as dimmed"
+            );
+        }
+        assert!(
+            contrast(dark.foreground, dark.diff_added.unwrap()) < 4.6,
+            "ocean-dark text could soften further before its diff ground stops it"
+        );
+        assert_eq!(dark.error, Color::Rgb(0xff, 0x6b, 0x6b));
+        assert_eq!(dark.warning, Color::Rgb(0xde, 0xb3, 0x49));
+        assert_eq!(light.error, Color::Rgb(0xb0, 0x28, 0x1f));
+        assert_eq!(light.warning, Color::Rgb(0x5d, 0x34, 0x00));
+
+        // The mirror itself: role for role, the same hue at the same distance
+        // from the other ground.
         for ((role, deep), (mirrored, shallow)) in roles(&dark).into_iter().zip(roles(&light)) {
             assert_eq!(role, mirrored, "the two variants list roles differently");
             assert_eq!(
@@ -2329,24 +2437,77 @@ mod tests {
                 order(shallow),
                 "ocean {role} changes hue between the variants: {deep:?} and {shallow:?}"
             );
+            // The grounds are mirrored on how far they look from their own
+            // background instead, below. The fuzzy-match pair is unset in
+            // both variants and tracks the selections, so it follows them.
+            if matches!(
+                role.as_str(),
+                "background"
+                    | "selection"
+                    | "selection_primary"
+                    | "fuzzy_match_secondary"
+                    | "fuzzy_match_primary"
+            ) {
+                continue;
+            }
+            let deep = contrast(deep, dark.background);
+            let shallow = contrast(shallow, light.background);
+            assert!(
+                (deep - shallow).abs() / deep <= 0.03,
+                "ocean {role} sits {deep} from one ground and {shallow} from the other"
+            );
         }
+
+        // The two selection grounds stand as far off their own background as
+        // their counterparts do off the other one, and the primary range is
+        // the one that stands out further in both.
+        for (role, deep, shallow) in [
+            ("selection", dark.selection, light.selection),
+            (
+                "selection_primary",
+                dark.selection_primary,
+                light.selection_primary,
+            ),
+        ] {
+            let deep = perceptual_distance(deep, dark.background);
+            let shallow = perceptual_distance(shallow, light.background);
+            assert!(
+                (deep - shallow).abs() / deep <= 0.05,
+                "ocean {role} stands {deep} off one ground and {shallow} off the other"
+            );
+        }
+        for theme in [&dark, &light] {
+            assert!(
+                perceptual_distance(theme.selection_primary, theme.background)
+                    > perceptual_distance(theme.selection, theme.background),
+                "the primary range should be the one that stands out"
+            );
+        }
+
+        // Dimmed text is the one role among the palette's colours that does
+        // not mirror its counterpart's contrast: it has to recede behind the shared jump labels, and the
+        // light ones are far softer than the dark ones, so the light variant
+        // puts it where `light` and `paper` put theirs instead.
+        assert_eq!(dark.jump_text_muted, Color::Rgb(0x7e, 0x9e, 0xaa));
+        assert_eq!(light.jump_text_muted, Color::Rgb(0x7b, 0x92, 0x9b));
+        assert_eq!(order(dark.jump_text_muted), order(light.jump_text_muted));
 
         // Normal is the accent turquoise, and the other carets walk from it
         // toward dusk, so the five modes are told apart by hue alone without
         // leaving the palette. Replace is the orchid a theme whose Normal
         // reads as green is given, rather than a green answering Normal.
         assert_eq!(dark.cursor_normal, dark.accent);
-        assert_eq!(dark.cursor_normal, Color::Rgb(0x1f, 0xc8, 0xb4));
-        assert_eq!(dark.cursor_insert, Color::Rgb(0x8f, 0xe8, 0xf5));
-        assert_eq!(dark.cursor_select, Color::Rgb(0x4f, 0xa8, 0xf5));
-        assert_eq!(dark.cursor_command, Color::Rgb(0x7d, 0x90, 0xff));
-        assert_eq!(dark.cursor_replace, Color::Rgb(0xb9, 0x8c, 0xff));
+        assert_eq!(dark.cursor_normal, Color::Rgb(0x00, 0xb6, 0xa2));
+        assert_eq!(dark.cursor_insert, Color::Rgb(0x69, 0xc3, 0xd0));
+        assert_eq!(dark.cursor_select, Color::Rgb(0x3f, 0x9d, 0xe9));
+        assert_eq!(dark.cursor_command, Color::Rgb(0x67, 0x7d, 0xea));
+        assert_eq!(dark.cursor_replace, Color::Rgb(0xad, 0x81, 0xf3));
         assert_eq!(light.cursor_normal, light.accent);
-        assert_eq!(light.cursor_normal, Color::Rgb(0x0a, 0x7a, 0x6c));
-        assert_eq!(light.cursor_insert, Color::Rgb(0x00, 0x4a, 0x6b));
-        assert_eq!(light.cursor_select, Color::Rgb(0x16, 0x63, 0xc4));
-        assert_eq!(light.cursor_command, Color::Rgb(0x45, 0x4a, 0xc9));
-        assert_eq!(light.cursor_replace, Color::Rgb(0x7b, 0x35, 0xc4));
+        assert_eq!(light.cursor_normal, Color::Rgb(0x00, 0x59, 0x4c));
+        assert_eq!(light.cursor_insert, Color::Rgb(0x00, 0x44, 0x64));
+        assert_eq!(light.cursor_select, Color::Rgb(0x00, 0x53, 0xb1));
+        assert_eq!(light.cursor_command, Color::Rgb(0x54, 0x55, 0xd6));
+        assert_eq!(light.cursor_replace, Color::Rgb(0x74, 0x2e, 0xbd));
     }
 
     #[test]
