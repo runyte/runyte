@@ -3497,9 +3497,12 @@ the third thing worth finding, which for code is strings. Its text reads at
 is larger only because the ground is darker. The red is the one colour left
 below the band the others share: a saturated red is darker than a saturated
 cyan, and lightening it into that band turns it pink and takes the frame with
-it, so it keeps its weight instead. The primary selection is deep magenta
-rather than the deep red the frame would suggest, because Runyte's shared
-deleted-row ground is a deep red and the two would have looked alike.
+it, so it keeps its weight instead. The primary selection answers the Select
+caret above it, in the same acid green banked down to a ground, while ordinary
+ranges stay blue. Both are kept clear of the shared Git rows: the primary green
+sits at the yellow end of the greens so it cannot be taken for an added line,
+and the deep red the frame would otherwise suggest for it is unused because it
+was indistinguishable from a deleted one.
 `ember-dark` and `ember-light` are Runyte's branded pair, named for the red
 they carry on an otherwise neutral gray ground rather than for being what
 Runyte starts in. They share red

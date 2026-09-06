@@ -771,14 +771,24 @@ pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
             cursor_select: Some("#7fbf18".into()),
             cursor_command: Some("#4d9fff".into()),
             directory: Some(neon_cyan.into()),
-            // Deep teal for ordinary ranges and deep magenta for the primary
-            // one, which is the range a reader is hunting for. The obvious
-            // choice for the primary was a deep red, echoing the frame, and
-            // it is not used: Runyte's shared `diff_removed` row is a deep
-            // red too, and the two landed three CIE76 points apart, which
-            // would have made a selected range and a deleted line look alike.
-            selection: "#14444c".into(),
-            selection_primary: Some("#591b4a".into()),
+            // The primary range answers the Select caret above it: the caret
+            // is the acid green, and the ground under the range it marks is
+            // the same green banked down to a ground. That has to be kept
+            // clear of Runyte's shared added-row green, which is a deep
+            // green as well; the two are told apart by being at opposite
+            // ends of the greens, this one yellow and that one blue, and
+            // sit 23 CIE76 points apart because of it. The same trap cost
+            // the obvious first choice for this role: a deep red echoing the
+            // frame landed three points from the shared deleted-row ground,
+            // which would have made a selected range and a deleted line look
+            // alike.
+            //
+            // Ordinary ranges stay blue and stand well off the ground. Both
+            // are as saturated as the dimmed text drawn on them allows: that
+            // text has to clear 3:1 on either, which caps both grounds at
+            // 1.96:1 against the pane, and these sit just under it.
+            selection: "#0a4478".into(),
+            selection_primary: Some("#354a06".into()),
             fuzzy_match_secondary: None,
             fuzzy_match_primary: None,
             status_background: "#0f1c24".into(),

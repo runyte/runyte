@@ -2625,12 +2625,48 @@ mod tests {
         assert!(Theme::is_green_hued(theme.cursor_select));
         assert_eq!(theme.cursor_replace, Color::Rgb(0xff, 0x4d, 0xe0));
 
-        // The primary selection is deep magenta rather than the deep red the
-        // frame would suggest, because Runyte's shared deleted-row ground is
-        // a deep red too and the two would have been indistinguishable.
+        // The primary range answers the Select caret above it, in the same
+        // acid green banked down to a ground.
+        let ranked = |color: Color| {
+            let (red, green, blue) = color.channels().unwrap();
+            let channels = [red, green, blue];
+            let mut ranked = [0, 1, 2];
+            ranked.sort_by_key(|index| (std::cmp::Reverse(channels[*index]), *index));
+            ranked
+        };
+        assert_eq!(
+            ranked(theme.selection_primary),
+            ranked(theme.cursor_select),
+            "the primary range should read as the Select caret's own colour"
+        );
+
+        // Neither ground may drift into one of the shared Git rows. A deep
+        // red primary landed three CIE76 points from the deleted row, and
+        // the acid green that replaced it has to stay off the added row for
+        // the same reason.
+        for ground in [theme.selection, theme.selection_primary] {
+            for row in [
+                theme.diff_added.unwrap(),
+                theme.diff_changed.unwrap(),
+                theme.diff_removed.unwrap(),
+            ] {
+                assert!(
+                    perceptual_distance(ground, row) >= 18.0,
+                    "a selected range and a changed line should not look alike"
+                );
+            }
+        }
+
+        // Ordinary ranges are blue, and visibly so: the first pairing was
+        // faint enough to be reported as hard to find.
+        let (red, green, blue) = theme.selection.channels().unwrap();
         assert!(
-            perceptual_distance(theme.selection_primary, theme.diff_removed.unwrap()) >= 18.0,
-            "a selected range and a deleted line should not look alike"
+            blue > green && green > red,
+            "ordinary ranges should be blue"
+        );
+        assert!(
+            perceptual_distance(theme.selection, theme.background) >= 30.0,
+            "ordinary ranges disappear into the pane"
         );
         assert!(
             perceptual_distance(theme.selection_primary, theme.background)
