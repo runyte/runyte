@@ -1205,7 +1205,7 @@ The leftmost mode label in the global status line uses the current mode's
 caret colour, which each theme names for itself. Most built-in themes use blue
 for Normal, red for Insert, neon green for Replace (neon magenta when another
 mode already uses green), orange for Select, and purple for Command;
-`default-dark` and `default-light` instead use green for Normal, red for
+`warning-dark` and `warning-light` instead use green for Normal, red for
 Insert, purple for Replace, pink for Select, and blue for Command. The rest of
 the row keeps the theme's ordinary background. Its left side
 then names the workspace mode and current workspace directory, marking the
@@ -1751,7 +1751,7 @@ Every flavour selects *all* of its matches at once, so the edit that follows
 applies to all of them. Each match is selected in full with the cursor on its
 last character, which is where an append or a motion continues from. The whole
 primary match carries the theme's primary-selection ground and one cursor in
-its Select colour — pink in `default-dark` and `default-light`, orange in most
+its Select colour — pink in `warning-dark` and `warning-light`, orange in most
 other built-in themes — while the other matches keep the secondary selection
 colour without cursor blocks. The status line identifies the primary's position
 among the results. Pressing `n` or `N` selects only the next
@@ -3330,7 +3330,7 @@ workspace:
 notifications:
   history_limit: 50 # newest workspace-lifetime notifications kept in memory
 
-# Optional. Leave it out to use the default-dark theme.
+# Optional. Leave it out to use the ocean-dark theme.
 theme: gruvbox
 ```
 
@@ -3424,8 +3424,9 @@ outside `keys` retain their normal startup failure behavior. Key remapping is
 read from the file only; it is not written by the `[config]` buffer.
 
 
-Built-in themes are `default-dark`, `default-light`, `dark`, `light`,
-`base16`, `paper`, `gruvbox`, `matrix`, `ocean-dark`, `ocean-light`,
+Built-in themes are `ocean-dark` (the default) and `ocean-light`,
+`warning-dark`, `warning-light`, `dark`, `light`,
+`base16`, `paper`, `gruvbox`, `matrix`,
 `atom-one-light`, `github-light`, all four
 Catppuccin flavours (`latte`, `frappe`, `macchiato`, and `mocha`), and the six
 Everforest variants (`everforest-dark-hard`, `everforest-dark-medium`,
@@ -3485,7 +3486,8 @@ because the turquoise Normal already reads as green. Two warm colours survive
 the discipline because the interface cannot afford to lose them in the water:
 the error red, which the one-key jump label shares, and the amber a warning is
 drawn in, alongside the Git gutter and diff grounds every bundled theme shares.
-`default-dark` and `default-light` are Runyte's branded pair. They share red
+`warning-dark` and `warning-light` are Runyte's branded pair, named for the
+red they are built on rather than for being what Runyte starts in. They share red
 accents and a green Normal, red Insert, pink Select, purple Replace, and
 blue Command mode vocabulary — inverted from most other built-in themes'
 purple Command and green Replace. They are also the only bundled themes that
@@ -3501,7 +3503,7 @@ the settings menu. The same theme choice is available from the `theme` row in
 
 Whichever theme is selected is written to `theme:` in the configuration file
 and used the next time Runyte starts. With no configured theme, Runyte starts
-in `default-dark`. A custom theme can be declared in the same file:
+in `ocean-dark`. A custom theme can be declared in the same file:
 
 ```yaml
 theme: midnight
@@ -3621,7 +3623,7 @@ light grounds; it switches to neon magenta when another resolved mode colour
 is green. Command and Replace are otherwise a Runyte colour rather than an
 upstream one: most built-in themes use blue for Normal, red for Insert, neon
 green for Replace, orange for Select, and purple for Command, but each theme
-is free to choose its own. `default-dark` and `default-light` do: green for
+is free to choose its own. `warning-dark` and `warning-light` do: green for
 Normal, red for Insert, purple for Replace, pink for Select, and blue for
 Command, the same blue their `command` role lists palette commands in.
 
@@ -3629,7 +3631,7 @@ Command, the same blue their `command` role lists palette commands in.
 `selection_primary` colours the primary range and ordinary Select-mode ranges;
 it falls back to `selection` when omitted. Most of Runyte's original built-in
 themes pair a cool secondary selection with a warm primary selection.
-`default-dark` and `default-light` separate the two by hue alone instead: a
+`warning-dark` and `warning-light` separate the two by hue alone instead: a
 vivid blue secondary against a pink primary that answers their Select cursor.
 Imported themes may preserve their upstream Visual and Search backgrounds
 rather than either, as the Zenbones variants do.

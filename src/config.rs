@@ -73,7 +73,7 @@ pub(crate) const MAX_GIT_REFRESH_INTERVAL_SECONDS: usize = 3_600;
 pub(crate) const MAX_IDLE_RETIREMENT_MINUTES: usize = 43_200;
 
 /// The theme Runyte starts in when nothing else has been chosen.
-pub const DEFAULT_THEME: &str = "default-dark";
+pub const DEFAULT_THEME: &str = "ocean-dark";
 
 // Git colours are deliberately shared by appearance rather than softened into
 // each palette. A Git meaning must be recognizable before the reader decodes
@@ -99,7 +99,7 @@ const DIFF_REMOVED_LIGHT: &str = "#ffe0ee";
 const JUMP_LABEL_DARK_PRIMARY: &str = "#5fd7e7";
 const JUMP_LABEL_DARK_SECONDARY: &str = "#4ab7c6";
 const JUMP_LABEL_LIGHT_PRIMARY: &str = "#00616e";
-// Two steps darker than `#007583`, one for each step `default-light` has
+// Two steps darker than `#007583`, one for each step `warning-light` has
 // taken toward its inactive pane: each darkening of that ground put the
 // previous value back under the 4.5:1 legibility floor against it. Every
 // other light theme keeps a lighter ground, so a darker secondary only reads
@@ -2036,8 +2036,6 @@ mod tests {
                 "atom-one-light",
                 "base16",
                 "dark",
-                "default-dark",
-                "default-light",
                 "duckbones-dark",
                 "everforest-dark-hard",
                 "everforest-dark-medium",
@@ -2074,6 +2072,8 @@ mod tests {
                 "tokyobones-dark",
                 "tokyobones-light",
                 "vimbones-light",
+                "warning-dark",
+                "warning-light",
                 "zenbones-dark",
                 "zenbones-light",
                 "zenburned-dark",
@@ -2091,14 +2091,14 @@ mod tests {
     }
 
     #[test]
-    fn runyte_default_themes_share_the_brand_and_mode_palette() {
+    fn runyte_branded_themes_share_the_brand_and_mode_palette() {
         let config = Config::default();
         let rgb = |(red, green, blue)| Color::Rgb(red, green, blue);
         let heading = crate::syntax::Scope::named("markup.heading").unwrap();
 
         for (name, background, foreground, accent, normal, insert, replace, select, command) in [
             (
-                "default-dark",
+                "warning-dark",
                 (0x28, 0x2a, 0x2f),
                 (0xb9, 0xb9, 0xbe),
                 (0xc9, 0x68, 0x70),
@@ -2109,7 +2109,7 @@ mod tests {
                 (0x6c, 0xb6, 0xff),
             ),
             (
-                "default-light",
+                "warning-light",
                 (0xda, 0xda, 0xdc),
                 (0x29, 0x2a, 0x30),
                 (0xa3, 0x3d, 0x49),
@@ -2140,14 +2140,23 @@ mod tests {
         // Every other bundled theme leaves the split unmade, so the palette
         // and the borders keep answering one accent.
         for name in config.theme_names() {
-            if name.starts_with("default-") {
+            if name.starts_with("warning-") {
                 continue;
             }
             let theme = config.resolve_theme(name).unwrap();
             assert_eq!(theme.command, theme.accent, "{name}");
         }
+    }
 
-        assert_eq!(DEFAULT_THEME, "default-dark");
+    /// Runyte starts in `ocean-dark`. The branded pair is named for the red
+    /// it is built on rather than for being what starts, so nothing about
+    /// which theme is the default can be read off a theme's name any more.
+    #[test]
+    fn the_startup_theme_is_ocean_dark() {
+        assert_eq!(DEFAULT_THEME, "ocean-dark");
+        let config = Config::default();
+        assert!(config.theme_names().contains(&DEFAULT_THEME));
+        assert_eq!(config.startup_theme().unwrap().0, "ocean-dark");
     }
 
     /// `matrix` is defined by what it refuses to spend as much as by what it
@@ -3559,11 +3568,11 @@ mod tests {
     }
 
     #[test]
-    fn default_themes_use_a_pink_primary_selection_and_a_vivid_blue_secondary() {
+    fn branded_themes_use_a_pink_primary_selection_and_a_vivid_blue_secondary() {
         // `built_in_search_selection_palettes_are_legible_and_role_distinct`
         // covers the bundled themes that answer Select mode in orange, and its
-        // hue rule is why the branded pair is not in that list: `default-dark`
-        // and `default-light` answer it in pink instead. The same legibility
+        // hue rule is why the branded pair is not in that list: `warning-dark`
+        // and `warning-light` answer it in pink instead. The same legibility
         // and role questions still have to be asked of them, so they are asked
         // here against the pink grammar.
         fn channels(color: Color) -> (u8, u8, u8) {
@@ -3617,8 +3626,8 @@ mod tests {
 
         let config = Config::default();
         for (name, secondary, primary, select) in [
-            ("default-dark", 0x0b3f8c, 0x5e2e4d, 0xf07ab4),
-            ("default-light", 0x8fc6fb, 0xf2b8da, 0xa4276f),
+            ("warning-dark", 0x0b3f8c, 0x5e2e4d, 0xf07ab4),
+            ("warning-light", 0x8fc6fb, 0xf2b8da, 0xa4276f),
         ] {
             let theme = config.resolve_theme(name).unwrap();
             let rgb = |value: u32| {

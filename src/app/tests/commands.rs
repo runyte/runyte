@@ -2401,10 +2401,10 @@ fn theme_names_activate_the_matching_theme() {
 
     let mut app = App::new(Config::default(), None).unwrap();
     private_theme_config(&mut app, &directory);
-    assert_eq!(app.theme_name, "default-dark");
+    assert_eq!(app.theme_name, "ocean-dark");
     assert_eq!(
         app.terminals.default_colors(),
-        DefaultColors::new(Some((0xb9, 0xb9, 0xbe)), Some((0x28, 0x2a, 0x2f)))
+        DefaultColors::new(Some((0xa6, 0xbd, 0xc5)), Some((0x0b, 0x1f, 0x2a)))
     );
     let default_accent = app.theme.accent;
 
