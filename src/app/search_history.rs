@@ -1009,9 +1009,14 @@ impl App {
         let soft_wrap = self.pane_soft_wrap(pane_id);
         let folds = self.resolved_folds(pane_id);
         {
-            let line = self.buffers[buffer_id].line_string(cursor.row);
             let segment = if soft_wrap {
-                crate::wrap::segment_index(&line, cursor.col, width, self.config.editor.tab_width)
+                crate::wrap::line_segment_index(
+                    &self.buffers[buffer_id],
+                    cursor.row,
+                    cursor.col,
+                    width,
+                    self.config.editor.tab_width,
+                )
             } else {
                 0
             };
@@ -1056,16 +1061,18 @@ impl App {
         let soft_wrap = self.pane_soft_wrap(pane_id);
         let folds = self.resolved_folds(pane_id);
         if soft_wrap {
-            let segment_count = crate::wrap::segments(
-                &self.buffers[buffer_id].line_string(row),
+            let segment_count = crate::wrap::line_segments(
+                &self.buffers[buffer_id],
+                row,
                 width,
                 self.config.editor.tab_width,
             )
             .len();
             let previous_row = previous_visible_row(&folds, row);
             let previous_segment = (row > 0).then(|| {
-                crate::wrap::segments(
-                    &self.buffers[buffer_id].line_string(previous_row),
+                crate::wrap::line_segments(
+                    &self.buffers[buffer_id],
+                    previous_row,
                     width,
                     self.config.editor.tab_width,
                 )

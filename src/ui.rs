@@ -5620,7 +5620,9 @@ mod tests {
                 config: format!("{:?}", app.config),
                 theme: format!("{:?}", app.theme),
                 theme_name: app.theme_name.clone(),
-                buffers: format!("{:?}", app.buffers),
+                // Cloning retains text and undo state but drops derived wrap
+                // geometry, which prepare_view is allowed to populate.
+                buffers: format!("{:?}", app.buffers.clone()),
                 syntax_languages: app
                     .syntax
                     .iter()

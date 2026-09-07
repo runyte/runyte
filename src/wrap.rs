@@ -6,6 +6,8 @@
 //! are derived here so rendering, cursor placement, scrolling, and vertical
 //! motion share exactly the same wrapping decisions.
 
+use std::sync::{Arc, Mutex};
+
 use unicode_width::UnicodeWidthChar;
 
 use crate::buffer::{Buffer, Position};
@@ -30,6 +32,112 @@ pub struct VisualRow {
     pub row: usize,
     pub segment: usize,
     pub span: Segment,
+}
+
+/// Bounded geometry for recently viewed lines, shared by movement and drawing.
+/// Text revisions are globally unique, including after replacement or undo.
+#[derive(Debug, Default)]
+pub(crate) struct Cache(Mutex<Vec<CachedLine>>);
+
+impl Clone for Cache {
+    fn clone(&self) -> Self {
+        Self::default()
+    }
+}
+
+#[derive(Debug)]
+struct CachedLine {
+    key: (u64, usize, usize, usize),
+    spans: Arc<[Segment]>,
+}
+
+pub(crate) fn line_segments(
+    buffer: &Buffer,
+    row: usize,
+    width: usize,
+    tab_width: usize,
+) -> Arc<[Segment]> {
+    const MAX_SEGMENTS: usize = 262_144;
+    const MAX_LINES: usize = 16;
+    let key = (buffer.revision(), row, width.max(1), tab_width.max(1));
+    let mut cache = buffer.wrap_cache.0.lock().unwrap();
+    cache.retain(|entry| entry.key.0 == key.0);
+    if let Some(index) = cache.iter().position(|entry| entry.key == key) {
+        let entry = cache.remove(index);
+        let spans = entry.spans.clone();
+        cache.push(entry);
+        return spans;
+    }
+    let spans: Arc<[Segment]> = segments(&buffer.line_string(row), key.2, key.3).into();
+    if spans.len() <= MAX_SEGMENTS {
+        let mut count = cache.iter().map(|entry| entry.spans.len()).sum::<usize>();
+        while cache.len() >= MAX_LINES || count + spans.len() > MAX_SEGMENTS {
+            count -= cache.remove(0).spans.len();
+        }
+        cache.push(CachedLine {
+            key,
+            spans: spans.clone(),
+        });
+    }
+    spans
+}
+
+pub(crate) fn line_segment_index(
+    buffer: &Buffer,
+    row: usize,
+    column: usize,
+    width: usize,
+    tab_width: usize,
+) -> usize {
+    index_in(&line_segments(buffer, row, width, tab_width), column)
+}
+
+pub(crate) fn line_screen_column(
+    buffer: &Buffer,
+    row: usize,
+    column: usize,
+    width: usize,
+    tab_width: usize,
+) -> usize {
+    let spans = line_segments(buffer, row, width, tab_width);
+    let segment = spans[index_in(&spans, column)];
+    let mut cell = segment.start_cell;
+    for character in buffer
+        .text()
+        .line(row)
+        .chars_at(segment.start)
+        .take(column.saturating_sub(segment.start))
+    {
+        cell += cell_width(character, cell, tab_width.max(1));
+    }
+    cell - segment.start_cell
+}
+
+pub(crate) fn line_column_for_screen(
+    buffer: &Buffer,
+    row: usize,
+    segment_index: usize,
+    desired: usize,
+    width: usize,
+    tab_width: usize,
+) -> usize {
+    let spans = line_segments(buffer, row, width, tab_width);
+    let segment = spans[segment_index.min(spans.len() - 1)];
+    let target = segment.start_cell.saturating_add(desired);
+    let mut cell = segment.start_cell;
+    for (index, character) in buffer
+        .text()
+        .line(row)
+        .chars_at(segment.start)
+        .take(segment.end - segment.start)
+        .enumerate()
+    {
+        cell += cell_width(character, cell, tab_width.max(1));
+        if cell > target {
+            return segment.start + index;
+        }
+    }
+    segment.end
 }
 
 pub fn segments(line: &str, width: usize, tab_width: usize) -> Vec<Segment> {
@@ -648,9 +756,8 @@ pub fn segment_index(line: &str, column: usize, width: usize, tab_width: usize) 
 
 fn index_in(spans: &[Segment], column: usize) -> usize {
     spans
-        .iter()
-        .position(|segment| column >= segment.start && column < segment.end)
-        .unwrap_or_else(|| spans.len().saturating_sub(1))
+        .partition_point(|segment| segment.end <= column)
+        .min(spans.len().saturating_sub(1))
 }
 
 pub fn screen_column(line: &str, column: usize, width: usize, tab_width: usize) -> usize {
@@ -696,10 +803,9 @@ pub fn move_vertical(
     width: usize,
     tab_width: usize,
 ) -> Position {
-    let line = buffer.line_string(position.row);
-    let current_segments = segments(&line, width, tab_width);
-    let current = segment_index(&line, position.col, width, tab_width);
-    let desired = screen_column(&line, position.col, width, tab_width);
+    let current_segments = line_segments(buffer, position.row, width, tab_width);
+    let current = index_in(&current_segments, position.col);
+    let desired = line_screen_column(buffer, position.row, position.col, width, tab_width);
     let (row, segment) = if down {
         if current + 1 < current_segments.len() {
             (position.row, current + 1)
@@ -712,15 +818,14 @@ pub fn move_vertical(
         (position.row, current - 1)
     } else if position.row > 0 {
         let row = position.row - 1;
-        let count = segments(&buffer.line_string(row), width, tab_width).len();
+        let count = line_segments(buffer, row, width, tab_width).len();
         (row, count.saturating_sub(1))
     } else {
         return position;
     };
-    let target = buffer.line_string(row);
     Position::new(
         row,
-        column_for_screen(&target, segment, desired, width, tab_width),
+        line_column_for_screen(buffer, row, segment, desired, width, tab_width),
     )
 }
 
@@ -736,8 +841,7 @@ pub fn visible_rows(
     let mut row = start_row.min(buffer.last_row());
     let mut segment = start_segment;
     while result.len() < height && row < buffer.len_lines() {
-        let line = buffer.line_string(row);
-        let spans = segments(&line, width, tab_width);
+        let spans = line_segments(buffer, row, width, tab_width);
         while segment < spans.len() && result.len() < height {
             result.push(VisualRow {
                 row,
@@ -776,12 +880,11 @@ pub fn visual_distance(
     }
     let mut distance = 0;
     for row in start_row..=target_row {
-        let count = segments(&buffer.line_string(row), width, tab_width).len();
         let first = if row == start_row { start_segment } else { 0 };
         let last = if row == target_row {
             target_segment
         } else {
-            count
+            line_segments(buffer, row, width, tab_width).len()
         };
         distance += last.saturating_sub(first);
         if distance > limit {
@@ -806,7 +909,7 @@ pub fn move_visual_start_backward(
             amount -= step;
         } else if row > 0 {
             row -= 1;
-            segment = segments(&buffer.line_string(row), width, tab_width)
+            segment = line_segments(buffer, row, width, tab_width)
                 .len()
                 .saturating_sub(1);
             amount -= 1;
@@ -908,6 +1011,10 @@ fn cell_width(character: char, cell: usize, tab_width: usize) -> usize {
         UnicodeWidthChar::width(character).unwrap_or(0)
     }
 }
+
+#[cfg(test)]
+#[path = "wrap/tests/cache.rs"]
+mod cache_tests;
 
 #[cfg(test)]
 mod tests {

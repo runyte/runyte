@@ -41,6 +41,26 @@ days, and fails below 89% total line coverage. The floor is deliberately below
 the observed baseline because conditional Linux and macOS code changes both the
 instrumented denominator and the paths available to a run on one platform.
 
+## 2026-09-07 — soft-wrapped long-line navigation
+
+Measured on `x86_64-unknown-linux-gnu` with cargo-llvm-cov 0.9.0 and Rust
+1.97.1, at base `c56eb96` plus cached wrap geometry and bounded snapshot
+traversal. Both `cargo test` and canonical
+`cargo llvm-cov --locked --workspace` passed 3,033 tests, with 33 ignored.
+
+| Measure | Covered | Total | Coverage |
+| --- | ---: | ---: | ---: |
+| Lines | 101,488 | 110,677 | 91.70% |
+| Functions | 9,413 | 10,167 | 92.58% |
+| Regions | 157,027 | 172,149 | 91.22% |
+
+New coverage exercises Unicode and tab geometry, reuse across pane widths,
+edit/undo/redo invalidation, cloned buffers, both cache bounds, and deep JSON
+snapshot text and syntax after resizing. The release-only movement performance
+gate remains outside canonical coverage. Runs used normal PTY, process, and
+local-socket access. The 89% floor is unchanged; native macOS validation remains
+for CI or a macOS host.
+
 ## 2026-09-07 — asynchronous initial syntax
 
 Measured on `x86_64-unknown-linux-gnu` with cargo-llvm-cov 0.9.0, at base

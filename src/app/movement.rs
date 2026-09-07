@@ -384,29 +384,21 @@ pub(super) fn move_offset_projected(
     let (viewport_height, scroll_row, scroll_wrap) = viewport;
     let position = buffer.position_of(offset);
     let desired = if soft_wrap {
-        crate::wrap::screen_column(
-            &buffer.line_string(position.row),
-            position.col,
-            width,
-            tab_width,
-        )
+        crate::wrap::line_screen_column(buffer, position.row, position.col, width, tab_width)
     } else {
         position.col
     };
     let move_once = |position: Position, down: bool| {
-        let segments = crate::wrap::segments(&buffer.line_string(position.row), width, tab_width);
         let current = if soft_wrap {
-            crate::wrap::segment_index(
-                &buffer.line_string(position.row),
-                position.col,
-                width,
-                tab_width,
-            )
+            crate::wrap::line_segment_index(buffer, position.row, position.col, width, tab_width)
         } else {
             0
         };
         let (row, segment) = if down {
-            if soft_wrap && current + 1 < segments.len() {
+            if soft_wrap
+                && current + 1
+                    < crate::wrap::line_segments(buffer, position.row, width, tab_width).len()
+            {
                 (position.row, current + 1)
             } else {
                 let row = next_visible_row(folds, position.row, buffer.last_row());
@@ -423,7 +415,7 @@ pub(super) fn move_offset_projected(
                 return position;
             }
             let segment = if soft_wrap {
-                crate::wrap::segments(&buffer.line_string(row), width, tab_width)
+                crate::wrap::line_segments(buffer, row, width, tab_width)
                     .len()
                     .saturating_sub(1)
             } else {
@@ -432,13 +424,7 @@ pub(super) fn move_offset_projected(
             (row, segment)
         };
         let col = if soft_wrap {
-            crate::wrap::column_for_screen(
-                &buffer.line_string(row),
-                segment,
-                desired,
-                width,
-                tab_width,
-            )
+            crate::wrap::line_column_for_screen(buffer, row, segment, desired, width, tab_width)
         } else {
             desired.min(buffer.line_len(row))
         };
@@ -486,14 +472,16 @@ pub(super) fn move_offset_projected(
                 let col = segment.map_or_else(
                     || desired.min(buffer.line_len(document_row)),
                     |segment| {
-                        let segment_index = crate::wrap::segment_index(
-                            &buffer.line_string(document_row),
+                        let segment_index = crate::wrap::line_segment_index(
+                            buffer,
+                            document_row,
                             segment.start,
                             width,
                             tab_width,
                         );
-                        crate::wrap::column_for_screen(
-                            &buffer.line_string(document_row),
+                        crate::wrap::line_column_for_screen(
+                            buffer,
+                            document_row,
                             segment_index,
                             desired,
                             width,

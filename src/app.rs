@@ -675,20 +675,15 @@ fn adjust_scroll_wrapped(
         return;
     }
     pane.scroll_row = pane.scroll_row.min(buffer.last_row());
-    let start_count =
-        crate::wrap::segments(&buffer.line_string(pane.scroll_row), width, tab_width).len();
+    let start_count = crate::wrap::line_segments(buffer, pane.scroll_row, width, tab_width).len();
     pane.scroll_wrap = pane.scroll_wrap.min(start_count.saturating_sub(1));
     pane.scroll_col = 0;
     if pane.preserve_scroll {
         return;
     }
 
-    let cursor_segment = crate::wrap::segment_index(
-        &buffer.line_string(cursor.row),
-        cursor.col,
-        width,
-        tab_width,
-    );
+    let cursor_segment =
+        crate::wrap::line_segment_index(buffer, cursor.row, cursor.col, width, tab_width);
     let distance = crate::wrap::visual_distance(
         buffer,
         pane.scroll_row,
@@ -814,7 +809,7 @@ fn project_visible_rows(
             .max()
             .filter(|lines| *lines > 0);
         if soft_wrap {
-            let spans = crate::wrap::segments(&buffer.line_string(row), width, tab_width);
+            let spans = crate::wrap::line_segments(buffer, row, width, tab_width);
             for (segment, span) in spans.iter().copied().enumerate().skip(initial_segment) {
                 if rows.len() == height {
                     break;
@@ -911,7 +906,7 @@ fn move_projected_start_backward(
             }
             row = previous;
             segment = if soft_wrap {
-                crate::wrap::segments(&buffer.line_string(row), width, tab_width)
+                crate::wrap::line_segments(buffer, row, width, tab_width)
                     .len()
                     .saturating_sub(1)
             } else {

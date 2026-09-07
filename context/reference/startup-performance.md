@@ -81,6 +81,57 @@ keeping syntax highlighting enabled. This applies to both `startup.py` and
 `run.py` through their shared setup, including instrumented launches. The
 first-open choice overlay therefore cannot intercept measurement keystrokes.
 
+## 2026-09-07 — soft-wrapped single-line navigation
+
+Measured on AMD Ryzen AI 9 365, Linux x86-64, Rust 1.97.1, with the default
+release profile. The baseline is `c56eb96`; the comparison adds cached wrap
+geometry, direct rope seeks in snapshot rendering, and contiguous visible
+highlight queries. Syntax parsing completes before timing. These are semantic
+movement plus snapshot measurements at 120×40, excluding terminal output and
+initial layout construction.
+
+An initial probe on the existing 1,693,791-byte `minified_json` fixture averaged
+six alternating down/up commands at each location:
+
+| Cursor location | Before | After |
+| --- | ---: | ---: |
+| Beginning | 16.88 ms | 0.53 ms |
+| Halfway through | 85.53 ms | 0.48 ms |
+| 2,000 characters before the end | Not measured | 0.49 ms |
+
+The baseline stopped at the middle location when its 50 ms assertion failed.
+The end-of-line value is therefore an after-only observation.
+
+Previously, each projected movement recomputed the whole logical line's wrap
+boundaries several times. Each visible row then traversed its hidden prefix
+through a character iterator. The prefix traversal repeated for every screen
+row, making scrolling progressively slower toward the end. Adjacent wrapped
+rows also restarted the syntax query separately.
+
+`wrap::Cache` retains at most 16 layouts and 262,144 segments per buffer
+(8 MiB of segment payload on a 64-bit target). Its key includes the text
+revision, logical row, pane width, and tab width. Clones drop derived geometry;
+edits, undo, redo, and text replacement invalidate it through text revisions.
+Layouts larger than the retention budget are computed without caching.
+The 64,000,000-byte soft-wrap refusal remains in place for first-layout and
+resize costs. Startup and idle measurements have not been rerun.
+
+Regression coverage is
+`moving_through_wrapped_json_stays_responsive_at_every_depth` in
+`tests/performance.rs`: a fixture exceeding 3 MB, beginning/middle/end positions,
+48 downward and 48 upward movements per position, with highlighting and cursor
+movement asserted and the slowest movement plus snapshot limited to 16 ms.
+The final 3,277,786-byte fixture measured a slowest movement of 0.60 ms at the
+beginning, 0.54 ms halfway through, and 0.54 ms at 10,000 characters before the
+end, over 96 movements per location. All 19 release performance tests passed
+serially with `cargo test --release --locked --test performance -- --ignored
+--test-threads=1 --nocapture`.
+
+Run the test serially in release mode with the other performance gates. Unicode
+coordinates, tab stops, layout eviction, edits and undo are covered in
+`src/wrap/tests/cache.rs`; deep Unicode JSON text and highlight preservation
+across resizing are covered in `src/snapshot/tests/long_lines.rs`.
+
 ## 2026-09-06 — persistent session navigation
 
 Release build from base `9750cd0` plus the session-navigation implementation,

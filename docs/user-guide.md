@@ -1892,14 +1892,12 @@ A document whose longest line exceeds 64,000,000 bytes is shown unwrapped
 whatever `editor.soft_wrap` says. The length is measured once, when the file is
 read, so the decision is made before anything is drawn.
 
-The limit is set from measurement. Wrapping is computed per logical line and
-from that line's start, so a frame's wrapping cost is linear in the longest
-line: roughly 10ms for a one-million-character line, 160ms at sixteen million,
-and 750ms at sixty-four million. The limit sits where a frame approaches a
-whole second, which is where a document stops being slow to scroll and starts
-being impossible to use. Below it nothing is taken away — a minified file of a
-few megabytes still wraps, at about 17ms a frame — so the limit only refuses
-the cases where wrapping could not have worked at all.
+Wrap layouts are reused while the text, pane width, and tab width stay the
+same. Moving through a minified file of a few megabytes therefore avoids
+recalculating its entire line on each keypress. Rendering seeks directly to
+the visible text, including near the end of the line. An edit or a new pane
+width still requires calculating the affected layout; the line-length limit
+protects against extremely costly layouts.
 
 `Space p j` is the inverse of `Space p w`: it removes every line break inside
 the selection. Select the lines first, with `x` or `X` for whole lines or with

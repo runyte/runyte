@@ -446,8 +446,9 @@ impl App {
                 // enormous, so folded panes use only the bounded projection
                 // below.
                 pane.scroll_row = pane.scroll_row.min(buffer.last_row());
-                let start_count = crate::wrap::segments(
-                    &buffer.line_string(pane.scroll_row),
+                let start_count = crate::wrap::line_segments(
+                    buffer,
+                    pane.scroll_row,
                     document_text_width,
                     tab_width,
                 )
@@ -469,8 +470,9 @@ impl App {
                 pane.scroll_wrap = 0;
             }
             let cursor_segment = if soft_wrap {
-                crate::wrap::segment_index(
-                    &buffer.line_string(cursor.row),
+                crate::wrap::line_segment_index(
+                    buffer,
+                    cursor.row,
                     cursor.col,
                     document_text_width,
                     tab_width,

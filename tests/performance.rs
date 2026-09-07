@@ -73,12 +73,9 @@ const FRAME: Duration = Duration::from_millis(16);
 
 /// What a document Runyte chooses to soft-wrap has to redraw within.
 ///
-/// Wrapping a very long line is linear and unavoidably costly, so the line
-/// limit is set where a frame would reach about a second. This is the other
-/// half of that promise: anything under the limit, and therefore still
-/// wrapped, has to stay inside it. Between one frame and this ceiling the
-/// editor is progressively slower to scroll but still usable, which is the
-/// trade the limit deliberately makes.
+/// The first layout of a very long line is linear in its length. The line
+/// limit protects that cost; subsequent movement reuses bounded cached
+/// geometry and is held to the ordinary frame budget separately.
 const WRAPPED_FRAME_CEILING: Duration = Duration::from_secs(1);
 
 /// Budgets describe an optimized build, the only one whose numbers say
@@ -344,8 +341,8 @@ fn a_large_highlighted_file_opens_and_redraws_within_budget() {
 /// The reported case: a megabyte-and-a-half of minified JSON on one line.
 ///
 /// Unwrapped it has to meet the ordinary frame budget. Wrapped it only has to
-/// meet the promise the line limit makes — see [`WRAPPED_FRAME_CEILING`] — and
-/// it is a long way inside it, at roughly 17ms.
+/// meet the initial-layout promise — see [`WRAPPED_FRAME_CEILING`]. Repeated
+/// movement throughout a larger minified document has a separate frame gate.
 #[test]
 #[ignore = "run serially in the release performance job"]
 fn a_minified_single_line_file_opens_and_redraws_within_budget() {
@@ -368,6 +365,52 @@ fn a_minified_single_line_file_opens_and_redraws_within_budget() {
                 FRAME
             }),
         );
+    }
+}
+
+/// Include the command and the frame it produces, and seek deep into the
+/// logical line: drawing only its beginning hides prefix-scanning costs.
+#[test]
+#[ignore = "run serially in the release performance job"]
+fn moving_through_wrapped_json_stays_responsive_at_every_depth() {
+    let path = fixture("minified_navigation.json", || {
+        let mut text = String::from("[");
+        for index in 0..100_000 {
+            text.push_str(&format!("{{\"id\":{index},\"name\":\"item-{index}\"}},"));
+        }
+        text.push_str("null]");
+        text
+    });
+    let length = fs::metadata(&path).unwrap().len() as usize;
+    assert!(length > 3_000_000);
+    let mut editor = editor_at(&path, true);
+    for offset in [0, length / 2, length - 10_000] {
+        editor.set_active_selection(Selection::point(offset));
+        let snapshot = editor.snapshot(120, 40);
+        assert!(has_continuation(&snapshot));
+        assert!(has_syntax_scope(&snapshot));
+        let mut slowest = Duration::ZERO;
+        for command in std::iter::repeat_n(EditorCommand::MoveDown, 48)
+            .chain(std::iter::repeat_n(EditorCommand::MoveUp, 48))
+        {
+            let previous = editor.active_selection().primary().head;
+            let start = Instant::now();
+            editor
+                .execute(
+                    CommandInvocation::editor(command, CommandExecutionContext::default()).unwrap(),
+                )
+                .unwrap();
+            editor.snapshot(120, 40);
+            slowest = slowest.max(start.elapsed());
+            let current = editor.active_selection().primary().head;
+            if command == EditorCommand::MoveDown {
+                assert!(current > previous);
+            } else {
+                assert!(current < previous);
+            }
+        }
+        eprintln!("slowest wrapped JSON movement at {offset}/{length}: {slowest:?}");
+        within("wrapped JSON movement and redraw", slowest, budget(FRAME));
     }
 }
 

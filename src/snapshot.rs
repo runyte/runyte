@@ -732,8 +732,7 @@ impl App {
         // difference between a responsive editor and a stalled one. A narrowed
         // query still reports the scopes of nodes that began earlier, so the
         // colours are the ones the full line would have produced.
-        let mut highlights = Vec::new();
-        let mut previous = None;
+        let mut highlight_ranges: Vec<(Offset, Offset)> = Vec::new();
         for row in &prepared.rows {
             let Some(document_row) = row.document_row else {
                 continue;
@@ -751,8 +750,7 @@ impl App {
                             buffer
                                 .text()
                                 .line(document_row)
-                                .chars()
-                                .skip(start_col)
+                                .chars_at(start_col)
                                 .take(line_len.saturating_sub(start_col)),
                             start_col,
                             prepared.text_width,
@@ -766,16 +764,23 @@ impl App {
                     },
                 )
                 .min(line_len);
-            if previous == Some((document_row, start_col, end_col)) {
-                continue;
-            }
-            previous = Some((document_row, start_col, end_col));
             let from = buffer.line_to_offset(document_row);
-            highlights.extend(self.highlights(
-                prepared.buffer_id,
-                from + start_col,
-                from + end_col,
-            ));
+            let range = (from + start_col, from + end_col);
+            // Adjacent wrapped rows share one query. Re-entering a flat
+            // syntax tree for every screen row repeatedly seeks past the
+            // same siblings near the end of a minified document. Never join
+            // across hidden text (folds or clipped zero-width runs).
+            if let Some(previous) = highlight_ranges.last_mut()
+                && range.0 <= previous.1
+            {
+                previous.1 = previous.1.max(range.1);
+            } else {
+                highlight_ranges.push(range);
+            }
+        }
+        let mut highlights = Vec::new();
+        for (from, to) in highlight_ranges {
+            highlights.extend(self.highlights(prepared.buffer_id, from, to));
         }
         highlights.sort_by_key(|span| (span.from, span.to));
         highlights.dedup();
@@ -1095,8 +1100,7 @@ impl App {
                     buffer
                         .text()
                         .line(context.row)
-                        .chars()
-                        .skip(start_col)
+                        .chars_at(start_col.min(line_len))
                         .take(line_len.saturating_sub(start_col)),
                     start_col,
                     context.text_width,
@@ -1125,12 +1129,11 @@ impl App {
         for (col, character) in buffer
             .text()
             .line(context.row)
-            .chars()
-            .take(line_len)
-            .enumerate()
-            .skip(start_col)
+            .chars_at(start_col.min(line_len))
             .take(end_col.saturating_sub(start_col))
+            .enumerate()
         {
+            let col = start_col + col;
             let remaining = visible_end.saturating_sub(visual_col);
             if let Some((label, part)) = label_at(row_start + col) {
                 if remaining == 0 {
@@ -1504,6 +1507,10 @@ fn terminal_title(session: &crate::terminal::TerminalSession, active_mode: Optio
     }
     name
 }
+
+#[cfg(test)]
+#[path = "snapshot/tests/long_lines.rs"]
+mod long_line_tests;
 
 #[cfg(test)]
 mod tests {
