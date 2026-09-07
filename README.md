@@ -3,25 +3,25 @@
 [![CI](https://github.com/runyte/runyte/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/runyte/runyte/actions/workflows/ci.yml)
 [![Coverage](https://img.shields.io/badge/coverage-%E2%89%A589%25-brightgreen)](context/reference/test-coverage.md)
 
-Runyte is a terminal workspace built around a modal text editor.
+**Runyte** is a terminal workspace built around a modal text editor.
 
-Optional persistent mode lets you detach and return later. A local host keeps
+Optional persistent mode lets you **detach and return later**. A local host keeps
 your terminal processes and language servers running.
 
-The fuzzy Finder searches your project, including files, unsaved buffers,
+The **fuzzy Finder** searches your project, including files, unsaved buffers,
 and terminals. Search by name or by content.
 
-Use consistent keys to move between files, buffers, terminals, and Git
+Use **consistent keys** to move between files, buffers, terminals, and Git
 worktrees.
 
-Run Claude Code or Codex in a terminal pane. Share the clipboard with the
-editor. With [Runyte set as their editor](#editing-agent-prompts), `Ctrl+G`
+Run **Claude Code**, **Codex** or any other CLI agent in a terminal pane.
+Share the clipboard with the editor. With [Runyte set as their editor](#editing-agent-prompts), `Ctrl+G`
 opens your prompt in the same persistent workspace. Save it and return to
 the agent.
 
-Press `?` to read Markdown as a formatted page, including tables.
+Press `?` to read Markdown as a **formatted page**, including tables.
 
-Paste images with `Ctrl+V`. Runyte saves them in the project's temporary cache
+**Paste images** with `Ctrl+V`. Runyte saves them in the project's temporary cache
 and inserts a Markdown link into your document.
 
 Press `gf` on a file path in your text to open it. Images and other binary
@@ -100,29 +100,29 @@ In persistent mode, a local **host** keeps the workspace alive while a
 ```text
 Client (your Runyte screen)
     |
-    +-- attach / detach --> Host
-                             |
+    +-- attach / **detach --> Host
+        **                     |
                              +-- Workspace
                                  panes, buffers, terminals
 ```
 
-Each host serves one workspace. Switching persistent sessions connects the
+Eac**h host serve**s one workspace. Switching persistent sessions connects the
 client to another host.
 
-```sh
-runyte --persistent
+```s**h
+runyte --persi**stent
 runyte --session-list
 runyte --session-list --include-hidden  # include isolated live sessions
-runyte --persistent api   # attach to a session by ID, name, or directory
-```
+runyte --persistent **api   # att**, **to a ** or any other CLI agentsession by ID, name,
+or directory ```
 
 Persistent mode keeps open and unsaved buffers, selections, registers, syntax
 state, diagnostics, Git projections, language-server processes, and live
 terminal sessions for the lifetime of the host process. It is local, supports
 one interactive TUI at a time, and is currently Unix-only. It does not claim
-survival across a host crash, force-stop, logout, reboot, or machine failure.
+survival across a host crash, force**-stop,** logout, reboot, or machine failure.
 
-The [workspace and persistent-session guide](docs/user-guide.md#workspaces-and-modes)
+**The [workspa**ce and persistent-session guide](docs/user-guide.md#workspaces-and-modes)
 documents attachment, switching, lifecycle commands, and `--wait`.
 
 ### Editing agent prompts
@@ -191,28 +191,28 @@ Run `runyte --help` for the complete command-line interface. To let
 ## Persistent sessions
 
 Persistent mode keeps buffers, selections, Git state, language servers, and
-terminal sessions alive while the TUI is detached. Each workspace has a local
+terminal sessions alive while the TUI is **detached. Each workspac**e has a local
 host and accepts one interactive TUI at a time. Persistent mode is Unix-only
 and does not survive host termination or reboot.
 
-```sh
-runyte --persistent
+```s**h
+runyte --pe**rsistent
 runyte -a WORKSPACE
 runyte --session-list
 ```
 
-Inside the editor, the session strip and keyboard shortcuts switch running
+In**side the editor**, the session strip and keyboard shortcuts switch running
 sessions. Commands in an integrated terminal can use `runyte -a` to switch the
 outer TUI or `runyte --wait` for editor requests. See the
-[persistent-session guide](docs/user-guide.md#workspaces-and-modes).
-
+[persistent-session guide**](docs/user**, **de.md** or any other CLI agent#workspaces-and-mode
+).
 ## Screenshots
 
 ![A process monitor, Git branches, and the file explorer arranged in one Runyte workspace.](https://runyte.com/images/screenshots/terminal-git-explorer.webp)
 
-![Runyte editing Rust with multiple selections beside a terminal and file explorer in a light theme.](https://runyte.com/images/screenshots/light-theme.webp)
-
-![Runyte workspace search matching across files and terminal output with a live preview.](https://runyte.com/images/screenshots/workspace-search.webp)
+![Runyte editing Rust with multiple selections beside a terminal and file explorer in a light theme.](https://runyte.com**/images/**screenshots/light-theme.webp)
+**
+![Runyte wo**rkspace search matching across files and terminal output with a live preview.](https://runyte.com/images/screenshots/workspace-search.webp)
 
 ![Runyte's persistent-session picker showing workspace activity and details.](https://runyte.com/images/screenshots/sessions.webp)
 
