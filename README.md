@@ -3,14 +3,37 @@
 [![CI](https://github.com/runyte/runyte/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/runyte/runyte/actions/workflows/ci.yml)
 [![Coverage](https://img.shields.io/badge/coverage-%E2%89%A589%25-brightgreen)](context/reference/test-coverage.md)
 
-Runyte is a fast modal terminal editor that combines selection-first editing,
-file management, terminal multiplexing, Git workflows, and language tools in
-one interface.
+Runyte is a terminal workspace built around a modal text editor.
 
-The editor, explorer, terminals, Git views, and language tools share the same
-panes, theme, command registry, and clipboard. Runyte's keymap is inspired by
-Helix's selection-first model and includes familiar Vim motions; it deliberately
-differs from both.
+Optional persistent mode lets you detach and return later. A local host keeps
+your terminal processes and language servers running.
+
+The fuzzy Finder searches your project, including files, unsaved buffers,
+and terminals. Search by name or by content.
+
+Use consistent keys to move between files, buffers, terminals, and Git
+worktrees.
+
+Run Claude Code or Codex in a terminal pane. Share the clipboard with the
+editor. With [Runyte set as their editor](#editing-agent-prompts), `Ctrl+G`
+opens your prompt in the same persistent workspace. Save it and return to
+the agent.
+
+Press `?` to read Markdown as a formatted page, including tables.
+
+Paste images with `Ctrl+V`. Runyte saves them in the project's temporary cache
+and inserts a Markdown link into your document.
+
+Press `gf` on a file path in your text to open it. Images and other binary
+files open in an external program you choose.
+
+Project goals:
+
+- Maximum performance and rock-solid stability.
+- Minimal UI. Maximum focus.
+- Coherent keybindings with constant feedback. Start a command sequence to
+  see the next keys.
+- One consistent theme for editing and terminals.
 
 Runyte currently supports Linux and macOS.
 
@@ -36,6 +59,97 @@ features remain available without them. Use `:lsp-trust` to change permission.
 
 Runyte uses optional YAML configuration and does not currently support plugins.
 See the [user guide](docs/user-guide.md) for complete behavior and limits.
+
+### Workspaces, panes, and navigation
+
+Everything belongs to a **workspace**: one project directory, its panes,
+open buffers, and terminal sessions. Panes show what you are working on;
+buffers hold editor content, and terminals run programs.
+
+```text
+Workspace
+|
++-- Pane 1 ---- shows ----> Buffer A: src/main.rs
++-- Pane 2 ---- shows ----> Buffer A: same text, another view
++-- Pane 3 ---- shows ----> Terminal: shell, build, or coding agent
+|
++-- Other open buffers and terminals, ready to switch to
+```
+
+A buffer can contain a file, scratch text, a directory listing, or a Git
+view. Several panes can show the same buffer. Each terminal has at most
+one visible pane, and hiding it leaves its program running.
+
+| Where you want to go | Default keys |
+| --- | --- |
+| Another visible pane | `Ctrl-w h/j/k/l` |
+| An open buffer or running terminal | `Space n` — Navigator |
+| Any file, buffer, or terminal in this workspace | `Space f` — Finder; `Tab` switches between names and contents |
+| Text in the current buffer | `s` for literal search; `/` for regex |
+| Another persistent session | `Space Space` — session manager; `Shift-Left/Right` cycles running sessions |
+
+`Ctrl-w n` also opens the Navigator while typing in a terminal. Finder searches
+the current workspace; the session manager takes you between workspaces.
+
+### Standalone and persistent modes
+
+In standalone mode, the default, the workspace lives in one Runyte process.
+In persistent mode, a local **host** keeps the workspace alive while a
+**client** provides the terminal interface:
+
+```text
+Client (your Runyte screen)
+    |
+    +-- attach / detach --> Host
+                             |
+                             +-- Workspace
+                                 panes, buffers, terminals
+```
+
+Each host serves one workspace. Switching persistent sessions connects the
+client to another host.
+
+```sh
+runyte --persistent
+runyte --session-list
+runyte --session-list --include-hidden  # include isolated live sessions
+runyte --persistent api   # attach to a session by ID, name, or directory
+```
+
+Persistent mode keeps open and unsaved buffers, selections, registers, syntax
+state, diagnostics, Git projections, language-server processes, and live
+terminal sessions for the lifetime of the host process. It is local, supports
+one interactive TUI at a time, and is currently Unix-only. It does not claim
+survival across a host crash, force-stop, logout, reboot, or machine failure.
+
+The [workspace and persistent-session guide](docs/user-guide.md#workspaces-and-modes)
+documents attachment, switching, lifecycle commands, and `--wait`.
+
+### Editing agent prompts
+
+`Ctrl+G` opens the external prompt editor in
+[Codex CLI](https://learn.chatgpt.com/docs/cli-customization#prompt-editor) and
+[Claude Code](https://code.claude.com/docs/en/interactive-mode#general-controls).
+When the agent runs in a Runyte persistent terminal with `EDITOR` and `VISUAL`
+set to `runyte --wait`, that request connects to the existing host and opens
+the prompt as a buffer in the same pane:
+
+```text
+Codex / Claude Code in a Runyte terminal
+    |
+    +-- Ctrl+G --> runyte --wait --> Existing host
+                                       |
+                                       +-- Prompt buffer in the same pane
+                                               |
+                                               +-- :wq --> Back to the agent
+                                                           with the edited prompt
+```
+
+Set `export EDITOR='runyte --wait' VISUAL='runyte --wait'` in the integrated
+shell before launching the agent. The attached client displays the prompt;
+`:wq` saves it, completes the request, and restores the agent's terminal.
+See the [navigation guide](docs/user-guide.md#session-and-destination-navigation)
+for editor environment handling and the full return-to-terminal behavior.
 
 ## Installation
 
