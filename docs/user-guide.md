@@ -1004,8 +1004,13 @@ and child termination stays explicit: type `exit` in the child, or choose Close
 from the terminal manager's Tab menu. An exited session remains listed and
 searchable until Close removes it and its retained output. Duplicate names are
 refused as ambiguous and numeric IDs never depend on picker order. Tab in the
-manager offers Show, Rename, Close, and Create; closing a hidden live process
-requires a second Enter. Only Show attaches a session to the active pane:
+manager offers Show, Rename, Close, Force kill, and Create; closing a hidden live process
+requires a second Enter. For a hung program, choose **Force kill**. It always
+opens a confirmation naming the terminal, even when it is visible: Enter
+confirms, and Escape cancels. Confirming kills the terminal's process group,
+discards its retained output, and reveals the pane's underlying buffer.
+Unsaved work in the program is lost. Force kill is unavailable for exited
+terminals; Close removes their retained output. Only Show attaches a session to the active pane:
 Rename asks for the new name and returns to the list, leaving every pane
 showing what it showed before. Neither `:close[!]` nor any `:quit…` command terminates
 a terminal.
@@ -2367,6 +2372,7 @@ message without affecting the internal registers.
 | `Space t y` | Copy this terminal's output into a read-only buffer (`:terminal-output`) |
 | `Space t s` | Send the selection — or the whole buffer — to a terminal as one bracketed paste (`:terminal-send [id\|name]`) |
 | `Tab`, then Close in `Space t t` | Explicitly end and forget the selected terminal |
+| `Tab`, then Force kill in `Space t t` | Kill the selected terminal's process group and discard its output after confirmation; Enter confirms, Escape cancels |
 | `Ctrl-w h/j/k/l` or `Ctrl-w Ctrl-h/j/k/l` in Terminal Insert | Move directly without capturing or discarding review; a live terminal destination starts Insert, a reviewed terminal stays in review, and a document destination starts Normal |
 | `Ctrl-h/j/k/l` in Terminal Insert | The exact same destination behavior without the prefix, when `editor.fast_pane_keys` is on; the child stops receiving those four keys |
 | `Ctrl-w w` in Terminal Insert | Cycle panes with the same live-terminal/reviewed-terminal/document destination behavior |

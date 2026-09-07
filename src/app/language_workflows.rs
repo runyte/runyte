@@ -2883,6 +2883,7 @@ impl App {
                 TerminalAction::Show,
                 TerminalAction::Rename,
                 TerminalAction::Close,
+                TerminalAction::ForceKill,
                 TerminalAction::Create,
                 TerminalAction::CloseExited,
                 TerminalAction::OpenSessionDirectory,
@@ -2916,6 +2917,20 @@ impl App {
                 let Some(action) = action else {
                     return Ok(());
                 };
+                if action == TerminalAction::ForceKill {
+                    if !self.terminals.get(id).is_some_and(TerminalSession::live) {
+                        self.terminal_action_menu.as_mut().unwrap().close_armed = false;
+                        self.status(
+                            "that terminal is no longer running; use Close to remove its output",
+                        );
+                        return Ok(());
+                    }
+                    if !armed {
+                        self.terminal_action_menu.as_mut().unwrap().close_armed = true;
+                        self.status("force kill ends this terminal and discards its output; press Enter again to confirm");
+                        return Ok(());
+                    }
+                }
                 if action == TerminalAction::Close
                     && self.terminals.get(id).is_some_and(TerminalSession::live)
                     && self.active_terminal() != Some(id)
@@ -2944,7 +2959,7 @@ impl App {
                     TerminalAction::Rename => {
                         self.open_listed_terminal_rename_prompt(id);
                     }
-                    TerminalAction::Close => {
+                    TerminalAction::Close | TerminalAction::ForceKill => {
                         let navigator = self.navigator_open();
                         self.close_terminal_id(id);
                         if navigator {

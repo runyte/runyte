@@ -1775,6 +1775,149 @@ fn closing_a_terminal_ends_its_child_and_forgets_it() {
 }
 
 #[test]
+fn force_kill_requires_confirmation_for_visible_and_hidden_stubborn_terminals() {
+    for hidden in [false, true] {
+        let mut session =
+            Session::start("/bin/sh -c 'trap \"\" HUP INT TERM; printf ready; exec /bin/cat'");
+        let id = session.app.active_terminal().unwrap();
+        assert!(session.settle(|app| {
+            app.terminals
+                .get(id)
+                .unwrap()
+                .plain_text()
+                .contains("ready")
+        }));
+        let pid = session.app.terminals.get(id).unwrap().process_id().unwrap();
+        session.colon("terminal-rename stuck");
+        if hidden {
+            session.type_text(" tq");
+        }
+        session.type_text(" tt");
+        session.press(KeyCode::Tab);
+        for _ in 0..3 {
+            session.press(KeyCode::Down);
+        }
+        session.press(KeyCode::Enter);
+        assert!(session.app.terminals.get(id).unwrap().live());
+        let confirmation = session
+            .app
+            .overlay_snapshots()
+            .into_iter()
+            .find(|overlay| overlay.kind == OverlayKind::Confirmation)
+            .unwrap();
+        assert_eq!(confirmation.title, "Force kill terminal");
+        let message = confirmation.message.unwrap();
+        assert!(
+            message.contains(&format!("[terminal] stuck (#{id})")),
+            "{message}"
+        );
+        assert!(message.contains("discard its retained output"));
+        assert!(session.screen(100, 30).contains("Force kill terminal"));
+
+        session.press(KeyCode::Enter);
+        assert!(session.app.terminals.get(id).is_none());
+        assert!(session.app.active_terminal().is_none());
+        assert_eq!(session.app.mode, Mode::Normal);
+        assert_eq!(session.app.panes.len(), 1);
+        // Teardown reaps the direct child before returning. Signal 0 only
+        // probes existence; it cannot harm a process if this PID is recycled.
+        assert_eq!(unsafe { libc::kill(pid as libc::pid_t, 0) }, -1);
+        assert_eq!(
+            std::io::Error::last_os_error().raw_os_error(),
+            Some(libc::ESRCH)
+        );
+    }
+}
+
+#[test]
+fn force_kill_cancellation_and_navigation_require_fresh_confirmation() {
+    let mut session = Session::start("/bin/cat");
+    let id = session.app.active_terminal().unwrap();
+    session.leave_input();
+    session.type_text(" tt");
+    for cancel in [
+        KeyStroke::plain(KeyCode::Escape),
+        KeyStroke::ctrl('c'),
+        KeyStroke::plain(KeyCode::Tab),
+    ] {
+        session.press(KeyCode::Tab);
+        for _ in 0..3 {
+            session.press(KeyCode::Down);
+        }
+        session.press(KeyCode::Enter);
+        session.app.handle_key(cancel).unwrap();
+        assert!(session.app.terminals.get(id).unwrap().live());
+        assert!(
+            !session
+                .app
+                .overlay_snapshots()
+                .iter()
+                .any(|overlay| overlay.kind == OverlayKind::Confirmation)
+        );
+    }
+    session.press(KeyCode::Tab);
+    for _ in 0..3 {
+        session.press(KeyCode::Down);
+    }
+    session.press(KeyCode::Enter);
+    session.press(KeyCode::Up);
+    session.press(KeyCode::Down);
+    assert!(
+        !session
+            .app
+            .overlay_snapshots()
+            .iter()
+            .any(|overlay| overlay.kind == OverlayKind::Confirmation)
+    );
+    session.press(KeyCode::Enter);
+    assert!(session.app.terminals.get(id).unwrap().live());
+    assert!(
+        session
+            .app
+            .overlay_snapshots()
+            .iter()
+            .any(|overlay| overlay.kind == OverlayKind::Confirmation)
+    );
+    session.press(KeyCode::Enter);
+    assert!(session.app.terminals.is_empty());
+}
+
+#[test]
+fn force_kill_rechecks_the_selected_terminal_after_exit() {
+    let mut session = Session::start("/bin/cat");
+    let id = session.app.active_terminal().unwrap();
+    session.colon("terminal /bin/cat");
+    let other = session.app.active_terminal().unwrap();
+    session.leave_input();
+    session.type_text(" tt");
+    session.press(KeyCode::Tab);
+    for _ in 0..3 {
+        session.press(KeyCode::Down);
+    }
+    session.press(KeyCode::Enter);
+    session
+        .app
+        .apply_terminal_output(runyte::terminal::TerminalOutput::Exited { id, code: Some(0) });
+    let overlays = session.app.overlay_snapshots();
+    assert!(
+        !overlays
+            .iter()
+            .any(|overlay| overlay.kind == OverlayKind::Confirmation)
+    );
+    let action = overlays
+        .iter()
+        .flat_map(|overlay| &overlay.rows)
+        .find(|row| row.label == "Force kill")
+        .unwrap();
+    assert!(!action.available);
+    session.press(KeyCode::Enter);
+    assert!(!session.app.terminals.get(id).unwrap().live());
+    assert!(session.app.terminals.get(other).unwrap().live());
+    assert_eq!(session.app.active_terminal(), Some(other));
+    assert!(session.app.status.contains("no longer running"));
+}
+
+#[test]
 fn renaming_a_listed_terminal_leaves_every_pane_showing_what_it_showed() {
     let mut session = Session::start("/bin/cat");
     let first = session.app.active_terminal().unwrap();

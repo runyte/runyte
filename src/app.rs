@@ -1890,6 +1890,7 @@ enum TerminalAction {
     Show,
     Rename,
     Close,
+    ForceKill,
     Create,
 }
 
@@ -1901,6 +1902,7 @@ impl TerminalAction {
             Self::Show => "Show",
             Self::Rename => "Rename",
             Self::Close => "Close",
+            Self::ForceKill => "Force kill",
             Self::Create => "Create",
         }
     }
@@ -1912,6 +1914,7 @@ impl TerminalAction {
             Self::Show => "Show this session in the active pane",
             Self::Rename => "Name this session",
             Self::Close => "End and forget this session",
+            Self::ForceKill => "Kill the terminal process group and discard its output (confirm)",
             Self::Create => "Create a shell in the working directory",
         }
     }
