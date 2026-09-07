@@ -104,29 +104,29 @@ In persistent mode, a local **host** keeps the workspace alive while a
 ```text
 Client (your Runyte screen)
     |
-    +-- attach / **detach --> Host
-        **                     |
+    +-- attach / detach --> Host
+                             |
                              +-- Workspace
                                  panes, buffers, terminals
 ```
 
-Eac**h host serve**s one workspace. Switching persistent sessions connects the
+Each host serves one workspace. Switching persistent sessions connects the
 client to another host.
 
-```s**h
-runyte --persi**stent
+```sh
+runyte --persistent
 runyte --session-list
 runyte --session-list --include-hidden  # include isolated live sessions
-runyte --persistent **api   # att**, **to a ** or any other CLI agentsession by ID, name,
-or directory ```
+runyte --persistent api   # attach to a session by ID, name, or directory
+```
 
 Persistent mode keeps open and unsaved buffers, selections, registers, syntax
 state, diagnostics, Git projections, language-server processes, and live
 terminal sessions for the lifetime of the host process. It is local, supports
 one interactive TUI at a time, and is currently Unix-only. It does not claim
-survival across a host crash, force**-stop,** logout, reboot, or machine failure.
+survival across a host crash, force-stop, logout, reboot, or machine failure.
 
-**The [workspa**ce and persistent-session guide](docs/user-guide.md#workspaces-and-modes)
+The [workspace and persistent-session guide](docs/user-guide.md#workspaces-and-modes)
 documents attachment, switching, lifecycle commands, and `--wait`.
 
 ### Editing agent prompts
@@ -195,21 +195,21 @@ Run `runyte --help` for the complete command-line interface. To let
 ## Persistent sessions
 
 Persistent mode keeps buffers, selections, Git state, language servers, and
-terminal sessions alive while the TUI is **detached. Each workspac**e has a local
+terminal sessions alive while the TUI is detached. Each workspace has a local
 host and accepts one interactive TUI at a time. Persistent mode is Unix-only
 and does not survive host termination or reboot.
 
-```s**h
-runyte --pe**rsistent
+```sh
+runyte --persistent
 runyte -a WORKSPACE
 runyte --session-list
 ```
 
-In**side the editor**, the session strip and keyboard shortcuts switch running
+Inside the editor, the session strip and keyboard shortcuts switch running
 sessions. Commands in an integrated terminal can use `runyte -a` to switch the
 outer TUI or `runyte --wait` for editor requests. See the
-[persistent-session guide**](docs/user**, **de.md** or any other CLI agent#workspaces-and-mode
-).
+[persistent-session guide](docs/user-guide.md#workspaces-and-modes).
+
 ## Screenshots
 
 ![Runyte 0.2.0 displaying a Markdown document as a formatted page.](https://runyte.com/images/screenshots/rendered-markdown.webp?v=28c285c399fe)
