@@ -3,6 +3,10 @@
 [![CI](https://github.com/runyte/runyte/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/runyte/runyte/actions/workflows/ci.yml)
 [![Coverage](https://img.shields.io/badge/coverage-%E2%89%A589%25-brightgreen)](context/reference/test-coverage.md)
 
+![Runyte 0.2.0 with a clickable strip of running persistent sessions above the editor.](https://runyte.com/images/screenshots/session-strip.webp?v=5f3ba82c64b1)
+
+*Switch projects. Keep buffers and terminals running. · ocean-dark*
+
 **Runyte** is a terminal workspace built around a modal text editor.
 
 Optional persistent mode lets you **detach and return later**. A local host keeps
@@ -208,13 +212,21 @@ outer TUI or `runyte --wait` for editor requests. See the
 ).
 ## Screenshots
 
-![A process monitor, Git branches, and the file explorer arranged in one Runyte workspace.](https://runyte.com/images/screenshots/terminal-git-explorer.webp)
+![Runyte 0.2.0 displaying a Markdown document as a formatted page.](https://runyte.com/images/screenshots/rendered-markdown.webp?v=28c285c399fe)
 
-![Runyte editing Rust with multiple selections beside a terminal and file explorer in a light theme.](https://runyte.com**/images/**screenshots/light-theme.webp)
-**
-![Runyte wo**rkspace search matching across files and terminal output with a live preview.](https://runyte.com/images/screenshots/workspace-search.webp)
+*Read Markdown as a page. Return to source. · nordbones-dark-soft*
 
-![Runyte's persistent-session picker showing workspace activity and details.](https://runyte.com/images/screenshots/sessions.webp)
+![Runyte 0.2.0 Navigator listing open buffers and running terminals.](https://runyte.com/images/screenshots/navigator.webp?v=fbd9ff1239c3)
+
+*Jump between open buffers and terminals. · terafox-soft*
+
+![Runyte 0.2.0 comparing indexed and working-tree Rust source with highlighted changes in rosebones-dark.](https://runyte.com/images/screenshots/side-by-side-diff.webp?v=e74adc8b6b70)
+
+*Compare changes side by side. · rosebones-dark*
+
+![Claude Code and OpenAI Codex in adjacent Runyte 0.2.0 terminal panes in frappe.](https://runyte.com/images/screenshots/coding-agents.webp?v=75cab6417c7e)
+
+*Claude and Codex. Two terminals, one workspace. · frappe*
 
 More examples are on the [screenshots page](https://runyte.com/screenshots/).
 
