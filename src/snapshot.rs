@@ -681,10 +681,14 @@ impl App {
         let cursor_screen_row = prepared.rows.iter().position(|row| {
             row.document_row == Some(cursor.row)
                 && row.segment.is_none_or(|segment| {
-                    cursor.col >= segment.start
-                        && (cursor.col < segment.end
-                            || cursor.col == segment.end
-                                && segment.end == buffer.line_len(cursor.row))
+                    crate::wrap::segment_contains(
+                        buffer,
+                        cursor.row,
+                        segment,
+                        cursor.col,
+                        prepared.wrap_width,
+                        self.config.editor.tab_width,
+                    )
                 })
         });
         let jump_active = prepared.pane_id == self.active_pane && self.jump.is_some();
@@ -737,6 +741,28 @@ impl App {
             let Some(document_row) = row.document_row else {
                 continue;
             };
+            if let Some(index) = row.segment.and_then(|segment| segment.table)
+                && let Some(layout) = crate::wrap::table_layout(
+                    buffer,
+                    document_row,
+                    prepared.wrap_width,
+                    self.config.editor.tab_width,
+                )
+            {
+                let scroll = if layout.width > prepared.wrap_width {
+                    prepared.scroll_col
+                } else {
+                    0
+                };
+                let start = buffer.line_to_offset(document_row);
+                for atom in layout.visible(buffer, document_row, index, scroll, prepared.wrap_width)
+                {
+                    if let Some(column) = atom.offset {
+                        highlight_ranges.push((start + column, start + column + 1));
+                    }
+                }
+                continue;
+            }
             let line_len = buffer.line_len(document_row);
             let start_col = row
                 .segment
@@ -766,20 +792,21 @@ impl App {
                 .min(line_len);
             let from = buffer.line_to_offset(document_row);
             let range = (from + start_col, from + end_col);
-            // Adjacent wrapped rows share one query. Re-entering a flat
-            // syntax tree for every screen row repeatedly seeks past the
-            // same siblings near the end of a minified document. Never join
-            // across hidden text (folds or clipped zero-width runs).
-            if let Some(previous) = highlight_ranges.last_mut()
+            highlight_ranges.push(range);
+        }
+        highlight_ranges.sort_unstable();
+        let mut merged: Vec<(Offset, Offset)> = Vec::new();
+        for range in highlight_ranges {
+            if let Some(previous) = merged.last_mut()
                 && range.0 <= previous.1
             {
                 previous.1 = previous.1.max(range.1);
             } else {
-                highlight_ranges.push(range);
+                merged.push(range);
             }
         }
         let mut highlights = Vec::new();
-        for (from, to) in highlight_ranges {
+        for (from, to) in merged {
             highlights.extend(self.highlights(prepared.buffer_id, from, to));
         }
         highlights.sort_by_key(|span| (span.from, span.to));
@@ -832,9 +859,14 @@ impl App {
         let pane = &self.panes[&prepared.pane_id];
         let cursor = pane.cursor(buffer);
         let cursor_segment = context.segment.is_none_or(|segment| {
-            cursor.col >= segment.start
-                && (cursor.col < segment.end
-                    || segment.end == buffer.line_len(context.row) && cursor.col == segment.end)
+            crate::wrap::segment_contains(
+                buffer,
+                context.row,
+                segment,
+                cursor.col,
+                prepared.wrap_width,
+                self.config.editor.tab_width,
+            )
         });
         let mut runs = self.snapshot_text_runs(prepared, buffer, highlights, context);
         if let Some(lines) = context.folded_lines {
@@ -1076,6 +1108,97 @@ impl App {
                 .then(|| self.jump.as_ref()?.label_at(offset))
                 .flatten()
         };
+
+        if let Some(index) = context.segment.and_then(|segment| segment.table)
+            && let Some(layout) = crate::wrap::table_layout(
+                buffer,
+                context.row,
+                prepared.wrap_width,
+                self.config.editor.tab_width,
+            )
+        {
+            let scroll = if layout.width > context.text_width {
+                prepared.scroll_col
+            } else {
+                0
+            };
+            let heads = pane
+                .selection
+                .ranges()
+                .iter()
+                .filter_map(|range| {
+                    let position = buffer.position_of(range.head);
+                    if position.row != context.row {
+                        return None;
+                    }
+                    let (line, x) = layout.position(position.col);
+                    (line == index && x >= scroll).then_some((x.saturating_sub(scroll), range.head))
+                })
+                .collect::<Vec<_>>();
+            let mut runs: Vec<TextRun> = Vec::new();
+            let mut next_cell = 0;
+            for atom in layout.visible(buffer, context.row, index, scroll, context.text_width) {
+                // A wide glyph intersected by the viewport is blank, while
+                // every following column retains its actual screen position.
+                if atom.x > next_cell {
+                    runs.push(TextRun {
+                        text: " ".repeat(atom.x - next_cell),
+                        kind: TextRunKind::Hint,
+                    });
+                }
+                let offset = atom.offset.map(|col| row_start + col);
+                let mut role = offset.map_or(TextRole::Plain, &role_at);
+                if let Some((_, head)) = heads.iter().find(|(x, _)| *x == atom.x) {
+                    let head_role = role_at(*head);
+                    if matches!(
+                        head_role,
+                        TextRole::Caret | TextRole::PrimaryCaret | TextRole::ReplaceCaret
+                    ) {
+                        role = head_role;
+                    }
+                }
+                let whitespace = offset.is_some()
+                    && self.config.editor.render_whitespace
+                    && matches!(atom.ch, ' ' | '\t');
+                let kind = offset.and_then(&label_at).map_or_else(
+                    || TextRunKind::Text {
+                        role,
+                        scope: offset.and_then(&scope_at).or_else(|| {
+                            atom.offset
+                                .is_none()
+                                .then(|| Scope::named("comment").unwrap())
+                        }),
+                        diagnostic: None,
+                        directory: false,
+                        whitespace,
+                        count: None,
+                    },
+                    |(_, part)| TextRunKind::JumpLabel(part),
+                );
+                let text = if let Some((label, _)) = offset.and_then(&label_at) {
+                    label.to_string()
+                } else if atom.ch == '\t' {
+                    if whitespace {
+                        format!("→{}", " ".repeat(atom.width.saturating_sub(1)))
+                    } else {
+                        " ".repeat(atom.width)
+                    }
+                } else if whitespace {
+                    "·".to_owned()
+                } else {
+                    atom.ch.to_string()
+                };
+                if let Some(last) = runs.last_mut()
+                    && last.kind == kind
+                {
+                    last.text.push_str(&text);
+                } else {
+                    runs.push(TextRun { text, kind });
+                }
+                next_cell = atom.x + atom.width;
+            }
+            return runs;
+        }
 
         let mut runs = Vec::new();
         let mut current = String::new();

@@ -25,6 +25,8 @@ pub struct Segment {
     pub end: usize,
     pub start_cell: usize,
     pub end_cell: usize,
+    /// Index in a structured table row; ordinary text remains contiguous.
+    pub(crate) table: Option<usize>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -37,11 +39,17 @@ pub struct VisualRow {
 /// Bounded geometry for recently viewed lines, shared by movement and drawing.
 /// Text revisions are globally unique, including after replacement or undo.
 #[derive(Debug, Default)]
-pub(crate) struct Cache(Mutex<Vec<CachedLine>>);
+pub(crate) struct Cache {
+    lines: Mutex<Vec<CachedLine>>,
+    pub(crate) tables: crate::table_layout::Tables,
+}
 
 impl Clone for Cache {
     fn clone(&self) -> Self {
-        Self::default()
+        Self {
+            lines: Mutex::default(),
+            tables: self.tables.clone(),
+        }
     }
 }
 
@@ -57,10 +65,13 @@ pub(crate) fn line_segments(
     width: usize,
     tab_width: usize,
 ) -> Arc<[Segment]> {
-    const MAX_SEGMENTS: usize = 262_144;
+    if let Some(layout) = table_layout(buffer, row, width, tab_width) {
+        return layout.segments.clone();
+    }
+    const MAX_SEGMENTS: usize = 8 * 1024 * 1024 / std::mem::size_of::<Segment>();
     const MAX_LINES: usize = 16;
     let key = (buffer.revision(), row, width.max(1), tab_width.max(1));
-    let mut cache = buffer.wrap_cache.0.lock().unwrap();
+    let mut cache = buffer.wrap_cache.lines.lock().unwrap();
     cache.retain(|entry| entry.key.0 == key.0);
     if let Some(index) = cache.iter().position(|entry| entry.key == key) {
         let entry = cache.remove(index);
@@ -89,6 +100,9 @@ pub(crate) fn line_segment_index(
     width: usize,
     tab_width: usize,
 ) -> usize {
+    if let Some(layout) = table_layout(buffer, row, width, tab_width) {
+        return layout.position(column).0;
+    }
     index_in(&line_segments(buffer, row, width, tab_width), column)
 }
 
@@ -99,6 +113,9 @@ pub(crate) fn line_screen_column(
     width: usize,
     tab_width: usize,
 ) -> usize {
+    if let Some(layout) = table_layout(buffer, row, width, tab_width) {
+        return layout.position(column).1;
+    }
     let spans = line_segments(buffer, row, width, tab_width);
     let segment = spans[index_in(&spans, column)];
     let mut cell = segment.start_cell;
@@ -121,6 +138,11 @@ pub(crate) fn line_column_for_screen(
     width: usize,
     tab_width: usize,
 ) -> usize {
+    if let Some(layout) = table_layout(buffer, row, width, tab_width) {
+        return layout
+            .column(segment_index, desired, false)
+            .unwrap_or_default();
+    }
     let spans = line_segments(buffer, row, width, tab_width);
     let segment = spans[segment_index.min(spans.len() - 1)];
     let target = segment.start_cell.saturating_add(desired);
@@ -138,6 +160,62 @@ pub(crate) fn line_column_for_screen(
         }
     }
     segment.end
+}
+
+/// Decorative row rules count for scrolling but are skipped by the caret.
+pub(crate) fn movable_segments(
+    buffer: &Buffer,
+    row: usize,
+    width: usize,
+    tab_width: usize,
+) -> usize {
+    table_layout(buffer, row, width, tab_width).map_or_else(
+        || line_segments(buffer, row, width, tab_width).len(),
+        |layout| layout.height,
+    )
+}
+
+pub(crate) fn visible_screen_column(
+    buffer: &Buffer,
+    row: usize,
+    column: usize,
+    width: usize,
+    tab: usize,
+    scroll: usize,
+) -> Option<usize> {
+    let x = line_screen_column(buffer, row, column, width, tab);
+    let scroll = table_layout(buffer, row, width, tab)
+        .filter(|layout| layout.width > width)
+        .map_or(0, |_| scroll);
+    x.checked_sub(scroll)
+}
+
+/// Structured geometry shares the same revision and width boundary as prose wrapping.
+pub(crate) fn table_layout(
+    buffer: &Buffer,
+    row: usize,
+    width: usize,
+    tab_width: usize,
+) -> Option<Arc<crate::table_layout::Layout>> {
+    buffer
+        .wrap_cache
+        .tables
+        .layout(buffer, row, width, tab_width)
+}
+
+pub(crate) fn segment_contains(
+    buffer: &Buffer,
+    row: usize,
+    segment: Segment,
+    column: usize,
+    width: usize,
+    tab_width: usize,
+) -> bool {
+    if let Some(index) = segment.table {
+        return line_segment_index(buffer, row, column, width, tab_width) == index;
+    }
+    column >= segment.start
+        && (column < segment.end || column == segment.end && segment.end == buffer.line_len(row))
 }
 
 pub fn segments(line: &str, width: usize, tab_width: usize) -> Vec<Segment> {
@@ -169,6 +247,7 @@ pub fn segments(line: &str, width: usize, tab_width: usize) -> Vec<Segment> {
                 end,
                 start_cell,
                 end_cell,
+                table: None,
             });
             start = end;
             start_cell = end_cell;
@@ -183,6 +262,7 @@ pub fn segments(line: &str, width: usize, tab_width: usize) -> Vec<Segment> {
                     end: column,
                     start_cell,
                     end_cell: cell,
+                    table: None,
                 });
                 start = column;
                 start_cell = cell;
@@ -202,6 +282,7 @@ pub fn segments(line: &str, width: usize, tab_width: usize) -> Vec<Segment> {
         end: length,
         start_cell,
         end_cell: cell,
+        table: None,
     });
     result
 }
@@ -803,11 +884,10 @@ pub fn move_vertical(
     width: usize,
     tab_width: usize,
 ) -> Position {
-    let current_segments = line_segments(buffer, position.row, width, tab_width);
-    let current = index_in(&current_segments, position.col);
+    let current = line_segment_index(buffer, position.row, position.col, width, tab_width);
     let desired = line_screen_column(buffer, position.row, position.col, width, tab_width);
     let (row, segment) = if down {
-        if current + 1 < current_segments.len() {
+        if current + 1 < movable_segments(buffer, position.row, width, tab_width) {
             (position.row, current + 1)
         } else if position.row < buffer.last_row() {
             (position.row + 1, 0)
@@ -818,7 +898,7 @@ pub fn move_vertical(
         (position.row, current - 1)
     } else if position.row > 0 {
         let row = position.row - 1;
-        let count = line_segments(buffer, row, width, tab_width).len();
+        let count = movable_segments(buffer, row, width, tab_width);
         (row, count.saturating_sub(1))
     } else {
         return position;
@@ -1031,12 +1111,14 @@ mod tests {
                     end: 3,
                     start_cell: 0,
                     end_cell: 4,
+                    table: None,
                 },
                 Segment {
                     start: 3,
                     end: 5,
                     start_cell: 4,
                     end_cell: 6,
+                    table: None,
                 },
             ]
         );
@@ -1056,6 +1138,7 @@ mod tests {
                 end: 3,
                 start_cell: 0,
                 end_cell: 2,
+                table: None,
             }]
         );
         assert_eq!(display_column("e\u{301}x", 2, 4), 1);

@@ -397,7 +397,7 @@ pub(super) fn move_offset_projected(
         let (row, segment) = if down {
             if soft_wrap
                 && current + 1
-                    < crate::wrap::line_segments(buffer, position.row, width, tab_width).len()
+                    < crate::wrap::movable_segments(buffer, position.row, width, tab_width)
             {
                 (position.row, current + 1)
             } else {
@@ -415,9 +415,7 @@ pub(super) fn move_offset_projected(
                 return position;
             }
             let segment = if soft_wrap {
-                crate::wrap::line_segments(buffer, row, width, tab_width)
-                    .len()
-                    .saturating_sub(1)
+                crate::wrap::movable_segments(buffer, row, width, tab_width).saturating_sub(1)
             } else {
                 0
             };
@@ -439,7 +437,26 @@ pub(super) fn move_offset_projected(
             } else {
                 (viewport_height / 2).max(1)
             };
-            (0..amount).fold(position, |position, _| move_once(position, down))
+            let mut target = position;
+            let mut remaining = amount;
+            while remaining > 0 {
+                let next = move_once(target, down);
+                if next == target {
+                    break;
+                }
+                // Page distances include a table's decorative rule even
+                // though the caret skips it when crossing a row boundary.
+                let rule = if soft_wrap && next.row != target.row {
+                    let row = if down { target.row } else { next.row };
+                    crate::wrap::table_layout(buffer, row, width, tab_width)
+                        .map_or(0, |layout| layout.segments.len() - layout.height)
+                } else {
+                    0
+                };
+                remaining = remaining.saturating_sub(1 + rule);
+                target = next;
+            }
+            target
         }
         Motion::WindowTop | Motion::WindowCenter | Motion::WindowBottom => {
             // Filler is not somewhere a caret can go, so the top, middle,
@@ -457,7 +474,16 @@ pub(super) fn move_offset_projected(
                 diff,
             )
             .into_iter()
-            .filter_map(|visual| Some((visual.document_row?, visual.segment)))
+            .filter_map(|visual| {
+                let row = visual.document_row?;
+                if let Some(index) = visual.segment.and_then(|segment| segment.table)
+                    && crate::wrap::table_layout(buffer, row, width, tab_width)
+                        .is_some_and(|layout| layout.is_separator(index))
+                {
+                    return None;
+                }
+                Some((row, visual.segment))
+            })
             .collect::<Vec<_>>();
             if rows.is_empty() {
                 position
@@ -472,13 +498,15 @@ pub(super) fn move_offset_projected(
                 let col = segment.map_or_else(
                     || desired.min(buffer.line_len(document_row)),
                     |segment| {
-                        let segment_index = crate::wrap::line_segment_index(
-                            buffer,
-                            document_row,
-                            segment.start,
-                            width,
-                            tab_width,
-                        );
+                        let segment_index = segment.table.unwrap_or_else(|| {
+                            crate::wrap::line_segment_index(
+                                buffer,
+                                document_row,
+                                segment.start,
+                                width,
+                                tab_width,
+                            )
+                        });
                         crate::wrap::line_column_for_screen(
                             buffer,
                             document_row,

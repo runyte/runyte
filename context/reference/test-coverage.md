@@ -41,6 +41,28 @@ days, and fails below 89% total line coverage. The floor is deliberately below
 the observed baseline because conditional Linux and macOS code changes both the
 instrumented denominator and the paths available to a run on one platform.
 
+## 2026-09-07 — rendered table wrapping
+
+Measured on `x86_64-unknown-linux-gnu`, at base `c655304` plus rendered-table
+wrapping. Both `cargo test` and canonical
+`cargo llvm-cov --locked --workspace` passed 3,047 tests, with 33 ignored.
+Formatting and warnings-as-errors Clippy passed.
+
+| Measure | Covered | Total | Coverage |
+| --- | ---: | ---: | ---: |
+| Lines | 102,142 | 111,374 | 91.71% |
+| Functions | 9,471 | 10,229 | 92.59% |
+| Regions | 158,116 | 173,296 | 91.24% |
+
+New coverage exercises independent cell wrapping, column allocation, Unicode
+and tabs, cache reuse and bounds, unequal-width splits, resize-stable
+selections, search and yank across visual breaks, pointer mapping, jump
+labels, page and window movement, narrow-pane horizontal overflow, re-render
+invalidation, and terminal border alignment. Tests used normal PTY, process,
+and local-socket access with `RUNYTE_PARENT_CONTEXT` removed from the test
+environment. The enforced 89% floor is unchanged. Native macOS validation
+remains for CI or a macOS host.
+
 ## 2026-09-07 — soft-wrapped long-line navigation
 
 Measured on `x86_64-unknown-linux-gnu` with cargo-llvm-cov 0.9.0 and Rust

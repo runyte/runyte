@@ -889,7 +889,22 @@ impl App {
                 let soft_wrap = self.pane_soft_wrap(pane);
                 let buffer = self.panes[&pane].buffer;
                 let prefix_width = self.buffers[buffer].row_prefix_width();
-                if prefix_width > 0 || !soft_wrap {
+                let overflow = soft_wrap
+                    && view.pane(pane).is_some_and(|prepared| {
+                        prepared.rows.iter().any(|row| {
+                            row.document_row
+                                .and_then(|row| {
+                                    crate::wrap::table_layout(
+                                        &self.buffers[buffer],
+                                        row,
+                                        prepared.wrap_width,
+                                        self.config.editor.tab_width,
+                                    )
+                                })
+                                .is_some_and(|layout| layout.width > prepared.wrap_width)
+                        })
+                    });
+                if prefix_width > 0 || !soft_wrap || overflow {
                     let candidate = self.panes.get_mut(&pane).unwrap();
                     let columns = 3usize.saturating_mul(usize::from(repetitions));
                     if event.kind == PointerEventKind::ScrollLeft {
@@ -902,7 +917,7 @@ impl App {
                         let prefix_columns =
                             columns.min(prefix_width.saturating_sub(candidate.row_prefix_scroll));
                         candidate.row_prefix_scroll += prefix_columns;
-                        if !soft_wrap {
+                        if !soft_wrap || overflow {
                             candidate.scroll_col = candidate
                                 .scroll_col
                                 .saturating_add(columns - prefix_columns);
@@ -1031,6 +1046,25 @@ impl App {
             (pane.gutter_width + pane.content_indent + pane.row_prefix_width) as u16,
         );
         let screen_cell = usize::from(column.checked_sub(text_x)?);
+        if let Some(index) = projected.segment.and_then(|segment| segment.table) {
+            let layout = crate::wrap::table_layout(
+                buffer,
+                document_row,
+                pane.wrap_width,
+                self.config.editor.tab_width,
+            )?;
+            let scroll = if layout.width > pane.wrap_width {
+                pane.scroll_col
+            } else {
+                0
+            };
+            return layout
+                .visible(buffer, document_row, index, scroll, pane.wrap_width)
+                .into_iter()
+                .find(|atom| screen_cell >= atom.x && screen_cell < atom.x + atom.width)
+                .and_then(|atom| atom.offset)
+                .map(|column| buffer.line_to_offset(document_row) + column);
+        }
         let segment = projected.segment;
         let (start, end, cells) = segment.map_or_else(
             || {
@@ -1203,6 +1237,24 @@ impl App {
             (pane.gutter_width + pane.content_indent + pane.row_prefix_width) as u16,
         );
         let screen_cell = usize::from(column.saturating_sub(text_x));
+        if let Some(index) = projected.segment.and_then(|segment| segment.table) {
+            let layout = crate::wrap::table_layout(
+                buffer,
+                document_row,
+                pane.wrap_width,
+                self.config.editor.tab_width,
+            )?;
+            let scroll = if layout.width > pane.wrap_width {
+                pane.scroll_col
+            } else {
+                0
+            };
+            return layout
+                .column(index, screen_cell.saturating_add(scroll), false)
+                .map(|column| {
+                    buffer.clamp_offset(buffer.line_to_offset(document_row) + column, insert)
+                });
+        }
         let start = projected
             .segment
             .map(|segment| segment.start)

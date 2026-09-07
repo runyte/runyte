@@ -228,10 +228,9 @@ impl App {
             .position(|visual| {
                 visual.document_row == Some(cursor.row)
                     && visual.segment.is_none_or(|segment| {
-                        cursor.col >= segment.start
-                            && (cursor.col < segment.end
-                                || cursor.col == segment.end
-                                    && segment.end == buffer.line_len(cursor.row))
+                        crate::wrap::segment_contains(
+                            buffer, cursor.row, segment, cursor.col, wrap_width, tab_width,
+                        )
                     })
             })
             .unwrap_or_else(|| {
@@ -256,9 +255,11 @@ impl App {
                             tab_width,
                         )
                     },
-                    |segment| {
-                        crate::wrap::display_column(&cursor_line, cursor.col, tab_width)
-                            .saturating_sub(segment.start_cell)
+                    |_| {
+                        crate::wrap::visible_screen_column(
+                            buffer, cursor.row, cursor.col, wrap_width, tab_width, scroll_col,
+                        )
+                        .unwrap_or(0)
                     },
                 )
             })
@@ -293,6 +294,11 @@ impl App {
                     (false, Some(begin)) => {
                         if column - begin >= 2
                             && columns.contains(&begin)
+                            && visual.segment.is_none_or(|segment| {
+                                crate::wrap::segment_contains(
+                                    buffer, row, segment, begin, wrap_width, tab_width,
+                                )
+                            })
                             && line[begin..begin + 2].iter().copied().all(is_single_cell)
                         {
                             let screen_col = visual.segment.map_or_else(
@@ -304,15 +310,29 @@ impl App {
                                         tab_width,
                                     )
                                 },
-                                |segment| {
-                                    crate::wrap::display_column(&line_string, begin, tab_width)
-                                        .saturating_sub(segment.start_cell)
+                                |_| {
+                                    crate::wrap::visible_screen_column(
+                                        buffer, row, begin, wrap_width, tab_width, scroll_col,
+                                    )
+                                    .unwrap_or(usize::MAX)
                                 },
                             );
                             let visible_label_cells = visual.segment.map_or_else(
                                 || wrap_width.saturating_sub(screen_col).min(2),
-                                |segment| (segment.end - begin).min(2),
+                                |segment| {
+                                    let second = crate::wrap::segment_contains(
+                                        buffer,
+                                        row,
+                                        segment,
+                                        begin + 1,
+                                        wrap_width,
+                                        tab_width,
+                                    );
+                                    usize::from(second) + 1
+                                },
                             );
+                            let visible_label_cells =
+                                visible_label_cells.min(wrap_width.saturating_sub(screen_col));
                             if visible_label_cells > 0 && screen_col < wrap_width {
                                 candidates.push(Candidate {
                                     offset: start + begin,

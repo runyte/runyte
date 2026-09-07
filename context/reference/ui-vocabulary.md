@@ -106,6 +106,13 @@ them, regardless of which extensibility direction is chosen.
   and the frontend draws terminal attributes — bold, italic, underline, and
   strikethrough — from the `markup.*` scopes in those spans rather than from
   anything Markdown-specific.
+  Rendered tables retain cell ranges beside that text. With soft wrap enabled,
+  their pane-local geometry places multiple cell fragments on each visual row,
+  with padding and repeated separators supplied by presentation. The same
+  geometry maps movement, pointer input, highlights, and jump labels to stable
+  character offsets. Extra row rules carry no selectable text; logical
+  selections and yank retain buffer order. Columns that cannot fit their
+  minimum widths overflow horizontally without disabling prose wrapping.
 - **Pane-backed filterable list** — a bounded-lifetime special buffer whose
   stable rows are actions or destinations. Filtering is an operation on the
   view; the list otherwise speaks normal Runyte and does not permanently own

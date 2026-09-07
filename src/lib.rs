@@ -61,6 +61,7 @@ pub mod startup;
 mod structural_selection;
 pub mod syntax;
 pub mod table;
+mod table_layout;
 pub mod terminal;
 #[doc(hidden)]
 pub mod test_support;

@@ -344,6 +344,8 @@ pub struct PreparedRow {
     /// belongs to no line of this buffer and can be clicked, labelled, or
     /// moved to no more than the blank area below the last line can.
     pub document_row: Option<usize>,
+    /// Ordinary text is one contiguous segment. A rendered table segment
+    /// names a row of cell fragments in its cached pane-width geometry.
     pub segment: Option<crate::wrap::Segment>,
     pub continuation: bool,
     /// Whether this logical row anchors a pane-local collapsed syntax region.
@@ -677,7 +679,20 @@ fn adjust_scroll_wrapped(
     pane.scroll_row = pane.scroll_row.min(buffer.last_row());
     let start_count = crate::wrap::line_segments(buffer, pane.scroll_row, width, tab_width).len();
     pane.scroll_wrap = pane.scroll_wrap.min(start_count.saturating_sub(1));
-    pane.scroll_col = 0;
+    if !pane.preserve_scroll {
+        if let Some(layout) = crate::wrap::table_layout(buffer, cursor.row, width, tab_width)
+            && layout.width > width
+        {
+            let x = layout.position(cursor.col).1;
+            if x < pane.scroll_col {
+                pane.scroll_col = x;
+            } else if x >= pane.scroll_col + width {
+                pane.scroll_col = x + 1 - width;
+            }
+        } else {
+            pane.scroll_col = 0;
+        }
+    }
     if pane.preserve_scroll {
         return;
     }

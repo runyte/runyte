@@ -495,10 +495,14 @@ impl App {
                 let cursor_screen_row = visible.iter().position(|row| {
                     row.document_row == Some(cursor.row)
                         && row.segment.is_none_or(|segment| {
-                            cursor.col >= segment.start
-                                && (cursor.col < segment.end
-                                    || cursor.col == segment.end
-                                        && segment.end == buffer.line_len(cursor.row))
+                            crate::wrap::segment_contains(
+                                buffer,
+                                cursor.row,
+                                segment,
+                                cursor.col,
+                                document_text_width,
+                                tab_width,
+                            )
                         })
                 });
                 let margin = scroll_offset.min(body_height / 2);
@@ -823,6 +827,9 @@ impl App {
         );
         self.generated_highlights
             .insert(buffer, rendered.spans().to_vec());
+        let revision = self.buffers[buffer].revision();
+        self.buffers[buffer].wrap_cache.tables =
+            crate::table_layout::Tables::new(revision, rendered.tables);
         let message = self.key_text(crate::key_spelling::actionable::MARKDOWN_SOURCE);
         self.status(message);
     }

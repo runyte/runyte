@@ -81,6 +81,33 @@ keeping syntax highlighting enabled. This applies to both `startup.py` and
 `run.py` through their shared setup, including instrumented launches. The
 first-open choice overlay therefore cannot intercept measurement keystrokes.
 
+## 2026-09-07 — rendered table wrapping
+
+Rendered Markdown pages retain table cell ranges when generated. Column
+measurements are shared across a table, including cached tab-width-dependent
+measurements. Per-row geometry is reused across navigation and redraws at the
+same pane width. Each rendered buffer retains at most 16 table layouts and
+2 MiB of their geometry payload; larger layouts are computed without retention.
+Viewport snapshots visit visible cell fragments rather than each complete
+logical row. No startup scan or polling timer is added.
+
+The shared segment type now also identifies structured table rows. Ordinary
+soft-wrap retention remains limited to 8 MiB of segment payload, with its
+segment-count ceiling derived from the type's size instead of a fixed count.
+Cloned buffers retain immutable table metadata but discard row geometry.
+
+The existing release-mode
+`moving_through_wrapped_json_stays_responsive_at_every_depth` check passed on
+Linux x86-64 at base `c655304` plus this change. Its 3,277,786-byte JSON fixture
+measured slowest movement-plus-snapshot times of 0.58 ms at the beginning,
+0.53 ms halfway through, and 0.51 ms near the end, all below its 16 ms budget.
+The check ran serially after the correctness and coverage suites completed;
+these timings measure ordinary soft wrapping, not table layout construction.
+
+Geometry and interaction coverage lives in `src/table_layout/tests/mod.rs`
+and `src/app/tests/markdown_tables.rs`. Startup and idle measurements have not
+been repeated for this change.
+
 ## 2026-09-07 — soft-wrapped single-line navigation
 
 Measured on AMD Ryzen AI 9 365, Linux x86-64, Rust 1.97.1, with the default

@@ -144,6 +144,25 @@ a row and a column in either buffer mean what they say. Search, selections,
 splits, and yank all work on the page as on any other buffer, and what they
 find is the text actually on screen.
 
+`Space p s` also wraps rendered tables. Columns share the pane's available
+text width, keeping short columns compact and wrapping longer cells
+independently. Each table row is as tall as its tallest cell; vertical
+separators continue through its lines, and horizontal rules separate entries.
+A resize or a differently sized split changes only the visual layout. With
+soft wrap off, tables keep their natural column widths.
+
+Columns retain a small minimum width. If the pane is too narrow to fit them
+all, that table scrolls horizontally; moving the caret into an off-screen
+column brings it into view. Other text still wraps normally. Up/down movement
+follows visual text rows and skips added rules; in a shorter cell's blank
+continuation it moves to the nearest cell containing text on that visual row.
+Clicks on padding place the caret at nearby text, while added rules are not
+mouse targets.
+
+Search and yank use the rendered buffer's logical text: visual wrap breaks,
+extra padding, and added rules are not copied. A selection across cells follows
+that logical order, so it need not form a rectangle on screen.
+
 The page is rendered from the buffer rather than from the file, so it shows
 unsaved work; rendering the same document again reuses its one page and
 regenerates it. Bold and underline are drawn by every terminal, italic by most;

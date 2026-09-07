@@ -77,9 +77,9 @@ fn cache_eviction_and_oversized_geometry_preserve_results() {
     buffer.apply(&Transaction::insert(0, "x".repeat(262_145)));
     let oversized = line_segments(&buffer, 0, 1, 4);
     assert_eq!(oversized.len(), buffer.line_len(0));
-    assert!(buffer.wrap_cache.0.lock().unwrap().is_empty());
+    assert!(buffer.wrap_cache.lines.lock().unwrap().is_empty());
     // Two individually cacheable layouts must also respect the total cap.
     line_segments(&buffer, 0, 2, 4);
     line_segments(&buffer, 0, 2, 8);
-    assert_eq!(buffer.wrap_cache.0.lock().unwrap().len(), 1);
+    assert_eq!(buffer.wrap_cache.lines.lock().unwrap().len(), 1);
 }

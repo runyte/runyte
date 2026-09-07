@@ -52,6 +52,7 @@ const INLINE_SCAN_LIMIT: usize = 2048;
 pub struct RenderedMarkdown {
     text: String,
     spans: Vec<Span>,
+    pub(crate) tables: Vec<crate::table_layout::TableRow>,
 }
 
 impl RenderedMarkdown {
@@ -115,6 +116,8 @@ struct Page {
     text: String,
     spans: Vec<Span>,
     chars: usize,
+    lines: usize,
+    tables: Vec<crate::table_layout::TableRow>,
 }
 
 impl Page {
@@ -124,6 +127,7 @@ impl Page {
         }
         let from = self.chars;
         self.text.push_str(text);
+        self.lines += text.bytes().filter(|byte| *byte == b'\n').count();
         self.chars += text.chars().count();
         let Some(scope) = scope else {
             return;
@@ -374,6 +378,7 @@ pub fn render(source: &str) -> RenderedMarkdown {
     RenderedMarkdown {
         text: page.text,
         spans: page.spans,
+        tables: page.tables,
     }
 }
 
@@ -609,14 +614,38 @@ fn write_table(page: &mut Page, rows: &[&str], palette: Palette) {
         })
         .collect::<Vec<_>>();
 
+    let tabbed = rendered
+        .iter()
+        .flat_map(|row| {
+            row.iter()
+                .enumerate()
+                .filter(|(_, pieces)| pieces.iter().any(|piece| piece.text.contains('\t')))
+                .map(|(column, pieces)| {
+                    (
+                        column,
+                        pieces
+                            .iter()
+                            .map(|piece| piece.text.as_str())
+                            .collect::<String>(),
+                    )
+                })
+        })
+        .collect();
+    let measured = std::sync::Arc::new(crate::table_layout::Columns::new(widths.clone(), tabbed));
+
     page.blank_line();
     for (index, row) in rendered.iter().enumerate() {
+        let line = page.lines;
+        let start = page.chars;
+        let mut cells = Vec::new();
         for (column, width) in widths.iter().enumerate() {
             if column > 0 {
                 page.push(" │ ", Some(palette.aside));
             }
             let cell = row.get(column);
+            let from = page.chars - start;
             page.pieces(cell.map_or(&[][..], Vec::as_slice));
+            cells.push(from..page.chars - start);
             let used = cell.map_or(0, |cell| width_of(cell));
             // The last column is not padded: trailing blanks would be text a
             // caret could sit past, and nothing is drawn to their right.
@@ -624,14 +653,33 @@ fn write_table(page: &mut Page, rows: &[&str], palette: Palette) {
                 page.push(&" ".repeat(width.saturating_sub(used)), None);
             }
         }
+        page.tables.push(crate::table_layout::TableRow {
+            line,
+            cells,
+            widths: measured.clone(),
+            rule: false,
+            separator: index > 0 && index + 1 < rendered.len(),
+        });
         page.newline();
         if index == 0 {
+            let line = page.lines;
+            let start = page.chars;
+            let mut cells = Vec::new();
             for (column, width) in widths.iter().enumerate() {
                 if column > 0 {
                     page.push("─┼─", Some(palette.aside));
                 }
+                let from = page.chars - start;
                 page.repeat('─', *width, Some(palette.aside));
+                cells.push(from..page.chars - start);
             }
+            page.tables.push(crate::table_layout::TableRow {
+                line,
+                cells,
+                widths: measured.clone(),
+                rule: true,
+                separator: false,
+            });
             page.newline();
         }
     }
