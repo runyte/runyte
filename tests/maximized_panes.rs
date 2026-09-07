@@ -161,10 +161,59 @@ fn fullscreen_maximizes_the_active_pane_without_narrowing_the_text() {
 }
 
 #[test]
+fn fullscreen_with_one_pane_leaves_both_split_bindings_available() {
+    for spelling in ["Ctrl-w f", "Space w f", ":fullscreen"] {
+        for split in ['v', 's'] {
+            for repeats in [1, 2] {
+                let mut app = App::new(Config::default(), None).unwrap();
+                for _ in 0..repeats {
+                    match spelling {
+                        "Ctrl-w f" => {
+                            press(&mut app, KeyCode::Char('w'), Modifiers::CONTROL);
+                            press(&mut app, KeyCode::Char('f'), Modifiers::NONE);
+                        }
+                        "Space w f" => {
+                            for key in [' ', 'w', 'f'] {
+                                press(&mut app, KeyCode::Char(key), Modifiers::NONE);
+                            }
+                        }
+                        _ => {
+                            app.execute(parse_colon_command("fullscreen").unwrap())
+                                .unwrap();
+                        }
+                    }
+                    assert_eq!(app.status, "only one pane");
+                    let prepared = prepare(&mut app, 120, 40);
+                    assert!(app.snapshot(&prepared).panes[0].title.maximized.is_none());
+                }
+                press(&mut app, KeyCode::Char('w'), Modifiers::CONTROL);
+                press(&mut app, KeyCode::Char(split), Modifiers::NONE);
+                assert_eq!(app.panes.len(), 2, "{spelling} blocked Ctrl-w {split}");
+                assert_eq!(prepare(&mut app, 120, 40).panes.len(), 2);
+            }
+        }
+    }
+}
+
+#[test]
+fn fullscreen_with_one_pane_leaves_zen_unchanged() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    app.execute(parse_colon_command("zen").unwrap()).unwrap();
+    let before = prepare(&mut app, 220, 40).panes[0].text_width;
+    app.execute(parse_colon_command("fullscreen").unwrap())
+        .unwrap();
+    assert_eq!(prepare(&mut app, 220, 40).panes[0].text_width, before);
+    app.execute(parse_colon_command("zen").unwrap()).unwrap();
+    run(&mut app, EditorCommand::SplitVertical);
+    assert_eq!(app.panes.len(), 2);
+}
+
+#[test]
 fn asking_for_the_other_maximized_view_switches_to_it_rather_than_stacking() {
     let mut config = Config::default();
     config.editor.line_numbers = false;
     let mut app = App::new(config, None).unwrap();
+    run(&mut app, EditorCommand::SplitVertical);
 
     app.execute(parse_colon_command("zen").unwrap()).unwrap();
     assert_eq!(prepare(&mut app, 220, 40).panes[0].text_width, 100);
@@ -182,7 +231,7 @@ fn asking_for_the_other_maximized_view_switches_to_it_rather_than_stacking() {
     // editor with no maximized pane at all.
     app.execute(parse_colon_command("zen").unwrap()).unwrap();
     run(&mut app, EditorCommand::SplitVertical);
-    assert_eq!(app.panes.len(), 2);
+    assert_eq!(app.panes.len(), 3);
 }
 
 #[test]

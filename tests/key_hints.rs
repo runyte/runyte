@@ -900,6 +900,9 @@ fn pane_titles_show_structural_file_and_explorer_types() {
 fn a_maximized_pane_is_tagged_with_the_view_it_shows() {
     let hints = KeyHintState::default();
     let mut app = App::new(Config::default(), None).unwrap();
+    app.handle_key(KeyStroke::ctrl('w')).unwrap();
+    app.handle_key(KeyStroke::plain(KeyCode::Char('v')))
+        .unwrap();
 
     let ordinary = render(100, 20, &mut app, &hints);
     assert!(!ordinary.contains("[zen]"), "{ordinary}");

@@ -454,6 +454,21 @@ fn control_w_fullscreen_and_zen_preserve_every_terminal_mode() {
     let mut session = Session::start("/bin/cat");
     let terminal = session.app.active_terminal().unwrap();
 
+    // A lone terminal already fills the editor area, so fullscreen must not
+    // prevent splitting or change its input mode.
+    session.app.handle_key(KeyStroke::ctrl('w')).unwrap();
+    session.type_text("f");
+    assert_eq!(session.app.status, "only one pane");
+    assert_eq!(session.app.mode, Mode::Insert);
+    assert!(!session.app.terminals.get(terminal).unwrap().reviewing());
+    session.app.handle_key(KeyStroke::ctrl('w')).unwrap();
+    session.type_text("v");
+    assert_eq!(session.app.panes.len(), 2);
+    render(&mut session.app, 60, 12);
+    session.app.handle_key(KeyStroke::ctrl('w')).unwrap();
+    session.type_text("h");
+    assert_eq!(session.app.active_terminal(), Some(terminal));
+
     // Insert uses the terminal-scoped window bindings without first entering
     // Normal or sending either key to the child.
     session.app.handle_key(KeyStroke::ctrl('w')).unwrap();

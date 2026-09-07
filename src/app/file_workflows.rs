@@ -2166,7 +2166,8 @@ impl App {
     ///
     /// The two views are one state rather than two, so asking for the other
     /// one switches to it instead of stacking a second maximization on top of
-    /// the first. Only the view that is already showing toggles off.
+    /// the first. Only the view that is already showing toggles off. Fullscreen
+    /// needs a split to maximize; with one pane it leaves the current view alone.
     pub(super) fn toggle_maximized(&mut self, view: MaximizedView) {
         if self
             .maximized
@@ -2177,6 +2178,10 @@ impl App {
                 MaximizedView::Zen => self.status("zen mode disabled"),
                 MaximizedView::Fullscreen => self.status("full-screen view disabled"),
             }
+            return;
+        }
+        if view == MaximizedView::Fullscreen && self.panes.len() == 1 {
+            self.status("only one pane");
             return;
         }
         self.maximized = Some(MaximizedPane {
