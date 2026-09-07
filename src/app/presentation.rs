@@ -890,6 +890,22 @@ impl App {
     /// line. Service feedback and action echoes may change while a decision is
     /// open; its popup must continue to name the exact operation Enter accepts.
     fn confirmation_overlay(&self) -> Option<ConfirmationOverlay> {
+        if let Some(menu) = &self.terminal_action_menu
+            && menu.close_armed
+            && menu.selected_action() == Some(super::TerminalAction::ForceKill)
+            && let Some(session) = self.terminals.get(menu.id).filter(|session| session.live())
+        {
+            return Some(ConfirmationOverlay {
+                title: "Force kill terminal",
+                accept: "force kill",
+                message: format!(
+                    "Force kill {} (#{}) and discard its retained output?\nThe terminal process group will be killed. Unsaved work in the program will be lost.\nEnter confirms.\nEscape cancels.",
+                    session.display_name(),
+                    menu.id
+                ),
+                input: None,
+            });
+        }
         if let Some(confirmation) = &self.file_reload_confirmation {
             return Some(ConfirmationOverlay {
                 title: "Reload file",
@@ -1628,6 +1644,15 @@ impl App {
                         );
                         if *action == super::TerminalAction::Show && self.navigator_open() {
                             result.label = "Bring into active pane".to_owned();
+                        }
+                        if *action == super::TerminalAction::ForceKill
+                            && !self
+                                .terminals
+                                .get(menu.id)
+                                .is_some_and(|session| session.live())
+                        {
+                            result.available = false;
+                            result.detail = "Terminal is no longer running".to_owned();
                         }
                         if *action == super::TerminalAction::CloseExited
                             && !self.terminals.iter().any(|terminal| !terminal.live())
