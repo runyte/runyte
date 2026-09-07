@@ -206,7 +206,7 @@ Backspace/Delete, Ctrl-u, and Ctrl-k. Prompts are labelled by flavour —
 | `zj`, `zk`, arrows | scroll view | matching scroll commands | Implemented | Does not move the selection. |
 | `z` + page keys | page/half-page motions | matching page commands | Implemented | Same commands as Normal mode. |
 | `Z` + view key | sticky view mode | matching view command | Implemented | The `Z` prefix remains pending until Escape. |
-| `mm` | `match_brackets` | `match-bracket` | Implemented | Resolves through the syntax tree, so brackets inside strings and comments are ignored. Requires a known language. |
+| `mm` | `match_brackets` | `match-bracket` | Implemented | Resolves through the syntax tree, so brackets inside strings and comments are ignored. Requires a current syntax tree; shares the temporary `Syntax is still parsing` availability of `Space x`. |
 
 ## Window and Space modes
 
@@ -242,6 +242,12 @@ active-buffer unavailability reason when the corresponding service is not
 ready. A dimmed namespace remains navigable: descendant rows carry their own
 availability, so LSP manager commands such as status and restart can remain
 available when document-specific commands are not.
+Initial parsing and full-document reparsing do not block reading or editing.
+`Space x` and `mm` require a current tree and report `Syntax is still parsing`
+while one is pending; a refused action is never replayed on completion. The
+rule belongs to command capability metadata, so remapped and colon invocations
+behave the same way. Smart newline remains usable with its existing indentation
+fallback until syntax can contribute.
 The `Space g` **Git** namespace uses the same navigable dimmed state when the
 Git executable is unavailable or the current project is not in a repository.
 The `Space t` namespace is labelled **Terminals** and carries no capability:

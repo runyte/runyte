@@ -6,10 +6,10 @@
 use super::{
     ActionEntry, App, Assoc, BTreeMap, Buffer, BufferAction, BufferActionMenu, BufferKind, Change,
     ChangeSync, Completion, CompletionSource, CompletionState, ContextAction, ContextActionMenu,
-    DocumentEdit, DocumentState, DocumentSyntax, Encoding, FailureClass, HashMap, HashSet,
-    HoverState, InputGrammar, KeyCode, KeyStroke, ListAction, ListPicker, ListPurpose, LspCommand,
-    LspEvent, LspHandle, LspRange, Mode, Modifiers, Offset, PATH_COMPLETION_ITEM_LIMIT_PER_ROOT,
-    Path, PathActionMenu, PathBuf, PathClipboardTarget, PathPopup, PendingRequest, PickerItem,
+    DocumentEdit, DocumentState, Encoding, FailureClass, HashMap, HashSet, HoverState,
+    InputGrammar, KeyCode, KeyStroke, ListAction, ListPicker, ListPurpose, LspCommand, LspEvent,
+    LspHandle, LspRange, Mode, Modifiers, Offset, PATH_COMPLETION_ITEM_LIMIT_PER_ROOT, Path,
+    PathActionMenu, PathBuf, PathClipboardTarget, PathPopup, PendingRequest, PickerItem,
     PromptKind, Range, Register, RequestKind, Response, Result, SPECIAL_BUFFER_RETENTION_LIMIT,
     SearchMode, Selection, SelectionSemantics, ServerState, SignatureContext, SignatureState,
     TerminalAction, TerminalActionMenu, TerminalSession, Text, TextDocumentContentChangeEvent,
@@ -17,7 +17,7 @@ use super::{
     WorkspaceSearchRequest, WorkspaceSearchService, WorkspaceSearchSnapshot, WorkspaceSearchTarget,
     buffer_language, buffer_picker_columns, buffer_preview, checked_lsp_range, display_path,
     edit_summary, from_lsp_position, from_lsp_range, is_word_completion_character,
-    language_completion_prefix_start, open_or_new, operative_span, parse_buffer, path_token_before,
+    language_completion_prefix_start, open_or_new, operative_span, path_token_before,
     push_matching_words, response_name, row_is_not_before, to_lsp_position, word_bounds,
     word_token_before, workspace_edit_path_identity,
 };
@@ -2136,14 +2136,8 @@ impl App {
         }
 
         enum PlannedTarget {
-            Existing {
-                buffer_id: usize,
-                staged: Buffer,
-            },
-            New {
-                staged: Buffer,
-                syntax: Option<DocumentSyntax>,
-            },
+            Existing { buffer_id: usize, staged: Buffer },
+            New { staged: Buffer },
         }
 
         struct GroupedEdit {
@@ -2287,10 +2281,7 @@ impl App {
             }
             let target = match buffer_id {
                 Some(buffer_id) => PlannedTarget::Existing { buffer_id, staged },
-                None => {
-                    let syntax = parse_buffer(&staged, &self.registry);
-                    PlannedTarget::New { staged, syntax }
-                }
+                None => PlannedTarget::New { staged },
             };
             planned.push(PlannedEdit {
                 target,
@@ -2307,6 +2298,7 @@ impl App {
                 PlannedTarget::Existing { buffer_id, staged } => {
                     let language_before = buffer_language(&self.buffers[buffer_id], &self.registry);
                     let watched = self.syntax[buffer_id].is_some()
+                        || self.pending_syntax.contains_key(&buffer_id)
                         || self.lsp_documents.contains_key(&buffer_id);
                     let before = watched.then(|| self.buffers[buffer_id].text().clone());
                     self.buffers[buffer_id] = staged;
@@ -2327,10 +2319,11 @@ impl App {
                             });
                     }
                 }
-                PlannedTarget::New { staged, syntax } => {
+                PlannedTarget::New { staged } => {
                     self.buffers.push(staged);
-                    self.syntax.push(syntax);
+                    self.syntax.push(None);
                     let buffer_id = self.buffers.len() - 1;
+                    self.reparse_whole(buffer_id);
                     let opened = self.lsp_touch(buffer_id);
                     if let Some((language, generation)) = command_server {
                         synchronized &= opened
@@ -3300,8 +3293,7 @@ impl App {
             BufferKind::Scratch => {
                 self.buffers[buffer].discard_changes_to("")?;
                 self.clear_syntax_history(buffer);
-                self.stale_syntax.remove(&buffer);
-                self.syntax[buffer] = None;
+                self.retire_syntax(buffer);
             }
             BufferKind::Virtual { .. }
             | BufferKind::Settings { .. }
@@ -3497,8 +3489,7 @@ impl App {
         for pane_id in uncover {
             self.uncover_terminal(pane_id, buffer);
         }
-        self.stale_syntax.remove(&buffer);
-        self.syntax[buffer] = None;
+        self.retire_syntax(buffer);
         self.generated_highlights.remove(&buffer);
         self.closed_buffers.insert(buffer);
         if let Some(path) = git_path

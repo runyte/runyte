@@ -154,7 +154,13 @@ pub fn key_hint_description(row: &KeyHintRow) -> String {
 
     let compact_availability = match (&row.unavailable_reason, row.availability) {
         (Some(_), BindingAvailability::Implemented) => match row.capability {
-            Some(crate::command::CommandCapability::Syntax) => " no syntax",
+            Some(crate::command::CommandCapability::Syntax) => {
+                if row.unavailable_reason.as_deref() == Some("Syntax is still parsing") {
+                    " parsing"
+                } else {
+                    " no syntax"
+                }
+            }
             Some(
                 crate::command::CommandCapability::LspDocument
                 | crate::command::CommandCapability::LspManager,

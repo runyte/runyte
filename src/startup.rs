@@ -18,8 +18,8 @@ use std::{
 pub const STARTUP_TIMING_FILE_ENV: &str = "RUNYTE_STARTUP_TIMING_FILE";
 
 /// Stable milestones on the path to a usable editor frame.
-/// Variants are declared in lifecycle order. A launch may skip phases that do
-/// not apply to its mode, but it must never move backwards through this list.
+/// Ordered phases describe construction. InitialSyntaxReady is independent:
+/// it may arrive before or after the first document frame.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum StartupPhase {
     MainEntry,
@@ -108,6 +108,21 @@ impl StartupTrace {
     #[inline(always)]
     pub fn mark(&mut self, _phase: StartupPhase) {}
 
+    /// Records the first applied initial tree, independently of frame ordering.
+    /// Returns whether the timing report gained a milestone.
+    #[cfg(feature = "startup-timing")]
+    pub fn note_initial_syntax_ready(&mut self) -> bool {
+        if self
+            .marks
+            .iter()
+            .any(|(phase, _)| *phase == StartupPhase::InitialSyntaxReady)
+        {
+            return false;
+        }
+        self.mark(StartupPhase::InitialSyntaxReady);
+        true
+    }
+
     /// Writes the report only when the measurement build was given an
     /// explicit destination. File output is safe while the alternate screen
     /// is active because it never writes diagnostic text to the terminal.
@@ -134,11 +149,20 @@ impl StartupTrace {
                 .is_none_or(|(_, previous)| *previous <= elapsed),
             "startup milestones must be recorded in elapsed-time order"
         );
+        if phase == StartupPhase::InitialSyntaxReady
+            && self.marks.iter().any(|(previous, _)| *previous == phase)
+        {
+            return;
+        }
         debug_assert!(
-            self.marks
-                .last()
-                .is_none_or(|(previous, _)| *previous <= phase),
-            "startup phases must follow lifecycle order"
+            phase == StartupPhase::InitialSyntaxReady
+                || self
+                    .marks
+                    .iter()
+                    .rev()
+                    .find(|(previous, _)| *previous != StartupPhase::InitialSyntaxReady)
+                    .is_none_or(|(previous, _)| *previous <= phase),
+            "startup construction phases must follow lifecycle order"
         );
         self.marks.push((phase, elapsed));
     }
@@ -161,6 +185,23 @@ impl StartupTrace {
 #[cfg(all(test, feature = "startup-timing"))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn syntax_readiness_can_arrive_after_the_editor_frame_and_is_recorded_once() {
+        let mut trace = StartupTrace::new();
+        trace.mark(StartupPhase::EditorFramePresented);
+        trace.mark(StartupPhase::InitialSyntaxReady);
+        trace.mark(StartupPhase::LspManagerSpawned);
+        trace.mark(StartupPhase::InitialSyntaxReady);
+        assert_eq!(
+            trace
+                .marks
+                .iter()
+                .filter(|(phase, _)| *phase == StartupPhase::InitialSyntaxReady)
+                .count(),
+            1
+        );
+    }
 
     #[test]
     fn report_preserves_phase_order_and_elapsed_values() {
@@ -195,7 +236,6 @@ mod phase_order_tests {
         assert!(StartupPhase::TerminalEntered < StartupPhase::LanguageRegistryReady);
         assert!(StartupPhase::TerminalEntered < StartupPhase::InitialBufferOpened);
         assert!(StartupPhase::TerminalEntered < StartupPhase::InitialSyntaxReady);
-        assert!(StartupPhase::InitialSyntaxReady < StartupPhase::EditorFramePresented);
     }
 }
 

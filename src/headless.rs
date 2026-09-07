@@ -95,6 +95,18 @@ impl HeadlessEditor {
         })
     }
 
+    /// Holds initial syntax until a background worker is explicitly attached.
+    /// Useful for proving document readiness without timing a real parser.
+    pub fn new_deferred_in(root: impl AsRef<Path>) -> Result<Self> {
+        Ok(Self {
+            app: App::new_in_isolated_project_with_syntax(
+                root,
+                HostPorts::isolated(Box::new(InertClipboard)),
+                true,
+            )?,
+        })
+    }
+
     /// Creates a scratch editor seeded through the transactional edit path.
     pub fn with_text_in(root: impl AsRef<Path>, text: &str) -> Result<Self> {
         let mut editor = Self::new_in(root)?;
@@ -197,7 +209,6 @@ impl HeadlessEditor {
     }
 
     /// Opts this test editor into the production background syntax path.
-    /// Must be called inside a Tokio runtime.
     pub fn enable_background_syntax(&mut self) -> SyntaxEvents {
         let (worker, events) = spawn_background(std::sync::Arc::clone(&self.app.registry));
         self.app.attach_syntax_worker(worker);

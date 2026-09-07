@@ -90,6 +90,9 @@ impl App {
     }
 
     pub(super) fn note_destination_activation(&mut self) {
+        if let Some(worker) = &self.syntax_worker {
+            worker.prioritize(self.active().buffer);
+        }
         let current = self.active().destination();
         self.destination_recency
             .retain(|destination| *destination != current);

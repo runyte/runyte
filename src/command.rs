@@ -896,7 +896,8 @@ impl EditorCommand {
             | Self::PreviousRunningSession
             | Self::OpenSessionDirectory
             | Self::OpenExplorerSession => Some(CommandCapability::PersistentSession),
-            Self::ExpandSyntaxSelection
+            Self::MatchBracket
+            | Self::ExpandSyntaxSelection
             | Self::ShrinkSyntaxSelection
             | Self::SelectSyntaxParent
             | Self::SelectSyntaxChild
@@ -3024,7 +3025,7 @@ mod tests {
             assert_eq!(command.category() == CommandCategory::Syntax, expected);
             assert_eq!(
                 command.capability() == Some(CommandCapability::Syntax),
-                expected
+                expected || *command == EditorCommand::MatchBracket
             );
             assert_eq!(command.metadata().capability, command.capability());
         }

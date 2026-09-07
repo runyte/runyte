@@ -30,7 +30,19 @@ impl App {
             .syntax
             .get(self.active().buffer)
             .is_some_and(Option::is_some);
-        if syntax_errors.is_empty() {
+        if let Some(failure) = self.failed_syntax.get(&self.active().buffer) {
+            entries.push(ServiceHealthEntry::new(
+                "syntax",
+                ServiceState::Degraded,
+                failure.clone(),
+            ));
+        } else if self.pending_syntax.contains_key(&self.active().buffer) {
+            entries.push(ServiceHealthEntry::new(
+                "syntax",
+                ServiceState::Idle,
+                "Syntax is still parsing",
+            ));
+        } else if syntax_errors.is_empty() {
             entries.push(ServiceHealthEntry::new(
                 "syntax",
                 if active_syntax {

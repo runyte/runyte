@@ -18,6 +18,9 @@ current sources take precedence.
 
 The retained completed records cover:
 
+- [Document readiness before syntax parsing](completed/PLAN_ASYNC_INITIAL_SYNTAX.md):
+  deferred initial/full parsing, bounded background work, edits before a tree is
+  available, command readiness, worker-owned retirement, and non-blocking quit;
 - [Session and open-destination navigation](completed/PLAN_SESSION_NAVIGATION.md):
   the persistent-session strip, mixed Navigator, directory opening, parent-terminal
   handoffs and external-editor waits, and remote destination inventories;

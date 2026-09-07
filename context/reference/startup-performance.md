@@ -127,6 +127,98 @@ An in-flight scan from before that attachment is replaced after it completes;
 the cached rows remain until the new result arrives. The idle interval and
 detached-host behavior are unchanged. The measurements above predate this fix.
 
+## 2026-09-07 — document readiness before initial syntax
+
+Runyte 0.2.0 at `aee17b0` was measured before and after the asynchronous
+initial-syntax change. Both runs used the same AMD Ryzen AI 9 365 Linux host,
+120×40 PTY, isolated home/XDG configuration, warm-cache fixtures, and ten
+measured launches after one discarded warm-up per cell. Editor order rotated.
+Builds and tests finished before measurements; desktop applications remained
+running. Both comparisons ran in the same execution sandbox.
+
+Neovim was 0.12.5 and Helix was 25.07.1 (`a05c151b`). Rust builds used
+1.97.1; the harness used Python 3.14. Runyte readiness used the ordinary release
+build. Internal Runyte milestones used a separate disposable build of the
+same source with `startup-timing` and the updated observation patch. The patch
+observes successful initial parsing on the worker, independently of when a
+frame is shown or a result is applied. No current Helix probe build was used.
+
+Every cell below is **median (min–max), milliseconds**. All 180 readiness
+samples in each comparison passed whole-file save verification; no successful
+slow sample was discarded. The before run also contains 60 Neovim internal
+samples; the after run contains 120 Neovim/Runyte internal samples.
+
+### Ready to edit — stock binaries
+
+| Fixture | Runyte before | Runyte after | Neovim after | Helix after |
+| --- | ---: | ---: | ---: | ---: |
+| `short.txt` | 15.8 (13.2–16.7) | 15.3 (13.7–16.0) | 20.9 (16.8–22.5) | 29.6 (27.9–32.6) |
+| `medium.txt` | 17.7 (14.9–25.9) | 16.6 (13.8–18.8) | 20.8 (18.0–25.1) | 30.5 (27.0–34.0) |
+| `long.txt` | 24.4 (21.0–27.2) | 23.4 (19.5–27.3) | 23.5 (20.1–26.6) | 34.5 (30.2–47.0) |
+| `short.lua` | 21.7 (18.6–23.9) | 17.4 (14.3–25.5) | 38.8 (37.4–44.2) | 38.5 (31.9–40.9) |
+| `medium.lua` | 34.0 (30.8–43.6) | 17.6 (15.3–21.7) | 29.3 (27.5–30.8) | 52.7 (49.2–66.7) |
+| `long.lua` | 160.9 (153.6–170.4) | 22.3 (20.0–30.0) | 29.7 (26.6–32.3) | 297.6 (289.2–314.6) |
+
+### File loaded and syntax ready — instrumented, after change
+
+| Fixture | Runyte file loaded | Runyte syntax ready | Neovim syntax ready |
+| --- | ---: | ---: | ---: |
+| `short.lua` | 5.7 (5.1–8.2) | 11.8 (10.7–14.5) | 20.3 (15.8–28.4) |
+| `medium.lua` | 6.7 (5.5–8.9) | 26.0 (22.8–30.3) | 33.0 (28.6–42.4) |
+| `long.lua` | 11.0 (10.3–16.0) | 156.9 (148.1–180.6) | 163.0 (157.9–182.4) |
+
+The large Lua fixture is ready to edit in 22.3 ms instead of 160.9 ms,
+about seven times sooner, and below Neovim's 29.7 ms median in this run.
+Runyte's initial parse still completes around 156.9 ms. These measurements
+show editing becoming available earlier; parsing itself takes a similar time.
+The large plain-text medians are close before and after (24.4 and 23.4 ms),
+and the after result is similar to Neovim's 23.5 ms. Overlapping ranges and
+ordinary run-to-run variation prevent universal editor rankings. Readiness
+and internal milestones come from separate launches and their medians must
+not be subtracted to isolate stage costs.
+
+### Quit during initial parsing
+
+`early_syntax_quit.py` decodes the first large Lua document frame and sends
+`:q` immediately from Normal mode. Ten measured samples follow one discarded
+warm-up, with the same isolated configuration and binaries as above. The
+interval starts when the command is sent and ends at successful process exit.
+Stock Runyte takes 2.7 ms (2.5–4.7); the instrumented build takes 3.3 ms
+(2.6–6.4). None of the ten instrumented launches reported syntax completion
+before exit. The [individual early-quit samples](../../benchmarks/results/startup-2026-09-07-async-syntax-early-quit.csv)
+retain those observations; the stock binary has no parser-completion probe.
+
+### Settled quit and idle
+
+The existing `run.py` harness, run afterward with ten quit samples per fixture,
+measured settled-document quit at 4 ms for `long.txt` and 22 ms for `long.lua`.
+The same Lua quit measurement on the pre-change binary was also 22 ms.
+These settled results include ordinary cleanup of an accepted document tree;
+they do not isolate its destructor cost. Three independent ten-second idle
+windows with `medium.lua` open in a Git repository measured 0.00% CPU median
+(range 0.00–0.10% of one logical CPU) and zero screen writes in every sample.
+
+### Samples and provenance
+
+The [before samples](../../benchmarks/results/startup-2026-09-07-async-syntax-before.csv)
+and [after samples](../../benchmarks/results/startup-2026-09-07-async-syntax-after.csv)
+retain every measured value, including plain-text internal milestones.
+The [preliminary samples](../../benchmarks/results/startup-2026-09-07-async-syntax-first-pass.csv)
+predate the second review's worker-side tree-disposal correction and are
+retained separately; their large Lua readiness median was 23.1 ms. That stock
+binary's SHA-256 was
+`db558ce7051160f4121688b8c7f0434e923a08954dd95737ff6010c5a360445d`, and its
+probe's was `8bb12a579eb01ae8f1f9d27dcb554be88a42ca26440e9cad5c606b1b7bf6e1cb`.
+The tables above and binary hashes below describe the final reviewed build.
+
+| Binary | SHA-256 |
+| --- | --- |
+| Runyte before | `b10630314605080e2021192a95ec4740918155d49b0391fafb2fadfd8d7dc160` |
+| Runyte after | `f8ebe84e611f4ade1bd4c15834d1fb191dfdffab39de6781823248108225d20d` |
+| Runyte after probe | `d85747f556e7bc0d9a3620c667d4ee735a9e77c5341f3634f2d2008eb7649a89` |
+| Neovim | `31b1f7b2bbf9d790596e4f9a76f3b7f09c01cf501c314ffa68d365a7fc6a03b0` |
+| Helix | `3f31b5db36dec738e153fc027edb280063616df8823598df2da56c80c71542e5` |
+
 ## 2026-09-05 — readiness, loading, and syntax
 
 Machine: AMD Ryzen AI 9 365, 10 cores / 20 hardware threads, approximately

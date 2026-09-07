@@ -88,16 +88,27 @@ strong text, links, and inline code use the ordinary foreground. The injection
 query still runs across the whole document on every edit, so this separate
 fidelity limit remains in place.
 
-Incremental reparsing runs on a background worker and edits only enqueue the
-latest text revision. If typing outruns the parser, one pending request is
-replaced rather than growing a backlog. Until the completed tree is drained
-between frames, Runyte retains the previous tree and translates its
-viewport-scoped highlight spans through the pending edits, so colours remain
-visible. Structural features such as outline, folds, matching brackets, text
-objects, and structural selection return no result during that interval rather
-than querying stale offsets. A completed tree is applied only if both its
-syntax base and target text revision still match the live document.
+Initial parsing and subsequent reparsing run on a background worker. Once
+file contents are loaded, the document is readable and editable immediately,
+using ordinary text colours until its first current syntax tree arrives.
+Highlighting appears without replacing text or moving the cursor or viewport.
+Opening another file, undo/redo, reload, and language changes use the same
+background path.
 
+If typing outruns the parser, one pending request per buffer is replaced rather
+than growing a backlog. After the first tree has arrived, Runyte retains the
+previous tree during updates and translates its viewport-scoped highlight spans
+through pending edits, so colours remain visible. Structural features such as
+outline, folds, matching brackets, text objects, and structural selection cannot
+query stale offsets. `Space x` commands and `mm` are dimmed while syntax is
+pending; invoking one reports `Syntax is still parsing` and does not queue it
+for later execution. Smart newline keeps its ordinary indentation/list fallback.
+Language detection, comments, editing, search, saving, and language-server
+workflows do not need a syntax tree.
+
+Completed trees are applied between frames only when their parse generation,
+language, and target text revision match the live document. Parse failures leave
+the document editable as plain text and can be inspected with `:service-health`.
 There is no separate line or byte refusal for syntax highlighting. Documents
 past the former 200,000-line and 8 MB limits are parsed; a slow parse delays the
 new tree, not the keystroke that requested it.
@@ -1294,9 +1305,8 @@ To build from a clone instead:
 
 Runyte accepts multiple startup text files and leaves the first text file
 active. Standalone launches show a stable `Opening workspace…` presentation
-while those files and their syntax are prepared; document text first appears
-as the complete highlighted editor frame, never as a partially highlighted
-intermediate frame. Put a one-based `+LINE` or `+LINE:COLUMN` immediately before
+while those files are loaded. The first document frame is already editable;
+syntax highlighting appears independently when parsing finishes. Put a one-based `+LINE` or `+LINE:COLUMN` immediately before
 a file to place its caret when that buffer is first shown; columns count Unicode
 characters rather than bytes. For example, `runyte +12:4 "notes with spaces.md"
 src/main.rs` opens both files at once.

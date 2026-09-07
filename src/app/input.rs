@@ -202,10 +202,10 @@ impl App {
             .and_then(|buffer| buffer_language(buffer, &self.registry));
         let syntax = if self.syntax.get(buffer_id).is_some_and(Option::is_some) {
             CommandAvailability::Available
-        } else if self.stale_syntax.contains_key(&buffer_id) {
-            CommandAvailability::Unavailable(
-                "syntax tree is being refreshed for this buffer".to_owned(),
-            )
+        } else if self.pending_syntax.contains_key(&buffer_id) {
+            CommandAvailability::Unavailable("Syntax is still parsing".to_owned())
+        } else if let Some(failure) = self.failed_syntax.get(&buffer_id) {
+            CommandAvailability::Unavailable(failure.clone())
         } else if let Some(error) = language_id.and_then(|language| {
             self.registry
                 .errors()
@@ -2925,8 +2925,7 @@ impl App {
             match refresh {
                 Ok(()) => {
                     self.clear_syntax_history(index);
-                    self.stale_syntax.remove(&index);
-                    self.syntax[index] = None;
+                    self.retire_syntax(index);
                     self.normalize_buffer(index);
                 }
                 Err(error) => warnings.push(format!(
@@ -4607,6 +4606,12 @@ impl App {
                 "{} is {availability}: {reason}",
                 command.metadata().description
             ));
+            return Ok(CommandOutcome::Unavailable(self.status.clone()));
+        }
+        if id.capability() == Some(crate::command::CommandCapability::Syntax)
+            && let CommandAvailability::Unavailable(reason) = self.command_capabilities().syntax
+        {
+            self.mark_unavailable(reason);
             return Ok(CommandOutcome::Unavailable(self.status.clone()));
         }
         let hint = match id {

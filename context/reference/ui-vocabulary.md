@@ -427,3 +427,14 @@ A resource that closes while selected cannot redirect a pending Enter to a
 replacement row. The session manager's selected-host inventory is a separate
 navigable choose-one surface with enter/back interaction and explicit loading,
 stopped, unsupported and failed states, rather than actions inside a preview.
+
+## Syntax readiness
+
+A document pane displays its authoritative editable text as soon as loading
+finishes. Initial syntax completion contributes colours and command availability
+without resetting the selection, viewport, wrapping, or undo history. Pending
+syntax uses the ordinary text rendering path and introduces no loading overlay.
+`Space x` and `mm` remain discoverable but dimmed until a current tree is present;
+hints and the palette distinguish `Syntax is still parsing` from an unsupported
+language or failed parse. Routine completion is silent. Language-service health
+reports pending work or failure through the existing service-health surface.

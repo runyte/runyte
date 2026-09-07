@@ -1046,3 +1046,29 @@ fn palette_path_rows_redraw_within_budget() {
     });
     within("redrawing path rows", slowest, budget(FRAME * 2));
 }
+
+/// Initial parser work must not enter either document opening or its first
+/// edits. Holding worker attachment makes that ordering deterministic.
+#[test]
+#[ignore = "run serially in the release performance job"]
+fn initial_syntax_does_not_delay_large_document_edits() {
+    let path = highlighted_rows();
+    let mut editor = HeadlessEditor::new_deferred_in(fixture_root()).unwrap();
+    let start = Instant::now();
+    editor
+        .execute(parse_colon_command(&format!("open {}", path.display())).unwrap())
+        .unwrap();
+    within(
+        "loading text before initial syntax",
+        start.elapsed(),
+        budget(Duration::from_millis(1500)),
+    );
+    assert!(editor.has_pending_syntax());
+    assert!(!has_syntax_scope(&editor.snapshot(120, 40)));
+    within(
+        "editing before initial syntax",
+        slowest_keystroke(&mut editor, 0),
+        budget(FRAME),
+    );
+    assert!(editor.has_pending_syntax());
+}

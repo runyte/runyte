@@ -14,7 +14,7 @@
 mod background;
 mod grammars;
 
-pub(crate) use background::StaleSyntax;
+pub(crate) use background::{ParseRequest, StaleSyntax};
 pub use background::{SyntaxEvent, SyntaxEvents, SyntaxHandle, spawn_background};
 
 use std::{

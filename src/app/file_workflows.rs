@@ -5,14 +5,13 @@
 // Application-module dependencies:
 use super::{
     App, Axis, Buffer, BufferKind, CommandRefusal, ContentAlignment, DiffSession, DiffSide,
-    DirectoryReloadConfirmation, DirectoryView, DocumentSyntax, FileObservation,
-    FileReloadConfirmation, FsConfirmation, FsOperation, FsPlan, GeneratedViewIdentity, HashSet,
-    InputGrammar, Layout, ListAction, ListPicker, MAX_DIFF_BYTES, MaximizedPane, MaximizedView,
-    Mode, PaneDirectory, Path, PathBuf, PickerItem, PromptKind, Result, Selection,
-    SelectionSemantics, Side, TerminalId, Transaction, TransferMode, bail, buffer_language,
-    diff_row_for_identity, diff_row_identity, enclosing_area, ensure, expand_home_path,
-    external_open, fs, open_or_new_at_identity, parse_buffer, path_token_bounds,
-    resolved_operation_path, trailing_whitespace_changes,
+    DirectoryReloadConfirmation, DirectoryView, FileObservation, FileReloadConfirmation,
+    FsConfirmation, FsOperation, FsPlan, GeneratedViewIdentity, HashSet, InputGrammar, Layout,
+    ListAction, ListPicker, MAX_DIFF_BYTES, MaximizedPane, MaximizedView, Mode, PaneDirectory,
+    Path, PathBuf, PickerItem, PromptKind, Result, Selection, SelectionSemantics, Side, TerminalId,
+    Transaction, TransferMode, bail, buffer_language, diff_row_for_identity, diff_row_identity,
+    enclosing_area, ensure, expand_home_path, external_open, fs, open_or_new_at_identity,
+    path_token_bounds, resolved_operation_path, trailing_whitespace_changes,
 };
 use crate::{
     directory_buffer::ListingView,
@@ -480,8 +479,7 @@ impl App {
     /// still be settled the same way.
     fn settle_reloaded_directory(&mut self, buffer: usize) {
         self.clear_syntax_history(buffer);
-        self.stale_syntax.remove(&buffer);
-        self.syntax[buffer] = None;
+        self.retire_syntax(buffer);
         self.forget_directory_view(buffer);
         self.forget_directory_jumps(buffer);
         self.normalize_buffer(buffer);
@@ -635,8 +633,7 @@ impl App {
         let view = self.listing_view();
         self.buffers[buffer_id].retarget_directory(path, view)?;
         self.clear_syntax_history(buffer_id);
-        self.stale_syntax.remove(&buffer_id);
-        self.syntax[buffer_id] = None;
+        self.retire_syntax(buffer_id);
         self.forget_directory_jumps(buffer_id);
         self.active_mut().directory_buffer = Some(buffer_id);
         Ok(Some(buffer_id))
@@ -735,8 +732,9 @@ impl App {
                     }
                     Err(error) => return Err(error),
                 };
-            self.syntax.push(parse_buffer(&buffer, &self.registry));
+            self.syntax.push(None);
             self.buffers.push(buffer);
+            self.reparse_whole(self.buffers.len() - 1);
             // A newly opened file is the one moment its staged text has to be
             // read; every edit after this is diffed against what is held here.
             self.track_in_git(&path);
@@ -914,7 +912,7 @@ impl App {
             .iter()
             .map(|path| crate::path_safety::path_identity(path))
             .collect::<Result<Vec<_>>>()?;
-        let mut staged: Vec<(PathBuf, PathBuf, Buffer, Option<DocumentSyntax>)> = Vec::new();
+        let mut staged: Vec<(PathBuf, PathBuf, Buffer)> = Vec::new();
         let mut refreshed = Vec::new();
         let mut prepared = Vec::with_capacity(paths.len());
         for (path, identity) in paths.iter().zip(&identities) {
@@ -944,7 +942,7 @@ impl App {
             }
             if let Some(slot) = staged
                 .iter()
-                .position(|(_, staged_identity, _, _)| staged_identity == identity)
+                .position(|(_, staged_identity, _)| staged_identity == identity)
             {
                 prepared.push(Prepared::Staged(slot));
                 continue;
@@ -954,9 +952,8 @@ impl App {
                 "binary files cannot be opened through the workspace protocol"
             );
             let buffer = open_or_new_at_identity(path, identity, self.listing_view())?;
-            let syntax = parse_buffer(&buffer, &self.registry);
             prepared.push(Prepared::Staged(staged.len()));
-            staged.push((path.clone(), identity.clone(), buffer, syntax));
+            staged.push((path.clone(), identity.clone(), buffer));
         }
 
         let first_is_directory = prepared.first().is_some_and(|prepared| match prepared {
@@ -1004,15 +1001,16 @@ impl App {
             self.normalize_buffer(index);
         }
         let mut staged_ids = vec![None; staged.len()];
-        for (slot, (path, _, buffer, syntax)) in staged.into_iter().enumerate() {
+        for (slot, (path, _, buffer)) in staged.into_iter().enumerate() {
             if Some(slot) == activated_slot {
                 staged_ids[slot] = activated_directory;
                 continue;
             }
             let is_directory = buffer.is_directory();
-            self.syntax.push(syntax);
+            self.syntax.push(None);
             self.buffers.push(buffer);
             let buffer_id = self.buffers.len() - 1;
+            self.reparse_whole(buffer_id);
             if !is_directory {
                 // A newly opened file is the one moment its staged text has to
                 // be read; every edit after this is diffed against what is
@@ -1340,6 +1338,7 @@ impl App {
         {
             self.trim_trailing_whitespace(buffer_id);
         }
+        let syntax_language_before = buffer_language(&self.buffers[buffer_id], &self.registry);
         let previous_git_path = path.as_ref().and_then(|destination| {
             self.buffers[buffer_id]
                 .path
@@ -1365,9 +1364,11 @@ impl App {
                 }
                 // `:write <path>` can give a scratch buffer a language for the
                 // first time, or change the one it already had.
-                self.clear_syntax_history(buffer_id);
-                self.stale_syntax.remove(&buffer_id);
-                self.syntax[buffer_id] = parse_buffer(&self.buffers[buffer_id], &self.registry);
+                if syntax_language_before
+                    != buffer_language(&self.buffers[buffer_id], &self.registry)
+                {
+                    self.reparse_whole(buffer_id);
+                }
                 self.lsp_save(buffer_id);
                 // Writing changes what Git reports without changing any
                 // buffer, and `:write <path>` can put a file under Git that
@@ -1783,7 +1784,7 @@ impl App {
             let right = self.diffs[index].side(Side::Right);
             debug_assert_eq!(right.buffer, source);
             self.buffers[left.buffer] = snapshot;
-            self.syntax[left.buffer] = None;
+            self.retire_syntax(left.buffer);
             let source_text = self.buffers[source].to_string();
             let session = DiffSession::new(left, right, text, &source_text);
             let equal = session.alignment().is_equal();

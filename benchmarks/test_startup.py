@@ -132,6 +132,22 @@ while True:
 @unittest.skipUnless(os.environ.get("RUNYTE_BENCH_BINARY"),
                      "set RUNYTE_BENCH_BINARY to a built Runyte executable")
 class RunyteReadinessTests(unittest.TestCase):
+    def test_quit_from_the_first_frame_without_a_settlement_wait(self):
+        import early_syntax_quit
+        binary = str(Path(os.environ["RUNYTE_BENCH_BINARY"]).resolve())
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            replacements = {name: root / name.lower() for name in (
+                "FIXTURES", "EMPTY_CONFIG", "EMPTY_CACHE", "EMPTY_STATE",
+                "EMPTY_DATA", "EMPTY_HOME",
+            )}
+            with mock.patch.multiple(startup.baseline, **replacements):
+                fixtures = startup.baseline.prepare()
+                result = early_syntax_quit.measure(
+                    binary, fixtures["long.lua"], startup.baseline.environment())
+                self.assertGreater(result["quit_ms"], 0)
+                self.assertIsNone(result["syntax_completed"])
+
     def test_first_open_with_empty_storage_accepts_and_saves_the_edit(self):
         binary = str(Path(os.environ["RUNYTE_BENCH_BINARY"]).resolve())
         with tempfile.TemporaryDirectory() as directory:

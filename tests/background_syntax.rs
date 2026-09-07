@@ -134,3 +134,44 @@ async fn late_tree_is_rejected_and_the_latest_coalesced_revision_applies() {
         "the typing burst should be coalesced into one incremental update"
     );
 }
+
+#[tokio::test]
+async fn initial_document_frame_and_edits_do_not_require_a_syntax_tree() {
+    let root = TempDir::new("initial-frame");
+    let path = root.0.join("initial.rs");
+    let original = "fn main() {\n    let café = 41;\n}\n";
+    fs::write(&path, original).unwrap();
+    let mut editor = HeadlessEditor::new_deferred_in(&root.0).unwrap();
+    editor
+        .execute(parse_colon_command(&format!("open {}", path.display())).unwrap())
+        .unwrap();
+    assert_eq!(editor.active_text(), original);
+    assert!(editor.has_pending_syntax());
+    assert!(!highlighted(&mut editor));
+    let frame = editor.snapshot(100, 20);
+    assert!(frame.panes.iter().any(|pane| pane.rows.iter().any(|row| {
+        matches!(row, SnapshotRow::Text(row) if row.runs.iter().map(|run| run.text.as_str()).collect::<String>().contains("fn main"))
+    })));
+    editor
+        .apply_transaction(Transaction::insert(0, "// α\n"))
+        .unwrap();
+    let expected = format!("// α\n{original}");
+    assert_eq!(editor.active_text(), expected);
+    assert!(editor.active_outline().unwrap().is_none());
+    let mut events = editor.enable_background_syntax();
+    let event = tokio::time::timeout(Duration::from_secs(5), events.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    let selection = editor.active_selection();
+    assert!(
+        !highlighted(&mut editor),
+        "an undrained result cannot affect frame preparation"
+    );
+    assert!(editor.apply_syntax_event(event));
+    assert!(highlighted(&mut editor));
+    assert_eq!(editor.active_selection(), selection);
+    assert_eq!(editor.active_text(), expected);
+    editor.undo().unwrap();
+    assert_eq!(editor.active_text(), original);
+}

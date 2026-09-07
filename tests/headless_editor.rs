@@ -449,7 +449,7 @@ fn structural_commands_report_unavailable_without_syntax() {
         editor
             .execute(editor_invocation(EditorCommand::DocumentOutline))
             .unwrap(),
-        CommandOutcome::Unavailable("document outline is unavailable for this buffer".to_owned())
+        CommandOutcome::Unavailable("syntax is unavailable for this buffer".to_owned())
     );
 }
 

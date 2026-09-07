@@ -99,9 +99,9 @@ use crate::{
         select_text_object, transform_selection,
     },
     syntax::{
-        DelimiterPair, DocumentSyntax, LanguageId, Outline, OutlineItem, OutlineKind, Registry,
-        RegistryError, Scope, Span, StaleSyntax, SyntaxError, SyntaxEvent, SyntaxFoldRange,
-        SyntaxHandle, SyntaxObject, SyntaxObjectPart, SyntaxSelectionRange,
+        DelimiterPair, DocumentSyntax, LanguageId, Outline, OutlineItem, OutlineKind, ParseRequest,
+        Registry, RegistryError, Scope, Span, StaleSyntax, SyntaxError, SyntaxEvent,
+        SyntaxFoldRange, SyntaxHandle, SyntaxObject, SyntaxObjectPart, SyntaxSelectionRange,
         SyntaxSelectionTransform,
     },
     terminal::{
@@ -2603,6 +2603,11 @@ pub struct App {
     /// query while their replacement is being parsed.
     stale_syntax: HashMap<usize, StaleSyntax>,
     syntax_worker: Option<SyntaxHandle>,
+    /// Explicitly deferred even before the production worker is attached.
+    defer_syntax: bool,
+    pending_syntax: HashMap<usize, ParseRequest>,
+    failed_syntax: HashMap<usize, String>,
+    next_syntax_generation: u64,
     pub registry: Arc<Registry>,
     /// Every terminal this editor owns, live or finished.
     ///
@@ -3064,6 +3069,26 @@ impl App {
             std::env::current_dir()?,
             ProgramCache::load(external_open::cache_root()),
             HostPorts::live(),
+            false,
+        )
+    }
+
+    /// Production startup loads text without awaiting any initial syntax tree.
+    pub fn new_in_project_with_deferred_syntax(
+        config: Config,
+        targets: Vec<LaunchTarget>,
+        project_root: impl AsRef<Path>,
+        startup: &mut StartupTrace,
+    ) -> Result<Self> {
+        Self::new_with_boundaries(
+            config,
+            targets,
+            project_root.as_ref().canonicalize()?,
+            startup,
+            std::env::current_dir()?,
+            ProgramCache::load(external_open::cache_root()),
+            HostPorts::live(),
+            true,
         )
     }
 
@@ -3076,6 +3101,14 @@ impl App {
         project_root: impl AsRef<Path>,
         ports: HostPorts,
     ) -> Result<Self> {
+        Self::new_in_isolated_project_with_syntax(project_root, ports, false)
+    }
+
+    pub(crate) fn new_in_isolated_project_with_syntax(
+        project_root: impl AsRef<Path>,
+        ports: HostPorts,
+        defer_syntax: bool,
+    ) -> Result<Self> {
         let project_root = project_root.as_ref().canonicalize()?;
         let mut startup = StartupTrace::new();
         Self::new_with_boundaries(
@@ -3086,6 +3119,7 @@ impl App {
             project_root.clone(),
             ProgramCache::default(),
             ports,
+            defer_syntax,
         )
     }
 
@@ -3098,6 +3132,7 @@ impl App {
         working_directory: PathBuf,
         programs: ProgramCache,
         ports: HostPorts,
+        defer_syntax: bool,
     ) -> Result<Self> {
         let (theme_name, theme) = config.startup_theme()?;
         startup.mark(StartupPhase::ThemeResolved);
@@ -3120,6 +3155,7 @@ impl App {
             &registry,
             ListingView::from_config(&config.editor),
             startup,
+            defer_syntax,
         )?;
         let registry_errors = registry.errors();
         let configured_help = ":? or <help-key> for help";
@@ -3208,6 +3244,10 @@ impl App {
             generated_highlights: HashMap::new(),
             stale_syntax: HashMap::new(),
             syntax_worker: None,
+            defer_syntax,
+            pending_syntax: HashMap::new(),
+            failed_syntax: HashMap::new(),
+            next_syntax_generation: 1,
             registry,
             terminals: TerminalSessions::new(),
             last_terminal: None,
@@ -3366,6 +3406,11 @@ impl App {
             next_lsp_token: 1,
             next_completion_session: 1,
         };
+        if defer_syntax {
+            for buffer in 0..app.buffers.len() {
+                app.reparse_whole(buffer);
+            }
+        }
         app.sync_terminal_default_colors();
         if app.grammar.kind() == crate::command::GrammarKind::Vim {
             app.active_mut()
@@ -4358,7 +4403,7 @@ fn workspace_edit_path_identity(path: &Path) -> Result<PathBuf> {
     Ok(normalized)
 }
 
-/// Opens and parses every distinct text target before the first editor frame.
+/// Opens every distinct text target; production defers their syntax work.
 ///
 /// Existing paths are canonicalized for identity. Nonexistent absolute paths
 /// retain their exact component sequence so symlink-sensitive `..` traversal
@@ -4377,6 +4422,7 @@ fn open_launch_targets(
     registry: &Registry,
     view: ListingView,
     startup: &mut StartupTrace,
+    defer_syntax: bool,
 ) -> Result<OpenedLaunchTargets> {
     let mut buffers = Vec::new();
     let mut syntax = Vec::new();
@@ -4425,8 +4471,10 @@ fn open_launch_targets(
         if buffers.is_empty() {
             startup.mark(StartupPhase::InitialBufferOpened);
         }
-        let parsed = parse_buffer(&buffer, registry);
-        if buffers.is_empty() {
+        let parsed = (!defer_syntax)
+            .then(|| parse_buffer(&buffer, registry))
+            .flatten();
+        if buffers.is_empty() && parsed.is_some() {
             startup.mark(StartupPhase::InitialSyntaxReady);
         }
         syntax.push(parsed);
@@ -4437,8 +4485,7 @@ fn open_launch_targets(
     if buffers.is_empty() {
         let scratch = Buffer::scratch();
         startup.mark(StartupPhase::InitialBufferOpened);
-        syntax.push(parse_buffer(&scratch, registry));
-        startup.mark(StartupPhase::InitialSyntaxReady);
+        syntax.push(None);
         buffers.push(scratch);
     }
     Ok(OpenedLaunchTargets {

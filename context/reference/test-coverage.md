@@ -41,6 +41,29 @@ days, and fails below 89% total line coverage. The floor is deliberately below
 the observed baseline because conditional Linux and macOS code changes both the
 instrumented denominator and the paths available to a run on one platform.
 
+## 2026-09-07 — asynchronous initial syntax
+
+Measured on `x86_64-unknown-linux-gnu` with cargo-llvm-cov 0.9.0, at base
+`aee17b0` plus asynchronous initial syntax. The canonical
+`cargo llvm-cov --locked --workspace` and ordinary `cargo test` both passed
+3,029 tests, with 32 ignored. Formatting and warnings-as-errors Clippy passed.
+
+| Measure | Covered | Total | Coverage |
+| --- | ---: | ---: | ---: |
+| Lines | 101,394 | 110,586 | 91.69% |
+| Functions | 9,403 | 10,160 | 92.55% |
+| Regions | 156,906 | 172,019 | 91.21% |
+
+Coverage includes deferred startup and later file opening, edits before initial
+parsing, generation and language invalidation, save preservation, atomic host
+opens, command availability, bounded worker queues, checkpoint reuse, fair
+active-document priority, parser failure, shutdown during active work, and
+worker-owned tree disposal without holding the request mutex.
+The ordinary and canonical suites ran outside the process sandbox for normal
+PTY, process, and local-socket behavior. The 89% floor, CI threshold, and README
+badge are unchanged. This Linux result does not supersede the macOS baseline;
+native macOS validation remains for CI or a macOS host.
+
 ## 2026-09-06 — Linux, session navigation
 
 Measured with `cargo-llvm-cov` 0.9.0 and Rust 1.97.1 on

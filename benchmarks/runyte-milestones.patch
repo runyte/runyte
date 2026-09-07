@@ -1,36 +1,48 @@
 --- a/src/startup.rs
 +++ b/src/startup.rs
-@@ -9,6 +9,10 @@
+@@ -8,6 +8,10 @@
+ //! `RUNYTE_STARTUP_TIMING_FILE` to an explicit output path.
  
  use std::{io, path::PathBuf};
- 
++
 +mod benchmark_probe {
 +    include!("benchmark_probe.rs");
 +}
-+
+ 
  #[cfg(feature = "startup-timing")]
  use std::{
-     env, fs,
-@@ -141,6 +145,11 @@
-             "startup phases must follow lifecycle order"
+@@ -165,6 +169,9 @@
+             "startup construction phases must follow lifecycle order"
          );
          self.marks.push((phase, elapsed));
-+        match phase {
-+            StartupPhase::InitialBufferOpened => benchmark_probe::mark("file_loaded"),
-+            StartupPhase::InitialSyntaxReady => benchmark_probe::mark("syntax_ready"),
-+            _ => (),
++        if phase == StartupPhase::InitialBufferOpened {
++            benchmark_probe::mark("file_loaded");
 +        }
      }
  
      #[cfg(feature = "startup-timing")]
---- a/src/app.rs
-+++ b/src/app.rs
-@@ -4337,7 +4337,7 @@
-             startup.mark(StartupPhase::InitialBufferOpened);
-         }
-         let parsed = parse_buffer(&buffer, registry);
--        if buffers.is_empty() {
-+        if buffers.is_empty() && parsed.is_some() {
-             startup.mark(StartupPhase::InitialSyntaxReady);
-         }
-         syntax.push(parsed);
+--- a/src/syntax/background.rs
++++ b/src/syntax/background.rs
+@@ -8,6 +8,9 @@
+ };
+ 
+ use super::{DocumentSyntax, Registry, Span};
++
++#[path = "../benchmark_probe.rs"]
++mod benchmark_probe;
+ use crate::text::{Assoc, Offset, Text, Transaction};
+ 
+ #[derive(Clone, Debug)]
+@@ -386,7 +389,11 @@
+         });
+         parsed.then_some(syntax)
+     } else {
+-        DocumentSyntax::new(&request.target, request.language, registry)
++        let syntax = DocumentSyntax::new(&request.target, request.language, registry);
++        if request.buffer == 0 && syntax.is_some() {
++            benchmark_probe::mark("syntax_ready");
++        }
++        syntax
+     }
+ }
+ 

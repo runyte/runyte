@@ -9,76 +9,165 @@ use super::{
 };
 
 impl App {
-    /// Reparses inline until the production background worker is attached.
+    /// Updates derived syntax without making production input wait for parsing.
     pub(super) fn reparse(
         &mut self,
         buffer_id: usize,
         before: Option<&crate::text::Text>,
         transaction: &Transaction,
     ) {
+        let after = self.buffers[buffer_id].text().clone();
+        if let Some(request) = self.pending_syntax.get_mut(&buffer_id) {
+            if let Some(stale) = self.stale_syntax.get_mut(&buffer_id) {
+                let Some(before) = before else {
+                    self.reparse_whole(buffer_id);
+                    return;
+                };
+                stale.append(before, &after, transaction);
+                *request = stale.request(buffer_id, request.generation);
+            } else {
+                request.target = after;
+            }
+            self.submit_syntax(buffer_id);
+            return;
+        }
         let Some(before) = before else {
             return;
         };
-        let after = self.buffers[buffer_id].text().clone();
-        if let Some(stale) = self.stale_syntax.get_mut(&buffer_id) {
-            stale.append(before, &after, transaction);
-            if let Some(worker) = &self.syntax_worker {
-                worker.send(stale.request(buffer_id));
-            }
-            return;
-        }
         let Some(syntax) = self.syntax[buffer_id].as_mut() else {
             return;
         };
-        if let Some(worker) = &self.syntax_worker {
+        if self.defer_syntax {
             let stale = StaleSyntax::new(syntax.clone(), before, &after, transaction);
-            worker.send(stale.request(buffer_id));
+            let generation = self.syntax_generation();
+            self.pending_syntax
+                .insert(buffer_id, stale.request(buffer_id, generation));
             self.syntax[buffer_id] = None;
             self.stale_syntax.insert(buffer_id, stale);
+            self.submit_syntax(buffer_id);
         } else if !syntax.update(before, &after, transaction, &self.registry) {
             self.syntax[buffer_id] = None;
+            self.failed_syntax
+                .insert(buffer_id, "syntax parsing failed or timed out".into());
         }
     }
 
-    /// Enables background reparsing. Tests remain inline unless they opt in.
+    fn syntax_generation(&mut self) -> u64 {
+        let generation = self.next_syntax_generation;
+        self.next_syntax_generation = generation
+            .checked_add(1)
+            .expect("syntax generation exhausted");
+        generation
+    }
+
+    fn submit_syntax(&mut self, buffer: usize) {
+        if let Some(worker) = &self.syntax_worker
+            && let Some(request) = self.pending_syntax.get(&buffer)
+            && !worker.send(request.clone())
+        {
+            self.pending_syntax.remove(&buffer);
+            self.stale_syntax.remove(&buffer);
+            self.failed_syntax
+                .insert(buffer, "syntax worker is unavailable".into());
+        }
+    }
+
+    /// Enables background parsing, submitting startup work in visible order.
     pub fn attach_syntax_worker(&mut self, worker: SyntaxHandle) {
+        self.defer_syntax = true;
+        worker.prioritize(self.active().buffer);
         self.syntax_worker = Some(worker);
+        let active = self.active().buffer;
+        let visible = self
+            .panes
+            .values()
+            .filter(|pane| pane.terminal.is_none())
+            .map(|pane| pane.buffer)
+            .collect::<HashSet<_>>();
+        let mut pending = self.pending_syntax.keys().copied().collect::<Vec<_>>();
+        pending.sort_by_key(|buffer| (*buffer != active, !visible.contains(buffer), *buffer));
+        for buffer in pending {
+            self.submit_syntax(buffer);
+        }
     }
 
     pub fn has_pending_syntax(&self) -> bool {
-        !self.stale_syntax.is_empty()
+        !self.pending_syntax.is_empty()
     }
 
-    /// Applies a finished parse between frames, rejecting any result whose
-    /// syntax base or target text revision is no longer current.
+    /// Settles a lost service without falling back to synchronous production work.
+    pub fn syntax_worker_stopped(&mut self) {
+        for (buffer, _) in self.pending_syntax.drain() {
+            self.failed_syntax
+                .insert(buffer, "syntax worker is unavailable".into());
+        }
+        self.stale_syntax.clear();
+    }
+
+    /// Applies only an exact live generation and text revision between frames.
     pub fn apply_syntax_event(&mut self, event: SyntaxEvent) -> bool {
-        let buffer_id = event.buffer;
-        let Some(stale) = self.stale_syntax.get(&buffer_id) else {
-            return false;
-        };
-        if self
-            .buffers
-            .get(buffer_id)
-            .is_none_or(|buffer| buffer.text().revision() != event.text_revision)
-            || !stale.accepts(&event)
+        let buffer = event.buffer;
+        if self.closed_buffers.contains(&buffer)
+            || !self
+                .pending_syntax
+                .get(&buffer)
+                .is_some_and(|request| request.accepts(&event))
+            || self.buffers.get(buffer).is_none_or(|live| {
+                live.text().revision() != event.text_revision
+                    || buffer_language(live, &self.registry) != Some(event.language)
+            })
         {
             return false;
         }
-        self.stale_syntax.remove(&buffer_id);
-        self.syntax[buffer_id] = event.syntax;
+        self.pending_syntax.remove(&buffer);
+        self.stale_syntax.remove(&buffer);
+        if let Some(failure) = event.failure {
+            self.failed_syntax.insert(buffer, failure);
+        } else {
+            self.failed_syntax.remove(&buffer);
+        }
+        self.syntax[buffer] = event.syntax;
+        self.report_new_registry_errors();
         true
     }
 
-    /// Redetects the language and reparses from scratch.
-    ///
-    /// Undo, redo, reload, and save-as can replace the first-line identity or
-    /// path without producing a transaction the parser can consume. Going
-    /// through the document inference boundary here prevents an old grammar
-    /// from parsing text that now belongs to another language.
+    /// Retires all syntax ownership when a document closes or is replaced.
+    pub(super) fn retire_syntax(&mut self, buffer: usize) {
+        if let Some(worker) = &self.syntax_worker {
+            worker.cancel(buffer);
+        }
+        self.pending_syntax.remove(&buffer);
+        self.failed_syntax.remove(&buffer);
+        self.stale_syntax.remove(&buffer);
+        self.syntax[buffer] = None;
+    }
+
+    /// Redetects language and schedules a fresh generation for replacement text.
     pub(super) fn reparse_whole(&mut self, buffer_id: usize) {
         self.clear_syntax_history(buffer_id);
-        self.stale_syntax.remove(&buffer_id);
-        self.syntax[buffer_id] = parse_buffer(&self.buffers[buffer_id], &self.registry);
+        self.retire_syntax(buffer_id);
+        let Some(language) = buffer_language(&self.buffers[buffer_id], &self.registry) else {
+            return;
+        };
+        if self.defer_syntax {
+            let generation = self.syntax_generation();
+            self.pending_syntax.insert(
+                buffer_id,
+                super::ParseRequest::full(
+                    buffer_id,
+                    generation,
+                    language,
+                    self.buffers[buffer_id].text().clone(),
+                ),
+            );
+            self.submit_syntax(buffer_id);
+        } else {
+            self.syntax[buffer_id] = parse_buffer(&self.buffers[buffer_id], &self.registry);
+            if self.syntax[buffer_id].is_none() {
+                self.failed_syntax
+                    .insert(buffer_id, "syntax parsing failed or timed out".into());
+            }
+        }
     }
 
     /// Rebuilds every language-derived service after text was replaced without

@@ -65,7 +65,7 @@ subtracted from each other as if they were stages of one recorded launch.
 | Milestone | Completion evidence |
 | --- | --- |
 | File loaded | The complete decoded document is in the editor's native text buffer. Neovim reports `BufReadPost`; Helix reports after constructing `Document` from the loaded rope; Runyte reports `InitialBufferOpened`. |
-| Syntax ready | The initial whole-document Lua parse has completed. Neovim's normal parse returns or calls its completion callback with an error-free root reaching the fixture's final newline; Helix has successfully constructed `Syntax`; Runyte's initial `parse_buffer` returns a syntax value. Plain text is reported as not applicable. |
+| Syntax ready | The initial whole-document Lua parse has completed. Neovim's normal parse returns or calls its completion callback with an error-free root reaching the fixture's final newline; Helix has successfully constructed `Syntax`; Runyte's background worker successfully constructs the initial document syntax tree. Plain text is reported as not applicable. |
 | Ready to edit | After the first document line appears, the harness sends `i` followed by one space. At the recorded starting position of `local function scan_0`, it must now see ` local function scan_0`. It waits for any synchronized-update frame to end, then records the timestamp. |
 
 Readiness uses the normal editor binaries with no internal probes. The harness
@@ -87,6 +87,25 @@ Syntax readiness means a completed parse, not highlighting every off-screen
 line, language-server readiness, or absence of later background work. The Lua
 fixtures trigger no injected languages.
 
+## Quitting before initial syntax
+
+`early_syntax_quit.py` opens the large Lua fixture, decodes the first document
+frame, and immediately sends `:q` plus Enter from its initial Normal mode.
+It measures from sending that command until successful process exit, without
+waiting for terminal quiet. With the optional instrumented binary, it also
+reports how many initial parses completed before exit; the stock binary makes
+no parser-completion claim.
+
+```sh
+benchmarks/.work/venv/bin/python benchmarks/early_syntax_quit.py --runs 10 \
+  --runyte-probe benchmarks/.work/runyte-probe/target/release/runyte \
+  --json benchmarks/.work/early-syntax-quit.json
+```
+
+This complements `run.py`'s settled-document quit measurement. It does not
+prove the worker started before the quit command; deterministic worker tests
+hold an active parse to verify shutdown never joins it.
+
 ## Instrumented file-loading and parsing measurements
 
 The Neovim probe is loaded with `--cmd` in internal runs only. It observes the
@@ -97,15 +116,16 @@ instrumented result.
 
 Helix and Runyte need disposable release builds. The supplied patches add only
 milestone observations; they are not changes to the distributed editors. The
-Helix patch is based on `a05c151b` (25.07.1); the Runyte patch is based on this
-repository's `8c0bcba` source. Recheck the observation sites if either patch
+Helix patch is based on `a05c151b` (25.07.1); the Runyte patch targets the asynchronous initial-syntax implementation in
+this repository. The historical `8c0bcba` measurement used the earlier inline
+observation site. Recheck the observation sites if either patch
 needs adapting to a later source revision.
 
 From the Runyte repository root, with a Helix checkout available:
 
 ```sh
 mkdir -p benchmarks/.work/runyte-probe benchmarks/.work/helix-probe
-git archive 8c0bcba | tar -x -C benchmarks/.work/runyte-probe
+git archive HEAD | tar -x -C benchmarks/.work/runyte-probe
 git -C /path/to/helix archive a05c151b | tar -x -C benchmarks/.work/helix-probe
 git apply --directory=benchmarks/.work/runyte-probe benchmarks/runyte-milestones.patch
 git apply --directory=benchmarks/.work/helix-probe benchmarks/helix-milestones.patch
@@ -122,6 +142,10 @@ benchmarks/.work/venv/bin/python benchmarks/startup.py --runs 10 \
   --json benchmarks/.work/startup-samples.json
 ```
 
+Use fresh extraction directories and a committed source revision containing the
+updated probe patch. Syntax completion is observed on the worker; the optional
+startup trace records when the first current tree is applied, which may follow
+the first document frame. Neither enqueueing work nor a failed parse counts.
 Use fresh extraction directories. The runtime must match the Helix source and
 contain its Lua grammar and queries; the recorded Linux run used
 `/usr/lib64/helix/runtime`. The same runtime is used for stock and instrumented
@@ -184,9 +208,8 @@ This metric is deliberately named for exactly what the harness observes. It
 does not decode the terminal stream or prove that the rest of the screen has
 been presented, test whether the editor accepts input, inspect editor internals,
 or wait for work that produces no terminal output. For Runyte, the product's
-startup ordering means document text first appears in its complete highlighted
-editor frame; that implementation property is not assumed for the other
-editors.
+startup ordering permits document text to appear before its initial syntax
+parse finishes; syntax completion is measured separately.
 
 **First terminal byte, diagnostic only.** The harness retains the time of the
 first byte for diagnosing changes within one editor, but prints it outside the

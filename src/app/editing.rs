@@ -12,7 +12,7 @@ use super::{
     Transaction, TransferMode, buffer_language, column_at_visual_column, fold_degradation_suffix,
     insert_word_back, insert_word_forward, is_single_cell, is_word, merged_line_spans, move_offset,
     move_offset_projected, navigate_text_object, operative_span, outline_item_detail,
-    outline_status, parse_buffer, project_visible_rows, select_delimiter, select_text_object,
+    outline_status, project_visible_rows, select_delimiter, select_text_object,
     syntax_object_label, syntax_object_part_label, trailing_whitespace_changes,
     transform_selection, visual_column, without_trailing_line_terminator,
 };
@@ -436,7 +436,7 @@ impl App {
         // the server's own column encoding. Snapshot it once, and only when
         // something is actually watching.
         let watched = self.syntax[buffer_id].is_some()
-            || self.stale_syntax.contains_key(&buffer_id)
+            || self.pending_syntax.contains_key(&buffer_id)
             || self.lsp_documents.contains_key(&buffer_id);
         let before = watched.then(|| self.buffers[buffer_id].text().clone());
         if !self.buffers[buffer_id].apply(transaction) {
@@ -478,8 +478,7 @@ impl App {
                 true
             }
         } else {
-            self.stale_syntax.remove(&buffer_id);
-            self.syntax[buffer_id] = parse_buffer(&self.buffers[buffer_id], &self.registry);
+            self.reparse_whole(buffer_id);
             self.retire_lsp_buffer(buffer_id);
             self.lsp_touch(buffer_id);
             true

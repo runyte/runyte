@@ -166,6 +166,7 @@ fn production_source() -> String {
         .join("\n")
 }
 
+mod async_syntax;
 mod commands;
 mod comparisons;
 mod editing;

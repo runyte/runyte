@@ -1412,7 +1412,7 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
     } else {
         None
     };
-    let mut app = App::new_in_project_with_targets_and_trace(
+    let mut app = App::new_in_project_with_deferred_syntax(
         config,
         arguments.targets,
         project_root.clone(),
@@ -1642,10 +1642,18 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
                     note_ended_service(&mut ended_services, "language servers");
                 }
             }
-            event = services.syntax_events.recv() => {
+            event = services.syntax_events.recv(), if !ended_services.contains("syntax") => {
                 if let Some(event) = event {
                     app.apply_event(HostEvent::Syntax(event));
+                    #[cfg(feature = "startup-timing")]
+                    if app.syntax.first().is_some_and(Option::is_some)
+                        && startup.note_initial_syntax_ready() {
+                        if let Err(error) = startup.write_requested() {
+                            app.report_host_error(format!("failed to write startup timing report: {error}"));
+                        }
+                    }
                 } else {
+                    app.syntax_worker_stopped();
                     note_ended_service(&mut ended_services, "syntax");
                 }
             }
@@ -2374,11 +2382,20 @@ async fn run_host_server(
                     note_ended_service(&mut ended_services, "language servers");
                 }
             }
-            event = services.syntax_events.recv() => {
+            event = services.syntax_events.recv(), if !ended_services.contains("syntax") => {
                 if let Some(event) = event {
                     host.apply_event(HostEvent::Syntax(event));
+                    #[cfg(feature = "startup-timing")]
+                    if host.syntax.first().is_some_and(Option::is_some)
+                        && startup.note_initial_syntax_ready() {
+                        if let Err(error) = startup.write_requested() {
+                            host.report_host_error(format!("failed to write startup timing report: {error}"));
+                        }
+                    }
                     changed = true;
                 } else {
+                    host.syntax_worker_stopped();
+                    changed = true;
                     note_ended_service(&mut ended_services, "syntax");
                 }
             }
@@ -5305,8 +5322,8 @@ struct TerminalGuard {
 
 /// Draws the stable presentation used while the first editor state is built.
 ///
-/// This screen deliberately contains no document text: replacing it with the
-/// first complete editor frame cannot flash incomplete syntax or reflow text.
+/// This screen covers file loading. The first editor frame can show ordinary
+/// text colours while its independently scheduled syntax is still parsing.
 fn present_startup_screen() -> Result<()> {
     let mut output = stdout();
     write_startup_screen(&mut output).context("failed to present startup screen")
