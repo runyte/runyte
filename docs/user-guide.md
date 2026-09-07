@@ -116,7 +116,11 @@ new tree, not the keystroke that requested it.
 ### Rendered Markdown
 
 `?` in a Markdown document opens it as a page to read, and `?` again returns to
-the source. `:render` (also `:markdown`) does the same from the command line.
+the source. Both directions move the cursor to the corresponding text and bring
+it into view. If the cursor is on markup removed by rendering, the page uses
+the nearest surviving text; toggling straight back restores the exact source
+position. Moving around the page before returning takes you to that new place
+in the source. `:render` (also `:markdown`) does the same from the command line.
 The page is a generated read-only buffer beside the document rather than a mode
 the document is in, so both stay open and the source keeps every editing key.
 

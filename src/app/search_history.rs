@@ -602,10 +602,21 @@ impl App {
     /// text while an edit or history checkpoint applies transactions.
     pub(super) fn map_transaction_views(&mut self, buffer_id: usize, transactions: &[Transaction]) {
         for transaction in transactions {
+            for (page, positions) in &mut self.markdown_positions {
+                if self.buffers[*page].markdown_render_source() == Some(buffer_id) {
+                    positions.map_source(transaction);
+                }
+            }
             for pane in self.panes.values_mut() {
                 // Every pane's history can hold this buffer, not just the
                 // panes currently showing it.
                 pane.jumps.map(buffer_id, transaction);
+                if let Some(origin) = &mut pane.markdown_origin
+                    && origin.source == buffer_id
+                {
+                    origin.source_offset =
+                        transaction.map_offset(origin.source_offset, crate::text::Assoc::After);
+                }
                 if pane.buffer == buffer_id {
                     // Mapping changes coordinates, not the operation that
                     // created them, so each pane keeps its selection model.

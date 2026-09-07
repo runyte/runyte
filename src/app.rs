@@ -438,6 +438,15 @@ pub struct OpenDestinationEntry {
     pub detail: String,
 }
 
+/// Exact origin of a toggle, including markup with no character on the page.
+#[derive(Clone, Debug)]
+struct MarkdownOrigin {
+    source: usize,
+    source_offset: usize,
+    page_offset: usize,
+    page_revision: u64,
+}
+
 #[derive(Clone, Debug)]
 pub struct Pane {
     pub buffer: usize,
@@ -469,6 +478,7 @@ pub struct Pane {
     /// other buffer must not reveal a terminal nobody asked for.
     covered_terminal: Option<(usize, TerminalId)>,
     pub selection: Selection,
+    markdown_origin: Option<MarkdownOrigin>,
     /// The model used by the operation that most recently produced this
     /// selection. This is provenance, not a coordinate witness: two different
     /// operations can intentionally produce equal ranges with different
@@ -518,6 +528,7 @@ impl Pane {
             terminal: None,
             covered_terminal: None,
             selection: Selection::point(0),
+            markdown_origin: None,
             selection_semantics: SelectionSemantics::Runyte,
             selection_revision: 0,
             scroll_row: 0,
@@ -535,6 +546,7 @@ impl Pane {
     }
 
     fn retarget(&mut self, buffer: usize) {
+        self.markdown_origin = None;
         self.remember_destination(OpenDestination::Buffer(buffer));
         // Even retargeting to the buffer already named leaves the terminal:
         // asking for a document is asking to stop looking at a terminal.
@@ -574,6 +586,7 @@ impl Pane {
     /// Replaces a retired backing buffer without exposing a covered terminal
     /// or adding the retired identity back to history.
     fn replace_closed_buffer(&mut self, buffer: usize) {
+        self.markdown_origin = None;
         self.buffer = buffer;
         self.selection_semantics = SelectionSemantics::Runyte;
         self.selection_revision = self.selection_revision.wrapping_add(1);
@@ -2609,6 +2622,7 @@ pub struct App {
     /// buffer arena slot. These are independent of parsed document syntax and
     /// leave the underlying searchable buffer text unchanged.
     generated_highlights: HashMap<usize, Vec<Span>>,
+    markdown_positions: HashMap<usize, crate::markdown::PositionMap>,
     /// Stale trees retain translated highlighting but expose no structural
     /// query while their replacement is being parsed.
     stale_syntax: HashMap<usize, StaleSyntax>,
@@ -3252,6 +3266,7 @@ impl App {
             buffers,
             syntax,
             generated_highlights: HashMap::new(),
+            markdown_positions: HashMap::new(),
             stale_syntax: HashMap::new(),
             syntax_worker: None,
             defer_syntax,

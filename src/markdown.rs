@@ -53,6 +53,7 @@ pub struct RenderedMarkdown {
     text: String,
     spans: Vec<Span>,
     pub(crate) tables: Vec<crate::table_layout::TableRow>,
+    pub(crate) positions: PositionMap,
 }
 
 impl RenderedMarkdown {
@@ -62,6 +63,108 @@ impl RenderedMarkdown {
 
     pub fn spans(&self) -> &[Span] {
         &self.spans
+    }
+}
+
+/// Correspondence between surviving source characters and page characters.
+/// Missing markup and generated decoration use the nearest surviving character.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(crate) struct PositionMap {
+    runs: Vec<PositionRun>,
+}
+
+/// Consecutive page characters normally advance through consecutive source
+/// characters. A deletion can leave a run anchored at one source offset.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct PositionRun {
+    source: usize,
+    page: usize,
+    len: usize,
+    collapsed: bool,
+}
+
+impl PositionMap {
+    fn from_pairs(pairs: Vec<(usize, usize)>) -> Self {
+        let mut runs: Vec<PositionRun> = Vec::new();
+        for (source, page) in pairs {
+            if let Some(last) = runs.last_mut()
+                && source == last.source + last.len
+                && page == last.page + last.len
+            {
+                last.len += 1;
+            } else {
+                runs.push(PositionRun {
+                    source,
+                    page,
+                    len: 1,
+                    collapsed: false,
+                });
+            }
+        }
+        Self { runs }
+    }
+
+    pub(crate) fn to_source(&self, offset: usize) -> usize {
+        self.runs
+            .iter()
+            .map(|run| {
+                let page = offset.clamp(run.page, run.page + run.len - 1);
+                let source = run.source + if run.collapsed { 0 } else { page - run.page };
+                (page.abs_diff(offset), source)
+            })
+            .min_by_key(|(distance, _)| *distance)
+            .map_or(0, |(_, source)| source)
+    }
+
+    pub(crate) fn to_page(&self, offset: usize) -> usize {
+        self.runs
+            .iter()
+            .map(|run| {
+                let end = run.source + if run.collapsed { 0 } else { run.len - 1 };
+                let source = offset.clamp(run.source, end);
+                (source.abs_diff(offset), run.page + source - run.source)
+            })
+            .min_by_key(|(distance, _)| *distance)
+            .map_or(0, |(_, page)| page)
+    }
+
+    pub(crate) fn map_source(&mut self, transaction: &crate::text::Transaction) {
+        let mut mapped = Vec::new();
+        for run in &self.runs {
+            if run.collapsed {
+                mapped.push(PositionRun {
+                    source: transaction.map_offset(run.source, crate::text::Assoc::After),
+                    ..run.clone()
+                });
+                continue;
+            }
+            // Only edit boundaries split a run. Retaining runs rather than a
+            // pair per character keeps both storage and typing cost tied to
+            // formatting and edits, not to the length of ordinary prose.
+            let mut start = run.source;
+            let end = start + run.len;
+            for boundary in transaction
+                .changes()
+                .iter()
+                .flat_map(|change| [change.from, (change.from + 1).min(change.to), change.to])
+                .filter(|boundary| *boundary > run.source && *boundary < end)
+                .chain(std::iter::once(end))
+            {
+                if boundary == start {
+                    continue;
+                }
+                let source = transaction.map_offset(start, crate::text::Assoc::After);
+                let last = transaction.map_offset(boundary - 1, crate::text::Assoc::After);
+                mapped.push(PositionRun {
+                    source,
+                    page: run.page + start - run.source,
+                    len: boundary - start,
+                    collapsed: last == source,
+                });
+                start = boundary;
+            }
+        }
+        self.runs = mapped;
     }
 }
 
@@ -108,11 +211,15 @@ impl Palette {
 struct Piece {
     text: String,
     scope: Option<Scope>,
+    origins: Vec<usize>,
 }
 
 /// The page under construction, in character offsets rather than bytes.
 #[derive(Default)]
-struct Page {
+struct Page<'a> {
+    source: &'a str,
+    source_bytes: Vec<usize>,
+    positions: Vec<(usize, usize)>,
     text: String,
     spans: Vec<Span>,
     chars: usize,
@@ -120,7 +227,29 @@ struct Page {
     tables: Vec<crate::table_layout::TableRow>,
 }
 
-impl Page {
+impl Page<'_> {
+    fn origins(&self, text: &str) -> Vec<usize> {
+        let byte = text.as_ptr() as usize - self.source.as_ptr() as usize;
+        let start = self.source_bytes.partition_point(|offset| *offset < byte);
+        (start..start + text.chars().count()).collect()
+    }
+
+    fn source_text(&mut self, text: &str, scope: Option<Scope>) {
+        let origins = self.origins(text);
+        self.positions.extend(
+            origins
+                .into_iter()
+                .enumerate()
+                .map(|(i, origin)| (origin, self.chars + i)),
+        );
+        self.push(text, scope);
+    }
+
+    fn inline(&mut self, text: &str, scope: Option<Scope>, palette: Palette) {
+        let origins = self.origins(text);
+        self.pieces(&inline(text, scope, palette), &origins);
+    }
+
     fn push(&mut self, text: &str, scope: Option<Scope>) {
         if text.is_empty() {
             return;
@@ -150,14 +279,36 @@ impl Page {
         });
     }
 
-    fn pieces(&mut self, pieces: &[Piece]) {
+    fn pieces(&mut self, pieces: &[Piece], origins: &[usize]) {
         for piece in pieces {
+            self.positions.extend(
+                piece
+                    .origins
+                    .iter()
+                    .enumerate()
+                    .map(|(i, origin)| (origins[*origin], self.chars + i)),
+            );
             self.push(&piece.text, piece.scope);
         }
     }
 
     fn repeat(&mut self, character: char, count: usize, scope: Option<Scope>) {
         self.push(&character.to_string().repeat(count), scope);
+    }
+
+    fn newline_origin(&self, line: &str) -> Option<usize> {
+        let end = line.as_ptr() as usize - self.source.as_ptr() as usize + line.len();
+        let newline = end + usize::from(self.source[end..].starts_with("\r\n"));
+        (self.source.as_bytes().get(newline) == Some(&b'\n'))
+            .then(|| self.source_bytes.partition_point(|byte| *byte < newline))
+    }
+
+    /// A physical source line's terminator, as opposed to added page spacing.
+    fn source_newline(&mut self, line: &str) {
+        if let Some(origin) = self.newline_origin(line) {
+            self.positions.push((origin, self.chars));
+        }
+        self.newline();
     }
 
     fn newline(&mut self) {
@@ -192,7 +343,11 @@ pub fn render(source: &str) -> RenderedMarkdown {
         .split('\n')
         .map(|line| line.strip_suffix('\r').unwrap_or(line))
         .collect::<Vec<_>>();
-    let mut page = Page::default();
+    let mut page = Page {
+        source,
+        source_bytes: source.char_indices().map(|(byte, _)| byte).collect(),
+        ..Page::default()
+    };
     let mut index = 0;
     // A four-space indent is a code block after a paragraph and a continuation
     // line inside a list, and the two are told apart only by what came before.
@@ -200,8 +355,8 @@ pub fn render(source: &str) -> RenderedMarkdown {
 
     if let Some(end) = front_matter_end(&lines) {
         for line in &lines[1..end] {
-            page.push(line, Some(palette.aside));
-            page.newline();
+            page.source_text(line, Some(palette.aside));
+            page.source_newline(line);
         }
         page.blank_line();
         index = end + 1;
@@ -215,8 +370,8 @@ pub fn render(source: &str) -> RenderedMarkdown {
             page.blank_line();
             while index < lines.len() && !closes_fence(lines[index], fence) {
                 page.push(CODE_INDENT, None);
-                page.push(lines[index], Some(palette.raw));
-                page.newline();
+                page.source_text(lines[index], Some(palette.raw));
+                page.source_newline(lines[index]);
                 index += 1;
             }
             // A document may end inside an unclosed fence; there is simply no
@@ -235,8 +390,8 @@ pub fn render(source: &str) -> RenderedMarkdown {
         if let Some((level, text)) = atx_heading(line) {
             page.blank_line();
             let rendered = inline(text, Some(palette.heading), palette);
-            page.pieces(&rendered);
-            page.newline();
+            page.pieces(&rendered, &page.origins(text));
+            page.source_newline(line);
             if level == 1 {
                 page.repeat('─', width_of(&rendered), Some(palette.heading));
                 page.newline();
@@ -259,8 +414,8 @@ pub fn render(source: &str) -> RenderedMarkdown {
             for _ in 0..depth {
                 page.push("▌ ", Some(palette.quote));
             }
-            page.pieces(&inline(text, Some(palette.quote), palette));
-            page.newline();
+            page.inline(text, Some(palette.quote), palette);
+            page.source_newline(line);
             in_list = false;
             continue;
         }
@@ -269,8 +424,8 @@ pub fn render(source: &str) -> RenderedMarkdown {
             page.push(&" ".repeat(item.indent), None);
             page.push(&item.marker, Some(palette.list));
             page.push(" ", None);
-            page.pieces(&inline(&item.text, None, palette));
-            page.newline();
+            page.inline(item.text, None, palette);
+            page.source_newline(line);
             in_list = true;
             continue;
         }
@@ -301,7 +456,7 @@ pub fn render(source: &str) -> RenderedMarkdown {
             }
             for candidate in &lines[start..=last] {
                 if candidate.trim().is_empty() {
-                    page.newline();
+                    page.source_newline(candidate);
                     continue;
                 }
                 // The four columns that made this a code block are the
@@ -309,11 +464,11 @@ pub fn render(source: &str) -> RenderedMarkdown {
                 // says it with its own indent instead. Anything past them is
                 // the block's own shape and is kept.
                 page.push(CODE_INDENT, None);
-                page.push(
+                page.source_text(
                     candidate[SOURCE_CODE_INDENT..].trim_end(),
                     Some(palette.raw),
                 );
-                page.newline();
+                page.source_newline(candidate);
             }
             index = last + 1;
             page.blank_line();
@@ -321,8 +476,8 @@ pub fn render(source: &str) -> RenderedMarkdown {
         }
 
         if is_html_comment(line) {
-            page.push(line.trim_end(), Some(palette.aside));
-            page.newline();
+            page.source_text(line.trim_end(), Some(palette.aside));
+            page.source_newline(line);
             continue;
         }
 
@@ -332,8 +487,8 @@ pub fn render(source: &str) -> RenderedMarkdown {
         if let Some(level) = setext_underline(lines.get(index).copied()) {
             page.blank_line();
             let rendered = inline(line.trim(), Some(palette.heading), palette);
-            page.pieces(&rendered);
-            page.newline();
+            page.pieces(&rendered, &page.origins(line.trim()));
+            page.source_newline(line);
             if level == 1 {
                 page.repeat('─', width_of(&rendered), Some(palette.heading));
                 page.newline();
@@ -354,20 +509,27 @@ pub fn render(source: &str) -> RenderedMarkdown {
         let (indent, _) = split_indent(line);
         let keep_indent = in_list;
         page.push(&" ".repeat(if keep_indent { indent } else { 0 }), None);
-        let paragraph = lines[start..index]
-            .iter()
-            .enumerate()
-            .map(|(offset, line)| {
-                if offset > 0 && keep_indent {
-                    line.trim_end().to_owned()
-                } else {
-                    line.trim().to_owned()
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-        page.pieces(&inline(&paragraph, None, palette));
-        page.newline();
+        let mut paragraph = String::new();
+        let mut origins = Vec::new();
+        for (offset, line) in lines[start..index].iter().enumerate() {
+            if offset > 0 {
+                paragraph.push('\n');
+                let previous = lines[start + offset - 1];
+                origins.push(
+                    page.newline_origin(previous)
+                        .expect("paragraph lines have a source newline"),
+                );
+            }
+            let text = if offset > 0 && keep_indent {
+                line.trim_end()
+            } else {
+                line.trim()
+            };
+            paragraph.push_str(text);
+            origins.extend(page.origins(text));
+        }
+        page.pieces(&inline(&paragraph, None, palette), &origins);
+        page.source_newline(lines[index - 1]);
     }
 
     while page.text.ends_with("\n\n") {
@@ -375,7 +537,10 @@ pub fn render(source: &str) -> RenderedMarkdown {
         page.chars -= 1;
     }
 
+    page.positions.retain(|(_, offset)| *offset < page.chars);
+    page.positions.push((source.chars().count(), page.chars));
     RenderedMarkdown {
+        positions: PositionMap::from_pairs(page.positions),
         text: page.text,
         spans: page.spans,
         tables: page.tables,
@@ -495,14 +660,14 @@ fn block_quote(line: &str) -> Option<(usize, &str)> {
     Some((depth, rest))
 }
 
-struct ListItem {
+struct ListItem<'a> {
     indent: usize,
     marker: String,
-    text: String,
+    text: &'a str,
 }
 
 /// The parts of a list item, with its bullet already chosen.
-fn list_item(line: &str) -> Option<ListItem> {
+fn list_item(line: &str) -> Option<ListItem<'_>> {
     let (indent, rest) = split_indent(line);
     let (marker, text) = if let Some(text) = rest
         .strip_prefix("- ")
@@ -542,7 +707,7 @@ fn list_item(line: &str) -> Option<ListItem> {
     Some(ListItem {
         indent,
         marker,
-        text: text.to_owned(),
+        text,
     })
 }
 
@@ -581,8 +746,8 @@ fn write_table(page: &mut Page, rows: &[&str], palette: Palette) {
         // Not a table after all — pipes in ordinary prose. Render the lines as
         // what they are rather than inventing columns for them.
         for row in rows {
-            page.pieces(&inline(row.trim(), None, palette));
-            page.newline();
+            page.inline(row.trim(), None, palette);
+            page.source_newline(row);
         }
         return;
     };
@@ -592,11 +757,18 @@ fn write_table(page: &mut Page, rows: &[&str], palette: Palette) {
         .enumerate()
         .filter(|(index, _)| *index != delimiter)
         .map(|(index, cells)| {
+            let row_origins = page.origins(rows[index]);
             cells
                 .iter()
-                .map(|cell| {
+                .map(|(cell, origins)| {
                     let base = (index == 0).then_some(palette.heading);
-                    inline(cell, base, palette)
+                    let mut pieces = inline(cell, base, palette);
+                    for piece in &mut pieces {
+                        for origin in &mut piece.origins {
+                            *origin = row_origins[origins[*origin]];
+                        }
+                    }
+                    pieces
                 })
                 .collect::<Vec<_>>()
         })
@@ -644,7 +816,18 @@ fn write_table(page: &mut Page, rows: &[&str], palette: Palette) {
             }
             let cell = row.get(column);
             let from = page.chars - start;
-            page.pieces(cell.map_or(&[][..], Vec::as_slice));
+            if let Some(pieces) = cell {
+                for piece in pieces {
+                    page.positions.extend(
+                        piece
+                            .origins
+                            .iter()
+                            .enumerate()
+                            .map(|(i, origin)| (*origin, page.chars + i)),
+                    );
+                    page.push(&piece.text, piece.scope);
+                }
+            }
             cells.push(from..page.chars - start);
             let used = cell.map_or(0, |cell| width_of(cell));
             // The last column is not padded: trailing blanks would be text a
@@ -660,7 +843,7 @@ fn write_table(page: &mut Page, rows: &[&str], palette: Palette) {
             rule: false,
             separator: index > 0 && index + 1 < rendered.len(),
         });
-        page.newline();
+        page.source_newline(rows[if index == 0 { 0 } else { index + 1 }]);
         if index == 0 {
             let line = page.lines;
             let start = page.chars;
@@ -687,33 +870,49 @@ fn write_table(page: &mut Page, rows: &[&str], palette: Palette) {
 }
 
 /// The cells of one table row, with the outer pipes dropped.
-fn table_cells(row: &str) -> Vec<String> {
+fn table_cells(row: &str) -> Vec<(String, Vec<usize>)> {
     let trimmed = row.trim();
     let trimmed = trimmed.strip_prefix('|').unwrap_or(trimmed);
     let trimmed = trimmed.strip_suffix('|').unwrap_or(trimmed);
     let mut cells = Vec::new();
     let mut current = String::new();
+    let mut origins = Vec::new();
+    let start = row[..trimmed.as_ptr() as usize - row.as_ptr() as usize]
+        .chars()
+        .count();
     let mut escaped = false;
-    for character in trimmed.chars() {
+    for (index, character) in trimmed.chars().enumerate() {
         match character {
             '\\' if !escaped => escaped = true,
-            '|' if !escaped => cells.push(std::mem::take(&mut current)),
+            '|' if !escaped => {
+                cells.push((std::mem::take(&mut current), std::mem::take(&mut origins)))
+            }
             _ => {
                 if escaped && character != '|' {
                     current.push('\\');
+                    origins.push(start + index - 1);
                 }
                 escaped = false;
                 current.push(character);
+                origins.push(start + index);
             }
         }
     }
-    cells.push(current);
-    cells.iter().map(|cell| cell.trim().to_owned()).collect()
+    cells.push((current, origins));
+    cells
+        .into_iter()
+        .map(|(cell, origins)| {
+            let start = cell.chars().take_while(|c| c.is_whitespace()).count();
+            let text = cell.trim();
+            let end = start + text.chars().count();
+            (text.to_owned(), origins[start..end].to_vec())
+        })
+        .collect()
 }
 
-fn is_table_delimiter(cells: &[String]) -> bool {
+fn is_table_delimiter(cells: &[(String, Vec<usize>)]) -> bool {
     !cells.is_empty()
-        && cells.iter().all(|cell| {
+        && cells.iter().all(|(cell, _)| {
             let trimmed = cell.trim();
             trimmed.len() >= 3
                 && trimmed
@@ -729,6 +928,7 @@ fn inline(source: &str, base: Option<Scope>, palette: Palette) -> Vec<Piece> {
     let characters = source.chars().collect::<Vec<_>>();
     let mut pieces = Vec::new();
     let mut plain = String::new();
+    let mut plain_origins = Vec::new();
     let mut index = 0;
 
     while index < characters.len() {
@@ -736,23 +936,39 @@ fn inline(source: &str, base: Option<Scope>, palette: Palette) -> Vec<Piece> {
         let consumed = match character {
             '\\' if index + 1 < characters.len() && is_escapable(characters[index + 1]) => {
                 plain.push(characters[index + 1]);
+                plain_origins.push(index + 1);
                 Some(2)
             }
             '`' => code_span(&characters, index).map(|(text, length)| {
-                flush(&mut pieces, &mut plain, base);
+                flush(&mut pieces, &mut plain, &mut plain_origins, base);
                 pieces.push(Piece {
+                    origins: {
+                        let run = characters[index..]
+                            .iter()
+                            .take_while(|c| **c == '`')
+                            .count();
+                        let padding = usize::from(length - 2 * run > text.chars().count());
+                        (index + run + padding..index + run + padding + text.chars().count())
+                            .collect()
+                    },
                     text,
                     scope: Some(palette.raw),
                 });
                 length
             }),
             '~' => delimited(&characters, index, '~', 2).map(|(content, length)| {
-                flush(&mut pieces, &mut plain, base);
-                pieces.extend(inline(&content, Some(palette.strikethrough), palette));
+                flush(&mut pieces, &mut plain, &mut plain_origins, base);
+                extend_inline(
+                    &mut pieces,
+                    &content,
+                    Some(palette.strikethrough),
+                    palette,
+                    index + 2,
+                );
                 length
             }),
             '*' | '_' => emphasis(&characters, index).map(|(content, run, length)| {
-                flush(&mut pieces, &mut plain, base);
+                flush(&mut pieces, &mut plain, &mut plain_origins, base);
                 // Three markers are bold and italic at once. The page carries
                 // one meaning per character, so it keeps the stronger of the
                 // two rather than silently dropping both. A longer run has to
@@ -763,11 +979,11 @@ fn inline(source: &str, base: Option<Scope>, palette: Palette) -> Vec<Piece> {
                 } else {
                     palette.bold
                 };
-                pieces.extend(inline(&content, Some(scope), palette));
+                extend_inline(&mut pieces, &content, Some(scope), palette, index + run);
                 length
             }),
             '[' | '!' => link(&characters, index).map(|parsed| {
-                flush(&mut pieces, &mut plain, base);
+                flush(&mut pieces, &mut plain, &mut plain_origins, base);
                 // A link's destination is something a reader can act on; a
                 // picture's is a file this terminal will not be showing, and
                 // printing it buries the description that stands in for it.
@@ -792,14 +1008,34 @@ fn inline(source: &str, base: Option<Scope>, palette: Palette) -> Vec<Piece> {
                     // whole rather than read as inline markup, because it is a
                     // file name and a `*` in one is part of the name.
                     pieces.push(Piece {
+                        origins: {
+                            let name = destination_name(&parsed.url);
+                            let start = parsed.url_start
+                                + parsed.url
+                                    [..name.as_ptr() as usize - parsed.url.as_ptr() as usize]
+                                    .chars()
+                                    .count();
+                            (start..start + name.chars().count()).collect()
+                        },
                         text: destination_name(&parsed.url).to_owned(),
                         scope: Some(scope),
                     });
                 } else {
-                    pieces.extend(inline(&parsed.text, Some(scope), palette));
+                    extend_inline(
+                        &mut pieces,
+                        &parsed.text,
+                        Some(scope),
+                        palette,
+                        index + 1 + usize::from(parsed.image),
+                    );
                 }
                 if !picture && !parsed.url.is_empty() {
                     pieces.push(Piece {
+                        origins: std::iter::once(parsed.url_start.saturating_sub(1))
+                            .chain(std::iter::once(parsed.url_start.saturating_sub(1)))
+                            .chain(parsed.url_start..parsed.url_start + parsed.url.chars().count())
+                            .chain(std::iter::once(index + parsed.length - 1))
+                            .collect(),
                         text: format!(" ({})", parsed.url),
                         scope: Some(palette.link_url),
                     });
@@ -807,8 +1043,9 @@ fn inline(source: &str, base: Option<Scope>, palette: Palette) -> Vec<Piece> {
                 parsed.length
             }),
             '<' => autolink(&characters, index).map(|(url, length)| {
-                flush(&mut pieces, &mut plain, base);
+                flush(&mut pieces, &mut plain, &mut plain_origins, base);
                 pieces.push(Piece {
+                    origins: (index + 1..index + length - 1).collect(),
                     text: url,
                     scope: Some(palette.link_url),
                 });
@@ -820,21 +1057,44 @@ fn inline(source: &str, base: Option<Scope>, palette: Palette) -> Vec<Piece> {
             Some(length) => index += length,
             None => {
                 plain.push(character);
+                plain_origins.push(index);
                 index += 1;
             }
         }
     }
 
-    flush(&mut pieces, &mut plain, base);
+    flush(&mut pieces, &mut plain, &mut plain_origins, base);
     pieces
 }
 
-fn flush(pieces: &mut Vec<Piece>, plain: &mut String, base: Option<Scope>) {
+fn extend_inline(
+    pieces: &mut Vec<Piece>,
+    source: &str,
+    base: Option<Scope>,
+    palette: Palette,
+    start: usize,
+) {
+    let mut nested = inline(source, base, palette);
+    for piece in &mut nested {
+        for origin in &mut piece.origins {
+            *origin += start;
+        }
+    }
+    pieces.extend(nested);
+}
+
+fn flush(
+    pieces: &mut Vec<Piece>,
+    plain: &mut String,
+    origins: &mut Vec<usize>,
+    base: Option<Scope>,
+) {
     if plain.is_empty() {
         return;
     }
     pieces.push(Piece {
         text: std::mem::take(plain),
+        origins: std::mem::take(origins),
         scope: base,
     });
 }
@@ -954,6 +1214,7 @@ struct ParsedLink {
     text: String,
     url: String,
     image: bool,
+    url_start: usize,
     length: usize,
 }
 
@@ -1037,6 +1298,7 @@ fn link(characters: &[char], index: usize) -> Option<ParsedLink> {
         text,
         url,
         image,
+        url_start: open + usize::from(characters.get(open) == Some(&'<')),
         length: end + 1 - index,
     })
 }

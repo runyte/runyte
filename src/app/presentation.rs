@@ -788,7 +788,25 @@ impl App {
                 self.action_failed("the rendered document is no longer open");
                 return;
             }
+            let offset = self
+                .active()
+                .markdown_origin
+                .as_ref()
+                .filter(|origin| {
+                    origin.source == source
+                        && origin.page_offset == self.active().head()
+                        && origin.page_revision == self.buffers[active].revision()
+                })
+                .map(|origin| origin.source_offset)
+                .unwrap_or_else(|| {
+                    self.markdown_positions
+                        .get(&active)
+                        .map_or(0, |positions| positions.to_source(self.active().head()))
+                })
+                .min(self.buffers[source].len_chars());
             self.switch_buffer(source);
+            self.active_mut()
+                .replace_selection(Selection::point(offset));
             return;
         }
         if !self.is_markdown_document(active) {
@@ -798,6 +816,8 @@ impl App {
         // The page is rendered from the buffer rather than from the file, so it
         // shows the work in progress rather than the last thing saved.
         let rendered = crate::markdown::render(&self.buffers[active].to_string());
+        let source_offset = self.active().head();
+        let offset = rendered.positions.to_page(source_offset);
         // Named the way every other generated view is: the pane title says
         // what the page is, and a file's directory is not part of that. A
         // pathless buffer is named by its display name with the brackets
@@ -830,6 +850,16 @@ impl App {
         let revision = self.buffers[buffer].revision();
         self.buffers[buffer].wrap_cache.tables =
             crate::table_layout::Tables::new(revision, rendered.tables);
+        self.markdown_positions.insert(buffer, rendered.positions);
+        self.active_mut().markdown_origin = Some(super::MarkdownOrigin {
+            source: active,
+            source_offset,
+            page_offset: offset,
+            page_revision: revision,
+        });
+        self.active_mut()
+            .replace_selection(Selection::point(offset));
+        self.active_mut().preserve_scroll = false;
         let message = self.key_text(crate::key_spelling::actionable::MARKDOWN_SOURCE);
         self.status(message);
     }

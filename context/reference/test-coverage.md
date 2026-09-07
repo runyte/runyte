@@ -41,6 +41,26 @@ days, and fails below 89% total line coverage. The floor is deliberately below
 the observed baseline because conditional Linux and macOS code changes both the
 instrumented denominator and the paths available to a run on one platform.
 
+## 2026-09-07 — Markdown cursor correspondence
+
+Measured on `x86_64-unknown-linux-gnu`, at base `4b81eea` plus Markdown
+cursor correspondence. Both `cargo test` and canonical
+`cargo llvm-cov --locked --workspace` passed 3,055 tests, with 33 ignored.
+Formatting and warnings-as-errors Clippy passed.
+
+| Measure | Covered | Total | Coverage |
+| --- | ---: | ---: | ---: |
+| Lines | 102,429 | 111,642 | 91.75% |
+| Functions | 9,498 | 10,255 | 92.62% |
+| Regions | 158,622 | 173,768 | 91.28% |
+
+New coverage exercises cursor correspondence through block and inline markup,
+Unicode, CRLF, escaped table cells, repeated text, page navigation, source
+edits and undo, page reuse and closure, removed markup, empty pages, wrapping,
+and resize. Tests used normal PTY, process, and local-socket access with
+`RUNYTE_PARENT_CONTEXT` removed from the test environment. The enforced 89%
+floor is unchanged. Native macOS validation remains for CI or a macOS host.
+
 ## 2026-09-07 — rendered table wrapping
 
 Measured on `x86_64-unknown-linux-gnu`, at base `c655304` plus rendered-table
