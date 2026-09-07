@@ -206,6 +206,7 @@ pub enum HostInputOutcome {
 
 #[derive(Clone, Debug)]
 struct PreparedFrame {
+    geometry: FrameGeometry,
     id: FrameId,
     pointer_compatible_since: FrameId,
     view: PreparedView,
@@ -1144,6 +1145,7 @@ impl WorkspaceHost {
             .filter(|prepared| prepared.view == view)
             .map_or(id, |prepared| prepared.pointer_compatible_since);
         self.prepared = Some(PreparedFrame {
+            geometry,
             id,
             pointer_compatible_since,
             view,
@@ -1160,6 +1162,13 @@ impl WorkspaceHost {
 
     pub fn current_frame_id(&self) -> Option<FrameId> {
         self.prepared.as_ref().map(|frame| frame.id)
+    }
+
+    pub fn advance_pointer_autoscroll(&mut self, now: Instant) -> bool {
+        let Some(prepared) = &self.prepared else {
+            return false;
+        };
+        self.app.advance_pointer_autoscroll(now, prepared.geometry)
     }
 
     /// Runs a semantic command only against the exact editor state the
@@ -1222,10 +1231,24 @@ impl WorkspaceHost {
                 frame,
                 repetitions,
             } => {
+                // Release ends a gesture even if autoscroll has since published
+                // a newer projection. It does not resolve any coordinates.
+                if matches!(event.kind, crate::input::PointerEventKind::Up(_))
+                    && self.app.cancel_pointer_drag()
+                {
+                    return Ok(HostInputOutcome::AppliedWithoutVisualChange);
+                }
                 let Some(prepared) = self.prepared.as_ref() else {
                     return Ok(HostInputOutcome::IgnoredStaleFrame);
                 };
-                if frame < prepared.pointer_compatible_since || frame > prepared.id {
+                let continued_selection = self.app.pointer_selection_drag_active()
+                    && matches!(
+                        event.kind,
+                        crate::input::PointerEventKind::Drag(crate::input::PointerButton::Left)
+                    );
+                if (frame < prepared.pointer_compatible_since && !continued_selection)
+                    || frame > prepared.id
+                {
                     return Ok(HostInputOutcome::IgnoredStaleFrame);
                 }
                 match self
@@ -1905,6 +1928,78 @@ mod tests {
         drop(host);
         drop(events);
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn pointer_autoscroll_accepts_continued_drag_and_release_from_an_older_frame() {
+        let mut host = host();
+        host.app_mut().buffers[0].apply(&Transaction::insert(0, "abcdef\n".repeat(100)));
+        let first = host.prepare_frame(geometry());
+        let body = host.prepared.as_ref().unwrap().view.pane(0).unwrap().body;
+        let event = PointerEvent {
+            kind: PointerEventKind::Down(PointerButton::Left),
+            column: body.x + 5,
+            row: body.y + 2,
+            modifiers: Modifiers::NONE,
+        };
+        host.execute(HostCommand::Pointer {
+            event,
+            frame: first.id,
+            repetitions: 1,
+        })
+        .unwrap();
+        let drag = PointerEvent {
+            kind: PointerEventKind::Drag(PointerButton::Left),
+            row: body.y + body.height,
+            ..event
+        };
+        host.execute(HostCommand::Pointer {
+            event: drag,
+            frame: first.id,
+            repetitions: 1,
+        })
+        .unwrap();
+        let now = Instant::now();
+        assert!(host.advance_pointer_autoscroll(now + host.pointer_autoscroll_delay(now).unwrap()));
+        let second = host.prepare_frame(geometry());
+        assert!(second.id > first.id);
+        assert_eq!(host.app().active().scroll_row, 1);
+        // Returning inward must stop a held edge drag even if the client has
+        // not received the newly scrolled frame yet.
+        assert_eq!(
+            host.execute(HostCommand::Pointer {
+                event: PointerEvent {
+                    row: body.y + 3,
+                    ..drag
+                },
+                frame: first.id,
+                repetitions: 1,
+            })
+            .unwrap(),
+            HostInputOutcome::Applied
+        );
+        assert!(host.pointer_autoscroll_delay(Instant::now()).is_none());
+        host.execute(HostCommand::Pointer {
+            event: drag,
+            frame: first.id,
+            repetitions: 1,
+        })
+        .unwrap();
+        assert!(host.pointer_autoscroll_delay(Instant::now()).is_some());
+        assert_eq!(
+            host.execute(HostCommand::Pointer {
+                event: PointerEvent {
+                    kind: PointerEventKind::Up(PointerButton::Left),
+                    ..drag
+                },
+                frame: first.id,
+                repetitions: 1,
+            })
+            .unwrap(),
+            HostInputOutcome::AppliedWithoutVisualChange
+        );
+        assert!(host.pointer_autoscroll_delay(Instant::now()).is_none());
+        assert!(!host.advance_pointer_autoscroll(Instant::now() + Duration::from_secs(1)));
     }
 
     #[test]

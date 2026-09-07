@@ -176,6 +176,7 @@ mod git_discovery;
 mod language;
 mod markdown_positions;
 mod markdown_tables;
+mod mouse_autoscroll;
 mod navigation_and_files;
 mod presentation_and_settings;
 mod search_and_pickers;

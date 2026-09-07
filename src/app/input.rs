@@ -494,6 +494,9 @@ impl App {
     /// Literal text stays one event and one edit transaction. Macro recording
     /// stores the same raw event ordering that arrived at this boundary.
     pub fn handle_input(&mut self, input: InputEvent) -> Result<()> {
+        if !matches!(input, InputEvent::Pointer(_)) {
+            self.cancel_pointer_drag();
+        }
         if self.macro_replay.is_some() {
             if is_macro_replay_cancel(&input) {
                 self.cancel_macro_replay();
@@ -601,6 +604,12 @@ impl App {
             self.forward_terminal_pointer(event, view, 1);
             return Ok(PointerOutcome::Unchanged);
         }
+        if !matches!(event.kind, PointerEventKind::Drag(PointerButton::Left)) {
+            self.pointer_autoscroll = None;
+        }
+        if matches!(event.kind, PointerEventKind::Down(_)) {
+            self.cancel_pointer_drag();
+        }
         self.last_interaction = Instant::now();
         if self.mode == Mode::Command || self.has_input_overlay() {
             self.invalidate_all_partial_guards();
@@ -609,7 +618,12 @@ impl App {
             return Ok(PointerOutcome::Changed);
         }
         let active_pane = self.active_pane;
-        if self.forward_terminal_pointer(event, view, repetitions) {
+        let selection_drag = self.pointer_selection_drag_active()
+            && matches!(
+                event.kind,
+                PointerEventKind::Drag(_) | PointerEventKind::Up(_)
+            );
+        if !selection_drag && self.forward_terminal_pointer(event, view, repetitions) {
             return Ok(if self.active_pane != active_pane {
                 self.invalidate_all_partial_guards();
                 self.status_error = false;
@@ -765,8 +779,9 @@ impl App {
                     }
                     // A drag builds a selection whatever mode it started in,
                     // and a selection covers characters.
+                    self.update_pointer_autoscroll(event, view);
                     let Some(offset) =
-                        self.pointer_offset(view, pane, event.column, event.row, false)
+                        self.pointer_drag_offset(view, pane, event.column, event.row)
                     else {
                         return Ok(PointerOutcome::Changed);
                     };
@@ -775,6 +790,7 @@ impl App {
                     let candidate = self.panes.get_mut(&pane).unwrap();
                     candidate.replace_selection(selection);
                     candidate.mark_selection_semantics(semantics);
+                    candidate.preserve_scroll = true;
                     self.mode = if anchor == offset {
                         Mode::Normal
                     } else {
@@ -1166,7 +1182,11 @@ impl App {
     /// half-open ones a syntax range or a Vim operator produces. The Vim
     /// grammar writes the same span down with its leading end one past the
     /// last covered character, so it is converted rather than reshaped.
-    fn pointer_selection(&self, anchor: Offset, head: Offset) -> (Selection, SelectionSemantics) {
+    pub(super) fn pointer_selection(
+        &self,
+        anchor: Offset,
+        head: Offset,
+    ) -> (Selection, SelectionSemantics) {
         let selection = Selection::single(Range::new(anchor, head));
         if self.grammar.kind() == crate::command::GrammarKind::Runyte {
             return (selection, SelectionSemantics::Runyte);
@@ -1206,7 +1226,7 @@ impl App {
     /// while every other caret addresses a character and stops on the last
     /// one. Keyboard motion has always clamped this way; the pointer is given
     /// the same rule rather than a second one of its own.
-    fn pointer_offset(
+    pub(super) fn pointer_offset(
         &self,
         view: &PreparedView,
         pane_id: usize,
@@ -4636,6 +4656,7 @@ impl App {
     /// outcomes; `Result::Err` is reserved for a fatal invariant failure at
     /// the application boundary.
     pub fn execute(&mut self, invocation: CommandInvocation) -> Result<CommandOutcome> {
+        self.cancel_pointer_drag();
         // Protocol and headless semantic commands bypass `handle_input`, but
         // they can move the originating selection just as surely as a key.
         self.invalidate_all_partial_guards();

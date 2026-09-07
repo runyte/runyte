@@ -1359,6 +1359,10 @@ a terminal that cannot reliably distinguish file contents from input events.
 Terminals with mouse reporting support can click an editor body to focus it
 and place the caret, Shift-click to extend, drag to select, scroll the pane
 under the pointer, and drag a shared pane border to resize the split.
+While selecting document text, hold the pointer at or beyond the pane body's
+top or bottom row to scroll automatically and keep extending the selection.
+Move back inside the pane or release the button to stop. Autoscroll follows
+visual rows, including soft wrapping and collapsed folds.
 Right-clicking any current selection copies all current selections to the
 system clipboard, exactly like `Space c y`, without moving or replacing them.
 The interaction line reports

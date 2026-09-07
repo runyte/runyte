@@ -1529,6 +1529,7 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
         }
         let hint_timeout = key_hints.time_until_expiry(Instant::now());
         let picker_pacing = app.picker_pacing_delay(Instant::now());
+        let pointer_autoscroll = app.pointer_autoscroll_delay(Instant::now());
         tokio::select! {
             input = terminal_events.next() => {
                 match input.transpose()? {
@@ -1721,6 +1722,11 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
                 let changed = app.refresh_git_if_due(Instant::now());
                 let activity_changed = app.refresh_session_activity();
                 if !changed && !activity_changed {
+                    continue;
+                }
+            }
+            _ = tokio::time::sleep(pointer_autoscroll.unwrap_or_default()), if pointer_autoscroll.is_some() => {
+                if !app.advance_pointer_autoscroll(Instant::now()) {
                     continue;
                 }
             }
@@ -1987,6 +1993,10 @@ async fn run_host_server(
         let mut changed = false;
         let hint_timeout = key_hints.time_until_expiry(Instant::now());
         let picker_pacing = host.picker_pacing_delay(Instant::now());
+        if active.is_none() {
+            host.cancel_pointer_drag();
+        }
+        let pointer_autoscroll = host.pointer_autoscroll_delay(Instant::now());
         tokio::select! {
             event = server.recv() => {
                 let Some(event) = event else {
@@ -2542,6 +2552,9 @@ async fn run_host_server(
                 && !host.finder_scan_refills() =>
             {
                 changed = true;
+            }
+            _ = tokio::time::sleep(pointer_autoscroll.unwrap_or_default()), if pointer_autoscroll.is_some() && active.is_some() => {
+                changed = host.advance_pointer_autoscroll(Instant::now());
             }
             // Paced picker state comes due without an event to carry it: a
             // ranked answer waiting for the rows to age out, and header

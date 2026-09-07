@@ -265,6 +265,7 @@ mod git_workflows;
 mod input;
 mod language_workflows;
 mod lsp_trust_workflows;
+mod mouse_autoscroll;
 mod movement;
 mod navigation_workflows;
 mod picker_workflows;
@@ -2950,6 +2951,7 @@ pub struct App {
     /// Which registry-backed settings surface owns the shared list picker.
     settings_view: Option<SettingsView>,
     pointer_drag: Option<PointerDrag>,
+    pointer_autoscroll: Option<mouse_autoscroll::Autoscroll>,
     /// Code actions backing a code-action picker.
     lsp_actions: Vec<ActionEntry>,
     /// The buffer revision against which the visible code actions were
@@ -3428,6 +3430,7 @@ impl App {
             list_actions: Vec::new(),
             settings_view: None,
             pointer_drag: None,
+            pointer_autoscroll: None,
             lsp_actions: Vec::new(),
             lsp_action_source: None,
             tutorial: None,

@@ -61,6 +61,16 @@ happens on the monitor thread and forwards nothing when the listing is
 unchanged, so it does not wake the editor. The fixtures below open a document
 rather than an explorer, so this work is not in the measurements either.
 
+## Mouse selection autoscroll
+
+Document selection drags at a pane's top or bottom edge schedule one visual-row
+scroll every 60 ms in standalone and attached persistent modes. Each tick
+prepares the current geometry and resolves the held pointer against the newly
+scrolled rows. The deadline exists only during an edge drag; moving inward,
+releasing the button, keyboard input, or detachment cancels it. Late ticks
+advance once without catching up in a burst. No startup work or idle polling
+is added. Startup and idle measurements have not been repeated for this change.
+
 ## Git discovery recovery
 
 Failed repository discovery can be retried explicitly through `:git-refresh`.
