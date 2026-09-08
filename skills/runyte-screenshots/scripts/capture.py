@@ -49,11 +49,7 @@ def isolated_env(root):
 
 class Capture:
     def __init__(self, options):
-        self.options = options
-        self.fonts = {}
-        for style in ("font", "bold_font", "italic_font", "bold_italic_font"):
-            path = getattr(options, style) or options.font
-            self.fonts[style] = ImageFont.truetype(path, options.font_size)
+        self.init_screen(options)
         self.temporary = tempfile.TemporaryDirectory(prefix="runyte-capture-")
         self.env = isolated_env(options.state_dir or self.temporary.name)
         config = options.config
@@ -61,11 +57,6 @@ class Capture:
             config = Path(self.temporary.name) / "config.yaml"
             config.write_text("theme: " + json.dumps(options.theme) + "\nlsp:\n  enable: false\n")
         self.argv = [str(Path(options.binary).resolve()), "-c", str(Path(config).resolve()), *options.arg]
-        self.screen = pyte.Screen(options.columns, options.rows)
-        self.stream = pyte.Stream(self.screen)
-        self.decoder = codecs.getincrementaldecoder("utf-8")("replace")
-        self.pending = ""
-        self.eof = False
         self.pid, self.fd = pty.fork()
         if self.pid == 0:
             try:
@@ -75,6 +66,19 @@ class Capture:
             except BaseException as error:
                 os.write(2, f"capture launch failed: {error}\n".encode())
                 os._exit(127)
+
+    def init_screen(self, options):
+        """Initialize the decoder/renderer independently of a live PTY."""
+        self.options = options
+        self.fonts = {}
+        for style in ("font", "bold_font", "italic_font", "bold_italic_font"):
+            path = getattr(options, style) or options.font
+            self.fonts[style] = ImageFont.truetype(path, options.font_size)
+        self.screen = pyte.Screen(options.columns, options.rows)
+        self.stream = pyte.Stream(self.screen)
+        self.decoder = codecs.getincrementaldecoder("utf-8")("replace")
+        self.pending = ""
+        self.eof = False
 
     def __enter__(self):
         return self
@@ -88,6 +92,12 @@ class Capture:
 
     def text(self):
         return "\n".join(self.screen.display)
+
+    def resize(self, columns, rows):
+        if not (1 <= columns <= 1000 and 1 <= rows <= 1000):
+            raise ValueError("geometry must be between 1 and 1000 cells")
+        self.screen.resize(lines=rows, columns=columns)
+        self._size(self.fd, columns, rows)
 
     def write(self, data):
         data = memoryview(data.encode() if isinstance(data, str) else data)
@@ -182,10 +192,7 @@ class Capture:
             self.write("\x1b[200~" + step["text"] + "\x1b[201~")
         elif op == "resize":
             columns, rows = int(step["columns"]), int(step["rows"])
-            if not (1 <= columns <= 1000 and 1 <= rows <= 1000):
-                raise ValueError("geometry must be between 1 and 1000 cells")
-            self.screen.resize(lines=rows, columns=columns)
-            self._size(self.fd, columns, rows)
+            self.resize(columns, rows)
         elif op == "mouse":
             ending = "m" if step.get("release") else "M"
             self.write(f"\x1b[<{int(step.get('button', 0))};{int(step['x'])};{int(step['y'])}{ending}")
@@ -200,13 +207,9 @@ class Capture:
         self.pump(step.get("wait", 0.2))
         return {"screen": self.text(), "eof": self.eof}
 
-    def save(self, destination):
-        if self.eof:
-            raise RuntimeError("Runyte exited; refusing to capture a dead PTY")
+    def render_image(self):
+        """Render the current screen without writing screenshot artifacts."""
         options = self.options
-        path = Path(destination).resolve()
-        if path.suffix.lower() not in (".png", ".webp"):
-            raise ValueError("capture destination must end in .png or .webp")
         width, height = options.cell_width, options.cell_height
         image = Image.new("RGB", (self.screen.columns * width, self.screen.lines * height))
         draw = ImageDraw.Draw(image)
@@ -239,20 +242,34 @@ class Capture:
         if options.cursor and not cursor.hidden:
             px, py = cursor.x * width, cursor.y * height
             draw.rectangle((px, py, px + width - 1, py + height - 1), outline=options.foreground)
+        return image
+
+    def metadata(self):
+        options = self.options
+        return {
+            "argv": self.argv, "cwd": str(Path(options.cwd).resolve()),
+            "columns": self.screen.columns, "rows": self.screen.lines,
+            "pixels": (self.screen.columns * options.cell_width, self.screen.lines * options.cell_height),
+            "theme": options.theme if not options.config else "see config",
+            "config": Path(self.argv[2]).read_text(),
+            "fonts": {key: getattr(options, key) for key in self.fonts},
+            "font_size": options.font_size, "cell_width": options.cell_width,
+            "cell_height": options.cell_height, "text_offset": options.text_offset,
+            "foreground": options.foreground, "background": options.background,
+            "label": options.label, "cursor": "outline" if options.cursor else "omitted",
+        }
+
+    def save(self, destination):
+        if self.eof:
+            raise RuntimeError("Runyte exited; refusing to capture a dead PTY")
+        path = Path(destination).resolve()
+        if path.suffix.lower() not in (".png", ".webp"):
+            raise ValueError("capture destination must end in .png or .webp")
+        image = self.render_image()
         path.parent.mkdir(parents=True, exist_ok=True)
         image.save(path, **({"lossless": True, "method": 6} if path.suffix.lower() == ".webp" else {}))
         path.with_suffix(".txt").write_text(self.text() + "\n")
-        metadata = {
-            "argv": self.argv, "cwd": str(Path(options.cwd).resolve()),
-            "columns": self.screen.columns, "rows": self.screen.lines,
-            "pixels": image.size, "theme": options.theme if not options.config else "see config",
-            "config": Path(self.argv[2]).read_text(),
-            "fonts": {key: getattr(options, key) for key in self.fonts},
-            "font_size": options.font_size, "cell_width": width, "cell_height": height,
-            "text_offset": options.text_offset, "label": options.label,
-            "cursor": "outline" if options.cursor else "omitted",
-        }
-        path.with_suffix(".json").write_text(json.dumps(metadata, indent=2) + "\n")
+        path.with_suffix(".json").write_text(json.dumps(self.metadata(), indent=2) + "\n")
         return {"image": str(path), "text": str(path.with_suffix('.txt'))}
 
     def close(self):
@@ -277,7 +294,7 @@ class Capture:
             self.temporary.cleanup()
 
 
-def parser():
+def parser(*, modes=True):
     result = argparse.ArgumentParser(description=__doc__)
     result.add_argument("--binary", required=True, help="Path to a built Runyte executable")
     result.add_argument("--cwd", required=True, help="Demo workspace directory")
@@ -294,9 +311,10 @@ def parser():
     result.add_argument("--background", default="#152630")
     result.add_argument("--cursor", action="store_true", help="Draw visible terminal cursor as an outline")
     result.add_argument("--label", default="", help="Source revision or scene provenance")
-    mode = result.add_mutually_exclusive_group(required=True)
-    mode.add_argument("--steps", help="JSON file containing an array of actions")
-    mode.add_argument("--interactive", action="store_true", help="Read JSON actions, one per stdin line")
+    if modes:
+        mode = result.add_mutually_exclusive_group(required=True)
+        mode.add_argument("--steps", help="JSON file containing an array of actions")
+        mode.add_argument("--interactive", action="store_true", help="Read JSON actions, one per stdin line")
     return result
 
 

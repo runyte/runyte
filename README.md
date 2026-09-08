@@ -3,9 +3,9 @@
 [![CI](https://github.com/runyte/runyte/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/runyte/runyte/actions/workflows/ci.yml)
 [![Coverage](https://img.shields.io/badge/coverage-%E2%89%A589%25-brightgreen)](context/reference/test-coverage.md)
 
-![Runyte 0.2.0 with a clickable strip of running persistent sessions above the editor.](https://runyte.com/images/screenshots/session-strip.webp?v=5f3ba82c64b1)
+[![Watch the Runyte demo: Markdown tables, integrated Codex, terminal navigation, and Rust diagnostics.](https://runyte.com/videos/runyte-demo-poster.webp)](https://runyte.com/videos/runyte-demo.mp4)
 
-*Switch projects. Keep buffers and terminals running. · ocean-dark*
+*[Watch the 60-second demo](https://runyte.com/videos/runyte-demo.mp4): from a Markdown prompt to Rust code, in one workspace.*
 
 **Runyte** is a terminal workspace built around a modal text editor.
 

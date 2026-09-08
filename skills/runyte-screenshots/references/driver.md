@@ -59,6 +59,9 @@ visible location, without claiming to reproduce its shape or blink phase.
 `--config` supplies a complete scene configuration instead of the generated
 theme/LSP-disabled config. Repeat `--arg` for Runyte arguments; use
 `--arg=--persistent` for values starting with a dash. `--help` lists all options.
+Put custom demo configuration in a separate temporary settings directory, not
+the parent of the demo workspace: Runyte rejects overlapping per-user and
+project storage roots.
 
 ## Actions
 
@@ -118,6 +121,10 @@ Call `capture.action({...})`, `capture.expect(...)`, and `capture.text()`.
 Use `capture.env` for scene-owned helper processes when they need the same
 runtime scope. Ordinary fixture preparation can use Python filesystem calls or
 subprocess argument vectors in a separate recipe.
+
+The adjacent `runyte-demo-videos` skill shares this driver. `init_screen`,
+`render_image`, and `metadata` separate decoding/rendering from process ownership
+and screenshot file writes so recorded PTY output can be replayed into video.
 
 ## Persistent sessions and real external programs
 

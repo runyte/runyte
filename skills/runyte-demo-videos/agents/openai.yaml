@@ -1,0 +1,4 @@
+interface:
+  display_name: "Runyte Demo Videos"
+  short_description: "Script and record real Runyte demos on Linux"
+  default_prompt: "Use $runyte-demo-videos to design an action sequence and record a video of the requested Runyte demonstration."
