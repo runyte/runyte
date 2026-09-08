@@ -86,9 +86,9 @@ and retained notifications, continuing activity leases, validated settings and
 conditional workspace state and a native manager with explicit stop/restart.
 The local-file media controller now exercises managed mpv playback and activity
 ownership, with service-adapter guides for Spotify and YouTube.
-Milestone 6 still needs the broader SDK,
-non-Python example, full conformance matrix and complete application performance
-and supported-platform evidence. Milestones 1–2 also retain their full overload,
+Milestone 6 now has its authoring guide, non-Python example and conformance
+matrix; complete application performance and supported-platform evidence remain.
+Milestones 1–2 also retain their full overload,
 real-attachment and performance acceptance work; the implemented primitives do
 not by themselves complete those gates.
 
@@ -1053,6 +1053,45 @@ source, so the immediately preceding 3,541-test ordinary/canonical suites and
 
 Authoring/conformance expansion and the complete performance and supported-platform
 acceptance evidence remain active. Native macOS validation is still required.
+
+## Authoring and conformance round
+
+The media round was committed as `fd582f4` (`Add native local media controller
+with managed mpv playback`). The authoring kit now documents clean-checkout
+installation of the local manager and background example, every public method
+and event family, capability routing, lifetimes, budgets and epoch migration.
+The conformance matrix distinguishes structural schema checks, public-wire
+examples, host behavior tests and native/performance evidence.
+
+`tasks.mjs` implements a native checklist with Node built-ins and no Python SDK
+or npm dependency. Its continuous reader has bounded framing, requests, dispatch
+and output; asynchronous handlers preserve exact view revisions and foreground
+invocations. Failed publication leaves the candidate isolated. An uncertain
+publication disables further actions until explicit plugin restart, and old
+view-close events cannot invalidate a replacement. Eleven subprocess tests
+validate real registration/messages against the schema, success, refusal,
+rollback, stale handles, timeout, late replies, EOF and quiescent silence.
+
+Review also fixed the minimal `jobs.py` example: cancellation can arrive on the
+SDK's separate lane before the `job.create` caller resumes. A bounded early-event
+record now preserves that signal, and cancellation winning a success reply gets
+its own acknowledgement. Failure to start a worker finishes the issued job.
+Five regressions include actual public-wire start/cancel without a frontend.
+
+`check_all.py` runs every checked-in plugin suite and can require installed mpv
+and Node backends instead of accepting missing-backend skips. All 25 suites pass
+on Linux, totaling 312 Python tests; real Node and mpv cases ran. Independent
+reviews checked the implementation, method/event/capability index, setup commands,
+links and example snippets. Python parsing, Node syntax, YAML parsing and diff
+checks pass. CI now schedules plugin conformance and canonical Rust coverage on
+both Linux and macOS, with separate coverage artifacts and the unchanged 89%
+floor. Configuring those jobs does not constitute macOS execution evidence.
+
+This round changes no Rust source. The previous 3,541-test ordinary/canonical
+suites and 91.72% Linux line baseline remain applicable. A current locked release
+build passes. The remaining work is the complete release workload/latency matrix,
+fixes justified by that evidence, and supported-platform acceptance. The plan
+remains active until those gates have actually passed.
 
 ## Investigation: existing foundation and missing boundaries
 

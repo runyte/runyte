@@ -36,8 +36,10 @@ lower floor that holds on its measured target, and each platform baseline is
 recorded separately.
 
 CI uses `cargo-llvm-cov` 0.9.0, publishes the full per-file summary in the job
-summary, retains an HTML report as the `rust-coverage-html` artifact for 14
-days, and fails below 89% total line coverage. The floor is deliberately below
+summary, retains an HTML report as a `rust-coverage-html-<runner>` artifact for
+each Linux/macOS runner for 14 days, and fails below 89% total line coverage.
+Adding a platform job does not establish a new measured baseline until that job
+has passed. The floor is deliberately below
 the observed baseline because conditional Linux and macOS code changes both the
 instrumented denominator and the paths available to a run on one platform.
 

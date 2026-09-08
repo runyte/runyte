@@ -5,6 +5,12 @@ transform selections. This first capability supports text snapshots and atomic
 selected-text replacements. The API is **experimental** and has no stable Rust
 ABI. The exact wire version is `runyte-experimental-1`.
 
+Application plugins opt into `runyte-experimental-2`. Start with the
+[authoring guide](plugins/authoring.md), [application contract](plugins/applications.md)
+and [conformance checks](plugins/conformance.md) for native views, jobs, local and
+remote files, managed helpers and continuing applications. Epoch 1 remains the
+configuration default.
+
 ## Install and enable the example
 
 Install Python 3 and copy [uppercase.py](plugins/uppercase.py) to a location you
@@ -47,9 +53,12 @@ collision rejects that plugin's registration; it never replaces an existing
 binding. `keys.rebind` continues to move built-in defaults only.
 
 `:plugin.case.stop` stops the instance, cancels pending work, and removes its
-commands, bindings and subscriptions. There is no live reload or automatic
-restart. Restart the workspace host to enable it again. `stop` is a reserved local
-command name, supplied by Runyte.
+commands, bindings and subscriptions. `:plugin-restart case` explicitly starts a
+fresh instance after old work finishes cleanup. `:plugins` shows configured,
+disabled and failed entries. Restarting a plugin uses its already loaded
+configuration; configuration changes require a workspace host restart. Failures
+never trigger automatic restart. `stop` is a reserved local command name,
+supplied by Runyte.
 
 ## Asynchronous behavior and errors
 

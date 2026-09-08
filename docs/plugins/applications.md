@@ -16,6 +16,12 @@ activity leases, settings/state, a native manager and the local mpv controller
 support continuing applications. Full release validation remains in progress.
 Epoch 1 remains the default and its uppercase example is unchanged.
 
+The [authoring guide](authoring.md) provides clean-checkout setup, method/event
+and capability indexes, lifetime rules and epoch migration. The
+[conformance guide](conformance.md) maps tests to their behavior boundaries.
+The dependency-free [Node checklist](tasks.mjs) demonstrates the same public
+protocol without the Python client.
+
 Enable the runnable background-job example with absolute paths:
 
 ```yaml

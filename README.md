@@ -84,6 +84,8 @@ Applications can read validated [settings and workspace state](docs/plugins/appl
 with conditional updates for nonsecret saved preferences.
 The native [plugin manager](docs/plugins/applications.md#plugin-manager) retains
 failed entries and provides explicit stop/restart after cleanup.
+The [authoring kit](docs/plugins/authoring.md) includes local setup, a Python
+client, an independent Node example and a conformance matrix.
 The broader application platform remains in development.
 See the [user guide](docs/user-guide.md) for complete behavior and limits.
 
