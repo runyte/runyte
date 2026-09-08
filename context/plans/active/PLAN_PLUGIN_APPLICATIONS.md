@@ -142,6 +142,30 @@ smoke is not a replacement for the plan's release performance matrix. Canonical
 Linux coverage also passed all 3,108 tests: 105,891 / 115,525 lines (**91.66%**),
 above the unchanged 89% floor; see the coverage register.
 
+## Native interaction round
+
+The next work item adds bounded prompts, filterable choices, confirmations and
+forms through the `interaction` capability. Opening returns a surface handle;
+completion creates a fresh short `ui.submit` callback, keeping human waiting
+separate from control deadlines. Only accepted callbacks receive foreground
+presentation authority. Text/secret/boolean/choice fields use declarative bounds.
+Secret text is masked before every snapshot, excluded from macro/history storage,
+and redacted from debug input traces before and after dispatch. Native popup
+takeover, detach, source closure, dismissal and owner stop cancel input once.
+
+The local file manager now offers native destination prompts as contextual
+actions, then uses the existing filesystem confirmation. Schema fixtures, SDK
+callback routing, public-message example smoke tests and host regressions cover
+the path. Review additionally corrected native picker semantics and selection
+preservation, cancelled-callback authority and shared surface payload accounting.
+Final subagent re-review found no blocking issues. Formatting, Clippy, the full
+suite (3,116 passed, 33 ignored), both schema checkers and canonical Linux coverage
+(106,407 / 116,087 lines, 91.66%) passed. A native PTY smoke exercised destination
+entry, prepared confirmation, text-file opening and return to the retained view;
+a two-second settled observation produced no terminal output. Revision-tagged asynchronous
+field validation will build on the observation/subscription boundary; it is not
+advertised as delivered here.
+
 ## Investigation: existing foundation and missing boundaries
 
 The current [guide](../../../docs/plugins.md) and

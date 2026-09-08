@@ -1588,11 +1588,14 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
                             continue;
                         }
                         #[cfg(debug_assertions)]
+                        let sensitive_input = app.app().plugin_input_active();
+                        #[cfg(debug_assertions)]
                         trace_input(
                             input_trace.as_mut(),
                             "before",
                             app.app(),
                             &input,
+                            sensitive_input,
                             repeated,
                             None,
                         )?;
@@ -1642,6 +1645,7 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
                             "after",
                             app.app(),
                             &input,
+                            sensitive_input,
                             repeated,
                             Some(hint_result),
                         )?;
@@ -2852,15 +2856,21 @@ fn open_input_trace() -> Result<Option<fs::File>> {
 
 #[cfg(debug_assertions)]
 fn trace_input(
-    trace: Option<&mut fs::File>,
+    trace: Option<&mut impl Write>,
     phase: &str,
     app: &App,
     input: &InputEvent,
+    sensitive: bool,
     repeated: bool,
     hint: Option<HintEventResult>,
 ) -> Result<()> {
     let Some(trace) = trace else {
         return Ok(());
+    };
+    let input = if sensitive {
+        "<application input redacted>".to_owned()
+    } else {
+        format!("{input:?}")
     };
     let terminal = app.active_terminal();
     let reviewing = terminal
@@ -2868,7 +2878,7 @@ fn trace_input(
         .is_some_and(|session| session.reviewing());
     writeln!(
         trace,
-        "{phase} input={input:?} repeated={repeated} hint={hint:?} mode={:?} pane={} \
+        "{phase} input={input} repeated={repeated} hint={hint:?} mode={:?} pane={} \
          terminal={terminal:?} reviewing={reviewing} pending={} fast_pane_keys={}",
         app.mode,
         app.active_pane,
@@ -5682,6 +5692,28 @@ Inside the editor press Space+? for the complete key reference."
 
 #[cfg(test)]
 mod tests {
+    #[cfg(debug_assertions)]
+    #[test]
+    fn application_input_trace_redacts_keys_before_and_after_surface_closure() {
+        let app = runyte::app::App::new(runyte::config::Config::default(), None).unwrap();
+        let mut trace = Vec::new();
+        for phase in ["before", "after"] {
+            super::trace_input(
+                Some(&mut trace),
+                phase,
+                &app,
+                &runyte::input::InputEvent::Key(runyte::input::KeyStroke::char('🔑')),
+                true,
+                false,
+                None,
+            )
+            .unwrap();
+        }
+        let text = String::from_utf8(trace).unwrap();
+        assert!(!text.contains('🔑'));
+        assert_eq!(text.matches("<application input redacted>").count(), 2);
+    }
+
     use std::{
         fs,
         path::{Path, PathBuf},

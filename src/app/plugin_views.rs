@@ -202,7 +202,8 @@ impl App {
                 "No attached frontend",
             ));
         }
-        if self.plugins.attachment_generation != context.attachment
+        if !context.foreground_allowed
+            || self.plugins.attachment_generation != context.attachment
             || self.plugins.foreground_generation != context.foreground
             || self.active_pane != context.pane
             || self.active().buffer != context.buffer

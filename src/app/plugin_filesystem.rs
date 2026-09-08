@@ -5,7 +5,10 @@ use crate::{fs_plan::FsPlan, plugin::filesystem::Finished};
 
 impl App {
     pub(crate) fn plugin_has_input_surface(&self) -> bool {
-        self.mode == Mode::Command || self.has_input_overlay() || self.macro_replay.is_some()
+        self.mode == Mode::Command
+            || self.has_input_overlay()
+            || self.macro_replay.is_some()
+            || self.recording_macro.is_some()
     }
 
     pub(crate) fn present_plugin_filesystem(&mut self, owner: usize, handle: String, plan: FsPlan) {

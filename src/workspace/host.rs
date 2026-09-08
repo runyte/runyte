@@ -240,6 +240,7 @@ struct CompletedGitSnapshot {
 mod plugin_applications;
 mod plugin_editor;
 mod plugin_filesystem;
+mod plugin_interaction;
 /// The only owner allowed to mutate one live editor/application workspace.
 ///
 /// Standalone mode uses this value directly. Persistent mode will keep the

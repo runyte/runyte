@@ -499,3 +499,10 @@ movement, selection, copying, search and host prefixes retain their registry
 bindings. Refreshes cannot accept an action against an unseen model revision.
 Typed plugin command arguments are parsed as quoted positional values without
 shell evaluation. These application commands remain deliberate Runyte additions.
+
+Epoch 2 application forms use the same overlay-specific input boundary as other
+prompts: Tab/Shift-Tab and Up/Down change fields, Left/Right/Space change a choice
+or boolean, Enter submits valid fields and Escape/Ctrl-c cancels. Text fields
+retain character movement, Home/End, Backspace/Delete and literal paste. Application
+pickers use typed filtering, Up/Down, Enter and Escape. These keys belong to the
+transient surface and do not add a second editor command registry.

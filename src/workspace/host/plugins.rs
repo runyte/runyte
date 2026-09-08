@@ -148,6 +148,7 @@ impl WorkspaceHost {
 
     /// Administrative cancellation also removes commands and subscriptions.
     pub fn stop_plugin(&mut self, id: usize, reason: &str) {
+        self.app.cancel_plugin_input(id, None);
         self.app.cancel_plugin_filesystem(id, None);
         let Some(instance) = self.app.plugins.instances.remove(&id) else {
             return;
@@ -568,6 +569,7 @@ impl WorkspaceHost {
     /// Observation checkpoints coalesce changes within a host turn, including
     /// undo/reload paths. No scan or wakeup exists when there are no subscribers.
     pub fn sync_plugin_observers(&mut self) {
+        self.sync_plugin_inputs();
         self.sync_plugin_filesystem();
         self.sync_plugin_views();
         for id in std::mem::take(&mut self.app.plugins.cancellations) {

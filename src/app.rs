@@ -270,6 +270,7 @@ mod movement;
 mod navigation_workflows;
 mod picker_workflows;
 mod plugin_filesystem;
+pub(crate) mod plugin_interaction;
 mod plugin_views;
 pub(crate) mod plugin_workflows;
 mod presentation;

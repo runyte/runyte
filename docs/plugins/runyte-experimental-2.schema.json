@@ -1655,6 +1655,9 @@
             },
             {
               "$ref": "#/$defs/localResult"
+            },
+            {
+              "$ref": "#/$defs/inputResult"
             }
           ]
         }
@@ -1835,6 +1838,21 @@
         },
         {
           "$ref": "#/$defs/buffer.open"
+        },
+        {
+          "$ref": "#/$defs/ui.form"
+        },
+        {
+          "$ref": "#/$defs/ui.prompt"
+        },
+        {
+          "$ref": "#/$defs/ui.pick"
+        },
+        {
+          "$ref": "#/$defs/ui.confirm"
+        },
+        {
+          "$ref": "#/$defs/ui.dismiss"
         }
       ]
     },
@@ -1857,6 +1875,9 @@
         },
         {
           "$ref": "#/$defs/event"
+        },
+        {
+          "$ref": "#/$defs/inputSubmission"
         }
       ]
     },
@@ -2356,6 +2377,349 @@
         "state",
         "applied",
         "recovery"
+      ],
+      "additionalProperties": true
+    },
+    "inputField": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_-]*$",
+          "maxLength": 48
+        },
+        "label": {
+          "type": "string",
+          "maxLength": 160
+        },
+        "kind": {
+          "enum": [
+            "text",
+            "secret",
+            "boolean",
+            "choice"
+          ]
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "choices": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 160
+          },
+          "maxItems": 64,
+          "uniqueItems": true
+        },
+        "minimum_length": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4096
+        },
+        "maximum_length": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4096
+        }
+      },
+      "required": [
+        "id",
+        "label",
+        "kind"
+      ],
+      "additionalProperties": false
+    },
+    "ui.form": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "request"
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^p:[1-9][0-9]*$",
+          "maxLength": 22
+        },
+        "method": {
+          "const": "ui.form"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "invocation": {
+              "type": "string",
+              "maxLength": 64
+            },
+            "title": {
+              "type": "string",
+              "maxLength": 160
+            },
+            "fields": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/inputField"
+              },
+              "minItems": 1,
+              "maxItems": 16
+            }
+          },
+          "required": [
+            "invocation",
+            "title",
+            "fields"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "method",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    "ui.prompt": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "request"
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^p:[1-9][0-9]*$",
+          "maxLength": 22
+        },
+        "method": {
+          "const": "ui.prompt"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "invocation": {
+              "type": "string",
+              "maxLength": 64
+            },
+            "title": {
+              "type": "string",
+              "maxLength": 160
+            },
+            "field": {
+              "$ref": "#/$defs/inputField"
+            }
+          },
+          "required": [
+            "invocation",
+            "title",
+            "field"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "method",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    "ui.pick": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "request"
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^p:[1-9][0-9]*$",
+          "maxLength": 22
+        },
+        "method": {
+          "const": "ui.pick"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "invocation": {
+              "type": "string",
+              "maxLength": 64
+            },
+            "title": {
+              "type": "string",
+              "maxLength": 160
+            },
+            "choices": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "maxLength": 160
+              },
+              "minItems": 1,
+              "maxItems": 64,
+              "uniqueItems": true
+            }
+          },
+          "required": [
+            "invocation",
+            "title",
+            "choices"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "method",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    "ui.confirm": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "request"
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^p:[1-9][0-9]*$",
+          "maxLength": 22
+        },
+        "method": {
+          "const": "ui.confirm"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "invocation": {
+              "type": "string",
+              "maxLength": 64
+            },
+            "title": {
+              "type": "string",
+              "maxLength": 160
+            },
+            "message": {
+              "type": "string",
+              "maxLength": 160
+            }
+          },
+          "required": [
+            "invocation",
+            "title",
+            "message"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "method",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    "ui.dismiss": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "request"
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^p:[1-9][0-9]*$",
+          "maxLength": 22
+        },
+        "method": {
+          "const": "ui.dismiss"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "surface": {
+              "type": "string",
+              "maxLength": 64
+            }
+          },
+          "required": [
+            "surface"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "method",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    "inputResult": {
+      "type": "object",
+      "properties": {
+        "surface": {
+          "type": "string",
+          "maxLength": 64
+        }
+      },
+      "required": [
+        "surface"
+      ],
+      "additionalProperties": false
+    },
+    "inputSubmission": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "request"
+        },
+        "id": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "method": {
+          "const": "ui.submit"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "surface": {
+              "type": "string",
+              "maxLength": 64
+            },
+            "accepted": {
+              "type": "boolean"
+            },
+            "values": {
+              "type": "object",
+              "maxProperties": 16,
+              "additionalProperties": {
+                "type": [
+                  "string",
+                  "boolean"
+                ],
+                "maxLength": 4096
+              }
+            }
+          },
+          "required": [
+            "surface",
+            "accepted",
+            "values"
+          ],
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "method",
+        "params"
       ],
       "additionalProperties": true
     }

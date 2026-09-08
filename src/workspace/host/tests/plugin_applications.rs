@@ -5,6 +5,8 @@ use crate::plugin::application as api;
 
 #[path = "plugin_filesystem.rs"]
 mod filesystem;
+#[path = "plugin_interaction.rs"]
+mod interaction;
 
 fn setup(
     host: &mut WorkspaceHost,

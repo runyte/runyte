@@ -921,6 +921,10 @@ impl App {
     /// The terminal event loop uses the same boundary as `handle_key` so a key
     /// that closes an overlay cannot also produce a normal-mode key hint.
     pub fn has_input_overlay(&self) -> bool {
+        self.plugins.input.is_some() || self.has_native_input_overlay()
+    }
+
+    pub(crate) fn has_native_input_overlay(&self) -> bool {
         self.picker.is_some()
             || self.fs_confirmation.is_some()
             || self.directory_reload_confirmation.is_some()
@@ -2016,6 +2020,71 @@ impl App {
             } else {
                 vec![OverlayAction::new("any key", "dismiss and continue")]
             };
+            overlays.push(snapshot);
+        }
+        if let Some(surface) = &self.plugins.input {
+            let mut snapshot = bounded(
+                OverlayKind::Prompt,
+                &surface.title,
+                surface.display(surface.selected),
+                surface
+                    .fields
+                    .iter()
+                    .enumerate()
+                    .map(|(i, f)| row(i, &f.label, surface.display(i)))
+                    .collect(),
+                Some(surface.selected),
+                surface
+                    .error
+                    .then(|| "Complete the selected field within its declared limits".into()),
+            );
+            snapshot.layout = OverlayLayout::Standard;
+            snapshot.query_cursor = Some(surface.cursor);
+            snapshot.query_placeholder = surface.fields[surface.selected].label.clone();
+            snapshot.actions = vec![
+                OverlayAction::new("Enter", "submit"),
+                OverlayAction::new("Tab/↑/↓", "field"),
+                OverlayAction::new("←/→/Space", "choice"),
+                OverlayAction::new("Esc", "cancel"),
+            ];
+            if surface.confirmation {
+                snapshot.purpose = OverlayPurpose::Confirmation;
+                snapshot.input = OverlayInput::None;
+                snapshot.message = Some(surface.fields[0].label.clone());
+                snapshot.rows.clear();
+                snapshot.total_rows = 0;
+                snapshot.selected = None;
+                snapshot.scroll_anchor = None;
+                snapshot.query.clear();
+                snapshot.query_cursor = None;
+                snapshot.query_placeholder.clear();
+                snapshot.actions = vec![
+                    OverlayAction::new("Enter", "confirm"),
+                    OverlayAction::new("Esc", "cancel"),
+                ];
+            }
+            if let Some(picker) = &surface.picker {
+                snapshot.purpose = OverlayPurpose::Picker;
+                snapshot.input = OverlayInput::Filter;
+                let indices = picker.visible_indices();
+                snapshot.rows = indices
+                    .iter()
+                    .map(|i| row(*i, &picker.items[*i].label, ""))
+                    .collect();
+                snapshot.total_rows = indices.len();
+                snapshot.omitted_rows = 0;
+                snapshot.row_offset = 0;
+                snapshot.selected = (!indices.is_empty()).then_some(picker.selected);
+                snapshot.scroll_anchor = snapshot.selected;
+                snapshot.query = picker.filter.clone();
+                snapshot.query_cursor = Some(picker.filter.chars().count());
+                snapshot.query_placeholder = "Type to filter".into();
+                snapshot.actions = vec![
+                    OverlayAction::new("Enter", "choose"),
+                    OverlayAction::new("↑/↓", "select"),
+                    OverlayAction::new("Esc", "cancel"),
+                ];
+            }
             overlays.push(snapshot);
         }
         overlays

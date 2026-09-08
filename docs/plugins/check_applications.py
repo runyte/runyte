@@ -58,7 +58,7 @@ class ApplicationSchemaTests(unittest.TestCase):
             send(host[0])
             registration = receive()
             self.assertIn('filesystem', registration['required_capabilities'])
-            send({**host[1], 'capabilities': ['views', 'filesystem', 'documents']})
+            send({**host[1], 'capabilities': ['views', 'filesystem', 'documents', 'interaction']})
             opening = {**host[2], 'params': {**host[2]['params'], 'arguments': {'path': '.'}}}
             send(opening)
             read = receive()
@@ -87,6 +87,23 @@ class ApplicationSchemaTests(unittest.TestCase):
             self.assertEqual(confirmation['params'], {'plan': 'f:g:3', 'invocation': 'h:2'})
             reply(confirmation, {})
             self.assertEqual(receive(), {'type': 'response', 'id': 'h:2', 'result': {'job': None}})
+            send({'type': 'request', 'id': 'h:3', 'method': 'command.invoke', 'params': {
+                'command': 'new', 'context': 'view', 'view': 'v:g:2', 'model_revision': 'm:1',
+                'rows': [], 'arguments': {}}})
+            prompt = receive()
+            self.assertEqual(prompt['method'], 'ui.prompt')
+            reply(prompt, {'surface': 'u:g:4'})
+            self.assertEqual(receive()['id'], 'h:3')
+            send({'type': 'request', 'id': 'h:4', 'method': 'ui.submit', 'params': {
+                'surface': 'u:g:4', 'accepted': True, 'values': {'destination': 'created.txt'}}})
+            prepared = receive()
+            self.assertEqual(prepared['params']['intent'], {'operation': 'create_file', 'destination': 'created.txt'})
+            reply(prepared, {'plan': 'f:g:5', 'operations': ['create created.txt']})
+            confirmation = receive()
+            self.assertEqual(confirmation['params']['invocation'], 'h:4')
+            reply(confirmation, {})
+            self.assertEqual(receive()['id'], 'h:4')
+
             child.stdin.close()
             self.assertEqual(child.wait(timeout=3), 0)
         finally:

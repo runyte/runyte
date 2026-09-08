@@ -496,6 +496,7 @@ impl App {
     /// Literal text stays one event and one edit transaction. Macro recording
     /// stores the same raw event ordering that arrived at this boundary.
     pub fn handle_input(&mut self, input: InputEvent) -> Result<()> {
+        self.sync_plugin_input();
         if !matches!(input, InputEvent::Pointer(_)) {
             self.plugins.foreground_generation += 1;
             self.cancel_pointer_drag();
@@ -506,6 +507,11 @@ impl App {
             } else {
                 self.macro_replay_progress_status();
             }
+            return Ok(());
+        }
+        if self.plugins.input.is_some() {
+            self.last_interaction = Instant::now();
+            self.handle_plugin_input(input);
             return Ok(());
         }
         self.handle_input_inner(input, false)

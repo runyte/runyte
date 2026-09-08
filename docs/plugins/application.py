@@ -18,6 +18,7 @@ class Application:
         self.name, self.commands, self.capabilities = name, commands, capabilities
         self.handlers = {}
         self.on_event = lambda event, data: None
+        self.on_input = lambda context: None
         self._lock = threading.RLock()
         self._pending = {}
         self._serial = 0
@@ -82,7 +83,7 @@ class Application:
                 return
             params = {**message['params'], 'invocation': message['id']}
             try:
-                handler = self.handlers[params['command']]
+                handler = self.on_input if message.get('method') == 'ui.submit' else self.handlers[params['command']]
                 result = handler(params) or {'job': None}
                 self._write({'type': 'response', 'id': message['id'], 'result': result})
             except PluginError as error:

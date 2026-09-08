@@ -20,12 +20,17 @@ app = Application('Local files', [
     command('rename', 'Review renaming a file; colon argument: destination', 'destination'),
     command('copy', 'Review copying a file; colon argument: destination', 'destination'),
     command('trash', 'Review trashing the selected file'),
-], ['views', 'filesystem', 'documents'])
+    command('new', 'Create a file using a native prompt'),
+    command('new-directory', 'Create a directory using a native prompt'),
+    command('rename-selected', 'Rename the selected file using a native prompt'),
+    command('copy-selected', 'Copy the selected file using a native prompt'),
+], ['views', 'filesystem', 'documents', 'interaction'])
 
 lock = threading.RLock()
 view = revision = directory = directory_revision = None
 path = '.'
 entries = {}
+pending_inputs = {}
 
 def listing(destination):
     rows, offset, expected = [], 0, None
@@ -106,6 +111,27 @@ def mutate(context, operation):
             app.request('filesystem.cancel', plan=prepared['plan'])
             raise
 
+def destination_prompt(context, operation):
+    with lock:
+        current(context)
+        if operation not in ('create_file', 'create_directory'):
+            selected(context)
+        result = app.request('ui.prompt', invocation=context['invocation'], title='Destination',
+                             field={'id': 'destination', 'label': 'Name relative to this directory',
+                                    'kind': 'text', 'required': True})
+        pending_inputs[result['surface']] = (dict(context), operation)
+
+def submitted(context):
+    with lock:
+        pending = pending_inputs.pop(context['surface'], None)
+        if pending is None or not context['accepted']:
+            return
+        original, operation = pending
+        original['invocation'] = context['invocation']
+        original['arguments'] = context['values']
+        mutate(original, operation)
+
+
 def event(name, data):
     global view, directory
     with lock:
@@ -132,7 +158,12 @@ app.handlers = {
     'rename': lambda context: mutate(context, 'rename'),
     'copy': lambda context: mutate(context, 'copy'),
     'trash': lambda context: mutate(context, 'trash'),
+    'new': lambda context: destination_prompt(context, 'create_file'),
+    'new-directory': lambda context: destination_prompt(context, 'create_directory'),
+    'rename-selected': lambda context: destination_prompt(context, 'rename'),
+    'copy-selected': lambda context: destination_prompt(context, 'copy'),
 }
 app.on_event = event
+app.on_input = submitted
 if __name__ == '__main__':
     app.run()

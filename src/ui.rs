@@ -608,7 +608,11 @@ fn render_editor_frame(
         global_status_line_area,
         interaction_line_area,
     );
-    if app.fs_confirmation.is_some() {
+    if app.plugins.input.is_some() {
+        if let Some(overlay) = overlays.iter().find(|o| o.kind == OverlayKind::Prompt) {
+            draw_snapshot_overlay(frame, &app.theme, overlay, snapshot);
+        }
+    } else if app.fs_confirmation.is_some() {
         draw_fs_confirmation(frame, &app, editor_area);
     } else if app.picker.is_some() {
         draw_picker(frame, &app, editor_area);

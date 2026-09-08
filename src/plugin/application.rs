@@ -121,6 +121,32 @@ pub struct CommandResult {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "method", content = "params", deny_unknown_fields)]
 pub enum Request {
+    #[serde(rename = "ui.form")]
+    UiForm {
+        invocation: String,
+        title: String,
+        fields: Vec<super::interaction::Field>,
+    },
+    #[serde(rename = "ui.prompt")]
+    UiPrompt {
+        invocation: String,
+        title: String,
+        field: super::interaction::Field,
+    },
+    #[serde(rename = "ui.pick")]
+    UiPick {
+        invocation: String,
+        title: String,
+        choices: Vec<String>,
+    },
+    #[serde(rename = "ui.confirm")]
+    UiConfirm {
+        invocation: String,
+        title: String,
+        message: String,
+    },
+    #[serde(rename = "ui.dismiss")]
+    UiDismiss { surface: String },
     #[serde(rename = "filesystem.list")]
     FilesystemList {
         path: String,
@@ -292,6 +318,12 @@ impl Default for Limits {
 #[derive(Clone, Debug, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum HostMessage {
+    #[serde(rename = "request")]
+    InputRequest {
+        id: String,
+        method: &'static str,
+        params: super::interaction::Submission,
+    },
     Hello {
         version: &'static str,
         capabilities: Vec<&'static str>,
@@ -340,6 +372,9 @@ pub enum Response {
 #[derive(Clone, Debug, Serialize)]
 #[serde(untagged)]
 pub enum ResultValue {
+    Surface {
+        surface: String,
+    },
     Directory {
         directory: String,
         revision: String,
@@ -409,7 +444,9 @@ pub struct Invocation {
     pub rows: Vec<String>,
 }
 
+#[derive(Clone)]
 pub(crate) struct CapturedContext {
+    pub foreground_allowed: bool,
     pub action: Option<u64>,
     pub pane: usize,
     pub buffer: usize,
@@ -420,6 +457,7 @@ pub(crate) struct CapturedContext {
 
 /// Bounded host ownership, independent of a frontend and the ten-second control timer.
 pub(crate) struct Instance {
+    pub input_surfaces: BTreeSet<String>,
     pub directories: BTreeMap<String, super::filesystem::Directory>,
     pub plans: BTreeMap<String, crate::fs_plan::FsPlan>,
     pub local_requests: BTreeMap<String, super::filesystem::Pending>,
@@ -452,6 +490,7 @@ impl Default for Instance {
             .unwrap_or_default()
             .as_nanos();
         Self {
+            input_surfaces: Default::default(),
             directories: Default::default(),
             plans: Default::default(),
             local_requests: Default::default(),
@@ -525,6 +564,7 @@ impl Instance {
 }
 
 pub const CAPABILITIES: &[&str] = &[
+    "interaction",
     "workspace",
     "jobs",
     "views",
@@ -560,6 +600,11 @@ pub(crate) fn decode(bytes: &[u8]) -> anyhow::Result<super::ClientMessage> {
             method,
             "buffer.list"
                 | "buffer.open"
+                | "ui.form"
+                | "ui.prompt"
+                | "ui.pick"
+                | "ui.confirm"
+                | "ui.dismiss"
                 | "filesystem.list"
                 | "filesystem.prepare"
                 | "filesystem.apply"
@@ -722,6 +767,27 @@ mod tests {
                     applied: 1,
                     recovery: false,
                 }),
+            },
+            HostMessage::Response {
+                id: "p:200".into(),
+                outcome: Response::Success {
+                    result: ResultValue::Surface {
+                        surface: "u:g:1".into(),
+                    },
+                },
+            },
+            HostMessage::InputRequest {
+                id: "h:2".into(),
+                method: "ui.submit",
+                params: super::super::interaction::Submission {
+                    surface: "u:g:1".into(),
+                    accepted: true,
+                    values: [(
+                        "name".into(),
+                        super::super::interaction::Value::Text("é".into()),
+                    )]
+                    .into(),
+                },
             },
         ];
         let expected = fixtures

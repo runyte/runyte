@@ -41,6 +41,26 @@ days, and fails below 89% total line coverage. The floor is deliberately below
 the observed baseline because conditional Linux and macOS code changes both the
 instrumented denominator and the paths available to a run on one platform.
 
+## 2026-09-08 — native application interaction
+
+Measured on `x86_64-unknown-linux-gnu` at `364fa1c` plus the native interaction
+round, using Rust 1.97.1 and cargo-llvm-cov 0.9.0. Canonical workspace coverage
+and the ordinary full suite each passed 3,116 tests with 33 ignored. Formatting,
+warnings-as-errors Clippy and both schema/example checkers passed.
+
+| Measure | Covered | Total | Coverage |
+| --- | ---: | ---: | ---: |
+| Lines | 106,407 | 116,087 | 91.66% |
+| Functions | 9,780 | 10,588 | 92.37% |
+| Regions | 163,948 | 179,746 | 91.21% |
+
+New host regressions cover Unicode form editing, validation and bounds, secret
+masking through private frames, choice filtering/navigation, native confirmation,
+foreign dismissal, competing input, detach/stop, cancelled foreground grants and
+shared payload reservation/release. A main-loop test verifies input-trace
+redaction before and after surface closure. The unchanged floor remains 89%;
+native macOS validation is still required before plan completion.
+
 ## 2026-09-08 — local file-manager round and application review
 
 Measured on `x86_64-unknown-linux-gnu` at `0731e51` plus the local filesystem

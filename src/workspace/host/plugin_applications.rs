@@ -149,6 +149,17 @@ impl WorkspaceHost {
                         Err(error) => self.application_local_reply(id, request_id, Err(error)),
                     };
                 }
+                if matches!(
+                    request,
+                    api::Request::UiForm { .. }
+                        | api::Request::UiPrompt { .. }
+                        | api::Request::UiPick { .. }
+                        | api::Request::UiConfirm { .. }
+                        | api::Request::UiDismiss { .. }
+                ) {
+                    let result = self.application_input_request(id, request);
+                    return self.application_local_reply(id, request_id, result);
+                }
                 let result = self.application_request(id, request);
                 let event = result
                     .as_ref()

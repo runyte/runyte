@@ -309,6 +309,7 @@
       "type": "hello",
       "version": "runyte-experimental-2",
       "capabilities": [
+        "interaction",
         "workspace",
         "jobs",
         "views",
@@ -552,6 +553,115 @@
         "state": "succeeded",
         "applied": 1,
         "recovery": false
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:200",
+      "method": "ui.form",
+      "params": {
+        "invocation": "h:1",
+        "title": "Profile",
+        "fields": [
+          {
+            "id": "name",
+            "label": "Name",
+            "kind": "text",
+            "required": true,
+            "choices": [],
+            "minimum_length": 0,
+            "maximum_length": 4096
+          }
+        ]
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:201",
+      "method": "ui.prompt",
+      "params": {
+        "invocation": "h:1",
+        "title": "Name",
+        "field": {
+          "id": "name",
+          "label": "Name",
+          "kind": "text",
+          "required": true,
+          "choices": [],
+          "minimum_length": 0,
+          "maximum_length": 4096
+        }
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:202",
+      "method": "ui.pick",
+      "params": {
+        "invocation": "h:1",
+        "title": "Choose",
+        "choices": [
+          "one",
+          "two"
+        ]
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:203",
+      "method": "ui.confirm",
+      "params": {
+        "invocation": "h:1",
+        "title": "Confirm",
+        "message": "Continue?"
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:204",
+      "method": "ui.dismiss",
+      "params": {
+        "surface": "u:g:1"
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "response",
+      "id": "p:200",
+      "result": {
+        "surface": "u:g:1"
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "request",
+      "id": "h:2",
+      "method": "ui.submit",
+      "params": {
+        "surface": "u:g:1",
+        "accepted": true,
+        "values": {
+          "name": "é"
+        }
       }
     }
   }

@@ -228,11 +228,12 @@ plugins:
     api: runyte-experimental-2
     executable: /usr/bin/python3
     args: [/path/to/runyte/docs/plugins/files.py]
-    capabilities: [views, filesystem, documents]
+    capabilities: [views, filesystem, documents, interaction]
 ```
 
 Run `:plugin.files.open .`. Enter opens the selected regular text file or browses
-the selected directory; Tab offers Parent, Refresh and Trash. Destination-taking
+the selected directory; Tab offers Parent, Refresh, Trash and native destination
+prompts for New, New directory, Rename selected and Copy selected. Destination-taking
 actions use the colon palette: `:plugin.files.create "new note.txt"`,
 `:plugin.files.mkdir subdir`, `:plugin.files.rename renamed.txt`, and
 `:plugin.files.copy copy.txt`. Destinations are relative to the directory shown.
@@ -277,3 +278,43 @@ disk baseline. It reuses an existing buffer, preserving unsaved text. Omitting
 `invocation` opens in the background; supplying it requests presentation in the
 originating pane. A changed foreground context rejects publication without
 switching panes. Opening an existing file does not save, reload or close it.
+
+
+## Native input
+
+The `interaction` capability admits `ui.prompt`, `ui.pick`, `ui.form`,
+`ui.confirm` and `ui.dismiss`. Every opening request names a current foreground
+`invocation`. A second surface returns `busy`; macro recording/replay also refuses
+input acquisition. Each retained surface reserves 512 KiB in the shared payload
+ledger until completion or cancellation. Forms have at most sixteen uniquely named fields: `text`,
+`secret`, `boolean` or `choice`. Text fields support `required`, `minimum_length`
+and `maximum_length` (Unicode scalars), with an additional 4,096-byte value limit.
+Choices contain at most 64 distinct bounded labels. Titles/labels are plain text
+without controls. Values start empty, false, or at the first choice.
+
+Opening returns `{ "surface": "opaque handle" }` promptly. The calling command
+can finish; human input does not extend a control deadline. Completion delivers a
+new host request, `ui.submit`, with `{surface, accepted, values}`. The Python SDK
+routes this to `app.on_input(context)`, adding `invocation` for the new request.
+Acknowledge it with the ordinary command response (the SDK does this). Accepted
+input carries a fresh foreground grant valid for that callback. Cancellation
+returns empty values and grants no authority to reopen UI. Dismissal is owner-only
+and idempotent; detach, source closure, competing native input and owner failure
+cancel the surface. A dead owner receives no callback. The callback has the same
+ten-second deadline as other control handlers.
+
+Forms use Tab/Shift-Tab or Up/Down for fields, Left/Right/Space for choices and
+booleans, Enter to submit valid values, and Escape/Ctrl-c to cancel. Text editing
+uses scalar cursor movement, Home/End, Backspace/Delete and bounded literal paste.
+`ui.pick` displays and filters candidates using the ordinary picker matcher;
+Up/Down selects and Enter accepts. `ui.confirm` uses the native confirmation vocabulary: Enter accepts with
+`confirmed: true`, while Escape/Ctrl-c cancels with no values.
+The local file manager uses `ui.prompt` followed by native filesystem confirmation.
+
+Secret values appear only in the accepted owner callback. All editor snapshots
+and bundled frontend frames contain masking glyphs; macro recording, command
+history, editor text and diagnostic input tracing never retain the typed value.
+Input state is ephemeral and is not persisted. Plugins must keep secret values
+out of their own logs and state. Remote field validation is not implemented yet;
+plugins can validate returned values and request a fresh form from an accepted
+callback, subject to the same foreground checks.

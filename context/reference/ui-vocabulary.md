@@ -472,3 +472,10 @@ surface. Detach, owner stop and source-buffer closure cancel the confirmation.
 Acceptance applies the reviewed plan through ordinary filesystem reconciliation;
 application plans preserve unsaved directory projections, including the active
 explorer. Cancellation is delivered to the owner as a lifecycle event.
+
+Application input reuses native input overlays. A form shows labelled fields and
+a current editing line, with Tab/Shift-Tab or arrows moving between fields.
+Secret fields are masked before snapshot production. Application pickers display
+filterable candidate rows using the shared matcher. Opening competing native
+input cancels the application surface, as do detach and owner/source closure.
+Cancelled callbacks cannot reopen presentation without another foreground command.

@@ -2986,7 +2986,8 @@ They run asynchronously; changing the invoking text rejects stale results.
 Persistent hosts retain their plugin processes across TUI detach and reattach.
 Opt-in epoch 2 applications also provide retained native views, typed commands,
 finite background jobs, explicit buffer/selection operations and bounded local
-filesystem operations with native confirmation. The
+filesystem operations with native confirmation, plus native prompts, filterable
+choices and forms with masked secret fields. The
 [application guide](plugins/applications.md) includes runnable task-list, local
 file-manager and background-job examples and lists the remaining work.
 

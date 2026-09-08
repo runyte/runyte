@@ -47,6 +47,12 @@ pub(crate) struct Instance {
 
 #[derive(Default)]
 pub(crate) struct Plugins {
+    pub input: Option<super::plugin_interaction::Surface>,
+    pub input_finished: Vec<(
+        usize,
+        plugin::application::CapturedContext,
+        plugin::interaction::Submission,
+    )>,
     pub filesystem_confirmation: Option<(usize, String, u64, usize)>,
     pub filesystem_finished: Vec<(usize, plugin::filesystem::Finished)>,
     pub commands: BTreeMap<u64, RuntimeCommand>,
@@ -178,6 +184,7 @@ impl App {
                 );
             }
             let capture = plugin::application::CapturedContext {
+                foreground_allowed: true,
                 action: self.active_action_id,
                 pane: self.active_pane,
                 buffer: self.active().buffer,
