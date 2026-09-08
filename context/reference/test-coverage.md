@@ -41,6 +41,27 @@ days, and fails below 89% total line coverage. The floor is deliberately below
 the observed baseline because conditional Linux and macOS code changes both the
 instrumented denominator and the paths available to a run on one platform.
 
+## 2026-09-08 — provider-backed document opening
+
+Measured on `x86_64-unknown-linux-gnu` at `bb03f2f` plus the provider read round,
+using Rust 1.97.1 and cargo-llvm-cov 0.9.0. Canonical workspace coverage and the
+ordinary full suite each passed 3,174 tests with 33 ignored. Formatting,
+warnings-as-errors Clippy and both schema/example checkers passed.
+
+| Measure | Covered | Total | Coverage |
+| --- | ---: | ---: | ---: |
+| Lines | 108,430 | 118,316 | 91.64% |
+| Functions | 9,915 | 10,746 | 92.27% |
+| Regions | 166,398 | 182,498 | 91.18% |
+
+Twenty new tests cover remote identity, Unicode/CRLF baseline editing, native and
+bundled-client save refusal, absence of local IO/LSP identity, canonical reuse,
+version/offset/EOF validation, cancellation and deadline races, provider stop,
+foreground changes, handle exhaustion, queue failures and shared control capacity.
+The native PTY example opened and edited multi-chunk provider text; a two-second
+settled observation emitted no bytes. The floor remains 89%. Native macOS and the
+complete application workload measurements remain required before plan completion.
+
 ## 2026-09-08 — bounded recursive application filesystem operations
 
 Measured on `x86_64-unknown-linux-gnu` at `f0488bf` plus the recursive filesystem

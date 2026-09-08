@@ -156,6 +156,7 @@ impl WorkspaceHost {
 
     /// Administrative cancellation also removes commands and subscriptions.
     pub fn stop_plugin(&mut self, id: usize, reason: &str) {
+        self.stop_provider_reads(id);
         self.orphan_document_saves(id);
         self.orphan_plugin_filesystem_apply(id);
         self.app.cancel_plugin_input(id, None);

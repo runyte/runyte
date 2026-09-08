@@ -9,6 +9,8 @@
 
 mod filesystem;
 pub(crate) use filesystem::{FilesystemInput, FilesystemUpdate};
+mod provider;
+pub use provider::{ProviderDocument, ProviderIdentity};
 
 use std::{
     collections::HashMap,
@@ -90,6 +92,7 @@ const HISTORY_LIMIT: usize = 1000;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum BufferKind {
     File,
+    Provider(ProviderDocument),
     Directory,
     Scratch,
     Virtual {
@@ -2503,7 +2506,10 @@ impl Buffer {
     /// `SPECIAL_BUFFER_RETENTION_LIMIT`; scratch remains ordinary pathless
     /// text.
     pub fn is_special(&self) -> bool {
-        !matches!(self.kind, BufferKind::File | BufferKind::Scratch)
+        !matches!(
+            self.kind,
+            BufferKind::File | BufferKind::Provider(_) | BufferKind::Scratch
+        )
     }
 
     /// Whether this scratch has no text or unsaved state worth retaining.
@@ -2654,6 +2660,14 @@ impl Buffer {
 
     pub fn display_name(&self) -> String {
         match &self.kind {
+            BufferKind::Provider(document) => {
+                let suffix = if document.available {
+                    ""
+                } else {
+                    " [unavailable]"
+                };
+                format!("[remote] {}{suffix}", document.label)
+            }
             BufferKind::File => self
                 .path
                 .as_ref()
@@ -3088,6 +3102,10 @@ impl Buffer {
         replace: bool,
         write: impl FnOnce(&Path, &[u8], ReplacePolicy<'_>) -> Result<AtomicWriteStatus>,
     ) -> Result<SaveOutcome> {
+        ensure!(
+            self.provider().is_none(),
+            "provider document saving is not available"
+        );
         if let Some(reason) = self.read_only_reason() {
             bail!("{reason}");
         }
@@ -3169,6 +3187,10 @@ impl Buffer {
         replace: bool,
         write: impl FnOnce(&Path, &[u8]) -> Result<AtomicWriteStatus>,
     ) -> Result<SaveOutcome> {
+        ensure!(
+            self.provider().is_none(),
+            "provider documents cannot be saved to a local path"
+        );
         if let Some(reason) = self.read_only_reason() {
             bail!("{reason}");
         }

@@ -8,6 +8,7 @@ pub mod editor;
 mod epoch1;
 pub mod filesystem;
 pub mod interaction;
+pub mod provider;
 pub mod view;
 mod worker;
 pub use epoch1::*;

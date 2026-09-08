@@ -17,6 +17,7 @@ class Application:
     def __init__(self, name, commands, capabilities):
         self.name, self.commands, self.capabilities = name, commands, capabilities
         self.handlers = {}
+        self.resource_handlers = {}
         self.on_event = lambda event, data: None
         self.on_input = lambda context: None
         self._lock = threading.RLock()
@@ -24,6 +25,8 @@ class Application:
         self._serial = 0
         self._slots = threading.BoundedSemaphore(16)
         self._dispatch = threading.BoundedSemaphore(16)
+        self._resource_slots = threading.BoundedSemaphore(4)
+        self._resource_executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
         self._control_slots = threading.BoundedSemaphore(16)
         self._control = concurrent.futures.ThreadPoolExecutor(max_workers=1)
         self._closed = threading.Event()
@@ -70,8 +73,9 @@ class Application:
     def _submit(self, message):
         # Cancellation must still run while command handlers await host replies.
         control = message.get('event') == 'job.cancel_requested'
-        slots = self._control_slots if control else self._dispatch
-        executor = self._control if control else self._executor
+        resource = message.get('method', '').startswith('resource.')
+        slots = self._resource_slots if resource else self._control_slots if control else self._dispatch
+        executor = self._resource_executor if resource else self._control if control else self._executor
         if not slots.acquire(blocking=False):
             raise PluginError('busy', 'Application dispatch queue full')
         executor.submit(self._handle, message, slots)
@@ -83,7 +87,13 @@ class Application:
                 return
             params = {**message['params'], 'invocation': message['id']}
             try:
-                handler = self.on_input if message.get('method') == 'ui.submit' else self.handlers[params['command']]
+                method = message.get('method', 'command.invoke')
+                if method.startswith('resource.'):
+                    handler = self.resource_handlers.get(method)
+                    if handler is None:
+                        raise PluginError('unsupported', 'Resource method is unsupported')
+                else:
+                    handler = self.on_input if method == 'ui.submit' else self.handlers[params['command']]
                 result = handler(params) or {'job': None}
                 self._write({'type': 'response', 'id': message['id'], 'result': result})
             except PluginError as error:
@@ -124,5 +134,6 @@ class Application:
                 for future in self._pending.values():
                     future.set_exception(PluginError('unavailable', 'Host disconnected'))
                 self._pending.clear()
+            self._resource_executor.shutdown(wait=True, cancel_futures=True)
             self._control.shutdown(wait=True, cancel_futures=True)
             self._executor.shutdown(wait=True, cancel_futures=True)

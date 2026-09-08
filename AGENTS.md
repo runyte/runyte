@@ -160,6 +160,8 @@ and the order of the push. Do not infer any of those from the commit history.
   settings, syntax, and language services. Lower-level feature ownership stays
   in the dedicated modules listed below.
 - `src/buffer.rs`: rope-backed buffers, file I/O, and transactional undo.
+  `src/buffer/provider.rs` keeps remote document identity and accepted text separate
+  from local paths; provider documents remain ordinary editable buffers.
 - `src/text.rs`: rope storage, character offsets, and transactions. Every
   buffer mutation goes through a transaction; nothing writes text directly.
 - `src/selection.rs`: normalized multi-range selections over offsets.
@@ -176,7 +178,10 @@ and the order of the push. Do not infer any of those from the commit history.
   lifecycle, explicit-target result application, and buffer observations.
   `src/plugin/filesystem.rs` prepares bounded local operations off the editor
   loop; `src/workspace/host/plugin_filesystem.rs` owns their handles and results,
-  and `src/app/plugin_filesystem.rs` coordinates native confirmation ownership. The
+  and `src/app/plugin_filesystem.rs` coordinates native confirmation ownership.
+  `src/plugin/provider.rs` defines transport-neutral resource values;
+  `src/workspace/host/plugin_providers.rs` owns bounded provider calls and remote
+  document publication. The
   extension contract lives in `docs/plugins.md`, separately from private bundled
   client DTOs and the headless testing facade.
 - `src/headless.rs`: a frontend-independent, test-oriented facade over semantic

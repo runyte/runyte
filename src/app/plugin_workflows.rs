@@ -241,7 +241,8 @@ impl App {
                 .then(|| format!("r:{}", self.buffers[capture.buffer].revision()));
             let instance = self.plugins.instances.get_mut(&command.plugin).unwrap();
             ensure!(
-                instance.application.requests.len() < plugin::application::MAX_REQUESTS,
+                instance.application.requests.len() + instance.application.provider_requests
+                    < plugin::application::MAX_REQUESTS,
                 "application request limit reached"
             );
             let pane = instance

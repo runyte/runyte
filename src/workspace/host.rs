@@ -243,6 +243,7 @@ mod plugin_editor;
 mod plugin_filesystem;
 mod plugin_filesystem_apply;
 mod plugin_interaction;
+mod plugin_providers;
 /// The only owner allowed to mutate one live editor/application workspace.
 ///
 /// Standalone mode uses this value directly. Persistent mode will keep the
@@ -250,6 +251,8 @@ mod plugin_interaction;
 mod plugins;
 
 pub struct WorkspaceHost {
+    provider_reads: std::collections::BTreeMap<String, plugin_providers::PendingRead>,
+    provider_ignored: std::collections::VecDeque<(usize, String, String)>,
     document_saves: std::collections::BTreeMap<String, plugin_documents::PendingSave>,
     filesystem_apply: Option<plugin_filesystem_apply::PendingApply>,
     plugin_workers: std::collections::BTreeMap<usize, crate::plugin::Worker>,
@@ -336,6 +339,8 @@ impl WorkspaceHost {
         let identity = WorkspaceIdentity::from_canonical(app.project_root.clone());
         Self {
             identity,
+            provider_reads: Default::default(),
+            provider_ignored: Default::default(),
             document_saves: Default::default(),
             filesystem_apply: None,
             plugin_workers: Default::default(),

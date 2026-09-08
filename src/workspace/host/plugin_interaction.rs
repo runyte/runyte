@@ -134,7 +134,7 @@ impl WorkspaceHost {
                 continue;
             }
             state.retained_payload -= interaction::SURFACE_CHARGE;
-            if state.requests.len() >= api::MAX_REQUESTS {
+            if state.requests.len() + state.provider_requests >= api::MAX_REQUESTS {
                 self.stop_plugin(owner, "input result consumer is too slow");
                 continue;
             }

@@ -181,6 +181,7 @@ mod mouse_autoscroll;
 mod navigation_and_files;
 mod plugin_document_lifecycle;
 mod presentation_and_settings;
+mod provider_documents;
 mod search_and_pickers;
 mod session_navigation;
 mod tutorial;

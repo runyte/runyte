@@ -309,6 +309,7 @@
       "type": "hello",
       "version": "runyte-experimental-2",
       "capabilities": [
+        "providers",
         "interaction",
         "workspace",
         "jobs",
@@ -736,6 +737,110 @@
         "kind": "file",
         "bytes": 5,
         "revision": "s:1"
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:81",
+      "method": "provider.register",
+      "params": {
+        "name": "memory",
+        "conditional_write": false,
+        "atomic_replace": false
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:82",
+      "method": "resource.open",
+      "params": {
+        "plugin": "memory",
+        "provider": "memory",
+        "key": "notes",
+        "invocation": null
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "response",
+      "id": "h:3",
+      "result": {
+        "kind": "stat",
+        "value": {
+          "key": "notes",
+          "label": "Memory notes",
+          "syntax_hint": "markdown",
+          "version": "v1",
+          "encoding": "utf-8",
+          "bytes": 5
+        }
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "response",
+      "id": "h:4",
+      "result": {
+        "kind": "read",
+        "value": {
+          "version": "v1",
+          "offset": 0,
+          "text": "é猫",
+          "eof": true
+        }
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "request",
+      "id": "h:3",
+      "method": "resource.stat",
+      "params": {
+        "job": "j:g:1",
+        "provider": "memory",
+        "key": "notes"
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "request",
+      "id": "h:4",
+      "method": "resource.read",
+      "params": {
+        "job": "j:g:1",
+        "provider": "memory",
+        "key": "notes",
+        "version": "v1",
+        "offset": 0,
+        "limit": 131072
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "event",
+      "sequence": "e:13",
+      "event": "resource.opened",
+      "data": {
+        "job": "j:g:1",
+        "buffer": "b:g:1",
+        "revision": "r:0",
+        "error": null
       }
     }
   }

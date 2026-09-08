@@ -74,8 +74,8 @@ Concrete decisions in this slice:
 
 Milestone 3 now has a local file manager, document lifecycle, native interaction
 and bounded recursive filesystem operations, documented below. Milestone 4's
-providers, remote save reconciliation and transport examples remain unimplemented. Milestone 5
-still needs managed processes, terminal/external handoffs, activity leases,
+provider-backed reads are implemented; remote save reconciliation and transport
+examples remain outstanding. Milestone 5 still needs managed processes, terminal/external handoffs, activity leases,
 settings/state and the plugin manager. Milestone 6 still needs the broader SDK,
 non-Python example, full conformance matrix and complete application performance
 and supported-platform evidence. Milestones 1–2 also retain their full overload,
@@ -240,6 +240,34 @@ smoke confirmed recursive copy, stat-based opening and zero terminal bytes over
 a two-second settled observation. Native macOS validation remains required.
 Provider operations, observation/resynchronization, richer views, application lifecycle,
 authoring and the complete platform/performance acceptance matrix remain active.
+
+## Provider document read round
+
+`provider.register` and `resource.open` establish transport-neutral metadata and
+serial version-bound UTF-8 reads. Host-issued finite jobs belong to the requester;
+provider call correlation separately tracks the configured provider generation.
+Canonical remote identities live in a distinct editable buffer kind with no local
+path. Live documents are reused; pending duplicates return busy. Titles use safe
+labels, syntax uses an explicit hint, and local filesystem/Git/LSP paths are never
+inferred. Stopped providers leave retained editable documents marked unavailable.
+
+Read limits are 8 MiB per document, 128 KiB per decoded chunk, two pending opens
+per requester/provider, and the shared sixteen host-control slots. Captured
+foreground checks govern final presentation. Cancellation/timeout prevents partial
+publication and frees retained bytes. The Python client has separate bounded
+resource dispatch; `memory.py` demonstrates multi-chunk Unicode and CRLF reads.
+
+Review corrected handle-capacity changes before publication and quiet rollback of
+unannounced jobs when initial provider dispatch fails. The synchronous bundled
+client save endpoint explicitly refuses provider documents rather than acknowledging
+a native refusal as saved. Formatting, warnings-as-errors Clippy, both schema
+checkers and full ordinary/canonical suites passed on Linux: 3,174 tests with
+33 ignored; coverage is 108,430 / 118,316 lines (**91.64%**), above the unchanged
+89% floor. Native PTY opening, editing and local-save refusal passed, with zero
+terminal bytes during a two-second settled observation. Native macOS remains
+required before plan completion. Provider writes, save continuations,
+unknown-outcome reconciliation and restart rebind are the next implementation
+round; transport examples and the remaining plan gates are still active.
 
 ## Investigation: existing foundation and missing boundaries
 

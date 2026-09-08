@@ -20,9 +20,11 @@ class ApplicationSchemaTests(unittest.TestCase):
         app = Application('Test', [], [])
         requests = queue.Queue()
         cancelled = threading.Event()
+        resource = threading.Event()
         app._write = lambda message: requests.put(message) if message['type'] == 'request' else None
         app.handlers['wait'] = lambda _: app.request('workspace.info') and None
         app.on_event = lambda name, data: cancelled.set() if name == 'job.cancel_requested' else None
+        app.resource_handlers['resource.stat'] = lambda _: resource.set() or {'kind': 'stat', 'value': {}}
         try:
             for index in range(4):
                 app._submit({'type': 'request', 'id': f'h:{index}', 'params': {'command': 'wait'}})
@@ -30,12 +32,67 @@ class ApplicationSchemaTests(unittest.TestCase):
                 requests.get(timeout=2)
             app._submit({'type': 'event', 'event': 'job.cancel_requested', 'data': {'job': 'j:1'}})
             self.assertTrue(cancelled.wait(1), 'Cancellation was starved by waiting commands')
+            app._submit({'type': 'request', 'id': 'h:5', 'method': 'resource.stat', 'params': {}})
+            self.assertTrue(resource.wait(1), 'Provider was starved by waiting commands')
         finally:
             with app._lock:
                 for future in app._pending.values():
                     future.set_result({})
+            app._resource_executor.shutdown(wait=True, cancel_futures=True)
             app._control.shutdown(wait=True, cancel_futures=True)
             app._executor.shutdown(wait=True, cancel_futures=True)
+
+    def test_memory_provider_reads_version_bound_unicode_chunks(self):
+        host = [f['message'] for f in FIXTURES if f['direction'] == 'host']
+        child = subprocess.Popen([sys.executable, str(DIRECTORY / 'memory.py')],
+                                 stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                 stderr=subprocess.PIPE, bufsize=0)
+        def send(message):
+            child.stdin.write((json.dumps(message) + '\n').encode())
+            child.stdin.flush()
+        def receive():
+            with selectors.DefaultSelector() as selector:
+                selector.register(child.stdout, selectors.EVENT_READ)
+                self.assertTrue(selector.select(3), 'provider response timed out')
+            message = json.loads(child.stdout.readline(1048577))
+            Draft202012Validator({**SCHEMA, 'anyOf': [{'$ref': '#/$defs/pluginMessage'}]}).validate(message)
+            return message
+        def reply(request, result):
+            send({'type': 'response', 'id': request['id'], 'result': result})
+        try:
+            send(host[0]); receive()
+            send({**host[1], 'capabilities': ['providers', 'documents', 'jobs']})
+            send({**host[2], 'params': {**host[2]['params'], 'arguments': {'key': 'alias'}}})
+            register = receive()
+            self.assertEqual(register['method'], 'provider.register')
+            reply(register, {})
+            opening = receive()
+            self.assertEqual(opening['method'], 'resource.open')
+            reply(opening, {'job': 'j:g:1', 'title': 'Open resource', 'state': 'running', 'progress': 0})
+            self.assertEqual(receive()['result'], {'job': 'j:g:1'})
+            send({'type': 'request', 'id': 'h:2', 'method': 'resource.stat',
+                  'params': {'job': 'j:g:1', 'provider': 'memory', 'key': 'alias'}})
+            metadata = receive()['result']['value']
+            self.assertEqual(metadata['key'], 'notes')
+            content = b''
+            reads = 0
+            while len(content) < metadata['bytes']:
+                send({'type': 'request', 'id': f'h:{reads+3}', 'method': 'resource.read',
+                      'params': {'job': 'j:g:1', 'provider': 'memory', 'key': 'notes',
+                                 'version': metadata['version'], 'offset': len(content), 'limit': 131072}})
+                chunk = receive()['result']['value']
+                self.assertEqual(chunk['offset'], len(content))
+                self.assertEqual(chunk['version'], metadata['version'])
+                content += chunk['text'].encode()
+                reads += 1
+                self.assertEqual(chunk['eof'], len(content) == metadata['bytes'])
+            self.assertGreater(reads, 1)
+            self.assertIn('é猫 🦀\r\n'.encode(), content)
+        finally:
+            child.stdin.close()
+            child.wait(timeout=3)
+            child.stdout.close()
+            child.stderr.close()
 
     def test_file_manager_browses_then_requests_native_confirmation(self):
         host = [f['message'] for f in FIXTURES if f['direction'] == 'host']

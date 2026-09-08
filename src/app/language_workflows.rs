@@ -169,6 +169,10 @@ impl App {
         if !self.lsp_workspace_allowed
             || !self.ports.has_lsp()
             || self.closed_buffers.contains(&buffer_id)
+            || self
+                .buffers
+                .get(buffer_id)
+                .is_some_and(|buffer| buffer.provider().is_some())
         {
             return false;
         }
@@ -3228,7 +3232,7 @@ impl App {
         }
         match buffer_state.kind {
             BufferKind::File => vec![BufferAction::Save, BufferAction::Discard],
-            BufferKind::Scratch | BufferKind::CommitMessage => {
+            BufferKind::Provider(_) | BufferKind::Scratch | BufferKind::CommitMessage => {
                 vec![BufferAction::Discard]
             }
             BufferKind::Virtual { .. }
@@ -3301,6 +3305,11 @@ impl App {
         }
         let kind = self.buffers[buffer].kind.clone();
         match kind {
+            BufferKind::Provider(_) => {
+                let language_before = buffer_language(&self.buffers[buffer], &self.registry);
+                self.buffers[buffer].discard_provider_changes()?;
+                self.resync_replaced_buffer(buffer, language_before);
+            }
             BufferKind::File => {
                 let language_before = buffer_language(&self.buffers[buffer], &self.registry);
                 self.buffers[buffer].reload()?;

@@ -195,6 +195,13 @@ impl WorkspaceHost {
                 id: request_id,
                 outcome,
             } => {
+                if self.provider_response(id, &request_id, &outcome)? {
+                    return Ok(());
+                }
+                ensure!(
+                    !matches!(outcome, api::CommandResponse::Resource { .. }),
+                    "resource response does not match a provider request"
+                );
                 let instance = self.app.plugins.instances.get_mut(&id).unwrap();
                 ensure!(instance.registered, "application must register first");
                 let Some(action) = instance.application.requests.remove(&request_id) else {
@@ -273,6 +280,15 @@ impl WorkspaceHost {
         request: api::Request,
     ) -> Result<(api::ResultValue, Option<&'static str>), api::Error> {
         use api::{ErrorCode as Code, Request};
+        if matches!(
+            request,
+            Request::ProviderRegister(_) | Request::ResourceOpen { .. }
+        ) {
+            return self.application_provider_request(id, request);
+        }
+        if let Some(result) = self.provider_job_request(id, &request) {
+            return result;
+        }
         let host_cancel = match &request {
             Request::JobGet { job }
             | Request::JobCancel { job }
@@ -466,6 +482,9 @@ impl WorkspaceHost {
             return Ok(());
         }
         instance.application.deadlines.remove(&token);
+        if self.provider_deadline(id, &token) {
+            return Ok(());
+        }
         if filesystem_running && self.cancel_queued_filesystem_job(id, &token).is_err() {
             // OS mutations cannot be interrupted or rolled back by a control deadline.
             return Ok(());

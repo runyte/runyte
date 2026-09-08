@@ -19,6 +19,10 @@ mod filesystem_review;
 mod filesystem_stat;
 #[path = "plugin_interaction.rs"]
 mod interaction;
+#[path = "plugin_provider_review.rs"]
+mod provider_review;
+#[path = "plugin_providers.rs"]
+mod providers;
 
 fn setup(
     host: &mut WorkspaceHost,

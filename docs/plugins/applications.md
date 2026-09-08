@@ -5,8 +5,9 @@ Epoch 2 (`runyte-experimental-2`) is being implemented in the
 The current implementation supports typed commands, finite background jobs,
 retained native views, explicit buffer reads/edits, immutable snapshots and
 pane selections, local metadata/browsing, document lifecycle operations, native
-input and confirmed bounded recursive filesystem mutations. Remote providers,
-subscriptions and managed media backends remain unfinished and are not
+input, confirmed bounded recursive filesystem mutations and provider-backed
+UTF-8 document opening. Remote saves and transports, subscriptions and managed
+media backends remain unfinished and are not
 advertised capabilities. This is not completion of the application plan.
 Epoch 1 remains the default and its uppercase example is unchanged.
 
@@ -116,6 +117,8 @@ generation and must never be parsed, persisted, or used by another owner.
 | filesystem | `filesystem.prepare` | Directory handle, expected revision and typed intent; owned prepared plan and descriptions |
 | filesystem + jobs | `filesystem.apply` | Plan and invoking command; presents native confirmation, with no immediate filesystem mutation |
 | filesystem | `filesystem.cancel/release` | Cancel a plan or release a directory snapshot, idempotently |
+| providers | `provider.register` | Unique provider name and independent conditional-write/atomic-replace declarations |
+| documents + jobs | `resource.open` | Configured plugin, provider, resource key and optional invocation; host-owned open job |
 | documents | `buffer.open` | Existing workspace-relative text path and optional invoking command; explicit buffer/revision |
 | documents | `buffer.create` | New workspace-relative path, initial text and optional invocation; named unsaved document |
 | documents + jobs | `buffer.save` | Owned buffer and expected revision; asynchronous host-owned save job |
@@ -214,7 +217,7 @@ These measure payload, not allocator RSS or the external process's memory.
 Buffer/pane issuance is bounded at 1,024/128 handles per connection generation.
 
 Still required by the active plan: revision-tagged field validation; source subscriptions
-and resynchronization; provider reads, asynchronous saves and transfer outcomes;
+and resynchronization; provider saves, rebind reconciliation and transfer outcomes;
 row patches and staged publication; managed helpers, activity leases, state,
 settings and a plugin manager; SFTP/FTP and media examples; broader SDK/conformance
 coverage and the complete performance/platform acceptance matrix.
@@ -417,3 +420,66 @@ buffer-context `save`/`close` commands. Configure it like `files.py`, using
 `:plugin.documents.create notes.txt "first note"` opens the new unsaved document;
 `:plugin.documents.save` returns its save job. Normal `:write`, movement, editing
 and buffer management remain available.
+
+
+## Provider-backed documents
+
+`memory.py` is a deterministic multi-chunk provider with no network or storage.
+Configure its plugin ID as `memory`, executable as `python3`, argument as the
+absolute path to `docs/plugins/memory.py`, epoch as `runyte-experimental-2` and
+capabilities as `[providers, documents, jobs]`. Run `:plugin.memory.open notes`;
+`alias` resolves to the same live document. The document supports normal editing,
+search, selection, splits, undo and syntax highlighting. Newline bytes are
+preserved, including CRLF. This round opens provider documents; remote saving,
+explicit restart rebind and SFTP/FTP transports remain active implementation work.
+Native write, write-to-path and reload refuse provider documents until those
+operations have their provider implementation. Discard restores the last accepted
+in-memory baseline. A stopped provider leaves editable text marked unavailable.
+
+An instance grants `providers` before `provider.register {name, conditional_write,
+atomic_replace}` can register up to eight unique names. Declarations describe
+transport capabilities independently; neither implies an upload is implemented
+by this round. `resource.open {plugin, provider, key, invocation?}` requires
+`documents` and `jobs` on the requesting application. The provider can be another
+configured application. Its generation, provider name and canonical key are
+correlated independently from the requesting application's job and buffer handle.
+A resource key is opaque: it never becomes a local path, Git target or LSP URI.
+Labels must be safe display text without credentials; resource keys are not
+included in titles. An optional syntax hint names a Runyte language.
+
+Opening accepts a finite 60-second host-owned job. The host sends the provider
+`resource.stat {job, provider, key}` and then serial `resource.read {job, provider,
+key, version, offset, limit}` calls, each with a ten-second control deadline.
+Provider calls may arrive before the open request's response; the authoring client
+keeps reading continuously and dispatches resource handlers separately from
+waiting command handlers. Responses use the ordinary `response` envelope, with
+`result: {kind: "stat", value: metadata}` or `{kind: "read", value: chunk}`;
+ordinary typed errors are accepted in either phase. Metadata contains `key`,
+`label`, optional `syntax_hint`, `version`, `encoding: "utf-8"` and `bytes`.
+Each chunk contains `version`, byte `offset`, UTF-8 `text` and `eof`.
+
+A document is at most 8 MiB. Each decoded chunk is at most 128 KiB, with the
+independent 1 MiB encoded-frame limit. Offsets and sizes count UTF-8 bytes, not
+Unicode scalar positions; editor text methods continue to count scalars. Chunks
+must preserve the advertised version, begin at the requested byte offset, make
+positive progress before EOF, and finish at exactly the advertised size. NUL and
+unsupported encodings reject publication. Resource keys/versions/labels are bounded
+at 4,096/256/160 bytes. At most two opens per requester and per provider are pending;
+each reserves 16 MiB of retained payload for read and publication. Provider calls
+share the existing sixteen host control-request slots with commands and input.
+
+An already live canonical identity reuses its buffer without replacing edits or
+its accepted version. A duplicate pending identity returns `busy`, including an
+alias discovered by stat. The host rechecks handle capacity before publishing.
+Completion reliably emits `resource.opened {job, buffer, revision, error}` with
+null buffer/revision on failure, then terminal `job.changed`. A captured foreground
+grant can present the result only while its pane, attachment and input context
+remain valid; otherwise the document stays available in the buffer list. Job
+acceptance does not extend that grant.
+
+The requester may cancel an open, but cannot finish or update a host-owned read
+job. Cancellation immediately prevents publication and releases read state;
+there is no remote mutation to reconcile. Up to 64 retired in-flight request IDs
+are remembered for late replies; other duplicate, foreign or out-of-order replies
+are protocol failures. Provider failure, timeout or stop settles the open without
+publishing partial text. No read creates a polling timer after completion.

@@ -4588,7 +4588,11 @@ fn buffer_language(buffer: &Buffer, registry: &Registry) -> Option<LanguageId> {
     if buffer.is_read_only() || buffer.is_directory() {
         return None;
     }
-    registry.language_for_document(buffer.path.as_deref(), buffer.text())
+    buffer
+        .provider()
+        .and_then(|document| document.syntax_hint.as_deref())
+        .and_then(|hint| registry.language_for_name(hint))
+        .or_else(|| registry.language_for_document(buffer.path.as_deref(), buffer.text()))
 }
 
 /// Parses a buffer if its path or bounded first-line metadata maps to a known

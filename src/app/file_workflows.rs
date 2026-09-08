@@ -20,6 +20,7 @@ use crate::{
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum ReloadDispatch {
+    Provider,
     Directory,
     GitStatus,
     GitBranches,
@@ -40,6 +41,7 @@ fn split_status(axis: Axis) -> &'static str {
 
 pub(super) fn reload_dispatch(kind: &BufferKind) -> ReloadDispatch {
     match kind {
+        BufferKind::Provider(_) => ReloadDispatch::Provider,
         BufferKind::Directory => ReloadDispatch::Directory,
         BufferKind::GitStatus => ReloadDispatch::GitStatus,
         BufferKind::GitBranches => ReloadDispatch::GitBranches,
@@ -809,6 +811,43 @@ impl App {
         index
     }
 
+    pub(crate) fn install_provider_document(&mut self, buffer: Buffer, activate: bool) -> usize {
+        let identity = &buffer
+            .provider()
+            .expect("prepared provider document")
+            .identity;
+        let existing = self
+            .buffers
+            .iter()
+            .enumerate()
+            .find_map(|(index, candidate)| {
+                (!self.closed_buffers.contains(&index)
+                    && candidate
+                        .provider()
+                        .is_some_and(|document| &document.identity == identity))
+                .then_some(index)
+            });
+        let index = existing.unwrap_or_else(|| {
+            let index = self.buffers.len();
+            self.buffers.push(buffer);
+            self.syntax.push(None);
+            self.reparse_whole(index);
+            index
+        });
+        if activate {
+            self.show_provider_document(index);
+        }
+        index
+    }
+
+    pub(crate) fn show_provider_document(&mut self, index: usize) {
+        let covered = self.active_terminal();
+        self.switch_buffer(index);
+        if let Some(terminal) = covered {
+            self.active_mut().covered_terminal = Some((index, terminal));
+        }
+    }
+
     fn live_buffer_for_path(&self, path: &Path) -> Option<usize> {
         let identity = crate::path_safety::path_identity(path).ok()?;
         self.live_buffer_for_identity(&identity)
@@ -1099,6 +1138,10 @@ impl App {
             buffer < self.buffers.len() && !self.closed_buffers.contains(&buffer),
             "unknown or closed buffer"
         );
+        ensure!(
+            self.buffers[buffer].provider().is_none(),
+            "provider document saving is not available"
+        );
         self.buffers[buffer].commit_undo_group();
         self.save_buffer(buffer, None, false)
     }
@@ -1288,6 +1331,10 @@ impl App {
         path: Option<PathBuf>,
         replace: bool,
     ) -> Result<()> {
+        if self.buffers[buffer_id].provider().is_some() {
+            self.action_warning("Save refused", "Provider document saving is not available");
+            return Ok(());
+        }
         if self.plugins.filesystem_applying || self.document_mutation_pending(buffer_id) {
             self.action_warning(
                 "Save pending",
@@ -1604,6 +1651,13 @@ impl App {
 
     pub(super) fn reload_active(&mut self) -> Result<()> {
         match reload_dispatch(&self.active_buffer().kind) {
+            ReloadDispatch::Provider => {
+                self.action_warning(
+                    "Reload refused",
+                    "Provider document reloading is not available",
+                );
+                Ok(())
+            }
             ReloadDispatch::Directory => self.refresh_directory(),
             ReloadDispatch::GitStatus => {
                 self.refresh_git();

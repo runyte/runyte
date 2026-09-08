@@ -109,6 +109,7 @@ pub enum ClientMessage {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum CommandResponse {
+    Resource { result: super::provider::Response },
     Success { result: CommandResult },
     Failure { error: Error },
 }
@@ -121,6 +122,15 @@ pub struct CommandResult {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "method", content = "params", deny_unknown_fields)]
 pub enum Request {
+    #[serde(rename = "provider.register")]
+    ProviderRegister(super::provider::Registration),
+    #[serde(rename = "resource.open")]
+    ResourceOpen {
+        plugin: String,
+        provider: String,
+        key: String,
+        invocation: Option<String>,
+    },
     #[serde(rename = "buffer.save")]
     BufferSave {
         buffer: String,
@@ -340,6 +350,12 @@ impl Default for Limits {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum HostMessage {
     #[serde(rename = "request")]
+    ResourceRequest {
+        id: String,
+        #[serde(flatten)]
+        request: super::provider::Request,
+    },
+    #[serde(rename = "request")]
     InputRequest {
         id: String,
         method: &'static str,
@@ -374,6 +390,7 @@ pub enum HostMessage {
 #[derive(Clone, Debug, Serialize)]
 #[serde(untagged)]
 pub enum EventData {
+    ResourceFinished(super::provider::Finished),
     FilesystemFinished(super::filesystem::Finished),
     FilesystemStarted { plan: String, job: String },
     Job(Job),
@@ -480,6 +497,8 @@ pub(crate) struct CapturedContext {
 
 /// Bounded host ownership, independent of a frontend and the ten-second control timer.
 pub(crate) struct Instance {
+    pub provider_requests: usize,
+    pub providers: BTreeMap<String, super::provider::Registration>,
     pub input_surfaces: BTreeSet<String>,
     pub directories: BTreeMap<String, super::filesystem::Directory>,
     pub plans: BTreeMap<String, crate::fs_plan::FsPlan>,
@@ -513,6 +532,8 @@ impl Default for Instance {
             .unwrap_or_default()
             .as_nanos();
         Self {
+            provider_requests: 0,
+            providers: Default::default(),
             input_surfaces: Default::default(),
             directories: Default::default(),
             plans: Default::default(),
@@ -587,6 +608,7 @@ impl Instance {
 }
 
 pub const CAPABILITIES: &[&str] = &[
+    "providers",
     "interaction",
     "workspace",
     "jobs",
@@ -621,7 +643,9 @@ pub(crate) fn decode(bytes: &[u8]) -> anyhow::Result<super::ClientMessage> {
         );
         if !matches!(
             method,
-            "buffer.list"
+            "provider.register"
+                | "resource.open"
+                | "buffer.list"
                 | "buffer.open"
                 | "buffer.save"
                 | "buffer.close"
@@ -834,6 +858,35 @@ mod tests {
                         revision: "s:1".into(),
                     }),
                 },
+            },
+            HostMessage::ResourceRequest {
+                id: "h:3".into(),
+                request: super::super::provider::Request::Stat {
+                    job: "j:g:1".into(),
+                    provider: "memory".into(),
+                    key: "notes".into(),
+                },
+            },
+            HostMessage::ResourceRequest {
+                id: "h:4".into(),
+                request: super::super::provider::Request::Read {
+                    job: "j:g:1".into(),
+                    provider: "memory".into(),
+                    key: "notes".into(),
+                    version: "v1".into(),
+                    offset: 0,
+                    limit: 131072,
+                },
+            },
+            HostMessage::Event {
+                sequence: "e:13".into(),
+                event: "resource.opened",
+                data: EventData::ResourceFinished(super::super::provider::Finished {
+                    job: "j:g:1".into(),
+                    buffer: Some("b:g:1".into()),
+                    revision: Some("r:0".into()),
+                    error: None,
+                }),
             },
         ];
         let expected = fixtures

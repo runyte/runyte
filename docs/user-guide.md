@@ -2990,8 +2990,12 @@ filesystem operations with native confirmation, plus native prompts, filterable
 choices and forms with masked secret fields. Applications can also create named
 unsaved documents and save them asynchronously: later edits stay dirty, and
 pending or uncertain writes cannot silently complete a close or `--wait` request.
-The [application guide](plugins/applications.md) includes runnable task-list, local
-file-manager, document and background-job examples and lists the remaining work.
+Provider applications can also open version-bound UTF-8 documents with normal
+editing and syntax highlighting; remote saving and network adapters remain in
+development. Their identities stay separate from local files. The
+[application guide](plugins/applications.md) includes runnable task-list, local
+file-manager, document, memory-provider and background-job examples and lists the
+remaining work.
 
 The runnable example, installation and configuration, command bindings, errors,
 subscription behavior, limits and experimental API are in the
