@@ -174,6 +174,7 @@ injection queries shipped inside them:
 - `tree-sitter-c 0.24.2`;
 - `tree-sitter-c-sharp 0.23.5`;
 - `tree-sitter-cmake 0.7.4`;
+- `tree-sitter-containerfile 0.9.2`;
 - `tree-sitter-cpp 0.23.4`;
 - `tree-sitter-css 0.25.0`;
 - `tree-sitter-go 0.25.0`;
@@ -203,7 +204,8 @@ and the query material used by Runyte are recorded in
 `docs/dependency-license-inventory.md`.
 
 Runyte carries attributed query files from these exact releases under
-`src/syntax/queries/`: the `tree-sitter-proto` highlight query; indentation
+`src/syntax/queries/`: the `tree-sitter-proto` highlight query; the Bash-only
+subset of `tree-sitter-containerfile` injections; indentation
 queries adapted from `tree-sitter-sequel`, `tree-sitter-zig`,
 `tree-sitter-cmake`, and `tree-sitter-proto`; fold queries from
 `tree-sitter-zig`, `tree-sitter-cmake`, `tree-sitter-proto`, and
@@ -224,6 +226,8 @@ Copyright notices present in the audited crate archives include:
 - Copyright (c) 2019 fwcd (`tree-sitter-kotlin-sg`);
 - Copyright (c) 2014-2023 Max Brunsfeld, Damien Guard, Amaan Qureshi, and
   contributors (`tree-sitter-c-sharp`);
+- Copyright (c) 2026 WharfLab and copyright (c) 2021 Camden Cheek
+  (`tree-sitter-containerfile`, with both license files shipped in the crate);
 - Copyright (c) 2025 Uy Ha (`tree-sitter-cmake`);
 - Copyright (c) 2024-2025 Mohammad Ashar Khan (`tree-sitter-proto`);
 - Copyright (c) 2016 Max Brunsfeld (`tree-sitter-python`);
@@ -231,6 +235,9 @@ Copyright notices present in the audited crate archives include:
 - Copyright (c) 2021 alex-pinkus (`tree-sitter-swift`); and
 - Copyright (c) 2019-2021 Ika and copyright (c) 2024 tree-sitter-grammars
   contributors (`tree-sitter-yaml`).
+
+Both `tree-sitter-containerfile` MIT license texts are preserved in
+`licenses/Tree-Sitter-Containerfile-MIT.txt`.
 
 The `tree-sitter-html 0.23.2` archive declares MIT but omits its repository
 license file. The license at its packaged revision carries copyright (c) 2014

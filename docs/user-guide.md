@@ -9,7 +9,7 @@ For the project overview and quick start, see the [main README](../README.md).
 - Normal, Insert, Replace, Select, and Command modes
 - Tree-sitter syntax highlighting for Python, Rust, Swift, C, C++, JavaScript,
   TypeScript, TSX, HTML, CSS, Go, Bash, Java, Kotlin, SQL, Lua, C#, Zig, CMake,
-  Protobuf, Make, INI, Markdown, TOML, YAML, and JSON
+  Protobuf, Make, INI, Markdown, TOML, YAML, JSON, and Dockerfile
 - Language servers: diagnostics, completion, hover, signature help, goto,
   references, rename, code actions, formatting, and symbol pickers
 - Word completion from every open buffer, including the explorer, with no
@@ -66,13 +66,22 @@ behavior is deliberately absent and some of it deliberately differs; the
 Tree-sitter grammars are compiled into the binary, so highlighting needs no
 network access, no grammar directory, and no runtime library loading. Adding a
 language means adding a dependency and a row to `src/syntax/grammars.rs`.
-Language detection checks an exact filename, then a case-insensitive
-extension, then a bounded first-line shebang; Bash currently recognizes
-`.bashrc`, `.bash_profile`, `sh`/`bash`/`ebuild`/`eclass` extensions, and
-`sh`/`bash`/`dash` interpreters. CMake recognizes `CMakeLists.txt`, Make
+Language detection checks an exact filename, then a registered filename prefix,
+then a case-insensitive extension, then a bounded first-line shebang; Bash
+currently recognizes `.bashrc`, `.bash_profile`, `sh`/`bash`/`ebuild`/`eclass`
+extensions, and `sh`/`bash`/`dash` interpreters. CMake recognizes `CMakeLists.txt`, Make
 recognizes `Makefile`, `makefile`, and `GNUmakefile`, and Lua recognizes a
 `lua` interpreter in a shebang. INI parses both `;` and `#` comments;
 `toggle-comments` inserts `;` when adding one.
+
+Dockerfile support recognizes `Dockerfile`, `Containerfile`, their lowercase
+names, dot-suffixed variants such as `Dockerfile.dev`, and `.dockerfile` /
+`.containerfile` extensions. The language name is `dockerfile`, including in
+Markdown code fences. Instructions, comments, strings, build options, and ports
+are highlighted; shell commands and `RUN` heredoc bodies use Bash highlighting
+within the injection size limit below. Shell highlighting assumes Bash syntax,
+including when a file selects another interpreter with `SHELL`. Dockerfile has
+no dedicated text-object, outline, indentation, or fold queries.
 
 Kotlin support recognizes `.kt` and `.kts`, including Kotlin 2 multi-dollar
 strings and guarded `when` branches. The pinned grammar does not yet model

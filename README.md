@@ -55,7 +55,7 @@ Community: [r/runyte](https://www.reddit.com/r/runyte/)
 | **Files** | Editable directory explorer with reviewed filesystem plans; unified file, buffer, and terminal search |
 | **Terminals** | Interactive PTYs, scrollback, modal review, splits, persistent processes |
 | **Git** | Status, diffs, staging, commits, pull, push, branches, worktrees, blame, stashes |
-| **Language** | 26 bundled Tree-sitter grammars and asynchronous LSP |
+| **Language** | 27 bundled Tree-sitter grammars and asynchronous LSP |
 | **Sessions** | Standalone or persistent workspaces, session switching, and `$EDITOR`-compatible `--wait` |
 | **Interface** | Registry-backed key hints and help, themes, settings, and notifications |
 

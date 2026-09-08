@@ -51,6 +51,11 @@ The sixth batch exact-pins `tree-sitter-sequel` at `=0.3.11`,
 `tree-sitter-ini` at `=1.4.0`. These pins protect local capability queries and
 the adapted query files carried for Zig, CMake, and Protobuf from silent node
 or predicate changes.
+Dockerfile support exact-pins `tree-sitter-containerfile` at `=0.9.2`. Its
+archive includes both `LICENSE` (WharfLab) and `LICENSE-MIT-CamdenCheek`.
+The archive reports its VCS revision with `dirty: true`, so the Cargo checksum
+is the identity of the audited source; the revision alone is not an exact
+source reproduction.
 Future grammar upgrades must repeat the query, checksum, revision, archive, and
 license review below rather than arriving through a compatible-version update.
 
@@ -89,6 +94,7 @@ the package's directory in its upstream repository.
 | `tree-sitter-python 0.25.0` | MIT | `tree-sitter/tree-sitter-python` at `293fdc02038ee2bf0e2e206711b69c90ac0d413f` | `6bf85fd39652e740bf60f46f4cda9492c3a9ad75880575bf14960f775cb74a1c` | Grammar plus `queries/highlights.scm` |
 | `tree-sitter-swift 0.7.3` | MIT | `alex-pinkus/tree-sitter-swift` at `b8b22bffbb3441780e6471665bacfb263741c86a` | `fe36052155b9dd69ca82b3b8f1b4ccfb2d867125ac1a4db1dd7331829242668c` | Grammar and upstream `queries/highlights.scm`, extended by one Runyte-authored comment query; upstream injections are deliberately disabled |
 | `tree-sitter-c 0.24.2` | MIT | `tree-sitter/tree-sitter-c` at `b780e47fc780ddc8da13afa35a3f4ed5c157823d` | `a9b2eb57a55fed6b00812912e730b7a275cf4fe98bfd6a5d76263d4438371728` | Grammar plus `queries/highlights.scm`; highlights are also inherited by C++ |
+| `tree-sitter-containerfile 0.9.2` | MIT | `wharflab/tree-sitter-containerfile` at `1df9124b22a72dde8683aab6f762ff4857acfeab` (archive reports dirty tree) | `f4811d55a5a2c32bb024b441c32b7417c3ec1af1a080a25fa20d321627b65a2b` | Grammar plus upstream `queries/highlights.scm` with a Runyte comment precedence repair; the local injection query retains upstream shell-command and RUN-heredoc Bash injections and omits comment and COPY-heredoc injections |
 | `tree-sitter-cpp 0.23.4` | MIT | `tree-sitter/tree-sitter-cpp` at `f41e1a044c8a84ea9fa8577fdd2eab92ec96de02` | `df2196ea9d47b4ab4a31b9297eaa5a5d19a0b121dceb9f118f6790ad0ab94743` | Grammar plus `queries/highlights.scm` |
 | `tree-sitter-json 0.24.8` | MIT | `tree-sitter/tree-sitter-json` at `ee35a6ebefcef0c5c416c0d1ccec7370cfca5a24` | `4d727acca406c0020cffc6cf35516764f36c8e3dc4408e5ebe2cb35a947ec471` | Grammar plus `queries/highlights.scm` |
 | `tree-sitter-toml-ng 0.7.0` | MIT | `tree-sitter-grammars/tree-sitter-toml` at `64b56832c2cffe41758f28e05c756a3a98d16f41` | `e9adc2c898ae49730e857d75be403da3f92bb81d8e37a2f918a08dd10de5ebb1` | Grammar plus `queries/highlights.scm` |
@@ -97,8 +103,9 @@ the package's directory in its upstream repository.
 
 Most upstream highlight, injection, and locals query strings named above are
 compiled into their grammar crates and used through crate constants. The
-exceptions are the packaged Protobuf highlight query and the Zig and CMake
-highlight queries adapted to Runyte's supported predicate set. Selected
+exceptions are the reduced Dockerfile injection query, the packaged Protobuf
+highlight query, and the Zig and CMake highlight queries adapted to Runyte's
+supported predicate set. Selected
 upstream indentation and fold queries are also carried locally, either adopted
 unchanged or reduced to Runyte's bounded `@indent.begin` and
 `@indent.always` dialect. Every copied or adapted file names its exact source
@@ -109,8 +116,9 @@ inline. The owned query compiler rejects unsupported captures and predicates
 rather than silently accepting semantics Runyte does not implement. C++
 composes the C indentation/fold base, while TypeScript and TSX compose the
 JavaScript base (and TSX also composes TypeScript additions). Markdown
-intentionally has no root indentation query; all 26 languages have
-conservative fold queries.
+intentionally has no root indentation query; 26 languages have conservative
+fold queries. Dockerfile currently supplies highlighting and shell injections
+without dedicated structural queries.
 
 The Kotlin highlight query has separate Apache-2.0 provenance: its packaged
 header says it is based on nvim-treesitter's query at revision

@@ -275,6 +275,8 @@ pub(super) struct LanguageDefinition {
     pub extensions: &'static [&'static str],
     /// Exact, case-sensitive file names recognized before extensions.
     pub filenames: &'static [&'static str],
+    /// Case-sensitive filename prefixes, including their separator.
+    pub filename_prefixes: &'static [&'static str],
     /// Lowercase interpreter basenames recognized in a first-line shebang.
     pub shebangs: &'static [&'static str],
     /// Marker that comments out the rest of a line, or `None` where the
@@ -305,6 +307,7 @@ pub(super) const BUILTIN_LANGUAGES: &[LanguageDefinition] = &[
         name: "rust",
         extensions: &["rs"],
         filenames: &[],
+        filename_prefixes: &[],
         shebangs: &[],
         line_comment: Some("//"),
         grammar: tree_sitter_rust::LANGUAGE,
@@ -359,6 +362,7 @@ pub(super) const BUILTIN_LANGUAGES: &[LanguageDefinition] = &[
         name: "python",
         extensions: &["py", "pyi", "py3", "pyw"],
         filenames: &[],
+        filename_prefixes: &[],
         shebangs: &[],
         line_comment: Some("#"),
         grammar: tree_sitter_python::LANGUAGE,
@@ -410,6 +414,7 @@ pub(super) const BUILTIN_LANGUAGES: &[LanguageDefinition] = &[
         name: "swift",
         extensions: &["swift", "swiftinterface"],
         filenames: &[],
+        filename_prefixes: &[],
         shebangs: &[],
         line_comment: Some("//"),
         grammar: tree_sitter_swift::LANGUAGE,
@@ -450,6 +455,7 @@ pub(super) const BUILTIN_LANGUAGES: &[LanguageDefinition] = &[
         name: "c",
         extensions: &["c"],
         filenames: &[],
+        filename_prefixes: &[],
         shebangs: &[],
         line_comment: Some("//"),
         grammar: tree_sitter_c::LANGUAGE,
@@ -473,6 +479,7 @@ pub(super) const BUILTIN_LANGUAGES: &[LanguageDefinition] = &[
             "cppm", "ino", "cu", "cuh",
         ],
         filenames: &[],
+        filename_prefixes: &[],
         shebangs: &[],
         line_comment: Some("//"),
         grammar: tree_sitter_cpp::LANGUAGE,
@@ -499,6 +506,7 @@ pub(super) const BUILTIN_LANGUAGES: &[LanguageDefinition] = &[
         name: "javascript",
         extensions: &["js", "jsx", "mjs", "cjs"],
         filenames: &[],
+        filename_prefixes: &[],
         shebangs: &[],
         line_comment: Some("//"),
         grammar: tree_sitter_javascript::LANGUAGE,
@@ -533,6 +541,7 @@ pub(super) const BUILTIN_LANGUAGES: &[LanguageDefinition] = &[
         name: "typescript",
         extensions: &["ts", "mts", "cts"],
         filenames: &[],
+        filename_prefixes: &[],
         shebangs: &[],
         line_comment: Some("//"),
         grammar: tree_sitter_typescript::LANGUAGE_TYPESCRIPT,
@@ -563,6 +572,7 @@ pub(super) const BUILTIN_LANGUAGES: &[LanguageDefinition] = &[
         name: "tsx",
         extensions: &["tsx"],
         filenames: &[],
+        filename_prefixes: &[],
         shebangs: &[],
         line_comment: Some("//"),
         grammar: tree_sitter_typescript::LANGUAGE_TSX,
@@ -604,6 +614,7 @@ pub(super) const BUILTIN_LANGUAGES: &[LanguageDefinition] = &[
         // injection and language-detection policy.
         extensions: &["html"],
         filenames: &[],
+        filename_prefixes: &[],
         shebangs: &[],
         line_comment: None,
         grammar: tree_sitter_html::LANGUAGE,
@@ -636,6 +647,7 @@ pub(super) const BUILTIN_LANGUAGES: &[LanguageDefinition] = &[
         name: "css",
         extensions: &["css"],
         filenames: &[],
+        filename_prefixes: &[],
         shebangs: &[],
         line_comment: None,
         grammar: tree_sitter_css::LANGUAGE,
@@ -662,6 +674,7 @@ pub(super) const BUILTIN_LANGUAGES: &[LanguageDefinition] = &[
         name: "go",
         extensions: &["go"],
         filenames: &[],
+        filename_prefixes: &[],
         shebangs: &[],
         line_comment: Some("//"),
         grammar: tree_sitter_go::LANGUAGE,
@@ -707,6 +720,7 @@ pub(super) const BUILTIN_LANGUAGES: &[LanguageDefinition] = &[
         name: "bash",
         extensions: &["sh", "bash", "ebuild", "eclass"],
         filenames: &[".bashrc", ".bash_profile"],
+        filename_prefixes: &[],
         shebangs: &["sh", "bash", "dash"],
         line_comment: Some("#"),
         grammar: tree_sitter_bash::LANGUAGE,
@@ -736,6 +750,7 @@ pub(super) const BUILTIN_LANGUAGES: &[LanguageDefinition] = &[
         name: "java",
         extensions: &["java"],
         filenames: &[],
+        filename_prefixes: &[],
         shebangs: &[],
         line_comment: Some("//"),
         grammar: tree_sitter_java::LANGUAGE,
@@ -775,6 +790,7 @@ pub(super) const BUILTIN_LANGUAGES: &[LanguageDefinition] = &[
         name: "kotlin",
         extensions: &["kt", "kts"],
         filenames: &[],
+        filename_prefixes: &[],
         shebangs: &[],
         line_comment: Some("//"),
         grammar: tree_sitter_kotlin_sg::LANGUAGE,
@@ -814,6 +830,7 @@ pub(super) const BUILTIN_LANGUAGES: &[LanguageDefinition] = &[
         name: "sql",
         extensions: &["sql"],
         filenames: &[],
+        filename_prefixes: &[],
         shebangs: &[],
         line_comment: Some("--"),
         grammar: tree_sitter_sequel::LANGUAGE,
@@ -846,6 +863,7 @@ pub(super) const BUILTIN_LANGUAGES: &[LanguageDefinition] = &[
         name: "lua",
         extensions: &["lua"],
         filenames: &[],
+        filename_prefixes: &[],
         shebangs: &["lua"],
         line_comment: Some("--"),
         grammar: tree_sitter_lua::LANGUAGE,
@@ -903,6 +921,7 @@ pub(super) const BUILTIN_LANGUAGES: &[LanguageDefinition] = &[
         name: "c-sharp",
         extensions: &["cs", "csx"],
         filenames: &[],
+        filename_prefixes: &[],
         shebangs: &[],
         line_comment: Some("//"),
         grammar: tree_sitter_c_sharp::LANGUAGE,
@@ -954,6 +973,7 @@ pub(super) const BUILTIN_LANGUAGES: &[LanguageDefinition] = &[
         name: "zig",
         extensions: &["zig", "zon"],
         filenames: &[],
+        filename_prefixes: &[],
         shebangs: &[],
         line_comment: Some("//"),
         grammar: tree_sitter_zig::LANGUAGE,
@@ -1006,6 +1026,7 @@ pub(super) const BUILTIN_LANGUAGES: &[LanguageDefinition] = &[
         name: "cmake",
         extensions: &["cmake"],
         filenames: &["CMakeLists.txt"],
+        filename_prefixes: &[],
         shebangs: &[],
         line_comment: Some("#"),
         grammar: tree_sitter_cmake::LANGUAGE,
@@ -1033,6 +1054,7 @@ pub(super) const BUILTIN_LANGUAGES: &[LanguageDefinition] = &[
         name: "proto",
         extensions: &["proto"],
         filenames: &[],
+        filename_prefixes: &[],
         shebangs: &[],
         line_comment: Some("//"),
         grammar: tree_sitter_proto::LANGUAGE,
@@ -1059,6 +1081,7 @@ pub(super) const BUILTIN_LANGUAGES: &[LanguageDefinition] = &[
         name: "make",
         extensions: &["mk", "mak"],
         filenames: &["Makefile", "makefile", "GNUmakefile"],
+        filename_prefixes: &[],
         shebangs: &[],
         line_comment: Some("#"),
         grammar: tree_sitter_make::LANGUAGE,
@@ -1085,6 +1108,7 @@ pub(super) const BUILTIN_LANGUAGES: &[LanguageDefinition] = &[
         name: "ini",
         extensions: &["ini"],
         filenames: &[],
+        filename_prefixes: &[],
         shebangs: &[],
         line_comment: Some(";"),
         grammar: tree_sitter_ini::LANGUAGE,
@@ -1114,6 +1138,7 @@ pub(super) const BUILTIN_LANGUAGES: &[LanguageDefinition] = &[
         name: "json",
         extensions: &["json"],
         filenames: &[],
+        filename_prefixes: &[],
         shebangs: &[],
         line_comment: None,
         grammar: tree_sitter_json::LANGUAGE,
@@ -1140,6 +1165,7 @@ pub(super) const BUILTIN_LANGUAGES: &[LanguageDefinition] = &[
         name: "toml",
         extensions: &["toml"],
         filenames: &[],
+        filename_prefixes: &[],
         shebangs: &[],
         line_comment: Some("#"),
         grammar: tree_sitter_toml_ng::LANGUAGE,
@@ -1166,6 +1192,7 @@ pub(super) const BUILTIN_LANGUAGES: &[LanguageDefinition] = &[
         name: "yaml",
         extensions: &["yaml", "yml"],
         filenames: &[],
+        filename_prefixes: &[],
         shebangs: &[],
         line_comment: Some("#"),
         grammar: tree_sitter_yaml::LANGUAGE,
@@ -1192,6 +1219,7 @@ pub(super) const BUILTIN_LANGUAGES: &[LanguageDefinition] = &[
         name: "markdown",
         extensions: &["md", "markdown"],
         filenames: &[],
+        filename_prefixes: &[],
         shebangs: &[],
         line_comment: None,
         grammar: tree_sitter_md::LANGUAGE,
@@ -1232,6 +1260,42 @@ pub(super) const BUILTIN_LANGUAGES: &[LanguageDefinition] = &[
             "Runyte Markdown folds",
         )]),
     },
+    LanguageDefinition {
+        name: "dockerfile",
+        extensions: &["dockerfile", "containerfile"],
+        filenames: &["Dockerfile", "dockerfile", "Containerfile", "containerfile"],
+        filename_prefixes: &[
+            "Dockerfile.",
+            "dockerfile.",
+            "Containerfile.",
+            "containerfile.",
+        ],
+        shebangs: &[],
+        line_comment: Some("#"),
+        grammar: tree_sitter_containerfile::LANGUAGE,
+        queries: LanguageQueries {
+            highlights: QuerySource::new(&[
+                upstream(
+                    tree_sitter_containerfile::HIGHLIGHTS_QUERY,
+                    "tree-sitter-containerfile 0.9.2 highlights",
+                ),
+                // Repeat the mapped capture after upstream's unmapped @spell.
+                runyte(
+                    "(comment) @comment",
+                    "Runyte Dockerfile comment precedence repair",
+                ),
+            ]),
+            injections: QuerySource::new(&[upstream(
+                include_str!("queries/dockerfile/injections.scm"),
+                "tree-sitter-containerfile 0.9.2 shell injections, adapted for bundled grammars",
+            )]),
+            locals: QuerySource::EMPTY,
+        },
+        text_objects: &[],
+        outline: QuerySource::EMPTY,
+        indentation: QuerySource::EMPTY,
+        folds: QuerySource::EMPTY,
+    },
 ];
 
 /// Parser configurations reachable only through an injection marker.
@@ -1242,6 +1306,7 @@ pub(super) const MARKDOWN_INLINE: LanguageDefinition = LanguageDefinition {
     name: "markdown_inline",
     extensions: &[],
     filenames: &[],
+    filename_prefixes: &[],
     shebangs: &[],
     line_comment: None,
     grammar: tree_sitter_md::INLINE_LANGUAGE,
@@ -1306,12 +1371,14 @@ mod tests {
                 ("toml", &["toml"][..]),
                 ("yaml", &["yaml", "yml"][..]),
                 ("markdown", &["md", "markdown"][..]),
+                ("dockerfile", &["dockerfile", "containerfile"][..]),
             ]
         );
 
         let mut names = HashSet::new();
         let mut extensions = HashSet::new();
         let mut filenames = HashSet::new();
+        let mut filename_prefixes = HashSet::new();
         let mut shebangs = HashSet::new();
         for definition in BUILTIN_LANGUAGES
             .iter()
@@ -1338,6 +1405,13 @@ mod tests {
                     "duplicate shebang interpreter {shebang}"
                 );
                 assert_eq!(*shebang, shebang.to_ascii_lowercase());
+            }
+            for prefix in definition.filename_prefixes {
+                assert!(!prefix.is_empty());
+                assert!(
+                    filename_prefixes.insert(*prefix),
+                    "duplicate filename prefix"
+                );
             }
         }
 

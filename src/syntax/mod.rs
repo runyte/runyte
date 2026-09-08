@@ -863,6 +863,7 @@ pub struct Registry {
     line_comments: Vec<Option<&'static str>>,
     by_extension: HashMap<&'static str, LanguageId>,
     by_filename: HashMap<&'static str, LanguageId>,
+    by_filename_prefix: Vec<(&'static str, LanguageId)>,
     by_shebang: HashMap<&'static str, LanguageId>,
     by_name: HashMap<&'static str, LanguageId>,
     /// Parser configurations named only by injection queries. They do not
@@ -1286,6 +1287,7 @@ impl Registry {
             line_comments: Vec::new(),
             by_extension: HashMap::new(),
             by_filename: HashMap::new(),
+            by_filename_prefix: Vec::new(),
             by_shebang: HashMap::new(),
             by_name: HashMap::new(),
             injection_languages: HashMap::new(),
@@ -1364,6 +1366,9 @@ impl Registry {
             }
             for filename in definition.filenames {
                 registry.by_filename.insert(*filename, language_id);
+            }
+            for prefix in definition.filename_prefixes {
+                registry.by_filename_prefix.push((*prefix, language_id));
             }
             for shebang in definition.shebangs {
                 registry.by_shebang.insert(*shebang, language_id);
@@ -1497,10 +1502,17 @@ impl Registry {
     }
 
     pub fn language_for_path(&self, path: &Path) -> Option<LanguageId> {
-        if let Some(filename) = path.file_name().and_then(|name| name.to_str())
-            && let Some(language) = self.by_filename.get(filename)
-        {
-            return Some(*language);
+        if let Some(filename) = path.file_name().and_then(|name| name.to_str()) {
+            if let Some(language) = self.by_filename.get(filename) {
+                return Some(*language);
+            }
+            if let Some((_, language)) = self
+                .by_filename_prefix
+                .iter()
+                .find(|(prefix, _)| filename.starts_with(prefix) && filename.len() > prefix.len())
+            {
+                return Some(*language);
+            }
         }
         let extension = path.extension()?.to_str()?.to_ascii_lowercase();
         self.by_extension.get(extension.as_str()).copied()
@@ -1508,8 +1520,8 @@ impl Registry {
 
     /// Infers a document language using bounded, editor-owned inputs.
     ///
-    /// Exact file names win over case-insensitive extensions, and both win
-    /// over a first-line shebang. The shebang scan reads at most 1,024
+    /// Exact file names win over filename prefixes, then case-insensitive
+    /// extensions, then a first-line shebang. The shebang scan reads at most 1,024
     /// characters, so a pathless or unknown one-line buffer cannot make
     /// inference allocate in proportion to its size.
     pub fn language_for_document(&self, path: Option<&Path>, source: &Text) -> Option<LanguageId> {
@@ -3690,6 +3702,7 @@ mod tests {
             ("css", None),
             ("c-sharp", Some("//")),
             ("cmake", Some("#")),
+            ("dockerfile", Some("#")),
             ("go", Some("//")),
             ("html", None),
             ("ini", Some(";")),
@@ -4329,8 +4342,8 @@ mod tests {
             "public languages need canonical/plain configurations and Markdown needs one internal inline configuration"
         );
         assert_eq!(
-            plain_count, 4,
-            "Rust, HTML, Markdown, and Lua have resolvable injection variants"
+            plain_count, 5,
+            "Rust, HTML, Markdown, Lua, and Dockerfile have resolvable injection variants"
         );
 
         for definition in grammars::BUILTIN_LANGUAGES
