@@ -11,8 +11,9 @@ UTF-8 document opening, conditional remote saves, native confirmation of weaker
 overwrites, explicit rebind and remote conflict inspection. Runnable SFTP and
 FTP/FTPS adapters share a native remote browser with explicit transport and
 overwrite guarantees. Metadata subscriptions provide consistent baselines,
-ordered changes and explicit resynchronization. Managed media backends
-remain unfinished. This is not completion of the application plan.
+ordered changes and explicit resynchronization. Managed helpers, continuing
+activity leases, settings/state, a native manager and the local mpv controller
+support continuing applications. Full release validation remains in progress.
 Epoch 1 remains the default and its uppercase example is unchanged.
 
 Enable the runnable background-job example with absolute paths:
@@ -190,8 +191,9 @@ cannot be repeated. Cancellation is idempotent and rejects subsequent success.
 Job acceptance and terminal changes generate reliable `job.changed` events;
 `job.cancel_requested` requests cooperative cancellation. A surviving connection
 gets one terminal transition. Responses precede their resulting events. Connection
-sequences increase across these events. Progress is currently recovered through
-`job.get`; subscription/coalescing support is still pending.
+sequences increase across these events. Inspect progress through `job.get` or
+subscribe to the job metadata source for ordered, coalesced observations and
+explicit resynchronization after dropped observations.
 
 Control requests time out after ten seconds independently. Finite jobs have
 explicit deadlines from one second to one hour. Expiry requests cancellation;
@@ -1581,6 +1583,68 @@ cannot starve cleanup. Keep that callback independent of locks held by command
 handlers; signal cancellation promptly and acknowledge only after the work stops.
 The host uses its existing one-shot deadline scheduler, with no activity timer
 when no lease or cleanup grace is present.
+
+## Local media controller
+
+`media.py` is a standard-library Python application backed by an installed mpv
+(0.37 or later). Runyte presents the playlist and current-item dashboard; mpv
+owns decoding, audio output and its external video window. The example accepts
+ordinary audio/video files inside the workspace. It refuses URLs and authored
+playlist files; Spotify and YouTube use separate service adapters described in
+the [media service guide](media-services.md).
+
+```yaml
+plugins:
+  - id: media
+    enabled: true
+    api: runyte-experimental-2
+    executable: /usr/bin/python3
+    args: [/path/to/runyte/docs/plugins/media.py]
+    capabilities: [views, processes, activity, jobs]
+```
+
+Use `:plugin.media.open music/first.wav` to replace the playlist and play a file,
+or `:plugin.media.add music/second.wav` to append one. Paths are workspace-relative;
+quote spaces using the ordinary command syntax. `:plugin.media.show` returns to
+the retained view. Select an item and use its primary action to play it. The
+view also exposes `play`, `pause`, `seek`, `next`, `previous` and `stop-playback`; for
+example, `:plugin.media.seek -10` seeks ten seconds backwards. Controls are
+serialized, and each finite control job waits for the backend acknowledgement.
+Next/previous preserve pause. Playing the currently paused row resumes at its
+existing position; selecting a different row starts that item.
+There are at most 64 entries and 16 KiB of combined canonical path text.
+
+Playback acquires an activity lease before starting or resuming the player. It
+renews only while playback is wanted, releases after an acknowledged pause/end,
+and retains ownership through uncertain control or cleanup. Cancellation closes
+the managed helper before acknowledging the lease. Detach retains the same
+player; reattachment does not start another one. `stop-playback` closes the helper, and
+`:plugin-stop media` cleans up the plugin's managed process group. A paused
+helper alone does not protect persistent-session retirement.
+
+The host-managed `mpv_backend.py` bridge starts one mpv child in its inherited
+process group, communicates through an inherited local socket, and bounds JSON
+lines at 64 KiB and its output queue at 256 KiB. Progress is coalesced to at most
+two updates per second during playback. Paused settlement creates no polling or
+redraw loop. Invalid state, a lost command acknowledgement or truncated output
+causes helper cleanup rather than automatic control replay.
+
+The bridge disables user configuration, script loading, automatic sidecars,
+playlist-reference loading and the network extractor. Its external window only
+displays video: default input bindings, on-screen controls and drag/drop are
+disabled so playback mutations pass through the native controller's lease checks.
+These settings are not a
+decoder or filesystem sandbox; the enabled plugin and installed player run with
+the user's ordinary permissions. Codecs and output devices remain mpv concerns.
+Pass `--mpv /absolute/path/to/mpv` in the example's `args` to select its executable.
+`--headless` selects null audio/video output for deterministic tests and does not
+exercise a display or sound device.
+
+Run `python3 docs/plugins/check_mpv_backend.py` with mpv on `PATH` (or `MPV` set
+to its executable) for real local-file playback, IPC, bounds and cleanup tests.
+`check_media.py` and `check_media_review.py` cover host-call orchestration,
+state validation and cancellation without a live service account. CI installs
+mpv explicitly; real-backend tests report skips when it is unavailable locally.
 
 ## Settings and workspace state
 

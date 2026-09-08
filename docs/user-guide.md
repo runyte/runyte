@@ -3065,6 +3065,14 @@ not acknowledge expiry or cancellation is stopped, cleaning up its managed
 helpers. The `:q!` spelling does not bypass this protection; explicit forced
 persistent-session stop remains available.
 
+The optional [local media controller](plugins/applications.md#local-media-controller)
+plays workspace audio and video files through an installed mpv. Its native
+playlist provides play, pause, relative seek, next, previous and stop actions;
+video appears in mpv's external window. Playback continues across detach and
+protects the persistent session while active. Pausing releases that protection;
+stop closes the owned player. The [service adapter guide](plugins/media-services.md)
+describes Spotify prerequisites and YouTube browser playback separately.
+
 Applications can read their configured settings and save bounded nonsecret
 workspace preferences through the [settings and state API](plugins/applications.md#settings-and-workspace-state).
 State updates check the revision observed by the application and preserve existing

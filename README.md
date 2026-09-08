@@ -78,6 +78,8 @@ pipes and process-group cleanup, publish retained notifications, and make explic
 Continuing work can use bounded, renewable
 [activity leases](docs/plugins/applications.md#continuing-activity) that appear in
 session health and protect normal shutdown.
+The optional [local media controller](docs/plugins/applications.md#local-media-controller)
+uses mpv for playback, with a native playlist, progress and playback controls.
 Applications can read validated [settings and workspace state](docs/plugins/applications.md#settings-and-workspace-state),
 with conditional updates for nonsecret saved preferences.
 The native [plugin manager](docs/plugins/applications.md#plugin-manager) retains

@@ -49,6 +49,11 @@ jobs:
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
+      - name: Install local media test backend
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends mpv
+
       - name: Validate plugin contracts
         run: |
           python3 -m venv "$RUNNER_TEMP/plugin-schema"
@@ -63,6 +68,9 @@ jobs:
           "$plugin_schema_python" docs/plugins/check_processes.py
           "$plugin_schema_python" docs/plugins/check_handoffs.py
           "$plugin_schema_python" docs/plugins/check_activity.py
+          "$plugin_schema_python" docs/plugins/check_mpv_backend.py
+          "$plugin_schema_python" docs/plugins/check_media.py
+          "$plugin_schema_python" docs/plugins/check_media_review.py
           "$plugin_schema_python" docs/plugins/check_state.py
           "$plugin_schema_python" docs/plugins/check_remote_provider.py
           "$plugin_schema_python" docs/plugins/check_downloads.py

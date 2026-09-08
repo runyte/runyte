@@ -84,7 +84,8 @@ also upload frozen binary disk files through native confirmation; later acceptan
 gates remain active. Milestone 5 now includes bounded managed processes, terminal/external handoffs
 and retained notifications, continuing activity leases, validated settings and
 conditional workspace state and a native manager with explicit stop/restart.
-The media controller remains.
+The local-file media controller now exercises managed mpv playback and activity
+ownership, with service-adapter guides for Spotify and YouTube.
 Milestone 6 still needs the broader SDK,
 non-Python example, full conformance matrix and complete application performance
 and supported-platform evidence. Milestones 1–2 also retain their full overload,
@@ -1006,6 +1007,52 @@ and diff checks pass. This round changes no Rust source: the immediately precedi
 3,541-test Rust suites and canonical 91.72% Linux line baseline remain applicable.
 The 89% floor is unchanged. Media, authoring and full platform/performance gates
 remain active.
+
+## Local media controller round
+
+The previous round was committed as `3ed31c2` (`Add confirmed binary uploads to
+remote browser applications`). The optional standard-library `media.py` example
+now presents a native playlist and current-item dashboard backed by a host-managed
+`mpv_backend.py` bridge. Open/add, selected-item play/resume, pause, relative seek,
+next/previous and explicit `stop-playback` use existing public methods. The bridge
+starts a real mpv child in its inherited managed process group and uses a bounded
+local IPC socket; video remains an external display. No Rust capability or wire
+epoch was added for the example.
+
+The controller keeps at most 64 ordinary workspace audio/video paths with a
+16 KiB aggregate path budget. One finite control waits for authoritative backend
+state; progress coalesces to two updates per second. Playback acquires its lease
+before a possible start, retains it through asynchronous load and playlist
+transitions, and releases only after settled pause/end or actual helper cleanup.
+Cancellation and uncertain control close the helper without replay. Paused
+settlement has no periodic polling or redraw. The mpv window's default controls
+are disabled so playback mutations pass through the controller's lease checks.
+
+Review fixed early cancellation, initial null playback times, readiness before
+first control, lost-output handling, premature lease release, stale-session
+callbacks, full outbox accounting and asynchronous player transitions. Native
+execution additionally found that `stop` is reserved for host plugin teardown;
+the example now uses `stop-playback` and tests its real registration frame.
+Selecting the current paused item preserves its seek position when resumed.
+
+A native Linux persistent-session smoke used generated local WAV and video files
+with real mpv null outputs. It verified playback controls, active-lease refusal
+of ordinary session stop, detach/reattach with the same player PID, zero terminal
+output over two settled paused seconds, and player cleanup after explicit
+playback stop and plugin stop. Null outputs exercise decoding and IPC, not an
+audio device or graphical display. The service guide records current official
+Spotify authorization/account requirements and the YouTube external-browser
+boundary; live accounts are not deterministic gates.
+
+All 23 plugin schema/SDK/example conformance scripts pass, totaling 296 Python
+tests. The final media suites pass 17 backend, 12 controller and five independent
+review cases; the real mpv cases ran without skips. CI installs mpv before the
+contract suite. Python parsing and diff checks pass. This round changes no Rust
+source, so the immediately preceding 3,541-test ordinary/canonical suites and
+91.72% Linux line baseline remain applicable; the 89% floor is unchanged.
+
+Authoring/conformance expansion and the complete performance and supported-platform
+acceptance evidence remain active. Native macOS validation is still required.
 
 ## Investigation: existing foundation and missing boundaries
 
