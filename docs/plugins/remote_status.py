@@ -116,3 +116,17 @@ class OperationStatus(PhaseStatus):
             'cancelled': ('Remote operation cancelled', 'muted'),
             'outcome_unknown': ('Remote operation outcome unknown · inspect remote state; do not retry', 'error'),
         }, 'preparing')
+
+
+class UploadStatus(PhaseStatus):
+    def __init__(self, owner):
+        super().__init__(owner, 'upload-status', {
+            'preparing': ('Preparing workspace disk-file upload', 'muted'),
+            'ready': (f'Upload ready · run :plugin.{owner.plugin_id}.confirm-upload', 'heading'),
+            'confirming': ('Review the disk-file upload in the native confirmation', 'muted'),
+            'applying': ('Uploading saved disk bytes', 'muted'),
+            'completed': (f'Upload completed · run :plugin.{owner.plugin_id}.refresh', 'heading'),
+            'failed': ('Disk-file upload failed · inspect source and remote target before preparing again', 'error'),
+            'cancelled': ('Disk-file upload cancelled', 'muted'),
+            'outcome_unknown': ('Upload outcome unknown · inspect remote target; restart plugin before another upload', 'error'),
+        }, 'preparing')

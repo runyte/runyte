@@ -76,6 +76,7 @@ class FtpFixture:
         self.namespace_release.set()
         self.drop_namespace_reply = False
         self.drop_rename_reply = False
+        self.reject_listing = False
         self.rename_entered, self.rename_done = threading.Event(), threading.Event()
         self.rename_release = threading.Event()
         self.rename_release.set()
@@ -159,6 +160,9 @@ class FtpFixture:
 
             def ftp_MLSD(self, path):
                 fixture.record('MLSD', path)
+                if fixture.reject_listing:
+                    self.respond('550 Listing unavailable')
+                    return
                 return super().ftp_MLSD(path)
 
             def ftp_DELE(self, path):

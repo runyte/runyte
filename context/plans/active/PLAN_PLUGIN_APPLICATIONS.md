@@ -79,8 +79,9 @@ are implemented, together with native weaker-transport confirmation and the SFTP
 and FTP/FTPS examples. Binary download staging now uses native confirmed
 publication, and the examples now provide native-confirmed remote mkdir, rename
 and delete. Native reload now offers divergent baseline recovery, including
-explicit restart and exact settlement of uncertain writes. Binary uploads and
-later acceptance gates remain active. Milestone 5 now includes bounded managed processes, terminal/external handoffs
+explicit restart and exact settlement of uncertain writes. The reference browsers
+also upload frozen binary disk files through native confirmation; later acceptance
+gates remain active. Milestone 5 now includes bounded managed processes, terminal/external handoffs
 and retained notifications, continuing activity leases, validated settings and
 conditional workspace state and a native manager with explicit stop/restart.
 The media controller remains.
@@ -960,6 +961,51 @@ Canonical Linux coverage passes the same 3,541 tests with 33 ignored and measure
 119,627/130,425 lines (91.72%), 10,778/11,760 functions (91.65%), and
 181,210/198,759 regions (91.17%). The enforced floor stays 89%. Native macOS and
 the complete performance acceptance matrix remain outstanding.
+
+## Confirmed binary disk-file upload round — 2026-09-08
+
+Both remote browsers now expose `upload`, `confirm-upload`, and `cancel-upload`.
+The application captures the workspace root once and freezes an ordinary local
+file of at most 8 MiB through a no-follow descriptor walk. Source identity, size,
+timestamps, directory links and exact EOF are rechecked before acceptance. The
+prepared bytes, including empty files and arbitrary binary content, stay inside
+the plugin process. They do not represent unsaved editor text and never enter
+the public text wire contract.
+
+A finite job owns source preparation and remote preflight. A separate invocation
+presents native confirmation of the exact source, destination, byte count and
+transport warnings. Long or unrenderable labels are refused. Accepted work
+revalidates the remote content hash or proven absence before staging and promotion.
+SFTP uses ordinary rename for a new file and its required POSIX replacement
+extension for an existing file. FTP/FTPS probes ordinary files directly and uses
+a complete bounded parent listing only to prove absence; an ambiguous `550` is
+never treated as an absent destination. Existing-file saves still work beside
+more than 1,024 sibling entries.
+
+Uploads share the existing mutation slot with document saves and namespace
+operations, retained until the actual worker exits. No destination is deleted as
+a rename fallback. Cancellation before promotion prevents mutation; failure after
+promotion remains an honest unknown outcome, with no automatic retry. One unknown
+upload flow retains its source/report and blocks another upload in that process;
+cancel cannot discard the uncertainty. Explicit restart is a user-directed reset,
+not remote settlement proof. Three independent phase rows preserve download,
+upload and namespace results without an idle polling loop.
+
+The native Linux FTPS smoke passes cancellation before mutation, exact frozen
+bytes after an external source edit, empty replacement and remote conflict
+preservation. A separate persistent-session smoke blocks promotion, detaches,
+finishes the upload without a frontend, then reattaches to its retained completion.
+Both produce zero output over two settled idle seconds. The actual SFTP and
+FTP/FTPS suites each pass 44 tests, retaining provider-save, download and namespace
+regressions as well as the new upload cases.
+
+All 20 plugin schema/SDK/example conformance scripts pass, totaling 262 Python
+tests. The upload workflow has 12 primary and four independent review tests;
+both transport suites include nine new upload cases each. Python source parsing
+and diff checks pass. This round changes no Rust source: the immediately preceding
+3,541-test Rust suites and canonical 91.72% Linux line baseline remain applicable.
+The 89% floor is unchanged. Media, authoring and full platform/performance gates
+remain active.
 
 ## Investigation: existing foundation and missing boundaries
 

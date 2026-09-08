@@ -3072,6 +3072,13 @@ data on conflict. The runnable `preferences.py` example demonstrates a configure
 default and a saved destination that survives restarting the editor. Secrets
 belong in an established credential manager or authentication helper.
 
+The SFTP and FTP/FTPS browsers can upload a workspace disk file of at most 8 MiB
+with `upload`. Preparation freezes its bytes; `confirm-upload` then opens native
+confirmation for the remote destination. Unsaved editor text is separate from the
+disk file. `cancel-upload` cancels pending work, while an unknown promotion outcome
+remains visible and blocks another upload until explicit plugin restart. See
+[binary uploads](plugins/applications.md#binary-uploads-from-workspace-disk-files).
+
 The SFTP and FTP/FTPS reference browsers also provide `mkdir`, `rename` and
 `delete` actions for one remote file or empty directory. After preparation,
 `confirm-operation` opens native confirmation; `cancel-operation` cancels pending

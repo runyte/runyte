@@ -128,6 +128,24 @@ class StatusTests(unittest.TestCase):
         self.assertEqual({row['id'] for row in rows}, original | {'operation-status'})
         self.assertEqual(self.ui.entries.keys(), dict.fromkeys(original).keys())
 
+    def test_upload_download_and_operation_phases_keep_all_bounded_rows(self):
+        original = set(self.ui.entries)
+        for status in (self.ui.download_status, self.ui.operation_status, self.ui.upload_status):
+            status('ready')
+            self.assertTrue(status.idle.wait(2))
+        rows = self.publications()[-1]['model']['rows']
+        self.assertEqual({row['id'] for row in rows}, original | {STATUS_ROW, 'operation-status', 'upload-status'})
+        self.assertEqual(rows[-1]['text'], 'Upload ready · run :plugin.custom-sftp.confirm-upload')
+        self.assertLessEqual(len(json.dumps(self.publications()[-1]['model']).encode()), MAX_MODEL_BYTES)
+        for phase in ('preparing', 'confirming', 'applying', 'completed', 'failed', 'cancelled', 'outcome_unknown'):
+            self.ui.upload_status(phase)
+            self.assertTrue(self.ui.upload_status.idle.wait(2))
+            self.assertEqual({row['id'] for row in self.publications()[-1]['model']['rows']},
+                             original | {STATUS_ROW, 'operation-status', 'upload-status'})
+        self.assertIn('restart plugin', self.publications()[-1]['model']['rows'][-1]['text'])
+        self.assertEqual(self.publications()[-1]['model']['rows'][-1]['role'], 'error')
+        self.assertTrue(all(method == 'view.publish' for method, _ in self.port.calls))
+
     def test_operation_completion_keeps_a_refresh_action_without_background_network_io(self):
         self.ui.operation_status('completed')
         self.assertTrue(self.ui.operation_status.idle.wait(2))

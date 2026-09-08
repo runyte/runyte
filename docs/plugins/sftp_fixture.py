@@ -163,15 +163,28 @@ class _Filesystem(paramiko.SFTPServerInterface):
 
     def rename(self, oldpath, newpath):
         self.fixture.record('rename', oldpath, newpath)
-        if not self.fixture.is_namespace(oldpath):
+        promotion = Path(oldpath).name.startswith('.runyte-upload-')
+        if not promotion and not self.fixture.is_namespace(oldpath):
             return paramiko.SFTP_OP_UNSUPPORTED
         try:
-            self.fixture.namespace_begin('rename', oldpath)
+            if promotion:
+                self.fixture.rename_entered.set()
+            else:
+                self.fixture.namespace_begin('rename', oldpath)
             source, destination = self._path(oldpath, False), self._path(newpath, False)
+            if promotion and self.fixture.before_rename is not None:
+                self.fixture.before_rename(source, destination)
             if destination.exists() or destination.is_symlink():
                 return paramiko.SFTP_FAILURE
             source.rename(destination)
-            self.fixture.namespace_finish('rename', oldpath)
+            if promotion:
+                self.fixture.rename_done.set()
+                if self.fixture.drop_rename_reply:
+                    self.fixture.disconnect_clients()
+                else:
+                    self.fixture.rename_release.wait(15)
+            else:
+                self.fixture.namespace_finish('rename', oldpath)
             return paramiko.SFTP_OK
         except OSError as error:
             return paramiko.SFTPServer.convert_errno(error.errno)

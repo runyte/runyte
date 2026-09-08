@@ -47,6 +47,10 @@ class FtpUiTests(shared.SftpUiTests):
                     command = next(command for command in ui.app.commands if command['name'] == name)
                     self.assertIn(label, command['description'])
                 self.assertNotIn('save', ui.handlers)
+                for name, scope in [('upload', 'view'), ('confirm-upload', 'workspace'),
+                                    ('cancel-upload', 'workspace')]:
+                    registered = next(command for command in ui.app.commands if command['name'] == name)
+                    self.assertEqual(registered['context'], scope)
                 self.ui.open(self.context)
                 self.assertEqual(self.port.calls[-1][1]['plugin'], 'other-ftp')
 

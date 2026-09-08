@@ -6,8 +6,7 @@ The current implementation supports typed commands, finite background jobs,
 retained native views, explicit buffer reads/edits, immutable snapshots and
 pane selections, local metadata/browsing, document lifecycle operations, native
 input with asynchronous field validation, confirmed bounded recursive filesystem
-mutations, private binary download
-staging and provider-backed
+mutations, private binary download staging, confirmed disk-file uploads and provider-backed
 UTF-8 document opening, conditional remote saves, native confirmation of weaker
 overwrites, explicit rebind and remote conflict inspection. Runnable SFTP and
 FTP/FTPS adapters share a native remote browser with explicit transport and
@@ -268,7 +267,7 @@ budgets are reserved for bounded queues, decoding and publication copies.
 These measure payload, not allocator RSS or the external process's memory.
 Buffer/pane issuance is bounded at 1,024/128 handles per connection generation.
 
-Still required by the active plan: binary uploads; media examples;
+Still required by the active plan: media examples;
 broader SDK/conformance coverage and the complete performance/platform
 acceptance matrix.
 
@@ -988,8 +987,8 @@ changing local text or its saved baseline; each side is limited to 4 MiB.
 an uncertain upload. An uncertain remote write keeps local data dirty and cannot
 be retried blindly; if settlement cannot be proved, rebind remains refused.
 Remote documents are limited to 8 MiB of UTF-8 and never acquire a local file path.
-Binary downloads use the staged workflow below. Binary uploads remain
-unfinished; remote mkdir/rename/delete commands use the confirmed workflow below.
+Binary downloads and disk-file uploads use the confirmed workflows below;
+remote mkdir/rename/delete commands have a separate confirmation workflow.
 The automated SFTP fixture uses temporary local credentials and a loopback server,
 and never contacts a live account.
 
@@ -1077,8 +1076,8 @@ baseline. After a disconnect during promotion, local text remains protected with
 an unknown write outcome. Explicit rebind succeeds only when the provider can
 prove the previous write has settled; reconnecting alone is not proof. If a
 server's rename behavior cannot complete replacement, the save is refused without
-weakening these guarantees. Binary downloads use the staged workflow below. Binary uploads remain unfinished; remote
-mutation commands use the confirmed workflow below. Automated fixtures use isolated loopback FTP/FTPS servers and
+weakening these guarantees. Binary downloads, disk-file uploads and remote
+mutation commands use the confirmed workflows below. Automated fixtures use isolated loopback FTP/FTPS servers and
 temporary credentials and certificates, never a live account.
 
 
@@ -1179,6 +1178,49 @@ alongside the shared application budget. Cancellation and process cleanup releas
 staging, while an already accepted native filesystem operation retains its frozen
 source until that operation settles.
 
+
+## Binary uploads from workspace disk files
+
+In either remote browser, run `:plugin.sftp.upload` or `:plugin.ftp.upload`.
+The native form asks for a workspace-relative source file and a destination
+relative to the displayed remote directory. This uploads the file's disk bytes;
+unsaved editor text is separate. Files must be ordinary files within the workspace,
+without symbolic-link traversal, and fit 8 MiB. Empty files, NUL bytes and non-UTF-8
+data are accepted. Binary data stays in the application process and is never sent
+through the editor's text or extension-message APIs.
+
+Preparation freezes the source bytes and reads the remote destination's current
+content hash or proves its absence. It does not upload data. When the browser
+reports `Upload ready`, run `:plugin.sftp.confirm-upload` or
+`:plugin.ftp.confirm-upload`. A fresh native confirmation names the source,
+destination, byte count and transport limitations. Unrenderable or excessive
+labels are refused instead of shortened. Changing the source file after preparation
+does not alter the frozen bytes that confirmation authorizes.
+
+Only an accepted confirmation starts the remote upload. The transport rechecks
+the prepared destination, writes a temporary remote staging file, then promotes
+it once. An observed remote content change or newly occupied destination refuses
+the operation. SFTP new-file promotion uses ordinary rename; existing-file
+replacement requires the server's POSIX-rename extension. FTP/FTPS rename may
+overwrite a destination created after its final check and is not guaranteed atomic.
+FTP staging permissions follow server policy. Neither transport claims atomic
+compare-and-swap, removes a destination as a fallback, or retries promotion.
+
+`cancel-upload` cancels a prompt, prepared upload or pending transfer. Each
+application admits one upload flow; its finite job includes preparation and human
+review, with a 60-second deadline. Workers retain their admission until they
+actually finish. Progress reports bounded increments and reaches completion only
+after an acknowledged promotion. Phase changes update the existing browser without
+an idle poll; accepted work can finish while detached.
+
+A failure after promotion may have an unknown outcome. That flow retains its
+source snapshot and destination report in the current plugin process, blocks another upload, and cannot be
+cleared by cancellation. Inspect the remote destination and explicitly restart
+the plugin before preparing a new attempt; reconnecting or observing matching
+bytes alone is not proof that the original operation has settled. There is no
+automatic retry. Uploads do not modify an open provider document, its local text,
+or its saved baseline; use ordinary provider reload or save conflict handling
+when the uploaded destination is also open in the editor.
 
 ## Confirmed remote directory operations
 

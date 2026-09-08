@@ -19,6 +19,7 @@ from application import PluginError
 from download_transport_checks import DownloadTransportChecks
 from download_wire_checks import check_download_wire
 from operation_transport_checks import OperationTransportChecks
+from upload_transport_checks import UploadTransportChecks
 from sftp_fixture import SftpFixture
 from sftp_transport import SftpTransport
 
@@ -29,7 +30,45 @@ def version(data):
     return hashlib.sha256(data).hexdigest()
 
 
-class SftpTransportTests(OperationTransportChecks, DownloadTransportChecks, unittest.TestCase):
+class SftpTransportTests(UploadTransportChecks, OperationTransportChecks, DownloadTransportChecks, unittest.TestCase):
+    def test_upload_new_target_uses_no_replace_rename_without_posix_extension(self):
+        fixture = self.fixture(posix_rename=False)
+        transport = self.transport(fixture)
+        prepared = transport.prepare_upload('new', b'\x00binary\xff')
+        self.assertEqual(transport.upload(prepared, b'\x00binary\xff'), 'applied')
+        self.assertEqual((fixture.root / 'new').read_bytes(), b'\x00binary\xff')
+        self.assertTrue(any(op[0] == 'rename' for op in fixture.operations))
+        self.assertFalse(any(op[0] == 'posix_rename' for op in fixture.operations))
+        prepared = transport.prepare_upload('new', b'replace')
+        with self.assertRaises(PluginError) as raised:
+            transport.upload(prepared, b'replace')
+        self.assertEqual(raised.exception.code, 'unsupported')
+        self.assertTrue(raised.exception.settled)
+        self.assertEqual((fixture.root / 'new').read_bytes(), b'\x00binary\xff')
+
+    def test_upload_refuses_final_symlinks_and_new_target_race_at_server_rename(self):
+        fixture = self.fixture()
+        transport = self.transport(fixture)
+        target = fixture.root / 'target'
+        target.write_bytes(b'keep')
+        link = fixture.root / 'link'
+        link.symlink_to(target)
+        with self.assertRaises(PluginError):
+            transport.prepare_upload('link', b'upload')
+        prepared = transport.prepare_upload('target', b'upload')
+        target.unlink()
+        target.symlink_to(link)
+        with self.assertRaises(PluginError):
+            transport.upload(prepared, b'upload')
+        self.assertFalse(fixture.rename_entered.is_set())
+        prepared = transport.prepare_upload('new', b'upload')
+        fixture.before_rename = lambda source, destination: destination.write_bytes(b'raced target')
+        with self.assertRaises(PluginError) as raised:
+            transport.upload(prepared, b'upload')
+        self.assertEqual(raised.exception.code, 'outcome_unknown')
+        self.assertEqual((fixture.root / 'new').read_bytes(), b'raced target')
+        self.assertFalse(fixture.rename_done.is_set())
+
     def fixture(self, **options):
         fixture = SftpFixture(**options)
         self.addCleanup(fixture.close)

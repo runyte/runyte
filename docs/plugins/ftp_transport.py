@@ -383,6 +383,56 @@ class FtpTransport(BoundedTransport):
         except Exception:
             pass
 
+    def _upload_state(self, client, operation, path):
+        canonical = self._operation_path(client, operation, path, new=True)
+        if canonical == self.root:
+            _fail('invalid_argument', 'The configured remote root cannot be replaced')
+        try:
+            facts = self._metadata(client, operation, canonical)
+        except ftplib.error_perm as error:
+            if str(error)[:3] != '550':
+                raise
+            # 550 is ambiguous (absence, permissions or another failure).
+            # Only a complete, successful bounded listing can prove absence.
+            entries = self._listing(client, operation, posixpath.dirname(canonical))
+            if any(entry['name'] == posixpath.basename(canonical) for entry in entries):
+                _fail('unavailable', 'Existing FTP destination metadata is unavailable')
+            return canonical, None
+        if facts.get('type', '').lower() != 'file':
+            _fail('unsupported', 'Upload destination must be an ordinary file or absent')
+        digest = hashlib.sha256()
+        self._read(client, operation, canonical, sink=digest.update)
+        return canonical, digest.hexdigest()
+
+    def _upload(self, client, operation, canonical, data, expected_version, progress=None):
+        self._check_upload_target(client, operation, canonical, expected_version)
+        directory = posixpath.join(posixpath.dirname(canonical), '.runyte-upload-' + uuid.uuid4().hex)
+        staged = posixpath.join(directory, 'document')
+        created, sent = False, 0
+
+        def uploaded(block):
+            nonlocal sent
+            operation.check()
+            sent += len(block)
+            self._upload_progress(progress, sent, len(data))
+
+        try:
+            self._tick(client, operation)
+            client.mkd(directory)
+            created = True
+            self._tick(client, operation)
+            client.storbinary('STOR ' + staged, io.BytesIO(data), blocksize=BLOCK_BYTES,
+                              callback=uploaded)
+            self._check_upload_target(client, operation, canonical, expected_version)
+            self._tick(client, operation)
+            operation.promote()
+            client.rename(staged, canonical)
+            if progress is not None:
+                progress(100)
+        finally:
+            if created:
+                self._cleanup(client, operation, directory, staged)
+
     def replace(self, path, data, expected_version, cancel=None):
         if (not isinstance(data, bytes) or len(data) > MAX_BYTES
                 or not isinstance(expected_version, str) or len(expected_version) != 64
@@ -391,32 +441,6 @@ class FtpTransport(BoundedTransport):
 
         def action(client, operation):
             canonical = self._path(client, operation, path)
-            self._stat(client, operation, canonical)
-            directory = posixpath.join(posixpath.dirname(canonical), '.runyte-upload-' + uuid.uuid4().hex)
-            staged = posixpath.join(directory, 'document')
-            created = False
-            try:
-                self._tick(client, operation)
-                # MKD fails on a collision. STOR is confined to a directory we
-                # just created; it never overwrites a guessed sibling filename.
-                client.mkd(directory)
-                created = True
-                self._tick(client, operation)
-                client.storbinary('STOR ' + staged, io.BytesIO(data), blocksize=BLOCK_BYTES,
-                                  callback=lambda block: operation.check())
-                if self._path(client, operation, path) != canonical:
-                    _fail('conflict', 'Remote path changed while preparing replacement')
-                current = self._read(client, operation, canonical)
-                if hashlib.sha256(current).hexdigest() != expected_version:
-                    _fail('conflict', 'Remote file changed; inspect it before saving')
-                del current
-                self._tick(client, operation)
-                operation.promote()
-                client.rename(staged, canonical)
-                return hashlib.sha256(data).hexdigest()
-            finally:
-                # Only our staging directory/file can be deleted. Cancellation
-                # and disconnect may leave them behind. Never unlink the target.
-                if created:
-                    self._cleanup(client, operation, directory, staged)
+            self._upload(client, operation, canonical, data, expected_version)
+            return hashlib.sha256(data).hexdigest()
         return self._run(action, cancel, mutation=True)

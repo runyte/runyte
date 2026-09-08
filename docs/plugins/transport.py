@@ -28,6 +28,16 @@ class PreparedOperation:
     warnings: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class PreparedUpload:
+    connection_id: str
+    destination: str
+    bytes: int
+    sha256: str
+    expected_version: str | None
+    warnings: tuple[str, ...]
+
+
 def _fail(code, message):
     raise TransportError(code, message)
 
@@ -118,6 +128,51 @@ class BoundedTransport:
             self._operation_apply(client, prepared)
             return 'applied'
         return self._run(action, cancel, mutation=True)
+
+    @staticmethod
+    def _upload_bytes(data):
+        if not isinstance(data, bytes):
+            _fail('invalid_argument', 'Upload requires immutable binary bytes')
+        if len(data) > 8 * 1024 * 1024:
+            _fail('limit_exceeded', 'Upload exceeds the 8 MiB limit')
+        return hashlib.sha256(data).hexdigest()
+
+    def prepare_upload(self, destination, data, cancel=None):
+        digest = self._upload_bytes(data)
+
+        def action(client, operation):
+            canonical, previous = self._upload_state(client, operation, destination)
+            if getattr(self, 'protocol', None) in ('ftp', 'ftps'):
+                warnings = ('FTP may overwrite raced targets; no atomicity or undo. Staging uses server permissions.',)
+            elif previous is None:
+                warnings = ('New remote file; no undo or durability guarantee.',)
+            else:
+                warnings = ('Replaces file; concurrent edits may be overwritten; no undo or durability.',)
+            return PreparedUpload(self.connection_id, canonical, len(data), digest, previous, warnings)
+        return self._run(action, cancel)
+
+    def upload(self, prepared, data, cancel=None, progress=None):
+        digest = self._upload_bytes(data)
+        if (not isinstance(prepared, PreparedUpload)
+                or prepared.connection_id != self.connection_id
+                or prepared.bytes != len(data) or prepared.sha256 != digest):
+            _fail('conflict', 'Upload bytes or connection changed; prepare and confirm again')
+
+        def action(client, operation):
+            self._upload(client, operation, prepared.destination, data,
+                         prepared.expected_version, progress)
+            return 'applied'
+        return self._run(action, cancel, mutation=True)
+
+    def _check_upload_target(self, client, operation, destination, expected_version):
+        canonical, current = self._upload_state(client, operation, destination)
+        if canonical != destination or current != expected_version:
+            _fail('conflict', 'Remote upload destination changed; prepare and confirm again')
+
+    @staticmethod
+    def _upload_progress(progress, sent, total):
+        if progress is not None:
+            progress(min(90, sent * 90 // max(1, total)))
 
     def download(self, path, staging_path, expected_bytes, cancel=None, progress=None):
         """Stream raw bytes into an existing host staging file, never a destination."""

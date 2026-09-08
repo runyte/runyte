@@ -10,7 +10,8 @@ from contextlib import contextmanager
 from application import Application, PluginError
 from remote_download import Downloads
 from remote_operations import Operations
-from remote_status import DownloadStatus, OperationStatus, STATUS_HEADROOM
+from remote_upload import Uploads
+from remote_status import DownloadStatus, OperationStatus, UploadStatus, STATUS_HEADROOM
 
 MAX_ROWS = 1024
 MAX_MODEL_BYTES = 900 * 1024
@@ -46,7 +47,7 @@ def available(lock):
 
 
 class RemoteApplication:
-    def __init__(self, transport, provider, plugin_id, app=None, *, protocol_label, atomic_replace):
+    def __init__(self, transport, provider, plugin_id, app=None, *, protocol_label, atomic_replace, workspace_root=None):
         if not re.fullmatch(r'[a-z][a-z0-9_-]{0,63}', plugin_id):
             raise PluginError('invalid_argument', 'Invalid configured plugin ID')
         self.transport, self.provider, self.plugin_id = transport, provider, plugin_id
@@ -62,6 +63,9 @@ class RemoteApplication:
             command('download', 'Download the selected remote file through native confirmation'),
             command('confirm-download', 'Confirm a completed download', context='workspace'),
             command('cancel-download', 'Cancel the current download', context='workspace'),
+            command('upload', 'Prepare an upload of a workspace disk file'),
+            command('confirm-upload', 'Confirm the prepared disk-file upload', context='workspace'),
+            command('cancel-upload', 'Cancel the pending disk-file upload', context='workspace'),
             command('mkdir', 'Prepare a remote directory creation'),
             command('rename', 'Prepare a selected remote file or empty directory rename'),
             command('delete', 'Prepare permanent deletion of a remote file or empty directory'),
@@ -76,13 +80,17 @@ class RemoteApplication:
         self.model = None
         self.download_status = DownloadStatus(self)
         self.operation_status = OperationStatus(self)
+        self.upload_status = UploadStatus(self)
         self.downloads = Downloads(self.app, transport, on_status=self.download_status)
         self.operations = Operations(self.app, transport, on_status=self.operation_status)
+        self.uploads = Uploads(self.app, transport, on_status=self.upload_status, workspace_root=workspace_root)
         self.handlers = {'browse': self.browse, 'enter': self.enter,
                          'parent': self.parent, 'refresh': self.refresh,
                          'open': self.open, 'inspect': self.inspect, 'rebind': self.rebind,
                          'download': self.download, 'confirm-download': self.downloads.confirm,
                          'cancel-download': self.downloads.cancel,
+                         'upload': self.upload, 'confirm-upload': self.uploads.confirm,
+                         'cancel-upload': self.uploads.cancel,
                          'mkdir': self.mkdir, 'rename': self.rename, 'delete': self.delete,
                          'confirm-operation': self.operations.confirm,
                          'cancel-operation': self.operations.cancel}
@@ -125,7 +133,7 @@ class RemoteApplication:
                                   'role': 'heading' if kind == 'directory' else
                                           'ordinary' if kind == 'file' else 'muted'})
             entries[row_id] = {'path': path, 'kind': kind, 'size': row.get('size')}
-        if len(json.dumps(model, ensure_ascii=False).encode('utf-8')) > MAX_MODEL_BYTES - 2 * STATUS_HEADROOM:
+        if len(json.dumps(model, ensure_ascii=False).encode('utf-8')) > MAX_MODEL_BYTES - 3 * STATUS_HEADROOM:
             raise PluginError('limit_exceeded', 'Remote directory model exceeds message budget')
         presented = self.status_model(base=model)
         if self.view is None:
@@ -200,6 +208,7 @@ class RemoteApplication:
     def event(self, name, data):
         self.downloads.event(name, data)
         self.operations.event(name, data)
+        self.uploads.event(name, data)
         self.provider.on_event(name, data)
         # View closures may arrive while a command waits for a host response.
         # Defer the invalidation until that bounded command has released its lock.
@@ -212,14 +221,22 @@ class RemoteApplication:
 
     def status_model(self, override=None, base=None):
         model = self.model if base is None else base
-        for status in (self.download_status, self.operation_status):
+        for status in (self.download_status, self.operation_status, self.upload_status):
             phase = override[1] if override is not None and override[0] is status else None
             model = status.model(model, phase)
         return model
 
     def submitted(self, context):
+        result = self.uploads.submitted(context)
+        if result is not None:
+            return result
         result = self.operations.submitted(context)
         return self.downloads.submitted(context) if result is None else result
+
+    def upload(self, context):
+        with available(self.lock):
+            self.current(context)
+            return self.uploads.start(context, self.path)
 
     def mkdir(self, context):
         with available(self.lock):

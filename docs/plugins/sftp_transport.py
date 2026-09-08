@@ -301,6 +301,57 @@ class SftpTransport(BoundedTransport):
         # remaining operation budget again.
         sftp.get_channel().settimeout(operation.remaining())
 
+    def _upload_state(self, sftp, operation, path):
+        canonical = self._operation_path(sftp, operation, path, new=True)
+        if canonical == self.root:
+            _fail('invalid_argument', 'The configured remote root cannot be replaced')
+        operation.check()
+        try:
+            attrs = sftp.lstat(canonical)
+        except OSError as error:
+            if error.errno == errno.ENOENT:
+                return canonical, None
+            raise
+        if not stat.S_ISREG(attrs.st_mode or 0):
+            _fail('unsupported', 'Upload destination must be an ordinary file or absent')
+        if self._operation_path(sftp, operation, canonical, new=False) != canonical:
+            _fail('conflict', 'Remote destination identity changed')
+        digest = hashlib.sha256()
+        self._read(sftp, operation, canonical, sink=digest.update)
+        return canonical, digest.hexdigest()
+
+    def _upload(self, sftp, operation, canonical, data, expected_version, progress=None):
+        self._check_upload_target(sftp, operation, canonical, expected_version)
+        mode = 0o600
+        if expected_version is not None:
+            mode = stat.S_IMODE(sftp.lstat(canonical).st_mode) & 0o777
+            self._probe_replace(sftp, operation, posixpath.dirname(canonical))
+        temporary = posixpath.join(posixpath.dirname(canonical), '.runyte-upload-' + uuid.uuid4().hex)
+        created = False
+        try:
+            operation.check()
+            with sftp.open(temporary, 'wx', bufsize=0) as stream:
+                created = True
+                sftp.chmod(temporary, 0o600)
+                for offset in range(0, len(data), BLOCK_BYTES):
+                    operation.check()
+                    block = data[offset:offset + BLOCK_BYTES]
+                    stream.write(block)
+                    self._upload_progress(progress, offset + len(block), len(data))
+            operation.check()
+            sftp.chmod(temporary, mode)
+            self._check_upload_target(sftp, operation, canonical, expected_version)
+            operation.promote()
+            if expected_version is None:
+                sftp.rename(temporary, canonical)
+            else:
+                sftp.posix_rename(temporary, canonical)
+            if progress is not None:
+                progress(100)
+        finally:
+            if created and not operation.promotion_started:
+                self._cleanup(sftp, operation, [temporary])
+
     def replace(self, path, data, expected_version, cancel=None):
         if (not isinstance(data, bytes) or len(data) > MAX_BYTES
                 or not isinstance(expected_version, str) or len(expected_version) != 64
@@ -308,38 +359,7 @@ class SftpTransport(BoundedTransport):
             _fail('invalid_argument', 'Invalid bounded remote replacement')
 
         def action(sftp, operation):
-            canonical = self._path(sftp, operation, path)
-            operation.check()
-            attrs = sftp.stat(canonical)
-            if attrs.st_mode is None or not stat.S_ISREG(attrs.st_mode):
-                _fail('unsupported', 'Remote resource is not a regular file')
-            self._probe_replace(sftp, operation, posixpath.dirname(canonical))
-            temporary = posixpath.join(posixpath.dirname(canonical), '.runyte-upload-' + uuid.uuid4().hex)
-            created = False
-            try:
-                operation.check()
-                with sftp.open(temporary, 'wx', bufsize=0) as stream:
-                    created = True
-                    # The initial empty exclusive file may inherit the server
-                    # umask; make it private before sending document contents.
-                    sftp.chmod(temporary, 0o600)
-                    for offset in range(0, len(data), BLOCK_BYTES):
-                        operation.check()
-                        stream.write(data[offset:offset + BLOCK_BYTES])
-                operation.check()
-                sftp.chmod(temporary, stat.S_IMODE(attrs.st_mode) & 0o777)
-                if self._path(sftp, operation, path) != canonical:
-                    _fail('conflict', 'Remote path changed while preparing replacement')
-                current = self._read(sftp, operation, canonical)
-                if hashlib.sha256(current).hexdigest() != expected_version:
-                    _fail('conflict', 'Remote file changed; inspect it before saving')
-                del current
-                operation.promote()
-                sftp.posix_rename(temporary, canonical)
-                return hashlib.sha256(data).hexdigest()
-            finally:
-                # No retry, destination unlink, or claim that closing a failed
-                # rename settles it. A disconnected upload may leave its temp.
-                if created and not operation.promotion_started:
-                    self._cleanup(sftp, operation, [temporary])
+            canonical = self._operation_path(sftp, operation, path, new=True)
+            self._upload(sftp, operation, canonical, data, expected_version)
+            return hashlib.sha256(data).hexdigest()
         return self._run(action, cancel, mutation=True)

@@ -17,6 +17,7 @@ from application import PluginError
 from download_transport_checks import DownloadTransportChecks
 from download_wire_checks import check_download_wire
 from operation_transport_checks import OperationTransportChecks
+from upload_transport_checks import UploadTransportChecks
 from ftp_fixture import FtpFixture
 from ftp_transport import FtpTransport
 
@@ -27,7 +28,7 @@ def version(data):
     return hashlib.sha256(data).hexdigest()
 
 
-class FtpTransportTests(OperationTransportChecks, DownloadTransportChecks, unittest.TestCase):
+class FtpTransportTests(UploadTransportChecks, OperationTransportChecks, DownloadTransportChecks, unittest.TestCase):
     def fixture(self, **options):
         fixture = FtpFixture(**options)
         self.addCleanup(fixture.close)
@@ -35,6 +36,32 @@ class FtpTransportTests(OperationTransportChecks, DownloadTransportChecks, unitt
 
     def transport(self, fixture, **options):
         return FtpTransport({**fixture.config, **options})
+
+    def test_upload_absence_requires_successful_parent_listing_not_550(self):
+        fixture = self.fixture()
+        transport = self.transport(fixture)
+        fixture.reject_listing = True
+        with self.assertRaises(PluginError) as raised:
+            transport.prepare_upload('missing', b'binary\x00')
+        self.assertEqual(raised.exception.code, 'unavailable')
+        self.assertFalse((fixture.root / 'missing').exists())
+        self.assertFalse(any(op[0] in ('STOR', 'RNFR', 'RNTO') for op in fixture.operations))
+
+    def test_upload_existing_file_needs_no_unbounded_parent_listing_but_absence_does(self):
+        fixture = self.fixture()
+        transport = self.transport(fixture)
+        target = fixture.root / 'target'
+        target.write_bytes(b'base')
+        for number in range(1025):
+            (fixture.root / ('entry-' + str(number))).touch()
+        prepared = transport.prepare_upload('target', b'\x00upload')
+        self.assertEqual(transport.upload(prepared, b'\x00upload'), 'applied')
+        self.assertEqual(target.read_bytes(), b'\x00upload')
+        self.assertFalse(any(op[0] == 'MLSD' for op in fixture.operations))
+        with self.assertRaises(PluginError) as raised:
+            transport.prepare_upload('missing', b'')
+        self.assertEqual(raised.exception.code, 'limit_exceeded')
+        self.assertFalse((fixture.root / 'missing').exists())
 
     def assert_no_destination_delete(self, fixture, destination):
         self.assertFalse(any(op[0] == 'DELE' and op[1] == str(destination)

@@ -70,8 +70,8 @@ UTF-8 editing with conditional or explicitly confirmed remote saves, conflict
 comparison, and [native reload recovery](docs/plugins/applications.md#native-reload-and-conflict-recovery).
 Runnable [SFTP](docs/plugins/applications.md#sftp-browser-and-editor)
 and [FTP/FTPS](docs/plugins/applications.md#ftp-and-ftps-browser-and-editor) browsers
-state their transport and overwrite guarantees explicitly and can download binary
-files through native confirmation. Applications can also control
+state their transport and overwrite guarantees explicitly and can download or
+upload binary files through native confirmation. Applications can also control
 [managed helpers](docs/plugins/applications.md#managed-helpers) with bounded binary
 pipes and process-group cleanup, publish retained notifications, and make explicit
 [native terminal/browser handoffs](docs/plugins/applications.md#notifications-and-native-handoffs).
