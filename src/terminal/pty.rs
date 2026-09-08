@@ -40,6 +40,14 @@ pub enum PtyEvent {
     Exited(Option<i32>),
 }
 
+/// Used only for an unpublished terminal. Cancellation exits before any
+/// blocking IO, retaining accounting until both duplicate descriptors close.
+#[derive(Clone)]
+pub(super) struct PendingActivation {
+    pub(super) wait: std::sync::Arc<dyn Fn() -> bool + Send + Sync>,
+    pub(super) lifetime: std::sync::Arc<dyn Send + Sync>,
+}
+
 /// A child process attached to a pseudoterminal.
 pub struct Pty {
     master: OwnedFd,
@@ -54,11 +62,15 @@ pub struct Pty {
 /// program exists, so ordinary `?` unwinding needs an owner that does both.
 struct SpawnedChild {
     child: Option<Child>,
+    unpublished: bool,
 }
 
 impl SpawnedChild {
-    fn new(child: Child) -> Self {
-        Self { child: Some(child) }
+    fn new(child: Child, unpublished: bool) -> Self {
+        Self {
+            child: Some(child),
+            unpublished,
+        }
     }
 
     fn id(&self) -> u32 {
@@ -73,7 +85,12 @@ impl SpawnedChild {
 impl Drop for SpawnedChild {
     fn drop(&mut self) {
         if let Some(child) = self.child.as_mut() {
-            terminate_child(child);
+            if self.unpublished {
+                signal_unpublished(child);
+                let _ = child.wait();
+            } else {
+                terminate_child(child);
+            }
         }
     }
 }
@@ -133,6 +150,31 @@ impl Pty {
             events,
             parent_context,
             |_, _| Ok(()),
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn spawn_gated_in_context(
+        program: &OsStr,
+        arguments: &[String],
+        directory: &Path,
+        columns: u16,
+        rows: u16,
+        parent_context: Option<&str>,
+        events: impl Fn(PtyEvent) + Send + 'static,
+        activation: PendingActivation,
+    ) -> io::Result<Self> {
+        Self::spawn_with_checkpoints(
+            program,
+            arguments,
+            directory,
+            columns,
+            rows,
+            events,
+            parent_context,
+            |_, _| Ok(()),
+            Some(activation),
         )
     }
 
@@ -146,6 +188,7 @@ impl Pty {
         events: impl Fn(PtyEvent) + Send + 'static,
         parent_context: Option<&str>,
         mut checkpoint: impl FnMut(SpawnCheckpoint, u32) -> io::Result<()>,
+        activation: Option<PendingActivation>,
     ) -> io::Result<Self> {
         let (master, slave) = open_pair(columns, rows)?;
         let slave_descriptor = slave.as_raw_fd();
@@ -205,7 +248,7 @@ impl Pty {
             });
         }
         let child = command.spawn()?;
-        let child = SpawnedChild::new(child);
+        let child = SpawnedChild::new(child, activation.is_some());
         checkpoint(SpawnCheckpoint::ChildOwned, child.id())?;
         // The child has duplicated this endpoint onto stdin/stdout/stderr.
         // Closing the parent's copy is what lets the reader observe EOF when
@@ -222,10 +265,19 @@ impl Pty {
         // reading — a paused pager, a program waiting on something else —
         // block the editor's event loop. The queue is what keeps a keystroke
         // from ever doing that.
+        let writer_activation = activation.clone();
         thread::Builder::new()
             .name("runyte-pty-write".to_owned())
             .spawn(move || {
                 let writer = writer;
+                if let Some(activation) = writer_activation {
+                    if !(activation.wait)() {
+                        drop(writer);
+                        drop(activation.lifetime);
+                        return;
+                    }
+                    drop(activation.lifetime);
+                }
                 while let Ok(bytes) = pending.recv() {
                     for chunk in bytes.chunks(WRITE_CHUNK) {
                         if write_all(writer.as_raw_fd(), chunk).is_err() {
@@ -240,6 +292,15 @@ impl Pty {
             .name("runyte-pty-read".to_owned())
             .spawn(move || {
                 let reader = reader;
+                if let Some(activation) = activation {
+                    if !(activation.wait)() {
+                        drop(reader);
+                        drop(activation.lifetime);
+                        return;
+                    }
+                    // Native ownership now accounts for the reader/PTY.
+                    drop(activation.lifetime);
+                }
                 let mut buffer = vec![0_u8; READ_CHUNK];
                 loop {
                     let read = unsafe {
@@ -296,6 +357,24 @@ impl Pty {
         terminate_child(&mut self.child);
     }
 
+    /// Only for an unpublished PTY that has never called `finished` or any
+    /// other reaping probe. Its reader is gated outside the host event queue.
+    pub(super) fn signal_unpublished(&self) {
+        signal_unpublished(&self.child);
+    }
+
+    pub(super) fn terminate_unpublished(&mut self) {
+        self.signal_unpublished();
+        let _ = self.child.wait();
+    }
+
+    #[cfg(test)]
+    pub(super) fn unpublished_completed(&self) -> io::Result<bool> {
+        crate::process_group::ChildExitObserver::new(&self.child)
+            .and_then(|observer| observer.completed(&self.child))
+            .map(|status| status.is_some())
+    }
+
     /// Reports the child's status if it has already finished, without waiting.
     pub fn finished(&mut self) -> Option<Option<i32>> {
         match self.child.try_wait() {
@@ -320,6 +399,23 @@ fn parent_editor_command(value: &std::ffi::OsStr) -> Option<String> {
 }
 
 const TERMINATION: process_group::Site = process_group::Site::new("terminal", "terminate_child");
+
+fn signal_unpublished(child: &Child) {
+    let anchor = match crate::process_group::ChildExitObserver::new(child)
+        .and_then(|observer| observer.completed(child))
+    {
+        Ok(Some(_)) => process_group::GroupAnchor::UnreapedLeader,
+        _ => process_group::GroupAnchor::RunningLeader,
+    };
+    let group = process_group::claim_anchored_group(
+        process_group::Site::new("terminal", "cancel_unpublished"),
+        child.id() as libc::pid_t,
+        anchor,
+    );
+    for signal in [libc::SIGHUP, libc::SIGKILL] {
+        group.signal(signal);
+    }
+}
 
 fn terminate_child(child: &mut Child) {
     terminate_child_with(child, |target, signal| {
@@ -563,6 +659,7 @@ mod tests {
                     }
                     Ok(())
                 },
+                None,
             )
             .expect_err("the selected setup checkpoint fails");
 

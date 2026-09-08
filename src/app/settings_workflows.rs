@@ -269,6 +269,7 @@ impl App {
 
     pub(super) fn open_notifications_buffer(&mut self) {
         self.notifications.acknowledge();
+        self.notifications_refresh_pending = false;
         let rendered = Buffer::notifications(self.notifications.render());
         let buffer = match self.buffers.iter().enumerate().find_map(|(index, buffer)| {
             (!self.closed_buffers.contains(&index) && buffer.is_notifications()).then_some(index)
@@ -296,6 +297,7 @@ impl App {
     }
 
     fn refresh_notification_buffers(&mut self) {
+        self.notifications_refresh_pending = false;
         let open = self
             .buffers
             .iter()
@@ -326,6 +328,17 @@ impl App {
     pub fn push_notification(&mut self, notification: NotificationDraft) {
         self.notifications.push(notification);
         self.refresh_notification_buffers();
+    }
+
+    pub(crate) fn push_background_notification(&mut self, notification: NotificationDraft) {
+        self.notifications.push(notification);
+        self.notifications_refresh_pending = true;
+    }
+
+    pub(super) fn settle_background_notifications(&mut self) {
+        if self.notifications_refresh_pending {
+            self.refresh_notification_buffers();
+        }
     }
 
     pub(super) fn refresh_settings_buffers(&mut self) {

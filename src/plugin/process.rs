@@ -17,7 +17,9 @@ pub const MAX_ARGUMENTS: usize = 64;
 pub const MAX_ARGUMENT_LENGTH: usize = 4096;
 pub const MAX_ARGUMENT_BYTES: usize = 64 * 1024;
 
-fn arguments<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Vec<String>, D::Error> {
+pub(super) fn arguments<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Vec<String>, D::Error> {
     struct Arguments;
     impl<'de> serde::de::Visitor<'de> for Arguments {
         type Value = Vec<String>;
@@ -64,40 +66,43 @@ impl Start {
     /// Validates wire bounds only. The worker resolves and checks cwd inside
     /// the workspace before spawning; executable/arguments never form a shell.
     pub fn validate(&self) -> Result<(), Error> {
-        if self.label.is_empty()
-            || self.label.len() > 160
-            || self.label.chars().any(char::is_control)
-        {
-            return Err(invalid("Invalid process label"));
-        }
-        if self.executable.is_empty()
-            || self.executable.len() > 4096
-            || self.executable.contains('\0')
-        {
-            return Err(invalid("Invalid process executable"));
-        }
-        if self.args.len() > MAX_ARGUMENTS
-            || self.args.iter().any(|arg| arg.len() > MAX_ARGUMENT_LENGTH)
-            || self
-                .args
-                .iter()
-                .try_fold(0usize, |used, arg| used.checked_add(arg.len()))
-                .is_none_or(|bytes| bytes > MAX_ARGUMENT_BYTES)
-        {
-            return Err(limited("Process arguments exceed their limit"));
-        }
-        if self.args.iter().any(|arg| arg.contains('\0')) {
-            return Err(invalid("Process arguments contain a null byte"));
-        }
-        if self
-            .cwd
-            .as_ref()
-            .is_some_and(|path| path.is_empty() || path.len() > 4096 || path.contains('\0'))
-        {
-            return Err(invalid("Invalid process working directory"));
-        }
-        Ok(())
+        validate_launch(
+            &self.label,
+            &self.executable,
+            &self.args,
+            self.cwd.as_deref(),
+        )
     }
+}
+
+pub(super) fn validate_launch(
+    label: &str,
+    executable: &str,
+    args: &[String],
+    cwd: Option<&str>,
+) -> Result<(), Error> {
+    if label.is_empty() || label.len() > 160 || label.chars().any(char::is_control) {
+        return Err(invalid("Invalid process label"));
+    }
+    if executable.is_empty() || executable.len() > 4096 || executable.contains('\0') {
+        return Err(invalid("Invalid process executable"));
+    }
+    if args.len() > MAX_ARGUMENTS
+        || args.iter().any(|arg| arg.len() > MAX_ARGUMENT_LENGTH)
+        || args
+            .iter()
+            .try_fold(0usize, |used, arg| used.checked_add(arg.len()))
+            .is_none_or(|bytes| bytes > MAX_ARGUMENT_BYTES)
+    {
+        return Err(limited("Process arguments exceed their limit"));
+    }
+    if args.iter().any(|arg| arg.contains('\0')) {
+        return Err(invalid("Process arguments contain a null byte"));
+    }
+    if cwd.is_some_and(|path| path.is_empty() || path.len() > 4096 || path.contains('\0')) {
+        return Err(invalid("Invalid process working directory"));
+    }
+    Ok(())
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]

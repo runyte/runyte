@@ -257,6 +257,7 @@ impl App {
     /// This is the only frame lifecycle step allowed to mutate view state.
     /// Rendering consumes the returned owned values and an immutable `App`.
     pub fn prepare_view(&mut self, geometry: FrameGeometry) -> PreparedView {
+        self.settle_background_notifications();
         if !self.plugins.instances.is_empty() {
             self.plugins.presented_views.clear();
             for (&pane_id, pane) in &self.panes {

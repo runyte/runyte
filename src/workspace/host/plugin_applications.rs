@@ -131,6 +131,17 @@ impl WorkspaceHost {
                 request,
             } => {
                 self.application_request_id(id, &request_id)?;
+                if let api::Request::NotificationPublish(notification) = request {
+                    let result = self.application_notification_request(id, notification);
+                    return self.application_local_reply(id, request_id, result);
+                }
+                if super::plugin_handoffs::is_handoff_request(&request) {
+                    let result = self.application_handoff_request(id, &request_id, request);
+                    return match result {
+                        Ok(()) => Ok(()),
+                        Err(error) => self.application_local_reply(id, request_id, Err(error)),
+                    };
+                }
                 if super::plugin_processes::is_process_request(&request) {
                     let result = self.application_process_request(id, &request_id, request);
                     return match result {

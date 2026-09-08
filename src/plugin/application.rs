@@ -133,6 +133,15 @@ pub struct CommandResult {
 pub enum Request {
     #[serde(rename = "process.start")]
     ProcessStart(super::process::Start),
+    #[serde(rename = "terminal.open")]
+    TerminalOpen(super::handoff::TerminalOpen),
+    #[serde(rename = "external.open")]
+    ExternalOpen {
+        invocation: String,
+        target: super::handoff::Target,
+    },
+    #[serde(rename = "notification.publish")]
+    NotificationPublish(super::handoff::Notification),
     #[serde(rename = "process.get")]
     ProcessGet { process: String },
     #[serde(rename = "process.read")]
@@ -543,6 +552,9 @@ pub enum Response {
 #[derive(Clone, Debug, Serialize)]
 #[serde(untagged)]
 pub enum ResultValue {
+    TerminalOpened {
+        terminal: String,
+    },
     Process(super::process::Info),
     ProcessRead(super::process::Read),
     ProcessWrite(super::process::Write),
@@ -671,6 +683,7 @@ pub(crate) struct CapturedContext {
 
 /// Bounded host ownership, independent of a frontend and the ten-second control timer.
 pub(crate) struct Instance {
+    pub notification_at: Option<std::time::Instant>,
     pub processes: BTreeSet<String>,
     pub model_requests: BTreeMap<String, super::view::Pending>,
     pub view_stages: BTreeMap<String, super::view::Stage>,
@@ -716,6 +729,7 @@ impl Default for Instance {
             .unwrap_or_default()
             .as_nanos();
         Self {
+            notification_at: None,
             processes: Default::default(),
             model_requests: Default::default(),
             view_stages: Default::default(),
@@ -802,6 +816,9 @@ impl Instance {
 }
 
 pub const CAPABILITIES: &[&str] = &[
+    "terminals",
+    "external",
+    "notifications",
     "processes",
     "providers",
     "interaction",
@@ -838,7 +855,10 @@ pub(crate) fn decode(bytes: &[u8]) -> anyhow::Result<super::ClientMessage> {
         );
         if !matches!(
             method,
-            "process.start"
+            "terminal.open"
+                | "external.open"
+                | "notification.publish"
+                | "process.start"
                 | "process.get"
                 | "process.read"
                 | "process.write"
@@ -1500,6 +1520,14 @@ mod tests {
                         },
                     }],
                 }),
+            },
+            HostMessage::Response {
+                id: "p:1101".into(),
+                outcome: Response::Success {
+                    result: ResultValue::TerminalOpened {
+                        terminal: "t:1".into(),
+                    },
+                },
             },
         ];
         let expected = fixtures

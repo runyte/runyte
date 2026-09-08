@@ -24,6 +24,14 @@ pub mod grid;
 pub mod keys;
 pub mod parser;
 #[cfg(unix)]
+mod pending;
+#[cfg(all(unix, test))]
+pub(crate) use pending::pending_test_guard;
+#[cfg(unix)]
+pub(crate) use pending::{
+    PENDING_TERMINAL_CHARGE, PendingTerminal, TerminalCancellation, TerminalPreparation,
+};
+#[cfg(unix)]
 pub mod pty;
 
 use std::{
@@ -139,6 +147,7 @@ const OUTPUT_BYTE_BUDGET: usize = 256 * 1024;
 
 #[derive(Debug, Default)]
 struct PendingOutput {
+    active: bool,
     bytes: VecDeque<Vec<u8>>,
     exit: Option<Option<i32>>,
     ready: bool,
@@ -161,6 +170,17 @@ struct OutputShared {
 struct TerminalEventSender(Arc<OutputShared>);
 
 impl TerminalEventSender {
+    fn wait_until_active(&self, id: TerminalId) -> bool {
+        let mut state = self.0.state.lock().unwrap_or_else(|e| e.into_inner());
+        while state
+            .sessions
+            .get(&id)
+            .is_some_and(|pending| !pending.active)
+        {
+            state = self.0.space.wait(state).unwrap_or_else(|e| e.into_inner());
+        }
+        state.sessions.contains_key(&id)
+    }
     fn register(&self, id: TerminalId) {
         self.0
             .state
@@ -168,7 +188,8 @@ impl TerminalEventSender {
             .unwrap_or_else(|error| error.into_inner())
             .sessions
             .entry(id)
-            .or_default();
+            .or_default()
+            .active = true;
     }
 
     fn remove(&self, id: TerminalId) {
@@ -191,6 +212,19 @@ impl TerminalEventSender {
             .state
             .lock()
             .unwrap_or_else(|error| error.into_inner());
+        // Unpublished sessions retain at most the reader's current chunk.
+        // Nothing enters the host queue until its session has been installed.
+        while state
+            .sessions
+            .get(&id)
+            .is_some_and(|pending| !pending.active)
+        {
+            state = self
+                .0
+                .space
+                .wait(state)
+                .unwrap_or_else(|error| error.into_inner());
+        }
         match output {
             TerminalOutput::Bytes { bytes, .. } => {
                 while state
@@ -2507,9 +2541,18 @@ impl TerminalSessions {
 
     /// Ends every session, for editor shutdown.
     pub fn close_all(&mut self) {
-        for id in self.sessions.keys().copied().collect::<Vec<_>>() {
-            self.events.remove(id);
-        }
+        // Reservations also belong to this manager. Closing it must wake
+        // unpublished readers and prevent a late preparation from installing.
+        let mut output = self
+            .events
+            .0
+            .state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        output.sessions.clear();
+        output.ready.clear();
+        drop(output);
+        self.events.0.space.notify_all();
         self.sessions.clear();
     }
 }

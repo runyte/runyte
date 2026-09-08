@@ -63,6 +63,28 @@ class Application:
             params['cwd'] = cwd
         return self.request('process.start', **params)
 
+    def publish_notification(self, severity, title, body=''):
+        """Publish bounded owner-labelled feedback without taking focus."""
+        return self.request('notification.publish', severity=severity, title=title, body=body)
+
+    def open_terminal(self, invocation, label, executable, args=(), *, cwd=None):
+        """Hand a native terminal session to the user with exact argument boundaries."""
+        params = {'invocation': invocation, 'label': label, 'executable': executable,
+                  'args': list(args)}
+        if cwd is not None:
+            params['cwd'] = cwd
+        return self.request('terminal.open', **params)
+
+    def open_url(self, invocation, url):
+        """Request one foreground system-browser handoff; never replay a failure."""
+        return self.request('external.open', invocation=invocation,
+                            target={'kind': 'url', 'url': url})
+
+    def open_file_externally(self, invocation, path):
+        """Hand an existing workspace file to its system handler."""
+        return self.request('external.open', invocation=invocation,
+                            target={'kind': 'file', 'path': path})
+
     def read_process(self, process, stream, offset, limit=65536):
         """Read retained output once. The returned data field contains decoded bytes."""
         if not 1 <= limit <= 65536:

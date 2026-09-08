@@ -185,6 +185,8 @@ mod plugin_provider_overwrite;
 mod plugin_provider_save_preview;
 mod plugin_provider_saves;
 mod plugin_rich_views;
+#[cfg(unix)]
+mod plugin_terminal_handoffs;
 mod plugin_validation;
 mod plugin_view_queries;
 mod presentation_and_settings;

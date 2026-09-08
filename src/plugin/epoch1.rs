@@ -49,6 +49,8 @@ pub enum ClientMessage {
     #[serde(skip)]
     Process(super::process::runtime::Event),
     #[serde(skip)]
+    Handoff(super::handoff::Event),
+    #[serde(skip)]
     ModelPrepared {
         generation: String,
         request: String,

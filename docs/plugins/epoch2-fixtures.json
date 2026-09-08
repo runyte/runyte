@@ -309,6 +309,9 @@
       "type": "hello",
       "version": "runyte-experimental-2",
       "capabilities": [
+        "terminals",
+        "external",
+        "notifications",
         "processes",
         "providers",
         "interaction",
@@ -670,7 +673,7 @@
         "surface": "u:g:1",
         "accepted": true,
         "values": {
-          "name": "é"
+          "name": "\u00e9"
         }
       }
     }
@@ -683,7 +686,7 @@
       "method": "buffer.create",
       "params": {
         "path": "notes.txt",
-        "text": "é猫\n",
+        "text": "\u00e9\u732b\n",
         "invocation": null
       }
     }
@@ -804,7 +807,7 @@
         "value": {
           "version": "v1",
           "offset": 0,
-          "text": "é猫",
+          "text": "\u00e9\u732b",
           "eof": true
         }
       }
@@ -979,7 +982,7 @@
         "job": "j:g:1",
         "upload": "upload-1",
         "offset": 0,
-        "text": "é猫"
+        "text": "\u00e9\u732b"
       }
     }
   },
@@ -1979,6 +1982,75 @@
             }
           }
         ]
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:1100",
+      "method": "notification.publish",
+      "params": {
+        "severity": "warning",
+        "title": "Transfer failed",
+        "body": "Inspect before retrying."
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:1101",
+      "method": "terminal.open",
+      "params": {
+        "invocation": "h:1",
+        "label": "Shell",
+        "executable": "/bin/sh",
+        "args": [
+          "-i"
+        ]
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:1102",
+      "method": "external.open",
+      "params": {
+        "invocation": "h:2",
+        "target": {
+          "kind": "url",
+          "url": "https://example.org/login"
+        }
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:1103",
+      "method": "external.open",
+      "params": {
+        "invocation": "h:3",
+        "target": {
+          "kind": "file",
+          "path": "report.pdf"
+        }
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "response",
+      "id": "p:1101",
+      "result": {
+        "terminal": "t:1"
       }
     }
   }

@@ -41,6 +41,29 @@ days, and fails below 89% total line coverage. The floor is deliberately below
 the observed baseline because conditional Linux and macOS code changes both the
 instrumented denominator and the paths available to a run on one platform.
 
+## 2026-09-08 — native handoffs and notifications
+
+Measured on `x86_64-unknown-linux-gnu` at `63d2d5e` plus the handoff round,
+using Rust 1.97.1 and cargo-llvm-cov 0.9.0. Ordinary and canonical suites each
+passed 3,442 tests with 33 ignored. Formatting and warnings-as-errors Clippy
+passed; the floor remains 89%.
+
+| Measure | Covered | Total | Coverage |
+| --- | ---: | ---: | ---: |
+| Lines | 116,552 | 127,169 | 91.65% |
+| Functions | 10,525 | 11,452 | 91.91% |
+| Regions | 177,270 | 194,471 | 91.15% |
+
+Twenty-seven new Rust tests cover system-handler validation/admission, unpublished
+terminal reader/writer ownership and cleanup, foreground and generation fences,
+retained notifications and one-shot idle presentation. Python application/schema
+checks (10) and handoff checks (5) passed. A native PTY smoke verified terminal
+command execution, terminal survival after plugin stop, retained owner-labelled
+notifications and zero terminal output over two settled idle seconds. Browser
+launch tests use an injected checked-in stand-in. Native macOS and the complete
+application performance matrix remain outstanding; the idle smoke is functional
+evidence rather than the release workload gate.
+
 ## 2026-09-08 — managed helper processes
 
 Measured on `x86_64-unknown-linux-gnu` at `b7b40c8` plus the managed-helper

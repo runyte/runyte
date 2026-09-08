@@ -242,8 +242,10 @@ mod plugin_documents;
 mod plugin_editor;
 mod plugin_filesystem;
 mod plugin_filesystem_apply;
+mod plugin_handoffs;
 mod plugin_interaction;
 mod plugin_models;
+mod plugin_notifications;
 mod plugin_observations;
 mod plugin_processes;
 mod plugin_provider_writes;
@@ -267,6 +269,9 @@ pub struct WorkspaceHost {
     plugin_processes: std::collections::BTreeMap<String, plugin_processes::Managed>,
     observation_buffers: Option<((usize, usize), Vec<usize>)>,
     plugin_events_sender: Option<tokio::sync::mpsc::Sender<crate::plugin::Event>>,
+    #[cfg(test)]
+    plugin_external_launcher: Option<std::path::PathBuf>,
+    plugin_handoffs: std::collections::BTreeMap<(usize, String, String), plugin_handoffs::Pending>,
     plugin_local_slots: Option<std::sync::Arc<tokio::sync::Semaphore>>,
     plugin_local_orphans: std::collections::BTreeMap<(usize, String, String), usize>,
     plugins_started: bool,
@@ -360,6 +365,9 @@ impl WorkspaceHost {
             plugin_processes: Default::default(),
             observation_buffers: None,
             plugin_events_sender: None,
+            #[cfg(test)]
+            plugin_external_launcher: None,
+            plugin_handoffs: Default::default(),
             plugin_local_slots: None,
             plugin_local_orphans: Default::default(),
             plugins_started: false,
@@ -603,6 +611,7 @@ impl WorkspaceHost {
                 })
                 .sum::<usize>()
                 + self.pending_process_requests(None)
+                + self.plugin_handoffs.len()
                 + self.app.plugins.provider_save_intents.len()
                 + self.provider_writes.values().filter(|p| p.orphaned).count()
                 + usize::from(

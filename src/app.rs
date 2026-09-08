@@ -2801,6 +2801,9 @@ pub struct App {
     /// Workspace-lifetime notifications. The persistent host owns `App`, so
     /// this history survives TUI detach/reattach but is never written to disk.
     notifications: NotificationCenter,
+    /// Background application notifications rebuild retained documents once
+    /// at the next presentation checkpoint, without an idle timer.
+    notifications_refresh_pending: bool,
     /// Presentation-only action echo for the last interactive command.
     /// Notifications never replace it; the next interaction does.
     action_feedback: Option<ActionFeedback>,
@@ -3369,6 +3372,7 @@ impl App {
             status,
             status_error,
             notifications: NotificationCenter::new(notification_limit),
+            notifications_refresh_pending: false,
             action_feedback: None,
             active_action_id: None,
             next_action_id: 1,

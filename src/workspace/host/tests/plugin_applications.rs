@@ -17,12 +17,16 @@ mod filesystem_recursive;
 mod filesystem_review;
 #[path = "plugin_filesystem_stat.rs"]
 mod filesystem_stat;
+#[path = "plugin_handoffs.rs"]
+mod handoffs;
 #[path = "plugin_interaction.rs"]
 mod interaction;
 #[path = "plugin_model_review.rs"]
 mod model_review;
 #[path = "plugin_models.rs"]
 mod models;
+#[path = "plugin_notifications.rs"]
+mod notifications;
 #[path = "plugin_observations.rs"]
 mod observations;
 #[path = "plugin_processes.rs"]

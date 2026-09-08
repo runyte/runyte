@@ -112,6 +112,9 @@ generation and must never be parsed, persisted, or used by another owner.
 | jobs | `job.finish` | Handle and terminal state; completed job |
 | jobs | `job.cancel` | Handle; cancellation requested or existing terminal state |
 | processes | `process.start/get/read/write/close` | Managed argument-vector helper, bounded binary pipes and explicit cleanup |
+| terminals | `terminal.open` | Foreground handoff to a native terminal session with exact arguments |
+| external | `external.open` | One foreground system-handler handoff for a URL or workspace file |
+| notifications | `notification.publish` | Bounded owner-labelled feedback without taking focus |
 | views | `view.create/get/publish/patch/close` | Semantic model, owned handle and model revision |
 | views | `view.query.set` | Explicit revision-bound query intent; matching publication settles it |
 | views | `view.stage.open/write/commit/close` | Bounded construction and atomic publication |
@@ -1339,3 +1342,82 @@ the group are outside this guarantee. Exit handling uses child-exit notification
 with no per-helper polling timer. The Python SDK's `start_process`, `read_process`
 and `write_process` helpers preserve these bounds; reads return decoded bytes,
 and invalid write acknowledgements produce `outcome_unknown` without replay.
+
+## Notifications and native handoffs
+
+`handoffs.py` demonstrates these operations. Configure it like the jobs example,
+with ID `handoffs` and capabilities `notifications`, `terminals` and `external`.
+Run `:plugin.handoffs.notify`, then `:notifications` to read the retained message.
+`:plugin.handoffs.terminal` opens the configured environment's interactive shell
+in a native terminal session. `:plugin.handoffs.browser https://example.org/`
+requests a system-browser handoff, and `:plugin.handoffs.file report.pdf` requests
+the system handler for an existing workspace file. These are explicit actions;
+the example never opens a browser during registration or in its conformance tests.
+
+`notification.publish {severity,title,body}` needs capability `notifications`.
+Severity is `info`, `warning` or `error`. The title is 1–160 UTF-8 bytes without
+controls; body is at most 4,096 UTF-8 bytes and 64 lines, with only newline and tab
+allowed as controls. Empty body is valid. The host labels the source with the
+configured plugin identity; the plugin cannot choose another source. Publication
+works while detached and does not replace action feedback, move focus or open a
+buffer. It wakes presentation once so an idle attached frontend sees its unread
+indicator; multiple accepted messages rebuild retained notification documents
+once at the next presentation checkpoint. There is no notification refresh timer.
+
+Publication accepts at most one message per 500 milliseconds per plugin; a faster
+call returns `busy`, without extending the interval. Consecutive identical messages
+use the native occurrence counter. Native notification-history count and byte
+limits apply, and records remain available after the plugin stops. Notifications
+alone do not protect idle retirement. The SDK helper is `publish_notification`.
+
+`terminal.open {invocation,label,executable,args?,cwd?}` needs capability
+`terminals` and a current foreground invocation. Argument, label and cwd bounds
+match `process.start`; stdin/stdout use a PTY instead of the helper pipe API.
+Arguments retain their exact boundaries and are never joined into a shell command.
+Cwd must resolve to an existing workspace-contained directory. Preparation and
+spawn run on a bounded worker. The host rechecks foreground context before
+installing the terminal and returns `{terminal}` as an opaque handoff receipt.
+The receipt does not grant plugin terminal-input or terminal-close operations.
+
+Early PTY output waits for native installation. Cancellation, owner stop or a
+stale foreground context before installation cancels the reader gate, signals the
+still-owned process group and retains accounting through actual cleanup. Native
+installation transfers ownership to the editor: the terminal session survives
+plugin stop and follows normal terminal navigation, close and persistent-session
+retention rules. Eight unpublished terminals globally reserve 4 MiB each; stale
+cleanup continues to occupy its reservation until settled. The SDK helper is
+`open_terminal`; the example passes an executable and argument list directly.
+
+`external.open {invocation,target}` needs capability `external` and consumes one
+foreground invocation when launch is admitted. Target is either
+`{kind:"url",url}` or `{kind:"file",path}`. URLs are at most 4,096 UTF-8 bytes,
+require an explicit HTTP/HTTPS authority and host, and reject credentials,
+controls, whitespace and backslash ambiguity. Encode intended URL spaces as
+`%20`. File targets resolve to an existing regular file inside the workspace;
+the canonical absolute path becomes one argument. The fixed handler is
+`xdg-open` on Linux and `/usr/bin/open` on macOS. Other schemes, custom handler
+commands and arbitrary shell execution are outside this operation.
+
+Validation runs off the editor loop and is followed by a fresh foreground check.
+Successful `{}` means the OS accepted the handler spawn, not that a browser opened,
+a login succeeded or playback started. Handler exit status cannot retroactively
+turn this receipt into a delivery guarantee. Handler startup waits at most five
+seconds; the host also applies an eight-second overall handoff deadline. After
+irreversible launch admission, a timeout is `outcome_unknown`, and the bounded
+system-opener owner still handles late spawn/reap. Never automatically retry it.
+At most sixteen system-opener records exist across the process; handlers have
+independent stdio/process groups and continue independently of plugin stop.
+Targets and URL query data never appear in host diagnostic messages.
+
+Each active plugin generation has at most one pending handoff; retired
+generations may retain separate cleanup within the shared worker and terminal
+limits. Preparation has a five-second
+response deadline; actual worker and unpublished-terminal cleanup retain shared
+local-work permits and payload charges after a timeout or owner stop. External
+preparation reserves 128 KiB. Foreground context is checked at admission and at
+the asynchronous handoff boundary; missing attachment, changed focus, stale
+invocations and cross-owner tokens cannot take presentation. An external launch
+consumes its invocation, preventing repeated windows from the same action.
+The SDK's `open_url` and `open_file_externally` preserve explicit target kinds and
+never replay failures. These handoffs complement managed helpers; they do not
+provide a browser widget, decoder, credential store or inline video surface.

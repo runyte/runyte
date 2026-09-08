@@ -72,7 +72,9 @@ and [FTP/FTPS](docs/plugins/applications.md#ftp-and-ftps-browser-and-editor) bro
 state their transport and overwrite guarantees explicitly and can download binary
 files through native confirmation. Applications can also control
 [managed helpers](docs/plugins/applications.md#managed-helpers) with bounded binary
-pipes and process-group cleanup. The broader application platform remains in development.
+pipes and process-group cleanup, publish retained notifications, and make explicit
+[native terminal/browser handoffs](docs/plugins/applications.md#notifications-and-native-handoffs).
+The broader application platform remains in development.
 See the [user guide](docs/user-guide.md) for complete behavior and limits.
 
 ### Workspaces, panes, and navigation

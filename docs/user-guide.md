@@ -3031,7 +3031,12 @@ the plugin protocol. Closing a helper or stopping its plugin cleans up and reaps
 the owned process group; naturally exited output stays readable until released.
 The runnable helper controller demonstrates Send, Flood, EOF and Close actions
 without a network service. Enabled idle helpers alone do not prevent persistent
-host retirement.
+host retirement. Applications can also publish owner-labelled notifications
+without changing focus or current action feedback. Explicit native handoffs can
+open a terminal session, an HTTP/HTTPS URL in the system browser, or an existing
+workspace file with its system handler. A terminal handed to the editor survives
+plugin stop and follows normal terminal-session retention. See the
+[handoff example](plugins/applications.md#notifications-and-native-handoffs).
 
 The SFTP and FTP/FTPS reference browsers also provide `mkdir`, `rename` and
 `delete` actions for one remote file or empty directory. After preparation,

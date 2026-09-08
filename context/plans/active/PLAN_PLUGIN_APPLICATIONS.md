@@ -79,9 +79,9 @@ are implemented, together with native weaker-transport confirmation and the SFTP
 and FTP/FTPS examples. Binary download staging now uses native confirmed
 publication, and the examples now provide native-confirmed remote mkdir, rename
 and delete. The remaining provider conflict/lifecycle refinements and later
-milestones remain active. Milestone 5 now includes bounded managed processes and still needs
-terminal/external handoffs, activity leases,
-settings/state and the plugin manager. Milestone 6 still needs the broader SDK,
+milestones remain active. Milestone 5 now includes bounded managed processes, terminal/external handoffs
+and retained notifications; activity leases, settings/state and the plugin
+manager remain. Milestone 6 still needs the broader SDK,
 non-Python example, full conformance matrix and complete application performance
 and supported-platform evidence. Milestones 1–2 also retain their full overload,
 real-attachment and performance acceptance work; the implemented primitives do
@@ -732,6 +732,52 @@ checks passed; naturally exited and stopped helpers were reaped, and two settled
 idle seconds emitted zero terminal bytes. This smoke is not the full performance
 gate. Terminal/external handoffs, notifications, leases, settings/state,
 management, remaining provider decisions and media/acceptance work continue.
+
+## Native handoff and notification round — 2026-09-08
+
+Added `terminal.open`, `external.open` and `notification.publish` with separate
+explicit capabilities. Native terminal preparation reserves an identity and
+bounded unpublished ownership, validates cwd and spawns off the editor loop,
+then rechecks foreground context before installation. Reader and writer gates
+precede OS IO, preserving early output and closing duplicated descriptors on
+cancellation. Pending Drop signals the owned unreaped group before background
+reap; shared accounting survives both PTY threads and child cleanup. Native
+installation transfers retention to the editor, so terminals survive plugin stop.
+
+System-handler handoffs accept strictly parsed HTTP/HTTPS URLs or canonical
+workspace-contained regular files. Fixed platform handlers receive exactly one
+argument; no shell, program-cache lookup or caller-selected handler is involved.
+One-shot foreground admission prevents repeated windows. Sixteen detached opener
+records bound startup/reaping, and a five-second spawn wait plus an eight-second
+overall handoff deadline report uncertain outcomes without replay. Preparation
+failure preserves authority; late workers and retired generations retain quota
+until actual settlement. Core tests inject a checked-in handler and never launch
+a browser.
+
+Notifications use the configured owner identity, retain bounded title/body text,
+pace each owner at two publications per second and preserve foreground/status.
+They wake idle presentation once, while a pending flag groups notification-document
+rebuilds at the presentation checkpoint. Existing native history bounds and
+occurrence aggregation apply. The SDK and `handoffs.py` expose explicit terminal,
+URL, file and feedback actions; schema/golden fixtures cover every new operation.
+
+Comprehensive reviews fixed prevalidation string copying, external target
+reservation bounds, stacked startup deadlines, idle notification/terminal repaint,
+shutdown before queued reap, and reader/writer descriptor accounting after
+cancelled unpublished PTYs. A PTY fixture now ignores inherited terminal hangup
+before creating its sleeper, ensuring the cleanup assertion observes a live
+descendant rather than one already killed by normal terminal hangup.
+
+Formatting, warnings-as-errors Clippy, the full suite and canonical Linux coverage
+passed: 3,442 tests with 33 ignored. Coverage is 116,552/127,169 lines (91.65%),
+10,525/11,452 functions (91.91%) and 177,270/194,471 regions (91.15%); the 89%
+floor is unchanged. Twenty-seven new Rust tests exercise core handler validation,
+unpublished terminal ownership, foreground admission, cleanup, notification
+pacing and presentation. Python application/schema checks (10) and handoff
+checks (5) passed. The native PTY smoke verified retained owner-labelled feedback,
+real terminal command output and terminal survival after plugin stop, with zero
+terminal bytes during two settled idle seconds. Native macOS and the full
+release workload matrix remain outstanding; this smoke is functional evidence.
 
 ## Investigation: existing foundation and missing boundaries
 
