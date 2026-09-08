@@ -15,6 +15,7 @@ import os
 from pathlib import Path
 import pty
 import select
+import signal
 import statistics
 import subprocess
 import sys
@@ -153,6 +154,87 @@ def cpu_snapshot(roots):
     identities = {str(pid): Path(f'/proc/{pid}/stat').read_text().rsplit(')', 1)[-1].split()[19] for pid in roots}
     total = sum(ptybench._cpu_ticks(pid) for pid in roots)
     return {'ticks': total, 'pids': sorted(live), 'roots': sorted(roots), 'identities': identities}
+
+
+def process_identity(pid):
+    fields = Path(f'/proc/{pid}/stat').read_text().rsplit(')', 1)[-1].split()
+    return int(fields[1]), fields[19]
+
+
+def process_children(pid):
+    children = set()
+    for task in Path(f'/proc/{pid}/task').iterdir():
+        try:
+            children.update(int(value) for value in (task / 'children').read_text().split())
+        except FileNotFoundError:
+            continue
+        if len(children) > 128:
+            raise ValueError('Cleanup descendant count exceeded its bound')
+    return children
+
+
+class OwnedProcesses:
+    """Pin verified process identities before cleanup; never signal numeric PIDs."""
+    def __init__(self):
+        self.fds = {}
+
+    def capture(self, pid, validate=None, parent=None):
+        if pid in self.fds:
+            return
+        if len(self.fds) >= 128:
+            raise ValueError('Cleanup process count exceeded its bound')
+        try:
+            before = process_identity(pid)
+            fd = os.pidfd_open(pid)
+        except (FileNotFoundError, ProcessLookupError):
+            return
+        try:
+            after = process_identity(pid)
+            if before != after or select.select([fd], [], [], 0)[0]:
+                return
+            if parent is not None:
+                if after[0] != parent or select.select([self.fds[parent]], [], [], 0)[0]:
+                    return
+            if validate is not None:
+                validate(pid)
+            self.fds[pid] = fd
+            fd = None
+            try:
+                children = process_children(pid)
+            except FileNotFoundError:
+                children = ()
+            for child in children:
+                self.capture(child, parent=pid)
+        except (FileNotFoundError, ProcessLookupError):
+            pass
+        finally:
+            if fd is not None:
+                os.close(fd)
+
+    def wait(self, seconds=2):
+        pending = set(self.fds.values())
+        deadline = time.monotonic() + seconds
+        while pending:
+            ready = select.select(list(pending), [], [], max(0, deadline - time.monotonic()))[0]
+            pending.difference_update(ready)
+            if pending and time.monotonic() >= deadline:
+                return False
+        return True
+
+    def terminate(self):
+        # Descendants are retained after their parents. Stop them first so an
+        # intact parent still has the opportunity to reap before its own exit.
+        for fd in reversed(list(self.fds.values())):
+            try:
+                signal.pidfd_send_signal(fd, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        return self.wait()
+
+    def close(self):
+        for fd in self.fds.values():
+            os.close(fd)
+        self.fds.clear()
 
 
 class Session:
@@ -325,15 +407,42 @@ class Session:
 
     def host_pid(self):
         endpoints = list(self.root.rglob('endpoint.json'))
-        pids = {json.loads(path.read_text())['pid'] for path in endpoints}
+        records = [json.loads(path.read_text()) for path in endpoints]
+        if any(bytes(record['project_root_bytes']) != os.fsencode(self.project.resolve()) for record in records):
+            raise ValueError('Endpoint does not belong to the isolated workspace')
+        pids = {record['pid'] for record in records}
         if len(pids) != 1:
             raise ValueError('Expected exactly one isolated persistent host')
         return pids.pop()
 
+    def validate_host(self, pid):
+        if (Path(f'/proc/{pid}/cwd').resolve() != self.project.resolve()
+                or Path(f'/proc/{pid}/exe').resolve() != self.binary.resolve()):
+            raise ValueError('Cleanup target is not the measured host in its private workspace')
+
     def close(self):
+        owned = OwnedProcesses()
+        failures = []
         try:
-            self.shutdown()
+            try:
+                if self.persistent:
+                    owned.capture(self.host_pid(), validate=self.validate_host)
+                elif not self.reaped:
+                    owned.capture(self.pid, validate=self.validate_host)
+            except Exception as error:
+                failures.append('Process capture: ' + str(error))
+            try:
+                self.shutdown()
+            except Exception as error:
+                failures.append('Ordinary shutdown: ' + str(error))
+            if not owned.wait():
+                failures.append('Owned process survived ordinary shutdown')
+            if failures:
+                if not owned.terminate():
+                    failures.append('Owned process did not exit after exact-identity termination')
+                raise RuntimeError('; '.join(failures))
         finally:
+            owned.close()
             if not self.reaped:
                 ptybench._reap(self.pid)
                 self.reaped = True
@@ -383,7 +492,15 @@ def session(binary, fixture, enabled=False, persistent=False, quiet=False, epoch
         value = Session(binary, Path(directory), fixture, enabled, persistent, quiet, epoch1)
         try:
             yield value
-        finally:
+        except BaseException as error:
+            try:
+                value.close()
+            except BaseException as cleanup:
+                # Keep the original failed observation and separately report
+                # cleanup, rather than replacing it with a later quit timeout.
+                error.cleanup_failure = f'{type(cleanup).__name__}: {cleanup}'
+            raise
+        else:
             value.close()
 
 
@@ -604,6 +721,8 @@ def main():
         artifact['complete'] = True
     except Exception as error:
         artifact['failure'] = {'type': type(error).__name__, 'message': str(error)}
+        if getattr(error, 'cleanup_failure', None):
+            artifact['failure']['cleanup'] = error.cleanup_failure
         raise
     finally:
         save()

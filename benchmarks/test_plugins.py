@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from jsonschema import Draft202012Validator
 
@@ -161,6 +161,76 @@ class WorkloadTests(unittest.TestCase):
                 self.assertTrue(workload.done.is_set())
             finally:
                 shutdown(workload.app)
+
+
+class CleanupTests(unittest.TestCase):
+    def test_capture_rejects_pid_reuse_before_retaining_any_signal_target(self):
+        owned = plugins.OwnedProcesses()
+        with patch.object(plugins, 'process_identity', side_effect=[(0, 'old'), (0, 'new')]), \
+             patch.object(plugins.os, 'pidfd_open', return_value=91), \
+             patch.object(plugins.os, 'close') as close, \
+             patch.object(plugins.select, 'select', return_value=([], [], [])):
+            owned.capture(10)
+            self.assertFalse(owned.fds)
+            close.assert_called_once_with(91)
+
+    def test_cleanup_signals_pinned_fds_and_stops_descendants_before_parent(self):
+        owned = plugins.OwnedProcesses()
+        identities = {10: (0, 'root'), 20: (10, 'child')}
+        with patch.object(plugins, 'process_identity', side_effect=lambda pid: identities[pid]) as identity, \
+             patch.object(plugins, 'process_children', side_effect=lambda pid: {20} if pid == 10 else set()), \
+             patch.object(plugins.os, 'pidfd_open', side_effect=lambda pid: pid + 100), \
+             patch.object(plugins.select, 'select', return_value=([], [], [])), \
+             patch.object(plugins.os, 'close'), \
+             patch.object(plugins.signal, 'pidfd_send_signal') as signal:
+            owned.capture(10)
+            self.assertEqual(owned.fds, {10: 110, 20: 120})
+            # Reusing either numeric PID later cannot change our pinned target.
+            identities[20] = (999, 'replacement')
+            calls = identity.call_count
+            with patch.object(owned, 'wait', return_value=True):
+                self.assertTrue(owned.terminate())
+            self.assertEqual(identity.call_count, calls)
+            self.assertEqual([call.args[0] for call in signal.call_args_list], [120, 110])
+            owned.close()
+            self.assertFalse(owned.fds)
+
+    def test_unrelated_reparented_pid_is_not_captured(self):
+        owned = plugins.OwnedProcesses()
+        owned.fds[10] = 110
+        with patch.object(plugins, 'process_identity', return_value=(999, 'foreign')), \
+             patch.object(plugins.os, 'pidfd_open', return_value=120), \
+             patch.object(plugins.os, 'close') as close, \
+             patch.object(plugins.select, 'select', return_value=([], [], [])):
+            owned.capture(20, parent=10)
+            self.assertEqual(owned.fds, {10: 110})
+            close.assert_called_once_with(120)
+
+    def test_failed_persistent_stop_uses_captured_identity_cleanup(self):
+        editor = object.__new__(plugins.Session)
+        editor.persistent = True
+        editor.reaped = editor.closed_fd = True
+        editor.host_pid = lambda: 10
+        editor.validate_host = Mock()
+        editor.shutdown = Mock(side_effect=RuntimeError('Stop failed'))
+        owned = Mock()
+        owned.wait.return_value = False
+        owned.terminate.return_value = True
+        with patch.object(plugins, 'OwnedProcesses', return_value=owned):
+            with self.assertRaisesRegex(RuntimeError, 'Stop failed'):
+                editor.close()
+        owned.capture.assert_called_once_with(10, validate=editor.validate_host)
+        owned.terminate.assert_called_once_with()
+        owned.close.assert_called_once_with()
+
+    def test_cleanup_failure_does_not_replace_the_original_failed_observation(self):
+        editor = Mock()
+        editor.close.side_effect = RuntimeError('Cleanup failed')
+        with patch.object(plugins, 'Session', return_value=editor):
+            with self.assertRaisesRegex(ValueError, 'Original observation') as caught:
+                with plugins.session(Path('/unused'), 'short.txt'):
+                    raise ValueError('Original observation')
+        self.assertIn('Cleanup failed', caught.exception.cleanup_failure)
 
 
 class WindowTests(unittest.TestCase):

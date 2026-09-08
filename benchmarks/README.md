@@ -530,7 +530,10 @@ current binary. The harness requires at least ten startup samples and three
 independent idle windows of at least ten seconds. Representative startup fixtures
 are `short.txt`, `medium.lua` and `long.lua`; workload windows use `medium.lua`.
 Linux `/proc` supplies CPU accounting, including live descendants and cumulative
-reaped-child CPU. Python and `pyte` come from the environment running the harness.
+reaped-child CPU. This harness requires Linux with `pidfd_open` and Python
+`signal.pidfd_send_signal`: cleanup pins the measured host and descendants,
+verifies their exit and can stop those exact identities if normal shutdown fails.
+Python and `pyte` come from the environment running the harness.
 All generated documents, configuration, runtime state and host inventory live in
 isolated temporary directories; only the requested JSON artifact is retained.
 
