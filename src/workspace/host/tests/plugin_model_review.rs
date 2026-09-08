@@ -32,6 +32,7 @@ async fn stopping_model_owner_retains_captured_source_charge_until_real_completi
         0,
         2,
         api::Request::ViewPublish {
+            expected_query_revision: None,
             view,
             expected_revision: revision,
             model: model(&[("one", "uncommitted replacement")]),
@@ -69,6 +70,7 @@ async fn closing_preparing_view_transfers_source_once_then_stop_preserves_reserv
         0,
         2,
         api::Request::ViewPublish {
+            expected_query_revision: None,
             view: view.clone(),
             expected_revision: revision,
             model: model(&[("one", "uncommitted replacement")]),
@@ -113,6 +115,7 @@ async fn closed_source_completion_releases_transferred_charge_and_returns_cancel
         0,
         2,
         api::Request::ViewPublish {
+            expected_query_revision: None,
             view: view.clone(),
             expected_revision: revision,
             model: model(&[("one", "uncommitted replacement")]),

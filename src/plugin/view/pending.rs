@@ -8,6 +8,7 @@ pub(crate) struct Pending {
     pub creating: bool,
     pub buffer: Option<usize>,
     pub revision: u64,
+    pub expected_query_revision: Option<String>,
     pub buffer_revision: u64,
     pub charge: usize,
     pub source_charge: usize,

@@ -13,6 +13,7 @@ pub enum StageKind {
 pub(crate) struct Stage {
     pub view: String,
     pub expected_revision: String,
+    pub expected_query_revision: Option<String>,
     pub kind: StageKind,
     pub declared: usize,
     text: String,
@@ -21,6 +22,7 @@ impl Stage {
     pub fn new(
         view: String,
         expected_revision: String,
+        expected_query_revision: Option<String>,
         kind: StageKind,
         declared: usize,
     ) -> Result<Self, Error> {
@@ -30,6 +32,7 @@ impl Stage {
         Ok(Self {
             view,
             expected_revision,
+            expected_query_revision,
             kind,
             declared,
             text: String::with_capacity(declared),

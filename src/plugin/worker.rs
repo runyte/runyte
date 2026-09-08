@@ -302,6 +302,11 @@ impl Sender {
             output: Arc::new(OutputWake::default()),
         }
     }
+    /// Check wire size without allocating or admitting an outbound message.
+    pub(crate) fn message_fits(message: &HostMessage) -> Result<bool> {
+        Ok(encoded_len(message)? <= MAX_BYTES)
+    }
+
     pub fn try_send(&self, message: HostMessage) -> Result<()> {
         let size = encoded_len(&message)?;
         ensure!(size <= MAX_BYTES, "plugin outbound message exceeds limit");

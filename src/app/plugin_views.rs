@@ -71,7 +71,12 @@ impl App {
                     .values()
                     .find(|view| view.buffer == self.active().buffer)
             })
-            .map(|view| &view.model.actions);
+            .map(|view| {
+                (
+                    &view.model.actions,
+                    view.query.as_ref().is_some_and(|query| query.pending),
+                )
+            });
         let commands = self
             .plugins
             .commands
@@ -79,8 +84,14 @@ impl App {
             .filter(|c| {
                 c.plugin == owner
                     && c.context == api::CommandContext::View
-                    && allowed
-                        .is_some_and(|actions| actions.is_empty() || actions.contains(&c.local))
+                    && allowed.is_some_and(|(actions, pending)| {
+                        (actions.is_empty() || actions.contains(&c.local))
+                            && (!pending
+                                || !self.plugins.instances[&owner]
+                                    .application
+                                    .primary_commands
+                                    .contains(&c.local))
+                    })
             })
             .collect::<Vec<_>>();
         if commands.is_empty() {
@@ -104,6 +115,7 @@ impl App {
                 command: c.id,
                 buffer,
                 revision,
+                query_revision: self.plugin_view_query_revision(buffer),
             })
             .collect();
         self.grammar.reset();
@@ -310,6 +322,8 @@ impl App {
         if self.plugins.frontend_attached != attached {
             self.plugins.frontend_attached = attached;
             self.plugins.attachment_generation += 1;
+            self.plugins.viewport_cache.clear();
+            self.plugins.presented_views.clear();
         }
     }
 
@@ -336,5 +350,186 @@ impl App {
             ));
         }
         Ok(())
+    }
+}
+
+impl App {
+    pub(crate) fn plugin_view_query_revision(&self, buffer: usize) -> Option<String> {
+        let Some(GeneratedViewIdentity::Plugin { owner, view }) = self
+            .buffers
+            .get(buffer)
+            .and_then(Buffer::generated_view_identity)
+        else {
+            return None;
+        };
+        self.plugins
+            .instances
+            .get(owner)?
+            .application
+            .views
+            .get(view)?
+            .query
+            .as_ref()
+            .map(|query| format!("qv:{}", query.revision))
+    }
+
+    pub(crate) fn refresh_plugin_view_title(&mut self, owner: usize, handle: &str) -> bool {
+        let Some(view) = self
+            .plugins
+            .instances
+            .get(&owner)
+            .and_then(|instance| instance.application.views.get(handle))
+        else {
+            return false;
+        };
+        let title = if view.query.as_ref().is_some_and(|query| query.pending) {
+            format!("{} — query pending", view.model.title)
+        } else {
+            view.model.title.clone()
+        };
+        let buffer = view.buffer;
+        let crate::buffer::BufferKind::Virtual { name, .. } = &mut self.buffers[buffer].kind else {
+            return false;
+        };
+        if *name == title {
+            return false;
+        }
+        *name = title;
+        if self.panes.iter().any(|(id, pane)| {
+            pane.buffer == buffer && pane.terminal.is_none() && self.areas.contains_key(id)
+        }) {
+            self.plugins.presentation_dirty = true;
+        }
+        true
+    }
+
+    pub(crate) fn set_plugin_viewport_watches(
+        &mut self,
+        watches: std::collections::BTreeSet<(usize, String, usize)>,
+    ) {
+        self.plugins
+            .viewport_cache
+            .retain(|key, _| watches.contains(key));
+        self.plugins.viewport_watches = watches;
+    }
+
+    pub(crate) fn plugin_viewport(
+        &self,
+        owner: usize,
+        view: &str,
+        pane: usize,
+    ) -> Option<&crate::plugin::observation::Snapshot> {
+        use crate::plugin::observation::Snapshot;
+        static HIDDEN: Snapshot = Snapshot::Viewport {
+            model_revision: None,
+            visible: false,
+            top: None,
+            bottom: None,
+        };
+        let cached = self
+            .plugins
+            .viewport_cache
+            .get(&(owner, view.to_owned(), pane))?;
+        let live = self
+            .plugins
+            .instances
+            .get(&owner)?
+            .application
+            .views
+            .get(view)?;
+        if !self.plugins.frontend_attached
+            || !self
+                .panes
+                .get(&pane)
+                .is_some_and(|target| target.buffer == live.buffer && target.terminal.is_none())
+            || self
+                .maximized
+                .is_some_and(|maximized| maximized.pane != pane)
+            || !self
+                .areas
+                .get(&pane)
+                .is_some_and(|area| area.width >= 3 && area.height >= 3)
+        {
+            return Some(&HIDDEN);
+        }
+        Some(cached)
+    }
+
+    pub(crate) fn capture_plugin_viewports(&mut self, prepared: &super::PreparedView) {
+        self.note_plugin_viewports(&prepared.panes);
+    }
+
+    pub(crate) fn note_plugin_viewports(&mut self, panes: &[super::PreparedPane]) {
+        use crate::plugin::observation::Snapshot;
+        if self.plugins.viewport_watches.is_empty() {
+            return;
+        }
+        for key @ (owner, handle, pane_id) in &self.plugins.viewport_watches {
+            let live = self
+                .plugins
+                .instances
+                .get(owner)
+                .and_then(|instance| instance.application.views.get(handle));
+            let pane = panes.iter().find(|pane| pane.pane_id == *pane_id);
+            let snapshot = match (live, pane) {
+                (Some(live), Some(pane))
+                    if self.plugins.frontend_attached
+                        && pane.buffer_id == live.buffer
+                        && pane.terminal.is_none()
+                        && pane.drawable
+                        && self.panes.get(pane_id).is_some_and(|current| {
+                            current.buffer == live.buffer && current.terminal.is_none()
+                        })
+                        && self.plugins.presented_views.get(pane_id)
+                            == Some(&(live.buffer, live.revision)) =>
+                {
+                    let mut rows = pane.rows.iter().filter_map(|row| {
+                        if row.padding {
+                            return None;
+                        }
+                        let index = live.projection.line_rows.get(row.document_row?)?.as_ref()?;
+                        Some(&live.projection.rows[*index].id)
+                    });
+                    let top = rows.next().cloned();
+                    let bottom = rows.next_back().cloned().or_else(|| top.clone());
+                    Snapshot::Viewport {
+                        model_revision: Some(format!("m:{}", live.revision)),
+                        visible: true,
+                        top,
+                        bottom,
+                    }
+                }
+                (Some(live), Some(pane))
+                    if self.plugins.frontend_attached
+                        && pane.buffer_id == live.buffer
+                        && pane.terminal.is_none()
+                        && pane.drawable
+                        && self.panes.get(pane_id).is_some_and(|current| {
+                            current.buffer == live.buffer && current.terminal.is_none()
+                        })
+                        && self
+                            .plugins
+                            .viewport_cache
+                            .get(key)
+                            .is_some_and(|snapshot| {
+                                matches!(snapshot,
+                        Snapshot::Viewport { model_revision: Some(revision), visible: true, .. }
+                        if self.plugins.presented_views.get(pane_id).is_some_and(|(buffer, model)|
+                            *buffer == live.buffer && revision == &format!("m:{model}")))
+                            }) =>
+                {
+                    self.plugins.viewport_cache[key].clone()
+                }
+                _ => Snapshot::Viewport {
+                    model_revision: None,
+                    visible: false,
+                    top: None,
+                    bottom: None,
+                },
+            };
+            if self.plugins.viewport_cache.get(key) != Some(&snapshot) {
+                self.plugins.viewport_cache.insert(key.clone(), snapshot);
+            }
+        }
     }
 }

@@ -649,6 +649,40 @@ publication and immutable readback, with zero terminal bytes over two settled
 seconds. This functional smoke does not replace the remaining release workload
 and native macOS gates.
 
+## Query, viewport and accepted-action round — 2026-09-08
+
+`view.query.set` records explicit query intent separately from the model revision.
+Inline, patched and staged publications capture that query token and recheck it
+at completion, including when a query was first enabled after work began. Previous
+rows remain readable while pending; primary actions are refused and nonprimary
+commands receive no row IDs so Filter and Refresh can still replace or retry the
+query. Only a matching successful publication clears pending state. Action-menu
+entries also capture query provenance.
+
+Owned viewport sources report stable endpoints from final prepared rows, preserving
+split/wrap/hidden/attachment semantics without a polling task. Accepted-action
+sources provide a baseline counter and reliable metadata correlated with the
+existing command callback. Resynchronization and unsubscribe retain accepted
+actions; oversized callbacks are refused before admission, while partial queue
+admission stops the owner. The catalog example demonstrates native explicit
+filtering, a bounded asynchronous lookup, viewport metadata and accepted actions.
+
+Comprehensive review fixed cached visibility after detach/retarget, old-frame
+reseeding after reattach, an oversized callback stopping a cooperative owner,
+and retained query allocation capacity. Tests also cover the final-frame rebuild
+after observation delivery stops an owner with a native form open. Managed helpers,
+terminal/external handoffs, leases, settings/state, plugin management and the later
+application examples and acceptance matrix remain active.
+
+Validation: formatting, warnings-as-errors Clippy and both full Rust suites
+passed (3,380 tests, 33 ignored). Canonical Linux line coverage is
+114,441 / 124,813 (91.69%), above the unchanged 89% floor. Epoch 2 schema/SDK,
+model regression and eleven query/example checks passed. The real-terminal
+catalog smoke exercised explicit query submission, pending-row refusal,
+cancellation, empty-query reset and viewport/action observations, with zero
+terminal bytes over two settled seconds. Native macOS and the complete release
+workload matrix remain required.
+
 ## Investigation: existing foundation and missing boundaries
 
 The current [guide](../../../docs/plugins.md) and

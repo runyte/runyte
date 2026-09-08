@@ -321,7 +321,7 @@ fn prepared_remap_uses_nearest_survivors_in_old_order_after_reordering() {
 
 #[test]
 fn staging_is_contiguous_bounded_and_keeps_failed_appends_atomic() {
-    let mut stage = Stage::new("v:1".into(), "m:1".into(), StageKind::Model, 5).unwrap();
+    let mut stage = Stage::new("v:1".into(), "m:1".into(), None, StageKind::Model, 5).unwrap();
     assert_eq!(stage.append(0, "é").unwrap(), 2);
     assert!(!stage.is_complete());
     assert!(stage.append(1, "x").is_err());
@@ -330,18 +330,19 @@ fn staging_is_contiguous_bounded_and_keeps_failed_appends_atomic() {
     assert_eq!(stage.append(2, "猫").unwrap(), 5);
     assert!(stage.is_complete());
     assert_eq!(stage.into_text().unwrap(), "é猫");
-    assert!(Stage::new("v:1".into(), "m:1".into(), StageKind::Patch, 0).is_err());
+    assert!(Stage::new("v:1".into(), "m:1".into(), None, StageKind::Patch, 0).is_err());
     assert!(
         Stage::new(
             "v:1".into(),
             "m:1".into(),
+            None,
             StageKind::Patch,
             MAX_MODEL_BYTES + 1
         )
         .is_err()
     );
     assert!(
-        Stage::new("v:1".into(), "m:1".into(), StageKind::Patch, 1)
+        Stage::new("v:1".into(), "m:1".into(), None, StageKind::Patch, 1)
             .unwrap()
             .into_text()
             .is_err()

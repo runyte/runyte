@@ -614,6 +614,7 @@ impl App {
         }
 
         self.settle_diff_scroll(&mut prepared);
+        self.note_plugin_viewports(&prepared);
         PreparedView {
             session_strip,
             geometry,

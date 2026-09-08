@@ -53,26 +53,36 @@ class Application:
     def request(self, method, **params):
         return self._request(method, params)
 
-    def publish_model(self, view, expected_revision, model):
+    def publish_model(self, view, expected_revision, model, *, expected_query_revision=None):
         """Atomically publish a model, staging large JSON without exposing partial rows."""
-        return self._model_update(view, expected_revision, 'model', model)
+        return self._model_update(view, expected_revision, 'model', model, expected_query_revision)
 
-    def patch_view(self, view, expected_revision, operations, header=None):
+    def patch_view(self, view, expected_revision, operations, header=None, *, expected_query_revision=None):
         patch = {'operations': operations}
         if header is not None:
             patch['header'] = header
-        return self._model_update(view, expected_revision, 'patch', patch)
+        return self._model_update(view, expected_revision, 'patch', patch, expected_query_revision)
 
-    def _model_update(self, view, expected_revision, kind, value):
+    def set_query(self, view, expected_revision, text, *, expected_query_revision=None):
+        """Begin an explicit query; matching publication settles its pending state."""
+        params = {'view': view, 'expected_revision': expected_revision, 'text': text}
+        if expected_query_revision is not None:
+            params['expected_query_revision'] = expected_query_revision
+        return self.request('view.query.set', **params)
+
+    def _model_update(self, view, expected_revision, kind, value, expected_query_revision=None):
         data = json.dumps(value, ensure_ascii=False, allow_nan=False,
                           separators=(',', ':')).encode('utf-8')
         if len(data) > MODEL_LIMIT:
             raise PluginError('limit_exceeded', 'Encoded model update exceeds limit')
+        preconditions = {'expected_revision': expected_revision}
+        if expected_query_revision is not None:
+            preconditions['expected_query_revision'] = expected_query_revision
         if len(data) <= LIMIT - 8192:
             params = {'model': value} if kind == 'model' else value
             return self.request('view.publish' if kind == 'model' else 'view.patch',
-                                view=view, expected_revision=expected_revision, **params)
-        stage = self.request('view.stage.open', view=view, expected_revision=expected_revision,
+                                view=view, **preconditions, **params)
+        stage = self.request('view.stage.open', view=view, **preconditions,
                              kind=kind, bytes=len(data))['stage']
         try:
             offset = 0
@@ -117,7 +127,8 @@ class Application:
                     if len(data) != snapshot['bytes']:
                         raise PluginError('invalid_argument', 'Incomplete model snapshot')
                     return {'view': view, 'revision': snapshot['revision'],
-                            'model': json.loads(data)}
+                            'model': json.loads(data),
+                            **({'query': result['query']} if 'query' in result else {})}
         finally:
             try:
                 self.request('view.snapshot.close', snapshot=handle)

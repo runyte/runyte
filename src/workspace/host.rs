@@ -1129,7 +1129,19 @@ impl WorkspaceHost {
             .next_frame
             .checked_add(1)
             .expect("workspace frame identity exhausted");
-        let view = self.app.prepare_view(geometry);
+        let mut view = self.app.prepare_view(geometry);
+        // Prepared rows include final wrapping, folds and scroll clamping. Publish
+        // their observations now so the last viewport change needs no later input.
+        loop {
+            let owners = self.app.plugins.instances.len();
+            self.sync_application_observers();
+            if self.app.plugins.instances.len() == owners {
+                break;
+            }
+            // Cleanup can dismiss an overlay. Each retry strictly removes an
+            // owner, bounding this loop by the eight-owner admission limit.
+            view = self.app.prepare_view(geometry);
+        }
         let editor = self.app.snapshot(&view);
         let mut overlays = self.app.overlay_snapshots();
         if let Some(key_hints) = key_hints

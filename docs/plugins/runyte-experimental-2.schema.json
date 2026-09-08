@@ -290,6 +290,9 @@
         },
         "model": {
           "$ref": "#/$defs/model"
+        },
+        "query": {
+          "$ref": "#/$defs/viewQuery"
         }
       },
       "required": [
@@ -533,6 +536,11 @@
                 "string",
                 "null"
               ],
+              "maxLength": 64
+            },
+            "query_revision": {
+              "type": "string",
+              "minLength": 1,
               "maxLength": 64
             }
           },
@@ -1295,6 +1303,11 @@
             },
             "model": {
               "$ref": "#/$defs/model"
+            },
+            "expected_query_revision": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
             }
           },
           "required": [
@@ -1736,6 +1749,9 @@
             },
             {
               "$ref": "#/$defs/viewSnapshotChunk"
+            },
+            {
+              "$ref": "#/$defs/viewQueryResult"
             }
           ]
         }
@@ -1802,7 +1818,8 @@
             "event.changed",
             "event.closed",
             "event.resync_required",
-            "ui.validation_cancelled"
+            "ui.validation_cancelled",
+            "event.action"
           ]
         },
         "data": {
@@ -1853,6 +1870,9 @@
             },
             {
               "$ref": "#/$defs/validationCancelled"
+            },
+            {
+              "$ref": "#/$defs/viewActionEvent"
             }
           ]
         }
@@ -1912,6 +1932,22 @@
             "properties": {
               "data": {
                 "$ref": "#/$defs/validationCancelled"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "event": {
+                "const": "event.action"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "data": {
+                "$ref": "#/$defs/viewActionEvent"
               }
             }
           }
@@ -2093,6 +2129,9 @@
         },
         {
           "$ref": "#/$defs/view.snapshot.close"
+        },
+        {
+          "$ref": "#/$defs/view.query.set"
         }
       ]
     },
@@ -4339,6 +4378,48 @@
             "kind"
           ],
           "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "viewport"
+            },
+            "view": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "pane": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          "required": [
+            "kind",
+            "view",
+            "pane"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "view_actions"
+            },
+            "view": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          "required": [
+            "kind",
+            "view"
+          ],
+          "additionalProperties": false
         }
       ]
     },
@@ -4439,6 +4520,48 @@
             "kind"
           ],
           "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "viewport"
+            },
+            "view": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "pane": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          "required": [
+            "kind",
+            "view",
+            "pane"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "view_actions"
+            },
+            "view": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          "required": [
+            "kind",
+            "view"
+          ],
+          "additionalProperties": false
         }
       ]
     },
@@ -4534,6 +4657,9 @@
               "type": "string",
               "minLength": 1,
               "maxLength": 128
+            },
+            "query": {
+              "$ref": "#/$defs/viewQuery"
             }
           },
           "required": [
@@ -4602,6 +4728,79 @@
           },
           "required": [
             "kind"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "viewport"
+            },
+            "model_revision": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "visible": {
+              "type": "boolean"
+            },
+            "top": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "bottom": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "model_revision",
+            "visible",
+            "top",
+            "bottom"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "view_actions"
+            },
+            "accepted": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            }
+          },
+          "required": [
+            "kind",
+            "accepted"
           ],
           "additionalProperties": false
         }
@@ -5302,6 +5501,11 @@
                 "$ref": "#/$defs/viewOperation"
               },
               "maxItems": 1024
+            },
+            "expected_query_revision": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
             }
           },
           "required": [
@@ -5357,6 +5561,11 @@
               "type": "integer",
               "minimum": 1,
               "maximum": 4194304
+            },
+            "expected_query_revision": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
             }
           },
           "required": [
@@ -5650,6 +5859,9 @@
           "type": "integer",
           "minimum": 0,
           "maximum": 10000
+        },
+        "query": {
+          "$ref": "#/$defs/viewQuery"
         }
       },
       "required": [
@@ -5740,6 +5952,204 @@
         "offset",
         "text",
         "eof"
+      ],
+      "additionalProperties": false
+    },
+    "viewQuery": {
+      "type": "object",
+      "properties": {
+        "revision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 1024
+        },
+        "pending": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "revision",
+        "text",
+        "pending"
+      ],
+      "additionalProperties": false
+    },
+    "viewQueryResult": {
+      "type": "object",
+      "properties": {
+        "view": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "revision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "query": {
+          "$ref": "#/$defs/viewQuery"
+        }
+      },
+      "required": [
+        "view",
+        "revision",
+        "query"
+      ],
+      "additionalProperties": false
+    },
+    "view.query.set": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "request"
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^p:[1-9][0-9]*$",
+          "maxLength": 22
+        },
+        "method": {
+          "const": "view.query.set"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "view": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            },
+            "expected_revision": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            },
+            "expected_query_revision": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            },
+            "text": {
+              "type": "string",
+              "maxLength": 1024
+            }
+          },
+          "required": [
+            "view",
+            "expected_revision",
+            "text"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "method",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    "viewAction": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "request": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "command": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 48
+        },
+        "pane": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "model_revision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "query_revision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "selection_revision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "selected_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        }
+      },
+      "required": [
+        "id",
+        "request",
+        "command",
+        "pane",
+        "model_revision",
+        "selection_revision",
+        "selected_count"
+      ],
+      "additionalProperties": false
+    },
+    "viewActionEvent": {
+      "type": "object",
+      "properties": {
+        "subscription": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "source": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "view_actions"
+            },
+            "view": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          "required": [
+            "kind",
+            "view"
+          ],
+          "additionalProperties": false
+        },
+        "revision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "action": {
+          "$ref": "#/$defs/viewAction"
+        }
+      },
+      "required": [
+        "subscription",
+        "source",
+        "revision",
+        "action"
       ],
       "additionalProperties": false
     }

@@ -286,16 +286,28 @@ pub enum Request {
     ViewCreate { model: super::view::Model },
     #[serde(rename = "view.get")]
     ViewGet { view: String },
+    #[serde(rename = "view.query.set")]
+    ViewQuerySet {
+        view: String,
+        expected_revision: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expected_query_revision: Option<String>,
+        text: String,
+    },
     #[serde(rename = "view.publish")]
     ViewPublish {
         view: String,
         expected_revision: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expected_query_revision: Option<String>,
         model: super::view::Model,
     },
     #[serde(rename = "view.patch")]
     ViewPatch {
         view: String,
         expected_revision: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expected_query_revision: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         header: Option<super::view::Header>,
         #[serde(deserialize_with = "super::view::decode_operations")]
@@ -305,6 +317,8 @@ pub enum Request {
     ViewStageOpen {
         view: String,
         expected_revision: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expected_query_revision: Option<String>,
         kind: super::view::StageKind,
         bytes: usize,
     },
@@ -478,6 +492,7 @@ pub enum EventData {
     ValidationCancelled(super::interaction::ValidationCancelled),
     Observation(super::observation::Change),
     ObservationResync(super::observation::ResyncRequired),
+    ObservationAction(super::observation::ActionEvent),
     ResourceReleased { job: String },
     ResourceFinished(super::provider::Finished),
     FilesystemFinished(super::filesystem::Finished),
@@ -500,9 +515,16 @@ pub enum Response {
 #[derive(Clone, Debug, Serialize)]
 #[serde(untagged)]
 pub enum ResultValue {
+    ViewQuery {
+        view: String,
+        revision: String,
+        query: super::view::Query,
+    },
     ViewInfo {
         view: String,
         revision: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        query: Option<super::view::Query>,
         bytes: usize,
         rows: usize,
     },
@@ -582,6 +604,8 @@ pub enum ResultValue {
     View {
         view: String,
         revision: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        query: Option<super::view::Query>,
         model: std::sync::Arc<super::view::Model>,
     },
     Empty(Empty),
@@ -598,6 +622,8 @@ pub struct Invocation {
     pub buffer_revision: Option<String>,
     pub view: Option<String>,
     pub model_revision: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub query_revision: Option<String>,
     pub rows: Vec<String>,
 }
 
@@ -815,6 +841,7 @@ pub(crate) fn decode(bytes: &[u8]) -> anyhow::Result<super::ClientMessage> {
                 | "view.create"
                 | "view.get"
                 | "view.publish"
+                | "view.query.set"
                 | "view.patch"
                 | "view.stage.open"
                 | "view.stage.write"
@@ -857,6 +884,7 @@ mod tests {
 
     #[test]
     fn schema_fixtures_round_trip_through_the_wire() {
+        use super::super::{observation as observe, view};
         let fixtures: Vec<serde_json::Value> =
             serde_json::from_str(include_str!("../../docs/plugins/epoch2-fixtures.json")).unwrap();
         for fixture in fixtures.iter().filter(|f| f["direction"] == "plugin") {
@@ -897,6 +925,7 @@ mod tests {
                     buffer: Some("b:g:2".into()),
                     buffer_revision: Some("r:0".into()),
                     view: None,
+                    query_revision: None,
                     model_revision: None,
                     rows: vec![],
                 },
@@ -1211,6 +1240,7 @@ mod tests {
                         revision: "m:2".into(),
                         bytes: 1_500_000,
                         rows: 1,
+                        query: None,
                     },
                 },
             },
@@ -1246,6 +1276,126 @@ mod tests {
                         offset: 0,
                         text: "{}".into(),
                         eof: true,
+                    },
+                },
+            },
+            HostMessage::Response {
+                id: "p:950".into(),
+                outcome: Response::Success {
+                    result: ResultValue::ViewQuery {
+                        view: "v:g:1".into(),
+                        revision: "m:1".into(),
+                        query: view::Query {
+                            revision: "qv:1".into(),
+                            text: "Topic 01".into(),
+                            pending: true,
+                        },
+                    },
+                },
+            },
+            HostMessage::Event {
+                sequence: "e:950".into(),
+                event: "event.changed",
+                data: EventData::Observation(observe::Change {
+                    subscription: "o:g:1".into(),
+                    coalesced: 0,
+                    sources: vec![observe::SourceState {
+                        source: observe::Source::View {
+                            view: "v:g:1".into(),
+                        },
+                        revision: "o:1".into(),
+                        state: observe::Snapshot::View {
+                            revision: "m:1".into(),
+                            query: Some(view::Query {
+                                revision: "qv:1".into(),
+                                text: "Topic 01".into(),
+                                pending: true,
+                            }),
+                        },
+                    }],
+                }),
+            },
+            HostMessage::Event {
+                sequence: "e:951".into(),
+                event: "event.changed",
+                data: EventData::Observation(observe::Change {
+                    subscription: "o:g:1".into(),
+                    coalesced: 0,
+                    sources: vec![observe::SourceState {
+                        source: observe::Source::Viewport {
+                            view: "v:g:1".into(),
+                            pane: "n:g:1".into(),
+                        },
+                        revision: "o:2".into(),
+                        state: observe::Snapshot::Viewport {
+                            model_revision: Some("m:1".into()),
+                            visible: true,
+                            top: Some("row".into()),
+                            bottom: Some("row".into()),
+                        },
+                    }],
+                }),
+            },
+            HostMessage::Event {
+                sequence: "e:952".into(),
+                event: "event.action",
+                data: EventData::ObservationAction(observe::ActionEvent {
+                    subscription: "o:g:1".into(),
+                    source: observe::Source::ViewActions {
+                        view: "v:g:1".into(),
+                    },
+                    revision: "o:3".into(),
+                    action: observe::Action {
+                        id: "a:1".into(),
+                        request: "h:950".into(),
+                        command: "toggle".into(),
+                        pane: "n:g:1".into(),
+                        model_revision: "m:1".into(),
+                        query_revision: Some("qv:2".into()),
+                        selection_revision: "q:1".into(),
+                        selected_count: 1,
+                    },
+                }),
+            },
+            HostMessage::Request {
+                id: "h:950".into(),
+                method: "command.invoke",
+                params: Invocation {
+                    command: "toggle".into(),
+                    context: CommandContext::View,
+                    view: Some("v:g:1".into()),
+                    model_revision: Some("m:1".into()),
+                    query_revision: Some("qv:2".into()),
+                    rows: vec!["row".into()],
+                    arguments: Default::default(),
+                    pane: "n:g:1".into(),
+                    selection_revision: "q:1".into(),
+                    buffer: Some("b:g:1".into()),
+                    buffer_revision: Some("r:1".into()),
+                },
+            },
+            HostMessage::Response {
+                id: "p:952".into(),
+                outcome: Response::Success {
+                    result: ResultValue::View {
+                        view: "v:g:1".into(),
+                        revision: "m:2".into(),
+                        query: Some(view::Query {
+                            revision: "qv:2".into(),
+                            text: "Topic 01".into(),
+                            pending: false,
+                        }),
+                        model: std::sync::Arc::new(view::Model {
+                            title: "Rows".into(),
+                            purpose: view::Purpose::List,
+                            rows: vec![view::Row {
+                                id: "row".into(),
+                                text: "Topic 01".into(),
+                                role: view::Role::Ordinary,
+                                ..Default::default()
+                            }],
+                            ..Default::default()
+                        }),
                     },
                 },
             },

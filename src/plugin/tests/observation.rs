@@ -68,6 +68,7 @@ fn baseline_latest_state_and_admission_are_atomic() {
                 buffer(0),
                 Snapshot::View {
                     revision: "m:1".into(),
+                    query: None,
                 },
             )],
         )

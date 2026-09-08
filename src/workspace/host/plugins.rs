@@ -189,6 +189,7 @@ impl WorkspaceHost {
         let Some(instance) = self.app.plugins.instances.remove(&id) else {
             return;
         };
+        self.refresh_plugin_viewport_watches(None);
         for (request, pending) in &instance.application.model_requests {
             pending
                 .cancelled

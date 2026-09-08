@@ -45,6 +45,10 @@ mod staging;
 mod validation;
 #[path = "plugin_validation_review.rs"]
 mod validation_review;
+#[path = "plugin_view_queries.rs"]
+mod view_queries;
+#[path = "plugin_view_query_review.rs"]
+mod view_query_review;
 
 fn setup(
     host: &mut WorkspaceHost,
@@ -748,6 +752,7 @@ async fn native_view_preserves_split_selections_by_row_and_rejects_unseen_action
         0,
         3,
         api::Request::ViewPublish {
+            expected_query_revision: None,
             view: view.clone(),
             expected_revision: revision,
             model: model(&[("three", "third"), ("one", "α first"), ("two", "second")]),
@@ -858,6 +863,7 @@ async fn presentation_grant_expires_on_input_and_detach_but_hidden_models_keep_u
         result: Ok(ClientMessage::Application(api::ClientMessage::Request {
             id: "p:4".into(),
             request: api::Request::ViewPublish {
+                expected_query_revision: None,
                 view: view.clone(),
                 expected_revision: revision,
                 model: model(&[("one", "updated")]),
@@ -902,6 +908,7 @@ async fn invalid_model_is_atomic_and_close_releases_owned_handle_after_response(
         0,
         2,
         api::Request::ViewPublish {
+            expected_query_revision: None,
             view: view.clone(),
             expected_revision: revision,
             model: model(&[("one", "changed"), ("one", "duplicate")]),

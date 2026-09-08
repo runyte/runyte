@@ -3729,8 +3729,12 @@ impl App {
                 command,
                 buffer,
                 revision,
+                query_revision,
             }) => {
-                if self.active().buffer != buffer || self.buffers[buffer].revision() != revision {
+                if self.active().buffer != buffer
+                    || self.buffers[buffer].revision() != revision
+                    || self.plugin_view_query_revision(buffer) != query_revision
+                {
                     self.action_failed("Application view changed; reopen the actions");
                 } else {
                     self.invoke_plugin(command)?;

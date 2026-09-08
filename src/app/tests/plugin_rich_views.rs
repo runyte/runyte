@@ -5,7 +5,7 @@ use crate::buffer::{PluginProjectionSource, PreparedPluginProjection};
 use crate::plugin::{self, application as api, view};
 use std::sync::{Arc, atomic::AtomicBool};
 
-fn model(ids: &[&str]) -> view::Model {
+pub(super) fn model(ids: &[&str]) -> view::Model {
     serde_json::from_value(serde_json::json!({
         "title":"Rich list", "purpose":"list",
         "rows": ids.iter().map(|id| serde_json::json!({"id":id,"text":format!("{id} 猫"),"role":"ordinary" })).collect::<Vec<_>>()
@@ -27,7 +27,7 @@ fn prepare(
     (model, text, spans)
 }
 
-fn fixture(model: view::Model) -> (App, usize, Arc<view::Projection>) {
+pub(super) fn fixture(model: view::Model) -> (App, usize, Arc<view::Projection>) {
     let mut app = App::new(Config::default(), None).unwrap();
     let (model, text, spans) = prepare(model, PluginProjectionSource::empty());
     let buffer = app.create_prepared_plugin_view(0, "v:1", &model, text, spans);
@@ -35,7 +35,7 @@ fn fixture(model: view::Model) -> (App, usize, Arc<view::Projection>) {
     (app, buffer, model.projection)
 }
 
-fn publish(
+pub(super) fn publish(
     app: &mut App,
     buffer: usize,
     old: &view::Projection,
@@ -151,7 +151,7 @@ fn rich_projection_hidden_update_preserves_active_pane_and_visible_selection() {
     assert_eq!(app.active().selection, selection);
 }
 
-fn commands(
+pub(super) fn commands(
     app: &mut App,
     buffer: usize,
     model: view::Model,
@@ -171,6 +171,8 @@ fn commands(
             charge: 0,
             revision: 1,
             published: None,
+            query: None,
+            accepted_actions: 0,
         },
     );
     app.plugins.instances.insert(

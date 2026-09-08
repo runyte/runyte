@@ -26,6 +26,13 @@ pub enum Source {
     View {
         view: String,
     },
+    Viewport {
+        view: String,
+        pane: String,
+    },
+    ViewActions {
+        view: String,
+    },
     Job {
         job: String,
     },
@@ -49,6 +56,17 @@ pub enum Snapshot {
     },
     View {
         revision: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        query: Option<super::view::Query>,
+    },
+    Viewport {
+        model_revision: Option<String>,
+        visible: bool,
+        top: Option<String>,
+        bottom: Option<String>,
+    },
+    ViewActions {
+        accepted: String,
     },
     Job {
         state: JobState,
@@ -112,8 +130,31 @@ pub struct ResyncRequired {
     pub subscription: String,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct Action {
+    pub id: String,
+    pub request: String,
+    pub command: String,
+    pub pane: String,
+    pub model_revision: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub query_revision: Option<String>,
+    pub selection_revision: String,
+    pub selected_count: usize,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ActionEvent {
+    pub subscription: String,
+    pub source: Source,
+    pub revision: String,
+    pub action: Action,
+}
+
 #[derive(Clone, Debug)]
 pub enum Delivery {
+    Action(Box<ActionEvent>),
     Changed(Change),
     ReliableChanged(Change),
     Closed(Change),
@@ -127,6 +168,7 @@ impl Delivery {
                 &change.subscription
             }
             Self::ResyncRequired(marker) => &marker.subscription,
+            Self::Action(action) => &action.subscription,
         }
     }
 }
@@ -188,14 +230,17 @@ impl Registry {
     }
 
     fn validate_source(source: &Source) -> Result<(), Error> {
-        let handle = match source {
-            Source::Buffer { buffer } => buffer,
-            Source::Pane { pane } => pane,
-            Source::View { view } => view,
-            Source::Job { job } => job,
-            Source::Buffers | Source::Attachment => return Ok(()),
+        let handles: &[&str] = match source {
+            Source::Buffer { buffer } => &[buffer],
+            Source::Pane { pane } => &[pane],
+            Source::View { view } | Source::ViewActions { view } => &[view],
+            Source::Viewport { view, pane } => &[view, pane],
+            Source::Job { job } => &[job],
+            Source::Buffers | Source::Attachment => &[],
         };
-        if handle.is_empty() || handle.len() > 128 || handle.chars().any(char::is_control) {
+        if handles.iter().any(|handle| {
+            handle.is_empty() || handle.len() > 128 || handle.chars().any(char::is_control)
+        }) {
             return Err(invalid("Invalid observation source handle"));
         }
         Ok(())
@@ -208,6 +253,8 @@ impl Registry {
             (Source::Buffer { .. }, Snapshot::Buffer { .. })
                 | (Source::Pane { .. }, Snapshot::Pane { .. })
                 | (Source::View { .. }, Snapshot::View { .. })
+                | (Source::Viewport { .. }, Snapshot::Viewport { .. })
+                | (Source::ViewActions { .. }, Snapshot::ViewActions { .. })
                 | (Source::Job { .. }, Snapshot::Job { .. })
                 | (Source::Attachment, Snapshot::Attachment { .. })
         ) || (!matches!(source, Source::Buffers)
@@ -226,7 +273,23 @@ impl Registry {
                 buffer,
                 selection_revision,
             } => buffer.as_ref().map_or(0, String::len) + selection_revision.len(),
-            Snapshot::View { revision } => revision.len(),
+            Snapshot::View { revision, query } => {
+                revision.len()
+                    + query
+                        .as_ref()
+                        .map_or(0, |query| query.revision.len() + query.text.len())
+            }
+            Snapshot::Viewport {
+                model_revision,
+                top,
+                bottom,
+                ..
+            } => [model_revision, top, bottom]
+                .into_iter()
+                .flatten()
+                .map(String::len)
+                .sum(),
+            Snapshot::ViewActions { accepted } => accepted.len(),
             Snapshot::Attachment { generation, .. } => generation.len(),
             Snapshot::Job { .. } | Snapshot::Closed {} => 0,
         };
@@ -414,6 +477,100 @@ impl Registry {
         Ok(())
     }
 
+    /// Reserve reliable fanout before admitting the corresponding command callback.
+    pub fn preflight_action(&self, source: &Source, action: &Action) -> Result<(), Error> {
+        Self::validate_source(source)?;
+        if !matches!(source, Source::ViewActions { .. }) {
+            return Err(invalid("Action requires a view-actions source"));
+        }
+        let tokens = [
+            &action.id,
+            &action.request,
+            &action.pane,
+            &action.model_revision,
+            &action.selection_revision,
+        ]
+        .into_iter()
+        .chain(action.query_revision.iter());
+        if tokens.into_iter().any(|token| {
+            token.is_empty() || token.len() > 128 || token.chars().any(char::is_control)
+        }) || !super::valid_name(&action.command)
+            || action.selected_count > super::view::MAX_ROWS
+        {
+            return Err(invalid("Invalid accepted action metadata"));
+        }
+        let bytes = serde_json::to_vec(&(source, action))
+            .map_err(|_| invalid("Invalid accepted action metadata"))?
+            .len();
+        if bytes + 512 > MAX_STATE_BYTES {
+            return Err(limit("Accepted action metadata exceeds limit"));
+        }
+        if self
+            .current
+            .get(source)
+            .is_some_and(|state| matches!(state.state, Snapshot::Closed {}))
+        {
+            return Err(Error::new(ErrorCode::Closed, "Action source is closed"));
+        }
+        let recipients = self
+            .subscriptions
+            .values()
+            .filter(|sub| sub.sources.contains(source))
+            .count();
+        if self.reliable.len().saturating_add(recipients) > MAX_RELIABLE {
+            return Err(limit("Reliable observation queue is full"));
+        }
+        if recipients > 0 && self.next_revision == u64::MAX {
+            return Err(Error::new(
+                ErrorCode::Internal,
+                "Observation revision exhausted",
+            ));
+        }
+        Ok(())
+    }
+
+    /// The callback and its deadline were admitted in this same host turn.
+    /// Accepted actions survive coalesced-state suspension and baseline resets.
+    pub fn record_action(&mut self, source: &Source, action: Action) -> Result<(), Error> {
+        self.preflight_action(source, &action)?;
+        let recipients: Vec<_> = self
+            .subscriptions
+            .iter()
+            .filter(|(_, sub)| sub.sources.contains(source))
+            .map(|(id, _)| id.clone())
+            .collect();
+        if recipients.is_empty() {
+            return Ok(());
+        }
+        self.next_revision += 1;
+        let revision = format!("o:{}", self.next_revision);
+        self.current.insert(
+            source.clone(),
+            SourceState {
+                source: source.clone(),
+                revision: revision.clone(),
+                state: Snapshot::ViewActions {
+                    accepted: action.id.clone(),
+                },
+            },
+        );
+        for subscription in recipients {
+            self.subscriptions
+                .get_mut(&subscription)
+                .unwrap()
+                .pending
+                .remove(source);
+            self.reliable
+                .push_back(Delivery::Action(Box::new(ActionEvent {
+                    subscription,
+                    source: source.clone(),
+                    revision: revision.clone(),
+                    action: action.clone(),
+                })));
+        }
+        Ok(())
+    }
+
     pub fn discover(&mut self, id: &str, source: Source, snapshot: Snapshot) -> Result<(), Error> {
         Self::validate_state(&source, &snapshot)?;
         let sub = self
@@ -549,3 +706,7 @@ impl Registry {
 #[cfg(test)]
 #[path = "tests/observation.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "tests/observation_actions.rs"]
+mod action_tests;

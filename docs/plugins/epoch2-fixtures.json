@@ -1580,5 +1580,243 @@
         "eof": true
       }
     }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:950",
+      "method": "view.query.set",
+      "params": {
+        "view": "v:g:1",
+        "expected_revision": "m:1",
+        "text": "Topic 01"
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:951",
+      "method": "view.query.set",
+      "params": {
+        "view": "v:g:1",
+        "expected_revision": "m:1",
+        "expected_query_revision": "qv:1",
+        "text": "Topic 01"
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:952",
+      "method": "view.publish",
+      "params": {
+        "view": "v:g:1",
+        "expected_revision": "m:1",
+        "expected_query_revision": "qv:2",
+        "model": {
+          "title": "Rows",
+          "purpose": "list",
+          "rows": [
+            {
+              "id": "row",
+              "text": "Topic 01",
+              "role": "ordinary"
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:953",
+      "method": "view.stage.open",
+      "params": {
+        "view": "v:g:1",
+        "expected_revision": "m:1",
+        "expected_query_revision": "qv:2",
+        "kind": "model",
+        "bytes": 2
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:954",
+      "method": "event.subscribe",
+      "params": {
+        "sources": [
+          {
+            "kind": "viewport",
+            "view": "v:g:1",
+            "pane": "n:g:1"
+          },
+          {
+            "kind": "view_actions",
+            "view": "v:g:1"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "response",
+      "id": "p:950",
+      "result": {
+        "view": "v:g:1",
+        "revision": "m:1",
+        "query": {
+          "revision": "qv:1",
+          "text": "Topic 01",
+          "pending": true
+        }
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "event",
+      "sequence": "e:950",
+      "event": "event.changed",
+      "data": {
+        "subscription": "o:g:1",
+        "sources": [
+          {
+            "source": {
+              "kind": "view",
+              "view": "v:g:1"
+            },
+            "revision": "o:1",
+            "state": {
+              "kind": "view",
+              "revision": "m:1",
+              "query": {
+                "revision": "qv:1",
+                "text": "Topic 01",
+                "pending": true
+              }
+            }
+          }
+        ],
+        "coalesced": 0
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "event",
+      "sequence": "e:951",
+      "event": "event.changed",
+      "data": {
+        "subscription": "o:g:1",
+        "sources": [
+          {
+            "source": {
+              "kind": "viewport",
+              "view": "v:g:1",
+              "pane": "n:g:1"
+            },
+            "revision": "o:2",
+            "state": {
+              "kind": "viewport",
+              "model_revision": "m:1",
+              "visible": true,
+              "top": "row",
+              "bottom": "row"
+            }
+          }
+        ],
+        "coalesced": 0
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "event",
+      "sequence": "e:952",
+      "event": "event.action",
+      "data": {
+        "subscription": "o:g:1",
+        "source": {
+          "kind": "view_actions",
+          "view": "v:g:1"
+        },
+        "revision": "o:3",
+        "action": {
+          "id": "a:1",
+          "request": "h:950",
+          "command": "toggle",
+          "pane": "n:g:1",
+          "model_revision": "m:1",
+          "query_revision": "qv:2",
+          "selection_revision": "q:1",
+          "selected_count": 1
+        }
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "request",
+      "id": "h:950",
+      "method": "command.invoke",
+      "params": {
+        "command": "toggle",
+        "context": "view",
+        "view": "v:g:1",
+        "model_revision": "m:1",
+        "query_revision": "qv:2",
+        "rows": [
+          "row"
+        ],
+        "arguments": {},
+        "pane": "n:g:1",
+        "selection_revision": "q:1",
+        "buffer": "b:g:1",
+        "buffer_revision": "r:1"
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "response",
+      "id": "p:952",
+      "result": {
+        "view": "v:g:1",
+        "revision": "m:2",
+        "query": {
+          "revision": "qv:2",
+          "text": "Topic 01",
+          "pending": false
+        },
+        "model": {
+          "title": "Rows",
+          "purpose": "list",
+          "rows": [
+            {
+              "id": "row",
+              "text": "Topic 01",
+              "role": "ordinary"
+            }
+          ]
+        }
+      }
+    }
   }
 ]

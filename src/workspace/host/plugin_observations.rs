@@ -31,13 +31,25 @@ impl WorkspaceHost {
                     .get(pane)
                     .is_some_and(|index| !self.app.panes.contains_key(index)),
             ),
-            wire::Source::View { view } => (
+            wire::Source::View { view } | wire::Source::ViewActions { view } => (
                 "views",
                 state.views.contains_key(view),
                 state
                     .views
                     .get(view)
                     .is_some_and(|view| self.app.host_buffer_is_closed(view.buffer)),
+            ),
+            wire::Source::Viewport { view, pane } => (
+                "views",
+                state.views.contains_key(view) && state.panes.contains_key(pane),
+                state
+                    .views
+                    .get(view)
+                    .is_some_and(|view| self.app.host_buffer_is_closed(view.buffer))
+                    || state
+                        .panes
+                        .get(pane)
+                        .is_some_and(|pane| !self.app.panes.contains_key(pane)),
             ),
             wire::Source::Job { job } => ("jobs", state.jobs.contains_key(job), false),
             wire::Source::Attachment | wire::Source::Buffers => ("workspace", true, false),
@@ -117,8 +129,43 @@ impl WorkspaceHost {
                 {
                     Some(view) => wire::Snapshot::View {
                         revision: format!("m:{}", view.revision),
+                        query: view
+                            .query
+                            .as_ref()
+                            .map(crate::plugin::view::QueryState::wire),
                     },
                     None => wire::Snapshot::Closed {},
+                }
+            }
+            wire::Source::ViewActions { view } => {
+                match state
+                    .views
+                    .get(view)
+                    .filter(|view| !self.app.host_buffer_is_closed(view.buffer))
+                {
+                    Some(view) => wire::Snapshot::ViewActions {
+                        accepted: format!("a:{}", view.accepted_actions),
+                    },
+                    None => wire::Snapshot::Closed {},
+                }
+            }
+            wire::Source::Viewport { view, pane } => {
+                match (state.views.get(view), state.panes.get(pane)) {
+                    (Some(live), Some(&pane))
+                        if !self.app.host_buffer_is_closed(live.buffer)
+                            && self.app.panes.contains_key(&pane) =>
+                    {
+                        self.app
+                            .plugin_viewport(owner, view, pane)
+                            .cloned()
+                            .unwrap_or(wire::Snapshot::Viewport {
+                                model_revision: None,
+                                visible: false,
+                                top: None,
+                                bottom: None,
+                            })
+                    }
+                    _ => wire::Snapshot::Closed {},
                 }
             }
             wire::Source::Job { job } => match state.jobs.get(job) {
@@ -167,6 +214,7 @@ impl WorkspaceHost {
             for delivery in deliveries {
                 self.send_observation(owner, delivery, true)?;
             }
+            self.refresh_plugin_viewport_watches(None);
             return self.application_local_reply(
                 owner,
                 request_id,
@@ -223,6 +271,10 @@ impl WorkspaceHost {
             .application
             .buffers
             .clone();
+        self.refresh_plugin_viewport_watches(Some((owner, &filters)));
+        if let Some(prepared) = &self.prepared {
+            self.app.capture_plugin_viewports(&prepared.view);
+        }
         let baseline = self.capture_observation_baseline(owner, &filters);
         let result = baseline.and_then(|baseline| {
             let encoded = serde_json::to_vec(&baseline)
@@ -272,7 +324,36 @@ impl WorkspaceHost {
                 .application
                 .buffers = old_buffers;
         }
+        self.refresh_plugin_viewport_watches(None);
         result
+    }
+
+    /// Watch membership changes only at subscription and owner lifecycle boundaries.
+    pub(super) fn refresh_plugin_viewport_watches(
+        &mut self,
+        extra: Option<(usize, &[wire::Source])>,
+    ) {
+        let mut watches = std::collections::BTreeSet::new();
+        for (&owner, instance) in &self.app.plugins.instances {
+            let sources = instance.application.observations.watched_sources();
+            let proposed = extra
+                .filter(|(id, _)| *id == owner)
+                .map_or(&[][..], |(_, sources)| sources);
+            for source in sources.iter().chain(proposed) {
+                if let wire::Source::Viewport { view, pane } = source
+                    && let Some(&pane) = instance.application.panes.get(pane)
+                    && self.app.panes.contains_key(&pane)
+                    && instance
+                        .application
+                        .views
+                        .get(view)
+                        .is_some_and(|live| !self.app.host_buffer_is_closed(live.buffer))
+                {
+                    watches.insert((owner, view.clone(), pane));
+                }
+            }
+        }
+        self.app.set_plugin_viewport_watches(watches);
     }
 
     fn observation_buffer_indices(&mut self) -> Vec<usize> {
@@ -378,6 +459,11 @@ impl WorkspaceHost {
                 api::EventData::ObservationResync(marker),
                 true,
             ),
+            wire::Delivery::Action(action) => (
+                "event.action",
+                api::EventData::ObservationAction(*action),
+                true,
+            ),
         };
         let state = &self.app.plugins.instances[&owner].application;
         let sequence = state.sequence + 1;
@@ -452,17 +538,21 @@ impl WorkspaceHost {
             .application
             .observations
             .watched_sources();
+        let mut viewport_closed = false;
         for source in sources {
             match self.observation_snapshot(owner, &source) {
-                Ok(snapshot) => self
-                    .app
-                    .plugins
-                    .instances
-                    .get_mut(&owner)
-                    .unwrap()
-                    .application
-                    .observations
-                    .observe(&source, snapshot)?,
+                Ok(snapshot) => {
+                    viewport_closed |= matches!(source, wire::Source::Viewport { .. })
+                        && matches!(snapshot, wire::Snapshot::Closed {});
+                    self.app
+                        .plugins
+                        .instances
+                        .get_mut(&owner)
+                        .unwrap()
+                        .application
+                        .observations
+                        .observe(&source, snapshot)?;
+                }
                 Err(_) => {
                     for subscription in &subscriptions {
                         if self.app.plugins.instances[&owner]
@@ -483,6 +573,9 @@ impl WorkspaceHost {
                     }
                 }
             }
+        }
+        if viewport_closed {
+            self.refresh_plugin_viewport_watches(None);
         }
         let discovery = subscriptions
             .into_iter()

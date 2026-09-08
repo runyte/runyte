@@ -3571,6 +3571,7 @@ enum ListAction {
         command: u64,
         buffer: usize,
         revision: u64,
+        query_revision: Option<String>,
     },
     Destination(OpenDestination),
     LspTrust {

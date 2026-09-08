@@ -112,6 +112,7 @@ generation and must never be parsed, persisted, or used by another owner.
 | jobs | `job.finish` | Handle and terminal state; completed job |
 | jobs | `job.cancel` | Handle; cancellation requested or existing terminal state |
 | views | `view.create/get/publish/patch/close` | Semantic model, owned handle and model revision |
+| views | `view.query.set` | Explicit revision-bound query intent; matching publication settles it |
 | views | `view.stage.open/write/commit/close` | Bounded construction and atomic publication |
 | views | `view.snapshot.open/read/close` | Immutable canonical model JSON and UTF-8 byte chunks |
 | views | `pane.show` | Pending invocation ID and view handle |
@@ -232,8 +233,7 @@ budgets are reserved for bounded queues, decoding and publication copies.
 These measure payload, not allocator RSS or the external process's memory.
 Buffer/pane issuance is bounded at 1,024/128 handles per connection generation.
 
-Still required by the active plan: query/viewport/action observations;
-binary uploads;
+Still required by the active plan: binary uploads;
 managed helpers, activity leases, state, settings and a plugin manager; media
 examples; broader SDK/conformance coverage and the complete performance/platform
 acceptance matrix.
@@ -298,6 +298,68 @@ captured model and buffer revisions and maps the selections and viewport that
 exist at commit time. The host reserves preparation memory before work starts,
 shares its finite worker admission bound with local filesystem work, and retains
 stopped-owner reservations until actual worker completion.
+
+## Explicit queries and observed views
+
+`catalog.py` demonstrates explicit filtering over 5,000 deterministic local
+records with capabilities `views` and `interaction`. Run `:plugin.catalog.open`,
+then Tab → Filter. The native prompt sends no query while typing; Enter starts a
+finite lookup and empty text restores all records. Refresh explicitly retries.
+One worker and one replaceable latest intent bound concurrent lookup work. There
+is no background timer while settled. The Observations action displays the last
+viewport endpoints and accepted-action metadata. Configure it like `dashboard.py`
+with ID `catalog` and the catalog script path.
+
+`view.query.set {view,expected_revision,text,expected_query_revision?}` starts or
+replaces query intent. `text` is at most 1,024 UTF-8 bytes, allows empty text and
+rejects controls. The result is `{view,revision,query:{revision,text,pending}}`;
+the outer revision still identifies the model. The first query enables this
+metadata. Later sets require the exact previous `expected_query_revision`, and
+every accepted set advances it, including a retry with identical text. The host
+adds a pending label to the view title while retaining the old rows and text
+revision. Query state is shared by every pane showing that view.
+
+Once a query exists, every `view.publish`, `view.patch` and `view.stage.open`
+requires its exact `expected_query_revision`, alongside the model revision.
+Staging captures the query token when opened; it cannot acquire a newer token
+at commit. Background preparation captures the token too, including the absence
+of a query. A query change before completion makes that result stale even when
+the text returns to the same value. Only a successful matching publication clears
+`pending`. Cancellation, invalid models, pacing and failures preserve the current
+intent and old rows. Each activated query reserves 4 KiB inside the owner's
+retained-payload budget. Legacy views keep their existing tokenless calls.
+
+Primary row actions are refused while a query is pending. Other view commands
+remain available with `rows: []`, allowing Filter and Refresh to replace or retry
+the query. Handlers for other row operations must continue to require selected
+IDs. Invocations include optional `query_revision`; action menus capture it and
+refuse entries from an older query. Matching publication still needs a prepared
+frame before actions can use the new model. The SDK's `set_query`, `publish_model`
+and `patch_view` expose these preconditions without automatic retries.
+
+Subscribe to `{"kind":"viewport","view":"…","pane":"…"}` using an owned view
+and an issued pane handle. Its state contains `model_revision`, `visible`, `top`
+and `bottom`; endpoints are stable data-row IDs or null. The host derives them
+from final wrapped/folded/diff-aware prepared rows, excluding headers and padding.
+Two panes can therefore report different endpoints for one model. An unavailable
+prepared model has a null revision; the host never interprets old frame rows
+through a newer projection. Hidden, covered, maximized-away and detached panes
+report no visible endpoints. Closing the pane or view produces a closed source.
+Only watched viewports are scanned; changes use the existing coalescible queue
+and do not create timers or request another frame.
+
+`{"kind":"view_actions","view":"…"}` observes accepted commands. Its baseline
+contains an `accepted` counter, not an action history. Reliable `event.action`
+contains `{subscription,source,revision,action}`. The action has `id`, `request`,
+`command`, `pane`, `model_revision`, optional `query_revision`, `selection_revision`
+and `selected_count`. The `request` identifies the existing `command.invoke`,
+which alone carries the full selected IDs and arguments. An observation does not
+invoke the command again or grant foreground authority. Rejected dispatches and
+later command results do not create actions. Queue capacity is checked before
+acceptance; an oversized callback is refused without stopping its cooperative
+owner. Reliable delivery failure stops the owner. Accepted actions retain FIFO
+order through state coalescing, resynchronization and unsubscribe acknowledgement.
+Both new source kinds require `views` and remain owner-scoped.
 
 ## Local file manager
 
@@ -1137,7 +1199,8 @@ same host turn. Each source entry contains a concrete `source`, opaque observati
 `revision` and typed `state`. Buffer metadata includes text revision, accepted
 saved revision, dirty/read-only flags, scalar length and a bounded display label.
 No text is copied. Pane metadata identifies its displayed buffer (null for a
-terminal) and selection revision. View metadata contains its model revision;
+terminal) and selection revision. View metadata contains its model revision and
+optional query metadata;
 job metadata contains state/progress; attachment metadata contains attached state
 and generation. Read text, selections and models through their existing explicit
 APIs when needed. An accepted save of an unchanged baseline need not emit a new

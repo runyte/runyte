@@ -41,6 +41,29 @@ days, and fails below 89% total line coverage. The floor is deliberately below
 the observed baseline because conditional Linux and macOS code changes both the
 instrumented denominator and the paths available to a run on one platform.
 
+## 2026-09-08 — query and view observations
+
+Measured on `x86_64-unknown-linux-gnu` at `ae90877` plus the query/observation
+round, using Rust 1.97.1 and cargo-llvm-cov 0.9.0. Ordinary and canonical suites
+each passed 3,380 tests with 33 ignored. Formatting and warnings-as-errors Clippy
+passed; the floor remains 89%.
+
+| Measure | Covered | Total | Coverage |
+| --- | ---: | ---: | ---: |
+| Lines | 114,441 | 124,813 | 91.69% |
+| Functions | 10,346 | 11,231 | 92.12% |
+| Regions | 174,385 | 191,220 | 91.20% |
+
+Thirty-two new Rust tests cover query preconditions and A→B→A races, pending row
+actions, stale menus, reliable action admission/FIFO, output-size refusal,
+query memory, staged cancellation, viewport splits/wrapping and attachment
+lifecycle, baseline seeding, and final-frame cleanup after observer failure.
+Eleven Python checks cover SDK query propagation, ordered action callbacks,
+structural conformance and the bounded catalog example. The native PTY smoke
+passed explicit filtering, pending retention, cancellation, empty-query reset
+and viewport/action observations; two settled seconds emitted zero terminal
+bytes. Native macOS and the full application workload matrix remain pending.
+
 ## 2026-09-08 — richer model publication
 
 Measured on `x86_64-unknown-linux-gnu` at `dd621e3` plus the richer-view

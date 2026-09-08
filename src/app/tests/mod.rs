@@ -186,6 +186,7 @@ mod plugin_provider_save_preview;
 mod plugin_provider_saves;
 mod plugin_rich_views;
 mod plugin_validation;
+mod plugin_view_queries;
 mod presentation_and_settings;
 mod provider_documents;
 mod search_and_pickers;

@@ -22,6 +22,7 @@ pub(super) fn is_model_request(request: &Request) -> bool {
     matches!(
         request,
         Request::ViewCreate { .. }
+            | Request::ViewQuerySet { .. }
             | Request::ViewPublish { .. }
             | Request::ViewPatch { .. }
             | Request::ViewStageOpen { .. }
@@ -82,13 +83,56 @@ impl WorkspaceHost {
             ));
         }
         match request {
+            Request::ViewQuerySet {
+                view: handle,
+                expected_revision,
+                expected_query_revision,
+                text,
+            } => {
+                self.check_model_target(owner, &handle, &expected_revision)?;
+                let live = &self.app.plugins.instances[&owner].application.views[&handle];
+                let query = view::QueryState::set(
+                    live.query.as_ref(),
+                    expected_query_revision.as_deref(),
+                    text,
+                )?;
+                let charge = if live.query.is_none() {
+                    view::QUERY_CHARGE
+                } else {
+                    0
+                };
+                self.reserve_application_payload(owner, charge)?;
+                let state = &mut self
+                    .app
+                    .plugins
+                    .instances
+                    .get_mut(&owner)
+                    .unwrap()
+                    .application;
+                let live = state.views.get_mut(&handle).unwrap();
+                live.charge += charge;
+                live.query = Some(query);
+                state.retained_payload += charge;
+                self.app.refresh_plugin_view_title(owner, &handle);
+                Ok(Some(ResultValue::ViewQuery {
+                    view: handle.clone(),
+                    revision: expected_revision,
+                    query: self.app.plugins.instances[&owner].application.views[&handle]
+                        .query
+                        .as_ref()
+                        .unwrap()
+                        .wire(),
+                }))
+            }
             Request::ViewStageOpen {
                 view: handle,
                 expected_revision,
+                expected_query_revision,
                 kind,
                 bytes,
             } => {
                 self.check_model_target(owner, &handle, &expected_revision)?;
+                self.check_model_query(owner, &handle, expected_query_revision.as_deref())?;
                 let state = &self.app.plugins.instances[&owner].application;
                 if state.view_stages.len()
                     + state
@@ -107,7 +151,13 @@ impl WorkspaceHost {
                     ));
                 }
                 self.reserve_application_payload(owner, bytes + HANDLE_CHARGE)?;
-                let stage = view::Stage::new(handle, expected_revision, kind, bytes)?;
+                let stage = view::Stage::new(
+                    handle,
+                    expected_revision,
+                    expected_query_revision,
+                    kind,
+                    bytes,
+                )?;
                 let state = &mut self
                     .app
                     .plugins
@@ -256,9 +306,11 @@ impl WorkspaceHost {
             Request::ViewPublish {
                 view,
                 expected_revision,
+                expected_query_revision,
                 model,
             } => {
                 self.check_model_target(owner, &view, &expected_revision)?;
+                self.check_model_query(owner, &view, expected_query_revision.as_deref())?;
                 self.start_model(
                     owner,
                     request_id,
@@ -271,10 +323,12 @@ impl WorkspaceHost {
             Request::ViewPatch {
                 view,
                 expected_revision,
+                expected_query_revision,
                 header,
                 operations,
             } => {
                 self.check_model_target(owner, &view, &expected_revision)?;
+                self.check_model_query(owner, &view, expected_query_revision.as_deref())?;
                 let base = self.app.plugins.instances[&owner].application.views[&view]
                     .model
                     .clone();
@@ -294,6 +348,11 @@ impl WorkspaceHost {
                     .get(&stage)
                     .ok_or_else(|| Error::new(Code::NotFound, "Unknown view stage"))?;
                 self.check_model_target(owner, &issued.view, &issued.expected_revision)?;
+                self.check_model_query(
+                    owner,
+                    &issued.view,
+                    issued.expected_query_revision.as_deref(),
+                )?;
                 let target = issued.view.clone();
                 if !issued.is_complete() {
                     return Err(Error::new(
@@ -330,6 +389,20 @@ impl WorkspaceHost {
             return Err(Error::new(Code::Stale, "View model changed"));
         }
         Ok(())
+    }
+
+    fn check_model_query(
+        &self,
+        owner: usize,
+        handle: &str,
+        expected: Option<&str>,
+    ) -> Result<(), Error> {
+        view::check_query(
+            self.app.plugins.instances[&owner].application.views[handle]
+                .query
+                .as_ref(),
+            expected,
+        )
     }
 
     fn model_admission(
@@ -444,6 +517,12 @@ impl WorkspaceHost {
         let source_charge = target
             .as_ref()
             .map_or(0, |target| state.views[target].charge);
+        let expected_query_revision = target.as_ref().and_then(|target| {
+            state.views[target]
+                .query
+                .as_ref()
+                .map(|query| format!("qv:{}", query.revision))
+        });
         let (buffer, revision, buffer_revision, source) = if let Some(target) = &target {
             let live = &state.views[target];
             (
@@ -480,6 +559,7 @@ impl WorkspaceHost {
                 buffer_revision,
                 charge,
                 source_charge,
+                expected_query_revision,
                 stage,
                 cancelled: cancelled.clone(),
             },
@@ -572,6 +652,11 @@ impl WorkspaceHost {
         }
         if let Some(buffer) = pending.buffer {
             self.check_model_target(owner, &pending.view, &format!("m:{}", pending.revision))?;
+            self.check_model_query(
+                owner,
+                &pending.view,
+                pending.expected_query_revision.as_deref(),
+            )?;
             let live = &self.app.plugins.instances[&owner].application.views[&pending.view];
             if live.buffer != buffer
                 || self.app.buffers[buffer].revision() != pending.buffer_revision
@@ -606,7 +691,15 @@ impl WorkspaceHost {
         let old_charge = pending.buffer.map_or(0, |_| {
             self.app.plugins.instances[&owner].application.views[&pending.view].charge
         });
-        self.reserve_application_payload(owner, model.charge.saturating_sub(old_charge))?;
+        let (mut query, accepted_actions) = pending.buffer.map_or((None, 0), |_| {
+            let live = &self.app.plugins.instances[&owner].application.views[&pending.view];
+            (live.query.clone(), live.accepted_actions)
+        });
+        if let Some(query) = &mut query {
+            query.pending = false;
+        }
+        let charge = model.charge + query.as_ref().map_or(0, |_| view::QUERY_CHARGE);
+        self.reserve_application_payload(owner, charge.saturating_sub(old_charge))?;
         let buffer = if let Some(buffer) = pending.buffer {
             let old = self.app.plugins.instances[&owner].application.views[&pending.view]
                 .projection
@@ -641,7 +734,7 @@ impl WorkspaceHost {
             .get_mut(&owner)
             .unwrap()
             .application;
-        state.retained_payload = state.retained_payload - old_charge + model.charge;
+        state.retained_payload = state.retained_payload - old_charge + charge;
         state.views.insert(
             pending.view.clone(),
             view::View {
@@ -649,22 +742,27 @@ impl WorkspaceHost {
                 model: model.model.clone(),
                 encoded: model.encoded.clone(),
                 projection: model.projection.clone(),
-                charge: model.charge,
+                charge,
+                query,
+                accepted_actions,
                 revision: pending.revision + 1,
                 published: (!pending.creating).then(std::time::Instant::now),
             },
         );
+        self.app.refresh_plugin_view_title(owner, &pending.view);
         Ok(self.model_result(owner, pending.view))
     }
 
     pub(super) fn model_result(&self, owner: usize, handle: String) -> ResultValue {
         let live = &self.app.plugins.instances[&owner].application.views[&handle];
         let revision = format!("m:{}", live.revision);
+        let query = live.query.as_ref().map(view::QueryState::wire);
         if live.encoded.len() < plugin::MAX_BYTES - 4096 {
             ResultValue::View {
                 view: handle,
                 revision,
                 model: live.model.clone(),
+                query,
             }
         } else {
             ResultValue::ViewInfo {
@@ -672,6 +770,7 @@ impl WorkspaceHost {
                 revision,
                 bytes: live.encoded.len(),
                 rows: live.model.rows.len(),
+                query,
             }
         }
     }

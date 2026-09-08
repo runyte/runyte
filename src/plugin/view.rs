@@ -9,12 +9,15 @@ mod decoding;
 mod patch;
 mod pending;
 mod projection;
+mod query;
 mod staging;
 pub(crate) use decoding::operations as decode_operations;
 pub use patch::{Operation, Patch};
 pub use pending::Prepared;
 pub(crate) use pending::{OwnedSnapshot, Pending};
 pub use projection::{PreparedModel, ProjectedRow, Projection};
+pub use query::{MAX_QUERY_BYTES, QUERY_CHARGE, Query};
+pub(crate) use query::{QueryState, check_query};
 pub use staging::StageKind;
 pub(crate) use staging::{ReadSnapshot, Stage};
 
@@ -279,8 +282,14 @@ pub(crate) struct View {
     pub charge: usize,
     pub revision: u64,
     pub published: Option<std::time::Instant>,
+    pub query: Option<QueryState>,
+    pub accepted_actions: u64,
 }
 
 #[cfg(test)]
 #[path = "tests/view_models.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "tests/view_queries.rs"]
+mod query_tests;

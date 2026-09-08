@@ -387,6 +387,7 @@ async fn owned_view_and_job_sources_capture_models_progress_and_final_state() {
         0,
         4,
         api::Request::ViewPublish {
+            expected_query_revision: None,
             view: view.as_str().unwrap().into(),
             expected_revision: created["result"]["revision"].as_str().unwrap().into(),
             model: model(&[("row", "After")]),

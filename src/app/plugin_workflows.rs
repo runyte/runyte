@@ -74,6 +74,8 @@ pub(crate) struct Plugins {
     pub attachment_generation: u64,
     pub foreground_generation: u64,
     pub presented_views: BTreeMap<usize, (usize, u64)>,
+    pub viewport_watches: BTreeSet<(usize, String, usize)>,
+    pub viewport_cache: BTreeMap<(usize, String, usize), plugin::observation::Snapshot>,
 }
 
 impl App {
@@ -182,6 +184,10 @@ impl App {
             .get(&id)
             .ok_or_else(|| anyhow::anyhow!("plugin command is no longer registered"))?
             .clone();
+        ensure!(
+            !self.plugins.cancellations.contains(&command.plugin),
+            "Plugin is stopping"
+        );
         let arguments = plugin::arguments::parse(&command.arguments, arguments)
             .map_err(|error| anyhow::anyhow!(error.message))?;
         if self.plugins.instances[&command.plugin].config.api == plugin::application::Api::Epoch2 {
@@ -211,52 +217,67 @@ impl App {
             if command.context == plugin::application::CommandContext::View {
                 ensure!(view.is_some(), "command requires an owned application view");
             }
-            let (view_handle, model_revision, rows) = if let Some((handle, view)) = view {
-                if command.context == plugin::application::CommandContext::View {
+            let (view_handle, model_revision, query_revision, rows) =
+                if let Some((handle, view)) = view {
+                    if command.context == plugin::application::CommandContext::View {
+                        ensure!(
+                            view.model.actions.is_empty()
+                                || view.model.actions.contains(&command.local),
+                            "Application view does not offer this action"
+                        );
+                        ensure!(
+                            self.plugins.presented_views.get(&self.active_pane)
+                                == Some(&(view.buffer, view.revision)),
+                            "Application view changed; wait for refresh"
+                        );
+                    }
+                    let query_pending = view.query.as_ref().is_some_and(|query| query.pending);
+                    let primary = command.context == plugin::application::CommandContext::View
+                        && self.plugins.instances[&command.plugin]
+                            .application
+                            .primary_commands
+                            .contains(&command.local);
                     ensure!(
-                        view.model.actions.is_empty()
-                            || view.model.actions.contains(&command.local),
-                        "Application view does not offer this action"
+                        !query_pending || !primary,
+                        "Application query pending; wait for matching results"
                     );
-                    ensure!(
-                        self.plugins.presented_views.get(&self.active_pane)
-                            == Some(&(view.buffer, view.revision)),
-                        "Application view changed; wait for refresh"
-                    );
-                }
-                let mut rows = std::collections::BTreeSet::new();
-                for range in self.active().selection.ranges() {
-                    for row in self.buffers[view.buffer].offset_to_row(range.from())
-                        ..=self.buffers[view.buffer].offset_to_row(
-                            range.to().saturating_sub(usize::from(!range.is_empty())),
-                        )
+                    let mut rows = std::collections::BTreeSet::new();
+                    for range in self
+                        .active()
+                        .selection
+                        .ranges()
+                        .iter()
+                        .filter(|_| !query_pending)
                     {
-                        if let Some(Some(index)) = view.projection.line_rows.get(row)
-                            && let Some(projected) = view.projection.rows.get(*index)
+                        for row in self.buffers[view.buffer].offset_to_row(range.from())
+                            ..=self.buffers[view.buffer].offset_to_row(
+                                range.to().saturating_sub(usize::from(!range.is_empty())),
+                            )
                         {
-                            rows.insert(projected.id.clone());
+                            if let Some(Some(index)) = view.projection.line_rows.get(row)
+                                && let Some(projected) = view.projection.rows.get(*index)
+                            {
+                                rows.insert(projected.id.clone());
+                            }
                         }
                     }
-                }
-                if command.context == plugin::application::CommandContext::View
-                    && self.plugins.instances[&command.plugin]
-                        .application
-                        .primary_commands
-                        .contains(&command.local)
-                {
-                    ensure!(
-                        !rows.is_empty(),
-                        "Select an application row before invoking its primary action"
-                    );
-                }
-                (
-                    Some(handle.clone()),
-                    Some(format!("m:{}", view.revision)),
-                    rows.into_iter().collect(),
-                )
-            } else {
-                (None, None, Vec::new())
-            };
+                    if primary {
+                        ensure!(
+                            !rows.is_empty(),
+                            "Select an application row before invoking its primary action"
+                        );
+                    }
+                    (
+                        Some(handle.clone()),
+                        Some(format!("m:{}", view.revision)),
+                        view.query
+                            .as_ref()
+                            .map(|query| format!("qv:{}", query.revision)),
+                        rows.into_iter().collect(),
+                    )
+                } else {
+                    (None, None, None, Vec::new())
+                };
             let selection_revision = format!("q:{}", self.plugin_selection_revision(capture.pane));
             let buffer_revision = capture
                 .terminal
@@ -284,29 +305,90 @@ impl App {
             };
             self.plugins.next_invocation += 1;
             let token = format!("h:{}", self.plugins.next_invocation);
-            instance.sender.try_send(HostMessage::Application(
-                plugin::application::HostMessage::Request {
-                    id: token.clone(),
-                    method: "command.invoke",
-                    params: plugin::application::Invocation {
-                        arguments,
-                        command: command.local,
-                        context: command.context,
-                        pane,
-                        selection_revision,
-                        buffer,
-                        buffer_revision,
-                        view: view_handle,
-                        model_revision,
-                        rows,
-                    },
+            let accepted_action = if command.context == plugin::application::CommandContext::View {
+                let handle = view_handle.as_ref().expect("owned view command");
+                let action = plugin::observation::Action {
+                    id: format!(
+                        "a:{}",
+                        instance.application.views[handle]
+                            .accepted_actions
+                            .checked_add(1)
+                            .ok_or_else(|| anyhow::anyhow!("View action identity exhausted"))?
+                    ),
+                    request: token.clone(),
+                    command: command.local.clone(),
+                    pane: pane.clone(),
+                    model_revision: model_revision.clone().expect("owned view model"),
+                    query_revision: query_revision.clone(),
+                    selection_revision: selection_revision.clone(),
+                    selected_count: rows.len(),
+                };
+                let source = plugin::observation::Source::ViewActions {
+                    view: handle.clone(),
+                };
+                instance
+                    .application
+                    .observations
+                    .preflight_action(&source, &action)
+                    .map_err(|error| anyhow::anyhow!(error.message))?;
+                Some((source, action))
+            } else {
+                None
+            };
+            let callback = HostMessage::Application(plugin::application::HostMessage::Request {
+                id: token.clone(),
+                method: "command.invoke",
+                params: plugin::application::Invocation {
+                    arguments,
+                    command: command.local,
+                    context: command.context,
+                    pane,
+                    selection_revision,
+                    buffer,
+                    buffer_revision,
+                    view: view_handle,
+                    model_revision,
+                    query_revision,
+                    rows,
                 },
-            ))?;
-            instance.sender.try_send(HostMessage::Deadline {
+            });
+            ensure!(
+                plugin::Sender::message_fits(&callback)?,
+                "Application action is too large; select fewer rows"
+            );
+            if let Err(error) = instance.sender.try_send(callback) {
+                self.plugins.cancellations.insert(command.plugin);
+                return Err(error);
+            }
+            if let Err(error) = instance.sender.try_send(HostMessage::Deadline {
                 token: token.clone(),
                 after_ms: Some(10000),
-            })?;
+            }) {
+                // The callback may already be visible to the child; retiring its
+                // owner prevents an untracked callback from gaining authority.
+                self.plugins.cancellations.insert(command.plugin);
+                return Err(error);
+            }
             instance.application.requests.insert(token.clone(), capture);
+            if let Some((source, action)) = accepted_action {
+                let plugin::observation::Source::ViewActions { view } = &source else {
+                    unreachable!()
+                };
+                instance
+                    .application
+                    .views
+                    .get_mut(view)
+                    .unwrap()
+                    .accepted_actions += 1;
+                if let Err(error) = instance
+                    .application
+                    .observations
+                    .record_action(&source, action)
+                {
+                    self.plugins.cancellations.insert(command.plugin);
+                    return Err(anyhow::anyhow!(error.message));
+                }
+            }
             return Ok(token);
         }
         ensure!(
