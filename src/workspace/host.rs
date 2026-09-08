@@ -245,6 +245,7 @@ mod plugin_filesystem;
 mod plugin_filesystem_apply;
 mod plugin_handoffs;
 mod plugin_interaction;
+mod plugin_manager;
 mod plugin_models;
 mod plugin_notifications;
 mod plugin_observations;
@@ -268,6 +269,8 @@ pub struct WorkspaceHost {
     document_saves: std::collections::BTreeMap<String, plugin_documents::PendingSave>,
     filesystem_apply: Option<plugin_filesystem_apply::PendingApply>,
     plugin_workers: std::collections::BTreeMap<usize, crate::plugin::Worker>,
+    plugin_manager: Vec<plugin_manager::Record>,
+    next_plugin_owner: usize,
     plugin_processes: std::collections::BTreeMap<String, plugin_processes::Managed>,
     observation_buffers: Option<((usize, usize), Vec<usize>)>,
     plugin_events_sender: Option<tokio::sync::mpsc::Sender<crate::plugin::Event>>,
@@ -372,6 +375,8 @@ impl WorkspaceHost {
             document_saves: Default::default(),
             filesystem_apply: None,
             plugin_workers: Default::default(),
+            plugin_manager: Vec::new(),
+            next_plugin_owner: 0,
             plugin_processes: Default::default(),
             observation_buffers: None,
             plugin_events_sender: None,

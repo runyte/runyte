@@ -391,7 +391,7 @@ async fn disabled_spawn_failure_and_host_attachment_do_not_duplicate_instances()
     host.handle_plugin_event(event);
     assert!(host.plugin_workers.is_empty());
     assert!(host.app.plugins.instances.is_empty());
-    assert!(host.app.status.contains("cannot start plugin"));
+    assert!(host.app.status.contains("could not start"));
 }
 
 #[cfg(unix)]
@@ -537,9 +537,9 @@ async fn process_malformed_output_exit_and_deadline_remove_commands() {
     for (behavior, expected) in [
         (
             "read -r hello\nprintf 'invalid-json\\n'\nwhile read -r line; do :; done\n",
-            "invalid plugin message",
+            "protocol or IO failed",
         ),
-        ("exit 7\n", "plugin"),
+        ("exit 7\n", "Plugin"),
         (
             "read -r hello\nwhile read -r line; do :; done\n",
             "timed out",
@@ -718,3 +718,8 @@ fn plugin_bindings_cannot_claim_grammar_counts_or_prefix_cancellation() {
 
 #[path = "plugin_applications.rs"]
 mod applications;
+
+#[path = "plugin_manager.rs"]
+mod manager;
+#[path = "plugin_manager_review.rs"]
+mod manager_review;

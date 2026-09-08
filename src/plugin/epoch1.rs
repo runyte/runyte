@@ -49,6 +49,11 @@ pub struct Registration {
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ClientMessage {
     #[serde(skip)]
+    WorkerStopped {
+        failure: Option<String>,
+        reaped: bool,
+    },
+    #[serde(skip)]
     Process(super::process::runtime::Event),
     #[serde(skip)]
     State(super::state::Event),

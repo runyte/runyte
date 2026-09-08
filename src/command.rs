@@ -109,6 +109,9 @@ pub enum ColonCommand {
     ResizeTop,
     ResizeBottom,
     ServiceHealth,
+    Plugins,
+    PluginStop,
+    PluginRestart,
     WriteQuit,
     WriteBufferClose,
     SessionAttach,
@@ -271,6 +274,9 @@ impl ColonCommand {
         Self::ResizeTop,
         Self::ResizeBottom,
         Self::ServiceHealth,
+        Self::Plugins,
+        Self::PluginStop,
+        Self::PluginRestart,
         Self::WriteQuit,
         Self::WriteBufferClose,
         Self::SessionAttach,
@@ -332,7 +338,12 @@ impl ColonCommand {
             | Self::ForceQuitAll
             | Self::QuitHere
             | Self::ForceQuitHere => CommandCategory::Application,
-            Self::Grammar | Self::LogOpen | Self::ServiceHealth => CommandCategory::Configuration,
+            Self::Grammar
+            | Self::LogOpen
+            | Self::ServiceHealth
+            | Self::Plugins
+            | Self::PluginStop
+            | Self::PluginRestart => CommandCategory::Configuration,
             Self::SessionAttach | Self::SessionList | Self::SessionStop | Self::SessionRename => {
                 CommandCategory::Application
             }
@@ -1668,6 +1679,30 @@ pub const COMMANDS: &[CommandSpec] = &[
         NoArguments
     ),
     spec!(
+        ColonId(Colon::Plugins),
+        "plugins",
+        [],
+        "plugins",
+        "Inspect configured plugins and their state",
+        NoArguments
+    ),
+    spec!(
+        ColonId(Colon::PluginStop),
+        "plugin-stop",
+        [],
+        "plugin-stop <configured-id>",
+        "Stop a plugin or cancel its pending restart",
+        Required(FreeText)
+    ),
+    spec!(
+        ColonId(Colon::PluginRestart),
+        "plugin-restart",
+        [],
+        "plugin-restart <configured-id>",
+        "Restart a configured plugin after cleanup",
+        Required(FreeText)
+    ),
+    spec!(
         ColonId(Colon::ServiceHealth),
         "service-health",
         ["health"],
@@ -2499,6 +2534,7 @@ fn valid_colon_parameters(command: ColonCommand, parameters: &InvocationParamete
             | Colon::Notifications
             | Colon::Path
             | Colon::ServiceHealth
+            | Colon::Plugins
             | Colon::Detach
             | Colon::Quit
             | Colon::ForceQuit
@@ -2528,6 +2564,10 @@ fn valid_colon_parameters(command: ColonCommand, parameters: &InvocationParamete
         (Colon::SessionRename, InvocationParameters::SessionRename { workspace, name }) => {
             !workspace.as_os_str().is_empty() && !name.trim().is_empty()
         }
+        (
+            Colon::PluginStop | Colon::PluginRestart,
+            InvocationParameters::OptionalText(Some(value)),
+        ) => crate::plugin::valid_name(value),
         (Colon::LspRestart, InvocationParameters::OptionalText(value)) => {
             value.as_ref().is_none_or(|value| !value.is_empty())
         }
@@ -2856,6 +2896,7 @@ fn invocation_from_parts(
                 | ColonCommand::Notifications
                 | ColonCommand::Path
                 | ColonCommand::ServiceHealth
+                | ColonCommand::Plugins
                 | ColonCommand::Detach
                 | ColonCommand::Quit
                 | ColonCommand::ForceQuit
@@ -2897,6 +2938,13 @@ fn invocation_from_parts(
             ) => Ok(CommandInvocation::new(
                 id,
                 InvocationParameters::PaneResize(parse_pane_resize(command, &value)?),
+            )),
+            (
+                ColonCommand::PluginStop | ColonCommand::PluginRestart,
+                ParsedArgument::Text(Some(value)),
+            ) if crate::plugin::valid_name(&value) => Ok(CommandInvocation::new(
+                id,
+                InvocationParameters::OptionalText(Some(value)),
             )),
             (ColonCommand::LspRestart, ParsedArgument::Text(value)) => Ok(CommandInvocation::new(
                 id,

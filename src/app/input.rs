@@ -487,6 +487,9 @@ impl App {
     }
 
     fn command_hint_count(&self) -> usize {
+        if let Some(hints) = self.matching_plugin_hints() {
+            return hints.len();
+        }
         self.matching_path_hints()
             .map_or_else(|| self.matching_commands().len(), |hints| hints.len())
     }
@@ -5347,6 +5350,21 @@ impl App {
                 self.open_path_popup();
                 Ok(())
             }
+            (Colon::Plugins, InvocationParameters::None) => {
+                self.open_plugin_manager();
+                Ok(())
+            }
+            (
+                Colon::PluginStop | Colon::PluginRestart,
+                InvocationParameters::OptionalText(Some(id)),
+            ) => {
+                let action = if command == Colon::PluginStop {
+                    crate::plugin::manager::Action::Stop
+                } else {
+                    crate::plugin::manager::Action::Restart
+                };
+                self.plugin_manager_action_by_id(&id, action)
+            }
             (Colon::ServiceHealth, InvocationParameters::None) => {
                 self.open_service_health();
                 Ok(())
@@ -5523,6 +5541,16 @@ impl App {
     }
 
     pub(super) fn complete_selected_command(&mut self) {
+        if let Some(hints) = self.matching_plugin_hints() {
+            let Some(entry) = hints.get(self.command_selection) else {
+                return;
+            };
+            let name = self.command.split_once(char::is_whitespace).unwrap().0;
+            self.command = format!("{name} {}", entry.configured_id);
+            self.command_cursor = self.command.chars().count();
+            self.command_selection = 0;
+            return;
+        }
         if let Some(hints) = self.matching_path_hints() {
             let Some(hint) = hints.get(self.command_selection) else {
                 return;

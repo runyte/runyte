@@ -38,6 +38,7 @@ pub(super) struct PendingWrite {
     upload: Option<String>,
     offset: usize,
     commit_sent: bool,
+    action: Option<u64>,
     continuation: Option<ProviderSaveContinuation>,
 }
 
@@ -58,6 +59,7 @@ impl WorkspaceHost {
         continuation: Option<ProviderSaveContinuation>,
         context: Option<api::CapturedContext>,
     ) -> Result<api::Job, Error> {
+        let action = context.as_ref().and_then(|context| context.action);
         if self.app.host_buffer_is_closed(buffer) {
             return Err(Error::new(Code::Closed, "Document closed"));
         }
@@ -263,6 +265,7 @@ impl WorkspaceHost {
                 upload: None,
                 offset: 0,
                 commit_sent: false,
+                action,
                 continuation,
             },
         );
@@ -682,10 +685,11 @@ impl WorkspaceHost {
             api::JobState::Failed
         };
         if let Some(error) = &error {
-            self.app.provider_save_feedback(false, &error.message);
+            self.app
+                .provider_save_action_feedback(pending.action, false, &error.message);
         } else {
             self.app
-                .provider_save_feedback(true, "Remote document saved");
+                .provider_save_action_feedback(pending.action, true, "Remote document saved");
         }
         if live && !pending.orphaned {
             let state = &mut self
@@ -1028,9 +1032,11 @@ impl WorkspaceHost {
     pub(super) fn sync_provider_writes(&mut self) {
         self.sync_provider_overwrite_approvals();
         for intent in self.app.take_provider_save_intents() {
+            let action = intent.context.action;
             if self.app.buffers[intent.buffer].revision() != intent.expected_revision {
                 self.app.plugins.document_saves.remove(&intent.buffer);
-                self.app.provider_save_feedback(
+                self.app.provider_save_action_feedback(
+                    action,
                     false,
                     "Document changed before save admission; retry the save",
                 );
@@ -1071,7 +1077,8 @@ impl WorkspaceHost {
                 }
                 Err(error) => {
                     self.app.plugins.document_saves.remove(&intent.buffer);
-                    self.app.provider_save_feedback(false, &error.message);
+                    self.app
+                        .provider_save_action_feedback(action, false, &error.message);
                 }
             }
         }

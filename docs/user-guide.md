@@ -2986,6 +2986,13 @@ likewise ignored after their open document advances.
 
 ### Experimental plugins
 
+`:plugins` opens the native manager for configured, disabled and failed plugins.
+Select an entry to inspect its capabilities, jobs, activity, helpers and diagnostic
+summary; Enter offers lifecycle actions. `:plugin-stop <id>` stops an owner and
+`:plugin-restart <id>` requests a fresh connection after cleanup finishes.
+Stopping a pending restart cancels it. Retained views remain readable and dirty
+provider documents remain editable. Restart does not replay old actions.
+
 Explicitly enabled process plugins can register commands, read the invoking
 buffer's text and selections, and return replacements as one undoable edit.
 They run asynchronously; changing the invoking text rejects stale results.
@@ -3146,6 +3153,9 @@ are enabled.
 :lsp-status             report language server state
 :notifications          open retained notification history (alias: not)
 :service-health         inspect syntax, LSP, providers, and helper health (alias: health)
+:plugins                open the configured plugin manager
+:plugin-stop <id>       stop a configured plugin or cancel its pending restart
+:plugin-restart <id>    restart a configured plugin after its cleanup finishes
 :hsplit [path]          create a stacked split (alias: split)
 :open <path>            open a file or directory in the active pane (aliases: e, edit)
 :path                   show the active buffer's absolute path in a popup;

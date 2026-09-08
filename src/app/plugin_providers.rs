@@ -326,6 +326,28 @@ impl App {
 }
 
 impl App {
+    pub(crate) fn provider_save_action_feedback(
+        &mut self,
+        action: Option<u64>,
+        success: bool,
+        message: &str,
+    ) {
+        self.provider_save_feedback(success, message);
+        let detail = if success {
+            message.to_owned()
+        } else {
+            format!("Remote save failed: {message}")
+        };
+        // Completion may arrive after another action or frontend attachment.
+        // Only replace the echo belonging to the captured native save.
+        if self.update_action_feedback(action, &detail) {
+            if let Some(feedback) = self.action_feedback.as_mut() {
+                feedback.is_error = !success;
+            }
+            self.plugins.presentation_dirty = true;
+        }
+    }
+
     pub(crate) fn provider_save_feedback(&mut self, success: bool, message: &str) {
         if success {
             self.status(message);

@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: MPL-2.0
 
 use super::{BufferId, BufferRevision, WorkspaceHost};
+#[cfg(test)]
+use crate::app::plugin_workflows::Instance;
 use crate::{
-    app::plugin_workflows::{Instance, RuntimeCommand},
+    app::plugin_workflows::RuntimeCommand,
     keymap::KeySequence,
     plugin::{self, ClientMessage, Event, HostMessage},
     text::{Change, Transaction},
@@ -24,86 +26,29 @@ impl WorkspaceHost {
             return None;
         }
         self.plugins_started = true;
-        let configs = self
-            .app
-            .config
-            .plugins
-            .iter()
-            .filter(|c| c.enabled)
-            .cloned()
-            .collect::<Vec<_>>();
-        if configs.is_empty() {
-            return None;
-        }
-        if configs.len() > plugin::MAX_PLUGINS {
-            self.report_host_error("At most 8 plugins may be enabled".to_owned());
-            return None;
-        }
-        let mut names = BTreeSet::new();
-        let (events, receiver) = tokio::sync::mpsc::channel(plugin::EVENT_CAPACITY);
-        self.plugin_events_sender = Some(events.clone());
-        for (id, config) in configs.into_iter().enumerate() {
-            if !plugin::valid_name(&config.id)
-                || !names.insert(config.id.clone())
-                || !config.executable.is_absolute()
-                || config.args.len() > 32
-                || config.args.iter().map(String::len).sum::<usize>() > 8192
-                || config.bindings.len()
-                    > if config.api == plugin::application::Api::Epoch2 {
-                        plugin::application::MAX_COMMANDS
-                    } else {
-                        plugin::MAX_COMMANDS
-                    }
-                || config.capabilities.len() > 32
-                || config
-                    .capabilities
-                    .iter()
-                    .any(|cap| !plugin::valid_name(cap))
-            {
-                self.report_host_error(format!(
-                    "Invalid or duplicate plugin configuration: {}",
-                    config.id
-                ));
-                continue;
-            }
-            let (worker, sender) = plugin::spawn(
-                config.clone(),
-                self.app.project_root.clone(),
-                id,
-                events.clone(),
-            );
-            sender
-                .try_send(if config.api == plugin::application::Api::Epoch2 {
-                    HostMessage::Application(plugin::application::HostMessage::Hello {
-                        version: plugin::application::VERSION,
-                        capabilities: plugin::application::CAPABILITIES.to_vec(),
-                        limits: Default::default(),
-                    })
-                } else {
-                    HostMessage::Hello {
-                        version: plugin::VERSION,
-                    }
-                })
-                .expect("new queue");
-            self.plugin_workers.insert(id, worker);
-            self.app.plugins.instances.insert(
-                id,
-                Instance {
-                    config,
-                    sender,
-                    registered: false,
-                    application: Default::default(),
-                    pending: None,
-                    issued: BTreeSet::new(),
-                    subscriptions: Default::default(),
-                    sequence: 0,
-                },
-            );
-        }
-        Some(receiver)
+        let enabled = self.app.config.plugins.iter().any(|config| config.enabled);
+        let receiver = if enabled {
+            let (events, receiver) = tokio::sync::mpsc::channel(plugin::EVENT_CAPACITY);
+            self.plugin_events_sender = Some(events);
+            Some(receiver)
+        } else {
+            None
+        };
+        self.initialize_plugin_manager();
+        receiver
     }
 
     pub fn handle_plugin_event(&mut self, event: Event) -> bool {
+        let changed = self.handle_plugin_event_inner(event);
+        self.sync_plugin_manager();
+        changed || self.plugin_presentation_pending()
+    }
+
+    fn handle_plugin_event_inner(&mut self, event: Event) -> bool {
+        if let Ok(ClientMessage::WorkerStopped { failure, reaped }) = event.result {
+            self.manager_worker_stopped(event.plugin, failure, reaped);
+            return self.plugin_presentation_pending();
+        }
         if let Ok(ClientMessage::FilesystemApplied { job, result, .. }) = event.result {
             self.complete_plugin_filesystem_apply(job, result);
             return true;
@@ -207,6 +152,7 @@ impl WorkspaceHost {
 
     /// Administrative cancellation also removes commands and subscriptions.
     pub fn stop_plugin(&mut self, id: usize, reason: &str) {
+        self.manager_stopping(id, reason == "stopped by user");
         self.stop_plugin_state(id);
         self.stop_plugin_handoffs(id);
         self.stop_plugin_processes(id);
@@ -246,7 +192,6 @@ impl WorkspaceHost {
                 .store(true, std::sync::atomic::Ordering::SeqCst);
         }
         self.app.plugins.presentation_dirty = true;
-        self.plugin_workers.remove(&id);
         for view in instance.application.views.values() {
             if let crate::buffer::BufferKind::Virtual { name, .. } =
                 &mut self.app.buffers[view.buffer].kind
@@ -300,6 +245,10 @@ impl WorkspaceHost {
 
     pub(super) fn plugin_message(&mut self, id: usize, message: ClientMessage) -> Result<()> {
         match message {
+            ClientMessage::WorkerStopped { failure, reaped } => {
+                self.manager_worker_stopped(id, failure, reaped);
+                return Ok(());
+            }
             ClientMessage::State(event) => return self.application_state_event(id, event),
             ClientMessage::Handoff(event) => return self.application_handoff_event(id, event),
             ClientMessage::Process(event) => return self.application_process_event(id, event),
@@ -597,7 +546,8 @@ impl WorkspaceHost {
                 self.plugin_send(id, HostMessage::Unsubscribed { request, buffer })?;
             }
             ClientMessage::Register { .. } => unreachable!(),
-            ClientMessage::Queued { .. }
+            ClientMessage::WorkerStopped { .. }
+            | ClientMessage::Queued { .. }
             | ClientMessage::OutputReady { .. }
             | ClientMessage::Local { .. }
             | ClientMessage::Application(_)
@@ -737,6 +687,7 @@ impl WorkspaceHost {
             self.stop_plugin(id, "event consumer is too slow");
         }
         self.sync_application_observers();
+        self.sync_plugin_manager();
     }
 }
 

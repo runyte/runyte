@@ -181,6 +181,7 @@ mod mouse_autoscroll;
 mod navigation_and_files;
 mod plugin_activity_health;
 mod plugin_document_lifecycle;
+mod plugin_manager;
 mod plugin_provider_inspection;
 mod plugin_provider_overwrite;
 mod plugin_provider_save_preview;

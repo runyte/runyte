@@ -261,6 +261,13 @@ their existing cancellation paths. Exact-text confirmations keep the space bar
 as literal input, because the durable path they ask for may contain one.
 Interaction-line prompts are not overlays and retain ordinary space entry.
 
+The `:plugins` surface is a manager for configured owners. Its filtered rows
+retain disabled and failed entries; the selected row's preview reports lifecycle,
+grants, work and diagnostics. Enter or Tab opens a finite lifecycle action list,
+whose Back action returns to the manager's prior filter and selection. Refreshes
+retain configured identity, while actions retain the generation they were opened
+for and cannot silently target a replacement process.
+
 ## Row selection
 
 Every surface that draws a list of rows — picker overlay, pane-backed

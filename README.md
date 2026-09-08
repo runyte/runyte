@@ -79,6 +79,8 @@ Continuing work can use bounded, renewable
 session health and protect normal shutdown.
 Applications can read validated [settings and workspace state](docs/plugins/applications.md#settings-and-workspace-state),
 with conditional updates for nonsecret saved preferences.
+The native [plugin manager](docs/plugins/applications.md#plugin-manager) retains
+failed entries and provides explicit stop/restart after cleanup.
 The broader application platform remains in development.
 See the [user guide](docs/user-guide.md) for complete behavior and limits.
 

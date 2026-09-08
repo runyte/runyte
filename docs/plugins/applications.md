@@ -40,6 +40,34 @@ Cancellation callbacks have their own bounded worker so waiting command handlers
 cannot starve them. Keep cancellation callbacks short: signal the running work
 and return, without waiting for a command handler or its lock.
 
+## Plugin manager
+
+`:plugins` opens the native manager for configured plugins, including disabled
+and failed entries. Its details show lifecycle state, negotiated capabilities,
+active jobs and activity leases, helpers, pending cleanup and a bounded diagnostic
+summary. Enter opens the selected entry's available lifecycle actions. The manager
+does not read disabled bundles or expose configured settings, arguments or raw
+process output.
+Disabled entries must first be enabled in configuration before they can restart.
+Configuration is bounded at 128 entries with at most eight enabled workers;
+exceeding either limit reports a configuration failure without starting workers.
+
+`:plugin-stop <configured-id>` stops an owner and
+`:plugin-restart <configured-id>` explicitly requests a fresh connection.
+Restart waits for the old process and its pending work to finish cleanup before
+launching the replacement. Stop cancels a pending restart. Failures never trigger
+automatic restart, and a new connection never replays old commands or jobs.
+Pending restart and cleanup protect ordinary quit and idle retirement. If process
+cleanup cannot be verified, the failed entry retains its slot and refuses restart.
+
+Stopping removes commands, bindings, subscriptions and input surfaces. Retained
+application views stay readable and show `[unavailable]`; dirty provider documents
+remain editable, with remote saving unavailable until an explicit provider rebind.
+Editor-owned terminal sessions survive plugin stop. Saved workspace preferences
+remain on disk; live handles belong to the old connection and cannot be reused.
+Persistent-session detach retains the same manager and workers without restarting
+them. An unchanged manager starts no refresh timer or redraw loop.
+
 ## Native task list
 
 Use the same configuration with `id: tasks`, `args` pointing at `tasks.py`, and
@@ -241,7 +269,7 @@ These measure payload, not allocator RSS or the external process's memory.
 Buffer/pane issuance is bounded at 1,024/128 handles per connection generation.
 
 Still required by the active plan: binary uploads and remaining remote conflict
-decisions; a plugin manager; media
+decisions; media
 examples; broader SDK/conformance coverage and the complete performance/platform
 acceptance matrix.
 

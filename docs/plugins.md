@@ -76,7 +76,13 @@ Persistent mode starts those processes in the persistent host, once. Detaching,
 disconnecting or reattaching a TUI does not restart them or cancel their work.
 Pending work can complete while detached. Host shutdown cancels plugin work; a
 pending invocation prevents automatic idle retirement until it finishes or times
-out. State and plugin processes do not survive a host restart.
+out. Live plugin state and processes do not survive a host restart; epoch 2's
+explicit nonsecret workspace state store preserves saved preferences.
+
+Use `:plugins` for configured and failed entries, lifecycle details and explicit
+Stop/Restart actions. `:plugin-stop <id>` and `:plugin-restart <id>` remain
+available after a plugin's own commands have been removed. See the
+[manager lifecycle](plugins/applications.md#plugin-manager).
 
 ## Version and transport contract
 

@@ -41,6 +41,31 @@ days, and fails below 89% total line coverage. The floor is deliberately below
 the observed baseline because conditional Linux and macOS code changes both the
 instrumented denominator and the paths available to a run on one platform.
 
+## 2026-09-08 — native plugin manager and explicit restart
+
+Measured on `x86_64-unknown-linux-gnu` at `457058b` plus the manager round,
+using Rust 1.97.1 and cargo-llvm-cov 0.9.0. Ordinary and canonical suites each
+passed 3,508 tests with 33 ignored. Formatting and warnings-as-errors Clippy
+passed; the floor remains 89%.
+
+| Measure | Covered | Total | Coverage |
+| --- | ---: | ---: | ---: |
+| Lines | 118,764 | 129,526 | 91.69% |
+| Functions | 10,722 | 11,687 | 91.74% |
+| Regions | 180,069 | 197,529 | 91.16% |
+
+Twenty-one new Rust tests cover native manager actions/completion/refresh,
+generation fences, immediate quit protection, bounded configuration admission,
+actual worker cancellation/reaping and deferred restart after state IO. The
+independent saturation case runs eight workers across three generations with
+all 128 inbound permits held. Provider tests preserve uncertainty across restart
+and check correlated native save success/failure feedback without replacing a
+later action. Ten application/schema checks pass. A native Linux PTY smoke
+verifies failed/disabled rows, stop/restart, retained unavailable views and state,
+dirty provider rebind/save, completed save feedback and zero manager output bytes
+over two settled seconds. Native macOS and the complete performance matrix
+remain outstanding.
+
 ## 2026-09-08 — plugin settings and workspace state
 
 Measured on `x86_64-unknown-linux-gnu` at `62f49c9` plus the settings/state

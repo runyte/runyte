@@ -40,6 +40,23 @@ impl App {
             })
             .sum::<usize>()
             + self.plugins.state_orphans
+            + self
+                .plugins
+                .manager_entries
+                .iter()
+                .filter(|entry| {
+                    matches!(
+                        entry.phase,
+                        crate::plugin::manager::Phase::Stopping
+                            | crate::plugin::manager::Phase::RestartPending
+                    ) || entry.cleanup > 0
+                        || self
+                            .plugins
+                            .manager_intents
+                            .iter()
+                            .any(|intent| intent.config_index == entry.config_index)
+                })
+                .count()
     }
 
     pub fn plugin_activity_health(&self) -> Vec<crate::service_health::ActivityLeaseHealth> {

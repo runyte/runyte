@@ -11,6 +11,7 @@ pub mod filesystem;
 pub mod handoff;
 pub mod interaction;
 pub mod json;
+pub(crate) mod manager;
 pub mod observation;
 pub mod process;
 pub mod provider;

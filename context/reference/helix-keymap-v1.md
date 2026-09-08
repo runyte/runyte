@@ -493,6 +493,11 @@ address authored built-in defaults. `plugin.<id>.stop` removes the runtime
 commands and bindings. These are Runyte extension commands, not Helix bindings.
 The wire and lifecycle contract is [the plugin guide](../../docs/plugins.md).
 
+The host's `:plugins` manager and `:plugin-stop <id>` / `:plugin-restart <id>`
+commands remain available after runtime commands disappear. The manager uses
+the existing filterable list keys; Enter opens explicit lifecycle choices.
+These colon commands add no default physical binding.
+
 Epoch 2 view commands use a validated dynamic application scope. One declared
 primary action defaults to Enter; Tab lists registered view actions. Normal
 movement, selection, copying, search and host prefixes retain their registry

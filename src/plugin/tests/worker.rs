@@ -253,7 +253,10 @@ fn all_noisy_owner_quotas_leave_the_quiet_owner_and_local_io_their_full_admissio
         events
             .try_send(Event {
                 plugin,
-                result: Err("bounded worker failure".into()),
+                result: Ok(ClientMessage::WorkerStopped {
+                    failure: Some("Plugin worker failed".into()),
+                    reaped: true,
+                }),
             })
             .unwrap();
     }
@@ -484,4 +487,147 @@ async fn simultaneous_host_deadlines_wait_for_owner_admission_without_stopping_w
             .await
             .is_err()
     );
+}
+
+#[cfg(unix)]
+fn managed_worker_config(
+    root: &crate::test_support::TestRuntimeRoot,
+    behavior: &str,
+) -> PluginConfig {
+    let program = root.join("managed-worker");
+    std::os::unix::fs::symlink(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/fixtures/stand-in"),
+        &program,
+    )
+    .unwrap();
+    std::fs::write(root.join("managed-worker.behavior"), behavior).unwrap();
+    PluginConfig {
+        settings: Default::default(),
+        id: "managed".into(),
+        api: application::Api::Epoch1,
+        capabilities: vec![],
+        enabled: true,
+        executable: program,
+        args: vec![],
+        bindings: Default::default(),
+    }
+}
+
+#[tokio::test]
+#[cfg(unix)]
+async fn managed_worker_final_follows_all_input_and_ready_notices_and_proves_reaping() {
+    let root = crate::test_support::TestRuntimeRoot::new("plugin-settled").unwrap();
+    let mut config = managed_worker_config(
+        &root,
+        "printf '%s\\n' \"$$\" > managed-worker.pid\nread -r hello\nn=0\nwhile [ \"$n\" -lt 16 ]; do printf '{\"type\":\"subscribe\",\"request\":\"%s\",\"buffer\":\"0\"}\\n' \"$n\"; n=$((n + 1)); done\nwhile read -r line; do :; done\n",
+    );
+    // Larger epoch2 outbound admission is useful here, while its inbound frames
+    // use epoch2 requests with the same sixteen-event admission bound.
+    config.api = application::Api::Epoch2;
+    std::fs::write(root.join("managed-worker.behavior"),
+        "printf '%s\\n' \"$$\" > managed-worker.pid\nread -r hello\nn=0\nwhile [ \"$n\" -lt 16 ]; do printf '{\"type\":\"request\",\"id\":\"p:%s\",\"method\":\"settings.get\",\"params\":{}}\\n' \"$n\"; n=$((n + 1)); done\nwhile read -r line; do :; done\n").unwrap();
+    let (events, mut receiver) = mpsc::channel(EVENT_CAPACITY);
+    let (worker, sender) = spawn(config, root.path().to_path_buf(), 0, events);
+    for index in 0..24 {
+        assert!(sender.try_send_state(message(index)).unwrap());
+    }
+    assert!(!sender.try_send_state(message(24)).unwrap());
+    let mut queued = Vec::new();
+    let mut notices = 0;
+    while queued.len() < PRODUCER_EVENTS || notices == 0 {
+        let event = tokio::time::timeout(Duration::from_secs(3), receiver.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        match event.result {
+            Ok(ClientMessage::OutputReady { .. }) => notices += 1,
+            Ok(message @ ClientMessage::Queued { .. }) => queued.push(message),
+            other => panic!("unexpected worker output: {other:?}"),
+        }
+    }
+    assert_eq!(notices, 1);
+    drop(worker); // Drop requests cleanup; it does not abort the reaping task.
+    let final_event = tokio::time::timeout(Duration::from_secs(3), receiver.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(matches!(
+        final_event.result,
+        Ok(ClientMessage::WorkerStopped {
+            failure: None,
+            reaped: true
+        })
+    ));
+    let pid: i32 = std::fs::read_to_string(root.join("managed-worker.pid"))
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    assert_eq!(unsafe { libc::kill(pid, 0) }, -1);
+    assert_eq!(
+        std::io::Error::last_os_error().raw_os_error(),
+        Some(libc::ESRCH)
+    );
+    drop(queued);
+    assert!(receiver.try_recv().is_err());
+}
+
+#[tokio::test]
+#[cfg(unix)]
+async fn managed_worker_stop_interrupts_blocked_stdin_write_before_final_reap() {
+    let root = crate::test_support::TestRuntimeRoot::new("plugin-stop-write").unwrap();
+    let config = managed_worker_config(
+        &root,
+        "printf '%s\\n' \"$$\" > managed-worker.pid\nprintf '{\"type\":\"subscribe\",\"request\":\"ready\",\"buffer\":\"0\"}\\n'\nexec sleep 30\n",
+    );
+    let (events, mut receiver) = mpsc::channel(EVENT_CAPACITY);
+    let (worker, sender) = spawn(config, root.path().to_path_buf(), 0, events);
+    let ready = tokio::time::timeout(Duration::from_secs(3), receiver.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(matches!(ready.result, Ok(ClientMessage::Queued { .. })));
+    sender
+        .try_send(HostMessage::Complete {
+            invocation: "1".into(),
+            status: "failed",
+            revision: None,
+            message: "x".repeat(900_000),
+        })
+        .unwrap();
+    tokio::task::yield_now().await;
+    worker.stop();
+    let final_event = tokio::time::timeout(Duration::from_secs(1), receiver.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(matches!(
+        final_event.result,
+        Ok(ClientMessage::WorkerStopped {
+            failure: None,
+            reaped: true
+        })
+    ));
+}
+
+#[tokio::test]
+#[cfg(unix)]
+async fn managed_worker_cancel_before_first_poll_starts_no_process() {
+    let root = crate::test_support::TestRuntimeRoot::new("plugin-stop-unstarted").unwrap();
+    let config = managed_worker_config(&root, "touch should-not-exist\n");
+    let (events, mut receiver) = mpsc::channel(EVENT_CAPACITY);
+    let (worker, _sender) = spawn(config, root.path().to_path_buf(), 0, events);
+    worker.stop();
+    let event = tokio::time::timeout(Duration::from_secs(3), receiver.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(matches!(
+        event.result,
+        Ok(ClientMessage::WorkerStopped {
+            failure: None,
+            reaped: true
+        })
+    ));
+    assert!(!root.join("should-not-exist").exists());
 }

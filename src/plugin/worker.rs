@@ -2,6 +2,7 @@
 
 use super::*;
 use anyhow::{Context, Result, bail, ensure};
+use futures_util::FutureExt;
 use std::{
     collections::BTreeMap,
     sync::{
@@ -12,14 +13,14 @@ use std::{
 use std::{path::PathBuf, process::Stdio, time::Duration};
 use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
-    sync::{Notify, mpsc},
+    sync::{Notify, mpsc, watch},
 };
 
 const PRODUCER_EVENTS: usize = 16;
 const RESERVED_MESSAGES: usize = 8;
 const RESERVED_BYTES: usize = 512 * 1024;
 /// Each worker owns 16 input/deadline permits, one state-ready notice and one
-/// failure. Local IO retains its separate 16 permits until its result is read.
+/// final settled event. Local IO retains its separate 16 permits until its result is read.
 /// Each of 32 managed helpers reserves three ordinary events and one final reap.
 pub const EVENT_CAPACITY: usize = MAX_PLUGINS * (PRODUCER_EVENTS + 2) + 16 + 32 * 4;
 
@@ -29,12 +30,19 @@ pub struct Event {
     pub result: Result<ClientMessage, String>,
 }
 
-/// A worker owns the process and all its pipes. Dropping the host aborts it;
-/// Tokio's kill-on-drop child handles termination/reaping without blocking UI.
-pub struct Worker(tokio::task::JoinHandle<()>);
+/// Dropping an owner requests cancellation. The detached supervisor retains the
+/// child until reaping and its final event until the host consumes it.
+pub struct Worker {
+    cancelled: watch::Sender<bool>,
+}
+impl Worker {
+    pub fn stop(&self) {
+        self.cancelled.send_replace(true);
+    }
+}
 impl Drop for Worker {
     fn drop(&mut self) {
-        self.0.abort();
+        self.stop();
     }
 }
 
@@ -62,17 +70,31 @@ pub fn spawn(
         output: Arc::clone(&sender.output),
         limit: sender.limit,
     };
-    let worker = tokio::spawn(async move {
-        if let Err(error) = run(config, root, plugin, &events, receiver, admission).await {
-            let _ = events
-                .send(Event {
-                    plugin,
-                    result: Err(error.to_string()),
-                })
-                .await;
-        }
+    let (cancelled, cancellation) = watch::channel(false);
+    tokio::spawn(async move {
+        let (failure, reaped) = supervise(
+            config,
+            root,
+            plugin,
+            &events,
+            receiver,
+            admission,
+            cancellation,
+        )
+        .await;
+        // This is the worker's only terminal/failure event. It follows every
+        // input, deadline and readiness notice from this same task in FIFO order.
+        let _ = events
+            .send(Event {
+                plugin,
+                result: Ok(ClientMessage::WorkerStopped {
+                    failure: failure.map(str::to_owned),
+                    reaped,
+                }),
+            })
+            .await;
     });
-    (Worker(worker), sender)
+    (Worker { cancelled }, sender)
 }
 
 async fn read_message(
@@ -105,20 +127,19 @@ struct OutputAdmission {
     limit: usize,
 }
 
-async fn run(
+async fn supervise(
     config: PluginConfig,
     root: PathBuf,
     plugin: usize,
     events: &mpsc::Sender<Event>,
-    mut input: mpsc::Receiver<HostMessage>,
+    input: mpsc::Receiver<HostMessage>,
     admission: OutputAdmission,
-) -> Result<()> {
-    let OutputAdmission {
-        charge,
-        output,
-        limit,
-    } = admission;
-    let mut child = tokio::process::Command::new(&config.executable)
+    mut cancellation: watch::Receiver<bool>,
+) -> (Option<&'static str>, bool) {
+    if *cancellation.borrow() {
+        return (None, true);
+    }
+    let mut child = match tokio::process::Command::new(&config.executable)
         .args(&config.args)
         .current_dir(root)
         .stdin(Stdio::piped())
@@ -126,7 +147,61 @@ async fn run(
         .stderr(Stdio::null())
         .kill_on_drop(true)
         .spawn()
-        .context("cannot start plugin")?;
+    {
+        Ok(child) => child,
+        Err(_) => return (Some("Plugin process could not start"), true),
+    };
+    let result = {
+        let io = std::panic::AssertUnwindSafe(run(
+            config.api, plugin, events, input, admission, &mut child,
+        ))
+        .catch_unwind();
+        tokio::select! {
+            biased;
+            _ = async {
+                while !*cancellation.borrow_and_update() {
+                    if cancellation.changed().await.is_err() { break; }
+                }
+            } => Ok(Ok(())),
+            result = io => result,
+        }
+    };
+    // Cancellation also interrupts a blocked stdin write. No new producer event
+    // can appear after dropping the IO future, and cleanup never blocks input.
+    let _ = child.start_kill();
+    let reaped = child.wait().await;
+    if reaped.is_err() {
+        return (Some("Plugin process cleanup failed"), false);
+    }
+    let failure = match result {
+        Ok(Ok(())) => None,
+        Ok(Err(error)) => Some(match error.to_string().as_str() {
+            "plugin registration or invocation timed out" => "Plugin request timed out",
+            "plugin stopped reading" => "Plugin stopped reading host messages",
+            "plugin inbound queue full" | "plugin inbound byte quota exceeded" => {
+                "Plugin output exceeded its quota"
+            }
+            reason if reason.starts_with("plugin exited:") => "Plugin process exited",
+            _ => "Plugin protocol or IO failed",
+        }),
+        Err(_) => Some("Plugin worker failed"),
+    };
+    (failure, true)
+}
+
+async fn run(
+    api: application::Api,
+    plugin: usize,
+    events: &mpsc::Sender<Event>,
+    mut input: mpsc::Receiver<HostMessage>,
+    admission: OutputAdmission,
+    child: &mut tokio::process::Child,
+) -> Result<()> {
+    let OutputAdmission {
+        charge,
+        output,
+        limit,
+    } = admission;
     let mut writer = child.stdin.take().expect("piped stdin");
     let mut reader = BufReader::new(child.stdout.take().expect("piped stdout"));
     let mut deadline = Some(tokio::time::Instant::now() + TIMEOUT);
@@ -136,7 +211,7 @@ async fn run(
     // Keep the partially read message future across outbound messages: cancelling
     // read_until would lose bytes already consumed from the pipe.
     loop {
-        let mut reading = Box::pin(read_message(&mut reader, config.api));
+        let mut reading = Box::pin(read_message(&mut reader, api));
         loop {
             tokio::select! {
                 result = &mut reading => {

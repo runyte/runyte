@@ -2541,6 +2541,13 @@ impl App {
 
     /// Handles a key while a result picker is open.
     pub(super) fn handle_list_key(&mut self, key: KeyStroke) -> Result<()> {
+        if self.plugin_manager_actions_open()
+            && (key.code == KeyCode::Escape
+                || (key.code == KeyCode::Char('c') && key.modifiers.contains(Modifiers::CONTROL)))
+        {
+            self.return_to_plugin_manager();
+            return Ok(());
+        }
         if self.navigator_open() && self.navigator_selection_lost {
             if matches!(key.code, KeyCode::Enter | KeyCode::Tab) {
                 self.action_failed("selected destination closed; select a destination again");
@@ -2629,6 +2636,10 @@ impl App {
                 preview_changed = true;
             }
             (KeyCode::Tab, _) => {
+                if let Some(ListAction::PluginEntry(index)) = self.selected_list_action() {
+                    self.open_plugin_manager_actions(index);
+                    return Ok(());
+                }
                 if let Some(ListAction::Destination(destination)) = self.selected_list_action() {
                     self.open_navigator_actions(destination);
                     return Ok(());
@@ -3684,6 +3695,25 @@ impl App {
 
     fn activate_list_selection(&mut self) -> Result<()> {
         let chosen = self.selected_list_action();
+        match &chosen {
+            Some(ListAction::PluginEntry(index)) => {
+                self.open_plugin_manager_actions(*index);
+                return Ok(());
+            }
+            Some(ListAction::PluginLifecycle(intent)) => {
+                if let Err(error) = self.queue_plugin_manager_action(intent.clone()) {
+                    self.action_failed(error.to_string());
+                } else {
+                    self.return_to_plugin_manager();
+                }
+                return Ok(());
+            }
+            Some(ListAction::PluginManagerBack) => {
+                self.return_to_plugin_manager();
+                return Ok(());
+            }
+            _ => {}
+        }
         if let Some(ListAction::LspTrust { allowed, remember }) = chosen {
             self.choose_lsp_trust(allowed, remember);
             return Ok(());
@@ -3716,6 +3746,11 @@ impl App {
         self.list = None;
         self.buffer_action_menu = None;
         match chosen {
+            Some(
+                ListAction::PluginEntry(_)
+                | ListAction::PluginLifecycle(_)
+                | ListAction::PluginManagerBack,
+            ) => unreachable!("plugin manager choices handled above"),
             Some(ListAction::LspTrust { .. }) => {
                 unreachable!("permission choices are handled before closing the list")
             }

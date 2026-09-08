@@ -81,7 +81,8 @@ publication, and the examples now provide native-confirmed remote mkdir, rename
 and delete. The remaining provider conflict/lifecycle refinements and later
 milestones remain active. Milestone 5 now includes bounded managed processes, terminal/external handoffs
 and retained notifications, continuing activity leases, validated settings and
-conditional workspace state. The plugin manager and media controller remain.
+conditional workspace state and a native manager with explicit stop/restart.
+The media controller remains.
 Milestone 6 still needs the broader SDK,
 non-Python example, full conformance matrix and complete application performance
 and supported-platform evidence. Milestones 1–2 also retain their full overload,
@@ -862,6 +863,54 @@ Canonical Linux coverage passes the same 3,487 tests with 33 ignored and measure
 118,094/128,818 lines (91.68%), 10,662/11,618 functions (91.77%) and
 179,219/196,594 regions (91.16%). The floor remains 89%. Native macOS and the
 complete release workload matrix remain outstanding.
+
+## Native plugin manager round — 2026-09-08
+
+Added `:plugins`, `:plugin-stop <id>` and `:plugin-restart <id>` with shared
+command metadata and configured-ID completion. The native manager retains
+configured, disabled, stopped and failed entries, showing negotiated grants,
+jobs, activity, helpers, cleanup and bounded host-authored diagnostics. Its
+action list captures the selected generation; semantic refresh preserves the
+configured row and filter, and unchanged or hidden state causes no redraw.
+Disabled bundles remain unread and cannot restart until enabled. Configuration
+admits at most 128 entries and eight enabled workers; invalid entries retain
+bounded display metadata rather than executable arguments or settings copies.
+
+Every launch receives a fresh monotonic owner. Normal stop now cancels the IO
+future, terminates and reaps the child, then emits one final FIFO event. The
+host retains its worker reservation until that final event is consumed. The
+existing 288-event bound therefore holds across restart, including queued input,
+deadlines, readiness notices and separately reserved local/helper completions.
+An unverified reap remains a failed cleanup record and cannot admit a replacement.
+
+Explicit restart waits for every old-owner asynchronous operation to finish;
+Stop cancels the pending restart. Uncertain provider recovery snapshots survive
+as separately charged recovery data. Retained views remain readable and unavailable,
+dirty provider documents remain editable, and native terminal handoffs retain
+editor ownership. Pending lifecycle intents protect quit immediately on enqueue,
+and pending restart/cleanup protect retirement across detach. Quiescent enabled
+plugins still do not protect retirement. No failure automatically restarts a worker.
+
+Review fixed immediate-start failure admission, failed-generation action races,
+configuration-report rendering, stale cleanup counters and pre-synchronization
+quit protection. The independent stress regression runs eight actual workers
+through three generations while holding all 128 inbound permits and withholding
+their final events before admitting replacements. A native provider restart smoke
+also exposed stale save feedback: completion now replaces only the captured save
+action's pending echo, preserving newer user feedback.
+
+Ordinary tests pass: 3,508 tests with 33 ignored, including 21 new manager,
+worker, provider-recovery and feedback regressions. Ten application/schema checks
+pass. The native Linux PTY smoke verifies live/disabled/failed manager entries,
+explicit stop/restart, retained unavailable views, saved preference preservation,
+dirty provider rebind and remote save with completed feedback, and zero output
+bytes over two settled manager seconds. This functional smoke does not replace
+the complete release workload matrix or native macOS validation.
+
+Formatting, warnings-as-errors Clippy and canonical Linux coverage pass. The
+canonical suite also passes 3,508 tests with 33 ignored and measures
+118,764/129,526 lines (91.69%), 10,722/11,687 functions (91.74%) and
+180,069/197,529 regions (91.16%). The enforced floor remains 89%.
 
 ## Investigation: existing foundation and missing boundaries
 

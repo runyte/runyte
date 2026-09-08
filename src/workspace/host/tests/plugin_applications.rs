@@ -34,6 +34,8 @@ mod notifications;
 mod observations;
 #[path = "plugin_processes.rs"]
 mod processes;
+#[path = "plugin_provider_feedback.rs"]
+mod provider_feedback;
 #[path = "plugin_provider_inspect.rs"]
 mod provider_inspect;
 #[path = "plugin_provider_overwrite.rs"]
@@ -594,7 +596,13 @@ while read -r message; do :; done
         "started\n"
     );
     host.stop_plugin(0, "stopped by user");
-    assert!(host.plugin_workers.is_empty());
+    while !host.plugin_workers.is_empty() {
+        let event = tokio::time::timeout(std::time::Duration::from_secs(3), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        host.handle_plugin_event(event);
+    }
 }
 
 fn model_service(host: &mut WorkspaceHost) -> mpsc::Receiver<Event> {

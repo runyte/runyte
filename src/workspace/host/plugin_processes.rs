@@ -7,7 +7,7 @@ use api::{Error, ErrorCode as Code, Request, ResultValue};
 use process::runtime;
 
 pub(super) struct Managed {
-    owner: usize,
+    pub(super) owner: usize,
     generation: String,
     identity: String,
     orphaned: bool,

@@ -273,6 +273,7 @@ mod picker_workflows;
 mod plugin_documents;
 mod plugin_filesystem;
 pub(crate) mod plugin_interaction;
+mod plugin_manager;
 pub(crate) mod plugin_provider_overwrite;
 pub(crate) mod plugin_providers;
 mod plugin_views;
@@ -3571,6 +3572,9 @@ fn outcome_clause(outcome: &str, message: &str) -> String {
 /// What a picker row stands for.
 #[derive(Clone, Debug)]
 enum ListAction {
+    PluginEntry(usize),
+    PluginLifecycle(crate::plugin::manager::Intent),
+    PluginManagerBack,
     PluginCommand {
         command: u64,
         buffer: usize,

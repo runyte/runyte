@@ -1792,7 +1792,28 @@ impl App {
 
         if self.mode == Mode::Command {
             if self.prompt_kind == PromptKind::Command {
-                if let Some(hints) = self.matching_path_hints() {
+                if let Some(hints) = self.matching_plugin_hints() {
+                    let command = self.command.split_once(char::is_whitespace).unwrap().0;
+                    overlays.push(bounded(
+                        OverlayKind::CommandPalette,
+                        format!("Choose plugin for :{command}"),
+                        "",
+                        hints
+                            .iter()
+                            .map(|entry| {
+                                row(
+                                    entry.configured_id.clone(),
+                                    entry.configured_id.clone(),
+                                    entry.phase.label(),
+                                )
+                            })
+                            .collect(),
+                        (!hints.is_empty()).then_some(self.command_selection),
+                        hints
+                            .is_empty()
+                            .then(|| "No matching configured plugins".to_owned()),
+                    ));
+                } else if let Some(hints) = self.matching_path_hints() {
                     // One title serves every path-argument command by naming
                     // the one being completed, rather than a title per
                     // command or a bare "Paths" that says nothing about what

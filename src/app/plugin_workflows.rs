@@ -47,6 +47,9 @@ pub(crate) struct Instance {
 
 #[derive(Default)]
 pub(crate) struct Plugins {
+    pub manager_entries: Vec<plugin::manager::Entry>,
+    pub manager_intents: VecDeque<plugin::manager::Intent>,
+    pub(super) manager_return: Option<super::plugin_manager::ManagerReturn>,
     pub state_orphans: usize,
     pub document_saves: BTreeSet<usize>,
     pub provider_save_intents: VecDeque<super::plugin_providers::ProviderSaveIntent>,
@@ -159,7 +162,21 @@ impl App {
         if let Some(command) = self.plugins.commands.get(&id)
             && command.local == "stop"
         {
-            self.plugins.cancellations.insert(command.plugin);
+            let owner = command.plugin;
+            if let Some(entry) = self
+                .plugins
+                .manager_entries
+                .iter()
+                .find(|entry| entry.owner == Some(owner))
+            {
+                self.queue_plugin_manager_action(plugin::manager::Intent {
+                    config_index: entry.config_index,
+                    expected_owner: Some(owner),
+                    action: plugin::manager::Action::Stop,
+                })?;
+            } else {
+                self.plugins.cancellations.insert(owner);
+            }
             self.status("Plugin stop requested");
             return Ok(CommandOutcome::Completed);
         }

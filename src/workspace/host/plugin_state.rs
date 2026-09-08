@@ -7,7 +7,7 @@ use api::{Error, ErrorCode as Code, Request, ResultValue};
 use std::{sync::Arc, time::Instant};
 
 pub(super) struct Pending {
-    owner: usize,
+    pub(super) owner: usize,
     generation: String,
     request: String,
     pub(super) token: String,
