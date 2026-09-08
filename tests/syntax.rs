@@ -765,7 +765,7 @@ fn outline_includes_supported_injections_without_exposing_parser_layers() {
 
 #[test]
 fn markdown_rust_error_degradation_does_not_invent_an_injected_symbol() {
-    let source = "# Outer\n\n```rust\nfn unavailable() {}\n```\n";
+    let source = "# Outer\n\n```rust\nfn unavailable(\n```\n";
     let (registry, _, _, outline) = document_outline(source, "markdown");
     assert!(
         outline
@@ -778,7 +778,7 @@ fn markdown_rust_error_degradation_does_not_invent_an_injected_symbol() {
             .items
             .iter()
             .any(|item| item.name.as_ref() == "unavailable"),
-        "tree-house 0.4 parses nonzero Markdown Rust ranges as ERROR; outline must degrade truthfully"
+        "malformed injected Rust must degrade truthfully"
     );
     assert!(
         outline
@@ -2375,45 +2375,32 @@ fn markdown_sections_and_paragraphs_are_captured() {
 }
 
 #[test]
-fn injected_rust_functions_degrade_instead_of_over_selecting_the_fence() {
+fn injected_rust_functions_preserve_punctuation_and_select_only_the_function() {
     let source = "# Notes\n\n```rust\nfn first() {}\nfn second() {}\n```\n";
-    let (registry, text, syntax) = parse(source, "markdown");
-    let rust = registry.language_for_name("rust").unwrap();
-    let injected_errors: Vec<_> = ["first", "second"]
-        .into_iter()
-        .map(|name| {
-            let leaf = syntax
-                .node_at(&text, &registry, char_offset(source, name))
-                .unwrap()
-                .unwrap();
-            syntax
-                .ancestors(&text, &registry, &leaf.path)
-                .unwrap()
-                .into_iter()
-                .find(|node| node.language == rust && node.kind.as_str() == "ERROR")
-                .expect("pinned tree-house produces an injected Rust ERROR node")
-        })
-        .collect();
-    assert_eq!(
-        injected_errors[0].range, injected_errors[1].range,
-        "the pinned parser does not distinguish the two injected functions"
+    let (text, registry, captures) = text_object_captures(
+        source,
+        "markdown",
+        SyntaxObject::Function,
+        SyntaxObjectPart::Around,
     );
-    let first_end = char_offset(source, "}\nfn second") + 1;
-    let second_end = char_offset(source, "}\n```") + 1;
+    assert_eq!(captures.len(), 2);
+    assert_eq!(capture_text(&text, &captures[0]), ["fn first() {}"]);
+    assert_eq!(capture_text(&text, &captures[1]), ["fn second() {}"]);
     assert!(
-        injected_errors[0].range.to > first_end && injected_errors[0].range.to < second_end,
-        "the shared ERROR range must cross one function boundary and stop inside another"
+        captures
+            .iter()
+            .all(|capture| registry.language_name(capture.language) == "rust")
     );
-    assert!(matches!(
-        syntax.text_object_captures(
-            &text,
-            &registry,
-            SyntaxObject::Function,
-            SyntaxObjectPart::Around,
-            SyntaxRange::new(0, text.len_chars()).unwrap(),
-        ),
-        Err(SyntaxError::UnsupportedTextObject { language, .. }) if language == rust
-    ));
+    let (_, _, _, outline) = document_outline(source, "markdown");
+    assert_eq!(
+        outline_entries(&outline),
+        [
+            ("Notes", OutlineKind::Heading),
+            ("first", OutlineKind::Function),
+            ("second", OutlineKind::Function)
+        ]
+    );
+    assert!(outline.issues.is_empty());
 }
 
 #[test]
@@ -2897,6 +2884,139 @@ fn large_markdown_keeps_block_color_and_drops_inline_color_with_injections() {
 }
 
 #[test]
+fn dockerfile_names_variants_and_extensions_are_detected() {
+    let registry = Registry::new();
+    let language = registry.language_for_name("dockerfile").unwrap();
+    assert_eq!(registry.line_comment(language), Some("#"));
+    for path in [
+        "Dockerfile",
+        "dockerfile",
+        "Containerfile",
+        "containerfile",
+        "build/Dockerfile.dev",
+        "Dockerfile.prod.linux",
+        "dockerfile.test",
+        "Containerfile.dev",
+        "containerfile.test",
+        "build/app.dockerfile",
+        "app.DOCKERFILE",
+        "app.containerfile",
+        "app.CONTAINERFILE",
+        "Dockerfile.sh",
+    ] {
+        assert_eq!(
+            registry.language_for_path(Path::new(path)),
+            Some(language),
+            "{path}"
+        );
+        assert_eq!(
+            registry.language_for_document(Some(Path::new(path)), &Text::from_str("#!/bin/bash\n")),
+            Some(language),
+            "{path}"
+        );
+    }
+    for path in [
+        "Dockerfiles",
+        "Dockerfile.",
+        "Dockerfile-dev",
+        "myDockerfile",
+        "Containerfiles",
+        "Dockerfile/notes.txt",
+        ".dockerignore",
+    ] {
+        assert_eq!(registry.language_for_path(Path::new(path)), None, "{path}");
+    }
+}
+
+#[test]
+fn dockerfile_highlights_instructions_comments_strings_and_build_options() {
+    let source = r#"# syntax=docker/dockerfile:1
+from alpine:3.21 AS build
+ARG VERSION="世界"
+ENV APP="café"
+WORKDIR /app
+COPY --from=build /out /app
+RUN --mount=type=cache,target=/cache echo "ready"
+EXPOSE 8080
+CMD ["/app/server", "--version"]
+"#;
+    let highlighted = scopes(source, "dockerfile");
+    for keyword in [
+        "from", "AS", "ARG", "ENV", "WORKDIR", "COPY", "RUN", "EXPOSE", "CMD",
+    ] {
+        assert_scope(&highlighted, keyword, "keyword");
+    }
+    assert_scope(&highlighted, "# syntax=docker/dockerfile:1\n", "comment");
+    assert_scope(&highlighted, "VERSION", "property");
+    assert_scope(&highlighted, "APP", "property");
+    assert_scope(&highlighted, "type=cache", "property");
+    assert_scope(&highlighted, "target=/cache", "property");
+    assert_scope(&highlighted, "\"世界\"", "string");
+    assert_scope(&highlighted, "\"/app/server\"", "string");
+    assert_scope(&highlighted, "8080", "number");
+}
+
+#[test]
+fn dockerfile_shell_commands_and_heredocs_highlight_independently() {
+    let source = "FROM alpine\nRUN echo first\nRUN printf second\nRUN <<EOF\necho \"世界\"\nEOF\nCOPY <<DATA /app/data\nplain text\nDATA\n";
+    let highlighted = scopes(source, "dockerfile");
+    assert_scope(&highlighted, "echo", "function");
+    assert_scope(&highlighted, "printf", "function");
+    assert_eq!(
+        highlighted
+            .iter()
+            .filter(|(text, scope)| text == "echo" && *scope == "function")
+            .count(),
+        2,
+        "both the standalone command and the heredoc body must use Bash"
+    );
+    assert_scope(&highlighted, "EOF", "label");
+    assert_scope(&highlighted, "\nplain text\n", "string");
+}
+
+#[test]
+fn dockerfile_fenced_code_is_highlighted_in_markdown() {
+    let highlighted = scopes(
+        "```dockerfile\n# note\nFROM alpine\nCMD [\"sh\"]\n```\n",
+        "markdown",
+    );
+    assert_scope(&highlighted, "FROM", "keyword");
+    assert_scope(&highlighted, "# note\n", "comment");
+    assert_scope(&highlighted, "\"sh\"", "string");
+}
+
+#[test]
+fn large_dockerfile_keeps_root_highlights_without_shell_injections() {
+    let source = format!(
+        "{}FROM alpine\nRUN echo ready\n",
+        "# padding\n".repeat(14_000)
+    );
+    assert!(source.len() > 128 * 1024);
+    let highlighted = scopes(&source, "dockerfile");
+    assert_scope(&highlighted, "FROM", "keyword");
+    assert_scope(&highlighted, "RUN", "keyword");
+    assert!(highlighted.iter().any(|(_, scope)| *scope == "comment"));
+    assert!(!highlighted.iter().any(|(_, scope)| *scope == "function"));
+}
+
+#[test]
+fn dockerfile_incremental_highlights_match_fresh_parse_after_unicode_edits() {
+    let (registry, mut text, mut syntax) =
+        parse("# café\nFROM alpine\nRUN echo \"unfinished", "dockerfile");
+    for insertion in ["世界\"\n", "RUN printf next\n", "CMD [\"/bin/sh\"]\n"] {
+        let before = text.clone();
+        let transaction = Transaction::insert(text.len_chars(), insertion);
+        text.apply(&transaction);
+        assert!(syntax.update(&before, &text, &transaction, &registry));
+        let fresh = DocumentSyntax::new(&text, syntax.language(), &registry).unwrap();
+        assert_eq!(
+            spans_of(&syntax, &text, &registry),
+            spans_of(&fresh, &text, &registry)
+        );
+    }
+}
+
+#[test]
 fn every_bundled_grammar_loads_without_error() {
     let registry = Registry::new();
     for language in [
@@ -2926,6 +3046,11 @@ fn every_bundled_grammar_loads_without_error() {
         "toml",
         "yaml",
         "markdown",
+        "dockerfile",
+        "xml",
+        "hcl",
+        "ruby",
+        "php",
     ] {
         let id = registry
             .language_for_name(language)

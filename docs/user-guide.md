@@ -9,7 +9,8 @@ For the project overview and quick start, see the [main README](../README.md).
 - Normal, Insert, Replace, Select, and Command modes
 - Tree-sitter syntax highlighting for Python, Rust, Swift, C, C++, JavaScript,
   TypeScript, TSX, HTML, CSS, Go, Bash, Java, Kotlin, SQL, Lua, C#, Zig, CMake,
-  Protobuf, Make, INI, Markdown, TOML, YAML, and JSON
+  Protobuf, Make, INI, Markdown, TOML, YAML, JSON, Dockerfile, XML,
+  HCL/Terraform, Ruby, and PHP
 - Language servers: diagnostics, completion, hover, signature help, goto,
   references, rename, code actions, formatting, and symbol pickers
 - Word completion from every open buffer, including the explorer, with no
@@ -66,13 +67,52 @@ behavior is deliberately absent and some of it deliberately differs; the
 Tree-sitter grammars are compiled into the binary, so highlighting needs no
 network access, no grammar directory, and no runtime library loading. Adding a
 language means adding a dependency and a row to `src/syntax/grammars.rs`.
-Language detection checks an exact filename, then a case-insensitive
-extension, then a bounded first-line shebang; Bash currently recognizes
-`.bashrc`, `.bash_profile`, `sh`/`bash`/`ebuild`/`eclass` extensions, and
-`sh`/`bash`/`dash` interpreters. CMake recognizes `CMakeLists.txt`, Make
+Language detection checks an exact filename, then a registered filename prefix,
+then a case-insensitive extension, then a bounded first-line shebang; Bash
+currently recognizes `.bashrc`, `.bash_profile`, `sh`/`bash`/`ebuild`/`eclass`
+extensions, and `sh`/`bash`/`dash` interpreters. CMake recognizes `CMakeLists.txt`, Make
 recognizes `Makefile`, `makefile`, and `GNUmakefile`, and Lua recognizes a
 `lua` interpreter in a shebang. INI parses both `;` and `#` comments;
 `toggle-comments` inserts `;` when adding one.
+
+Dockerfile support recognizes `Dockerfile`, `Containerfile`, their lowercase
+names, dot-suffixed variants such as `Dockerfile.dev`, and `.dockerfile` /
+`.containerfile` extensions. The language name is `dockerfile`, including in
+Markdown code fences. Instructions, comments, strings, build options, and ports
+are highlighted; shell commands and `RUN` heredoc bodies use Bash highlighting
+within the injection size limit below. Shell highlighting assumes Bash syntax,
+including when a file selects another interpreter with `SHELL`. Dockerfile has
+no dedicated text-object, outline, indentation, or fold queries.
+
+XML, HCL/Terraform, Ruby, and PHP are also bundled:
+
+| Language name | Detected files include |
+| --- | --- |
+| `xml` | `.xml`, `.svg`, `.xsd`, `.xsl`, `.xslt`, `.wsdl`, `.xaml`, `.csproj`, `.fsproj`, `.vbproj`, `.props`, `.targets`, `.resx`, and `.plist` |
+| `hcl` | `.hcl`, `.tf`, and `.tfvars`, including `terragrunt.hcl` and `production.auto.tfvars` |
+| `ruby` | `.rb`, `.rake`, `.gemspec`, `.ru`, `Gemfile`, `Rakefile`, `Guardfile`, `Vagrantfile`, `Brewfile`, `Podfile`, `Fastfile`, `Appfile`, `.irbrc`, and `.pryrc` |
+| `php` | `.php`, `.phtml`, `.php3`, `.php4`, `.php5`, `.php7`, `.php8`, and `.phps` |
+
+Ruby also recognizes `ruby` and `jruby` shebangs; PHP recognizes `php`.
+Terraform's `.tf.json` files retain JSON highlighting. XML uses its own parser
+rather than the HTML parser, including XML declarations, entities, and CDATA.
+HCL highlights blocks, expressions, interpolation, template directives, and
+heredocs. Ruby distinguishes local bindings from method calls, including loop,
+exception, and pattern bindings. Class/module bodies and methods isolate their
+locals. Singleton method receiver expressions are a highlighting limitation:
+in `object = Object.new; def object.greet; end`, the receiver `object` can use
+function colouring because the local-scope query covers the whole method.
+
+PHP highlights code inside `<?php` or `<?=` tags and injects HTML into the
+surrounding template text, including JavaScript and CSS inside script/style
+elements. Heredoc and nowdoc labels matching a bundled language, such as `SQL`
+or `JSON`, enable highlighting for that language; unknown labels keep string
+highlighting. Inside an injected heredoc, the embedded language controls the
+body's colours, so PHP interpolations such as `$id` may use string colouring.
+PHPDoc comments keep ordinary comment highlighting. PHP snippets
+in Markdown fences also need an opening PHP tag; HCL fences can use `hcl` or
+`tf`. These four languages have no dedicated text-object, outline, indentation,
+or fold queries.
 
 Kotlin support recognizes `.kt` and `.kts`, including Kotlin 2 multi-dollar
 strings and guarded `when` branches. The pinned grammar does not yet model
@@ -2035,10 +2075,20 @@ cancellation keys.
 
 ### Files and splits
 
+`g f` opens `https://`, `http://`, and `www.` links in the default browser;
+`www.` addresses use HTTPS. With a bare caret, surrounding Markdown wrappers
+and trailing prose punctuation are excluded. An explicit selection is used
+exactly. The same command works in terminal NORMAL/review mode, using the
+frozen review text and resolving relative paths against the terminal's latest
+validated directory (or its launch directory) and the project root. Multiple
+existing file matches open a picker. Opening a file leaves the terminal
+process running; opening a link keeps the terminal view in place. Inferred
+targets stay within one buffer line or terminal review row.
+
 | Key | Action |
 | --- | --- |
 | `Space c y` / `Space c p` / `Space c P` | System clipboard yank / replace the selection, or paste after a bare caret / paste before |
-| `g f` | Open the selected path, or the complete path under the cursor; choose between matches beside the active file/explorer and at the project root |
+| `g f` | Open the selected path or web link, or the complete target under the cursor; relative files are matched beside the active file/explorer and at the project root |
 | `Space e` | Open the active buffer's directory as an editable explorer; from a file, select that file |
 | `Space E` | Open the working directory (controlled by `:cd`) as an editable explorer |
 | `Space 1`–`Space 9` | Attach directly to the numbered persistent session without opening the manager |
@@ -2136,6 +2186,11 @@ ends in whitespace, contains a control character, or is not valid UTF-8 makes
 the editable projection refuse to open, because such a name cannot be
 distinguished safely from the explorer's row syntax. New rows are held to the
 same boundary before a confirmation opens.
+
+`Tab t` opens an integrated terminal in the same pane, starting in the directory
+the explorer currently shows. The explorer remains available behind the terminal,
+including any unsaved edits. The directory under the cursor does not change where
+the terminal starts.
 
 Three settings decide how an explorer shows a directory, and `Tab` offers all
 of them: `editor.show_hidden_files` lists dotfiles or leaves them out,
@@ -2395,6 +2450,7 @@ message without affecting the internal registers.
 | `C` / `Alt-C` in terminal review | Add carets below / above at the same occupied terminal-cell column, skipping short rows |
 | `Ctrl-u` / `Ctrl-d`, `Ctrl-b` / `Ctrl-f` | Move the review caret by half / full pages, keeping it visible |
 | `gg` / `ge` in a terminal | Move to the oldest / newest rows in the captured review snapshot |
+| `gf` in terminal review | Open the selected file path or web link, or the target under the caret; web links use the default browser |
 | `gw` in terminal review | Label visible terminal words and jump to the chosen one |
 | `s` / `/`, then `n` / `N` | Search an immutable terminal review snapshot by literal / regular expression and move among matches |
 | `y` / `Space c y` in terminal review | Copy the caret character or every selection, joined by newlines, to the unnamed register / system clipboard |

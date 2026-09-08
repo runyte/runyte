@@ -817,6 +817,14 @@ impl App {
                 }
                 true
             }
+            Command::GotoFile => {
+                let target = session.review_navigation_target();
+                let directory = session.directory().to_path_buf();
+                if let Err(error) = self.open_navigation_target(target, Some(directory)) {
+                    self.action_failed(error.to_string());
+                }
+                true
+            }
             Command::GotoWord => {
                 let targets = session.visible_review_word_targets(page);
                 let _ = session;

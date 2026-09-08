@@ -36,6 +36,8 @@ Historical plans explain decisions but are not a second source of current
 behavior. The source, user guide, and current reference documents take
 precedence where later work refined a completed plan.
 
+Repository-local skills live in `skills/`; read the relevant skill's `SKILL.md` when using one.
+
 ## Terminology
 
 - A **workspace** is the project-root editor scope used in both standalone and

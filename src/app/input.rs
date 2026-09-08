@@ -4134,8 +4134,8 @@ impl App {
                 self.open_prompt(PromptKind::GlobalSearch(SearchMode::Regex))
             }
             Command::OpenTerminal => self.open_terminal(None),
+            Command::OpenTerminalDirectoryRoot => self.open_terminal_directory_root(None),
             Command::OpenTerminalFileDirectory
-            | Command::OpenTerminalDirectoryRoot
             | Command::OpenTerminalSelectedDirectory
             | Command::OpenTerminalSessionDirectory => self.action_failed(format!(
                 "{} is a typed command",

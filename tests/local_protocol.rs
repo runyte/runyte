@@ -5099,13 +5099,16 @@ async fn integrated_attach_switches_real_outer_tui_and_returns_to_original_shell
     let result = root.join("parent-attach-result");
     let before_pid = root.join("shell-before");
     let after_pid = root.join("shell-after");
+    // The result is the reader's completion signal, so publish it only after
+    // both PID files are complete. Preserve the attach status before printf
+    // replaces `$?` with its own result.
     let script = format!(
-        "cd {}; printf '%s' \"$$\" > {}; {} -a; printf '%s' $? > {}; printf '%s' \"$$\" > {}; printf 'PARENT_SHELL_RETURNED\\n'; pwd; while IFS= read -r line; do printf 'parent-echo:%s\\n' \"$line\"; done",
+        "cd {}; printf '%s' \"$$\" > {}; {} -a; attach_status=$?; printf '%s' \"$$\" > {}; printf '%s' \"$attach_status\" > {}; printf 'PARENT_SHELL_RETURNED\\n'; pwd; while IFS= read -r line; do printf 'parent-echo:%s\\n' \"$line\"; done",
         parent_shell_quote(&destination),
         parent_shell_quote(&before_pid),
         parent_shell_quote(Path::new(env!("CARGO_BIN_EXE_runyte"))),
-        parent_shell_quote(&result),
-        parent_shell_quote(&after_pid)
+        parent_shell_quote(&after_pid),
+        parent_shell_quote(&result)
     );
     type_colon_command(
         &mut terminal,

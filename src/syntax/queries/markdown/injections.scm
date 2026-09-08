@@ -4,10 +4,13 @@
 ; inline node must retain its children: emphasis and code-span delimiters are
 ; precisely what the inline grammar needs to see.
 
-(fenced_code_block
+; Fence-content children include punctuation needed by the injected parser,
+; such as comment markers and JSON-array quotes in a Dockerfile.
+((fenced_code_block
   (info_string
     (language) @injection.language)
   (code_fence_content) @injection.content)
+  (#set! injection.include-children))
 
 ((html_block) @injection.content
   (#set! injection.language "html"))

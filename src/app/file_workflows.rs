@@ -11,7 +11,7 @@ use super::{
     Path, PathBuf, PickerItem, PromptKind, Result, Selection, SelectionSemantics, Side, TerminalId,
     Transaction, TransferMode, bail, buffer_language, diff_row_for_identity, diff_row_identity,
     enclosing_area, ensure, expand_home_path, external_open, fs, open_or_new_at_identity,
-    path_token_bounds, resolved_operation_path, trailing_whitespace_changes,
+    resolved_operation_path, trailing_whitespace_changes,
 };
 use crate::{
     directory_buffer::ListingView,
@@ -82,23 +82,44 @@ impl App {
     pub(super) fn goto_file_under_cursor(&mut self) -> Result<()> {
         let buffer = self.active().buffer;
         let range = self.active().selection.primary();
-        let span = if range.is_empty() {
-            path_token_bounds(&self.buffers[buffer], range.head)
-        } else if matches!(
-            self.active().selection_semantics(),
-            SelectionSemantics::HalfOpen | SelectionSemantics::VimLinewise
-        ) {
-            Some((range.from(), range.to()))
+        let requested_text = if range.is_empty() {
+            let row = self.buffers[buffer].offset_to_row(range.head);
+            let start = self.buffers[buffer].line_to_offset(row);
+            let line =
+                self.buffers[buffer].slice(start, start + self.buffers[buffer].line_len(row));
+            crate::navigation_target::under_cursor(&line, range.head - start)
         } else {
-            Some(super::operative_span(&self.buffers[buffer], &range))
+            let (from, to) = if matches!(
+                self.active().selection_semantics(),
+                SelectionSemantics::HalfOpen | SelectionSemantics::VimLinewise
+            ) {
+                (range.from(), range.to())
+            } else {
+                super::operative_span(&self.buffers[buffer], &range)
+            };
+            Some(self.buffers[buffer].slice(from, to))
         };
-        let Some((from, to)) = span else {
-            self.action_failed("no path under the cursor");
+        self.open_navigation_target(requested_text, self.buffer_directory(buffer))
+    }
+
+    pub(super) fn open_navigation_target(
+        &mut self,
+        requested_text: Option<String>,
+        directory: Option<PathBuf>,
+    ) -> Result<()> {
+        let Some(requested_text) =
+            requested_text.filter(|text| !text.is_empty() && !text.contains(['\n', '\r']))
+        else {
+            self.action_failed("no path or link under the cursor");
             return Ok(());
         };
-        let requested_text = self.buffers[buffer].slice(from, to);
-        if requested_text.is_empty() || requested_text.contains('\n') {
-            self.action_failed("no path under the cursor");
+        if let Some(url) = crate::navigation_target::web_url(&requested_text) {
+            match (self.ports.browser)(&url) {
+                Ok(()) => self.status(format!("opened {url} in the default browser")),
+                Err(error) => {
+                    self.error_from("Browser", "Browser launch failed", error.to_string())
+                }
+            }
             return Ok(());
         }
 
@@ -110,7 +131,7 @@ impl App {
         if requested.is_absolute() {
             unresolved.push(requested);
         } else {
-            if let Some(directory) = self.buffer_directory(buffer) {
+            if let Some(directory) = directory {
                 unresolved.push(directory.join(&requested));
             }
             unresolved.push(self.project_root.join(requested));

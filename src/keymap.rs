@@ -2414,7 +2414,13 @@ fn build_keymap(bindings: Vec<Binding>) -> Keymap {
             "session",
             EditorCommand::OpenExplorerSession,
         ),
-        // An explorer's contextual actions are the three settings that decide
+        ContextAction::buffer(
+            BindingScope::Directory,
+            Key::char('t'),
+            "terminal",
+            EditorCommand::OpenTerminalDirectoryRoot,
+        ),
+        // These explorer actions are the three settings that decide
         // how it shows a directory. They are buffer-wide because none of them
         // is about the row under the cursor, and they sit here rather than on
         // scoped keys of their own because `Tab` is already how a view offers

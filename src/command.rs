@@ -640,7 +640,7 @@ editor_commands! {
     GotoWindowTop => ("goto-window-top", "Move to the top of the view"),
     GotoWindowCenter => ("goto-window-center", "Move to the center of the view"),
     GotoWindowBottom => ("goto-window-bottom", "Move to the bottom of the view"),
-    GotoFile => ("goto-file", "Go to the file under the cursor"),
+    GotoFile => ("goto-file", "Open the file or web link under the cursor"),
     GotoWord => (
         "goto-word",
         "Label visible words by proximity and jump to one"
@@ -751,7 +751,7 @@ editor_commands! {
     ),
     OpenTerminalDirectoryRoot => (
         "open-terminal-directory-root",
-        "Run a terminal at the active directory root"
+        "Open terminal here"
     ),
     OpenTerminalSelectedDirectory => (
         "open-terminal-selected-directory",

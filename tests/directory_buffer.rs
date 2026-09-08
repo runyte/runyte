@@ -53,6 +53,73 @@ impl Drop for TempDir {
     }
 }
 
+#[cfg(unix)]
+#[test]
+fn explorer_tab_t_opens_terminal_here_in_the_same_pane() {
+    const CHILD: &str = "RUNYTE_TEST_EXPLORER_TERMINAL";
+    if std::env::var_os(CHILD).is_none() {
+        // Isolate SHELL from the parallel test process and avoid user shell rc files.
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "explorer_tab_t_opens_terminal_here_in_the_same_pane",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .env("SHELL", "/bin/cat")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
+
+    let directory = TempDir::new("terminal-here");
+    let nested = directory.path().join("nested");
+    fs::create_dir_all(nested.join("child")).unwrap();
+    for mode in [Mode::Normal, Mode::Select] {
+        let mut app = App::new(Config::default(), Some(directory.path().to_path_buf())).unwrap();
+        app.handle_key(KeyStroke::ctrl('w')).unwrap();
+        app.handle_key(KeyStroke::char('v')).unwrap();
+        app.handle_key(KeyStroke::plain(KeyCode::Enter)).unwrap();
+        assert_eq!(app.active_buffer().directory_root(), Some(nested.as_path()));
+        assert_ne!(app.working_directory, nested);
+        // The selected child is a different directory; unpublished edits also survive.
+        assert_eq!(app.active_buffer().to_string(), "child/\n");
+        let buffer = app.active().buffer;
+        assert!(app.buffers[buffer].apply(&Transaction::insert(7, "new.txt\n")));
+        let text = app.active_buffer().to_string();
+        let pane = app.active_pane;
+        let panes = app.panes.len();
+        app.mode = mode;
+
+        app.handle_key(KeyStroke::plain(KeyCode::Tab)).unwrap();
+        app.handle_key(KeyStroke::char('t')).unwrap();
+
+        let terminal = app.active_terminal().expect("Tab t opens a terminal");
+        assert_eq!(app.terminals.get(terminal).unwrap().directory(), nested);
+        assert_eq!(app.active_pane, pane);
+        assert_eq!(app.panes.len(), panes);
+        assert_eq!(app.mode, Mode::Insert);
+        app.execute(
+            runyte::command::CommandInvocation::editor(
+                runyte::command::EditorCommand::LeaveTerminal,
+                Default::default(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(app.active().buffer, buffer);
+        assert_eq!(app.active_buffer().to_string(), text);
+        assert!(app.active_buffer().dirty);
+        app.terminals.close_all();
+    }
+}
+
 struct TemporaryTrash {
     destination: PathBuf,
     fail: bool,

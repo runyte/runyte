@@ -867,9 +867,10 @@ fn syntax_text_objects_work_in_injected_markdown_and_malformed_source_is_safe() 
     let outcome = editor
         .execute(editor_invocation(EditorCommand::SelectSyntaxFunction))
         .unwrap();
-    assert!(
-        matches!(&outcome, CommandOutcome::Unavailable(message) if message.contains("does not support")),
-        "pinned injected Rust parsing must degrade explicitly: {outcome:?}"
+    assert_eq!(outcome, CommandOutcome::Completed);
+    assert_eq!(
+        inclusive_selected_text(&editor),
+        "fn greet(name: usize) { let value = name; }"
     );
 
     editor

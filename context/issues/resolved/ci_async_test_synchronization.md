@@ -35,6 +35,20 @@ current `NOR` status instead. That is the real interactive client's rendered
 semantic state, uses the same absolute thirty-second deadline, and does not
 widen the private protocol or return to raw-byte matching or elapsed sleeps.
 
+A later follow-up fixes the shell-completion signal in
+`integrated_attach_switches_real_outer_tui_and_returns_to_original_shell` in
+`tests/local_protocol.rs`. In [CI run 34206403603](https://github.com/runyte/runyte/actions/runs/34206403603),
+the macOS lifecycle stress job observed `parent-attach-result` before the
+shell created `shell-after`, then failed with `NotFound` while comparing the
+before/after shell PIDs. The shell now saves the attach command's exit status,
+writes the after-PID file, and only then publishes the result. Observing that
+result therefore orders both PID writes before the assertions, while retaining
+the original command's status rather than the intervening `printf` status.
+The existing integration test still checks successful attachment, unchanged
+shell and client PIDs, and input reaching the original shell after returning
+to the source persistent session. The lifecycle stress gate repeats it inside
+the complete `local_protocol` suite with normal test parallelism.
+
 Coverage is provided by
 `git_commit_wait_tui_completes_through_write_quit`,
 `incompatible_worktree_host_returns_the_tui_to_its_source`, and

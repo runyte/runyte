@@ -167,16 +167,19 @@ is included in the repository's root `LICENSE`. The bindings crate also vendors
 Tree-sitter C source under the MIT License, with copyright (c) 2018 Max
 Brunsfeld.
 
-Runyte also statically links these grammar crates and uses the highlight or
-injection queries shipped inside them:
+Runyte also statically links these grammar crates and uses their available
+highlight, injection, or locals queries. HCL uses a Runyte-authored highlight
+query because its crate ships none:
 
 - `tree-sitter-bash 0.25.1`;
 - `tree-sitter-c 0.24.2`;
 - `tree-sitter-c-sharp 0.23.5`;
 - `tree-sitter-cmake 0.7.4`;
+- `tree-sitter-containerfile 0.9.2`;
 - `tree-sitter-cpp 0.23.4`;
 - `tree-sitter-css 0.25.0`;
 - `tree-sitter-go 0.25.0`;
+- `tree-sitter-hcl 1.1.0`;
 - `tree-sitter-html 0.23.2`;
 - `tree-sitter-ini 1.4.0`;
 - `tree-sitter-java 0.23.5`;
@@ -187,24 +190,31 @@ injection queries shipped inside them:
 - `tree-sitter-make 1.1.1`;
 - `tree-sitter-md 0.5.3`;
 - `tree-sitter-proto 0.5.0`;
+- `tree-sitter-php 0.24.2`;
 - `tree-sitter-python 0.25.0`;
 - `tree-sitter-rust 0.24.2`;
+- `tree-sitter-ruby 0.23.1`;
 - `tree-sitter-sequel 0.3.11`;
 - `tree-sitter-swift 0.7.3`;
 - `tree-sitter-toml-ng 0.7.0`;
 - `tree-sitter-typescript 0.23.2`;
+- `tree-sitter-xml 0.7.0`;
 - `tree-sitter-yaml 0.7.2`; and
 - `tree-sitter-zig 1.1.2`.
 
-Each grammar crate declares the MIT License except `tree-sitter-ini 1.4.0`,
-which declares Apache-2.0. The supporting `tree-sitter-language 0.1.7` crate
-declares MIT. Package repositories, exact upstream revisions, Cargo checksums,
+Each grammar crate declares the MIT License except `tree-sitter-ini 1.4.0`
+and `tree-sitter-hcl 1.1.0`, which declare Apache-2.0. The supporting
+`tree-sitter-language 0.1.7` crate declares MIT. Package repositories, exact upstream revisions, Cargo checksums,
 and the query material used by Runyte are recorded in
 `docs/dependency-license-inventory.md`.
 
 Runyte carries attributed query files from these exact releases under
-`src/syntax/queries/`: the `tree-sitter-proto` highlight query; indentation
-queries adapted from `tree-sitter-sequel`, `tree-sitter-zig`,
+`src/syntax/queries/`: the `tree-sitter-proto` highlight query; the Bash-only
+subset of `tree-sitter-containerfile` injections; PHP HTML and heredoc injections
+adapted to preserve body children and omit the unbundled PHPDoc grammar; Ruby
+locals adapted to name their definition highlight scope, isolate Ruby scopes,
+cover loop/exception/pattern bindings, and preserve explicit method-call
+highlighting; indentation queries adapted from `tree-sitter-sequel`, `tree-sitter-zig`,
 `tree-sitter-cmake`, and `tree-sitter-proto`; fold queries from
 `tree-sitter-zig`, `tree-sitter-cmake`, `tree-sitter-proto`, and
 `tree-sitter-ini`; and highlight queries from `tree-sitter-zig` and
@@ -224,13 +234,27 @@ Copyright notices present in the audited crate archives include:
 - Copyright (c) 2019 fwcd (`tree-sitter-kotlin-sg`);
 - Copyright (c) 2014-2023 Max Brunsfeld, Damien Guard, Amaan Qureshi, and
   contributors (`tree-sitter-c-sharp`);
+- Copyright (c) 2026 WharfLab and copyright (c) 2021 Camden Cheek
+  (`tree-sitter-containerfile`, with both license files shipped in the crate);
 - Copyright (c) 2025 Uy Ha (`tree-sitter-cmake`);
 - Copyright (c) 2024-2025 Mohammad Ashar Khan (`tree-sitter-proto`);
+- Copyright (c) 2017 Josh Vera, GitHub, and copyright (c) 2019 Max Brunsfeld,
+  Amaan Qureshi, Christian Frøystad, Caleb White (`tree-sitter-php`);
 - Copyright (c) 2016 Max Brunsfeld (`tree-sitter-python`);
 - Copyright (c) 2017 Maxim Sokolov (`tree-sitter-rust`);
 - Copyright (c) 2021 alex-pinkus (`tree-sitter-swift`); and
 - Copyright (c) 2019-2021 Ika and copyright (c) 2024 tree-sitter-grammars
   contributors (`tree-sitter-yaml`).
+
+Both `tree-sitter-containerfile` MIT license texts are preserved in
+`licenses/Tree-Sitter-Containerfile-MIT.txt`.
+
+The `tree-sitter-xml 0.7.0` and `tree-sitter-ruby 0.23.1` archives declare MIT
+but omit their repository license files. At their packaged revisions those
+licenses carry copyright (c) 2023 ObserverOfTime and copyright (c) 2016 Rob Rix,
+respectively. The exact texts are preserved in
+`licenses/Tree-Sitter-XML-MIT.txt` and `licenses/Tree-Sitter-Ruby-MIT.txt`.
+The PHP crate's license is preserved in `licenses/Tree-Sitter-PHP-MIT.txt`.
 
 The `tree-sitter-html 0.23.2` archive declares MIT but omits its repository
 license file. The license at its packaged revision carries copyright (c) 2014

@@ -41,6 +41,7 @@ pub mod lsp;
 pub mod lsp_trust;
 pub mod manual;
 pub mod markdown;
+mod navigation_target;
 pub mod notification;
 pub mod pasted_image;
 pub mod path_safety;

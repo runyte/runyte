@@ -3,9 +3,9 @@
 [![CI](https://github.com/runyte/runyte/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/runyte/runyte/actions/workflows/ci.yml)
 [![Coverage](https://img.shields.io/badge/coverage-%E2%89%A589%25-brightgreen)](context/reference/test-coverage.md)
 
-![Runyte 0.2.0 with a clickable strip of running persistent sessions above the editor.](https://runyte.com/images/screenshots/session-strip.webp?v=5f3ba82c64b1)
+[![Watch the Runyte demo: Markdown tables, integrated Codex, terminal navigation, and Rust diagnostics.](https://runyte.com/videos/runyte-demo-poster.webp)](https://runyte.com/videos/runyte-demo.mp4)
 
-*Switch projects. Keep buffers and terminals running. · ocean-dark*
+*[Watch the 60-second demo](https://runyte.com/videos/runyte-demo.mp4): from a Markdown prompt to Rust code, in one workspace.*
 
 **Runyte** is a terminal workspace built around a modal text editor.
 
@@ -28,8 +28,9 @@ Press `?` to read Markdown as a **formatted page**, including tables.
 **Paste images** with `Ctrl+V`. Runyte saves them in the project's temporary cache
 and inserts a Markdown link into your document.
 
-Press `gf` on a file path in your text to open it. Images and other binary
-files open in an external program you choose.
+Press `gf` on a file path in a buffer or terminal review to open it. Images
+and other binary files open in an external program you choose. Web links
+(`https://`, `http://`, and `www.`) open in your default browser.
 
 Project goals:
 
@@ -54,7 +55,7 @@ Community: [r/runyte](https://www.reddit.com/r/runyte/)
 | **Files** | Editable directory explorer with reviewed filesystem plans; unified file, buffer, and terminal search |
 | **Terminals** | Interactive PTYs, scrollback, modal review, splits, persistent processes |
 | **Git** | Status, diffs, staging, commits, pull, push, branches, worktrees, blame, stashes |
-| **Language** | 26 bundled Tree-sitter grammars and asynchronous LSP |
+| **Language** | 31 bundled Tree-sitter grammars and asynchronous LSP |
 | **Sessions** | Standalone or persistent workspaces, session switching, and `$EDITOR`-compatible `--wait` |
 | **Interface** | Registry-backed key hints and help, themes, settings, and notifications |
 

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Runyte Screenshots"
+  short_description: "Capture real Runyte features through a PTY"
+  default_prompt: "Use $runyte-screenshots to capture the requested Runyte feature from a real editor process."
