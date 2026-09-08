@@ -186,6 +186,7 @@ mod plugin_provider_inspection;
 mod plugin_provider_overwrite;
 mod plugin_provider_save_preview;
 mod plugin_provider_saves;
+mod plugin_recovery;
 mod plugin_rich_views;
 #[cfg(unix)]
 mod plugin_terminal_handoffs;

@@ -324,6 +324,7 @@ impl App {
             self.plugins.attachment_generation += 1;
             self.plugins.viewport_cache.clear();
             self.plugins.presented_views.clear();
+            self.sync_provider_reload();
         }
     }
 

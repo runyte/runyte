@@ -66,8 +66,9 @@ Runyte uses optional YAML configuration. Explicitly enabled
 multiple selections in one undoable edit. The opt-in
 [application API](docs/plugins/applications.md) adds native application views,
 a local file manager, background jobs, ordered metadata subscriptions, explicit text operations and provider-backed
-UTF-8 editing with conditional or explicitly confirmed remote saves and conflict
-comparison. Runnable [SFTP](docs/plugins/applications.md#sftp-browser-and-editor)
+UTF-8 editing with conditional or explicitly confirmed remote saves, conflict
+comparison, and [native reload recovery](docs/plugins/applications.md#native-reload-and-conflict-recovery).
+Runnable [SFTP](docs/plugins/applications.md#sftp-browser-and-editor)
 and [FTP/FTPS](docs/plugins/applications.md#ftp-and-ftps-browser-and-editor) browsers
 state their transport and overwrite guarantees explicitly and can download binary
 files through native confirmation. Applications can also control

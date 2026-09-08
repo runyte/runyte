@@ -262,17 +262,21 @@ impl App {
         })
     }
 
+    pub(crate) fn plugin_id_completion_open(&self) -> bool {
+        self.mode == Mode::Command
+            && self.prompt_kind == PromptKind::Command
+            && self.command_cursor == self.command.chars().count()
+            && self
+                .command
+                .split_once(char::is_whitespace)
+                .is_some_and(|(name, _)| matches!(name, "plugin-stop" | "plugin-restart"))
+    }
+
     pub(super) fn matching_plugin_hints(&self) -> Option<Vec<&Entry>> {
-        if self.mode != Mode::Command
-            || self.prompt_kind != PromptKind::Command
-            || self.command_cursor != self.command.chars().count()
-        {
+        if !self.plugin_id_completion_open() {
             return None;
         }
-        let (name, prefix) = self.command.split_once(char::is_whitespace)?;
-        if !matches!(name, "plugin-stop" | "plugin-restart") {
-            return None;
-        }
+        let (_, prefix) = self.command.split_once(char::is_whitespace)?;
         let prefix = prefix.trim_start();
         Some(
             self.plugins

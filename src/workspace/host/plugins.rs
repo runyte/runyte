@@ -45,6 +45,11 @@ impl WorkspaceHost {
     }
 
     fn handle_plugin_event_inner(&mut self, event: Event) -> bool {
+        if let Ok(ClientMessage::ProviderReload(reload)) = event.result {
+            self.provider_reload_event(event.plugin, reload);
+            self.sync_application_observers();
+            return self.plugin_presentation_pending();
+        }
         if let Ok(ClientMessage::WorkerStopped { failure, reaped }) = event.result {
             self.manager_worker_stopped(event.plugin, failure, reaped);
             return self.plugin_presentation_pending();
@@ -156,6 +161,7 @@ impl WorkspaceHost {
         self.stop_plugin_state(id);
         self.stop_plugin_handoffs(id);
         self.stop_plugin_processes(id);
+        self.stop_provider_recoveries(id);
         self.stop_provider_reads(id);
         self.stop_provider_writes(id);
         self.orphan_document_saves(id);
@@ -245,6 +251,10 @@ impl WorkspaceHost {
 
     pub(super) fn plugin_message(&mut self, id: usize, message: ClientMessage) -> Result<()> {
         match message {
+            ClientMessage::ProviderReload(reload) => {
+                self.provider_reload_event(id, reload);
+                return Ok(());
+            }
             ClientMessage::WorkerStopped { failure, reaped } => {
                 self.manager_worker_stopped(id, failure, reaped);
                 return Ok(());
@@ -546,7 +556,8 @@ impl WorkspaceHost {
                 self.plugin_send(id, HostMessage::Unsubscribed { request, buffer })?;
             }
             ClientMessage::Register { .. } => unreachable!(),
-            ClientMessage::WorkerStopped { .. }
+            ClientMessage::ProviderReload(_)
+            | ClientMessage::WorkerStopped { .. }
             | ClientMessage::Queued { .. }
             | ClientMessage::OutputReady { .. }
             | ClientMessage::Local { .. }
@@ -637,6 +648,7 @@ impl WorkspaceHost {
         self.sync_plugin_handoffs();
         self.sync_provider_writes();
         self.sync_provider_inspections();
+        self.sync_provider_recoveries();
         self.sync_plugin_inputs();
         self.sync_plugin_filesystem();
         self.sync_plugin_views();

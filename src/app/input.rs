@@ -500,6 +500,8 @@ impl App {
     /// stores the same raw event ordering that arrived at this boundary.
     pub fn handle_input(&mut self, input: InputEvent) -> Result<()> {
         self.cancel_plugin_validation_intent();
+        let reload_owned_input = self.plugins.provider_reload.is_some();
+        self.sync_provider_reload();
         let overwrite_owned_input = self.plugins.provider_overwrite.is_some();
         self.sync_provider_overwrite();
         self.sync_plugin_input();
@@ -513,6 +515,11 @@ impl App {
             } else {
                 self.macro_replay_progress_status();
             }
+            return Ok(());
+        }
+        if reload_owned_input {
+            self.last_interaction = Instant::now();
+            self.handle_provider_reload_input(input);
             return Ok(());
         }
         if overwrite_owned_input {
@@ -529,7 +536,10 @@ impl App {
     }
 
     pub(super) fn handle_replayed_input(&mut self, input: InputEvent) -> Result<()> {
-        if self.plugins.provider_overwrite.is_some() || self.plugins.input.is_some() {
+        if self.plugins.provider_reload.is_some()
+            || self.plugins.provider_overwrite.is_some()
+            || self.plugins.input.is_some()
+        {
             self.cancel_plugin_validation_intent();
             return Ok(());
         }
@@ -618,9 +628,11 @@ impl App {
         repetitions: u16,
     ) -> Result<PointerOutcome> {
         self.cancel_plugin_validation_intent();
+        let reload_owned_input = self.plugins.provider_reload.is_some();
+        self.sync_provider_reload();
         let overwrite_owned_input = self.plugins.provider_overwrite.is_some();
         self.sync_provider_overwrite();
-        if overwrite_owned_input {
+        if overwrite_owned_input || reload_owned_input {
             return Ok(PointerOutcome::Unchanged);
         }
         if self.macro_replay.is_some() {
@@ -1325,7 +1337,7 @@ impl App {
     }
 
     fn handle_key_stroke(&mut self, mut key: KeyStroke) -> Result<()> {
-        if self.plugins.provider_overwrite.is_some() {
+        if self.plugins.provider_reload.is_some() || self.plugins.provider_overwrite.is_some() {
             return Ok(());
         }
         if self.session_inventory_open() {
@@ -1512,7 +1524,7 @@ impl App {
     }
 
     fn handle_text(&mut self, text: &str) -> Result<()> {
-        if self.plugins.provider_overwrite.is_some() {
+        if self.plugins.provider_reload.is_some() || self.plugins.provider_overwrite.is_some() {
             return Ok(());
         }
         if text.is_empty() {
@@ -4733,6 +4745,7 @@ impl App {
     /// the application boundary.
     pub fn execute(&mut self, invocation: CommandInvocation) -> Result<CommandOutcome> {
         self.plugins.foreground_generation += 1;
+        self.sync_provider_reload();
         self.sync_provider_overwrite();
         self.cancel_pointer_drag();
         // Protocol and headless semantic commands bypass `handle_input`, but

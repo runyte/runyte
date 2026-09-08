@@ -41,6 +41,30 @@ days, and fails below 89% total line coverage. The floor is deliberately below
 the observed baseline because conditional Linux and macOS code changes both the
 instrumented denominator and the paths available to a run on one platform.
 
+## 2026-09-08 — native provider reload and recovery
+
+Measured on `x86_64-unknown-linux-gnu` at `1ab2335` plus the recovery round,
+using Rust 1.97.1 and cargo-llvm-cov 0.9.0. Ordinary and canonical suites each
+passed 3,541 tests with 33 ignored. Formatting and warnings-as-errors Clippy
+passed; the floor remains 89%.
+
+| Measure | Covered | Total | Coverage |
+| --- | ---: | ---: | ---: |
+| Lines | 119,627 | 130,425 | 91.72% |
+| Functions | 10,778 | 11,760 | 91.65% |
+| Regions | 181,210 | 198,759 | 91.17% |
+
+Thirty-three new Rust regressions cover Unicode transaction mapping and inverse
+edits, remote-baseline adoption with preserved undo, native choice input and actual
+rendered frames, manager-ID completion rendering, stale and expired candidates,
+exact prior-write settlement, owner/global quota boundaries, and reservations
+retained through cancellation, stop and document closure until actual worker
+completion. A retained browser view does not prevent a small document reload.
+Ten application/schema checks pass. A native Linux PTY smoke verifies recovery
+after restart, all three decisions, subsequent save, undo/redo, clean reload,
+visible plugin-ID completion and zero output during two settled idle seconds.
+Native macOS and the complete release performance matrix remain outstanding.
+
 ## 2026-09-08 — native plugin manager and explicit restart
 
 Measured on `x86_64-unknown-linux-gnu` at `457058b` plus the manager round,

@@ -268,6 +268,14 @@ whose Back action returns to the manager's prior filter and selection. Refreshes
 retain configured identity, while actions retain the generation they were opened
 for and cannot silently target a replacement process.
 
+Provider `:reload` uses the **Reload remote document** choice overlay when local
+edits or an uncertain save need a decision. Its three rows are **Reload remote
+text**, **Keep local edits and use remote baseline**, and **Cancel**, initially
+selected. The overlay contains only decision metadata; the host retains the
+prepared remote text. Physical Enter accepts the selected row. Dismissal or a
+changed document, provider, pane, or attachment cancels without adopting it.
+Clean provider documents accept a fresh reload without opening this overlay.
+
 ## Row selection
 
 Every surface that draws a list of rows — picker overlay, pane-backed

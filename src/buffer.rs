@@ -10,6 +10,9 @@
 mod filesystem;
 pub(crate) use filesystem::{FilesystemInput, FilesystemUpdate};
 mod provider;
+pub(crate) use provider::{
+    PreparedProviderReload, ProviderReloadChoice, ProviderReloadGuard, ProviderReloadSource,
+};
 pub use provider::{
     ProviderConflict, ProviderDocument, ProviderIdentity, ProviderSave, ProviderUncertain,
 };

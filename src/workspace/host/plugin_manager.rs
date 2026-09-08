@@ -331,10 +331,15 @@ impl WorkspaceHost {
         }
     }
     fn plugin_owner_work(&self, owner: usize) -> usize {
-        self.plugin_local_orphans
-            .keys()
-            .filter(|(id, _, _)| *id == owner)
+        self.plugin_recoveries
+            .values()
+            .filter(|pending| pending.owner == owner)
             .count()
+            + self
+                .plugin_local_orphans
+                .keys()
+                .filter(|(id, _, _)| *id == owner)
+                .count()
             + self
                 .plugin_handoffs
                 .keys()

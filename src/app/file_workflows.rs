@@ -1797,13 +1797,7 @@ impl App {
 
     pub(super) fn reload_active(&mut self) -> Result<()> {
         match reload_dispatch(&self.active_buffer().kind) {
-            ReloadDispatch::Provider => {
-                self.action_warning(
-                    "Reload refused",
-                    "Provider document reloading is not available",
-                );
-                Ok(())
-            }
+            ReloadDispatch::Provider => self.queue_provider_reload(),
             ReloadDispatch::Directory => self.refresh_directory(),
             ReloadDispatch::GitStatus => {
                 self.refresh_git();

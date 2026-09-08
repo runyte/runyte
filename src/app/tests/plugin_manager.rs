@@ -239,3 +239,55 @@ fn plugin_manager_queued_actions_protect_before_host_sync_and_allow_persistent_d
     ));
     assert_eq!(app.plugins.manager_intents.len(), 1);
 }
+
+#[test]
+fn plugin_manager_id_completion_renders_configured_rows_in_native_frame() {
+    use ratatui::{Terminal, backend::TestBackend};
+    let mut app = App::new(Config::default(), None).unwrap();
+    app.update_plugin_manager(vec![
+        entry(0, "remote-worker", Phase::Failed, Some(4)),
+        entry(1, "other", Phase::Stopped, None),
+    ]);
+    app.mode = Mode::Command;
+    app.prompt_kind = PromptKind::Command;
+    app.command = "plugin-restart rem".into();
+    app.command_cursor = app.command.chars().count();
+    let mut terminal = Terminal::new(TestBackend::new(100, 24)).unwrap();
+    terminal
+        .draw(|frame| {
+            let prepared = app.prepare_view(crate::ui::frame_geometry(frame.area()));
+            let snapshot = app.snapshot(&prepared);
+            crate::ui::render_exact_colors_for_test(
+                frame,
+                &app,
+                &snapshot,
+                &crate::key_hints::KeyHintState::default(),
+            );
+        })
+        .unwrap();
+    let buffer = terminal.backend().buffer();
+    let lines = (0..24)
+        .map(|row| {
+            (0..100)
+                .map(|column| buffer[(column, row)].symbol())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.contains("remote-worker") && line.contains("Failed")),
+        "{}",
+        lines.join("\n")
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.contains("Choose plugin for :plugin-restart"))
+    );
+    assert!(
+        !lines
+            .iter()
+            .any(|line| line.contains("other") && line.contains("Stopped"))
+    );
+}

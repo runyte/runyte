@@ -8,10 +8,40 @@ use crate::{
 };
 use api::{Error, ErrorCode as Code};
 
+pub(super) enum ReadPurpose {
+    Open,
+    Rebind(usize),
+    Inspect(ProviderInspectIntent),
+    Reload(crate::app::plugin_recovery::ProviderReloadIntent),
+}
+impl ReadPurpose {
+    pub(super) fn rebind(&self) -> Option<usize> {
+        match self {
+            Self::Rebind(buffer) => Some(*buffer),
+            Self::Reload(intent) => Some(intent.buffer),
+            _ => None,
+        }
+    }
+    fn inspect(&self) -> Option<&ProviderInspectIntent> {
+        match self {
+            Self::Inspect(intent) => Some(intent),
+            _ => None,
+        }
+    }
+    pub(super) fn reload(&self) -> Option<&crate::app::plugin_recovery::ProviderReloadIntent> {
+        match self {
+            Self::Reload(intent) => Some(intent),
+            _ => None,
+        }
+    }
+    fn native(&self) -> bool {
+        matches!(self, Self::Inspect(_) | Self::Reload(_))
+    }
+}
+
 pub(super) struct PendingRead {
     pub charge: usize,
-    pub rebind: Option<usize>,
-    pub inspect: Option<ProviderInspectIntent>,
+    pub purpose: ReadPurpose,
     rebind_epoch: Option<u64>,
     reconcile_write: Option<String>,
     pub requester: usize,
@@ -31,15 +61,14 @@ impl WorkspaceHost {
         owner: usize,
         request: api::Request,
     ) -> Result<(api::ResultValue, Option<&'static str>), Error> {
-        self.application_provider_read(owner, request, None, None)
+        self.application_provider_read(owner, request, ReadPurpose::Open)
     }
 
-    fn application_provider_read(
+    pub(super) fn application_provider_read(
         &mut self,
         owner: usize,
         request: api::Request,
-        rebind: Option<usize>,
-        inspect: Option<ProviderInspectIntent>,
+        purpose: ReadPurpose,
     ) -> Result<(api::ResultValue, Option<&'static str>), Error> {
         let state = &self.app.plugins.instances[&owner].application;
         match request {
@@ -129,8 +158,7 @@ impl WorkspaceHost {
                         key: identity.key,
                         invocation: None,
                     },
-                    Some(index),
-                    None,
+                    ReadPurpose::Rebind(index),
                 )?;
                 self.app.plugins.document_saves.insert(index);
                 Ok(result)
@@ -170,7 +198,7 @@ impl WorkspaceHost {
                 key,
                 invocation,
             } => {
-                if inspect.is_none()
+                if !purpose.native()
                     && (!state.capabilities.contains("documents")
                         || !state.capabilities.contains("jobs"))
                 {
@@ -241,12 +269,14 @@ impl WorkspaceHost {
                 }
                 // An uncertain write reserves both its captured text and the
                 // bounded recovery read, so quota exhaustion cannot trap recovery.
-                let charge =
-                    if rebind.is_some_and(|index| self.provider_uncertain.contains_key(&index)) {
-                        0
-                    } else {
-                        wire::READ_CHARGE
-                    };
+                let charge = if purpose
+                    .rebind()
+                    .is_some_and(|index| self.provider_uncertain.contains_key(&index))
+                {
+                    0
+                } else {
+                    wire::READ_CHARGE
+                };
                 self.reserve_application_payload(owner, charge)?;
                 let identity = ProviderIdentity {
                     configured_plugin: plugin,
@@ -258,7 +288,9 @@ impl WorkspaceHost {
                 }
                 let job = self.create_provider_job(
                     owner,
-                    if inspect.is_some() {
+                    if purpose.reload().is_some() {
+                        "Reload resource"
+                    } else if purpose.inspect().is_some() {
                         "Inspect resource"
                     } else {
                         "Open resource"
@@ -275,18 +307,18 @@ impl WorkspaceHost {
                     job.job.clone(),
                     PendingRead {
                         charge,
-                        rebind,
-                        rebind_epoch: rebind
-                            .or_else(|| inspect.as_ref().map(|i| i.buffer))
+                        rebind_epoch: purpose
+                            .rebind()
+                            .or_else(|| purpose.inspect().map(|i| i.buffer))
                             .and_then(|index| {
                                 self.app.buffers[index].provider().map(|d| d.baseline_epoch)
                             }),
-                        reconcile_write: rebind.and_then(|index| {
+                        reconcile_write: purpose.rebind().and_then(|index| {
                             self.provider_uncertain
                                 .get(&index)
                                 .map(|(_, _, job)| job.clone())
                         }),
-                        inspect,
+                        purpose,
                         requester: owner,
                         requester_generation,
                         owner: provider_owner,
@@ -300,7 +332,7 @@ impl WorkspaceHost {
                 );
                 if self.send_provider_read(&job.job).is_err() {
                     let pending = self.provider_reads.remove(&job.job).unwrap();
-                    if let Some(index) = pending.rebind {
+                    if let Some(index) = pending.purpose.rebind() {
                         self.app.plugins.document_saves.remove(&index);
                     }
                     if !pending.request.is_empty() {
@@ -388,8 +420,7 @@ impl WorkspaceHost {
                 key: identity.key,
                 invocation: None,
             },
-            None,
-            Some(intent),
+            ReadPurpose::Inspect(intent),
         )
     }
 
@@ -533,7 +564,15 @@ impl WorkspaceHost {
         match result {
             Ok(Some(index)) => self.finish_provider_read(&job, Ok(index)),
             Err(error) => self.finish_provider_read(&job, Err(error)),
-            Ok(None) => self.send_provider_read(&job)?,
+            Ok(None) => {
+                if !self
+                    .plugin_recoveries
+                    .get(&job)
+                    .is_some_and(|pending| pending.preparing_or_ready())
+                {
+                    self.send_provider_read(&job)?;
+                }
+            }
         }
         Ok(true)
     }
@@ -580,7 +619,7 @@ impl WorkspaceHost {
         match (pending.metadata.as_ref(), response) {
             (None, wire::Response::Stat(metadata)) => {
                 metadata.validate()?;
-                if (pending.rebind.is_some() || pending.inspect.is_some())
+                if (pending.purpose.rebind().is_some() || pending.purpose.inspect().is_some())
                     && pending.identity.key != metadata.key
                 {
                     return Err(Error::new(
@@ -589,8 +628,8 @@ impl WorkspaceHost {
                     ));
                 }
                 pending.identity.key = metadata.key.clone();
-                if pending.rebind.is_none()
-                    && pending.inspect.is_none()
+                if pending.purpose.rebind().is_none()
+                    && pending.purpose.inspect().is_none()
                     && let Some((index, _)) =
                         self.app.buffers.iter().enumerate().find(|(index, buffer)| {
                             !self.app.host_buffer_is_closed(*index)
@@ -601,7 +640,9 @@ impl WorkspaceHost {
                 {
                     return Ok(Some(index));
                 }
-                if pending.inspect.is_some() && metadata.bytes > crate::diff_view::MAX_DIFF_BYTES {
+                if pending.purpose.inspect().is_some()
+                    && metadata.bytes > crate::diff_view::MAX_DIFF_BYTES
+                {
                     return Err(Error::new(
                         Code::LimitExceeded,
                         "Remote comparison exceeds the 4 MiB diff limit",
@@ -636,7 +677,15 @@ impl WorkspaceHost {
                 if !chunk.eof {
                     return Ok(None);
                 }
-                if let Some(intent) = &pending.inspect {
+                if pending.purpose.reload().is_some() {
+                    let remote = std::mem::take(&mut pending.text);
+                    let generation = pending.generation.clone();
+                    let version = metadata.version.clone();
+                    let settled = pending.reconcile_write.is_some();
+                    self.prepare_provider_reload(job, remote, generation, version, settled)?;
+                    return Ok(None);
+                }
+                if let Some(intent) = pending.purpose.inspect() {
                     let index = intent.buffer;
                     if self.app.host_buffer_is_closed(index) {
                         return Err(Error::new(
@@ -678,7 +727,7 @@ impl WorkspaceHost {
                         .map(Some)
                         .map_err(|error| Error::new(Code::ContextChanged, &error.to_string()));
                 }
-                if let Some(index) = pending.rebind {
+                if let Some(index) = pending.purpose.rebind() {
                     if self.app.host_buffer_is_closed(index) {
                         return Err(Error::new(Code::Closed, "Document closed during rebind"));
                     }
@@ -739,11 +788,12 @@ impl WorkspaceHost {
         }
     }
 
-    fn finish_provider_read(&mut self, token: &str, result: Result<usize, Error>) {
+    pub(super) fn finish_provider_read(&mut self, token: &str, result: Result<usize, Error>) {
+        self.retire_provider_recovery(token, result.as_ref().err());
         let Some(pending) = self.provider_reads.remove(token) else {
             return;
         };
-        if let Some(index) = pending.rebind {
+        if let Some(index) = pending.purpose.rebind() {
             self.app.plugins.document_saves.remove(&index);
         }
         self.reconcile_provider_payload();
@@ -809,8 +859,13 @@ impl WorkspaceHost {
             return;
         };
         instance.application.retained_payload -= pending.charge;
+        let native_reload = pending.purpose.reload().is_some();
         let result = result.and_then(|index| {
-            let handle = instance.application.buffer_handle(index)?;
+            let handle = if native_reload {
+                String::new()
+            } else {
+                instance.application.buffer_handle(index)?
+            };
             Ok((
                 index,
                 handle,
@@ -828,14 +883,15 @@ impl WorkspaceHost {
         }
         let job = job.clone();
         instance.application.finished_jobs.push_back(token.into());
-        if pending.inspect.is_some()
+        if pending.purpose.inspect().is_some()
             && let Err(error) = &result
         {
             self.app.provider_save_feedback(false, &error.message);
         }
         let (buffer, revision, error) = match result {
             Ok((index, handle, revision)) => {
-                if pending.inspect.is_none()
+                if !native_reload
+                    && pending.purpose.inspect().is_none()
                     && let Some(context) = &pending.context
                     && self.app.plugin_foreground(context).is_ok()
                 {
@@ -852,7 +908,7 @@ impl WorkspaceHost {
             .get_mut(&pending.requester)
             .unwrap()
             .application;
-        state.sequence += 1;
+        state.sequence += u64::from(!native_reload);
         let sequence = format!("e:{}", state.sequence);
         let finished = wire::Finished {
             job: token.into(),
@@ -869,20 +925,21 @@ impl WorkspaceHost {
                 },
             )
             .is_err()
-            || self
-                .application_send(
-                    pending.requester,
-                    api::HostMessage::Event {
-                        sequence,
-                        event: if pending.inspect.is_some() {
-                            "resource.inspected"
-                        } else {
-                            "resource.opened"
+            || (!native_reload
+                && self
+                    .application_send(
+                        pending.requester,
+                        api::HostMessage::Event {
+                            sequence,
+                            event: if pending.purpose.inspect().is_some() {
+                                "resource.inspected"
+                            } else {
+                                "resource.opened"
+                            },
+                            data: api::EventData::ResourceFinished(finished),
                         },
-                        data: api::EventData::ResourceFinished(finished),
-                    },
-                )
-                .is_err()
+                    )
+                    .is_err())
             || self
                 .application_job_event(pending.requester, "job.changed", job)
                 .is_err()

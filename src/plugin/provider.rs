@@ -174,3 +174,12 @@ impl Metadata {
         Ok(())
     }
 }
+
+/// Internal bounded worker completion; never decoded from plugin output.
+#[derive(Debug)]
+pub struct ReloadEvent {
+    pub(crate) generation: String,
+    pub(crate) job: String,
+    pub(crate) result: Result<crate::buffer::PreparedProviderReload, super::application::Error>,
+    pub(crate) _permit: std::sync::Arc<tokio::sync::OwnedSemaphorePermit>,
+}

@@ -927,7 +927,8 @@ impl App {
     }
 
     pub(crate) fn has_native_input_overlay(&self) -> bool {
-        self.plugins.provider_overwrite.is_some()
+        self.plugins.provider_reload.is_some()
+            || self.plugins.provider_overwrite.is_some()
             || self.picker.is_some()
             || self.fs_confirmation.is_some()
             || self.directory_reload_confirmation.is_some()
@@ -1313,6 +1314,43 @@ impl App {
         }
 
         let mut overlays = Vec::new();
+        if let Some(reload) = &self.plugins.provider_reload {
+            let mut overlay = bounded(
+                OverlayKind::ResultList,
+                "Reload remote document",
+                "",
+                vec![
+                    row(
+                        "reload",
+                        "Reload remote text",
+                        "Replace local text as one undoable change",
+                    ),
+                    row(
+                        "keep",
+                        "Keep local edits and use remote baseline",
+                        "Keep local text; future saves use the remote version",
+                    ),
+                    row(
+                        "cancel",
+                        "Cancel",
+                        "Keep the current text and accepted baseline",
+                    ),
+                ],
+                Some(reload.selected),
+                Some(format!(
+                    "Choose how to reload {}. No remote write is performed.",
+                    reload.label
+                )),
+            );
+            overlay.purpose = OverlayPurpose::Choice;
+            overlay.input = OverlayInput::None;
+            overlay.actions = vec![
+                OverlayAction::new("↑/↓ or Tab", "select"),
+                OverlayAction::new("Enter", "choose"),
+                OverlayAction::new("Esc", "cancel"),
+            ];
+            overlays.push(overlay);
+        }
         if let Some(confirmation) = &self.fs_confirmation {
             overlays.push(bounded(
                 OverlayKind::FilesystemConfirmation,

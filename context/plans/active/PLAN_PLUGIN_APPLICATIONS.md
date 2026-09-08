@@ -78,8 +78,9 @@ provider-backed reads, conditional saves, explicit rebind and conflict inspectio
 are implemented, together with native weaker-transport confirmation and the SFTP
 and FTP/FTPS examples. Binary download staging now uses native confirmed
 publication, and the examples now provide native-confirmed remote mkdir, rename
-and delete. The remaining provider conflict/lifecycle refinements and later
-milestones remain active. Milestone 5 now includes bounded managed processes, terminal/external handoffs
+and delete. Native reload now offers divergent baseline recovery, including
+explicit restart and exact settlement of uncertain writes. Binary uploads and
+later acceptance gates remain active. Milestone 5 now includes bounded managed processes, terminal/external handoffs
 and retained notifications, continuing activity leases, validated settings and
 conditional workspace state and a native manager with explicit stop/restart.
 The media controller remains.
@@ -911,6 +912,54 @@ Formatting, warnings-as-errors Clippy and canonical Linux coverage pass. The
 canonical suite also passes 3,508 tests with 33 ignored and measures
 118,764/129,526 lines (91.69%), 10,722/11,687 functions (91.74%) and
 180,069/197,529 regions (91.16%). The enforced floor remains 89%.
+
+## Native provider reload and recovery round — 2026-09-08
+
+The ordinary `reload` command obtains fresh version-bound provider text. Clean,
+known documents adopt it directly; dirty or uncertain documents present a native
+choice to reload remote text, keep local edits while adopting the remote baseline,
+or cancel. Cancel is selected initially, and only physical Enter authorizes a
+choice. Reload creates one undo checkpoint while preserving older history; undo
+restores local text against the newly accepted remote baseline. Keep-local changes
+neither the text revision nor undo/redo state. Equal text adds no checkpoint.
+
+Preparation bounds both local and remote text at 8 MiB and builds the replacement,
+inverse transaction, layout, and dirty comparison off the editor loop. Transaction
+mapping caches inserted character counts at construction, avoiding repeated scans
+of a large replacement for every selection or viewport. Preparation reserves
+16 MiB plus twice the captured local byte length, at most 32 MiB, alongside the
+existing read or uncertain-write charge. Small documents leave capacity for a
+retained remote browser view. Its local
+worker permit and payload reservation survive cancellation and owner stop until
+the actual completion is consumed; explicit restart and quit protection include
+that cleanup period.
+
+Acceptance checks the captured document revision, resource identity, saved
+baseline, uncertainty state, provider generation and current provider registration.
+Context changes, detach, competing input, timeout, or stop cancel without adoption.
+An unknown prior write requires the exact reconciliation settlement proof before
+a reload candidate can be offered; a fresh stat or matching text alone is not
+proof. Public `resource.rebind` retains its conservative baseline rules. Completion
+updates only the original reload action's feedback.
+
+Native terminal validation exposed a renderer omission: the choice snapshot owned
+input but was not drawn by the standalone frontend. Generic native choice snapshots
+now use the snapshot renderer, with full-frame coverage at ordinary and narrow
+sizes. Review also aligned native plugin-ID completion rendering with the existing
+completion snapshot. Canceled uncertain preparation pins its reused recovery
+reservation even if the document closes before the worker completes.
+
+Ordinary tests pass: 3,541 tests with 33 ignored, including 33 new transaction,
+buffer, native input/rendering, manager hint and host recovery regressions. Ten
+application/schema checks pass. The native Linux PTY smoke verifies recovery after
+restart, keep-local followed by save, cancellation preserving edits, reload with
+undo/redo, clean adoption without a choice, visible plugin-ID completion, and zero
+output over two settled idle seconds. Formatting and warnings-as-errors Clippy pass.
+
+Canonical Linux coverage passes the same 3,541 tests with 33 ignored and measures
+119,627/130,425 lines (91.72%), 10,778/11,760 functions (91.65%), and
+181,210/198,759 regions (91.17%). The enforced floor stays 89%. Native macOS and
+the complete performance acceptance matrix remain outstanding.
 
 ## Investigation: existing foundation and missing boundaries
 

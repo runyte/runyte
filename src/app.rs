@@ -276,6 +276,7 @@ pub(crate) mod plugin_interaction;
 mod plugin_manager;
 pub(crate) mod plugin_provider_overwrite;
 pub(crate) mod plugin_providers;
+pub(crate) mod plugin_recovery;
 mod plugin_views;
 pub(crate) mod plugin_workflows;
 mod presentation;

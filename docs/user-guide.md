@@ -3017,7 +3017,13 @@ Newer edits remain
 dirty during uploads; save-and-close waits for confirmed success. Explicit rebind
 reconciles restarted providers and uncertain writes. `:diff-remote` compares fresh
 remote text with local edits without changing the saved baseline; both sides must
-fit the 4 MiB comparison limit. The runnable
+fit the 4 MiB comparison limit. Native `:reload` reads fresh remote text; dirty
+or uncertain documents offer reload, keeping local edits against a new baseline,
+or cancellation.
+Reload is one undoable edit and preserves earlier history. Unknown writes require
+provider settlement before accepting a baseline. Each side may contain at most
+8 MiB. See [provider recovery](plugins/applications.md#native-reload-and-conflict-recovery).
+The runnable
 [SFTP browser and editor](plugins/applications.md#sftp-browser-and-editor) verifies
 SSH host keys, uses explicit identity files or an existing SSH agent, and opens
 remote UTF-8 documents up to 8 MiB. Run `:plugin.sftp.browse .` with its documented
@@ -3168,7 +3174,7 @@ are enabled.
 :quit-all!              discard buffer changes and quit, without ending terminals (alias: qa!)
 :quit-here              quit and return the shell to the active directory (alias: qh)
 :quit-here!             discard changes, quit, and return there (alias: qh!)
-:reload                 reload the active file or refresh the active explorer or supported Git list
+:reload                 reload the active local/provider file or refresh the explorer or supported Git list
 :resize-right +/- N     grow or shrink the pane at its right edge by N cells
 :resize-left +/- N      grow or shrink the pane at its left edge by N cells
 :resize-top +/- N       grow or shrink the pane at its top edge by N cells

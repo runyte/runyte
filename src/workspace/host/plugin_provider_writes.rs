@@ -1091,10 +1091,14 @@ impl WorkspaceHost {
             .keys()
             .copied()
             .filter(|index| {
-                self.app.host_buffer_is_closed(*index)
-                    || self.app.buffers[*index]
-                        .provider()
-                        .is_none_or(|d| d.uncertain.is_none())
+                !self
+                    .plugin_recoveries
+                    .values()
+                    .any(|pending| pending.retains_uncertainty(*index))
+                    && (self.app.host_buffer_is_closed(*index)
+                        || self.app.buffers[*index]
+                            .provider()
+                            .is_none_or(|d| d.uncertain.is_none()))
             })
             .collect();
         for index in released {

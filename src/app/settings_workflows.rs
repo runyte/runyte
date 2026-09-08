@@ -40,6 +40,7 @@ impl App {
             })
             .sum::<usize>()
             + self.plugins.state_orphans
+            + self.plugins.provider_reload_cleanup
             + self
                 .plugins
                 .manager_entries

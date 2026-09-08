@@ -1509,3 +1509,8 @@ fn terminal_job_history_retains_completion_order_across_handle_widths() {
         );
     }
 }
+
+#[path = "plugin_recovery.rs"]
+mod recovery;
+#[path = "plugin_recovery_review.rs"]
+mod recovery_review;

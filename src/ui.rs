@@ -620,11 +620,27 @@ fn render_editor_frame(
         draw_snapshot_overlay(frame, &app.theme, actions, snapshot);
     } else if app.list.is_some() {
         draw_list(frame, &app, editor_area);
+    } else if let Some(choice) = overlays.iter().find(|overlay| {
+        overlay.kind == OverlayKind::ResultList
+            && overlay.purpose == crate::snapshot::OverlayPurpose::Choice
+    }) {
+        // Some native choices deliberately keep only fenced metadata in App;
+        // their immutable snapshot is the complete rendering owner.
+        draw_snapshot_overlay(frame, &app.theme, choice, snapshot);
     } else {
         if let Some(overlay) = path_completion_overlay {
             draw_snapshot_overlay(frame, &app.theme, overlay, snapshot);
         } else if app.mode == Mode::Command && app.prompt_kind == PromptKind::Command {
-            draw_command_palette(frame, &app, editor_area);
+            if app.plugin_id_completion_open() {
+                if let Some(overlay) = overlays
+                    .iter()
+                    .find(|overlay| overlay.kind == OverlayKind::CommandPalette)
+                {
+                    draw_snapshot_overlay(frame, &app.theme, overlay, snapshot);
+                }
+            } else {
+                draw_command_palette(frame, &app, editor_area);
+            }
         } else if app.mode == Mode::Command && app.prompt_kind == PromptKind::ExternalProgram {
             draw_program_hints(frame, &app, editor_area);
             if app.program_action_menu.is_some() {

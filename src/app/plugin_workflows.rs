@@ -54,6 +54,10 @@ pub(crate) struct Plugins {
     pub document_saves: BTreeSet<usize>,
     pub provider_save_intents: VecDeque<super::plugin_providers::ProviderSaveIntent>,
     pub provider_inspect_intents: VecDeque<super::plugin_providers::ProviderInspectIntent>,
+    pub provider_reload_cleanup: usize,
+    pub provider_reload_intents: VecDeque<super::plugin_recovery::ProviderReloadIntent>,
+    pub provider_reload: Option<super::plugin_recovery::ProviderReload>,
+    pub provider_reload_decision: Option<super::plugin_recovery::ProviderReloadDecision>,
     pub provider_overwrite: Option<super::plugin_provider_overwrite::ProviderOverwrite>,
     pub provider_overwrite_decision:
         Option<super::plugin_provider_overwrite::ProviderOverwriteDecision>,

@@ -268,9 +268,8 @@ budgets are reserved for bounded queues, decoding and publication copies.
 These measure payload, not allocator RSS or the external process's memory.
 Buffer/pane issuance is bounded at 1,024/128 handles per connection generation.
 
-Still required by the active plan: binary uploads and remaining remote conflict
-decisions; media
-examples; broader SDK/conformance coverage and the complete performance/platform
+Still required by the active plan: binary uploads; media examples;
+broader SDK/conformance coverage and the complete performance/platform
 acceptance matrix.
 
 ## Columns, blocks and atomic model updates
@@ -657,8 +656,9 @@ preserved, including CRLF. Native `:write`, `:wq` and `:write-buffer-close`, plu
 `:plugin.memory.save`, use the conditional upload protocol below. Normal save
 trimming hooks still apply. `:plugin.memory.rebind` explicitly reconciles the
 current provider document. `:plugin.memory.inspect` and native `:diff-remote`
-compare fresh remote text with the editable document. Local write-to-path and
-ordinary `:reload` remain refused. Native writes to weaker providers require
+compare fresh remote text with the editable document. Native `:reload` obtains
+a fresh remote version and offers recovery choices for dirty or uncertain text,
+as described below. Local write-to-path remains refused. Native writes to weaker providers require
 foreground confirmation. Discard restores the accepted in-memory baseline, preserving any
 unknown write and its dirty protection. Stopping a provider leaves editable text
 marked unavailable. The memory example resets remote content on process restart.
@@ -719,6 +719,42 @@ there is no remote mutation to reconcile. Up to 64 retired in-flight request IDs
 are remembered for late replies; other duplicate, foreign or out-of-order replies
 are protocol failures. Provider failure, timeout or stop settles the open without
 publishing partial text. No read creates a polling timer after completion.
+
+
+### Native reload and conflict recovery
+
+`:reload` reads a fresh, version-bound remote document. A clean document accepts
+that text directly. Dirty or uncertain documents offer three native choices:
+
+- Reload remote text, replacing the local text as one undoable edit.
+- Keep local edits and use the remote version as the new saved baseline.
+- Cancel, preserving local text and the previously accepted baseline.
+
+Cancel is selected initially. Use the native choice keys and physical Enter to
+accept a different decision; macros cannot authorize a remote reload.
+
+Both adoption choices preserve earlier undo history. Undoing a replacement
+restores the prior local text against the newly accepted remote baseline; undo
+does not rewind the remote version. Keeping local edits adds no undo entry and
+leaves the document dirty unless those edits equal the remote text.
+
+The host prepares replacement text, history and display measurements before
+offering the choice. Local and remote text must each fit 8 MiB; this operation
+is independent of the 4 MiB side-by-side comparison limit. Changed document
+revisions, provider generations or foreground context invalidate the captured
+decision. Detach, cancellation and plugin stop preserve the original document.
+Preparation reserves 16 MiB plus twice the local byte length, in addition to the
+existing 16 MiB read or uncertain-write reservation. Capacity is checked before
+preparation; canceled workers retain their charge until they actually finish.
+
+An unknown prior write must be proven settled through the provider's reconciliation
+contract before a new baseline can be accepted. An inspection snapshot alone
+cannot provide that proof. Public `resource.rebind` remains conservative and
+accepts only a known baseline; native reload makes divergent recovery an explicit
+user decision. After restart, the provider must register the same identity again.
+For the memory example, `:plugin.memory.rebind` performs that registration even
+when its conservative reconciliation reports a conflict; `:reload` then offers
+the native recovery choices.
 
 
 ### Remote conflict inspection

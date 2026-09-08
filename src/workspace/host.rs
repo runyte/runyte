@@ -252,6 +252,7 @@ mod plugin_observations;
 mod plugin_processes;
 mod plugin_provider_writes;
 mod plugin_providers;
+mod plugin_recovery;
 mod plugin_staging;
 mod plugin_state;
 mod plugin_validation;
@@ -270,6 +271,9 @@ pub struct WorkspaceHost {
     filesystem_apply: Option<plugin_filesystem_apply::PendingApply>,
     plugin_workers: std::collections::BTreeMap<usize, crate::plugin::Worker>,
     plugin_manager: Vec<plugin_manager::Record>,
+    plugin_recoveries: std::collections::BTreeMap<String, plugin_recovery::Pending>,
+    #[cfg(test)]
+    plugin_recovery_hook: Option<std::sync::Arc<dyn Fn() + Send + Sync>>,
     next_plugin_owner: usize,
     plugin_processes: std::collections::BTreeMap<String, plugin_processes::Managed>,
     observation_buffers: Option<((usize, usize), Vec<usize>)>,
@@ -376,6 +380,9 @@ impl WorkspaceHost {
             filesystem_apply: None,
             plugin_workers: Default::default(),
             plugin_manager: Vec::new(),
+            plugin_recoveries: Default::default(),
+            #[cfg(test)]
+            plugin_recovery_hook: None,
             next_plugin_owner: 0,
             plugin_processes: Default::default(),
             observation_buffers: None,
@@ -618,6 +625,7 @@ impl WorkspaceHost {
             plugin_jobs: self.app.plugin_active_job_count()
                 + self.pending_process_requests(None)
                 + self.plugin_handoffs.len()
+                + self.plugin_recoveries.len()
                 + self.app.plugins.provider_save_intents.len()
                 + self.provider_writes.values().filter(|p| p.orphaned).count()
                 + usize::from(
