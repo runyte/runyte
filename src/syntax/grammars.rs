@@ -1296,6 +1296,112 @@ pub(super) const BUILTIN_LANGUAGES: &[LanguageDefinition] = &[
         indentation: QuerySource::EMPTY,
         folds: QuerySource::EMPTY,
     },
+    LanguageDefinition {
+        name: "xml",
+        extensions: &[
+            "xml", "svg", "xsd", "xsl", "xslt", "wsdl", "xaml", "csproj", "fsproj", "vbproj",
+            "props", "targets", "resx", "plist",
+        ],
+        filenames: &[],
+        filename_prefixes: &[],
+        shebangs: &[],
+        line_comment: None,
+        grammar: tree_sitter_xml::LANGUAGE_XML,
+        queries: LanguageQueries {
+            highlights: QuerySource::new(&[upstream(
+                tree_sitter_xml::XML_HIGHLIGHT_QUERY,
+                "tree-sitter-xml 0.7.0 XML highlights",
+            )]),
+            injections: QuerySource::EMPTY,
+            locals: QuerySource::EMPTY,
+        },
+        text_objects: &[],
+        outline: QuerySource::EMPTY,
+        indentation: QuerySource::EMPTY,
+        folds: QuerySource::EMPTY,
+    },
+    LanguageDefinition {
+        name: "hcl",
+        extensions: &["hcl", "tf", "tfvars"],
+        filenames: &[],
+        filename_prefixes: &[],
+        shebangs: &[],
+        line_comment: Some("#"),
+        grammar: tree_sitter_hcl::LANGUAGE,
+        queries: LanguageQueries {
+            highlights: QuerySource::new(&[runyte(
+                include_str!("queries/hcl/highlights.scm"),
+                "Runyte HCL highlights for tree-sitter-hcl 1.1.0",
+            )]),
+            injections: QuerySource::EMPTY,
+            locals: QuerySource::EMPTY,
+        },
+        text_objects: &[],
+        outline: QuerySource::EMPTY,
+        indentation: QuerySource::EMPTY,
+        folds: QuerySource::EMPTY,
+    },
+    LanguageDefinition {
+        name: "ruby",
+        extensions: &["rb", "rake", "gemspec", "ru"],
+        filenames: &[
+            "Gemfile",
+            "Rakefile",
+            "Guardfile",
+            "Vagrantfile",
+            "Brewfile",
+            "Podfile",
+            "Fastfile",
+            "Appfile",
+            ".irbrc",
+            ".pryrc",
+        ],
+        filename_prefixes: &[],
+        shebangs: &["ruby", "jruby"],
+        line_comment: Some("#"),
+        grammar: tree_sitter_ruby::LANGUAGE,
+        queries: LanguageQueries {
+            highlights: QuerySource::new(&[upstream(
+                tree_sitter_ruby::HIGHLIGHTS_QUERY,
+                "tree-sitter-ruby 0.23.1 highlights",
+            )]),
+            injections: QuerySource::EMPTY,
+            locals: QuerySource::new(&[upstream(
+                include_str!("queries/ruby/locals.scm"),
+                "tree-sitter-ruby 0.23.1 locals, adapted to typed definitions",
+            )]),
+        },
+        text_objects: &[],
+        outline: QuerySource::EMPTY,
+        indentation: QuerySource::EMPTY,
+        folds: QuerySource::EMPTY,
+    },
+    LanguageDefinition {
+        name: "php",
+        extensions: &[
+            "php", "phtml", "php3", "php4", "php5", "php7", "php8", "phps",
+        ],
+        filenames: &[],
+        filename_prefixes: &[],
+        shebangs: &["php"],
+        line_comment: Some("//"),
+        grammar: tree_sitter_php::LANGUAGE_PHP,
+        queries: LanguageQueries {
+            highlights: QuerySource::new(&[upstream(
+                tree_sitter_php::HIGHLIGHTS_QUERY,
+                "tree-sitter-php 0.24.2 highlights",
+            )]),
+            injections: QuerySource::new(&[upstream(
+                include_str!("queries/php/injections.scm"),
+                "tree-sitter-php 0.24.2 HTML and heredoc injections, adapted for bundled grammars",
+            )]),
+            locals: QuerySource::EMPTY,
+        },
+        text_objects: &[],
+        outline: QuerySource::EMPTY,
+        indentation: QuerySource::EMPTY,
+        folds: QuerySource::EMPTY,
+    },
 ];
 
 /// Parser configurations reachable only through an injection marker.
@@ -1372,6 +1478,21 @@ mod tests {
                 ("yaml", &["yaml", "yml"][..]),
                 ("markdown", &["md", "markdown"][..]),
                 ("dockerfile", &["dockerfile", "containerfile"][..]),
+                (
+                    "xml",
+                    &[
+                        "xml", "svg", "xsd", "xsl", "xslt", "wsdl", "xaml", "csproj", "fsproj",
+                        "vbproj", "props", "targets", "resx", "plist"
+                    ][..]
+                ),
+                ("hcl", &["hcl", "tf", "tfvars"][..]),
+                ("ruby", &["rb", "rake", "gemspec", "ru"][..]),
+                (
+                    "php",
+                    &[
+                        "php", "phtml", "php3", "php4", "php5", "php7", "php8", "phps"
+                    ][..]
+                ),
             ]
         );
 

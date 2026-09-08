@@ -56,6 +56,11 @@ archive includes both `LICENSE` (WharfLab) and `LICENSE-MIT-CamdenCheek`.
 The archive reports its VCS revision with `dirty: true`, so the Cargo checksum
 is the identity of the audited source; the revision alone is not an exact
 source reproduction.
+The XML/HCL/Ruby/PHP batch exact-pins `tree-sitter-xml =0.7.0`,
+`tree-sitter-hcl =1.1.0`, `tree-sitter-ruby =0.23.1`, and
+`tree-sitter-php =0.24.2`. All expose `tree-sitter-language` grammar handles;
+HCL requires a local highlight query, Ruby requires typed local-definition
+captures, and PHP requires a local HTML/heredoc injection query.
 Future grammar upgrades must repeat the query, checksum, revision, archive, and
 license review below rather than arriving through a compatible-version update.
 
@@ -100,25 +105,29 @@ the package's directory in its upstream repository.
 | `tree-sitter-toml-ng 0.7.0` | MIT | `tree-sitter-grammars/tree-sitter-toml` at `64b56832c2cffe41758f28e05c756a3a98d16f41` | `e9adc2c898ae49730e857d75be403da3f92bb81d8e37a2f918a08dd10de5ebb1` | Grammar plus `queries/highlights.scm` |
 | `tree-sitter-yaml 0.7.2` | MIT | `tree-sitter-grammars/tree-sitter-yaml` at `7708026449bed86239b1cd5bce6e3c34dbca6415` | `53c223db85f05e34794f065454843b0668ebc15d240ada63e2b5939f43ce7c97` | Grammar plus `queries/highlights.scm` |
 | `tree-sitter-md 0.5.3` | MIT | `tree-sitter-grammars/tree-sitter-markdown` at `f969cd3ae3f9fbd4e43205431d0ae286014c05b5` | `2efd398be546456c814598ee56c0f51769a77241511b4a58077815d120afa882` | Block grammar plus `tree-sitter-markdown/queries/highlights.scm` and `queries/injections.scm` |
+| `tree-sitter-xml 0.7.0` | MIT | `tree-sitter-grammars/tree-sitter-xml` at `4b64dd3a03ec002258d6268d712fd93716d6ab57` | `e670041f591d994f54d597ddcd8f4ebc930e282c4c76a42268743b71f0c8b6b3` | XML grammar and upstream XML highlights; the DTD-only parser is not registered |
+| `tree-sitter-hcl 1.1.0` | Apache-2.0 | `tree-sitter-grammars/tree-sitter-hcl` at `009def4ae38ec30e5b40beeae26efe93484ab286` | `5a7b2cc3d7121553b84309fab9d11b3ff3d420403eef9ae50f9fd1cd9d9cf012` | Grammar with Runyte-authored highlights; the crate ships no query files |
+| `tree-sitter-ruby 0.23.1` | MIT | `tree-sitter/tree-sitter-ruby` at `71bd32fb7607035768799732addba884a37a6210` | `be0484ea4ef6bb9c575b4fdabde7e31340a8d2dbc7d52b321ac83da703249f95` | Grammar and upstream highlights; local copy of the upstream locals query changes definitions to `@local.definition.variable` for tree-house, isolates method and class/module locals, adds loop/exception/pattern definitions, and keeps explicit method calls out of local-reference highlighting |
+| `tree-sitter-php 0.24.2` | MIT | `tree-sitter/tree-sitter-php` at `5b5627faaa290d89eb3d01b9bf47c3bb9e797dea` | `0d8c17c3ab69052c5eeaa7ff5cd972dd1bc25d1b97ee779fec391ad3b5df5592` | Mixed PHP/HTML grammar and upstream highlights; local injections combine HTML regions, resolve opening heredoc/nowdoc labels, and preserve body children, omitting the unbundled phpdoc injection; PHP-only parser is not registered |
 
 Most upstream highlight, injection, and locals query strings named above are
 compiled into their grammar crates and used through crate constants. The
-exceptions are the reduced Dockerfile injection query, the packaged Protobuf
-highlight query, and the Zig and CMake highlight queries adapted to Runyte's
-supported predicate set. Selected
-upstream indentation and fold queries are also carried locally, either adopted
+exceptions include the reduced Dockerfile and PHP injection queries, the
+adapted Ruby locals query, the packaged Protobuf highlight query, and the Zig
+and CMake highlight queries adapted to Runyte's supported predicate set.
+Selected upstream indentation and fold queries are also carried locally, either adopted
 unchanged or reduced to Runyte's bounded `@indent.begin` and
 `@indent.always` dialect. Every copied or adapted file names its exact source
-release and retains the applicable SPDX identifier. Other structural,
-indentation, fold, and outline files under `src/syntax/queries/` are
+release and retains the applicable SPDX identifier. HCL highlights and the
+remaining structural, indentation, fold, and outline files under `src/syntax/queries/` are
 Runyte-authored MPL-2.0 material and name their target grammar and version
 inline. The owned query compiler rejects unsupported captures and predicates
 rather than silently accepting semantics Runyte does not implement. C++
 composes the C indentation/fold base, while TypeScript and TSX compose the
 JavaScript base (and TSX also composes TypeScript additions). Markdown
 intentionally has no root indentation query; 26 languages have conservative
-fold queries. Dockerfile currently supplies highlighting and shell injections
-without dedicated structural queries.
+fold queries. Dockerfile, XML, HCL, Ruby, and PHP currently supply highlighting
+without dedicated structural queries; Dockerfile and PHP also supply injections.
 
 The Kotlin highlight query has separate Apache-2.0 provenance: its packaged
 header says it is based on nvim-treesitter's query at revision
@@ -126,21 +135,24 @@ header says it is based on nvim-treesitter's query at revision
 revision shows broader grammar-specific adaptations than the packaged header's
 stated removal of `#lua-match?`: comment, string/interpolation, regex, null,
 operator, keyword-node, and related patterns also differ. The full Apache-2.0
-terms preserved in `licenses/Apache-2.0.txt` also cover `tree-sitter-ini` and
-the adopted INI fold query.
+terms preserved in `licenses/Apache-2.0.txt` also cover `tree-sitter-ini`, the
+adopted INI fold query, and `tree-sitter-hcl`.
 
 The audited crate archives declare every grammar MIT except
-`tree-sitter-ini`, which declares Apache-2.0. Eleven archives
+`tree-sitter-ini` and `tree-sitter-hcl`, which declare Apache-2.0. Thirteen archives
 (`tree-sitter-cpp`, `tree-sitter-json`, `tree-sitter-md`, and
 `tree-sitter-toml-ng`, plus `tree-sitter-typescript`, `tree-sitter-html`, and
 `tree-sitter-java`, plus `tree-sitter-sequel`, `tree-sitter-lua`,
-`tree-sitter-zig`, and `tree-sitter-make`) do not include a top-level license
-file even though their Cargo metadata declares MIT. Their repository and
+`tree-sitter-zig`, `tree-sitter-make`, `tree-sitter-xml`, and `tree-sitter-ruby`)
+do not include a top-level license file even though their Cargo metadata declares MIT. Their repository and
 packaged revision are therefore retained above and must be checked deliberately
 when they are upgraded or assembled into a release license bundle. The exact
 HTML revision's repository license is MIT, copyright (c) 2014 Max Brunsfeld.
 The exact Java revision's repository license is MIT, copyright (c) 2017 Ayman
-Nadeem.
+Nadeem. XML and Ruby repository license texts at their exact revisions are
+retained in `licenses/Tree-Sitter-XML-MIT.txt` and
+`licenses/Tree-Sitter-Ruby-MIT.txt`; PHP's packaged license is retained in
+`licenses/Tree-Sitter-PHP-MIT.txt`.
 `tree-sitter-javascript 0.25.0` and
 `tree-sitter-css 0.25.0` do ship their MIT license files. The exact Go and Bash
 archives also ship MIT license files, carrying copyright (c) 2014 and 2017 Max

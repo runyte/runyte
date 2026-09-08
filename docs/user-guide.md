@@ -9,7 +9,8 @@ For the project overview and quick start, see the [main README](../README.md).
 - Normal, Insert, Replace, Select, and Command modes
 - Tree-sitter syntax highlighting for Python, Rust, Swift, C, C++, JavaScript,
   TypeScript, TSX, HTML, CSS, Go, Bash, Java, Kotlin, SQL, Lua, C#, Zig, CMake,
-  Protobuf, Make, INI, Markdown, TOML, YAML, JSON, and Dockerfile
+  Protobuf, Make, INI, Markdown, TOML, YAML, JSON, Dockerfile, XML,
+  HCL/Terraform, Ruby, and PHP
 - Language servers: diagnostics, completion, hover, signature help, goto,
   references, rename, code actions, formatting, and symbol pickers
 - Word completion from every open buffer, including the explorer, with no
@@ -82,6 +83,36 @@ are highlighted; shell commands and `RUN` heredoc bodies use Bash highlighting
 within the injection size limit below. Shell highlighting assumes Bash syntax,
 including when a file selects another interpreter with `SHELL`. Dockerfile has
 no dedicated text-object, outline, indentation, or fold queries.
+
+XML, HCL/Terraform, Ruby, and PHP are also bundled:
+
+| Language name | Detected files include |
+| --- | --- |
+| `xml` | `.xml`, `.svg`, `.xsd`, `.xsl`, `.xslt`, `.wsdl`, `.xaml`, `.csproj`, `.fsproj`, `.vbproj`, `.props`, `.targets`, `.resx`, and `.plist` |
+| `hcl` | `.hcl`, `.tf`, and `.tfvars`, including `terragrunt.hcl` and `production.auto.tfvars` |
+| `ruby` | `.rb`, `.rake`, `.gemspec`, `.ru`, `Gemfile`, `Rakefile`, `Guardfile`, `Vagrantfile`, `Brewfile`, `Podfile`, `Fastfile`, `Appfile`, `.irbrc`, and `.pryrc` |
+| `php` | `.php`, `.phtml`, `.php3`, `.php4`, `.php5`, `.php7`, `.php8`, and `.phps` |
+
+Ruby also recognizes `ruby` and `jruby` shebangs; PHP recognizes `php`.
+Terraform's `.tf.json` files retain JSON highlighting. XML uses its own parser
+rather than the HTML parser, including XML declarations, entities, and CDATA.
+HCL highlights blocks, expressions, interpolation, template directives, and
+heredocs. Ruby distinguishes local bindings from method calls, including loop,
+exception, and pattern bindings. Class/module bodies and methods isolate their
+locals. Singleton method receiver expressions are a highlighting limitation:
+in `object = Object.new; def object.greet; end`, the receiver `object` can use
+function colouring because the local-scope query covers the whole method.
+
+PHP highlights code inside `<?php` or `<?=` tags and injects HTML into the
+surrounding template text, including JavaScript and CSS inside script/style
+elements. Heredoc and nowdoc labels matching a bundled language, such as `SQL`
+or `JSON`, enable highlighting for that language; unknown labels keep string
+highlighting. Inside an injected heredoc, the embedded language controls the
+body's colours, so PHP interpolations such as `$id` may use string colouring.
+PHPDoc comments keep ordinary comment highlighting. PHP snippets
+in Markdown fences also need an opening PHP tag; HCL fences can use `hcl` or
+`tf`. These four languages have no dedicated text-object, outline, indentation,
+or fold queries.
 
 Kotlin support recognizes `.kt` and `.kts`, including Kotlin 2 multi-dollar
 strings and guarded `when` branches. The pinned grammar does not yet model

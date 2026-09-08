@@ -3703,6 +3703,10 @@ mod tests {
             ("c-sharp", Some("//")),
             ("cmake", Some("#")),
             ("dockerfile", Some("#")),
+            ("xml", None),
+            ("hcl", Some("#")),
+            ("ruby", Some("#")),
+            ("php", Some("//")),
             ("go", Some("//")),
             ("html", None),
             ("ini", Some(";")),
@@ -4342,8 +4346,8 @@ mod tests {
             "public languages need canonical/plain configurations and Markdown needs one internal inline configuration"
         );
         assert_eq!(
-            plain_count, 5,
-            "Rust, HTML, Markdown, Lua, and Dockerfile have resolvable injection variants"
+            plain_count, 6,
+            "Rust, HTML, Markdown, Lua, Dockerfile, and PHP have resolvable injection variants"
         );
 
         for definition in grammars::BUILTIN_LANGUAGES

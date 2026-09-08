@@ -3047,6 +3047,10 @@ fn every_bundled_grammar_loads_without_error() {
         "yaml",
         "markdown",
         "dockerfile",
+        "xml",
+        "hcl",
+        "ruby",
+        "php",
     ] {
         let id = registry
             .language_for_name(language)
