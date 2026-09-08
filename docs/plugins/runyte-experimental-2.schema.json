@@ -1733,7 +1733,8 @@
             "resource.released",
             "event.changed",
             "event.closed",
-            "event.resync_required"
+            "event.resync_required",
+            "ui.validation_cancelled"
           ]
         },
         "data": {
@@ -1781,6 +1782,9 @@
             },
             {
               "$ref": "#/$defs/observationResync"
+            },
+            {
+              "$ref": "#/$defs/validationCancelled"
             }
           ]
         }
@@ -1824,6 +1828,22 @@
             "properties": {
               "data": {
                 "$ref": "#/$defs/observationResync"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "event": {
+                "const": "ui.validation_cancelled"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "data": {
+                "$ref": "#/$defs/validationCancelled"
               }
             }
           }
@@ -1978,6 +1998,9 @@
         },
         {
           "$ref": "#/$defs/event.resync"
+        },
+        {
+          "$ref": "#/$defs/validationResponse"
         }
       ]
     },
@@ -2024,6 +2047,9 @@
         },
         {
           "$ref": "#/$defs/resource.write.abort"
+        },
+        {
+          "$ref": "#/$defs/validationRequest"
         }
       ]
     },
@@ -2574,6 +2600,18 @@
           "type": "integer",
           "minimum": 0,
           "maximum": 4096
+        },
+        "validate": {
+          "type": "boolean",
+          "default": false
+        },
+        "validation_message": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 160
         }
       },
       "required": [
@@ -4679,6 +4717,176 @@
         "id",
         "method",
         "params"
+      ],
+      "additionalProperties": false
+    },
+    "validationRequest": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "request"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "method": {
+          "const": "ui.validate"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "surface": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            },
+            "revision": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            },
+            "fields": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_-]*$",
+                "maxLength": 48
+              },
+              "minItems": 1,
+              "maxItems": 16,
+              "uniqueItems": true
+            },
+            "values": {
+              "type": "object",
+              "maxProperties": 16,
+              "additionalProperties": {
+                "type": [
+                  "string",
+                  "boolean"
+                ],
+                "maxLength": 4096
+              }
+            }
+          },
+          "required": [
+            "surface",
+            "revision",
+            "fields",
+            "values"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "method",
+        "params"
+      ],
+      "additionalProperties": true
+    },
+    "fieldValidation": {
+      "type": "object",
+      "properties": {
+        "field": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_-]*$",
+          "maxLength": 48
+        },
+        "status": {
+          "enum": [
+            "valid",
+            "invalid",
+            "unavailable"
+          ]
+        }
+      },
+      "required": [
+        "field",
+        "status"
+      ],
+      "additionalProperties": false
+    },
+    "validationResult": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "validation"
+        },
+        "surface": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "revision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "fields": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fieldValidation"
+          },
+          "minItems": 1,
+          "maxItems": 16
+        }
+      },
+      "required": [
+        "kind",
+        "surface",
+        "revision",
+        "fields"
+      ],
+      "additionalProperties": false
+    },
+    "validationResponse": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "response"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "result": {
+          "$ref": "#/$defs/validationResult"
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "result"
+      ],
+      "additionalProperties": false
+    },
+    "validationCancelled": {
+      "type": "object",
+      "properties": {
+        "request": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "surface": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "revision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        }
+      },
+      "required": [
+        "request",
+        "surface",
+        "revision"
       ],
       "additionalProperties": false
     }

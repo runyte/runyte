@@ -103,6 +103,7 @@ impl WorkspaceHost {
             )
         });
         self.app.plugins.input = Some(Surface {
+            validation: Default::default(),
             picker,
             confirmation,
             owner,
@@ -120,6 +121,7 @@ impl WorkspaceHost {
     }
     pub(super) fn sync_plugin_inputs(&mut self) {
         self.app.sync_plugin_input();
+        self.sync_plugin_validation();
         for (owner, context, params) in std::mem::take(&mut self.app.plugins.input_finished) {
             let Some(state) = self
                 .app
@@ -141,6 +143,9 @@ impl WorkspaceHost {
             self.app.plugins.next_invocation += 1;
             let id = format!("h:{}", self.app.plugins.next_invocation);
             state.requests.insert(id.clone(), context);
+            if params.sensitive {
+                state.sensitive_input_requests.insert(id.clone());
+            }
             if self
                 .application_send(
                     owner,

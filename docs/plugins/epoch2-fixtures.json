@@ -661,7 +661,7 @@
         "surface": "u:g:1",
         "accepted": true,
         "values": {
-          "name": "\u00e9"
+          "name": "é"
         }
       }
     }
@@ -674,7 +674,7 @@
       "method": "buffer.create",
       "params": {
         "path": "notes.txt",
-        "text": "\u00e9\u732b\n",
+        "text": "é猫\n",
         "invocation": null
       }
     }
@@ -795,7 +795,7 @@
         "value": {
           "version": "v1",
           "offset": 0,
-          "text": "\u00e9\u732b",
+          "text": "é猫",
           "eof": true
         }
       }
@@ -970,7 +970,7 @@
         "job": "j:g:1",
         "upload": "upload-1",
         "offset": 0,
-        "text": "\u00e9\u732b"
+        "text": "é猫"
       }
     }
   },
@@ -1277,6 +1277,80 @@
       "event": "event.resync_required",
       "data": {
         "subscription": "o:g:1"
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:800",
+      "method": "ui.form",
+      "params": {
+        "invocation": "h:20",
+        "title": "Validate connection",
+        "fields": [
+          {
+            "id": "name",
+            "label": "Name",
+            "kind": "text",
+            "validate": true,
+            "validation_message": "Name is unavailable",
+            "required": false,
+            "choices": [],
+            "minimum_length": 0,
+            "maximum_length": 4096
+          }
+        ]
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "request",
+      "id": "h:21",
+      "method": "ui.validate",
+      "params": {
+        "surface": "u:g:1",
+        "revision": "i:1",
+        "fields": [
+          "name"
+        ],
+        "values": {
+          "name": "example"
+        }
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "response",
+      "id": "h:21",
+      "result": {
+        "kind": "validation",
+        "surface": "u:g:1",
+        "revision": "i:1",
+        "fields": [
+          {
+            "field": "name",
+            "status": "valid"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "event",
+      "sequence": "e:5",
+      "event": "ui.validation_cancelled",
+      "data": {
+        "request": "h:21",
+        "surface": "u:g:1",
+        "revision": "i:1"
       }
     }
   }

@@ -184,6 +184,7 @@ mod plugin_provider_inspection;
 mod plugin_provider_overwrite;
 mod plugin_provider_save_preview;
 mod plugin_provider_saves;
+mod plugin_validation;
 mod presentation_and_settings;
 mod provider_documents;
 mod search_and_pickers;

@@ -206,13 +206,18 @@ impl WorkspaceHost {
                 id: request_id,
                 outcome,
             } => {
-                if self.provider_response(id, &request_id, &outcome)?
+                if self.validation_response(id, &request_id, &outcome)?
+                    || self.provider_response(id, &request_id, &outcome)?
                     || self.provider_write_response(id, &request_id, &outcome)?
                 {
                     return Ok(());
                 }
                 ensure!(
-                    !matches!(outcome, api::CommandResponse::Resource { .. }),
+                    !matches!(
+                        outcome,
+                        api::CommandResponse::Resource { .. }
+                            | api::CommandResponse::Validation { .. }
+                    ),
                     "resource response does not match a provider request"
                 );
                 let instance = self.app.plugins.instances.get_mut(&id).unwrap();
@@ -220,6 +225,10 @@ impl WorkspaceHost {
                 let Some(action) = instance.application.requests.remove(&request_id) else {
                     anyhow::bail!("unknown or completed application request");
                 };
+                let sensitive_input = instance
+                    .application
+                    .sensitive_input_requests
+                    .remove(&request_id);
                 if let api::CommandResponse::Success { result } = &outcome
                     && let Some(job) = &result.job
                 {
@@ -252,15 +261,20 @@ impl WorkspaceHost {
                     },
                 )?;
                 if let api::CommandResponse::Failure { error } = outcome {
+                    let message = if sensitive_input {
+                        "Application input failed"
+                    } else {
+                        &error.message
+                    };
                     ensure!(
-                        safe_label(&error.message, 1024),
+                        safe_label(message, 1024),
                         "invalid application error message"
                     );
                     self.app.plugin_completion_feedback(
                         action.action,
                         "command",
                         "failed",
-                        &error.message,
+                        message,
                     );
                 }
             }
@@ -515,6 +529,9 @@ impl WorkspaceHost {
             return Ok(());
         }
         instance.application.deadlines.remove(&token);
+        if self.validation_deadline(id, &token)? {
+            return Ok(());
+        }
         if self.provider_write_deadline(id, &token)? {
             return Ok(());
         }

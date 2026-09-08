@@ -109,9 +109,18 @@ pub enum ClientMessage {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum CommandResponse {
-    Resource { result: super::provider::Response },
-    Success { result: CommandResult },
-    Failure { error: Error },
+    Validation {
+        result: super::interaction::ValidationResult,
+    },
+    Resource {
+        result: super::provider::Response,
+    },
+    Success {
+        result: CommandResult,
+    },
+    Failure {
+        error: Error,
+    },
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -381,6 +390,12 @@ impl Default for Limits {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum HostMessage {
     #[serde(rename = "request")]
+    ValidationRequest {
+        id: String,
+        method: &'static str,
+        params: super::interaction::ValidationRequest,
+    },
+    #[serde(rename = "request")]
     ResourceRequest {
         id: String,
         #[serde(flatten)]
@@ -421,6 +436,7 @@ pub enum HostMessage {
 #[derive(Clone, Debug, Serialize)]
 #[serde(untagged)]
 pub enum EventData {
+    ValidationCancelled(super::interaction::ValidationCancelled),
     Observation(super::observation::Change),
     ObservationResync(super::observation::ResyncRequired),
     ResourceReleased { job: String },
@@ -536,6 +552,9 @@ pub(crate) struct CapturedContext {
 
 /// Bounded host ownership, independent of a frontend and the ten-second control timer.
 pub(crate) struct Instance {
+    pub sensitive_input_requests: BTreeSet<String>,
+    pub validation: Option<super::interaction::PendingValidation>,
+    pub retired_validations: BTreeSet<String>,
     pub observations: super::observation::Registry,
     pub provider_requests: usize,
     pub providers: BTreeMap<String, super::provider::Registration>,
@@ -574,6 +593,9 @@ impl Default for Instance {
             .unwrap_or_default()
             .as_nanos();
         Self {
+            sensitive_input_requests: Default::default(),
+            validation: None,
+            retired_validations: Default::default(),
             observations: Default::default(),
             provider_requests: 0,
             providers: Default::default(),
@@ -884,6 +906,7 @@ mod tests {
                 id: "h:2".into(),
                 method: "ui.submit",
                 params: super::super::interaction::Submission {
+                    sensitive: false,
                     surface: "u:g:1".into(),
                     accepted: true,
                     values: [(
@@ -1078,6 +1101,31 @@ mod tests {
                 data: EventData::ObservationResync(super::super::observation::ResyncRequired {
                     subscription: "o:g:1".into(),
                 }),
+            },
+            HostMessage::ValidationRequest {
+                id: "h:21".into(),
+                method: "ui.validate",
+                params: super::super::interaction::ValidationRequest {
+                    surface: "u:g:1".into(),
+                    revision: "i:1".into(),
+                    fields: vec!["name".into()],
+                    values: [(
+                        "name".into(),
+                        super::super::interaction::Value::Text("example".into()),
+                    )]
+                    .into(),
+                },
+            },
+            HostMessage::Event {
+                sequence: "e:5".into(),
+                event: "ui.validation_cancelled",
+                data: EventData::ValidationCancelled(
+                    super::super::interaction::ValidationCancelled {
+                        request: "h:21".into(),
+                        surface: "u:g:1".into(),
+                        revision: "i:1".into(),
+                    },
+                ),
             },
         ];
         let expected = fixtures

@@ -4,7 +4,7 @@ use crate::{
     input::{InputEvent, KeyStroke},
     plugin::interaction::{Field, Kind, Value},
 };
-fn begin(
+pub(super) fn begin(
     host: &mut WorkspaceHost,
     output: &mut mpsc::Receiver<HostMessage>,
     serial: u64,
@@ -52,7 +52,7 @@ fn begin(
     ));
     surface
 }
-fn key(host: &mut WorkspaceHost, key: &str) {
+pub(super) fn key(host: &mut WorkspaceHost, key: &str) {
     host.app.handle_key(KeyStroke::parse(key).unwrap()).unwrap();
 }
 #[test]

@@ -163,6 +163,9 @@ impl WorkspaceHost {
         if let Err(error) = result {
             self.stop_plugin(event.plugin, &error.to_string());
         }
+        // Asynchronous validation can complete input or release a queued retry.
+        // Progress both before returning to an otherwise idle frontend.
+        self.sync_plugin_inputs();
         self.sync_plugin_views();
         self.sync_application_observers();
         before != presentation(self)

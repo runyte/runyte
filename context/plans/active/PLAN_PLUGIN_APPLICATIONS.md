@@ -568,6 +568,52 @@ Revision-tagged field validation, richer view/query/action observations, helpers
 and their exit sources, leases, settings/state, manager/media examples, broader
 conformance and complete native platform/performance gates remain active.
 
+## Asynchronous form validation round — 2026-09-08
+
+Implemented after `97a45c0`: opt-in `validate` fields and static validation
+messages, explicit-submit `ui.validate` callbacks with whole-form revisions,
+status-only replies, cooperative cancellation and bounded timeout retirement.
+Physical unmodified Enter performs declarative checks before starting validation;
+typing and field navigation perform no RPC. Successful checks submit only while
+the originating Enter intent, foreground and form revision remain current.
+Any later input cancels that submit intent; editing away and back still advances
+the revision. Current-value feedback never steals focus after field navigation.
+
+Validation includes all nonsecret form values for cross-field checks, plus secret
+values only when those fields explicitly opt in. Those values go solely to the
+owning plugin after physical submit intent, and never into observations,
+snapshots, history, runtime persistence or feedback. Validator errors and accepted
+secret-bearing submit errors use fixed host messages. Pending host records retain
+only identities and requested field names.
+
+One validation callback per owner shares the existing sixteen request slots,
+with one latest explicit Enter intent queued in the surface. The ten-second
+callback deadline emits `ui.validation_cancelled`, releases the active slot and
+retains at most sixteen known late IDs. Late results cannot reopen a dismissed
+surface; saturation refuses further validation until late replies retire IDs.
+No timer runs merely because a form is visible. Response processing advances
+submit/retry work in the same host turn, without requiring another keystroke.
+
+The Python client has a separate bounded validation worker, preserves reserved
+cancellation delivery, builds exact typed responses and suppresses exception
+text. `validation.py` demonstrates invalid feedback, masked secret opt-in and
+asynchronous acceptance without accounts or network dependencies. Comprehensive
+review corrected strict tagged-result decoding, secret-submit diagnostics,
+missing timeout cancellation, delayed callback dispatch, stale redraws and
+feedback that could move field focus. Focused validation passed 32 Rust tests;
+the Python validation checks passed six cases including the public-wire example.
+Ordinary and canonical Rust suites each passed 3,312 tests with 33 ignored;
+formatting and warnings-as-errors Clippy passed. Linux canonical line coverage is
+112,364 / 122,601 (**91.65%**), above the unchanged 89% floor. The native editor
+PTY smoke passed invalid feedback, masked fields, stale success retention,
+current-success automatic submission and cancellation with late completion.
+Two settled seconds emitted zero terminal bytes. Native macOS and the complete
+application performance matrix remain pending.
+
+Richer view models, row patches/staging and remaining view observations, managed
+helpers/leases/handoffs, settings/state and manager/media examples, broader
+conformance, and complete native platform/performance gates remain active.
+
 ## Investigation: existing foundation and missing boundaries
 
 The current [guide](../../../docs/plugins.md) and

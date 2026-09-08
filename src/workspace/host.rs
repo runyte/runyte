@@ -247,6 +247,7 @@ mod plugin_observations;
 mod plugin_provider_writes;
 mod plugin_providers;
 mod plugin_staging;
+mod plugin_validation;
 /// The only owner allowed to mutate one live editor/application workspace.
 ///
 /// Standalone mode uses this value directly. Persistent mode will keep the

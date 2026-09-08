@@ -5,7 +5,8 @@ Epoch 2 (`runyte-experimental-2`) is being implemented in the
 The current implementation supports typed commands, finite background jobs,
 retained native views, explicit buffer reads/edits, immutable snapshots and
 pane selections, local metadata/browsing, document lifecycle operations, native
-input, confirmed bounded recursive filesystem mutations, private binary download
+input with asynchronous field validation, confirmed bounded recursive filesystem
+mutations, private binary download
 staging and provider-backed
 UTF-8 document opening, conditional remote saves, native confirmation of weaker
 overwrites, explicit rebind and remote conflict inspection. Runnable SFTP and
@@ -226,8 +227,8 @@ budgets are reserved for bounded queues, decoding and publication copies.
 These measure payload, not allocator RSS or the external process's memory.
 Buffer/pane issuance is bounded at 1,024/128 handles per connection generation.
 
-Still required by the active plan: revision-tagged field validation; source subscriptions
-and resynchronization; binary uploads; row patches and staged view publication;
+Still required by the active plan: richer view/query/action observations;
+binary uploads; row patches and staged view publication;
 managed helpers, activity leases, state, settings and a plugin manager; media
 examples; broader SDK/conformance coverage and the complete performance/platform
 acceptance matrix.
@@ -375,13 +376,62 @@ Up/Down selects and Enter accepts. `ui.confirm` uses the native confirmation voc
 `confirmed: true`, while Escape/Ctrl-c cancels with no values.
 The local file manager uses `ui.prompt` followed by native filesystem confirmation.
 
-Secret values appear only in the accepted owner callback. All editor snapshots
+Secret values appear in the accepted owner callback and, for fields explicitly
+opting into asynchronous validation, in an owner-only check after physical Enter.
+All editor snapshots
 and bundled frontend frames contain masking glyphs; macro recording, command
 history, editor text and diagnostic input tracing never retain the typed value.
 Input state is ephemeral and is not persisted. Plugins must keep secret values
-out of their own logs and state. Remote field validation is not implemented yet;
-plugins can validate returned values and request a fresh form from an accepted
-callback, subject to the same foreground checks.
+out of their own logs and state. Validation errors and secret-bearing submit
+callback errors use generic host feedback instead of plugin-provided error text.
+
+### Asynchronous field validation
+
+A field may declare `validate: true` and an optional static `validation_message`
+(up to 160 plain UTF-8 bytes). After physical, unmodified Enter passes all local
+field checks, the host sends `ui.validate {surface, revision, fields, values}`.
+`fields` contains exactly the opted-in IDs. `values` contains every nonsecret
+field for cross-field checks, plus only those secret fields with `validate: true`.
+Typing, moving between fields, copying snapshots and cancellation send no values.
+A validation request provides no foreground authority.
+
+Reply with `{kind:"validation", surface, revision, fields:[{field,status}]}`,
+using each requested field exactly once and statuses `valid`, `invalid` or
+`unavailable`. The surface and revision must match the request. A successful
+result submits automatically only while the original Enter intent, complete form
+revision and foreground context remain unchanged. Any subsequent input cancels
+that submit intent. Every value edit advances the revision, even editing away
+and back to identical text. Stale replies cannot submit or replace current-value
+feedback. Current-revision feedback never steals field focus after navigation.
+
+One validation runs at a time per application, with one latest explicit Enter
+intent waiting behind it. Validation shares the sixteen control-request slots;
+a queued intent is admitted when capacity returns. The editor remains editable.
+Cancellation or value changes emit reliable `ui.validation_cancelled` with the
+request, surface and revision; cooperative validators should abandon work and
+still settle their callback. No value appears in that event. A ten-second timeout
+marks validation unavailable and leaves the form open for retry. Up to sixteen
+known late request IDs are retained without values; reaching that limit refuses
+further validation until a reply retires an ID or the owner restarts. Waiting for
+human input has no deadline and no polling timer.
+
+Invalid fields use their predeclared message or generic text. Unavailable checks
+and callback failures use fixed retry feedback; remote exception strings never
+enter the form or diagnostic snapshots. A malformed result is a protocol error.
+Cancellation, detach, input takeover, source closure and owner stop prevent late
+results from reopening or submitting a surface.
+
+The Python SDK dispatches `app.on_validate(context)` on its own bounded worker.
+Return a mapping from requested field ID to status; the SDK constructs the typed
+response and preserves correlation. It keeps validation cancellation on the
+reserved control worker, so a validator waiting on IO cannot block cancellation.
+Use bounded IO and keep secrets out of plugin logs.
+
+For an account-free demonstration, configure `validation.py` with the
+`interaction` capability and run `:plugin.validation.open`. Enter any name except
+`taken` and the example code `demo-code`, then press Enter. The example simulates
+a 200 ms service check; editing during that check keeps the form open. It has no
+accounts, network dependencies or background polling.
 
 ### Explicit document lifecycle
 
@@ -1072,8 +1122,7 @@ app.unsubscribe(baseline['subscription'])
 Callbacks run on one bounded observation worker, separately from command,
 provider and cancellation handlers. The client refuses a full 32-callback queue
 instead of silently losing observations. Callbacks already queued before an
-unsubscribe acknowledgement may still finish locally. Asynchronous field
-validation, view query/viewport/action observations and helper-exit sources are
+unsubscribe acknowledgement may still finish locally. View query/viewport/action observations and helper-exit sources are
 still pending alongside their corresponding later application features.
 
 Authors using generic `app.request('event.subscribe', sources=...)` receive updates

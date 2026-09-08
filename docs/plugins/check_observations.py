@@ -23,7 +23,7 @@ class ObservationTests(unittest.TestCase):
         for thread in self.threads:
             thread.join(2)
         for executor in (self.app._executor, self.app._resource_executor,
-                         self.app._control, self.app._observations):
+                         self.app._control, self.app._observations, self.app._validation_executor):
             executor.shutdown(wait=True, cancel_futures=True)
 
     def call(self, function):

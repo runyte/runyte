@@ -496,6 +496,7 @@ impl App {
     /// Literal text stays one event and one edit transaction. Macro recording
     /// stores the same raw event ordering that arrived at this boundary.
     pub fn handle_input(&mut self, input: InputEvent) -> Result<()> {
+        self.cancel_plugin_validation_intent();
         let overwrite_owned_input = self.plugins.provider_overwrite.is_some();
         self.sync_provider_overwrite();
         self.sync_plugin_input();
@@ -525,7 +526,8 @@ impl App {
     }
 
     pub(super) fn handle_replayed_input(&mut self, input: InputEvent) -> Result<()> {
-        if self.plugins.provider_overwrite.is_some() {
+        if self.plugins.provider_overwrite.is_some() || self.plugins.input.is_some() {
+            self.cancel_plugin_validation_intent();
             return Ok(());
         }
         self.handle_input_inner(input, true)
@@ -612,6 +614,7 @@ impl App {
         view: &PreparedView,
         repetitions: u16,
     ) -> Result<PointerOutcome> {
+        self.cancel_plugin_validation_intent();
         let overwrite_owned_input = self.plugins.provider_overwrite.is_some();
         self.sync_provider_overwrite();
         if overwrite_owned_input {

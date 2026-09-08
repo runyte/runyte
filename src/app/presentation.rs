@@ -2045,7 +2045,8 @@ impl App {
                 Some(surface.selected),
                 surface
                     .error
-                    .then(|| "Complete the selected field within its declared limits".into()),
+                    .then(|| "Complete the selected field within its declared limits".into())
+                    .or_else(|| surface.validation_feedback()),
             );
             snapshot.layout = OverlayLayout::Standard;
             snapshot.query_cursor = Some(surface.cursor);

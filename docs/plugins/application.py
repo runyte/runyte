@@ -21,6 +21,7 @@ class Application:
         self.on_event = lambda event, data: None
         self.on_observation = lambda event, sequence, data: self.on_event(event, data)
         self.on_input = lambda context: None
+        self.on_validate = lambda context: {field: 'unavailable' for field in context['fields']}
         self._lock = threading.RLock()
         self._pending = {}
         self._accept = {}
@@ -32,6 +33,8 @@ class Application:
         self._dispatch = threading.BoundedSemaphore(16)
         self._resource_slots = threading.BoundedSemaphore(4)
         self._resource_executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
+        self._validation_slots = threading.BoundedSemaphore(2)
+        self._validation_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
         self._control_slots = threading.BoundedSemaphore(16)
         self._control = concurrent.futures.ThreadPoolExecutor(max_workers=1)
         self._closed = threading.Event()
@@ -136,10 +139,13 @@ class Application:
                 self._queue_observation(callback, message['event'], message['sequence'], message['data'])
             return
         # Cancellation must still run while command handlers await host replies.
-        control = message.get('event') in ('job.cancel_requested', 'resource.released')
+        control = message.get('event') in ('job.cancel_requested', 'resource.released', 'ui.validation_cancelled')
         resource = message.get('method', '').startswith('resource.')
-        slots = self._resource_slots if resource else self._control_slots if control else self._dispatch
-        executor = self._resource_executor if resource else self._control if control else self._executor
+        validation = message.get('method') == 'ui.validate'
+        slots = (self._validation_slots if validation else self._resource_slots if resource
+                 else self._control_slots if control else self._dispatch)
+        executor = (self._validation_executor if validation else self._resource_executor if resource
+                    else self._control if control else self._executor)
         if not slots.acquire(blocking=False):
             raise PluginError('busy', 'Application dispatch queue full')
         executor.submit(self._handle, message, slots)
@@ -156,12 +162,24 @@ class Application:
                     handler = self.resource_handlers.get(method)
                     if handler is None:
                         raise PluginError('unsupported', 'Resource method is unsupported')
+                elif method == 'ui.validate':
+                    handler = self.on_validate
                 else:
                     handler = self.on_input if method == 'ui.submit' else self.handlers[params['command']]
-                result = handler(params) or {'job': None}
+                if method == 'ui.validate':
+                    statuses = handler(params)
+                    if (not isinstance(statuses, dict) or set(statuses) != set(params['fields'])
+                            or any(status not in ('valid', 'invalid', 'unavailable') for status in statuses.values())):
+                        raise PluginError('invalid_argument', 'Invalid field validation result')
+                    result = {'kind': 'validation', 'surface': params['surface'],
+                              'revision': params['revision'], 'fields': [
+                                  {'field': field, 'status': statuses[field]} for field in params['fields']]}
+                else:
+                    result = handler(params) or {'job': None}
                 self._write({'type': 'response', 'id': message['id'], 'result': result})
             except PluginError as error:
-                self._write({'type': 'response', 'id': message['id'], 'error': {'code': error.code, 'message': str(error)}})
+                detail = 'Application validation failed' if method == 'ui.validate' else str(error)
+                self._write({'type': 'response', 'id': message['id'], 'error': {'code': error.code, 'message': detail}})
             except Exception:
                 # Do not put exception details, paths or credentials on the wire.
                 self._write({'type': 'response', 'id': message['id'], 'error': {'code': 'internal', 'message': 'Application command failed'}})
@@ -195,6 +213,7 @@ class Application:
                 self._accept.clear()
                 self._subscriptions.clear()
             self._resource_executor.shutdown(wait=True, cancel_futures=True)
+            self._validation_executor.shutdown(wait=True, cancel_futures=True)
             self._control.shutdown(wait=True, cancel_futures=True)
             self._executor.shutdown(wait=True, cancel_futures=True)
             self._observations.shutdown(wait=True, cancel_futures=True)

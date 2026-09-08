@@ -41,6 +41,29 @@ days, and fails below 89% total line coverage. The floor is deliberately below
 the observed baseline because conditional Linux and macOS code changes both the
 instrumented denominator and the paths available to a run on one platform.
 
+## 2026-09-08 — asynchronous form validation
+
+Measured on `x86_64-unknown-linux-gnu` at `97a45c0` plus the validation
+round, using Rust 1.97.1 and cargo-llvm-cov 0.9.0. Ordinary and canonical suites
+each passed 3,312 tests with 33 ignored. Formatting and warnings-as-errors Clippy
+passed; the floor remains 89%.
+
+| Measure | Covered | Total | Coverage |
+| --- | ---: | ---: | ---: |
+| Lines | 112,364 | 122,601 | 91.65% |
+| Functions | 10,202 | 11,062 | 92.23% |
+| Regions | 171,554 | 188,135 | 91.19% |
+
+Twenty-three new Rust tests cover physical submit provenance, whole-form revision
+changes, secret opt-in and omission, stale replies, pointer/replay/semantic
+cancellation, field focus, masked frames, exact response shapes, request capacity,
+timeouts/late replies, owner isolation and secret-safe callback failures. Six
+Python checks separately exercise callback isolation, response correlation,
+secret-safe errors and the runnable example. A native PTY smoke passed validation
+feedback, masking, stale retention, automatic submission and cancellation;
+two settled seconds emitted zero terminal bytes. Native macOS and the full
+application workload matrix remain pending.
+
 ## 2026-09-08 — source subscriptions and fair delivery
 
 Measured on `x86_64-unknown-linux-gnu` at `0f1beac` plus the subscription
