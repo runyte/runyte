@@ -8,9 +8,10 @@ Implementation authorized 2026-09-08. Milestones are being implemented in order;
 this record remains active until all acceptance gates have evidence.
 
 As of 2026-09-09, all six milestones' feature implementations and examples are
-delivered, reviewed and committed. Linux formatting, Clippy, 3,543 Rust tests,
-322 plugin conformance tests, 91.71% canonical line coverage and the complete
-release performance matrix pass. Native macOS CI execution is the remaining
+delivered, reviewed and committed. Linux formatting, Clippy, 3,581 Rust tests,
+91.74% canonical line coverage and the complete release performance matrix pass.
+The unchanged example clients previously passed 322 plugin conformance tests.
+Native macOS CI execution is the remaining
 completion gate; the historical implementation rounds below retain their
 original intermediate scope descriptions.
 
@@ -1176,6 +1177,34 @@ Twenty-one pure harness tests pass. The
 binary identities, methods, medians, ranges, limitations and a link to every raw
 sample. Native macOS tests, conformance and canonical coverage remain unrun;
 this plan stays active until those CI gates pass.
+
+## Review follow-up and dev integration — 2026-09-09
+
+`e65c36e` (`Address plugin review findings and preserve native input intent`)
+keeps deliberate quit protection for pending activity while naming `:plugins`
+as the stop/recovery path in both deployment modes. Only persistent mode offers
+`:detach`. Stale reload and overwrite surfaces now return the triggering key
+to ordinary editor input after cancellation, while retaining the original
+ownership fence against approval of a replacement surface or macro input.
+The unreachable synchronous plugin-filesystem completion branch was removed;
+the asynchronous host path remains the sole completion owner.
+
+Plugin command discovery now shares metadata admission checks with dispatch,
+so unavailable contexts, pending primary queries and busy owners are represented
+accurately without encoding snapshots or capturing row selections in the palette.
+Epoch 1 subscription buffer handles are bounded before parsing and echoing,
+closing the long zero-padded decimal-ID bypass. A reported undo-ordering defect
+was not reproducible: synchronous preflight covers every downstream refusal
+before committing the undo group. New behavior coverage proves rejected and
+no-op results preserve the current insert group; no speculative history change
+was made.
+
+Independent review found no further defect. All 446 targeted plugin tests pass.
+`fc2d4d3` integrates `dev` at `3862af3`, retaining both its browser port and the
+shared asynchronous trash backend in the sole textual conflict. Formatting,
+Clippy, all 3,581 ordinary and instrumented Rust tests pass, with 33 existing
+ignored tests. Canonical Linux line coverage is 119,840 / 130,636 (**91.74%**),
+above the unchanged 89% floor. Native macOS CI remains outstanding.
 
 ## Investigation: existing foundation and missing boundaries
 

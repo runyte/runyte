@@ -43,6 +43,27 @@ has passed. The floor is deliberately below
 the observed baseline because conditional Linux and macOS code changes both the
 instrumented denominator and the paths available to a run on one platform.
 
+## 2026-09-09 — plugin review fixes and dev integration
+
+Measured on `x86_64-unknown-linux-gnu` at `fc2d4d3`, following review fixes in
+`e65c36e` and integration of `dev` at `3862af3`, using Rust 1.97.1 and
+cargo-llvm-cov 0.9.0. Formatting and warnings-as-errors Clippy pass. Ordinary
+and canonical instrumented suites each pass 3,581 tests with 33 existing
+ignored tests. The targeted plugin suite passes all 446 tests.
+
+| Measure | Covered | Total | Coverage |
+| --- | ---: | ---: | ---: |
+| Lines | 119,840 | 130,636 | 91.74% |
+| Functions | 10,809 | 11,790 | 91.68% |
+| Regions | 181,532 | 199,099 | 91.18% |
+
+New regressions cover stale native-surface input, protection against redirected
+confirmation, actionable quit guidance, plugin command availability, bounded
+epoch 1 subscription handles and preserved undo grouping after rejected plugin
+results. The existing real-helper tests timed out under sandbox restrictions;
+the native rerun passed, as did both complete native suites above. The enforced
+floor remains 89%. This Linux result does not establish macOS CI completion.
+
 ## 2026-09-08 — application acceptance and advertised resources
 
 Measured on `x86_64-unknown-linux-gnu` at `48a906e` plus the application acceptance
