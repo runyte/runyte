@@ -17,6 +17,70 @@ cargo build --release
 benchmarks/run.py
 ```
 
+## 2026-09-08 — application API development
+
+Measured on Linux `x86_64-unknown-linux-gnu`, kernel `7.1.13-200.fc44.x86_64`,
+AMD Ryzen AI 9 365 (20 logical CPUs, approximately 27.2 GiB RAM), with Rust
+1.97.1. The retained base is `c7c18bd`; the measured branch is `e86fe54` plus
+the in-progress application implementation. Both were built with
+`cargo build --release --locked`. Builds, tests and coverage finished before
+the serial measurement. Binary size changed from 45,335,520 to
+45,837,312 bytes (1.11%). The retained binary SHA-256 values are:
+
+- Base: `724984cd14f457584ec0162926dfa0ea74f60bbce10ab7c9f1ef31dedbdbc2ec`.
+- Branch: `f98af0b21b937bdd56d2135623589a163c02a71381601f7f8ae6055f84a9935d`.
+
+`benchmarks/plugins.py --applications` uses ten launches per startup cell in a
+120×40 PTY, isolated home/XDG storage, disabled LSP and enabled syntax. All 120
+launches emitted document text, settled and quit successfully. The enabled
+cases run the checked-in epoch 1 uppercase example and the epoch 2 jobs example
+through the same Python interpreter, with no command/job started during startup.
+Values are medians; this harness does not retain startup ranges.
+
+| First document output | Base, disabled | Branch, disabled | Epoch 1, quiescent | Epoch 2, quiescent |
+| --- | ---: | ---: | ---: | ---: |
+| `short.txt` | 6.1 ms | 5.9 ms | 5.9 ms | 6.3 ms |
+| `medium.lua` | 6.2 ms | 6.8 ms | 6.2 ms | 7.0 ms |
+| `long.lua` | 12.1 ms | 11.6 ms | 11.9 ms | 12.6 ms |
+
+| Quit after settlement | Base, disabled | Branch, disabled | Epoch 1, quiescent | Epoch 2, quiescent |
+| --- | ---: | ---: | ---: | ---: |
+| `short.txt` | 3.3 ms | 3.3 ms | 3.8 ms | 3.0 ms |
+| `medium.lua` | 5.8 ms | 6.8 ms | 6.8 ms | 5.9 ms |
+| `long.lua` | 23.4 ms | 23.6 ms | 22.2 ms | 22.4 ms |
+
+Idle uses three independent ten-second windows after 2.5 seconds of settlement.
+CPU includes editor descendants. The native-view case opens `tasks.py` through
+the command palette, requires rendered task text, and settles for another 2.5
+seconds before measurement. All fifteen idle windows completed. Values are
+median (minimum–maximum).
+
+| Idle case | CPU | Screen writes |
+| --- | ---: | ---: |
+| Base, disabled | 0.10% (0.00–0.10) | 0 (0–0) |
+| Branch, disabled | 0.00% (0.00–0.00) | 0 (0–0) |
+| Epoch 1, quiescent | 0.00% (0.00–0.10) | 0 (0–0) |
+| Epoch 2, quiescent | 0.00% (0.00–0.00) | 0 (0–0) |
+| Native task-list view | 0.00% (0.00–0.00) | 0 (0–0) |
+
+These are representative first-document-output and idle measurements. They do
+not establish full editing/plugin readiness, input-latency p95, statistical
+startup equivalence, large-view/flood performance, detached job cost or the
+provider/helper workload matrix. Native macOS evidence is still outstanding.
+The [application plan](../plans/active/PLAN_PLUGIN_APPLICATIONS.md) remains active.
+
+The initial real-view check exposed an inherited palette bug: plugin commands
+were listed but Enter resolved only built-in names. The corrected implementation
+and a rendered-content setup guard are included in this measurement; failed
+setups cannot produce zero-cost idle results.
+
+Reproduce after building and retaining both releases, with the benchmark Python
+requirements installed:
+
+```sh
+python3 benchmarks/plugins.py --before /path/to/base/runyte --applications
+```
+
 ## 2026-09-07 — experimental process plugins
 
 Measured on Linux `x86_64-unknown-linux-gnu`, AMD Ryzen AI 9 365 (20 logical

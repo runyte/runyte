@@ -492,3 +492,10 @@ bindings are configured under `plugins[].bindings`; `keys.rebind` continues to
 address authored built-in defaults. `plugin.<id>.stop` removes the runtime
 commands and bindings. These are Runyte extension commands, not Helix bindings.
 The wire and lifecycle contract is [the plugin guide](../../docs/plugins.md).
+
+Epoch 2 view commands use a validated dynamic application scope. One declared
+primary action defaults to Enter; Tab lists registered view actions. Normal
+movement, selection, copying, search and host prefixes retain their registry
+bindings. Refreshes cannot accept an action against an unseen model revision.
+Typed plugin command arguments are parsed as quoted positional values without
+shell evaluation. These application commands remain deliberate Runyte additions.

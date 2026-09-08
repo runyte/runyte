@@ -88,7 +88,10 @@ impl HelpTopic {
             // A Markdown document is ordinary text with one key of its own, so
             // it reads the text overview too; the key table below that prose is
             // generated from the scope and carries the extra row.
-            BindingScope::Help | BindingScope::Global | BindingScope::Markdown => Self::Text,
+            BindingScope::Help
+            | BindingScope::Global
+            | BindingScope::Markdown
+            | BindingScope::Plugin(_) => Self::Text,
         }
     }
 

@@ -237,6 +237,8 @@ struct CompletedGitSnapshot {
     mutation: bool,
 }
 
+mod plugin_applications;
+mod plugin_editor;
 /// The only owner allowed to mutate one live editor/application workspace.
 ///
 /// Standalone mode uses this value directly. Persistent mode will keep the
@@ -276,15 +278,22 @@ pub struct ProtectedHostState {
     pub unsaved_buffers: usize,
     pub pending_wait_requests: usize,
     pub live_terminals: usize,
+    pub plugin_jobs: usize,
 }
 
 impl ProtectedHostState {
     pub const fn is_empty(self) -> bool {
-        self.unsaved_buffers == 0 && self.pending_wait_requests == 0 && self.live_terminals == 0
+        self.unsaved_buffers == 0
+            && self.pending_wait_requests == 0
+            && self.live_terminals == 0
+            && self.plugin_jobs == 0
     }
 
     pub fn refusal(self) -> String {
         let mut parts = Vec::new();
+        if self.plugin_jobs > 0 {
+            parts.push(format!("{} active plugin jobs", self.plugin_jobs));
+        }
         if self.unsaved_buffers > 0 {
             parts.push(format!(
                 "{} unsaved buffer{}",
@@ -546,6 +555,20 @@ impl WorkspaceHost {
     /// The single lifecycle summary used by retirement, inspection and stop.
     pub fn protected_state(&self) -> ProtectedHostState {
         ProtectedHostState {
+            plugin_jobs: self
+                .app
+                .plugins
+                .instances
+                .values()
+                .map(|instance| {
+                    instance
+                        .application
+                        .jobs
+                        .values()
+                        .filter(|job| job.state.active())
+                        .count()
+                })
+                .sum(),
             unsaved_buffers: self.unsaved_buffers(),
             pending_wait_requests: self
                 .wait_requests
@@ -566,12 +589,15 @@ impl WorkspaceHost {
     pub fn may_retire_idle(&self) -> bool {
         self.protected_state().is_empty()
             && self.app.terminals.is_empty()
-            && self
-                .app
-                .plugins
-                .instances
-                .values()
-                .all(|instance| instance.pending.is_none())
+            && self.app.plugins.instances.values().all(|instance| {
+                instance.pending.is_none()
+                    && instance.application.requests.is_empty()
+                    && !instance
+                        .application
+                        .jobs
+                        .values()
+                        .any(|job| job.state.active())
+            })
     }
 
     pub fn read_buffer(&self, id: BufferId) -> Result<BufferContents, BufferRequestError> {

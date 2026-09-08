@@ -166,7 +166,8 @@ use crate::workspace::{
 /// can start project-aware servers without asking and cannot honor revocation.
 /// Version 50 adds session navigation, authenticated parent-terminal requests,
 /// and bounded destination inventories.
-pub const VERSION: u32 = 50;
+/// Version 51 adds semantic diagnostic scopes used by application projections.
+pub const VERSION: u32 = 51;
 pub const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const MAX_PATHS: usize = 32;
 pub const MAX_PATH_BYTES: usize = 32 * 1024;
@@ -1064,7 +1065,7 @@ mod tests {
 
     #[test]
     fn protocol_version_and_request_bounds_are_explicit() {
-        assert_eq!(VERSION, 50);
+        assert_eq!(VERSION, 51);
         let oversized_command = ClientRequest::Invoke {
             command: CommandRequest {
                 name: "open".to_owned(),

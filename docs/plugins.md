@@ -311,3 +311,7 @@ programs. Shutdown kills the directly owned child without waiting in the editor
 loop; plugins must manage their own subprocesses. Automatic restart, OS resource
 sandboxes, package installation, marketplaces, multiple runtimes, arbitrary UI,
 general command automation and background reads are outside the delivered API.
+
+Application API development and the opt-in epoch 2 background-job example are
+documented in [applications.md](plugins/applications.md). Epoch 1 remains the
+default for configurations without an explicit `api` field.

@@ -533,3 +533,11 @@ ignored `.work/` storage, and LSP is disabled. The example starts after document
 presentation; first document output does not measure plugin registration readiness.
 Each line prints the full result summary, including completion counts and idle
 ranges, so incomplete samples cannot masquerade as a zero-cost measurement.
+
+`--applications` also enables the epoch 2 background-job example without starting
+a job, then opens the native task-list example for a separate idle measurement.
+It requires `pyte` from `requirements.txt`: the harness waits for the command
+palette before submitting Enter, verifies rendered task text, and settles for
+another 2.5 seconds before each ten-second idle window. A failed view setup is
+reported as incomplete, not as zero CPU. This does not measure busy jobs, detached
+work, input latency, large-model publication or managed helpers.

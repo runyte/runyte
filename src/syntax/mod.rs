@@ -771,6 +771,8 @@ pub const SCOPES: &[&str] = &[
     "comment",
     "constant",
     "constructor",
+    "diagnostic.error",
+    "diagnostic.warning",
     "function",
     "keyword",
     "label",

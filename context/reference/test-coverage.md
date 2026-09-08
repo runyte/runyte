@@ -41,6 +41,38 @@ days, and fails below 89% total line coverage. The floor is deliberately below
 the observed baseline because conditional Linux and macOS code changes both the
 instrumented denominator and the paths available to a run on one platform.
 
+## 2026-09-08 — application API development slice
+
+Measured on `x86_64-unknown-linux-gnu` at base `e86fe54` plus the in-progress
+application API, using Rust 1.97.1 and cargo-llvm-cov 0.9.0. The canonical
+`cargo llvm-cov --locked --workspace` passed 3,097 tests, with 33 ignored.
+Native local socket/process access was required; the sandbox refused an
+existing local-client handshake fixture's Unix-socket write. Ordinary tests,
+formatting and warnings-as-errors Clippy also passed.
+
+| Measure | Covered | Total | Coverage |
+| --- | ---: | ---: | ---: |
+| Lines | 105,199 | 114,783 | 91.65% |
+| Functions | 9,712 | 10,506 | 92.44% |
+| Regions | 162,351 | 177,988 | 91.21% |
+
+New behavior coverage in `src/workspace/host/tests/plugin_applications.rs`
+exercises command/job concurrency, cancellation races, ownership and generation
+limits, native view publication and stale actions, split selection preservation,
+foreground context expiration, hidden-buffer Unicode edits, immutable snapshots,
+pane selection preconditions and private-frame rendering of diagnostic roles.
+Keyboard-driven cases exercise actual command-palette acceptance in both epochs,
+typed arguments and captured buffer/pane handles after focus changes.
+Wire conformance and argument/queue tests also live in `src/plugin/`.
+
+Coverage exposed a valid race where an immediately exiting child closes stdin
+before the worker writes hello. The worker now labels that IO failure with
+plugin context, as it already did stdout/exit failures; the original regression
+assertion was retained. The canonical rerun passed.
+
+The enforced floor remains **89%**. This is a Linux development measurement,
+not completion of the application plan or a new native macOS measurement.
+
 ## 2026-09-07 — experimental process plugins
 
 Measured on `x86_64-unknown-linux-gnu`, at base `ef1bf58` plus the experimental

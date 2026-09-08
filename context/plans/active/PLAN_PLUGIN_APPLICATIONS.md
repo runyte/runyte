@@ -2,12 +2,10 @@
 
 ## Status and intended outcome
 
-Proposed implementation plan, written 2026-09-08 against `c7c18bd`
+Active implementation plan, originally written 2026-09-08 against `c7c18bd`
 (`Add experimental external-process plugins and versioned API schema`).
-Only planning is authorized in this session. No capability described below is
-delivered by this document. A later implementation session should move this
-record to `active/`, execute the milestones in order, and record decisions and
-validation before moving it to `completed/`.
+Implementation authorized 2026-09-08. Milestones are being implemented in order;
+this record remains active until all acceptance gates have evidence.
 
 The objective is an extension system that can host useful applications: a file
 manager, a remote file browser/editor with transfers, and a media controller.
@@ -19,6 +17,93 @@ responsiveness and coherent interaction remain release requirements.
 The implementation is complete when those application patterns work through
 documented public operations, without patches for individual example plugins.
 It is not complete merely when a larger collection of methods exists.
+
+## Implementation record — 2026-09-08
+
+Implementation began from `e86fe54`, whose runtime matches the `c7c18bd`
+foundation inspected above. This plan remains active: the complete application
+patterns and all acceptance gates have not been delivered.
+
+The current slice provides:
+
+- Exact epoch routing with epoch 1 remaining the configuration default; atomic
+  epoch 2 command registration and explicit capability grants.
+- Independent command deadlines, finite jobs, cancellation acknowledgement,
+  generation-scoped handles, reliable job lifecycle events, bounded command/job
+  histories, per-producer inbound limits and encoded outbound byte accounting.
+- Required positional scalar command arguments, workspace/buffer/view contexts,
+  dynamic application key scopes validated in both fast-pane variants, a primary
+  Enter action, and a Tab action list drawn from runtime command metadata.
+- Retained semantic application projections, stable row selection/viewport
+  mapping, revision-checked publication, stale displayed-action rejection,
+  guarded foreground presentation, ordinary special-buffer retention and readable
+  unavailable content after plugin stop. Native snapshots carry diagnostic
+  warning/error scopes through bundled frontend protocol 51.
+- Paged buffer metadata, pane metadata, revision-bound scalar reads, retained
+  immutable text snapshots, explicit atomic single-buffer edits, and separately
+  revision-checked pane selections. Invocations issue captured buffer/pane
+  handles so background handlers do not have to rediscover a moving active target.
+- A Python authoring client, runnable task-list and background-job examples,
+  epoch 2 JSON Schema, shared Rust/Python wire fixtures, Python example smoke
+  coverage, and CI schema checks. Epoch 1's guide/schema/example are retained.
+
+The public implementation is documented in
+[applications.md](../../../docs/plugins/applications.md). Its method list is
+intentionally limited to operations backed by current host adapters. The larger
+operation tables below remain the approved target, rather than a claim that
+those methods already exist.
+
+Concrete decisions in this slice:
+
+- Plugin request IDs are increasing canonical `p:<positive integer>` values in
+  send order. This makes duplicate detection bounded while allowing responses
+  to complete out of order. Live resource handles remain opaque.
+- Application views specialize the existing virtual-buffer projection with
+  `GeneratedViewIdentity::Plugin`; a second pane-content engine is unnecessary.
+  Refreshes use a transaction without user undo history. The initial model has
+  stable single-line rows and semantic roles; columns, staged models and patches
+  remain outstanding.
+- A foreground grant belongs to a pending command and expires on further input,
+  pane-target changes or attachment changes. Job acceptance does not extend it.
+- Projected models and immutable snapshots share 48 MiB per-owner and 160 MiB
+  host-wide retained payload allowances, leaving bounded queue/decoding/copy
+  headroom inside the overall 64/256 MiB design budgets. Single-message models
+  reserve envelope headroom; the proposed 4 MiB staged publication is pending.
+- Job progress is recovered through `job.get` in this slice. General source
+  subscriptions, coalescing and resynchronization are not advertised yet.
+
+Milestone 3 still needs local document/filesystem operations, confirmations and
+forms, and the actual file-manager application. Milestone 4's providers, remote
+save reconciliation and transport examples remain unimplemented. Milestone 5
+still needs managed processes, terminal/external handoffs, activity leases,
+settings/state and the plugin manager. Milestone 6 still needs the broader SDK,
+non-Python example, full conformance matrix and complete application performance
+and supported-platform evidence. Milestones 1–2 also retain their full overload,
+real-attachment and performance acceptance work; the implemented primitives do
+not by themselves complete those gates.
+
+Validation: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`,
+`cargo test`, both schema checkers and canonical workspace coverage passed on
+Linux. Ordinary and instrumented suites each passed 3,097 tests with 33 ignored;
+canonical line coverage is 105,199 / 114,783 (**91.65%**), above the unchanged
+89% floor. See the [coverage register](../../reference/test-coverage.md).
+The existing socket/process suite requires native local socket access in this
+environment; a sandboxed handshake write returned `EPERM` and was rerun natively.
+
+The real PTY task-view check exposed an inherited palette gap: dynamic commands
+appeared as completions but Enter resolved only built-in names. Palette acceptance
+now resolves runtime metadata before the shared parser/executor. Keyboard-driven
+tests cover both epochs, correctable argument errors and quoted argument delivery.
+
+The final release comparison against `c7c18bd` completed 120 startup samples and
+fifteen ten-second idle windows across disabled plugins, quiescent epoch 1/2
+examples and the actual visible task list. Every idle window had zero terminal
+writes. Hardware, binary identities, medians, idle ranges and measurement limits
+are retained in the [performance register](../../reference/startup-performance.md).
+These representative measurements do not complete the latency/workload gates.
+
+Native macOS validation and the full application workload matrix are required
+before this record can move to `completed/`.
 
 ## Investigation: existing foundation and missing boundaries
 

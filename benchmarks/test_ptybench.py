@@ -13,6 +13,15 @@ import ptybench
 
 
 class MedianStartupTests(unittest.TestCase):
+    def test_idle_setup_failure_cannot_report_zero_cost(self):
+        import sys
+        result = ptybench.measure_idle(
+            [sys.executable, "-c", "import time; time.sleep(5)"], {},
+            settle=0, window=0, prepare=lambda _pid, _fd, _initial: False,
+        )
+        self.assertFalse(result["complete"])
+        self.assertIsNone(result["cpu_percent"])
+
     def test_startup_metrics_and_quit_completeness_are_counted_independently(
         self,
     ) -> None:

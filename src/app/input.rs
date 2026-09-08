@@ -497,6 +497,7 @@ impl App {
     /// stores the same raw event ordering that arrived at this boundary.
     pub fn handle_input(&mut self, input: InputEvent) -> Result<()> {
         if !matches!(input, InputEvent::Pointer(_)) {
+            self.plugins.foreground_generation += 1;
             self.cancel_pointer_drag();
         }
         if self.macro_replay.is_some() {
@@ -606,6 +607,7 @@ impl App {
             self.forward_terminal_pointer(event, view, 1);
             return Ok(PointerOutcome::Unchanged);
         }
+        self.plugins.foreground_generation += 1;
         if !matches!(event.kind, PointerEventKind::Drag(PointerButton::Left)) {
             self.pointer_autoscroll = None;
         }
@@ -3152,12 +3154,23 @@ impl App {
                     return Ok(());
                 }
                 let name = command.split_whitespace().next().unwrap_or_default();
-                let Some(spec) = resolve_command(name) else {
+                let spec = resolve_command(name);
+                let plugin = self
+                    .plugins
+                    .commands
+                    .values()
+                    .find(|entry| entry.name == name);
+                let description = if let Some(spec) = spec {
+                    spec.description.to_owned()
+                } else if let Some(plugin) = plugin {
+                    plugin.description.clone()
+                } else {
                     self.complete_selected_command();
                     return Ok(());
                 };
-                let availability = self.command_capabilities().command_availability(spec);
-                if let CommandAvailability::Unavailable(reason) = availability {
+                let availability =
+                    spec.map(|spec| self.command_capabilities().command_availability(spec));
+                if let Some(CommandAvailability::Unavailable(reason)) = availability {
                     // Deliberately does not call report_completed_action: the
                     // palette is still open (the same "correctable input"
                     // treatment as a schema error below), and the
@@ -3166,13 +3179,16 @@ impl App {
                     // under whoever is still typing, which is exactly the
                     // "notifications never replace [the prompt]" rule this
                     // stays retained-only for; see the resolved issue file.
-                    self.mark_unavailable(format!("{} is unavailable: {reason}", spec.description));
+                    self.mark_unavailable(format!("{description} is unavailable: {reason}"));
                     return Ok(());
                 }
                 let has_argument = command
                     .split_once(char::is_whitespace)
                     .is_some_and(|(_, argument)| !argument.trim().is_empty());
-                if spec.arguments.is_required() && !has_argument {
+                if let Some(spec) = spec
+                    && spec.arguments.is_required()
+                    && !has_argument
+                {
                     self.command = format!("{} ", spec.name);
                     self.command_cursor = self.command.chars().count();
                     self.command_selection = 0;
@@ -3193,7 +3209,7 @@ impl App {
                 self.command_selection = 0;
                 self.mode = Mode::Normal;
                 let outcome = self.execute(invocation)?;
-                self.report_completed_action(&format!(":{name}"), spec.description, outcome);
+                self.report_completed_action(&format!(":{name}"), &description, outcome);
                 if let Some(mode) = self.grammar.preferred_mode()
                     && matches!(self.mode, Mode::Normal | Mode::Select)
                 {
@@ -4658,6 +4674,7 @@ impl App {
     /// outcomes; `Result::Err` is reserved for a fatal invariant failure at
     /// the application boundary.
     pub fn execute(&mut self, invocation: CommandInvocation) -> Result<CommandOutcome> {
+        self.plugins.foreground_generation += 1;
         self.cancel_pointer_drag();
         // Protocol and headless semantic commands bypass `handle_input`, but
         // they can move the originating selection just as surely as a key.
@@ -4670,7 +4687,11 @@ impl App {
         let before = CommandState::capture(self);
         let (id, parameters, execution, unavailable) = invocation.into_parts();
         if let CommandId::Plugin(id) = id {
-            return self.invoke_plugin(id);
+            let arguments = match &parameters {
+                InvocationParameters::OptionalText(Some(text)) => text.as_str(),
+                _ => "",
+            };
+            return self.invoke_plugin_arguments(id, arguments);
         }
         if let Some(unavailable) = unavailable {
             let CommandId::Editor(command) = id else {

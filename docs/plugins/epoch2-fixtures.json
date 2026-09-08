@@ -1,0 +1,422 @@
+[
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "register",
+      "version": "runyte-experimental-2",
+      "name": "Tasks",
+      "commands": [
+        {
+          "name": "open",
+          "description": "Open tasks",
+          "context": "workspace",
+          "primary": false,
+          "arguments": []
+        }
+      ],
+      "required_capabilities": [
+        "jobs"
+      ],
+      "optional_capabilities": [
+        "workspace"
+      ]
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "response",
+      "id": "h:1",
+      "result": {
+        "job": "j:g:1"
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "response",
+      "id": "h:2",
+      "error": {
+        "code": "cancelled",
+        "message": "Cancelled"
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:1",
+      "method": "buffer.list",
+      "params": {
+        "offset": 0,
+        "limit": 32
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:2",
+      "method": "pane.list",
+      "params": {}
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:3",
+      "method": "buffer.read",
+      "params": {
+        "buffer": "b:g:1",
+        "expected_revision": "m:1",
+        "from": 0,
+        "to": 0
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:4",
+      "method": "buffer.edit",
+      "params": {
+        "buffer": "b:g:1",
+        "expected_revision": "m:1",
+        "changes": []
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:5",
+      "method": "buffer.snapshot.open",
+      "params": {
+        "buffer": "b:g:1",
+        "expected_revision": "m:1"
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:6",
+      "method": "buffer.snapshot.read",
+      "params": {
+        "snapshot": "t:g:1",
+        "from": 0,
+        "to": 0
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:7",
+      "method": "buffer.snapshot.close",
+      "params": {
+        "snapshot": "t:g:1"
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:8",
+      "method": "selection.get",
+      "params": {
+        "pane": "p:g:1"
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:9",
+      "method": "selection.set",
+      "params": {
+        "pane": "p:g:1",
+        "buffer": "b:g:1",
+        "expected_revision": "m:1",
+        "ranges": [
+          {
+            "anchor": 0,
+            "head": 0
+          }
+        ],
+        "primary": 0
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:10",
+      "method": "view.create",
+      "params": {
+        "model": {
+          "title": "Tasks",
+          "purpose": "list",
+          "rows": [
+            {
+              "id": "task-1",
+              "text": "First task",
+              "role": "ordinary"
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:11",
+      "method": "view.get",
+      "params": {
+        "view": "v:g:1"
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:12",
+      "method": "view.publish",
+      "params": {
+        "view": "v:g:1",
+        "expected_revision": "m:1",
+        "model": {
+          "title": "Tasks",
+          "purpose": "list",
+          "rows": [
+            {
+              "id": "task-1",
+              "text": "First task",
+              "role": "ordinary"
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:13",
+      "method": "view.close",
+      "params": {
+        "view": "v:g:1"
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:14",
+      "method": "pane.show",
+      "params": {
+        "invocation": "h:1",
+        "view": "v:g:1"
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:15",
+      "method": "workspace.info",
+      "params": {}
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:16",
+      "method": "job.create",
+      "params": {
+        "title": "Download",
+        "deadline_seconds": 60
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:17",
+      "method": "job.get",
+      "params": {
+        "job": "j:g:1"
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:18",
+      "method": "job.update",
+      "params": {
+        "job": "j:g:1",
+        "progress": 50
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:19",
+      "method": "job.finish",
+      "params": {
+        "job": "j:g:1",
+        "state": "succeeded"
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:20",
+      "method": "job.cancel",
+      "params": {
+        "job": "j:g:1"
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "hello",
+      "version": "runyte-experimental-2",
+      "capabilities": [
+        "workspace",
+        "jobs",
+        "views",
+        "text",
+        "selections"
+      ],
+      "limits": {
+        "line_bytes": 1048576,
+        "commands": 64,
+        "requests": 16,
+        "finite_jobs": 4,
+        "control_queue_messages": 32,
+        "control_queue_bytes": 4194304,
+        "control_deadline_seconds": 10,
+        "job_deadline_seconds": 3600,
+        "cancellation_seconds": 2
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "registered",
+      "commands": [
+        "plugin.tasks.open"
+      ],
+      "capabilities": [
+        "jobs"
+      ],
+      "limits": {
+        "line_bytes": 1048576,
+        "commands": 64,
+        "requests": 16,
+        "finite_jobs": 4,
+        "control_queue_messages": 32,
+        "control_queue_bytes": 4194304,
+        "control_deadline_seconds": 10,
+        "job_deadline_seconds": 3600,
+        "cancellation_seconds": 2
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "request",
+      "id": "h:1",
+      "method": "command.invoke",
+      "params": {
+        "command": "open",
+        "context": "workspace",
+        "view": null,
+        "model_revision": null,
+        "rows": [],
+        "arguments": {},
+        "pane": "p:g:1",
+        "selection_revision": "q:0",
+        "buffer": "b:g:2",
+        "buffer_revision": "r:0"
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "response",
+      "id": "p:1",
+      "result": {
+        "name": "project"
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "response",
+      "id": "p:2",
+      "result": {
+        "job": "j:g:1",
+        "title": "Download",
+        "state": "running",
+        "progress": 0
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "response",
+      "id": "p:3",
+      "error": {
+        "code": "not_found",
+        "message": "Unknown job"
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "event",
+      "sequence": "e:1",
+      "event": "job.changed",
+      "data": {
+        "job": "j:g:1",
+        "title": "Download",
+        "state": "running",
+        "progress": 0
+      }
+    }
+  }
+]

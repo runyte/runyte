@@ -152,6 +152,11 @@ pub enum BufferKind {
 pub enum GeneratedViewIdentity {
     /// Deliberately named internal projections and test/embedder documents.
     Named(String),
+    /// Host-owned application projection, separate from labels and local paths.
+    Plugin {
+        owner: usize,
+        view: String,
+    },
     About,
     Tutorial,
     Manual,
@@ -2839,6 +2844,26 @@ impl Buffer {
         self.undo.push(undo);
         self.update_dirty();
         Some(group)
+    }
+
+    /// Transactional generated publication, without a user undo checkpoint.
+    pub(crate) fn replace_plugin_projection(&mut self, text: &str) {
+        debug_assert!(matches!(
+            self.generated_view_identity(),
+            Some(GeneratedViewIdentity::Plugin { .. })
+        ));
+        self.text
+            .apply(&Transaction::new(vec![crate::text::Change::new(
+                0,
+                self.len_chars(),
+                text,
+            )]));
+        self.longest_line = self.text.longest_line_bytes();
+        self.layout = self.layout.remeasured(text);
+        self.undo.clear();
+        self.redo.clear();
+        self.undo_group = None;
+        self.mark_saved();
     }
 
     /// Replaces the contents of a read-only virtual buffer.

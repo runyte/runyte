@@ -49,6 +49,14 @@ jobs:
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
+      - name: Validate plugin contracts
+        run: |
+          python3 -m venv "$RUNNER_TEMP/plugin-schema"
+          plugin_schema_python="$RUNNER_TEMP/plugin-schema/bin/python"
+          "$plugin_schema_python" -m pip install jsonschema==4.23.0
+          "$plugin_schema_python" docs/plugins/check_schema.py
+          "$plugin_schema_python" docs/plugins/check_applications.py
+
       - name: Check formatting
         run: cargo fmt --check
 

@@ -3022,6 +3022,9 @@ impl App {
     }
 
     pub(super) fn open_context_actions(&mut self) -> bool {
+        if self.open_plugin_actions() {
+            return true;
+        }
         let actions = self
             .keymap
             .context_actions(self.key_binding_scope())
@@ -3686,6 +3689,17 @@ impl App {
             Some(ListAction::CodeAction(index)) => self.run_code_action(index),
             Some(ListAction::Destination(destination)) => {
                 self.visit_open_destination(destination);
+            }
+            Some(ListAction::PluginCommand {
+                command,
+                buffer,
+                revision,
+            }) => {
+                if self.active().buffer != buffer || self.buffers[buffer].revision() != revision {
+                    self.action_failed("Application view changed; reopen the actions");
+                } else {
+                    self.invoke_plugin(command)?;
+                }
             }
             Some(ListAction::Buffer(buffer)) => self.switch_buffer(buffer),
             Some(ListAction::SyntaxOutline { buffer, target }) => {

@@ -455,3 +455,13 @@ warning notifications, process/protocol failures produce errors, and explicit
 plugin stop is informational. Captured buffer targets never change focus when
 results arrive. Generated help remains a snapshot of the view where it was
 opened; reopening it uses the current registered bindings.
+
+## Experimental application views
+
+Epoch 2 native application models materialize as retained read-only special
+buffers. Their stable row identities are separate from text offsets; publication
+preserves each pane's selection endpoints and viewport by identity. Application
+views retain ordinary buffer navigation and management. Filtering is an explicit
+registered action, while Tab opens a transient action picker from runtime command
+metadata. Clean hidden views share normal special-buffer eviction; visible views
+remain retained. Plugin stop preserves readable content labelled unavailable.

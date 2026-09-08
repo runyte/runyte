@@ -30,6 +30,8 @@ fn host() -> (TestRuntimeRoot, WorkspaceHost) {
 fn config(id: &str) -> PluginConfig {
     PluginConfig {
         id: id.into(),
+        api: Default::default(),
+        capabilities: vec![],
         enabled: true,
         executable: "/nonexistent/runyte-plugin".into(),
         args: vec![],
@@ -46,8 +48,9 @@ fn instance(
         id,
         Instance {
             config,
-            sender,
+            sender: plugin::Sender::new(sender),
             registered: false,
+            application: Default::default(),
             pending: None,
             issued: BTreeSet::new(),
             subscriptions: Default::default(),
@@ -711,3 +714,6 @@ fn plugin_bindings_cannot_claim_grammar_counts_or_prefix_cancellation() {
         assert!(host.app.parse_command("plugin.case.upper").is_err());
     }
 }
+
+#[path = "plugin_applications.rs"]
+mod applications;

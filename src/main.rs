@@ -1530,11 +1530,19 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
         let hint_timeout = key_hints.time_until_expiry(Instant::now());
         let picker_pacing = app.picker_pacing_delay(Instant::now());
         let pointer_autoscroll = app.pointer_autoscroll_delay(Instant::now());
+        app.note_plugin_frontend(true);
         app.sync_plugin_observers();
         tokio::select! {
+            _ = std::future::ready(()), if app.plugin_presentation_pending() => { app.take_plugin_presentation_change(); }
             event = runyte::plugin::receive(&mut services.plugin_events) => {
-                if let Some(event) = event { app.handle_plugin_event(event); }
-                else { services.plugin_events = None; }
+                if let Some(event) = event {
+                    if !app.handle_plugin_event(event) && !app.plugin_presentation_pending() {
+                        continue;
+                    }
+                } else {
+                    services.plugin_events = None;
+                    continue;
+                }
             }
             input = terminal_events.next() => {
                 match input.transpose()? {
@@ -2002,10 +2010,12 @@ async fn run_host_server(
             host.cancel_pointer_drag();
         }
         let pointer_autoscroll = host.pointer_autoscroll_delay(Instant::now());
+        host.note_plugin_frontend(active.is_some());
         host.sync_plugin_observers();
         tokio::select! {
+            _ = std::future::ready(()), if host.plugin_presentation_pending() => { changed = host.take_plugin_presentation_change(); }
             event = runyte::plugin::receive(&mut services.plugin_events) => {
-                if let Some(event) = event { host.handle_plugin_event(event); }
+                if let Some(event) = event { changed |= host.handle_plugin_event(event); }
                 else { services.plugin_events = None; }
             }
             event = server.recv() => {

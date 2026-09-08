@@ -15,12 +15,15 @@ use std::{
 
 #[derive(Clone, Debug)]
 pub(crate) struct RuntimeCommand {
+    pub arguments: Vec<plugin::arguments::Argument>,
     pub id: u64,
     pub plugin: usize,
     pub name: String,
+    pub usage: String,
     pub local: String,
     pub description: String,
     pub binding: Option<KeySequence>,
+    pub context: plugin::application::CommandContext,
 }
 
 pub(crate) struct Pending {
@@ -33,8 +36,9 @@ pub(crate) struct Pending {
 
 pub(crate) struct Instance {
     pub config: PluginConfig,
-    pub sender: tokio::sync::mpsc::Sender<HostMessage>,
+    pub sender: plugin::Sender,
     pub registered: bool,
+    pub application: plugin::application::Instance,
     pub pending: Option<Pending>,
     pub issued: BTreeSet<usize>,
     pub subscriptions: BTreeMap<usize, (u64, bool)>,
@@ -48,6 +52,11 @@ pub(crate) struct Plugins {
     pub cancellations: BTreeSet<usize>,
     pub next_command: u64,
     pub next_invocation: u64,
+    pub frontend_attached: bool,
+    pub presentation_dirty: bool,
+    pub attachment_generation: u64,
+    pub foreground_generation: u64,
+    pub presented_views: BTreeMap<usize, (usize, u64)>,
 }
 
 impl App {
@@ -64,6 +73,9 @@ impl App {
                         sequence,
                         BindingTarget::Plugin(command.id),
                     );
+                    if command.context == plugin::application::CommandContext::View {
+                        binding.scope = crate::keymap::BindingScope::Plugin(command.plugin);
+                    }
                     binding.description =
                         format!("{} — {}", command.name, command.description).into();
                     binding
@@ -91,15 +103,23 @@ impl App {
         &self,
         text: &str,
     ) -> Result<CommandInvocation, crate::command::CommandParseError> {
-        if let Some(command) = self
-            .plugins
-            .commands
-            .values()
-            .find(|c| c.name == text.trim())
-        {
+        let text = text.trim();
+        let (name, arguments) = text.split_once(char::is_whitespace).unwrap_or((text, ""));
+        if let Some(command) = self.plugins.commands.values().find(|c| c.name == name) {
+            plugin::arguments::parse(&command.arguments, arguments).map_err(|_| {
+                crate::command::CommandParseError::InvalidArgument {
+                    command: "plugin command",
+                    value: arguments.chars().take(160).collect(),
+                    expected: "declared arguments with balanced quotes",
+                }
+            })?;
             return Ok(CommandInvocation::from_parts(
                 CommandId::Plugin(command.id),
-                InvocationParameters::None,
+                if arguments.is_empty() {
+                    InvocationParameters::None
+                } else {
+                    InvocationParameters::OptionalText(Some(arguments.into()))
+                },
                 Default::default(),
             )
             .expect("plugin takes no arguments"));
@@ -108,6 +128,14 @@ impl App {
     }
 
     pub(crate) fn invoke_plugin(&mut self, id: u64) -> Result<CommandOutcome> {
+        self.invoke_plugin_arguments(id, "")
+    }
+
+    pub(crate) fn invoke_plugin_arguments(
+        &mut self,
+        id: u64,
+        arguments: &str,
+    ) -> Result<CommandOutcome> {
         if let Some(command) = self.plugins.commands.get(&id)
             && command.local == "stop"
         {
@@ -115,7 +143,7 @@ impl App {
             self.status("Plugin stop requested");
             return Ok(CommandOutcome::Completed);
         }
-        let result = self.submit_plugin(id);
+        let result = self.submit_plugin(id, arguments);
         match result {
             Ok(token) => {
                 self.status(format!("Plugin invocation {token} accepted"));
@@ -130,13 +158,118 @@ impl App {
         }
     }
 
-    fn submit_plugin(&mut self, id: u64) -> Result<String> {
+    fn submit_plugin(&mut self, id: u64, arguments: &str) -> Result<String> {
         let command = self
             .plugins
             .commands
             .get(&id)
             .ok_or_else(|| anyhow::anyhow!("plugin command is no longer registered"))?
             .clone();
+        let arguments = plugin::arguments::parse(&command.arguments, arguments)
+            .map_err(|error| anyhow::anyhow!(error.message))?;
+        if self.plugins.instances[&command.plugin].config.api == plugin::application::Api::Epoch2 {
+            if command.context == plugin::application::CommandContext::Buffer {
+                ensure!(
+                    self.active_terminal().is_none()
+                        && !self.host_buffer_is_closed(self.active().buffer),
+                    "command requires a buffer"
+                );
+            }
+            let capture = plugin::application::CapturedContext {
+                action: self.active_action_id,
+                pane: self.active_pane,
+                buffer: self.active().buffer,
+                terminal: self.active().terminal,
+                attachment: self.plugins.attachment_generation,
+                foreground: self.plugins.foreground_generation,
+            };
+            let view = self.plugins.instances[&command.plugin]
+                .application
+                .views
+                .iter()
+                .find(|(_, view)| {
+                    view.buffer == self.active().buffer && self.active_terminal().is_none()
+                });
+            if command.context == plugin::application::CommandContext::View {
+                ensure!(view.is_some(), "command requires an owned application view");
+            }
+            let (view_handle, model_revision, rows) = if let Some((handle, view)) = view {
+                if command.context == plugin::application::CommandContext::View {
+                    ensure!(
+                        self.plugins.presented_views.get(&self.active_pane)
+                            == Some(&(view.buffer, view.revision)),
+                        "Application view changed; wait for refresh"
+                    );
+                }
+                let mut rows = std::collections::BTreeSet::new();
+                for range in self.active().selection.ranges() {
+                    for row in self.buffers[view.buffer].offset_to_row(range.from())
+                        ..=self.buffers[view.buffer].offset_to_row(range.to())
+                    {
+                        if let Some(row) = view.model.rows.get(row) {
+                            rows.insert(row.id.clone());
+                        }
+                    }
+                }
+                (
+                    Some(handle.clone()),
+                    Some(format!("m:{}", view.revision)),
+                    rows.into_iter().collect(),
+                )
+            } else {
+                (None, None, Vec::new())
+            };
+            let selection_revision = format!("q:{}", self.plugin_selection_revision(capture.pane));
+            let buffer_revision = capture
+                .terminal
+                .is_none()
+                .then(|| format!("r:{}", self.buffers[capture.buffer].revision()));
+            let instance = self.plugins.instances.get_mut(&command.plugin).unwrap();
+            ensure!(
+                instance.application.requests.len() < plugin::application::MAX_REQUESTS,
+                "application request limit reached"
+            );
+            let pane = instance
+                .application
+                .pane_handle(capture.pane)
+                .map_err(|error| anyhow::anyhow!(error.message))?;
+            let buffer = if capture.terminal.is_none() {
+                Some(
+                    instance
+                        .application
+                        .buffer_handle(capture.buffer)
+                        .map_err(|error| anyhow::anyhow!(error.message))?,
+                )
+            } else {
+                None
+            };
+            self.plugins.next_invocation += 1;
+            let token = format!("h:{}", self.plugins.next_invocation);
+            instance.sender.try_send(HostMessage::Application(
+                plugin::application::HostMessage::Request {
+                    id: token.clone(),
+                    method: "command.invoke",
+                    params: plugin::application::Invocation {
+                        arguments,
+                        command: command.local,
+                        context: command.context,
+                        pane,
+                        selection_revision,
+                        buffer,
+                        buffer_revision,
+                        view: view_handle,
+                        model_revision,
+                        rows,
+                    },
+                },
+            ))?;
+            instance.sender.try_send(HostMessage::Deadline {
+                token: token.clone(),
+                after_ms: Some(10000),
+            })?;
+            instance.application.requests.insert(token.clone(), capture);
+            return Ok(token);
+        }
         ensure!(
             self.active_terminal().is_none(),
             "plugin commands require a document buffer"
@@ -232,9 +365,15 @@ impl App {
                     id: CommandId::Plugin(command.id),
                     name: &command.name,
                     aliases: &[],
-                    usage: &command.name,
+                    usage: &command.usage,
                     description: &command.description,
-                    arguments: crate::command::CommandArguments::None,
+                    arguments: if command.arguments.is_empty() {
+                        crate::command::CommandArguments::None
+                    } else {
+                        crate::command::CommandArguments::Required(
+                            crate::command::ArgumentKind::FreeText,
+                        )
+                    },
                 },
                 name: &command.name,
                 category: crate::command::CommandCategory::Editing,
@@ -245,6 +384,12 @@ impl App {
 }
 
 impl App {
+    pub(crate) fn plugin_application_feedback(&mut self, action: Option<u64>, detail: &str) {
+        if self.update_action_feedback(action, detail) {
+            self.plugins.presentation_dirty = true;
+        }
+    }
+
     pub(crate) fn plugin_completion_feedback(
         &mut self,
         action: Option<u64>,

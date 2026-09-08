@@ -1,0 +1,649 @@
+// SPDX-License-Identifier: MPL-2.0
+
+//! Epoch 2 wire values. No editor or frontend types cross this boundary.
+
+use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, BTreeSet};
+
+pub const VERSION: &str = "runyte-experimental-2";
+pub const MAX_COMMANDS: usize = 64;
+pub const MAX_REQUESTS: usize = 16;
+pub const MAX_JOBS: usize = 4;
+pub const MAX_QUEUE_BYTES: usize = 4 * 1024 * 1024;
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
+pub enum Api {
+    #[default]
+    #[serde(rename = "runyte-experimental-1")]
+    Epoch1,
+    #[serde(rename = "runyte-experimental-2")]
+    Epoch2,
+}
+impl Api {
+    pub fn version(self) -> &'static str {
+        match self {
+            Self::Epoch1 => super::VERSION,
+            Self::Epoch2 => VERSION,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ErrorCode {
+    InvalidArgument,
+    Unsupported,
+    CapabilityDenied,
+    NotFound,
+    Closed,
+    Stale,
+    Conflict,
+    ReadOnly,
+    Busy,
+    LimitExceeded,
+    Cancelled,
+    Timeout,
+    Unavailable,
+    Internal,
+    OutcomeUnknown,
+    NoFrontend,
+    ContextChanged,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Error {
+    pub code: ErrorCode,
+    pub message: String,
+}
+impl Error {
+    pub fn new(code: ErrorCode, message: &str) -> Self {
+        Self {
+            code,
+            message: message.to_owned(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Registration {
+    #[serde(default)]
+    pub arguments: Vec<super::arguments::Argument>,
+    #[serde(default)]
+    pub primary: bool,
+    pub name: String,
+    pub description: String,
+    pub context: CommandContext,
+}
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CommandContext {
+    Workspace,
+    Buffer,
+    View,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ClientMessage {
+    Register {
+        version: String,
+        name: String,
+        commands: Vec<Registration>,
+        required_capabilities: BTreeSet<String>,
+        optional_capabilities: BTreeSet<String>,
+    },
+    Request {
+        id: String,
+        #[serde(flatten)]
+        request: Request,
+    },
+    Response {
+        id: String,
+        #[serde(flatten)]
+        outcome: CommandResponse,
+    },
+}
+
+// The untagged response variants enforce exactly one terminal outcome.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum CommandResponse {
+    Success { result: CommandResult },
+    Failure { error: Error },
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CommandResult {
+    pub job: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "method", content = "params", deny_unknown_fields)]
+pub enum Request {
+    #[serde(rename = "buffer.list")]
+    BufferList { offset: usize, limit: usize },
+    #[serde(rename = "pane.list")]
+    PaneList(Empty),
+    #[serde(rename = "buffer.read")]
+    BufferRead {
+        buffer: String,
+        expected_revision: String,
+        from: usize,
+        to: usize,
+    },
+    #[serde(rename = "buffer.edit")]
+    BufferEdit {
+        buffer: String,
+        expected_revision: String,
+        changes: Vec<super::editor::Change>,
+    },
+    #[serde(rename = "buffer.snapshot.open")]
+    SnapshotOpen {
+        buffer: String,
+        expected_revision: String,
+    },
+    #[serde(rename = "buffer.snapshot.read")]
+    SnapshotRead {
+        snapshot: String,
+        from: usize,
+        to: usize,
+    },
+    #[serde(rename = "buffer.snapshot.close")]
+    SnapshotClose { snapshot: String },
+    #[serde(rename = "selection.get")]
+    SelectionGet { pane: String },
+    #[serde(rename = "selection.set")]
+    SelectionSet {
+        pane: String,
+        buffer: String,
+        expected_revision: String,
+        ranges: Vec<super::editor::Range>,
+        primary: usize,
+    },
+    #[serde(rename = "view.create")]
+    ViewCreate { model: super::view::Model },
+    #[serde(rename = "view.get")]
+    ViewGet { view: String },
+    #[serde(rename = "view.publish")]
+    ViewPublish {
+        view: String,
+        expected_revision: String,
+        model: super::view::Model,
+    },
+    #[serde(rename = "view.close")]
+    ViewClose { view: String },
+    #[serde(rename = "pane.show")]
+    PaneShow { invocation: String, view: String },
+    #[serde(rename = "workspace.info")]
+    WorkspaceInfo(Empty),
+    #[serde(rename = "job.create")]
+    JobCreate {
+        title: String,
+        deadline_seconds: u64,
+    },
+    #[serde(rename = "job.get")]
+    JobGet { job: String },
+    #[serde(rename = "job.update")]
+    JobUpdate { job: String, progress: u8 },
+    #[serde(rename = "job.finish")]
+    JobFinish { job: String, state: TerminalState },
+    #[serde(rename = "job.cancel")]
+    JobCancel { job: String },
+}
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Empty {}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TerminalState {
+    Succeeded,
+    Failed,
+    Cancelled,
+    OutcomeUnknown,
+}
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum JobState {
+    Running,
+    Cancelling,
+    Succeeded,
+    Failed,
+    Cancelled,
+    OutcomeUnknown,
+}
+impl JobState {
+    pub fn active(self) -> bool {
+        matches!(self, Self::Running | Self::Cancelling)
+    }
+}
+impl From<TerminalState> for JobState {
+    fn from(state: TerminalState) -> Self {
+        match state {
+            TerminalState::Succeeded => Self::Succeeded,
+            TerminalState::Failed => Self::Failed,
+            TerminalState::Cancelled => Self::Cancelled,
+            TerminalState::OutcomeUnknown => Self::OutcomeUnknown,
+        }
+    }
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Job {
+    pub job: String,
+    pub title: String,
+    pub state: JobState,
+    pub progress: u8,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Limits {
+    pub line_bytes: usize,
+    pub commands: usize,
+    pub requests: usize,
+    pub finite_jobs: usize,
+    pub control_queue_messages: usize,
+    pub control_queue_bytes: usize,
+    pub control_deadline_seconds: u64,
+    pub job_deadline_seconds: u64,
+    pub cancellation_seconds: u64,
+}
+impl Default for Limits {
+    fn default() -> Self {
+        Self {
+            line_bytes: super::MAX_BYTES,
+            commands: MAX_COMMANDS,
+            requests: MAX_REQUESTS,
+            finite_jobs: MAX_JOBS,
+            control_queue_messages: 32,
+            control_queue_bytes: MAX_QUEUE_BYTES,
+            control_deadline_seconds: 10,
+            job_deadline_seconds: 3600,
+            cancellation_seconds: 2,
+        }
+    }
+}
+#[derive(Clone, Debug, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum HostMessage {
+    Hello {
+        version: &'static str,
+        capabilities: Vec<&'static str>,
+        limits: Limits,
+    },
+    Registered {
+        commands: Vec<String>,
+        capabilities: BTreeSet<String>,
+        limits: Limits,
+    },
+    Request {
+        id: String,
+        method: &'static str,
+        params: Invocation,
+    },
+    Response {
+        id: String,
+        #[serde(flatten)]
+        outcome: Response,
+    },
+    Event {
+        sequence: String,
+        event: &'static str,
+        data: EventData,
+    },
+}
+#[derive(Clone, Debug, Serialize)]
+#[serde(untagged)]
+pub enum EventData {
+    Job(Job),
+    ViewClosed { view: String },
+}
+impl From<Job> for EventData {
+    fn from(job: Job) -> Self {
+        Self::Job(job)
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(untagged)]
+pub enum Response {
+    Success { result: ResultValue },
+    Failure { error: Error },
+}
+#[derive(Clone, Debug, Serialize)]
+#[serde(untagged)]
+pub enum ResultValue {
+    Buffers {
+        buffers: Vec<super::editor::Buffer>,
+        next: Option<usize>,
+    },
+    Panes {
+        panes: Vec<super::editor::Pane>,
+    },
+    Text {
+        revision: String,
+        from: usize,
+        to: usize,
+        text: String,
+    },
+    Edited {
+        buffer: String,
+        revision: String,
+        changes: usize,
+    },
+    Snapshot {
+        snapshot: String,
+        revision: String,
+        chars: usize,
+    },
+    Selection {
+        pane: String,
+        buffer: String,
+        revision: String,
+        ranges: Vec<super::editor::Range>,
+        primary: usize,
+    },
+    Workspace {
+        name: String,
+    },
+    View {
+        view: String,
+        revision: String,
+        model: super::view::Model,
+    },
+    Empty(Empty),
+    Job(Job),
+}
+#[derive(Clone, Debug, Serialize)]
+pub struct Invocation {
+    pub arguments: BTreeMap<String, super::arguments::Scalar>,
+    pub command: String,
+    pub context: CommandContext,
+    pub pane: String,
+    pub selection_revision: String,
+    pub buffer: Option<String>,
+    pub buffer_revision: Option<String>,
+    pub view: Option<String>,
+    pub model_revision: Option<String>,
+    pub rows: Vec<String>,
+}
+
+pub(crate) struct CapturedContext {
+    pub action: Option<u64>,
+    pub pane: usize,
+    pub buffer: usize,
+    pub terminal: Option<crate::terminal::TerminalId>,
+    pub attachment: u64,
+    pub foreground: u64,
+}
+
+/// Bounded host ownership, independent of a frontend and the ten-second control timer.
+pub(crate) struct Instance {
+    pub capabilities: BTreeSet<String>,
+    pub requests: BTreeMap<String, CapturedContext>,
+    pub views: BTreeMap<String, super::view::View>,
+    pub buffers: BTreeMap<String, usize>,
+    pub panes: BTreeMap<String, usize>,
+    pub snapshots: BTreeMap<String, super::editor::Snapshot>,
+    pub deadlines: BTreeMap<String, std::time::Instant>,
+    pub retained_payload: usize,
+    pub command_contexts: BTreeMap<String, CommandContext>,
+    pub primary_commands: BTreeSet<String>,
+    pub command_arguments: BTreeMap<String, Vec<super::arguments::Argument>>,
+    pub jobs: BTreeMap<String, Job>,
+    pub job_actions: BTreeMap<String, Option<u64>>,
+    pub last_request: u64,
+    pub next_handle: u64,
+    pub generation: String,
+    pub sequence: u64,
+}
+
+impl Default for Instance {
+    fn default() -> Self {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        let serial = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let time = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        Self {
+            capabilities: Default::default(),
+            requests: Default::default(),
+            views: Default::default(),
+            buffers: Default::default(),
+            panes: Default::default(),
+            snapshots: Default::default(),
+            deadlines: Default::default(),
+            retained_payload: 0,
+            command_contexts: Default::default(),
+            primary_commands: Default::default(),
+            command_arguments: Default::default(),
+            jobs: Default::default(),
+            job_actions: Default::default(),
+            last_request: 0,
+            next_handle: 0,
+            sequence: 0,
+            generation: format!("{time:x}-{serial:x}"),
+        }
+    }
+}
+
+impl Instance {
+    pub fn buffer_handle(&mut self, buffer: usize) -> Result<String, Error> {
+        Self::issue_handle(
+            &mut self.buffers,
+            &self.generation,
+            &mut self.next_handle,
+            "b",
+            buffer,
+            1024,
+        )
+    }
+
+    pub fn pane_handle(&mut self, pane: usize) -> Result<String, Error> {
+        Self::issue_handle(
+            &mut self.panes,
+            &self.generation,
+            &mut self.next_handle,
+            "p",
+            pane,
+            128,
+        )
+    }
+
+    fn issue_handle(
+        handles: &mut BTreeMap<String, usize>,
+        generation: &str,
+        next: &mut u64,
+        prefix: &str,
+        index: usize,
+        limit: usize,
+    ) -> Result<String, Error> {
+        if let Some((handle, _)) = handles.iter().find(|(_, value)| **value == index) {
+            return Ok(handle.clone());
+        }
+        if handles.len() >= limit {
+            return Err(Error::new(
+                ErrorCode::LimitExceeded,
+                "Editor handle limit reached",
+            ));
+        }
+        *next += 1;
+        let handle = format!("{prefix}:{generation}:{next}");
+        handles.insert(handle.clone(), index);
+        Ok(handle)
+    }
+}
+
+pub const CAPABILITIES: &[&str] = &["workspace", "jobs", "views", "text", "selections"];
+
+/// Validate framing independently of method dispatch so unknown methods receive
+/// `unsupported`, while malformed known requests cannot be interpreted as others.
+pub(crate) fn decode(bytes: &[u8]) -> anyhow::Result<super::ClientMessage> {
+    let value: serde_json::Value = serde_json::from_slice(bytes)?;
+    if value.get("type").and_then(|v| v.as_str()) == Some("request") {
+        let object = value.as_object().unwrap();
+        anyhow::ensure!(
+            object.len() == 4 && object.contains_key("params"),
+            "invalid request envelope"
+        );
+        let id = value
+            .get("id")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("missing request ID"))?;
+        let method = value
+            .get("method")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("missing method"))?;
+        anyhow::ensure!(
+            id.len() <= 64 && method.len() <= 96,
+            "invalid request ID or method"
+        );
+        if !matches!(
+            method,
+            "buffer.list"
+                | "pane.list"
+                | "buffer.read"
+                | "buffer.edit"
+                | "buffer.snapshot.open"
+                | "buffer.snapshot.read"
+                | "buffer.snapshot.close"
+                | "selection.get"
+                | "selection.set"
+                | "view.create"
+                | "view.get"
+                | "view.publish"
+                | "view.close"
+                | "pane.show"
+                | "workspace.info"
+                | "job.create"
+                | "job.get"
+                | "job.update"
+                | "job.finish"
+                | "job.cancel"
+        ) {
+            return Ok(super::ClientMessage::Unsupported { id: id.to_owned() });
+        }
+    }
+    if value.get("type").and_then(|v| v.as_str()) == Some("register") {
+        let object = value.as_object().unwrap();
+        anyhow::ensure!(object.len() == 6, "invalid registration envelope");
+    }
+    if value.get("type").and_then(|v| v.as_str()) == Some("response") {
+        let object = value.as_object().unwrap();
+        anyhow::ensure!(
+            object.len() == 3 && (object.contains_key("result") ^ object.contains_key("error")),
+            "invalid response envelope"
+        );
+    }
+    Ok(super::ClientMessage::Application(serde_json::from_value(
+        value,
+    )?))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn schema_fixtures_round_trip_through_the_wire() {
+        let fixtures: Vec<serde_json::Value> =
+            serde_json::from_str(include_str!("../../docs/plugins/epoch2-fixtures.json")).unwrap();
+        for fixture in fixtures.iter().filter(|f| f["direction"] == "plugin") {
+            let message = &fixture["message"];
+            let super::super::ClientMessage::Application(decoded) =
+                decode(&serde_json::to_vec(message).unwrap()).unwrap()
+            else {
+                panic!()
+            };
+            assert_eq!(serde_json::to_value(decoded).unwrap(), *message);
+        }
+        let job = Job {
+            job: "j:g:1".into(),
+            title: "Download".into(),
+            state: JobState::Running,
+            progress: 0,
+        };
+        let messages = [
+            HostMessage::Hello {
+                version: VERSION,
+                capabilities: CAPABILITIES.to_vec(),
+                limits: Limits::default(),
+            },
+            HostMessage::Registered {
+                commands: vec!["plugin.tasks.open".into()],
+                capabilities: ["jobs".into()].into(),
+                limits: Limits::default(),
+            },
+            HostMessage::Request {
+                id: "h:1".into(),
+                method: "command.invoke",
+                params: Invocation {
+                    arguments: Default::default(),
+                    command: "open".into(),
+                    context: CommandContext::Workspace,
+                    pane: "p:g:1".into(),
+                    selection_revision: "q:0".into(),
+                    buffer: Some("b:g:2".into()),
+                    buffer_revision: Some("r:0".into()),
+                    view: None,
+                    model_revision: None,
+                    rows: vec![],
+                },
+            },
+            HostMessage::Response {
+                id: "p:1".into(),
+                outcome: Response::Success {
+                    result: ResultValue::Workspace {
+                        name: "project".into(),
+                    },
+                },
+            },
+            HostMessage::Response {
+                id: "p:2".into(),
+                outcome: Response::Success {
+                    result: ResultValue::Job(job.clone()),
+                },
+            },
+            HostMessage::Response {
+                id: "p:3".into(),
+                outcome: Response::Failure {
+                    error: Error::new(ErrorCode::NotFound, "Unknown job"),
+                },
+            },
+            HostMessage::Event {
+                sequence: "e:1".into(),
+                event: "job.changed",
+                data: job.into(),
+            },
+        ];
+        let expected = fixtures
+            .iter()
+            .filter(|f| f["direction"] == "host")
+            .collect::<Vec<_>>();
+        assert_eq!(messages.len(), expected.len());
+        for (message, fixture) in messages.into_iter().zip(expected) {
+            assert_eq!(serde_json::to_value(message).unwrap(), fixture["message"]);
+        }
+    }
+
+    #[test]
+    fn wire_rejects_ambiguous_results_and_strict_request_fields() {
+        assert!(decode(br#"{"type":"request","id":"p:1","method":"job.create","params":{"title":"Copy","deadline_seconds":60}}"#).is_ok());
+        assert!(decode(br#"{"type":"response","id":"h:2","result":{"job":null}}"#).is_ok());
+        for message in [
+            r#"{"type":"response","id":"h:2","result":{"job":null},"error":{"code":"stale","message":"Changed"}}"#,
+            r#"{"type":"request","id":"p:1","method":"job.create","params":{"title":"Copy","deadline_seconds":60,"extra":true}}"#,
+            r#"{"type":"request","id":"p:1","method":"workspace.info","params":{},"extra":true}"#,
+        ] {
+            assert!(decode(message.as_bytes()).is_err(), "{message}");
+        }
+        assert!(matches!(
+            decode(br#"{"type":"request","id":"p:1","method":"future.method","params":{}}"#)
+                .unwrap(),
+            super::super::ClientMessage::Unsupported { .. }
+        ));
+    }
+}

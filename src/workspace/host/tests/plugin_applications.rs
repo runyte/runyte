@@ -1,0 +1,1187 @@
+// SPDX-License-Identifier: MPL-2.0
+
+use super::*;
+use crate::plugin::application as api;
+
+fn setup(
+    host: &mut WorkspaceHost,
+    id: usize,
+    capabilities: &[&str],
+) -> mpsc::Receiver<HostMessage> {
+    let mut cfg = config(&format!("app-{id}"));
+    cfg.api = api::Api::Epoch2;
+    cfg.capabilities = capabilities.iter().map(|s| (*s).into()).collect();
+    let receiver = instance(host, id, cfg);
+    host.application_message(
+        id,
+        api::ClientMessage::Register {
+            version: api::VERSION.into(),
+            name: "Tasks".into(),
+            commands: vec![api::Registration {
+                arguments: vec![],
+                primary: false,
+                name: "open".into(),
+                description: "Open tasks".into(),
+                context: api::CommandContext::Workspace,
+            }],
+            required_capabilities: capabilities.iter().map(|s| (*s).into()).collect(),
+            optional_capabilities: Default::default(),
+        },
+    )
+    .unwrap();
+    receiver
+}
+fn next(receiver: &mut mpsc::Receiver<HostMessage>) -> api::HostMessage {
+    loop {
+        match receiver.try_recv().unwrap() {
+            HostMessage::Application(message) => return message,
+            HostMessage::Deadline { .. } => {}
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+}
+fn request(host: &mut WorkspaceHost, plugin: usize, n: u64, request: api::Request) {
+    host.handle_plugin_event(Event {
+        plugin,
+        result: Ok(ClientMessage::Application(api::ClientMessage::Request {
+            id: format!("p:{n}"),
+            request,
+        })),
+    });
+}
+fn job(receiver: &mut mpsc::Receiver<HostMessage>) -> api::Job {
+    match next(receiver) {
+        api::HostMessage::Response {
+            outcome:
+                api::Response::Success {
+                    result: api::ResultValue::Job(job),
+                },
+            ..
+        } => job,
+        other => panic!("unexpected {other:?}"),
+    }
+}
+
+fn type_command(host: &mut WorkspaceHost, text: &str) {
+    use crate::input::KeyStroke;
+    for character in format!(":{text}").chars() {
+        host.app.handle_key(KeyStroke::char(character)).unwrap();
+    }
+    host.app
+        .handle_key(KeyStroke::parse("Enter").unwrap())
+        .unwrap();
+}
+
+#[test]
+fn application_command_palette_submits_both_epochs_on_enter() {
+    let (_root, mut host) = host();
+    let mut legacy = instance(&mut host, 1, config("case"));
+    register(&mut host, 1).unwrap();
+    legacy.try_recv().unwrap();
+    type_command(&mut host, "plugin.case.upper");
+    assert_eq!(host.app.mode, crate::app::Mode::Normal);
+    assert!(
+        matches!(legacy.try_recv().unwrap(), HostMessage::Invoke { command, .. } if command == "upper")
+    );
+
+    let mut application = setup(&mut host, 0, &["views"]);
+    next(&mut application);
+    type_command(&mut host, "plugin.app-0.open");
+    assert_eq!(host.app.mode, crate::app::Mode::Normal);
+    assert!(
+        matches!(next(&mut application), api::HostMessage::Request { params, .. } if params.command == "open")
+    );
+}
+
+#[test]
+fn application_palette_validates_arguments_before_closing_and_submits_quoted_values() {
+    use crate::input::KeyStroke;
+    let (_root, mut host) = host();
+    let mut cfg = config("args");
+    cfg.api = api::Api::Epoch2;
+    let mut receiver = instance(&mut host, 0, cfg);
+    host.application_message(
+        0,
+        api::ClientMessage::Register {
+            version: api::VERSION.into(),
+            name: "Arguments".into(),
+            commands: vec![api::Registration {
+                name: "echo".into(),
+                description: "Echo arguments".into(),
+                context: api::CommandContext::Workspace,
+                primary: false,
+                arguments: serde_json::from_str(
+                    r#"[{"name":"label","type":"string"},{"name":"count","type":"integer"}]"#,
+                )
+                .unwrap(),
+            }],
+            required_capabilities: Default::default(),
+            optional_capabilities: Default::default(),
+        },
+    )
+    .unwrap();
+    next(&mut receiver);
+    type_command(&mut host, "plugin.args.echo 'é hello' bad");
+    assert_eq!(host.app.mode, crate::app::Mode::Command);
+    assert!(receiver.try_recv().is_err());
+    host.app
+        .handle_key(KeyStroke::parse("Esc").unwrap())
+        .unwrap();
+    type_command(&mut host, "plugin.args.echo 'é hello' -7");
+    assert_eq!(host.app.mode, crate::app::Mode::Normal);
+    let api::HostMessage::Request { params, .. } = next(&mut receiver) else {
+        panic!()
+    };
+    assert_eq!(
+        serde_json::to_value(params.arguments).unwrap(),
+        serde_json::json!({"label":"é hello","count":-7})
+    );
+}
+
+#[test]
+fn application_invocation_captures_usable_buffer_and_pane_handles() {
+    let (_root, mut host) = host();
+    seed(&mut host, "é before");
+    let mut receiver = setup(&mut host, 0, &["text", "selections"]);
+    next(&mut receiver);
+    invoke(&mut host, "plugin.app-0.open");
+    let api::HostMessage::Request { params, .. } = next(&mut receiver) else {
+        panic!()
+    };
+    let captured_buffer = params.buffer.unwrap();
+    let captured_revision = params.buffer_revision.unwrap();
+    host.app
+        .execute(CommandInvocation::editor(EditorCommand::NewBuffer, Default::default()).unwrap())
+        .unwrap();
+    request(
+        &mut host,
+        0,
+        1,
+        api::Request::BufferRead {
+            buffer: captured_buffer,
+            expected_revision: captured_revision,
+            from: 0,
+            to: 8,
+        },
+    );
+    assert!(matches!(next(&mut receiver), api::HostMessage::Response {
+        outcome: api::Response::Success { result: api::ResultValue::Text { text, .. } }, ..
+    } if text == "é before"));
+    request(
+        &mut host,
+        0,
+        2,
+        api::Request::SelectionGet { pane: params.pane },
+    );
+    assert!(matches!(next(&mut receiver), api::HostMessage::Response {
+        outcome: api::Response::Success { result: api::ResultValue::Selection { revision, .. } }, ..
+    } if revision != params.selection_revision));
+}
+
+#[test]
+fn jobs_survive_commands_and_protect_host_until_terminal_response() {
+    let (_root, mut host) = host();
+    let mut receiver = setup(&mut host, 0, &["workspace", "jobs"]);
+    assert!(matches!(
+        next(&mut receiver),
+        api::HostMessage::Registered { .. }
+    ));
+    assert!(host.may_retire_idle());
+    invoke(&mut host, "plugin.app-0.open");
+    let api::HostMessage::Request { id: first, .. } = next(&mut receiver) else {
+        panic!()
+    };
+    invoke(&mut host, "plugin.app-0.open");
+    let api::HostMessage::Request { id: second, .. } = next(&mut receiver) else {
+        panic!()
+    };
+    request(
+        &mut host,
+        0,
+        1,
+        api::Request::JobCreate {
+            title: "Download".into(),
+            deadline_seconds: 120,
+        },
+    );
+    let created = job(&mut receiver);
+    assert!(matches!(
+        next(&mut receiver),
+        api::HostMessage::Event {
+            event: "job.changed",
+            ..
+        }
+    ));
+    assert_eq!(host.protected_state().plugin_jobs, 1);
+    assert!(!host.may_retire_idle());
+    assert!(host.protected_state().refusal().contains("plugin jobs"));
+    for request in [second, first] {
+        host.application_message(
+            0,
+            api::ClientMessage::Response {
+                id: request,
+                outcome: api::CommandResponse::Success {
+                    result: api::CommandResult {
+                        job: Some(created.job.clone()),
+                    },
+                },
+            },
+        )
+        .unwrap();
+    }
+    request(
+        &mut host,
+        0,
+        2,
+        api::Request::JobFinish {
+            job: created.job.clone(),
+            state: api::TerminalState::Succeeded,
+        },
+    );
+    assert_eq!(job(&mut receiver).state, api::JobState::Succeeded);
+    assert!(matches!(
+        next(&mut receiver),
+        api::HostMessage::Event {
+            event: "job.changed",
+            ..
+        }
+    ));
+    assert!(host.may_retire_idle());
+    request(
+        &mut host,
+        0,
+        3,
+        api::Request::JobFinish {
+            job: created.job,
+            state: api::TerminalState::Succeeded,
+        },
+    );
+    assert!(matches!(
+        next(&mut receiver),
+        api::HostMessage::Response {
+            outcome: api::Response::Failure {
+                error: api::Error {
+                    code: api::ErrorCode::Conflict,
+                    ..
+                }
+            },
+            ..
+        }
+    ));
+    assert!(receiver.try_recv().is_err());
+}
+
+#[test]
+fn cancellation_is_idempotent_rejects_late_success_and_preserves_other_owner() {
+    let (_root, mut host) = host();
+    let mut a = setup(&mut host, 0, &["jobs"]);
+    let mut b = setup(&mut host, 1, &["jobs"]);
+    next(&mut a);
+    next(&mut b);
+    request(
+        &mut host,
+        0,
+        1,
+        api::Request::JobCreate {
+            title: "Upload".into(),
+            deadline_seconds: 30,
+        },
+    );
+    let created = job(&mut a);
+    next(&mut a);
+    request(
+        &mut host,
+        1,
+        1,
+        api::Request::JobGet {
+            job: created.job.clone(),
+        },
+    );
+    assert!(matches!(
+        next(&mut b),
+        api::HostMessage::Response {
+            outcome: api::Response::Failure {
+                error: api::Error {
+                    code: api::ErrorCode::NotFound,
+                    ..
+                }
+            },
+            ..
+        }
+    ));
+    request(
+        &mut host,
+        0,
+        2,
+        api::Request::JobCancel {
+            job: created.job.clone(),
+        },
+    );
+    assert_eq!(job(&mut a).state, api::JobState::Cancelling);
+    assert!(matches!(
+        next(&mut a),
+        api::HostMessage::Event {
+            event: "job.cancel_requested",
+            ..
+        }
+    ));
+    request(
+        &mut host,
+        0,
+        3,
+        api::Request::JobCancel {
+            job: created.job.clone(),
+        },
+    );
+    job(&mut a);
+    assert!(a.try_recv().is_err());
+    request(
+        &mut host,
+        0,
+        4,
+        api::Request::JobFinish {
+            job: created.job.clone(),
+            state: api::TerminalState::Succeeded,
+        },
+    );
+    assert!(matches!(
+        next(&mut a),
+        api::HostMessage::Response {
+            outcome: api::Response::Failure {
+                error: api::Error {
+                    code: api::ErrorCode::Cancelled,
+                    ..
+                }
+            },
+            ..
+        }
+    ));
+    host.app
+        .plugins
+        .instances
+        .get_mut(&0)
+        .unwrap()
+        .application
+        .deadlines
+        .remove(&created.job);
+    host.handle_plugin_event(Event {
+        plugin: 0,
+        result: Ok(ClientMessage::Deadline { token: created.job }),
+    });
+    assert!(!host.app.plugins.instances.contains_key(&0));
+    assert!(host.app.plugins.instances.contains_key(&1));
+    assert!(!host.app.plugins.commands.values().any(|c| c.plugin == 0));
+}
+
+#[test]
+fn required_capabilities_registration_rollback_and_request_reuse_are_bounded() {
+    let (_root, mut host) = host();
+    let mut a = setup(&mut host, 0, &[]);
+    next(&mut a);
+    request(&mut host, 0, 1, api::Request::WorkspaceInfo(api::Empty {}));
+    assert!(matches!(
+        next(&mut a),
+        api::HostMessage::Response {
+            outcome: api::Response::Failure {
+                error: api::Error {
+                    code: api::ErrorCode::CapabilityDenied,
+                    ..
+                }
+            },
+            ..
+        }
+    ));
+    request(&mut host, 0, 1, api::Request::WorkspaceInfo(api::Empty {}));
+    assert!(!host.app.plugins.instances.contains_key(&0));
+    let mut cfg = config("denied");
+    cfg.api = api::Api::Epoch2;
+    let _receiver = instance(&mut host, 2, cfg);
+    assert!(
+        host.application_message(
+            2,
+            api::ClientMessage::Register {
+                version: api::VERSION.into(),
+                name: "Denied".into(),
+                commands: vec![],
+                required_capabilities: ["jobs".into()].into(),
+                optional_capabilities: Default::default(),
+            }
+        )
+        .is_err()
+    );
+    assert!(!host.app.plugins.commands.values().any(|c| c.plugin == 2));
+}
+
+#[test]
+fn generations_and_job_limits_prevent_reuse_and_unbounded_work() {
+    let (_root, mut host) = host();
+    let mut a = setup(&mut host, 0, &["jobs"]);
+    next(&mut a);
+    let mut old = String::new();
+    for n in 1..=4 {
+        request(
+            &mut host,
+            0,
+            n,
+            api::Request::JobCreate {
+                title: "Copy".into(),
+                deadline_seconds: 3600,
+            },
+        );
+        old = job(&mut a).job;
+        next(&mut a);
+    }
+    request(
+        &mut host,
+        0,
+        5,
+        api::Request::JobCreate {
+            title: "Overflow".into(),
+            deadline_seconds: 3600,
+        },
+    );
+    assert!(matches!(
+        next(&mut a),
+        api::HostMessage::Response {
+            outcome: api::Response::Failure {
+                error: api::Error {
+                    code: api::ErrorCode::LimitExceeded,
+                    ..
+                }
+            },
+            ..
+        }
+    ));
+    host.stop_plugin(0, "stopped by user");
+    let mut a = setup(&mut host, 0, &["jobs"]);
+    next(&mut a);
+    request(&mut host, 0, 1, api::Request::JobGet { job: old.clone() });
+    assert!(matches!(
+        next(&mut a),
+        api::HostMessage::Response {
+            outcome: api::Response::Failure { .. },
+            ..
+        }
+    ));
+    request(
+        &mut host,
+        0,
+        2,
+        api::Request::JobCreate {
+            title: "New".into(),
+            deadline_seconds: 30,
+        },
+    );
+    assert_ne!(job(&mut a).job, old);
+}
+
+#[tokio::test]
+async fn real_application_job_outlives_control_timeout_and_attachment() {
+    let (root, mut host) = host();
+    let program = root.join("jobs");
+    std::os::unix::fs::symlink(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/fixtures/stand-in"),
+        &program,
+    )
+    .unwrap();
+    std::fs::write(root.join("jobs.behavior"), r#"
+printf 'started\n' >> "$0.starts"
+read -r hello
+printf '%s\n' '{"type":"register","version":"runyte-experimental-2","name":"Jobs","commands":[{"name":"open","description":"Start job","context":"workspace"}],"required_capabilities":["jobs"],"optional_capabilities":[]}'
+read -r registered
+read -r invocation
+printf '%s\n' '{"type":"request","id":"p:1","method":"job.create","params":{"title":"Long task","deadline_seconds":60}}'
+read -r created
+read -r event
+printf '%s\n' '{"type":"response","id":"h:1","result":{"job":null}}'
+sleep 11
+printf '%s\n' '{"type":"request","id":"p:2","method":"job.create","params":{"title":"Still alive","deadline_seconds":60}}'
+while read -r message; do :; done
+"#).unwrap();
+    let mut cfg = config("jobs");
+    cfg.api = api::Api::Epoch2;
+    cfg.executable = program;
+    cfg.capabilities = vec!["jobs".into()];
+    host.app.config.plugins.push(cfg);
+    let mut events = host.start_plugins().unwrap();
+    for phase in 0..4 {
+        let event = tokio::time::timeout(std::time::Duration::from_secs(15), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(event.result.is_ok(), "{:?}", event.result);
+        host.handle_plugin_event(event);
+        if phase == 0 {
+            invoke(&mut host, "plugin.jobs.open");
+        }
+        if phase == 2 {
+            host.app.note_frontend_attached();
+            host.app.note_frontend_attached();
+            assert!(host.start_plugins().is_none());
+            assert_eq!(host.protected_state().plugin_jobs, 1);
+        }
+    }
+    assert_eq!(host.protected_state().plugin_jobs, 2);
+    assert_eq!(
+        std::fs::read_to_string(root.join("jobs.starts")).unwrap(),
+        "started\n"
+    );
+    host.stop_plugin(0, "stopped by user");
+    assert!(host.plugin_workers.is_empty());
+}
+
+fn model(rows: &[(&str, &str)]) -> crate::plugin::view::Model {
+    crate::plugin::view::Model {
+        title: "Tasks".into(),
+        purpose: crate::plugin::view::Purpose::List,
+        rows: rows
+            .iter()
+            .map(|(id, text)| crate::plugin::view::Row {
+                id: (*id).into(),
+                text: (*text).into(),
+                role: crate::plugin::view::Role::Ordinary,
+            })
+            .collect(),
+    }
+}
+fn view_setup(host: &mut WorkspaceHost) -> mpsc::Receiver<HostMessage> {
+    let mut cfg = config("tasks");
+    cfg.api = api::Api::Epoch2;
+    cfg.capabilities = vec!["views".into()];
+    let mut receiver = instance(host, 0, cfg);
+    host.application_message(
+        0,
+        api::ClientMessage::Register {
+            version: api::VERSION.into(),
+            name: "Tasks".into(),
+            commands: vec![
+                api::Registration {
+                    arguments: vec![],
+                    name: "open".into(),
+                    description: "Open tasks".into(),
+                    context: api::CommandContext::Workspace,
+                    primary: false,
+                },
+                api::Registration {
+                    arguments: vec![],
+                    name: "toggle".into(),
+                    description: "Toggle selected tasks".into(),
+                    context: api::CommandContext::View,
+                    primary: true,
+                },
+            ],
+            required_capabilities: ["views".into()].into(),
+            optional_capabilities: Default::default(),
+        },
+    )
+    .unwrap();
+    next(&mut receiver);
+    host.app.note_plugin_frontend(true);
+    receiver
+}
+fn view_result(receiver: &mut mpsc::Receiver<HostMessage>) -> (String, String) {
+    let api::HostMessage::Response {
+        outcome:
+            api::Response::Success {
+                result: api::ResultValue::View { view, revision, .. },
+            },
+        ..
+    } = next(receiver)
+    else {
+        panic!()
+    };
+    (view, revision)
+}
+fn show_view(
+    host: &mut WorkspaceHost,
+    receiver: &mut mpsc::Receiver<HostMessage>,
+    view: &str,
+    n: u64,
+) {
+    invoke(host, "plugin.tasks.open");
+    let api::HostMessage::Request { id, .. } = next(receiver) else {
+        panic!()
+    };
+    request(
+        host,
+        0,
+        n,
+        api::Request::PaneShow {
+            invocation: id,
+            view: view.into(),
+        },
+    );
+    assert!(matches!(
+        next(receiver),
+        api::HostMessage::Response {
+            outcome: api::Response::Success { .. },
+            ..
+        }
+    ));
+}
+
+#[test]
+fn native_view_preserves_split_selections_by_row_and_rejects_unseen_actions() {
+    let (_root, mut host) = host();
+    let mut receiver = view_setup(&mut host);
+    request(
+        &mut host,
+        0,
+        1,
+        api::Request::ViewCreate {
+            model: model(&[("one", "α first"), ("two", "second"), ("three", "third")]),
+        },
+    );
+    let (view, revision) = view_result(&mut receiver);
+    assert_eq!(host.app.active().buffer, 0, "creation cannot take focus");
+    show_view(&mut host, &mut receiver, &view, 2);
+    let buffer = host.app.active().buffer;
+    assert!(host.app.buffers[buffer].is_read_only());
+    host.app
+        .execute(CommandInvocation::split_vertical(None))
+        .unwrap();
+    assert_eq!(
+        host.app
+            .panes
+            .values()
+            .filter(|p| p.buffer == buffer)
+            .count(),
+        2
+    );
+    let second = host.app.buffers[buffer].line_to_offset(1);
+    for pane in host.app.panes.values_mut().filter(|p| p.buffer == buffer) {
+        pane.selection = Selection::single(Range::new(second + 3, second + 1));
+    }
+    host.app.prepare_view(Default::default());
+    request(
+        &mut host,
+        0,
+        3,
+        api::Request::ViewPublish {
+            view: view.clone(),
+            expected_revision: revision,
+            model: model(&[("three", "third"), ("one", "α first"), ("two", "second")]),
+        },
+    );
+    view_result(&mut receiver);
+    let second = host.app.buffers[buffer].line_to_offset(2);
+    for pane in host.app.panes.values().filter(|p| p.buffer == buffer) {
+        assert_eq!(pane.selection.primary(), Range::new(second + 3, second + 1));
+    }
+    assert!(!host.app.buffers[buffer].dirty);
+    assert!(matches!(
+        invoke(&mut host, "plugin.tasks.toggle"),
+        CommandOutcome::UserError(_)
+    ));
+    host.app.prepare_view(Default::default());
+    assert!(matches!(
+        invoke(&mut host, "plugin.tasks.toggle"),
+        CommandOutcome::AsynchronousRequest(_)
+    ));
+    let api::HostMessage::Request { params, .. } = next(&mut receiver) else {
+        panic!()
+    };
+    assert_eq!(params.rows, vec!["two"]);
+    assert_eq!(params.model_revision.as_deref(), Some("m:2"));
+    assert_eq!(
+        host.app.key_binding_scope(),
+        crate::keymap::BindingScope::Plugin(0)
+    );
+    assert!(matches!(
+        host.app.keymap().lookup_in(
+            crate::command::Mode::Normal,
+            host.app.key_binding_scope(),
+            &crate::keymap::KeySequence::parse("Enter").unwrap()
+        ),
+        crate::keymap::Lookup::Exact(_)
+    ));
+}
+
+#[test]
+fn presentation_grant_expires_on_input_and_detach_but_hidden_models_keep_updating() {
+    let (_root, mut host) = host();
+    let mut receiver = view_setup(&mut host);
+    request(
+        &mut host,
+        0,
+        1,
+        api::Request::ViewCreate {
+            model: model(&[("one", "original")]),
+        },
+    );
+    let (view, revision) = view_result(&mut receiver);
+    invoke(&mut host, "plugin.tasks.open");
+    let api::HostMessage::Request { id: invocation, .. } = next(&mut receiver) else {
+        panic!()
+    };
+    host.app
+        .execute(CommandInvocation::editor(EditorCommand::MoveRight, Default::default()).unwrap())
+        .unwrap();
+    request(
+        &mut host,
+        0,
+        2,
+        api::Request::PaneShow {
+            invocation: invocation.clone(),
+            view: view.clone(),
+        },
+    );
+    assert!(matches!(
+        next(&mut receiver),
+        api::HostMessage::Response {
+            outcome: api::Response::Failure {
+                error: api::Error {
+                    code: api::ErrorCode::ContextChanged,
+                    ..
+                }
+            },
+            ..
+        }
+    ));
+    host.app.note_plugin_frontend(false);
+    request(
+        &mut host,
+        0,
+        3,
+        api::Request::PaneShow {
+            invocation,
+            view: view.clone(),
+        },
+    );
+    assert!(matches!(
+        next(&mut receiver),
+        api::HostMessage::Response {
+            outcome: api::Response::Failure {
+                error: api::Error {
+                    code: api::ErrorCode::NoFrontend,
+                    ..
+                }
+            },
+            ..
+        }
+    ));
+    let changed = host.handle_plugin_event(Event {
+        plugin: 0,
+        result: Ok(ClientMessage::Application(api::ClientMessage::Request {
+            id: "p:4".into(),
+            request: api::Request::ViewPublish {
+                view: view.clone(),
+                expected_revision: revision,
+                model: model(&[("one", "updated")]),
+            },
+        })),
+    });
+    assert!(!changed, "hidden publication must not request a frame");
+    view_result(&mut receiver);
+    host.app.note_plugin_frontend(true);
+    show_view(&mut host, &mut receiver, &view, 5);
+    assert_eq!(host.app.active_buffer().to_string(), "updated\n");
+    host.stop_plugin(0, "stopped by user");
+    assert_eq!(host.app.active_buffer().to_string(), "updated\n");
+    assert!(
+        host.app
+            .active_buffer()
+            .display_name()
+            .contains("unavailable")
+    );
+}
+
+#[test]
+fn invalid_model_is_atomic_and_close_releases_owned_handle_after_response() {
+    let (_root, mut host) = host();
+    let mut receiver = view_setup(&mut host);
+    request(
+        &mut host,
+        0,
+        1,
+        api::Request::ViewCreate {
+            model: model(&[("one", "original")]),
+        },
+    );
+    let (view, revision) = view_result(&mut receiver);
+    request(
+        &mut host,
+        0,
+        2,
+        api::Request::ViewPublish {
+            view: view.clone(),
+            expected_revision: revision,
+            model: model(&[("one", "changed"), ("one", "duplicate")]),
+        },
+    );
+    assert!(matches!(
+        next(&mut receiver),
+        api::HostMessage::Response {
+            outcome: api::Response::Failure { .. },
+            ..
+        }
+    ));
+    let buffer = host.app.plugins.instances[&0].application.views[&view].buffer;
+    assert_eq!(host.app.buffers[buffer].to_string(), "original\n");
+    request(
+        &mut host,
+        0,
+        3,
+        api::Request::ViewClose { view: view.clone() },
+    );
+    assert!(matches!(
+        next(&mut receiver),
+        api::HostMessage::Response {
+            outcome: api::Response::Success { .. },
+            ..
+        }
+    ));
+    assert!(matches!(
+        next(&mut receiver),
+        api::HostMessage::Event {
+            event: "view.closed",
+            ..
+        }
+    ));
+    assert!(
+        !host.app.plugins.instances[&0]
+            .application
+            .views
+            .contains_key(&view)
+    );
+}
+
+#[test]
+fn explicit_unicode_edits_are_atomic_hidden_and_one_undo_while_snapshots_stay_immutable() {
+    let (_root, mut host) = host();
+    seed(&mut host, "éß 😀xy");
+    let mut receiver = setup(&mut host, 0, &["workspace", "text", "selections"]);
+    next(&mut receiver);
+    request(
+        &mut host,
+        0,
+        1,
+        api::Request::BufferList {
+            offset: 0,
+            limit: 32,
+        },
+    );
+    let api::HostMessage::Response {
+        outcome:
+            api::Response::Success {
+                result: api::ResultValue::Buffers { buffers, .. },
+            },
+        ..
+    } = next(&mut receiver)
+    else {
+        panic!()
+    };
+    let buffer = buffers[0].buffer.clone();
+    let revision = buffers[0].revision.clone();
+    request(
+        &mut host,
+        0,
+        2,
+        api::Request::SnapshotOpen {
+            buffer: buffer.clone(),
+            expected_revision: revision.clone(),
+        },
+    );
+    let api::HostMessage::Response {
+        outcome:
+            api::Response::Success {
+                result: api::ResultValue::Snapshot { snapshot, .. },
+            },
+        ..
+    } = next(&mut receiver)
+    else {
+        panic!()
+    };
+    host.app
+        .execute(CommandInvocation::editor(EditorCommand::NewBuffer, Default::default()).unwrap())
+        .unwrap();
+    let hidden_focus = host.app.active().buffer;
+    assert_ne!(hidden_focus, 0);
+    request(
+        &mut host,
+        0,
+        3,
+        api::Request::BufferEdit {
+            buffer: buffer.clone(),
+            expected_revision: revision.clone(),
+            changes: vec![
+                crate::plugin::editor::Change {
+                    from: 0,
+                    to: 2,
+                    text: "ÉSS".into(),
+                },
+                crate::plugin::editor::Change {
+                    from: 3,
+                    to: 4,
+                    text: "🐈".into(),
+                },
+            ],
+        },
+    );
+    assert!(matches!(
+        next(&mut receiver),
+        api::HostMessage::Response {
+            outcome: api::Response::Success {
+                result: api::ResultValue::Edited { changes: 2, .. }
+            },
+            ..
+        }
+    ));
+    assert_eq!(host.app.active().buffer, hidden_focus);
+    assert_eq!(host.app.buffers[0].to_string(), "ÉSS 🐈xy");
+    request(
+        &mut host,
+        0,
+        4,
+        api::Request::BufferRead {
+            buffer: buffer.clone(),
+            expected_revision: revision.clone(),
+            from: 0,
+            to: 2,
+        },
+    );
+    assert!(matches!(
+        next(&mut receiver),
+        api::HostMessage::Response {
+            outcome: api::Response::Failure {
+                error: api::Error {
+                    code: api::ErrorCode::Stale,
+                    ..
+                }
+            },
+            ..
+        }
+    ));
+    request(
+        &mut host,
+        0,
+        5,
+        api::Request::SnapshotRead {
+            snapshot: snapshot.clone(),
+            from: 0,
+            to: 4,
+        },
+    );
+    let api::HostMessage::Response {
+        outcome:
+            api::Response::Success {
+                result:
+                    api::ResultValue::Text {
+                        text,
+                        revision: old_revision,
+                        ..
+                    },
+            },
+        ..
+    } = next(&mut receiver)
+    else {
+        panic!()
+    };
+    assert_eq!(text, "éß 😀");
+    assert_eq!(revision, old_revision);
+    host.app
+        .panes
+        .get_mut(&host.app.active_pane)
+        .unwrap()
+        .buffer = 0;
+    undo(&mut host);
+    assert_eq!(host.app.buffers[0].to_string(), "éß 😀xy");
+    let revision = format!("r:{}", host.app.buffers[0].revision());
+    request(
+        &mut host,
+        0,
+        6,
+        api::Request::BufferEdit {
+            buffer,
+            expected_revision: revision,
+            changes: vec![
+                crate::plugin::editor::Change {
+                    from: 0,
+                    to: 3,
+                    text: "bad".into(),
+                },
+                crate::plugin::editor::Change {
+                    from: 2,
+                    to: 4,
+                    text: "overlap".into(),
+                },
+            ],
+        },
+    );
+    assert!(matches!(
+        next(&mut receiver),
+        api::HostMessage::Response {
+            outcome: api::Response::Failure {
+                error: api::Error {
+                    code: api::ErrorCode::InvalidArgument,
+                    ..
+                }
+            },
+            ..
+        }
+    ));
+    assert_eq!(host.app.buffers[0].to_string(), "éß 😀xy");
+    request(&mut host, 0, 7, api::Request::SnapshotClose { snapshot });
+    assert!(matches!(
+        next(&mut receiver),
+        api::HostMessage::Response {
+            outcome: api::Response::Success { .. },
+            ..
+        }
+    ));
+    assert_eq!(
+        host.app.plugins.instances[&0].application.retained_payload,
+        0
+    );
+}
+
+#[test]
+fn pane_selection_targets_revision_and_foreign_buffer_handles_are_rejected() {
+    let (_root, mut host) = host();
+    seed(&mut host, "éß 😀xy");
+    let mut receiver = setup(&mut host, 0, &["workspace", "text", "selections"]);
+    next(&mut receiver);
+    request(&mut host, 0, 1, api::Request::PaneList(api::Empty {}));
+    let api::HostMessage::Response {
+        outcome:
+            api::Response::Success {
+                result: api::ResultValue::Panes { panes },
+            },
+        ..
+    } = next(&mut receiver)
+    else {
+        panic!()
+    };
+    let pane = panes[0].pane.clone();
+    let buffer = panes[0].buffer.clone().unwrap();
+    let revision = panes[0].selection_revision.clone();
+    request(
+        &mut host,
+        0,
+        2,
+        api::Request::SelectionSet {
+            pane: pane.clone(),
+            buffer: buffer.clone(),
+            expected_revision: revision.clone(),
+            ranges: vec![crate::plugin::editor::Range { anchor: 5, head: 3 }],
+            primary: 0,
+        },
+    );
+    let api::HostMessage::Response {
+        outcome:
+            api::Response::Success {
+                result: api::ResultValue::Selection { ranges, .. },
+            },
+        ..
+    } = next(&mut receiver)
+    else {
+        panic!()
+    };
+    assert_eq!((ranges[0].anchor, ranges[0].head), (5, 3));
+    request(
+        &mut host,
+        0,
+        3,
+        api::Request::SelectionSet {
+            pane,
+            buffer: buffer.clone(),
+            expected_revision: revision,
+            ranges: vec![crate::plugin::editor::Range { anchor: 0, head: 0 }],
+            primary: 0,
+        },
+    );
+    assert!(matches!(
+        next(&mut receiver),
+        api::HostMessage::Response {
+            outcome: api::Response::Failure {
+                error: api::Error {
+                    code: api::ErrorCode::Stale,
+                    ..
+                }
+            },
+            ..
+        }
+    ));
+    let current_revision = format!("r:{}", host.app.buffers[0].revision());
+    let mut other = setup(&mut host, 1, &["text"]);
+    next(&mut other);
+    request(
+        &mut host,
+        1,
+        1,
+        api::Request::BufferRead {
+            buffer,
+            expected_revision: current_revision,
+            from: 0,
+            to: 1,
+        },
+    );
+    assert!(matches!(
+        next(&mut other),
+        api::HostMessage::Response {
+            outcome: api::Response::Failure {
+                error: api::Error {
+                    code: api::ErrorCode::NotFound,
+                    ..
+                }
+            },
+            ..
+        }
+    ));
+}
+
+#[test]
+fn native_view_survives_private_frame_round_trip_with_theme_roles_in_narrow_panes() {
+    let (_root, mut host) = host();
+    let mut receiver = view_setup(&mut host);
+    let mut model = model(&[("warn", "Careful"), ("error", "Failed")]);
+    model.rows[0].role = crate::plugin::view::Role::Warning;
+    model.rows[1].role = crate::plugin::view::Role::Error;
+    request(&mut host, 0, 1, api::Request::ViewCreate { model });
+    let (view, _) = view_result(&mut receiver);
+    show_view(&mut host, &mut receiver, &view, 2);
+    let geometry = crate::ui::frame_geometry(ratatui::layout::Rect::new(0, 0, 40, 12));
+    let core = host.prepare_frame(geometry);
+    let wire: crate::protocol::HostFrame = core.into();
+    let bytes = serde_json::to_vec(&wire).unwrap();
+    let wire: crate::protocol::HostFrame = serde_json::from_slice(&bytes).unwrap();
+    let core: crate::workspace::HostFrame = wire.try_into().unwrap();
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(40, 12)).unwrap();
+    terminal
+        .draw(|frame| crate::ui::render_host_frame_exact_colors_for_test(frame, &core))
+        .unwrap();
+    let cells = terminal.backend().buffer();
+    let rendered = cells
+        .content
+        .iter()
+        .map(|cell| cell.symbol())
+        .collect::<String>();
+    assert!(rendered.contains("Careful"));
+    assert!(rendered.contains("Failed"));
+    let theme = host
+        .app
+        .config
+        .resolve_theme(
+            host.app
+                .config
+                .theme
+                .as_deref()
+                .unwrap_or(crate::config::DEFAULT_THEME),
+        )
+        .unwrap();
+    for (word, expected) in [("Careful", theme.warning), ("Failed", theme.error)] {
+        let crate::config::Color::Rgb(red, green, blue) = expected else {
+            panic!("default theme uses RGB");
+        };
+        let start = cells
+            .content
+            .windows(word.len())
+            .position(|window| window.iter().map(|cell| cell.symbol()).collect::<String>() == word)
+            .unwrap();
+        // The first character can carry the normal-mode caret; the rest uses the semantic role.
+        assert_eq!(
+            cells.content[start + 1].fg,
+            ratatui::style::Color::Rgb(red, green, blue)
+        );
+    }
+}

@@ -269,6 +269,7 @@ mod mouse_autoscroll;
 mod movement;
 mod navigation_workflows;
 mod picker_workflows;
+mod plugin_views;
 pub(crate) mod plugin_workflows;
 mod presentation;
 mod prompt_editing;
@@ -3551,6 +3552,11 @@ fn outcome_clause(outcome: &str, message: &str) -> String {
 /// What a picker row stands for.
 #[derive(Clone, Debug)]
 enum ListAction {
+    PluginCommand {
+        command: u64,
+        buffer: usize,
+        revision: u64,
+    },
     Destination(OpenDestination),
     LspTrust {
         allowed: bool,

@@ -11,6 +11,13 @@ use anyhow::{Result, ensure};
 use std::collections::BTreeSet;
 
 impl WorkspaceHost {
+    pub fn plugin_presentation_pending(&self) -> bool {
+        self.app.plugins.presentation_dirty
+    }
+    pub fn take_plugin_presentation_change(&mut self) -> bool {
+        std::mem::take(&mut self.app.plugins.presentation_dirty)
+    }
+
     /// Called once by host service startup; never by an attached frontend.
     pub fn start_plugins(&mut self) -> Option<tokio::sync::mpsc::Receiver<Event>> {
         if self.plugins_started {
@@ -33,14 +40,24 @@ impl WorkspaceHost {
             return None;
         }
         let mut names = BTreeSet::new();
-        let (events, receiver) = tokio::sync::mpsc::channel(32);
+        let (events, receiver) = tokio::sync::mpsc::channel(136);
         for (id, config) in configs.into_iter().enumerate() {
             if !plugin::valid_name(&config.id)
                 || !names.insert(config.id.clone())
                 || !config.executable.is_absolute()
                 || config.args.len() > 32
                 || config.args.iter().map(String::len).sum::<usize>() > 8192
-                || config.bindings.len() > plugin::MAX_COMMANDS
+                || config.bindings.len()
+                    > if config.api == plugin::application::Api::Epoch2 {
+                        plugin::application::MAX_COMMANDS
+                    } else {
+                        plugin::MAX_COMMANDS
+                    }
+                || config.capabilities.len() > 32
+                || config
+                    .capabilities
+                    .iter()
+                    .any(|cap| !plugin::valid_name(cap))
             {
                 self.report_host_error(format!(
                     "Invalid or duplicate plugin configuration: {}",
@@ -55,8 +72,16 @@ impl WorkspaceHost {
                 events.clone(),
             );
             sender
-                .try_send(HostMessage::Hello {
-                    version: plugin::VERSION,
+                .try_send(if config.api == plugin::application::Api::Epoch2 {
+                    HostMessage::Application(plugin::application::HostMessage::Hello {
+                        version: plugin::application::VERSION,
+                        capabilities: plugin::application::CAPABILITIES.to_vec(),
+                        limits: Default::default(),
+                    })
+                } else {
+                    HostMessage::Hello {
+                        version: plugin::VERSION,
+                    }
                 })
                 .expect("new queue");
             self.plugin_workers.insert(id, worker);
@@ -66,6 +91,7 @@ impl WorkspaceHost {
                     config,
                     sender,
                     registered: false,
+                    application: Default::default(),
                     pending: None,
                     issued: BTreeSet::new(),
                     subscriptions: Default::default(),
@@ -76,12 +102,37 @@ impl WorkspaceHost {
         Some(receiver)
     }
 
-    pub fn handle_plugin_event(&mut self, event: Event) {
+    pub fn handle_plugin_event(&mut self, event: Event) -> bool {
+        let presentation = |host: &Self| {
+            let visible = host
+                .app
+                .panes
+                .iter()
+                .filter(|(_, pane)| pane.terminal.is_none())
+                .map(|(&pane_id, pane)| {
+                    let buffer = &host.app.buffers[pane.buffer];
+                    (
+                        pane_id,
+                        pane.buffer,
+                        buffer.revision(),
+                        host.app.plugin_selection_revision(pane_id),
+                        buffer.display_name(),
+                    )
+                })
+                .collect::<Vec<_>>();
+            (
+                host.app.active_pane,
+                visible,
+                host.app.status.clone(),
+                host.app.plugins.commands.len(),
+            )
+        };
+        let before = presentation(self);
         // Observation delivery or a queued stop can retire this same instance.
         // Check membership after that boundary before looking up its state.
         self.sync_plugin_observers();
         if !self.app.plugins.instances.contains_key(&event.plugin) {
-            return;
+            return before != presentation(self);
         }
         let result = event
             .result
@@ -90,6 +141,8 @@ impl WorkspaceHost {
         if let Err(error) = result {
             self.stop_plugin(event.plugin, &error.to_string());
         }
+        self.sync_plugin_views();
+        before != presentation(self)
     }
 
     /// Administrative cancellation also removes commands and subscriptions.
@@ -97,7 +150,15 @@ impl WorkspaceHost {
         let Some(instance) = self.app.plugins.instances.remove(&id) else {
             return;
         };
+        self.app.plugins.presentation_dirty = true;
         self.plugin_workers.remove(&id);
+        for view in instance.application.views.values() {
+            if let crate::buffer::BufferKind::Virtual { name, .. } =
+                &mut self.app.buffers[view.buffer].kind
+            {
+                name.push_str(" [unavailable]");
+            }
+        }
         self.app
             .plugins
             .commands
@@ -119,24 +180,69 @@ impl WorkspaceHost {
         );
     }
 
-    fn plugin_send(&mut self, id: usize, message: HostMessage) -> Result<()> {
-        self.app
+    pub(super) fn plugin_send(&mut self, id: usize, message: HostMessage) -> Result<()> {
+        let instance = self
+            .app
             .plugins
             .instances
-            .get(&id)
-            .ok_or_else(|| anyhow::anyhow!("plugin stopped"))?
+            .get_mut(&id)
+            .ok_or_else(|| anyhow::anyhow!("plugin stopped"))?;
+        if let HostMessage::Deadline { token, after_ms } = &message {
+            if let Some(ms) = after_ms {
+                instance.application.deadlines.insert(
+                    token.clone(),
+                    std::time::Instant::now() + std::time::Duration::from_millis(*ms),
+                );
+            } else {
+                instance.application.deadlines.remove(token);
+            }
+        }
+        instance
             .sender
             .try_send(message)
             .map_err(|_| anyhow::anyhow!("plugin outbound queue full or closed"))
     }
 
-    fn plugin_message(&mut self, id: usize, message: ClientMessage) -> Result<()> {
+    pub(super) fn plugin_message(&mut self, id: usize, message: ClientMessage) -> Result<()> {
+        match message {
+            ClientMessage::Queued { message, .. } => return self.plugin_message(id, *message),
+            ClientMessage::Application(message) => {
+                ensure!(
+                    self.app.plugins.instances[&id].config.api == plugin::application::Api::Epoch2,
+                    "wrong API epoch"
+                );
+                return self.application_message(id, message);
+            }
+            ClientMessage::Unsupported { id: request } => {
+                self.application_request_id(id, &request)?;
+                return self.application_send(
+                    id,
+                    plugin::application::HostMessage::Response {
+                        id: request,
+                        outcome: plugin::application::Response::Failure {
+                            error: plugin::application::Error::new(
+                                plugin::application::ErrorCode::Unsupported,
+                                "Unsupported method",
+                            ),
+                        },
+                    },
+                );
+            }
+            ClientMessage::Deadline { token } => return self.application_deadline(id, token),
+            _ => {}
+        }
         if let ClientMessage::Register { version, commands } = message {
             let instance = &self.app.plugins.instances[&id];
             ensure!(!instance.registered, "plugin already registered");
             ensure!(version == plugin::VERSION, "unsupported plugin API version");
             ensure!(
-                !commands.is_empty() && commands.len() <= plugin::MAX_COMMANDS,
+                !commands.is_empty()
+                    && commands.len()
+                        <= if instance.config.api == plugin::application::Api::Epoch2 {
+                            plugin::application::MAX_COMMANDS
+                        } else {
+                            plugin::MAX_COMMANDS
+                        },
                 "invalid plugin command count"
             );
             let mut candidate = self.app.plugins.commands.clone();
@@ -166,6 +272,13 @@ impl WorkspaceHost {
                     .bindings
                     .get(&registration.name)
                     .map(|s| KeySequence::parse(s))
+                    .or_else(|| {
+                        instance
+                            .application
+                            .primary_commands
+                            .contains(&registration.name)
+                            .then(|| KeySequence::parse("Enter"))
+                    })
                     .transpose()
                     .map_err(anyhow::Error::msg)?;
                 ensure!(
@@ -177,12 +290,36 @@ impl WorkspaceHost {
                 candidate.insert(
                     command_id,
                     RuntimeCommand {
+                        arguments: instance
+                            .application
+                            .command_arguments
+                            .get(&registration.name)
+                            .cloned()
+                            .unwrap_or_default(),
                         id: command_id,
                         plugin: id,
+                        usage: format!(
+                            "{}{}",
+                            name,
+                            instance
+                                .application
+                                .command_arguments
+                                .get(&registration.name)
+                                .into_iter()
+                                .flatten()
+                                .map(|arg| format!(" <{}>", arg.name))
+                                .collect::<String>()
+                        ),
                         name: name.clone(),
-                        local: registration.name,
+                        local: registration.name.clone(),
                         description: registration.description,
                         binding,
+                        context: instance
+                            .application
+                            .command_contexts
+                            .get(&registration.name)
+                            .copied()
+                            .unwrap_or(plugin::application::CommandContext::Buffer),
                     },
                 );
                 full_names.push(name);
@@ -201,24 +338,34 @@ impl WorkspaceHost {
             candidate.insert(
                 command_id,
                 RuntimeCommand {
+                    arguments: vec![],
                     id: command_id,
                     plugin: id,
+                    usage: stop_name.clone(),
                     name: stop_name,
                     local: "stop".to_owned(),
                     description: "Stop plugin and cancel pending work".to_owned(),
                     binding: None,
+                    context: plugin::application::CommandContext::Workspace,
                 },
             );
             let maps = self.app.plugin_keymaps(&candidate)?;
             self.app.plugins.commands = candidate;
             self.app.install_plugin_keymaps(maps);
             self.app.plugins.instances.get_mut(&id).unwrap().registered = true;
-            return self.plugin_send(
-                id,
+            let instance = &self.app.plugins.instances[&id];
+            let message = if instance.config.api == plugin::application::Api::Epoch2 {
+                HostMessage::Application(plugin::application::HostMessage::Registered {
+                    commands: full_names,
+                    capabilities: instance.application.capabilities.clone(),
+                    limits: Default::default(),
+                })
+            } else {
                 HostMessage::Registered {
                     commands: full_names,
-                },
-            );
+                }
+            };
+            return self.plugin_send(id, message);
         }
         ensure!(
             self.app.plugins.instances[&id].registered,
@@ -331,6 +478,10 @@ impl WorkspaceHost {
                 self.plugin_send(id, HostMessage::Unsubscribed { request, buffer })?;
             }
             ClientMessage::Register { .. } => unreachable!(),
+            ClientMessage::Queued { .. }
+            | ClientMessage::Application(_)
+            | ClientMessage::Unsupported { .. }
+            | ClientMessage::Deadline { .. } => anyhow::bail!("wrong API epoch"),
         }
         Ok(())
     }
@@ -406,6 +557,7 @@ impl WorkspaceHost {
     /// Observation checkpoints coalesce changes within a host turn, including
     /// undo/reload paths. No scan or wakeup exists when there are no subscribers.
     pub fn sync_plugin_observers(&mut self) {
+        self.sync_plugin_views();
         for id in std::mem::take(&mut self.app.plugins.cancellations) {
             self.stop_plugin(id, "stopped by user");
         }
@@ -458,3 +610,79 @@ impl WorkspaceHost {
 #[cfg(all(test, unix))]
 #[path = "tests/plugins.rs"]
 mod tests;
+
+impl WorkspaceHost {
+    fn sync_plugin_views(&mut self) {
+        let snapshots = self
+            .app
+            .plugins
+            .instances
+            .iter()
+            .flat_map(|(&owner, instance)| {
+                instance
+                    .application
+                    .snapshots
+                    .iter()
+                    .filter(|(_, snapshot)| self.app.host_buffer_is_closed(snapshot.buffer))
+                    .map(move |(handle, _)| (owner, handle.clone()))
+            })
+            .collect::<Vec<_>>();
+        for (owner, token) in snapshots {
+            let Some(instance) = self.app.plugins.instances.get_mut(&owner) else {
+                continue;
+            };
+            if let Some(snapshot) = instance.application.snapshots.remove(&token) {
+                instance.application.retained_payload -= snapshot.text.len_bytes();
+            }
+            if self
+                .plugin_send(
+                    owner,
+                    HostMessage::Deadline {
+                        token,
+                        after_ms: None,
+                    },
+                )
+                .is_err()
+            {
+                self.stop_plugin(owner, "event consumer is too slow");
+            }
+        }
+        let closed = self
+            .app
+            .plugins
+            .instances
+            .iter()
+            .flat_map(|(&owner, instance)| {
+                instance
+                    .application
+                    .views
+                    .iter()
+                    .filter(|(_, view)| self.app.host_buffer_is_closed(view.buffer))
+                    .map(move |(handle, _)| (owner, handle.clone()))
+            })
+            .collect::<Vec<_>>();
+        for (owner, view) in closed {
+            let Some(instance) = self.app.plugins.instances.get_mut(&owner) else {
+                continue;
+            };
+            if let Some(view) = instance.application.views.remove(&view) {
+                instance.application.retained_payload -= view.model.payload_bytes() * 2;
+            }
+            instance.application.sequence += 1;
+            let sequence = format!("e:{}", instance.application.sequence);
+            if self
+                .application_send(
+                    owner,
+                    plugin::application::HostMessage::Event {
+                        sequence,
+                        event: "view.closed",
+                        data: plugin::application::EventData::ViewClosed { view },
+                    },
+                )
+                .is_err()
+            {
+                self.stop_plugin(owner, "event consumer is too slow");
+            }
+        }
+    }
+}

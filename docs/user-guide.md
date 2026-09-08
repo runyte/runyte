@@ -2984,6 +2984,10 @@ Explicitly enabled process plugins can register commands, read the invoking
 buffer's text and selections, and return replacements as one undoable edit.
 They run asynchronously; changing the invoking text rejects stale results.
 Persistent hosts retain their plugin processes across TUI detach and reattach.
+Opt-in epoch 2 applications also provide retained native views, typed commands,
+finite background jobs and explicit buffer/selection operations; the
+[application guide](plugins/applications.md) includes runnable task-list and
+background-job examples and lists the remaining work.
 
 The runnable example, installation and configuration, command bindings, errors,
 subscription behavior, limits and experimental API are in the

@@ -114,6 +114,9 @@ themes:
 
 # Experimental process plugins are disabled unless explicitly enabled.
 # See docs/plugins.md. Use trusted programs and absolute paths.
+# Omitted api selects runyte-experimental-1. Application examples and the
+# explicit runyte-experimental-2 capability configuration are documented in
+# docs/plugins/applications.md.
 # plugins:
 #   - id: case
 #     enabled: true

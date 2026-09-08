@@ -2241,8 +2241,10 @@ impl CommandInvocation {
     ) -> Result<Self, CommandInvocationError> {
         let valid = match id {
             CommandId::Plugin(_) => {
-                matches!(parameters, InvocationParameters::None)
-                    && execution == CommandExecutionContext::default()
+                matches!(
+                    parameters,
+                    InvocationParameters::None | InvocationParameters::OptionalText(_)
+                ) && execution == CommandExecutionContext::default()
             }
             CommandId::Editor(EditorCommand::ShowHelp) => {
                 matches!(parameters, InvocationParameters::Help(_))

@@ -257,6 +257,25 @@ impl App {
     /// This is the only frame lifecycle step allowed to mutate view state.
     /// Rendering consumes the returned owned values and an immutable `App`.
     pub fn prepare_view(&mut self, geometry: FrameGeometry) -> PreparedView {
+        if !self.plugins.instances.is_empty() {
+            self.plugins.presented_views.clear();
+            for (&pane_id, pane) in &self.panes {
+                if pane.terminal.is_none() {
+                    for instance in self.plugins.instances.values() {
+                        if let Some(view) = instance
+                            .application
+                            .views
+                            .values()
+                            .find(|view| view.buffer == pane.buffer)
+                        {
+                            self.plugins
+                                .presented_views
+                                .insert(pane_id, (view.buffer, view.revision));
+                        }
+                    }
+                }
+            }
+        }
         let (geometry, session_strip) = self.prepare_session_strip(geometry);
         self.pace_picker_progress();
         self.flush_lsp_replies();
@@ -634,6 +653,16 @@ impl App {
         // to, which is the one wrong answer available here.
         if self.active_terminal().is_some() {
             return BindingScope::Terminal;
+        }
+        if let Some(GeneratedViewIdentity::Plugin { owner, view }) =
+            self.active_buffer().generated_view_identity()
+            && self
+                .plugins
+                .instances
+                .get(owner)
+                .is_some_and(|instance| instance.application.views.contains_key(view))
+        {
+            return BindingScope::Plugin(*owner);
         }
         if self.active_buffer().is_directory() {
             BindingScope::Directory
