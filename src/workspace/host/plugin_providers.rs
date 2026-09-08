@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 use super::WorkspaceHost;
+use crate::app::plugin_providers::ProviderInspectIntent;
 use crate::{
     buffer::{Buffer, ProviderDocument, ProviderIdentity},
     plugin::{self, application as api, provider as wire},
@@ -10,6 +11,7 @@ use api::{Error, ErrorCode as Code};
 pub(super) struct PendingRead {
     pub charge: usize,
     pub rebind: Option<usize>,
+    pub inspect: Option<ProviderInspectIntent>,
     rebind_epoch: Option<u64>,
     reconcile_write: Option<String>,
     pub requester: usize,
@@ -29,17 +31,62 @@ impl WorkspaceHost {
         owner: usize,
         request: api::Request,
     ) -> Result<(api::ResultValue, Option<&'static str>), Error> {
-        self.application_provider_request_with_rebind(owner, request, None)
+        self.application_provider_read(owner, request, None, None)
     }
 
-    fn application_provider_request_with_rebind(
+    fn application_provider_read(
         &mut self,
         owner: usize,
         request: api::Request,
         rebind: Option<usize>,
+        inspect: Option<ProviderInspectIntent>,
     ) -> Result<(api::ResultValue, Option<&'static str>), Error> {
         let state = &self.app.plugins.instances[&owner].application;
         match request {
+            api::Request::ResourceInspect {
+                buffer,
+                expected_revision,
+                invocation,
+            } => {
+                if !state.capabilities.contains("documents") || !state.capabilities.contains("jobs")
+                {
+                    return Err(Error::new(
+                        Code::CapabilityDenied,
+                        "Resource inspection requires documents and jobs capabilities",
+                    ));
+                }
+                let index = *state
+                    .buffers
+                    .get(&buffer)
+                    .ok_or_else(|| Error::new(Code::NotFound, "Unknown document"))?;
+                let context = state
+                    .requests
+                    .get(&invocation)
+                    .ok_or_else(|| Error::new(Code::ContextChanged, "Invoking command finished"))?
+                    .clone();
+                self.app.plugin_foreground(&context)?;
+                if context.buffer != index {
+                    return Err(Error::new(
+                        Code::ContextChanged,
+                        "Inspection must target the invoking document",
+                    ));
+                }
+                if self.app.host_buffer_is_closed(index) {
+                    return Err(Error::new(Code::Closed, "Document closed"));
+                }
+                let revision = self.app.buffers[index].revision();
+                if format!("r:{revision}") != expected_revision {
+                    return Err(Error::new(Code::Stale, "Document changed"));
+                }
+                self.start_provider_inspection(
+                    owner,
+                    ProviderInspectIntent {
+                        buffer: index,
+                        expected_revision: revision,
+                        context,
+                    },
+                )
+            }
             api::Request::ResourceRebind {
                 buffer,
                 expected_revision,
@@ -74,7 +121,7 @@ impl WorkspaceHost {
                     ));
                 }
                 let identity = document.identity.clone();
-                let result = self.application_provider_request_with_rebind(
+                let result = self.application_provider_read(
                     owner,
                     api::Request::ResourceOpen {
                         plugin: identity.configured_plugin,
@@ -83,6 +130,7 @@ impl WorkspaceHost {
                         invocation: None,
                     },
                     Some(index),
+                    None,
                 )?;
                 self.app.plugins.document_saves.insert(index);
                 Ok(result)
@@ -122,7 +170,9 @@ impl WorkspaceHost {
                 key,
                 invocation,
             } => {
-                if !state.capabilities.contains("documents") || !state.capabilities.contains("jobs")
+                if inspect.is_none()
+                    && (!state.capabilities.contains("documents")
+                        || !state.capabilities.contains("jobs"))
                 {
                     return Err(Error::new(
                         Code::CapabilityDenied,
@@ -206,24 +256,14 @@ impl WorkspaceHost {
                 if self.provider_reads.values().any(|p| p.identity == identity) {
                     return Err(Error::new(Code::Busy, "Resource open is already pending"));
                 }
-                let created = self.application_request(
+                let job = self.create_provider_job(
                     owner,
-                    api::Request::JobCreate {
-                        title: "Open resource".into(),
-                        deadline_seconds: 60,
+                    if inspect.is_some() {
+                        "Inspect resource"
+                    } else {
+                        "Open resource"
                     },
-                );
-                let (api::ResultValue::Job(job), _) = (match created {
-                    Ok(result) => result,
-                    Err(error) => {
-                        if error.code == Code::Unavailable {
-                            self.stop_plugin(owner, "resource job admission failed");
-                        }
-                        return Err(error);
-                    }
-                }) else {
-                    unreachable!()
-                };
+                )?;
                 self.app
                     .plugins
                     .instances
@@ -236,14 +276,17 @@ impl WorkspaceHost {
                     PendingRead {
                         charge,
                         rebind,
-                        rebind_epoch: rebind.and_then(|index| {
-                            self.app.buffers[index].provider().map(|d| d.baseline_epoch)
-                        }),
+                        rebind_epoch: rebind
+                            .or_else(|| inspect.as_ref().map(|i| i.buffer))
+                            .and_then(|index| {
+                                self.app.buffers[index].provider().map(|d| d.baseline_epoch)
+                            }),
                         reconcile_write: rebind.and_then(|index| {
                             self.provider_uncertain
                                 .get(&index)
                                 .map(|(_, _, job)| job.clone())
                         }),
+                        inspect,
                         requester: owner,
                         requester_generation,
                         owner: provider_owner,
@@ -301,6 +344,88 @@ impl WorkspaceHost {
                 Ok((api::ResultValue::Job(job), Some("job.changed")))
             }
             _ => unreachable!(),
+        }
+    }
+
+    fn start_provider_inspection(
+        &mut self,
+        owner: usize,
+        intent: ProviderInspectIntent,
+    ) -> Result<(api::ResultValue, Option<&'static str>), Error> {
+        self.app.plugin_foreground(&intent.context)?;
+        if intent.context.terminal.is_some() {
+            return Err(Error::new(
+                Code::ContextChanged,
+                "Remote inspection requires a visible provider document",
+            ));
+        }
+        if self.app.host_buffer_is_closed(intent.buffer) {
+            return Err(Error::new(Code::Closed, "Document closed"));
+        }
+        let buffer = &self.app.buffers[intent.buffer];
+        if buffer.revision() != intent.expected_revision {
+            return Err(Error::new(
+                Code::Stale,
+                "Document changed before inspection admission",
+            ));
+        }
+        if buffer.len_bytes() > crate::diff_view::MAX_DIFF_BYTES {
+            return Err(Error::new(
+                Code::LimitExceeded,
+                "Document exceeds the 4 MiB diff limit",
+            ));
+        }
+        let identity = buffer
+            .provider()
+            .ok_or_else(|| Error::new(Code::Unsupported, "Document has no resource provider"))?
+            .identity
+            .clone();
+        self.application_provider_read(
+            owner,
+            api::Request::ResourceOpen {
+                plugin: identity.configured_plugin,
+                provider: identity.provider,
+                key: identity.key,
+                invocation: None,
+            },
+            None,
+            Some(intent),
+        )
+    }
+
+    pub(super) fn sync_provider_inspections(&mut self) {
+        for intent in self.app.take_provider_inspect_intents() {
+            let owner = self
+                .app
+                .buffers
+                .get(intent.buffer)
+                .and_then(|b| b.provider())
+                .and_then(|d| {
+                    self.app
+                        .plugins
+                        .instances
+                        .iter()
+                        .find(|(_, i)| i.registered && i.config.id == d.identity.configured_plugin)
+                        .map(|(owner, _)| *owner)
+                });
+            let result = owner
+                .ok_or_else(|| Error::new(Code::Unavailable, "Resource provider is unavailable"))
+                .and_then(|owner| {
+                    self.start_provider_inspection(owner, intent)
+                        .map(|(result, _)| (owner, result))
+                });
+            match result {
+                Ok((owner, api::ResultValue::Job(job))) => {
+                    if self
+                        .application_job_event(owner, "job.changed", job)
+                        .is_err()
+                    {
+                        self.stop_plugin(owner, "resource job consumer is too slow");
+                    }
+                }
+                Ok(_) => unreachable!(),
+                Err(error) => self.app.provider_save_feedback(false, &error.message),
+            }
         }
     }
 
@@ -455,7 +580,9 @@ impl WorkspaceHost {
         match (pending.metadata.as_ref(), response) {
             (None, wire::Response::Stat(metadata)) => {
                 metadata.validate()?;
-                if pending.rebind.is_some() && pending.identity.key != metadata.key {
+                if (pending.rebind.is_some() || pending.inspect.is_some())
+                    && pending.identity.key != metadata.key
+                {
                     return Err(Error::new(
                         Code::Conflict,
                         "Canonical resource identity changed during rebind",
@@ -463,6 +590,7 @@ impl WorkspaceHost {
                 }
                 pending.identity.key = metadata.key.clone();
                 if pending.rebind.is_none()
+                    && pending.inspect.is_none()
                     && let Some((index, _)) =
                         self.app.buffers.iter().enumerate().find(|(index, buffer)| {
                             !self.app.host_buffer_is_closed(*index)
@@ -472,6 +600,12 @@ impl WorkspaceHost {
                         })
                 {
                     return Ok(Some(index));
+                }
+                if pending.inspect.is_some() && metadata.bytes > crate::diff_view::MAX_DIFF_BYTES {
+                    return Err(Error::new(
+                        Code::LimitExceeded,
+                        "Remote comparison exceeds the 4 MiB diff limit",
+                    ));
                 }
                 pending.text = String::with_capacity(metadata.bytes);
                 pending.metadata = Some(metadata);
@@ -501,6 +635,48 @@ impl WorkspaceHost {
                 }
                 if !chunk.eof {
                     return Ok(None);
+                }
+                if let Some(intent) = &pending.inspect {
+                    let index = intent.buffer;
+                    if self.app.host_buffer_is_closed(index) {
+                        return Err(Error::new(
+                            Code::Closed,
+                            "Document closed during inspection",
+                        ));
+                    }
+                    if !self.app.buffers[index].provider().is_some_and(|d| {
+                        d.identity == pending.identity
+                            && Some(d.baseline_epoch) == pending.rebind_epoch
+                    }) {
+                        return Err(Error::new(
+                            Code::Conflict,
+                            "Resource binding changed during inspection",
+                        ));
+                    }
+                    let handles = &self.app.plugins.instances[&pending.requester]
+                        .application
+                        .buffers;
+                    let existing = self.app.provider_inspection_snapshot(index);
+                    if handles.len() >= 1024
+                        && !existing.is_some_and(|snapshot| {
+                            handles.values().any(|value| *value == snapshot)
+                        })
+                    {
+                        return Err(Error::new(
+                            Code::LimitExceeded,
+                            "Buffer handle limit reached before publication",
+                        ));
+                    }
+                    return self
+                        .app
+                        .publish_provider_inspection(
+                            intent.clone(),
+                            pending.generation.clone(),
+                            metadata.version.clone(),
+                            std::mem::take(&mut pending.text),
+                        )
+                        .map(Some)
+                        .map_err(|error| Error::new(Code::ContextChanged, &error.to_string()));
                 }
                 if let Some(index) = pending.rebind {
                     if self.app.host_buffer_is_closed(index) {
@@ -623,9 +799,15 @@ impl WorkspaceHost {
         }
         let job = job.clone();
         instance.application.finished_jobs.push_back(token.into());
+        if pending.inspect.is_some()
+            && let Err(error) = &result
+        {
+            self.app.provider_save_feedback(false, &error.message);
+        }
         let (buffer, revision, error) = match result {
             Ok((index, handle, revision)) => {
-                if let Some(context) = &pending.context
+                if pending.inspect.is_none()
+                    && let Some(context) = &pending.context
                     && self.app.plugin_foreground(context).is_ok()
                 {
                     self.app.show_provider_document(index);
@@ -663,7 +845,11 @@ impl WorkspaceHost {
                     pending.requester,
                     api::HostMessage::Event {
                         sequence,
-                        event: "resource.opened",
+                        event: if pending.inspect.is_some() {
+                            "resource.inspected"
+                        } else {
+                            "resource.opened"
+                        },
                         data: api::EventData::ResourceFinished(finished),
                     },
                 )

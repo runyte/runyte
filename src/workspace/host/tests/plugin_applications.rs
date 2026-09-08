@@ -19,6 +19,8 @@ mod filesystem_review;
 mod filesystem_stat;
 #[path = "plugin_interaction.rs"]
 mod interaction;
+#[path = "plugin_provider_inspect.rs"]
+mod provider_inspect;
 #[path = "plugin_provider_rebind.rs"]
 mod provider_rebind;
 #[path = "plugin_provider_review.rs"]

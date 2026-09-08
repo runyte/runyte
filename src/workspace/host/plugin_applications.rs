@@ -287,6 +287,7 @@ impl WorkspaceHost {
             Request::ProviderRegister(_)
                 | Request::ResourceOpen { .. }
                 | Request::ResourceRebind { .. }
+                | Request::ResourceInspect { .. }
         ) {
             return self.application_provider_request(id, request);
         }

@@ -1025,5 +1025,32 @@
         "error": null
       }
     }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:84",
+      "method": "resource.inspect",
+      "params": {
+        "buffer": "b:g:1",
+        "expected_revision": "r:0",
+        "invocation": "h:10"
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "event",
+      "sequence": "e:15",
+      "event": "resource.inspected",
+      "data": {
+        "job": "j:g:3",
+        "buffer": "b:g:2",
+        "revision": "r:1",
+        "error": null
+      }
+    }
   }
 ]

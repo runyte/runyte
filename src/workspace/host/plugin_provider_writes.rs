@@ -125,7 +125,7 @@ impl WorkspaceHost {
         }
         // A host-owned job does not require the provider to grant itself the
         // plugin-facing job.create capability; API callers are checked separately.
-        let job = self.create_provider_write_job(requester)?;
+        let job = self.create_provider_job(requester, "Save resource")?;
         let snapshot = match self.app.prepare_provider_save_text(buffer) {
             Ok(snapshot) => snapshot,
             Err(_) => {
@@ -206,7 +206,11 @@ impl WorkspaceHost {
         Ok(job)
     }
 
-    fn create_provider_write_job(&mut self, owner: usize) -> Result<api::Job, Error> {
+    pub(super) fn create_provider_job(
+        &mut self,
+        owner: usize,
+        title: &str,
+    ) -> Result<api::Job, Error> {
         let state = &mut self
             .app
             .plugins
@@ -225,7 +229,7 @@ impl WorkspaceHost {
         state.next_handle += 1;
         let job = api::Job {
             job: format!("j:{}:{}", state.generation, state.next_handle),
-            title: "Save resource".into(),
+            title: title.into(),
             state: api::JobState::Running,
             progress: 0,
         };
@@ -240,7 +244,7 @@ impl WorkspaceHost {
             )
             .is_err()
         {
-            self.stop_plugin(owner, "resource write job admission failed");
+            self.stop_plugin(owner, "resource job admission failed");
             return Err(Error::new(
                 Code::Unavailable,
                 "Application queue unavailable",

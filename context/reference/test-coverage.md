@@ -41,6 +41,26 @@ days, and fails below 89% total line coverage. The floor is deliberately below
 the observed baseline because conditional Linux and macOS code changes both the
 instrumented denominator and the paths available to a run on one platform.
 
+## 2026-09-08 — remote conflict inspection
+
+Measured on `x86_64-unknown-linux-gnu` at `e399acc` plus the remote inspection
+round, using Rust 1.97.1 and cargo-llvm-cov 0.9.0. Canonical coverage and the full
+suite each passed 3,222 tests with 33 ignored. Formatting, warnings-as-errors
+Clippy and both schema/example checkers passed.
+
+| Measure | Covered | Total | Coverage |
+| --- | ---: | ---: | ---: |
+| Lines | 109,799 | 119,836 | 91.62% |
+| Functions | 10,009 | 10,849 | 92.26% |
+| Regions | 168,200 | 184,470 | 91.18% |
+
+Fourteen behavior tests cover fresh remote comparisons, immutable baselines and
+undo, uncertain unavailable sources, stale context/revisions, terminal-covered
+panes, snapshot reuse/retirement, handle saturation, bounded admission and read
+cleanup. The native PTY example passed native and plugin inspection plus the
+save/rebind flow, with no output during two settled seconds. The unchanged 89%
+floor remains satisfied; native macOS and complete workload evidence are pending.
+
 ## 2026-09-08 — conditional provider saves and reconciliation
 
 Measured on `x86_64-unknown-linux-gnu` at `36fb36f` plus the provider save round,

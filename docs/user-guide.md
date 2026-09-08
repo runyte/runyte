@@ -2067,6 +2067,7 @@ cancellation keys.
 | `Space o s` | Inspect syntax, LSP, and Git service health |
 | `Ctrl-s`, `:write`, or `:save` | Save |
 | `:diff-disk` | Compare the active file buffer with a fresh immutable disk snapshot |
+| `:diff-remote` | Compare the active provider document with a fresh read-only remote snapshot |
 | `:diff-this` (`:difft`, `:dt`) | Mark this buffer, or compare it with the one marked before it |
 | `:diff-off` (`:do`) | Close the comparison this buffer is part of |
 | `:reload` | Reload the active file (confirming first when dirty), or refresh the active explorer or supported Git list |
@@ -2993,7 +2994,9 @@ pending or uncertain writes cannot silently complete a close or `--wait` request
 Provider applications can also open version-bound UTF-8 documents with normal
 editing, syntax highlighting and conditional remote saves. Newer edits remain
 dirty during uploads; save-and-close waits for confirmed success. Explicit rebind
-reconciles restarted providers and uncertain writes. Network adapters remain in
+reconciles restarted providers and uncertain writes. `:diff-remote` compares fresh
+remote text with local edits without changing the saved baseline; both sides must
+fit the 4 MiB comparison limit. Network adapters remain in
 development, and remote identities stay separate from local files. The
 [application guide](plugins/applications.md) includes runnable task-list, local
 file-manager, document, memory-provider and background-job examples and lists the
@@ -3034,6 +3037,7 @@ are enabled.
 :window-close           close the active pane, but not the last one (alias: wc)
 :buffer-new             open a new scratch buffer in the current pane (alias: new)
 :diff-disk              compare a fresh disk snapshot with the active file buffer
+:diff-remote            compare a fresh remote snapshot with the active provider document
 :diff-this              mark this buffer, or compare it with the one marked before it (aliases: difft, dt)
 :diff-off               close the comparison this buffer is part of (alias: do)
 :explorer [path]        open an editable directory explorer (alias: files)

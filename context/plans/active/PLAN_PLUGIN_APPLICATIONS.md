@@ -74,8 +74,8 @@ Concrete decisions in this slice:
 
 Milestone 3 now has a local file manager, document lifecycle, native interaction
 and bounded recursive filesystem operations, documented below. Milestone 4's
-provider-backed reads, conditional saves and explicit rebind are implemented;
-weaker-transport confirmation, conflict inspection and transport examples remain
+provider-backed reads, conditional saves, explicit rebind and conflict inspection
+are implemented; weaker-transport confirmation and transport examples remain
 outstanding. Milestone 5 still needs managed processes, terminal/external handoffs, activity leases,
 settings/state and the plugin manager. Milestone 6 still needs the broader SDK,
 non-Python example, full conformance matrix and complete application performance
@@ -307,6 +307,37 @@ scheduler delays cannot invalidate its assertion. Native macOS remains unmeasure
 Confirmed overwrites for weaker transports, divergent conflict inspection, binary
 staging, SFTP/FTP adapters, subscriptions, richer models, helpers/leases/settings,
 manager/media examples and complete platform/performance evidence remain active.
+
+## Remote conflict inspection round
+
+Native `:diff-remote` and foreground-authorized `resource.inspect` share a fresh,
+version-bound provider read. The host verifies the captured source identity,
+baseline epoch, text revision, pane, attachment and foreground before publishing
+a read-only remote snapshot beside the editable document. Both sides obey the
+existing 4 MiB diff limit. Inspection never accepts a new saved baseline or clears
+uncertain write protection, including after provider restart.
+
+Repeated inspection reuses the source's snapshot and comparison, while closed
+snapshots release their text. Host jobs, read slots, retained payload, cancellation,
+timeouts and stop cleanup share the existing bounded provider coordinator. Public
+requests require documents/jobs and an owned live invocation at admission; native
+inspection uses a host-owned job without granting plugin-facing jobs authority.
+The completion event identifies the generated snapshot and its revision.
+
+Review corrected terminal-covered source admission, terminal-covered snapshot
+pane reuse, and refresh at full handle capacity. Behavior tests cover those
+boundaries along with stale publication, fresh reads despite live identity reuse,
+size and identity refusals, lifecycle cleanup, baseline/undo preservation and
+uncertain unavailable documents. Formatting, warnings-as-errors Clippy, both
+schema checkers and the full suite passed. Ordinary and canonical instrumented
+suites each passed 3,222 tests with 33 ignored. Linux line coverage is
+109,799/119,836 (91.62%), above the unchanged 89% floor. Native PTY checks passed
+both inspection commands plus the existing save/rebind flow, with zero output
+bytes during two settled seconds. The new command increments the tested command
+inventory by one. Native macOS remains unmeasured.
+
+Weaker-transport overwrite confirmation, remote reload decisions, binary staging,
+network adapters and the remaining application/platform acceptance work stay active.
 
 ## Investigation: existing foundation and missing boundaries
 

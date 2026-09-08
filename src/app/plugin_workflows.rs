@@ -49,6 +49,7 @@ pub(crate) struct Instance {
 pub(crate) struct Plugins {
     pub document_saves: BTreeSet<usize>,
     pub provider_save_intents: VecDeque<super::plugin_providers::ProviderSaveIntent>,
+    pub provider_inspect_intents: VecDeque<super::plugin_providers::ProviderInspectIntent>,
     pub filesystem_accepted: Option<crate::fs_plan::DeletionMode>,
     pub filesystem_applying: bool,
     pub orphaned_payload: usize,

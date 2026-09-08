@@ -195,6 +195,12 @@ pub enum GeneratedViewIdentity {
         source_buffer: usize,
         revision: String,
     },
+    /// One immutable remote observation, independent of the document baseline.
+    ProviderSnapshot {
+        source_buffer: usize,
+        generation: String,
+        version: String,
+    },
     /// One Markdown document rendered for reading.
     ///
     /// Named by the buffer it was rendered from rather than by a path, so a

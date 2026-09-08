@@ -1980,12 +1980,18 @@ impl App {
     /// Left and right are read off the screen rather than off the order the
     /// two buffers were marked in, so the side that is coloured as added is
     /// always the one the person sees on the right.
-    fn diff_sides(&mut self, marked: usize, active: usize) -> Option<(DiffSide, DiffSide)> {
+    pub(super) fn diff_sides(
+        &mut self,
+        marked: usize,
+        active: usize,
+    ) -> Option<(DiffSide, DiffSide)> {
         let active_pane = self.active_pane;
         let marked_pane = match self
             .panes
             .iter()
-            .find(|(pane_id, pane)| **pane_id != active_pane && pane.buffer == marked)
+            .find(|(pane_id, pane)| {
+                **pane_id != active_pane && pane.terminal.is_none() && pane.buffer == marked
+            })
             .map(|(pane_id, _)| *pane_id)
         {
             Some(pane_id) => pane_id,

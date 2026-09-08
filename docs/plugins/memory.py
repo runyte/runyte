@@ -15,6 +15,7 @@ app = Application('Memory provider', [
      'context': 'workspace', 'arguments': [{'name': 'key', 'type': 'string'}]},
     {'name': 'save', 'description': 'Save the captured provider document', 'context': 'buffer'},
     {'name': 'rebind', 'description': 'Reconcile the provider document explicitly', 'context': 'buffer'},
+    {'name': 'inspect', 'description': 'Compare fresh remote text with the provider document', 'context': 'buffer'},
 ], ['providers', 'documents', 'jobs'])
 registered = False
 registration_lock = threading.Lock()
@@ -56,6 +57,13 @@ def save(context):
 def rebind(context):
     register()
     result = app.request('resource.rebind', buffer=context['buffer'], expected_revision=context['buffer_revision'])
+    return {'job': result['job']}
+
+
+def inspect(context):
+    register()
+    result = app.request('resource.inspect', buffer=context['buffer'],
+                         expected_revision=context['buffer_revision'], invocation=context['invocation'])
     return {'job': result['job']}
 
 
@@ -158,7 +166,7 @@ def abort(context):
         return {'kind': 'write_aborted', 'value': {}}
 
 
-app.handlers = {'open': open_resource, 'save': save, 'rebind': rebind}
+app.handlers = {'open': open_resource, 'save': save, 'rebind': rebind, 'inspect': inspect}
 app.resource_handlers = {'resource.stat': stat, 'resource.read': read, 'resource.reconcile': reconcile,
     'resource.write.begin': begin, 'resource.write.chunk': write_chunk,
     'resource.write.commit': commit, 'resource.write.abort': abort}

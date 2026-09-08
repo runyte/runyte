@@ -1725,7 +1725,8 @@
             "filesystem.finished",
             "filesystem.started",
             "resource.opened",
-            "resource.saved"
+            "resource.saved",
+            "resource.inspected"
           ]
         },
         "data": {
@@ -1893,6 +1894,9 @@
         },
         {
           "$ref": "#/$defs/resource.rebind"
+        },
+        {
+          "$ref": "#/$defs/resource.inspect"
         }
       ]
     },
@@ -3805,6 +3809,51 @@
           "required": [
             "job",
             "upload"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "method",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    "resource.inspect": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "request"
+        },
+        "id": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "method": {
+          "const": "resource.inspect"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "buffer": {
+              "type": "string",
+              "maxLength": 64
+            },
+            "expected_revision": {
+              "type": "string",
+              "maxLength": 64
+            },
+            "invocation": {
+              "type": "string",
+              "maxLength": 64
+            }
+          },
+          "required": [
+            "buffer",
+            "expected_revision",
+            "invocation"
           ],
           "additionalProperties": false
         }

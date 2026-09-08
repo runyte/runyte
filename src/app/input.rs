@@ -5182,6 +5182,7 @@ impl App {
                 self.diff_disk();
                 Ok(())
             }
+            (Colon::DiffRemote, InvocationParameters::None) => self.queue_provider_inspection(),
             (Colon::DiffOff, InvocationParameters::None) => {
                 self.diff_off();
                 Ok(())

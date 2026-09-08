@@ -58,6 +58,7 @@ pub enum ColonCommand {
     ChangeDirectory,
     CloseBuffer,
     DiffDisk,
+    DiffRemote,
     DiffOff,
     DiffThis,
     ForceCloseBuffer,
@@ -219,6 +220,7 @@ impl ColonCommand {
         Self::ChangeDirectory,
         Self::CloseBuffer,
         Self::DiffDisk,
+        Self::DiffRemote,
         Self::DiffOff,
         Self::DiffThis,
         Self::ForceCloseBuffer,
@@ -289,9 +291,12 @@ impl ColonCommand {
             Self::ResizeRight | Self::ResizeLeft | Self::ResizeTop | Self::ResizeBottom => {
                 CommandCategory::Window
             }
-            Self::DiffThis | Self::DiffDisk | Self::DiffOff | Self::Notifications | Self::Path => {
-                CommandCategory::View
-            }
+            Self::DiffThis
+            | Self::DiffDisk
+            | Self::DiffRemote
+            | Self::DiffOff
+            | Self::Notifications
+            | Self::Path => CommandCategory::View,
             Self::Format | Self::LspTrust | Self::LspRestart | Self::LspStatus => {
                 CommandCategory::Language
             }
@@ -1467,6 +1472,14 @@ pub const COMMANDS: &[CommandSpec] = &[
         NoArguments
     ),
     spec!(
+        ColonId(Colon::DiffRemote),
+        "diff-remote",
+        [],
+        "diff-remote",
+        "Compare the active provider document with a fresh read-only remote snapshot",
+        NoArguments
+    ),
+    spec!(
         ColonId(Colon::DiffThis),
         "diff-this",
         ["difft", "dt"],
@@ -2453,6 +2466,7 @@ fn valid_colon_parameters(command: ColonCommand, parameters: &InvocationParamete
         (
             Colon::CloseBuffer
             | Colon::DiffDisk
+            | Colon::DiffRemote
             | Colon::DiffOff
             | Colon::DiffThis
             | Colon::ForceCloseBuffer
@@ -2809,6 +2823,7 @@ fn invocation_from_parts(
             (
                 ColonCommand::CloseBuffer
                 | ColonCommand::DiffDisk
+                | ColonCommand::DiffRemote
                 | ColonCommand::DiffOff
                 | ColonCommand::DiffThis
                 | ColonCommand::ForceCloseBuffer

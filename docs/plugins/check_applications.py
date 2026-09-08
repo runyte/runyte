@@ -110,6 +110,17 @@ class ApplicationSchemaTests(unittest.TestCase):
             reconciled = resource('resource.reconcile', 107, job='j:g:rebind', provider='memory', key='notes', previous_write='j:g:save')
             self.assertEqual(reconciled['result']['value']['previous_write'], 'j:g:save')
             self.assertEqual(reconciled['result']['value']['metadata']['version'], current['version'])
+            send({**host[2], 'id': 'h:108', 'params': {**host[2]['params'],
+                  'command': 'inspect', 'context': 'buffer', 'buffer': 'b:g:1',
+                  'buffer_revision': 'r:7', 'arguments': {}}})
+            inspecting = receive()
+            self.assertEqual(inspecting['method'], 'resource.inspect')
+            self.assertEqual(inspecting['params'], {'buffer': 'b:g:1',
+                             'expected_revision': 'r:7', 'invocation': 'h:108'})
+            reply(inspecting, {'job': 'j:g:inspect', 'title': 'Inspect remote',
+                              'state': 'running', 'progress': 0})
+            self.assertEqual(receive(), {'type': 'response', 'id': 'h:108',
+                                        'result': {'job': 'j:g:inspect'}})
         finally:
             child.stdin.close()
             child.wait(timeout=3)
@@ -266,6 +277,15 @@ class ApplicationSchemaTests(unittest.TestCase):
                     malformed['result'] = {'job': None}
                     malformed['error'] = {'code': 'internal', 'message': 'Failed'}
                     self.assertFalse(validator.is_valid(malformed))
+
+    def test_remote_inspection_requires_explicit_foreground_invocation(self):
+        fixture = next(f['message'] for f in FIXTURES if f['message'].get('method') == 'resource.inspect')
+        validator = Draft202012Validator({**SCHEMA, 'anyOf': [{'$ref': '#/$defs/pluginMessage'}]})
+        for invocation in [None, 'missing']:
+            params = {**fixture['params'], 'invocation': invocation}
+            if invocation == 'missing':
+                del params['invocation']
+            self.assertFalse(validator.is_valid({**fixture, 'params': params}))
 
     def test_task_application_runs_through_public_messages(self):
         host = [f['message'] for f in FIXTURES if f['direction'] == 'host']

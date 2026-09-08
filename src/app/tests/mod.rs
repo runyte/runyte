@@ -180,6 +180,7 @@ mod markdown_tables;
 mod mouse_autoscroll;
 mod navigation_and_files;
 mod plugin_document_lifecycle;
+mod plugin_provider_inspection;
 mod plugin_provider_saves;
 mod presentation_and_settings;
 mod provider_documents;

@@ -584,6 +584,7 @@ impl WorkspaceHost {
     /// undo/reload paths. No scan or wakeup exists when there are no subscribers.
     pub fn sync_plugin_observers(&mut self) {
         self.sync_provider_writes();
+        self.sync_provider_inspections();
         self.sync_plugin_inputs();
         self.sync_plugin_filesystem();
         self.sync_plugin_views();

@@ -6,8 +6,9 @@ The current implementation supports typed commands, finite background jobs,
 retained native views, explicit buffer reads/edits, immutable snapshots and
 pane selections, local metadata/browsing, document lifecycle operations, native
 input, confirmed bounded recursive filesystem mutations and provider-backed
-UTF-8 document opening, conditional remote saves and explicit rebind. Network
-transports, subscriptions and managed media backends remain unfinished. This is not completion of the application plan.
+UTF-8 document opening, conditional remote saves, explicit rebind and remote
+conflict inspection. Network transports, subscriptions and managed media backends
+remain unfinished. This is not completion of the application plan.
 Epoch 1 remains the default and its uppercase example is unchanged.
 
 Enable the runnable background-job example with absolute paths:
@@ -119,6 +120,7 @@ generation and must never be parsed, persisted, or used by another owner.
 | providers | `provider.register` | Unique provider name and independent conditional-write/atomic-replace declarations |
 | documents + jobs | `resource.open` | Configured plugin, provider, resource key and optional invocation; host-owned open job |
 | documents + jobs | `resource.rebind` | Buffer and expected revision; bounded remote reconciliation job |
+| documents + jobs | `resource.inspect` | Buffer, expected revision and foreground invocation; fresh remote comparison job |
 | documents | `buffer.open` | Existing workspace-relative text path and optional invoking command; explicit buffer/revision |
 | documents | `buffer.create` | New workspace-relative path, initial text and optional invocation; named unsaved document |
 | documents + jobs | `buffer.save` | Owned buffer and expected revision; asynchronous host-owned save job |
@@ -433,9 +435,10 @@ search, selection, splits, undo and syntax highlighting. Newline bytes are
 preserved, including CRLF. Native `:write`, `:wq` and `:write-buffer-close`, plus
 `:plugin.memory.save`, use the conditional upload protocol below. Normal save
 trimming hooks still apply. `:plugin.memory.rebind` explicitly reconciles the
-current provider document. Forced overwrite, local write-to-path and ordinary
-`:reload` remain refused; confirmed weaker transports and conflict inspection are
-subsequent work. Discard restores the accepted in-memory baseline, preserving any
+current provider document. `:plugin.memory.inspect` and native `:diff-remote`
+compare fresh remote text with the editable document. Forced overwrite, local
+write-to-path and ordinary `:reload` remain refused; confirmed weaker transports
+are subsequent work. Discard restores the accepted in-memory baseline, preserving any
 unknown write and its dirty protection. Stopping a provider leaves editable text
 marked unavailable. The memory example resets remote content on process restart.
 
@@ -487,6 +490,33 @@ are remembered for late replies; other duplicate, foreign or out-of-order replie
 are protocol failures. Provider failure, timeout or stop settles the open without
 publishing partial text. No read creates a polling timer after completion.
 
+
+### Remote conflict inspection
+
+`resource.inspect {buffer, expected_revision, invocation}` requires `documents`
+and `jobs`, an owned provider buffer at the expected text revision, and a live
+foreground invocation for that document. Native `:diff-remote` uses the same
+bounded read workflow. Inspection accepts a finite host-owned job, obtains fresh
+`resource.stat` metadata and version-bound `resource.read` chunks, then opens a
+read-only remote snapshot beside the editable document. Both sides must fit the
+4 MiB comparison limit. A reused provider buffer never substitutes for this fresh
+read.
+
+The invoking command can return the associated job and finish. Before showing the
+comparison, the host rechecks the captured pane, buffer, attachment, foreground
+context and local text revision; changes can reject publication. Native inspection
+uses a host-owned job even when the provider did not grant itself `jobs`. The
+reliable completion event is `resource.inspected {job, buffer, revision, error}`,
+identifying the generated read-only snapshot on success, followed by terminal
+`job.changed`. Failure carries null buffer and revision.
+Cancellation, provider failure or a changed remote version discards the pending
+read without publishing partial text. Use `:diff-off` to close the comparison.
+
+Inspection does not adopt remote text as the saved baseline, change the provider
+binding/version, or clear an unknown write. It remains available to examine a
+conflict while explicit reconciliation is refused. Even when the snapshot equals
+an uncertain upload, comparison alone cannot prove that the previous remote
+mutation has settled. Rebind still requires the settlement proof described below.
 
 ### Conditional uploads and recovery
 

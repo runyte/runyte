@@ -122,6 +122,12 @@ pub struct CommandResult {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "method", content = "params", deny_unknown_fields)]
 pub enum Request {
+    #[serde(rename = "resource.inspect")]
+    ResourceInspect {
+        buffer: String,
+        expected_revision: String,
+        invocation: String,
+    },
     #[serde(rename = "resource.rebind")]
     ResourceRebind {
         buffer: String,
@@ -651,6 +657,7 @@ pub(crate) fn decode(bytes: &[u8]) -> anyhow::Result<super::ClientMessage> {
             "provider.register"
                 | "resource.open"
                 | "resource.rebind"
+                | "resource.inspect"
                 | "buffer.list"
                 | "buffer.open"
                 | "buffer.save"
@@ -948,6 +955,16 @@ mod tests {
                     error: None,
                 }),
             },
+            HostMessage::Event {
+                sequence: "e:15".into(),
+                event: "resource.inspected",
+                data: EventData::ResourceFinished(super::super::provider::Finished {
+                    job: "j:g:3".into(),
+                    buffer: Some("b:g:2".into()),
+                    revision: Some("r:1".into()),
+                    error: None,
+                }),
+            },
         ];
         let expected = fixtures
             .iter()
@@ -964,6 +981,8 @@ mod tests {
         assert!(decode(br#"{"type":"request","id":"p:1","method":"job.create","params":{"title":"Copy","deadline_seconds":60}}"#).is_ok());
         assert!(decode(br#"{"type":"response","id":"h:2","result":{"job":null}}"#).is_ok());
         for message in [
+            r#"{"type":"request","id":"p:1","method":"resource.inspect","params":{"buffer":"b:g:1","expected_revision":"r:0"}}"#,
+            r#"{"type":"request","id":"p:1","method":"resource.inspect","params":{"buffer":"b:g:1","expected_revision":"r:0","invocation":null}}"#,
             r#"{"type":"response","id":"h:2","result":{"job":null},"error":{"code":"stale","message":"Changed"}}"#,
             r#"{"type":"request","id":"p:1","method":"job.create","params":{"title":"Copy","deadline_seconds":60,"extra":true}}"#,
             r#"{"type":"request","id":"p:1","method":"workspace.info","params":{},"extra":true}"#,
