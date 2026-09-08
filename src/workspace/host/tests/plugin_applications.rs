@@ -19,6 +19,8 @@ mod filesystem_review;
 mod filesystem_stat;
 #[path = "plugin_interaction.rs"]
 mod interaction;
+#[path = "plugin_observations.rs"]
+mod observations;
 #[path = "plugin_provider_inspect.rs"]
 mod provider_inspect;
 #[path = "plugin_provider_overwrite.rs"]

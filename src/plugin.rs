@@ -8,6 +8,7 @@ pub mod editor;
 mod epoch1;
 pub mod filesystem;
 pub mod interaction;
+pub mod observation;
 pub mod provider;
 pub(crate) mod staging;
 pub mod view;

@@ -1665,6 +1665,9 @@
             },
             {
               "$ref": "#/$defs/inputResult"
+            },
+            {
+              "$ref": "#/$defs/observationBaseline"
             }
           ]
         }
@@ -1727,7 +1730,10 @@
             "resource.opened",
             "resource.saved",
             "resource.inspected",
-            "resource.released"
+            "resource.released",
+            "event.changed",
+            "event.closed",
+            "event.resync_required"
           ]
         },
         "data": {
@@ -1769,6 +1775,12 @@
                 "job"
               ],
               "additionalProperties": false
+            },
+            {
+              "$ref": "#/$defs/observationChange"
+            },
+            {
+              "$ref": "#/$defs/observationResync"
             }
           ]
         }
@@ -1779,7 +1791,44 @@
         "event",
         "data"
       ],
-      "additionalProperties": true
+      "additionalProperties": true,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "event": {
+                "enum": [
+                  "event.changed",
+                  "event.closed"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "data": {
+                "$ref": "#/$defs/observationChange"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "event": {
+                "const": "event.resync_required"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "data": {
+                "$ref": "#/$defs/observationResync"
+              }
+            }
+          }
+        }
+      ]
     },
     "pluginMessage": {
       "oneOf": [
@@ -1920,6 +1969,15 @@
         },
         {
           "$ref": "#/$defs/staging.close"
+        },
+        {
+          "$ref": "#/$defs/event.subscribe"
+        },
+        {
+          "$ref": "#/$defs/event.unsubscribe"
+        },
+        {
+          "$ref": "#/$defs/event.resync"
         }
       ]
     },
@@ -4065,6 +4123,564 @@
         "path"
       ],
       "additionalProperties": true
+    },
+    "observationSource": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "buffer"
+            },
+            "buffer": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          "required": [
+            "kind",
+            "buffer"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "pane"
+            },
+            "pane": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          "required": [
+            "kind",
+            "pane"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "view"
+            },
+            "view": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          "required": [
+            "kind",
+            "view"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "job"
+            },
+            "job": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          "required": [
+            "kind",
+            "job"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "attachment"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "observationFilter": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "buffer"
+            },
+            "buffer": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          "required": [
+            "kind",
+            "buffer"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "pane"
+            },
+            "pane": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          "required": [
+            "kind",
+            "pane"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "view"
+            },
+            "view": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          "required": [
+            "kind",
+            "view"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "job"
+            },
+            "job": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          "required": [
+            "kind",
+            "job"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "attachment"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "buffers"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "observationSnapshot": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "buffer"
+            },
+            "revision": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "saved_revision": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "name": {
+              "type": "string",
+              "maxLength": 512
+            },
+            "chars": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "read_only": {
+              "type": "boolean"
+            },
+            "dirty": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "kind",
+            "revision",
+            "saved_revision",
+            "name",
+            "chars",
+            "read_only",
+            "dirty"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "pane"
+            },
+            "buffer": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "selection_revision": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          "required": [
+            "kind",
+            "buffer",
+            "selection_revision"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "view"
+            },
+            "revision": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          "required": [
+            "kind",
+            "revision"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "job"
+            },
+            "state": {
+              "enum": [
+                "running",
+                "cancelling",
+                "succeeded",
+                "failed",
+                "cancelled",
+                "outcome_unknown"
+              ]
+            },
+            "progress": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100
+            }
+          },
+          "required": [
+            "kind",
+            "state",
+            "progress"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "attachment"
+            },
+            "attached": {
+              "type": "boolean"
+            },
+            "generation": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          "required": [
+            "kind",
+            "attached",
+            "generation"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "closed"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "observationState": {
+      "type": "object",
+      "properties": {
+        "source": {
+          "$ref": "#/$defs/observationSource"
+        },
+        "revision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "state": {
+          "$ref": "#/$defs/observationSnapshot"
+        }
+      },
+      "required": [
+        "source",
+        "revision",
+        "state"
+      ],
+      "additionalProperties": false
+    },
+    "observationBaseline": {
+      "type": "object",
+      "properties": {
+        "subscription": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "sequence": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/observationState"
+          },
+          "maxItems": 256
+        }
+      },
+      "required": [
+        "subscription",
+        "sequence",
+        "sources"
+      ],
+      "additionalProperties": false
+    },
+    "observationChange": {
+      "type": "object",
+      "properties": {
+        "subscription": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/observationState"
+          },
+          "maxItems": 256
+        },
+        "coalesced": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "subscription",
+        "sources",
+        "coalesced"
+      ],
+      "additionalProperties": false
+    },
+    "observationResync": {
+      "type": "object",
+      "properties": {
+        "subscription": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      },
+      "required": [
+        "subscription"
+      ],
+      "additionalProperties": false
+    },
+    "event.subscribe": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "request"
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^p:[1-9][0-9]*$",
+          "maxLength": 22
+        },
+        "method": {
+          "const": "event.subscribe"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "sources": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/observationFilter"
+              },
+              "minItems": 1,
+              "maxItems": 256
+            }
+          },
+          "required": [
+            "sources"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "method",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    "event.unsubscribe": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "request"
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^p:[1-9][0-9]*$",
+          "maxLength": 22
+        },
+        "method": {
+          "const": "event.unsubscribe"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "subscription": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          "required": [
+            "subscription"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "method",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    "event.resync": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "request"
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^p:[1-9][0-9]*$",
+          "maxLength": 22
+        },
+        "method": {
+          "const": "event.resync"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "subscription": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          "required": [
+            "subscription"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "method",
+        "params"
+      ],
+      "additionalProperties": false
     }
   },
   "anyOf": [

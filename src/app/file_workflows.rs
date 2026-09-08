@@ -1189,6 +1189,11 @@ impl App {
         Ok(())
     }
 
+    /// Slots and retirement membership only grow; reopening issues a new slot.
+    pub(crate) fn plugin_buffer_membership_revision(&self) -> (usize, usize) {
+        (self.buffers.len(), self.closed_buffers.len())
+    }
+
     pub(crate) fn host_buffer_is_closed(&self, buffer: usize) -> bool {
         self.closed_buffers.contains(&buffer)
     }

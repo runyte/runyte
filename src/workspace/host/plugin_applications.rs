@@ -133,6 +133,14 @@ impl WorkspaceHost {
                 self.application_request_id(id, &request_id)?;
                 if matches!(
                     request,
+                    api::Request::EventSubscribe { .. }
+                        | api::Request::EventUnsubscribe { .. }
+                        | api::Request::EventResync { .. }
+                ) {
+                    return self.application_observation_request(id, request_id, request);
+                }
+                if matches!(
+                    request,
                     api::Request::FilesystemStat { .. }
                         | api::Request::FilesystemList { .. }
                         | api::Request::FilesystemPrepare { .. }
@@ -299,6 +307,17 @@ impl WorkspaceHost {
         }
         if let Some(result) = self.provider_job_request(id, &request) {
             return result;
+        }
+        if matches!(
+            request,
+            Request::EventSubscribe { .. }
+                | Request::EventUnsubscribe { .. }
+                | Request::EventResync { .. }
+        ) {
+            return Err(api::Error::new(
+                Code::InvalidArgument,
+                "Subscription requests require the observation coordinator",
+            ));
         }
         let host_cancel = match &request {
             Request::JobGet { job }

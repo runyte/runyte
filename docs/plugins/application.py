@@ -19,9 +19,14 @@ class Application:
         self.handlers = {}
         self.resource_handlers = {}
         self.on_event = lambda event, data: None
+        self.on_observation = lambda event, sequence, data: self.on_event(event, data)
         self.on_input = lambda context: None
         self._lock = threading.RLock()
         self._pending = {}
+        self._accept = {}
+        self._subscriptions = {}
+        self._observation_slots = threading.BoundedSemaphore(32)
+        self._observations = concurrent.futures.ThreadPoolExecutor(max_workers=1)
         self._serial = 0
         self._slots = threading.BoundedSemaphore(16)
         self._dispatch = threading.BoundedSemaphore(16)
@@ -41,6 +46,57 @@ class Application:
             sys.stdout.buffer.flush()
 
     def request(self, method, **params):
+        return self._request(method, params)
+
+    def subscribe(self, sources, callback):
+        """Deliver baseline and ordered updates as callback(event, sequence, data).
+
+        Baselines use the SDK-only event name event.baseline. Callbacks must
+        return promptly; the bounded observation lane is independent of commands.
+        """
+        def accept(result):
+            self._subscriptions[result['subscription']] = callback
+            self._queue_observation(callback, 'event.baseline', result['sequence'], result)
+        return self._request('event.subscribe', {'sources': sources}, accept)
+
+    def resync(self, subscription):
+        def accept(result):
+            callback = self._subscriptions.get(subscription)
+            if callback is not None:
+                self._queue_observation(callback, 'event.baseline', result['sequence'], result)
+        return self._request('event.resync', {'subscription': subscription}, accept)
+
+    def unsubscribe(self, subscription):
+        return self._request('event.unsubscribe', {'subscription': subscription},
+                             lambda _: self._subscriptions.pop(subscription, None))
+
+    def _queue_observation(self, callback, event, sequence, data):
+        if not self._observation_slots.acquire(blocking=False):
+            raise PluginError('busy', 'Application observation queue full')
+        def deliver():
+            try:
+                callback(event, sequence, data)
+            finally:
+                self._observation_slots.release()
+        self._observations.submit(deliver)
+
+    def _response(self, message):
+        with self._lock:
+            future = self._pending.pop(message['id'], None)
+            accept = self._accept.pop(message['id'], None)
+            if future is not None:
+                if 'error' in message:
+                    future.set_exception(PluginError(**message['error']))
+                else:
+                    try:
+                        if accept is not None:
+                            accept(message['result'])
+                    except Exception as error:
+                        future.set_exception(error)
+                        raise
+                    future.set_result(message['result'])
+
+    def _request(self, method, params, accept=None):
         if not self._slots.acquire(blocking=False):
             raise PluginError('busy', 'Too many outstanding requests')
         future = concurrent.futures.Future()
@@ -51,6 +107,8 @@ class Application:
                 self._serial += 1
                 request_id = f'p:{self._serial}'
                 self._pending[request_id] = future
+                if accept is not None:
+                    self._accept[request_id] = accept
                 self._write({'type': 'request', 'id': request_id, 'method': method, 'params': params})
             try:
                 return future.result(timeout=10)
@@ -60,6 +118,7 @@ class Application:
             with self._lock:
                 if 'request_id' in locals():
                     self._pending.pop(request_id, None)
+                    self._accept.pop(request_id, None)
             self._slots.release()
 
     def _read(self):
@@ -71,6 +130,11 @@ class Application:
         return json.loads(data)
 
     def _submit(self, message):
+        if message.get('event', '').startswith('event.'):
+            with self._lock:
+                callback = self._subscriptions.get(message['data']['subscription'], self.on_observation)
+                self._queue_observation(callback, message['event'], message['sequence'], message['data'])
+            return
         # Cancellation must still run while command handlers await host replies.
         control = message.get('event') in ('job.cancel_requested', 'resource.released')
         resource = message.get('method', '').startswith('resource.')
@@ -117,13 +181,7 @@ class Application:
             while True:
                 message = self._read()
                 if message['type'] == 'response':
-                    with self._lock:
-                        future = self._pending.pop(message['id'], None)
-                    if future is not None:
-                        if 'error' in message:
-                            future.set_exception(PluginError(**message['error']))
-                        else:
-                            future.set_result(message['result'])
+                    self._response(message)
                 elif message['type'] in ('request', 'event'):
                     self._submit(message)
         except EOFError:
@@ -134,6 +192,9 @@ class Application:
                 for future in self._pending.values():
                     future.set_exception(PluginError('unavailable', 'Host disconnected'))
                 self._pending.clear()
+                self._accept.clear()
+                self._subscriptions.clear()
             self._resource_executor.shutdown(wait=True, cancel_futures=True)
             self._control.shutdown(wait=True, cancel_futures=True)
             self._executor.shutdown(wait=True, cancel_futures=True)
+            self._observations.shutdown(wait=True, cancel_futures=True)

@@ -122,6 +122,14 @@ pub struct CommandResult {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "method", content = "params", deny_unknown_fields)]
 pub enum Request {
+    #[serde(rename = "event.subscribe")]
+    EventSubscribe {
+        sources: Vec<super::observation::Source>,
+    },
+    #[serde(rename = "event.unsubscribe")]
+    EventUnsubscribe { subscription: String },
+    #[serde(rename = "event.resync")]
+    EventResync { subscription: String },
     #[serde(rename = "resource.inspect")]
     ResourceInspect {
         buffer: String,
@@ -413,6 +421,8 @@ pub enum HostMessage {
 #[derive(Clone, Debug, Serialize)]
 #[serde(untagged)]
 pub enum EventData {
+    Observation(super::observation::Change),
+    ObservationResync(super::observation::ResyncRequired),
     ResourceReleased { job: String },
     ResourceFinished(super::provider::Finished),
     FilesystemFinished(super::filesystem::Finished),
@@ -435,6 +445,7 @@ pub enum Response {
 #[derive(Clone, Debug, Serialize)]
 #[serde(untagged)]
 pub enum ResultValue {
+    Observation(super::observation::Baseline),
     Staging {
         staging: String,
         path: String,
@@ -525,6 +536,7 @@ pub(crate) struct CapturedContext {
 
 /// Bounded host ownership, independent of a frontend and the ten-second control timer.
 pub(crate) struct Instance {
+    pub observations: super::observation::Registry,
     pub provider_requests: usize,
     pub providers: BTreeMap<String, super::provider::Registration>,
     pub input_surfaces: BTreeSet<String>,
@@ -562,6 +574,7 @@ impl Default for Instance {
             .unwrap_or_default()
             .as_nanos();
         Self {
+            observations: Default::default(),
             provider_requests: 0,
             providers: Default::default(),
             input_surfaces: Default::default(),
@@ -675,7 +688,10 @@ pub(crate) fn decode(bytes: &[u8]) -> anyhow::Result<super::ClientMessage> {
         );
         if !matches!(
             method,
-            "provider.register"
+            "event.subscribe"
+                | "event.unsubscribe"
+                | "event.resync"
+                | "provider.register"
                 | "resource.open"
                 | "resource.rebind"
                 | "resource.inspect"
@@ -1028,6 +1044,41 @@ mod tests {
                     },
                 },
             },
+            HostMessage::Response {
+                id: "p:400".into(),
+                outcome: Response::Success {
+                    result: ResultValue::Observation(super::super::observation::Baseline {
+                        subscription: "o:g:1".into(),
+                        sequence: "e:1".into(),
+                        sources: vec![observation_fixture(false)],
+                    }),
+                },
+            },
+            HostMessage::Event {
+                sequence: "e:2".into(),
+                event: "event.changed",
+                data: EventData::Observation(super::super::observation::Change {
+                    subscription: "o:g:1".into(),
+                    sources: vec![observation_fixture(false)],
+                    coalesced: 2,
+                }),
+            },
+            HostMessage::Event {
+                sequence: "e:3".into(),
+                event: "event.closed",
+                data: EventData::Observation(super::super::observation::Change {
+                    subscription: "o:g:1".into(),
+                    sources: vec![observation_fixture(true)],
+                    coalesced: 0,
+                }),
+            },
+            HostMessage::Event {
+                sequence: "e:4".into(),
+                event: "event.resync_required",
+                data: EventData::ObservationResync(super::super::observation::ResyncRequired {
+                    subscription: "o:g:1".into(),
+                }),
+            },
         ];
         let expected = fixtures
             .iter()
@@ -1036,6 +1087,28 @@ mod tests {
         assert_eq!(messages.len(), expected.len());
         for (message, fixture) in messages.into_iter().zip(expected) {
             assert_eq!(serde_json::to_value(message).unwrap(), fixture["message"]);
+        }
+    }
+
+    fn observation_fixture(closed: bool) -> super::super::observation::SourceState {
+        use super::super::observation::{Snapshot, Source, SourceState};
+        SourceState {
+            source: Source::Buffer {
+                buffer: "b:g:1".into(),
+            },
+            revision: if closed { "o:2" } else { "o:1" }.into(),
+            state: if closed {
+                Snapshot::Closed {}
+            } else {
+                Snapshot::Buffer {
+                    revision: "r:1".into(),
+                    saved_revision: Some("r:1".into()),
+                    name: "scratch".into(),
+                    chars: 0,
+                    read_only: false,
+                    dirty: false,
+                }
+            },
         }
     }
 

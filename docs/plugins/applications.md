@@ -10,7 +10,8 @@ staging and provider-backed
 UTF-8 document opening, conditional remote saves, native confirmation of weaker
 overwrites, explicit rebind and remote conflict inspection. Runnable SFTP and
 FTP/FTPS adapters share a native remote browser with explicit transport and
-overwrite guarantees. Subscriptions and managed media backends
+overwrite guarantees. Metadata subscriptions provide consistent baselines,
+ordered changes and explicit resynchronization. Managed media backends
 remain unfinished. This is not completion of the application plan.
 Epoch 1 remains the default and its uppercase example is unchanged.
 
@@ -111,6 +112,7 @@ generation and must never be parsed, persisted, or used by another owner.
 | views | `pane.show` | Pending invocation ID and view handle |
 | workspace | `buffer.list` | Offset and page size 1–128; live buffer metadata and next offset |
 | workspace | `pane.list` | Empty parameters; pane handles and selection revisions |
+| source-dependent | `event.subscribe/resync/unsubscribe` | Explicit source filters; subscription handle, ordered baseline and changes |
 | text | `buffer.read` | Buffer, expected revision and scalar range; exact revision-bound text |
 | text | `buffer.edit` | Buffer, expected revision and explicit changes; resulting revision |
 | text | `buffer.snapshot.open/read/close` | Immutable rope snapshot and explicit scalar chunks |
@@ -1001,3 +1003,80 @@ indistinguishable from unchanged content, so these checks do not prove that the
 server retained the same filesystem object.
 The isolated server fixtures cover cancellation, changed sources, collisions,
 empty-directory limits, uncertain replies and serialization with document saves.
+
+## Source subscriptions
+
+`event.subscribe` takes `sources`, a nonempty array of filters. Use
+`{"kind":"buffers"}` for existing and newly opened buffers, or explicit issued
+handles such as `{"kind":"buffer","buffer":"…"}` and
+`{"kind":"pane","pane":"…"}`. These and `{"kind":"attachment"}` require
+`workspace`. Owned `view` and `job` handles require `views` and `jobs` respectively.
+Foreign or closed handles cannot create a subscription. Filters never authorize
+text access or grant another application's owned view or job handles.
+Workspace buffer discovery includes metadata for generated application buffers,
+just like `buffer.list`.
+
+The response contains `subscription`, `sequence` and `sources`, captured in the
+same host turn. Each source entry contains a concrete `source`, opaque observation
+`revision` and typed `state`. Buffer metadata includes text revision, accepted
+saved revision, dirty/read-only flags, scalar length and a bounded display label.
+No text is copied. Pane metadata identifies its displayed buffer (null for a
+terminal) and selection revision. View metadata contains its model revision;
+job metadata contains state/progress; attachment metadata contains attached state
+and generation. Read text, selections and models through their existing explicit
+APIs when needed. An accepted save of an unchanged baseline need not emit a new
+state; the saved revision describes the baseline, not a count of save commands.
+
+`event.changed` carries `data: {subscription, sources, coalesced}`. Buffer-open,
+saved-baseline, job-state and attachment transitions use reliable delivery.
+Ordinary text invalidations, selection/model revisions and progress can coalesce:
+only the latest metadata survives, and `coalesced` reports replaced pending
+observations. Closing a source produces reliable `event.closed` with a
+`{"kind":"closed"}` state. The outer `sequence` increases in connection delivery
+order, including other application events; source revisions describe snapshots.
+Neither is an edit log, and cross-application ordering is unspecified.
+
+The host admits at most 32 subscriptions and 256 subscription/source pairs per
+application, counting a source watched twice twice. Each subscription retains at
+most 64 pending changed sources. Exceeding the pending table or discovery limit
+emits reliable `event.resync_required` and suspends that subscription. Call
+`event.resync` with its handle to obtain a fresh baseline; an oversized baseline
+is refused without replacing the old subscription. There is no replay. A bounded
+reliable queue preserves lifecycle transitions, responses and accepted actions;
+an owner that cannot accept them is stopped. Eight outgoing message slots and
+512 KiB remain reserved for reliable control. A drain notification flushes the
+last coalesced state without waiting for input or starting a timer.
+
+`event.unsubscribe` is idempotent. Previously queued observations precede its
+acknowledgement; no later event names that subscription. A new subscription gets
+a new handle and baseline. Subscriptions disappear when their owner stops.
+Mutation responses precede resulting invalidations. With no subscriptions there
+is no subscription scan, worker or timer. New-buffer discovery caches membership
+and revisits it only after buffers open or close.
+
+The Python client offers ordered callbacks and queues baselines before subsequent
+events, including events received before `subscribe` returns:
+
+```python
+def observe(event, sequence, data):
+    # event.baseline is an SDK callback name; other names are host events.
+    # Schedule expensive work elsewhere and return promptly.
+    pass
+
+baseline = app.subscribe([{'kind': 'buffers'}], observe)
+# After event.resync_required, explicitly request the new baseline:
+app.resync(baseline['subscription'])
+app.unsubscribe(baseline['subscription'])
+```
+
+Callbacks run on one bounded observation worker, separately from command,
+provider and cancellation handlers. The client refuses a full 32-callback queue
+instead of silently losing observations. Callbacks already queued before an
+unsubscribe acknowledgement may still finish locally. Asynchronous field
+validation, view query/viewport/action observations and helper-exit sources are
+still pending alongside their corresponding later application features.
+
+Authors using generic `app.request('event.subscribe', sources=...)` receive updates
+through `on_observation(event, sequence, data)`, which defaults to forwarding to
+`on_event(event, data)`. Use the convenience helper when baseline and update
+processing must run through the same ordered callback lane.

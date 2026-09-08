@@ -56,6 +56,7 @@ jobs:
           "$plugin_schema_python" -m pip install jsonschema==4.23.0 -r docs/plugins/requirements-sftp.txt -r docs/plugins/requirements-ftp-test.txt
           "$plugin_schema_python" docs/plugins/check_schema.py
           "$plugin_schema_python" docs/plugins/check_applications.py
+          "$plugin_schema_python" docs/plugins/check_observations.py
           "$plugin_schema_python" docs/plugins/check_remote_provider.py
           "$plugin_schema_python" docs/plugins/check_downloads.py
           "$plugin_schema_python" docs/plugins/check_remote_status.py

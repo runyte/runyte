@@ -2991,6 +2991,9 @@ filesystem operations with native confirmation, plus native prompts, filterable
 choices and forms with masked secret fields. Applications can also create named
 unsaved documents and save them asynchronously: later edits stay dirty, and
 pending or uncertain writes cannot silently complete a close or `--wait` request.
+Applications can subscribe to buffer, pane, owned view/job and attachment metadata
+with consistent baselines and bounded ordered delivery. New-buffer discovery
+needs no polling; slow consumers receive an explicit resynchronization marker.
 Provider applications can also open version-bound UTF-8 documents with normal
 editing, syntax highlighting and remote saves. Providers with conditional writes
 save normally; weaker providers require native foreground confirmation describing

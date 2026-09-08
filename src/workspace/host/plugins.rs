@@ -40,7 +40,7 @@ impl WorkspaceHost {
             return None;
         }
         let mut names = BTreeSet::new();
-        let (events, receiver) = tokio::sync::mpsc::channel(136);
+        let (events, receiver) = tokio::sync::mpsc::channel(plugin::EVENT_CAPACITY);
         self.plugin_events_sender = Some(events.clone());
         for (id, config) in configs.into_iter().enumerate() {
             if !plugin::valid_name(&config.id)
@@ -164,6 +164,7 @@ impl WorkspaceHost {
             self.stop_plugin(event.plugin, &error.to_string());
         }
         self.sync_plugin_views();
+        self.sync_application_observers();
         before != presentation(self)
     }
 
@@ -255,6 +256,11 @@ impl WorkspaceHost {
                 ..
             } => {
                 return self.application_local_result(id, generation, request, result);
+            }
+            ClientMessage::OutputReady { _notification } => {
+                self.sync_application_observers();
+                drop(_notification);
+                return Ok(());
             }
             ClientMessage::Queued { message, .. } => return self.plugin_message(id, *message),
             ClientMessage::Application(message) => {
@@ -530,6 +536,7 @@ impl WorkspaceHost {
             }
             ClientMessage::Register { .. } => unreachable!(),
             ClientMessage::Queued { .. }
+            | ClientMessage::OutputReady { .. }
             | ClientMessage::Local { .. }
             | ClientMessage::Application(_)
             | ClientMessage::Unsupported { .. }
@@ -662,6 +669,7 @@ impl WorkspaceHost {
         for id in failed {
             self.stop_plugin(id, "event consumer is too slow");
         }
+        self.sync_application_observers();
     }
 }
 

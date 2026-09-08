@@ -527,6 +527,47 @@ Linux coverage measurement. Native macOS and full performance gates remain open.
 Source subscriptions, asynchronous field validation, richer models, managed
 helpers, leases, settings/state and manager/media examples remain active.
 
+## Source subscription round — 2026-09-08
+
+Implemented after `0f1beac`: explicit buffer, pane, owned view/job and attachment
+subscriptions, with wildcard new-buffer discovery, same-turn baselines,
+connection sequences, source revisions and metadata-only observations. Public
+`event.subscribe`, `event.resync` and idempotent `event.unsubscribe` share the
+existing epoch 2 transport. Mutation responses precede invalidations; closed
+sources produce reliable tombstones. Job/save/attachment/open transitions remain
+reliable while text, selection/model revisions and progress coalesce.
+
+The host bounds subscriptions to 32 and aggregate subscription/source pairs to
+256, with 64 pending sources per subscription, 64 retained reliable records and
+4 KiB encoded source states. Overflow emits reliable resynchronization and
+suspends coalescible delivery until a fresh baseline. Baseline admission and
+speculative handle issuance roll back atomically. A first subscription reserves
+8 MiB of the existing payload budget; the last unsubscribe releases it.
+Buffer discovery caches live membership and incrementally updates append-only
+slots; absent subscriptions do no observation work.
+
+The worker reserves eight outgoing slots and 512 KiB for control. One guarded
+capacity notification delivers the final retained state after draining without
+input or idle polling. Both epochs use sixteen per-worker inbound permits;
+internal deadlines await those permits instead of disconnecting a cooperative
+owner on a simultaneous timeout burst. Shared event capacity accounts for eight
+producers, their capacity/failure notices, and sixteen local IO results. A future
+restart manager must retain old-generation admission accounting until its queued
+work drains.
+
+The Python client offers ordered baseline/update callbacks independent of command,
+provider and cancellation workers, including generic request API forwarding.
+Comprehensive review corrected coalesced counts during reliable promotion,
+generic SDK event dispatch and simultaneous host deadline admission. The Rust
+suite passed 3,289 tests with 33 ignored; Python passed epoch 1 (8), epoch 2/SDK
+(10) and observation ordering (5). Formatting and warnings-as-errors Clippy passed. Canonical Linux line coverage
+is 111,854 / 122,070 (**91.63%**), above the unchanged 89% floor; the instrumented
+suite also passed 3,289 tests with 33 ignored.
+
+Revision-tagged field validation, richer view/query/action observations, helpers
+and their exit sources, leases, settings/state, manager/media examples, broader
+conformance and complete native platform/performance gates remain active.
+
 ## Investigation: existing foundation and missing boundaries
 
 The current [guide](../../../docs/plugins.md) and

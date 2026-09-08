@@ -65,7 +65,7 @@ Runyte uses optional YAML configuration. Explicitly enabled
 [experimental process plugins](docs/plugins.md) can register commands and transform
 multiple selections in one undoable edit. The opt-in
 [application API](docs/plugins/applications.md) adds native application views,
-a local file manager, background jobs, explicit text operations and provider-backed
+a local file manager, background jobs, ordered metadata subscriptions, explicit text operations and provider-backed
 UTF-8 editing with conditional or explicitly confirmed remote saves and conflict
 comparison. Runnable [SFTP](docs/plugins/applications.md#sftp-browser-and-editor)
 and [FTP/FTPS](docs/plugins/applications.md#ftp-and-ftps-browser-and-editor) browsers

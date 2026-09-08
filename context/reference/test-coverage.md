@@ -41,6 +41,28 @@ days, and fails below 89% total line coverage. The floor is deliberately below
 the observed baseline because conditional Linux and macOS code changes both the
 instrumented denominator and the paths available to a run on one platform.
 
+## 2026-09-08 — source subscriptions and fair delivery
+
+Measured on `x86_64-unknown-linux-gnu` at `0f1beac` plus the subscription
+round, using Rust 1.97.1 and cargo-llvm-cov 0.9.0. Ordinary and canonical suites
+each passed 3,289 tests with 33 ignored. Formatting and warnings-as-errors Clippy
+passed; the floor remains 89%.
+
+| Measure | Covered | Total | Coverage |
+| --- | ---: | ---: | ---: |
+| Lines | 111,854 | 122,070 | 91.63% |
+| Functions | 10,166 | 11,023 | 92.23% |
+| Regions | 170,989 | 187,526 | 91.18% |
+
+Twenty-seven new Rust tests cover atomic subscription admission, baseline and
+mutation ordering, coalescing/resynchronization, source closure and discovery,
+source ownership, saved baselines, pane targets/selections, view/job metadata,
+reserved message/byte capacity, fair producer admission, final drain wakeups and
+simultaneous host deadlines. Five Python checks cover ordered baseline callbacks,
+resynchronization, unsubscribe, generic event forwarding and bounded callback
+isolation from cancellation. Native macOS and the complete application workload
+matrix remain pending.
+
 ## 2026-09-08 — private binary download staging
 
 Measured on `x86_64-unknown-linux-gnu` at `e586e39` plus the binary staging

@@ -2781,6 +2781,11 @@ impl Buffer {
         self.text.revision()
     }
 
+    /// Revision of the accepted saved snapshot, without copying its text.
+    pub(crate) fn plugin_saved_revision(&self) -> Option<u64> {
+        self.saved_text.as_ref().map(Text::revision)
+    }
+
     pub fn len_lines(&self) -> usize {
         self.text.len_lines()
     }

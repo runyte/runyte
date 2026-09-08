@@ -661,7 +661,7 @@
         "surface": "u:g:1",
         "accepted": true,
         "values": {
-          "name": "é"
+          "name": "\u00e9"
         }
       }
     }
@@ -674,7 +674,7 @@
       "method": "buffer.create",
       "params": {
         "path": "notes.txt",
-        "text": "é猫\n",
+        "text": "\u00e9\u732b\n",
         "invocation": null
       }
     }
@@ -795,7 +795,7 @@
         "value": {
           "version": "v1",
           "offset": 0,
-          "text": "é猫",
+          "text": "\u00e9\u732b",
           "eof": true
         }
       }
@@ -970,7 +970,7 @@
         "job": "j:g:1",
         "upload": "upload-1",
         "offset": 0,
-        "text": "é猫"
+        "text": "\u00e9\u732b"
       }
     }
   },
@@ -1143,6 +1143,140 @@
       "result": {
         "staging": "s:g:1",
         "path": "/runtime/cache/downloads/generation/stage-1"
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:400",
+      "method": "event.subscribe",
+      "params": {
+        "sources": [
+          {
+            "kind": "buffers"
+          },
+          {
+            "kind": "attachment"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:401",
+      "method": "event.resync",
+      "params": {
+        "subscription": "o:g:1"
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:402",
+      "method": "event.unsubscribe",
+      "params": {
+        "subscription": "o:g:1"
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "response",
+      "id": "p:400",
+      "result": {
+        "subscription": "o:g:1",
+        "sequence": "e:1",
+        "sources": [
+          {
+            "source": {
+              "kind": "buffer",
+              "buffer": "b:g:1"
+            },
+            "revision": "o:1",
+            "state": {
+              "kind": "buffer",
+              "revision": "r:1",
+              "saved_revision": "r:1",
+              "name": "scratch",
+              "chars": 0,
+              "read_only": false,
+              "dirty": false
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "event",
+      "sequence": "e:2",
+      "event": "event.changed",
+      "data": {
+        "subscription": "o:g:1",
+        "sources": [
+          {
+            "source": {
+              "kind": "buffer",
+              "buffer": "b:g:1"
+            },
+            "revision": "o:1",
+            "state": {
+              "kind": "buffer",
+              "revision": "r:1",
+              "saved_revision": "r:1",
+              "name": "scratch",
+              "chars": 0,
+              "read_only": false,
+              "dirty": false
+            }
+          }
+        ],
+        "coalesced": 2
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "event",
+      "sequence": "e:3",
+      "event": "event.closed",
+      "data": {
+        "subscription": "o:g:1",
+        "sources": [
+          {
+            "source": {
+              "kind": "buffer",
+              "buffer": "b:g:1"
+            },
+            "revision": "o:2",
+            "state": {
+              "kind": "closed"
+            }
+          }
+        ],
+        "coalesced": 0
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "event",
+      "sequence": "e:4",
+      "event": "event.resync_required",
+      "data": {
+        "subscription": "o:g:1"
       }
     }
   }

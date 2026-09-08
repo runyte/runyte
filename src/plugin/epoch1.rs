@@ -47,6 +47,10 @@ pub struct Registration {
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ClientMessage {
     #[serde(skip)]
+    OutputReady {
+        _notification: super::OutputReadyGuard,
+    },
+    #[serde(skip)]
     FilesystemApplied {
         job: String,
         result: Result<super::filesystem::Applied, String>,
