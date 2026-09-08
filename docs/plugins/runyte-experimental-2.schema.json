@@ -1866,6 +1866,9 @@
         },
         {
           "$ref": "#/$defs/buffer.create"
+        },
+        {
+          "$ref": "#/$defs/filesystem.stat"
         }
       ]
     },
@@ -2360,6 +2363,9 @@
               "changes"
             ]
           }
+        },
+        {
+          "$ref": "#/$defs/filesystemStat"
         }
       ]
     },
@@ -2882,6 +2888,81 @@
       "required": [
         "plan",
         "job"
+      ],
+      "additionalProperties": true
+    },
+    "filesystem.stat": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "request"
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^p:[1-9][0-9]*$",
+          "maxLength": 22
+        },
+        "method": {
+          "const": "filesystem.stat"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "maxLength": 4096
+            },
+            "expected_revision": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "maxLength": 128
+            }
+          },
+          "required": [
+            "path"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "method",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    "filesystemStat": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "kind": {
+          "enum": [
+            "file",
+            "directory",
+            "symlink",
+            "other"
+          ]
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "revision": {
+          "type": "string",
+          "maxLength": 128
+        }
+      },
+      "required": [
+        "path",
+        "kind",
+        "bytes",
+        "revision"
       ],
       "additionalProperties": true
     }

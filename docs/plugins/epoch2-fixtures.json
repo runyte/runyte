@@ -713,5 +713,30 @@
         "job": "j:g:3"
       }
     }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:80",
+      "method": "filesystem.stat",
+      "params": {
+        "path": "notes.txt",
+        "expected_revision": null
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "response",
+      "id": "p:80",
+      "result": {
+        "path": "notes.txt",
+        "kind": "file",
+        "bytes": 5,
+        "revision": "s:1"
+      }
+    }
   }
 ]

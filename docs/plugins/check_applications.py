@@ -103,6 +103,18 @@ class ApplicationSchemaTests(unittest.TestCase):
             self.assertEqual(confirmation['params']['invocation'], 'h:4')
             reply(confirmation, {})
             self.assertEqual(receive()['id'], 'h:4')
+            send({'type': 'request', 'id': 'h:5', 'method': 'command.invoke', 'params': {
+                'command': 'enter', 'context': 'view', 'view': 'v:g:2', 'model_revision': 'm:1',
+                'rows': ['n:1'], 'arguments': {}}})
+            stat = receive()
+            self.assertEqual(stat['method'], 'filesystem.stat')
+            self.assertEqual(stat['params']['path'], 'é.txt')
+            reply(stat, {'path': 'é.txt', 'kind': 'file', 'bytes': 5, 'revision': 's:1'})
+            opening = receive()
+            self.assertEqual(opening['method'], 'buffer.open')
+            self.assertEqual(opening['params'], {'path': 'é.txt', 'invocation': 'h:5'})
+            reply(opening, {'buffer': 'b:g:1', 'revision': 'r:0'})
+            self.assertEqual(receive()['id'], 'h:5')
 
             child.stdin.close()
             self.assertEqual(child.wait(timeout=3), 0)

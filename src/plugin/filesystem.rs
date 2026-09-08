@@ -8,6 +8,13 @@ use serde::{Deserialize, Serialize};
 use std::path::{Component, Path, PathBuf};
 
 pub const MAX_ENTRIES: usize = 1024;
+pub(crate) const OPERATION_LIMITS: crate::fs_plan::OperationLimits =
+    crate::fs_plan::OperationLimits {
+        entries: 1024,
+        depth: 32,
+        bytes: 64 * 1024 * 1024,
+        metadata_bytes: 4 * 1024 * 1024,
+    };
 pub const MAX_DOCUMENT_BYTES: usize = 8 * 1024 * 1024;
 pub const DIRECTORY_CHARGE: usize = 8 * 1024 * 1024;
 pub const MAX_DIRECTORIES: usize = 2;
@@ -29,6 +36,14 @@ pub struct Entry {
     pub name: String,
     pub kind: &'static str,
     pub bytes: u64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct Stat {
+    pub path: String,
+    pub kind: &'static str,
+    pub bytes: u64,
+    pub revision: String,
 }
 
 #[derive(Clone, Debug)]
@@ -69,6 +84,10 @@ impl Directory {
 
 #[derive(Debug)]
 pub(crate) enum Task {
+    Stat {
+        root: PathBuf,
+        path: String,
+    },
     Create {
         root: PathBuf,
         path: String,
@@ -91,6 +110,7 @@ pub(crate) enum Task {
 
 #[derive(Debug)]
 pub enum Prepared {
+    Stat(Stat),
     Directory(Directory),
     Plan(FsPlan),
     Document(Box<crate::buffer::Buffer>),
@@ -124,6 +144,7 @@ impl Task {
         let io = |error: anyhow::Error| {
             if error.is::<crate::buffer::ReadLimitExceeded>()
                 || error.is::<crate::fs_plan::DirectoryLimitExceeded>()
+                || error.is::<crate::fs_plan::OperationLimitExceeded>()
             {
                 Error::new(
                     ErrorCode::LimitExceeded,
@@ -142,6 +163,26 @@ impl Task {
             }
         };
         match self {
+            Self::Stat { root, path } => {
+                let resolved = project_path(&root, &path)?;
+                let fingerprint =
+                    crate::fs_plan::SourceFingerprint::shallow(&resolved, "application stat")
+                        .map_err(|_| {
+                            Error::new(ErrorCode::NotFound, "Path is absent or unreadable")
+                        })?;
+                let kind = match fingerprint.kind() {
+                    EntryKind::File => "file",
+                    EntryKind::Directory => "directory",
+                    EntryKind::Symlink => "symlink",
+                    EntryKind::Other => "other",
+                };
+                Ok(Prepared::Stat(Stat {
+                    path,
+                    kind,
+                    bytes: fingerprint.detail_fields().len,
+                    revision: fingerprint.revision_key(),
+                }))
+            }
             Self::Create { root, path, text } => {
                 let path = project_path(&root, &path)?;
                 if std::fs::symlink_metadata(&path).is_ok() {
@@ -200,16 +241,17 @@ impl Task {
                     ),
                     _ => None,
                 };
-                // This adapter initially admits regular files. Recursive directory
-                // operations need the subsequent asynchronous mutation/job adapter.
                 if let Some(source) = source {
-                    if source.kind != EntryKind::File {
+                    if !matches!(source.kind, EntryKind::File | EntryKind::Directory) {
                         return Err(Error::new(
                             ErrorCode::Unsupported,
-                            "This application adapter mutates regular files only",
+                            "This application adapter mutates ordinary files and directories",
                         ));
                     }
-                    if source.source_fingerprint().detail_fields().len > MAX_DOCUMENT_BYTES as u64 {
+                    if source.kind == EntryKind::File
+                        && source.source_fingerprint().detail_fields().len
+                            > MAX_DOCUMENT_BYTES as u64
+                    {
                         return Err(Error::new(
                             ErrorCode::LimitExceeded,
                             "File exceeds application operation limit",
@@ -259,8 +301,13 @@ impl Task {
                     )),
                     Intent::Trash { .. } => {}
                 }
+                let mut limits = OPERATION_LIMITS;
+                if source.is_some_and(|source| source.kind == EntryKind::File) {
+                    limits.bytes = MAX_DOCUMENT_BYTES as u64;
+                }
                 let plan =
-                    FsPlan::build(directory.path, directory.snapshot, desired).map_err(io)?;
+                    FsPlan::build_bounded(directory.path, directory.snapshot, desired, limits)
+                        .map_err(io)?;
                 for operation in plan.operations() {
                     use crate::fs_plan::FsOperation;
                     let paths = match operation {

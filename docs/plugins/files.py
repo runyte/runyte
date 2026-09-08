@@ -83,9 +83,10 @@ def enter(context):
     with lock:
         row = selected(context)
         destination = str(PurePosixPath(path) / row['name'])
-        if row['kind'] == 'directory':
+        metadata = app.request('filesystem.stat', path=destination)
+        if metadata['kind'] == 'directory':
             refresh(destination)
-        elif row['kind'] == 'file':
+        elif metadata['kind'] == 'file':
             app.request('buffer.open', path=destination, invocation=context['invocation'])
         else:
             raise PluginError('unsupported', 'This example opens ordinary files and directories')

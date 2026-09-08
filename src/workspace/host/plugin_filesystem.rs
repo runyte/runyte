@@ -53,6 +53,21 @@ impl WorkspaceHost {
         let root = self.app.project_root.clone();
         let task =
             match operation {
+                Request::FilesystemStat {
+                    path,
+                    expected_revision,
+                } => {
+                    if path.len() > 4096
+                        || expected_revision
+                            .as_ref()
+                            .is_some_and(|revision| revision.len() > 128)
+                    {
+                        return Err(fail(Code::InvalidArgument, "Invalid stat path or revision"));
+                    }
+                    pending.charge = 64 * 1024;
+                    pending.expected_revision = expected_revision;
+                    local::Task::Stat { root, path }
+                }
                 Request::FilesystemList {
                     path,
                     offset,
@@ -222,21 +237,22 @@ impl WorkspaceHost {
         let request = request.to_owned();
         // The permit remains with the blocking read and then its queued result,
         // even when the owner stops while the OS operation is still running.
-        let work = runtime.spawn_blocking(move || (task.run(), permit));
+        let work = runtime.spawn_blocking(move || task.run());
         runtime.spawn(async move {
-            if let Ok((result, permit)) = work.await {
-                let _ = sender
-                    .send(plugin::Event {
-                        plugin: owner,
-                        result: Ok(plugin::ClientMessage::Local {
-                            generation,
-                            request,
-                            result,
-                            _permit: permit,
-                        }),
-                    })
-                    .await;
-            }
+            let result = work.await.unwrap_or_else(|_| {
+                Err(Error::new(Code::Internal, "Local filesystem worker failed"))
+            });
+            let _ = sender
+                .send(plugin::Event {
+                    plugin: owner,
+                    result: Ok(plugin::ClientMessage::Local {
+                        generation,
+                        request,
+                        result,
+                        _permit: permit,
+                    }),
+                })
+                .await;
         });
         Ok(None)
     }
@@ -275,6 +291,16 @@ impl WorkspaceHost {
     ) -> Result<ResultValue, Error> {
         let fail = Error::new;
         match prepared {
+            local::Prepared::Stat(stat) => {
+                if pending
+                    .expected_revision
+                    .as_ref()
+                    .is_some_and(|expected| *expected != stat.revision)
+                {
+                    return Err(fail(Code::Stale, "Filesystem metadata changed"));
+                }
+                Ok(ResultValue::Stat(stat))
+            }
             local::Prepared::Directory(directory) => {
                 if pending
                     .expected_revision

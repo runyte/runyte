@@ -72,9 +72,9 @@ Concrete decisions in this slice:
 - Job progress is recovered through `job.get` in this slice. General source
   subscriptions, coalescing and resynchronization are not advertised yet.
 
-Milestone 3 now has an initial local file manager, documented below; document
-recursive mutations remain. Milestone 4's providers, remote
-save reconciliation and transport examples remain unimplemented. Milestone 5
+Milestone 3 now has a local file manager, document lifecycle, native interaction
+and bounded recursive filesystem operations, documented below. Milestone 4's
+providers, remote save reconciliation and transport examples remain unimplemented. Milestone 5
 still needs managed processes, terminal/external handoffs, activity leases,
 settings/state and the plugin manager. Milestone 6 still needs the broader SDK,
 non-Python example, full conformance matrix and complete application performance
@@ -214,6 +214,32 @@ Formatting, warnings-as-errors Clippy, both schema/example checkers, the full su
 (3,142 passed, 33 ignored) and canonical Linux coverage (107,502 / 117,376 lines,
 91.59%) passed. A native PTY smoke confirmed a create, opened text and returned to
 the retained manager; a two-second settled observation emitted no terminal bytes.
+
+## Bounded recursive filesystem round
+
+`filesystem.stat` adds shallow revision-checked metadata without retaining a
+listing. The local manager checks it before opening/entering a row. Directory
+rename/copy/trash now use the same asynchronous confirmed plan path, with limits
+at preparation, revalidation and copy traversal: 1,024 entries including the root,
+32 descendant components, 64 MiB regular-file data and 4 MiB captured metadata.
+Top-level files keep their 8 MiB allowance. Symlinks are copied as links; their
+actual target paths count toward metadata. Native copy metadata behavior remains.
+
+Review corrected recursive sibling-list accumulation, uncharged symlink targets
+and the top-level file's execution byte allowance. Local preparation worker failure
+now posts a terminal error instead of stranding its request. Re-review found no
+further concrete defects. The public schema, shared fixtures and runnable manager
+cover stat; regressions cover recursive confirmation/cancellation, Unicode/link
+preservation, dirty descendant retarget/undo, shallow stat, preparation limits,
+deep changes with unchanged root metadata, and copy-growth cleanup.
+
+Validation: formatting, warnings-as-errors Clippy, both schema checkers, the full
+ordinary suite and canonical coverage passed on Linux: 3,154 tests, 33 ignored;
+107,679 / 117,546 lines (**91.61%**), above the unchanged 89% floor. A native PTY
+smoke confirmed recursive copy, stat-based opening and zero terminal bytes over
+a two-second settled observation. Native macOS validation remains required.
+Provider operations, observation/resynchronization, richer views, application lifecycle,
+authoring and the complete platform/performance acceptance matrix remain active.
 
 ## Investigation: existing foundation and missing boundaries
 

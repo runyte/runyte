@@ -11,8 +11,12 @@ mod documents;
 mod filesystem;
 #[path = "plugin_filesystem_apply.rs"]
 mod filesystem_apply;
+#[path = "plugin_filesystem_recursive.rs"]
+mod filesystem_recursive;
 #[path = "plugin_filesystem_review.rs"]
 mod filesystem_review;
+#[path = "plugin_filesystem_stat.rs"]
+mod filesystem_stat;
 #[path = "plugin_interaction.rs"]
 mod interaction;
 

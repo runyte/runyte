@@ -163,6 +163,11 @@ pub enum Request {
     },
     #[serde(rename = "ui.dismiss")]
     UiDismiss { surface: String },
+    #[serde(rename = "filesystem.stat")]
+    FilesystemStat {
+        path: String,
+        expected_revision: Option<String>,
+    },
     #[serde(rename = "filesystem.list")]
     FilesystemList {
         path: String,
@@ -389,6 +394,7 @@ pub enum Response {
 #[derive(Clone, Debug, Serialize)]
 #[serde(untagged)]
 pub enum ResultValue {
+    Stat(super::filesystem::Stat),
     Surface {
         surface: String,
     },
@@ -625,6 +631,7 @@ pub(crate) fn decode(bytes: &[u8]) -> anyhow::Result<super::ClientMessage> {
                 | "ui.pick"
                 | "ui.confirm"
                 | "ui.dismiss"
+                | "filesystem.stat"
                 | "filesystem.list"
                 | "filesystem.prepare"
                 | "filesystem.apply"
@@ -815,6 +822,17 @@ mod tests {
                 data: EventData::FilesystemStarted {
                     plan: "f:g:2".into(),
                     job: "j:g:3".into(),
+                },
+            },
+            HostMessage::Response {
+                id: "p:80".into(),
+                outcome: Response::Success {
+                    result: ResultValue::Stat(super::super::filesystem::Stat {
+                        path: "notes.txt".into(),
+                        kind: "file",
+                        bytes: 5,
+                        revision: "s:1".into(),
+                    }),
                 },
             },
         ];

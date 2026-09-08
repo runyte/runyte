@@ -133,7 +133,8 @@ impl WorkspaceHost {
                 self.application_request_id(id, &request_id)?;
                 if matches!(
                     request,
-                    api::Request::FilesystemList { .. }
+                    api::Request::FilesystemStat { .. }
+                        | api::Request::FilesystemList { .. }
                         | api::Request::FilesystemPrepare { .. }
                         | api::Request::FilesystemApply { .. }
                         | api::Request::FilesystemCancel { .. }

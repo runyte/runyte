@@ -4,8 +4,8 @@ Epoch 2 (`runyte-experimental-2`) is being implemented in the
 [application plan](../../context/plans/active/PLAN_PLUGIN_APPLICATIONS.md).
 The current implementation supports typed commands, finite background jobs,
 retained native views, explicit buffer reads/edits, immutable snapshots and
-pane selections, bounded local directory browsing, document opens and reviewed
-regular-file mutations. Recursive filesystem mutations, remote providers,
+pane selections, local metadata/browsing, document lifecycle operations, native
+input and confirmed bounded recursive filesystem mutations. Remote providers,
 subscriptions and managed media backends remain unfinished and are not
 advertised capabilities. This is not completion of the application plan.
 Epoch 1 remains the default and its uppercase example is unchanged.
@@ -111,6 +111,7 @@ generation and must never be parsed, persisted, or used by another owner.
 | text | `buffer.edit` | Buffer, expected revision and explicit changes; resulting revision |
 | text | `buffer.snapshot.open/read/close` | Immutable rope snapshot and explicit scalar chunks |
 | selections | `selection.get/set` | Explicit pane, displayed buffer and selection revision |
+| filesystem | `filesystem.stat` | Workspace-relative path and optional metadata revision; shallow kind, byte length and opaque revision |
 | filesystem | `filesystem.list` | Workspace-relative path, offset, limit and optional expected revision; retained directory handle and metadata page |
 | filesystem | `filesystem.prepare` | Directory handle, expected revision and typed intent; owned prepared plan and descriptions |
 | filesystem + jobs | `filesystem.apply` | Plan and invoking command; presents native confirmation, with no immediate filesystem mutation |
@@ -212,8 +213,7 @@ budgets are reserved for bounded queues, decoding and publication copies.
 These measure payload, not allocator RSS or the external process's memory.
 Buffer/pane issuance is bounded at 1,024/128 handles per connection generation.
 
-Still required by the active plan: recursive filesystem mutations; revision-tagged
-field validation; source subscriptions
+Still required by the active plan: revision-tagged field validation; source subscriptions
 and resynchronization; provider reads, asynchronous saves and transfer outcomes;
 row patches and staged publication; managed helpers, activity leases, state,
 settings and a plugin manager; SFTP/FTP and media examples; broader SDK/conformance
@@ -252,6 +252,15 @@ resolve the deferred hostile-process symlink-race issue or sandbox the plugin.
 The example browses ordinary directories and opens ordinary UTF-8 text files;
 it labels symlinks without following them as actions.
 
+`filesystem.stat` performs shallow metadata IO, so a large directory does not
+require listing its children. It resolves symlink aliases only inside the workspace,
+returns the requested relative path, kind, byte length and an opaque metadata
+revision, and rejects a mismatching optional `expected_revision` with `stale`.
+It retains no directory handle; byte length for a directory is filesystem metadata,
+not the summed contents. Revisions describe observations and are not mutation
+permissions. The manager uses stat before entering/opening a row; mutations still
+require a prepared directory plan and native confirmation.
+
 Directory reads, plan preparation and document loading run on a bounded blocking
 pool, with two pending local requests per owner and sixteen across the host.
 Reads and results retain their slot even if the owner stops before IO finishes;
@@ -265,8 +274,20 @@ preparation reserves 8 MiB within the shared retained-payload allowance.
 
 Intents are `create_file`, `create_directory`, `rename`, `copy`, and `trash`.
 The latter three name an entry from the issued directory and admit regular files
-of at most 8 MiB. Preparation uses the existing directory baseline and plan
-collision checks. `filesystem.apply` only opens the host's confirmation, requires
+of at most 8 MiB or directories with bounded descendants. Directory sources permit
+at most 1,024 entries including the root, 32 descendant path components, 64 MiB of
+regular-file data and 4 MiB of captured path/fingerprint metadata. Symlink targets
+are counted as metadata and copied as links without following them; the top-level
+source remains an ordinary file or directory. The byte budget covers regular-file
+data, separately from native macOS extended attributes/resource forks and ACLs.
+Metadata copying retains the platform's existing behavior.
+
+Preparation and application revalidation enforce the traversal limits. Copying
+also charges entries/depth/metadata as it walks and refuses data beyond each
+file's validated size, so growth cannot expand a staged copy without limit.
+Failure retains the existing collision/cleanup/recovery behavior. Directory
+rename retargets open descendants while preserving newer unsaved text and undo.
+Preparation uses the existing directory baseline and plan collision checks. `filesystem.apply` only opens the host's confirmation, requires
 a current foreground grant, and returns `busy` while another input surface owns
 the frontend. The plugin has no API that supplies the user's confirmation.
 Accepting the confirmation starts a host-owned job and emits `job.changed` followed

@@ -41,6 +41,26 @@ days, and fails below 89% total line coverage. The floor is deliberately below
 the observed baseline because conditional Linux and macOS code changes both the
 instrumented denominator and the paths available to a run on one platform.
 
+## 2026-09-08 — bounded recursive application filesystem operations
+
+Measured on `x86_64-unknown-linux-gnu` at `f0488bf` plus the recursive filesystem
+round, using Rust 1.97.1 and cargo-llvm-cov 0.9.0. Canonical workspace coverage
+and the ordinary full suite each passed 3,154 tests with 33 ignored. Formatting,
+warnings-as-errors Clippy and both schema/example checkers passed.
+
+| Measure | Covered | Total | Coverage |
+| --- | ---: | ---: | ---: |
+| Lines | 107,679 | 117,546 | 91.61% |
+| Functions | 9,866 | 10,692 | 92.27% |
+| Regions | 165,515 | 181,578 | 91.15% |
+
+New coverage exercises shallow stat, contained aliases, recursive operation and
+confirmation behavior, dirty descendants, depth/count/data/metadata budgets,
+unchanged-root descendant revalidation, and growth during copy with staging
+cleanup. Native PTY confirmation copied a directory and opened text through stat;
+the two-second settled observation emitted no terminal bytes. The floor remains
+89%; native macOS validation remains required.
+
 ## 2026-09-08 — asynchronous application filesystem apply
 
 Measured on `x86_64-unknown-linux-gnu` at `1c27b77` plus the asynchronous filesystem
