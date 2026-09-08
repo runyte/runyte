@@ -57,6 +57,8 @@ jobs:
           "$plugin_schema_python" docs/plugins/check_schema.py
           "$plugin_schema_python" docs/plugins/check_applications.py
           "$plugin_schema_python" docs/plugins/check_remote_provider.py
+          "$plugin_schema_python" docs/plugins/check_downloads.py
+          "$plugin_schema_python" docs/plugins/check_remote_status.py
           "$plugin_schema_python" docs/plugins/check_sftp_ui.py
           "$plugin_schema_python" docs/plugins/check_sftp.py
           "$plugin_schema_python" docs/plugins/check_ftp_ui.py

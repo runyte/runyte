@@ -249,22 +249,28 @@ class FtpTransport(BoundedTransport):
             _fail('limit_exceeded', 'Remote file exceeds 8 MiB')
         return size, facts.get('modify'), facts.get('unique')
 
-    def _read(self, client, operation, path):
+    def _read(self, client, operation, path, sink=None):
         before = self._stat(client, operation, path)
         content = bytearray()
+        count = 0
 
         def received(data):
+            nonlocal count
             operation.check()
-            if len(content) + len(data) > MAX_BYTES:
+            count += len(data)
+            if count > MAX_BYTES:
                 _fail('limit_exceeded', 'Remote file exceeds 8 MiB')
-            content.extend(data)
+            if sink is None:
+                content.extend(data)
+            else:
+                sink(data)
 
         self._tick(client, operation)
         client.retrbinary('RETR ' + path, received, blocksize=BLOCK_BYTES)
         after = self._stat(client, operation, path)
-        if before != after or len(content) != before[0]:
+        if before != after or count != before[0]:
             _fail('conflict', 'Remote file changed while reading')
-        return bytes(content)
+        return bytes(content) if sink is None else None
 
     def canonical(self, path, cancel=None):
         return self._run(lambda client, op: self._path(client, op, path), cancel)

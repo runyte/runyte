@@ -1096,5 +1096,54 @@
         "job": "j:g:4"
       }
     }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:701",
+      "method": "staging.create",
+      "params": {
+        "job": "j:g:5",
+        "bytes": 5
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:702",
+      "method": "staging.prepare",
+      "params": {
+        "staging": "s:g:1",
+        "directory": "d:g:1",
+        "expected_revision": "d:1",
+        "destination": "download.bin",
+        "sha256": "8ed3f6ad685b959ead7022518e1af76cd816f8e8ec7ccdda1ed4018e8f2223f8"
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:703",
+      "method": "staging.close",
+      "params": {
+        "staging": "s:g:1"
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "response",
+      "id": "p:701",
+      "result": {
+        "staging": "s:g:1",
+        "path": "/runtime/cache/downloads/generation/stage-1"
+      }
+    }
   }
 ]

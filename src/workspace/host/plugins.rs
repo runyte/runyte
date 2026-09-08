@@ -140,6 +140,19 @@ impl WorkspaceHost {
         // Observation delivery or a queued stop can retire this same instance.
         // Check membership after that boundary before looking up its state.
         self.sync_plugin_observers();
+        if let Ok(ClientMessage::Local {
+            generation,
+            request,
+            ..
+        }) = &event.result
+            && let Some(charge) = self.plugin_local_orphans.remove(&(
+                event.plugin,
+                generation.clone(),
+                request.clone(),
+            ))
+        {
+            self.app.plugins.orphaned_payload -= charge;
+        }
         if !self.app.plugins.instances.contains_key(&event.plugin) {
             return before != presentation(self);
         }
@@ -165,6 +178,21 @@ impl WorkspaceHost {
         let Some(instance) = self.app.plugins.instances.remove(&id) else {
             return;
         };
+        for (request, pending) in &instance.application.local_requests {
+            if let Some(cancelled) = &pending.cancelled {
+                cancelled.store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+            self.plugin_local_orphans.insert(
+                (id, instance.application.generation.clone(), request.clone()),
+                pending.charge,
+            );
+            self.app.plugins.orphaned_payload += pending.charge;
+        }
+        for issued in instance.application.staging.values() {
+            issued
+                .cancelled
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+        }
         self.app.plugins.presentation_dirty = true;
         self.plugin_workers.remove(&id);
         for view in instance.application.views.values() {

@@ -16,6 +16,8 @@ import unittest
 import paramiko
 
 from application import PluginError
+from download_transport_checks import DownloadTransportChecks
+from download_wire_checks import check_download_wire
 from sftp_fixture import SftpFixture
 from sftp_transport import SftpTransport
 
@@ -26,7 +28,7 @@ def version(data):
     return hashlib.sha256(data).hexdigest()
 
 
-class SftpTransportTests(unittest.TestCase):
+class SftpTransportTests(DownloadTransportChecks, unittest.TestCase):
     def fixture(self, **options):
         fixture = SftpFixture(**options)
         self.addCleanup(fixture.close)
@@ -369,6 +371,7 @@ class SftpTransportTests(unittest.TestCase):
             self.assertTrue(chunk['eof'])
             send({'type': 'event', 'sequence': 'e:1', 'event': 'resource.released',
                   'data': {'job': 'j:g:open'}})
+            check_download_wire(self, fixture, invocation, row, contents, send, receive, reply)
             child.stdin.close()
             self.assertEqual(child.wait(timeout=3), 0)
         finally:

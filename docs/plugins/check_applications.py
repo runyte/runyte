@@ -291,6 +291,32 @@ class ApplicationSchemaTests(unittest.TestCase):
                     malformed['error'] = {'code': 'internal', 'message': 'Failed'}
                     self.assertFalse(validator.is_valid(malformed))
 
+    def test_staging_requires_owned_handles_exact_size_and_digest(self):
+        validator = Draft202012Validator({**SCHEMA, 'anyOf': [{'$ref': '#/$defs/pluginMessage'}]})
+        fixtures = {f['message']['method']: f['message'] for f in FIXTURES
+                    if f['message'].get('method', '').startswith('staging.')}
+        for method, message in fixtures.items():
+            for field in message['params']:
+                params = dict(message['params'])
+                del params[field]
+                self.assertFalse(validator.is_valid({**message, 'params': params}), (method, field))
+            self.assertFalse(validator.is_valid({**message, 'params': {**message['params'], 'path': '/unissued'}}))
+        create = fixtures['staging.create']
+        for size in [-1, True, 8 * 1024 * 1024 + 1, '5', None]:
+            self.assertFalse(validator.is_valid({**create, 'params': {**create['params'], 'bytes': size}}))
+        for size in [0, 8 * 1024 * 1024]:
+            validator.validate({**create, 'params': {**create['params'], 'bytes': size}})
+        prepare = fixtures['staging.prepare']
+        for digest in ['', '0' * 63, '0' * 65, 'F' * 64, 'x' * 64, None]:
+            self.assertFalse(validator.is_valid({**prepare, 'params': {**prepare['params'], 'sha256': digest}}))
+        host = Draft202012Validator({**SCHEMA, 'anyOf': [{'$ref': '#/$defs/hostMessage'}]})
+        result = next(f['message'] for f in FIXTURES if f['direction'] == 'host'
+                      and 'staging' in f['message'].get('result', {}))
+        for field in ['staging', 'path']:
+            value = dict(result['result'])
+            del value[field]
+            self.assertFalse(host.is_valid({**result, 'result': value}))
+
     def test_remote_inspection_requires_explicit_foreground_invocation(self):
         fixture = next(f['message'] for f in FIXTURES if f['message'].get('method') == 'resource.inspect')
         validator = Draft202012Validator({**SCHEMA, 'anyOf': [{'$ref': '#/$defs/pluginMessage'}]})

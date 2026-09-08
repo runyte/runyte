@@ -76,8 +76,8 @@ Milestone 3 now has a local file manager, document lifecycle, native interaction
 and bounded recursive filesystem operations, documented below. Milestone 4's
 provider-backed reads, conditional saves, explicit rebind and conflict inspection
 are implemented, together with native weaker-transport confirmation and the SFTP
-and FTP/FTPS examples. Binary staging and remote filesystem operations remain
-outstanding. Milestone 5 still needs managed processes, terminal/external handoffs, activity leases,
+and FTP/FTPS examples. Binary download staging now uses native confirmed
+publication. Remote filesystem operations remain outstanding. Milestone 5 still needs managed processes, terminal/external handoffs, activity leases,
 settings/state and the plugin manager. Milestone 6 still needs the broader SDK,
 non-Python example, full conformance matrix and complete application performance
 and supported-platform evidence. Milestones 1–2 also retain their full overload,
@@ -449,6 +449,46 @@ its 91.63% Linux coverage remains the latest canonical measurement.
 Binary staging and remote operations are next. Subscriptions, richer models,
 helpers/leases/settings, manager/media examples and complete native-platform and
 performance evidence remain active.
+
+## Private binary download staging round
+
+`staging.create/prepare/close` issue bounded private files to a live plugin-owned
+job. A completed download is checked against its declared length and SHA-256,
+copied into a separate host-owned inode, and retained by an ordinary `FsPlan`.
+Existing filesystem confirmation, collision revalidation, asynchronous apply and
+reconciliation publish only to a new workspace destination. The plugin-written
+inode never becomes the destination. Original retained write descriptors cannot
+alter the sealed copy or the published file.
+
+Storage follows the configured runtime root. Descriptor-relative ownership checks
+reject links, special files and replacement inodes; new files are private from
+creation. A bounded lazy cleanup worker releases final file ownership without
+filesystem IO in editor-thread destructors. The host accepts at most two issued
+8 MiB downloads per plugin, with bounded sealing construction and existing plan
+limits. Pending IO charges survive owner stop until the result is discarded.
+Cancellation, job termination and close prevent late sealing publication; native
+confirmation takes independent ownership after successful `filesystem.apply`.
+
+Both remote browsers stream arbitrary bytes into staging through their existing
+bounded transport workers. Input callbacks return a finite job before transfer
+work. Completion requires a fresh confirm-download action, preserving foreground
+expiry. The schema, shared fixtures, public-wire transport checks and authoring
+reference cover the new boundary. Review corrected configured runtime-root use,
+private source display labels, post-create failure cleanup and short callback
+ownership during slow transfers.
+
+Formatting, warnings-as-errors Clippy and both full Rust suites passed: 3,262
+tests with 33 ignored. Canonical Linux coverage is 110,864/121,002 lines (91.62%),
+above the unchanged 89% floor. Python checks passed epoch 1 (8), epoch 2/SDK
+(10), generic provider (10), download lifecycle (14), phase publication (6), SFTP
+browser (7), FTP browser (10), and actual SFTP and FTP/FTPS fixtures (21 each).
+The final native FTPS smoke displayed completion, accepted a fresh confirmation
+action, preserved the destination on cancellation and published exact binary
+bytes on approval, with zero output during two settled seconds. Final review
+found no remaining concrete defect in this round. Remote filesystem mutations,
+subscriptions, richer models, managed helpers, leases,
+settings/state, manager/media examples and complete platform/performance evidence
+remain active.
 
 ## Investigation: existing foundation and missing boundaries
 

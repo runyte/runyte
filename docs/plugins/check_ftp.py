@@ -14,6 +14,8 @@ import unittest
 from unittest.mock import patch
 
 from application import PluginError
+from download_transport_checks import DownloadTransportChecks
+from download_wire_checks import check_download_wire
 from ftp_fixture import FtpFixture
 from ftp_transport import FtpTransport
 
@@ -24,7 +26,7 @@ def version(data):
     return hashlib.sha256(data).hexdigest()
 
 
-class FtpTransportTests(unittest.TestCase):
+class FtpTransportTests(DownloadTransportChecks, unittest.TestCase):
     def fixture(self, **options):
         fixture = FtpFixture(**options)
         self.addCleanup(fixture.close)
@@ -346,6 +348,7 @@ class FtpTransportTests(unittest.TestCase):
             self.assertTrue(chunk['eof'])
             send({'type': 'event', 'sequence': 'e:1', 'event': 'resource.released',
                   'data': {'job': 'j:g:open'}})
+            check_download_wire(self, fixture, invocation, row, contents, send, receive, reply)
             child.stdin.close()
             self.assertEqual(child.wait(timeout=3), 0)
         finally:

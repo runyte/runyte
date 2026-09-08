@@ -245,6 +245,7 @@ mod plugin_filesystem_apply;
 mod plugin_interaction;
 mod plugin_provider_writes;
 mod plugin_providers;
+mod plugin_staging;
 /// The only owner allowed to mutate one live editor/application workspace.
 ///
 /// Standalone mode uses this value directly. Persistent mode will keep the
@@ -261,6 +262,7 @@ pub struct WorkspaceHost {
     plugin_workers: std::collections::BTreeMap<usize, crate::plugin::Worker>,
     plugin_events_sender: Option<tokio::sync::mpsc::Sender<crate::plugin::Event>>,
     plugin_local_slots: Option<std::sync::Arc<tokio::sync::Semaphore>>,
+    plugin_local_orphans: std::collections::BTreeMap<(usize, String, String), usize>,
     plugins_started: bool,
     identity: WorkspaceIdentity,
     app: App,
@@ -351,6 +353,7 @@ impl WorkspaceHost {
             plugin_workers: Default::default(),
             plugin_events_sender: None,
             plugin_local_slots: None,
+            plugin_local_orphans: Default::default(),
             plugins_started: false,
             app,
             services: ServiceLifecycle::new(256),

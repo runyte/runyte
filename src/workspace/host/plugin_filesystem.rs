@@ -43,6 +43,9 @@ impl WorkspaceHost {
             return Err(fail(Code::CapabilityDenied, "Capability was not granted"));
         }
         let mut pending = local::Pending {
+            staging_job: None,
+            staging_handle: None,
+            cancelled: None,
             creating: false,
             invocation: None,
             offset: 0,
@@ -53,6 +56,13 @@ impl WorkspaceHost {
         let root = self.app.project_root.clone();
         let task =
             match operation {
+                operation @ (Request::StagingCreate { .. } | Request::StagingPrepare { .. }) => {
+                    self.plugin_staging_task(owner, operation, &mut pending)?
+                }
+                Request::StagingClose { staging } => {
+                    self.close_plugin_staging(owner, &staging);
+                    return Ok(Some(ResultValue::Empty(api::Empty {})));
+                }
                 Request::FilesystemStat {
                     path,
                     expected_revision,
@@ -172,6 +182,7 @@ impl WorkspaceHost {
                         .unwrap()
                         .application;
                     state.plans.remove(&plan);
+                    state.staging_plans.remove(&plan);
                     // Charge stays with the displayed confirmation until it settles.
                     return Ok(Some(ResultValue::Empty(api::Empty {})));
                 }
@@ -187,6 +198,7 @@ impl WorkspaceHost {
                     if state.plans.remove(&plan).is_some() {
                         state.retained_payload -= local::DIRECTORY_CHARGE;
                     }
+                    state.staging_plans.remove(&plan);
                     return Ok(Some(ResultValue::Empty(api::Empty {})));
                 }
                 Request::FilesystemRelease { directory } => {
@@ -232,6 +244,9 @@ impl WorkspaceHost {
             .unwrap()
             .application;
         let generation = state.generation.clone();
+        if let Some(handle) = &pending.staging_handle {
+            state.staging.get_mut(handle).unwrap().busy = true;
+        }
         state.retained_payload += pending.charge;
         state.local_requests.insert(request.into(), pending);
         let request = request.to_owned();
@@ -278,6 +293,34 @@ impl WorkspaceHost {
             return Ok(());
         };
         state.retained_payload -= pending.charge;
+        if let Some(handle) = &pending.staging_handle
+            && let Some(issued) = state.staging.get_mut(handle)
+        {
+            issued.busy = false;
+        }
+        if let Some(job) = &pending.staging_job
+            && (!state
+                .jobs
+                .get(job)
+                .is_some_and(|job| job.state == api::JobState::Running)
+                || pending
+                    .cancelled
+                    .as_ref()
+                    .is_some_and(|cancelled| cancelled.load(std::sync::atomic::Ordering::SeqCst))
+                || pending
+                    .staging_handle
+                    .as_ref()
+                    .is_some_and(|handle| !state.staging.contains_key(handle)))
+        {
+            return self.application_local_reply(
+                owner,
+                request,
+                Err(Error::new(
+                    Code::Cancelled,
+                    "Download was cancelled or released",
+                )),
+            );
+        }
         let result =
             result.and_then(|prepared| self.publish_application_local(owner, pending, prepared));
         self.application_local_reply(owner, request, result)
@@ -291,6 +334,42 @@ impl WorkspaceHost {
     ) -> Result<ResultValue, Error> {
         let fail = Error::new;
         match prepared {
+            local::Prepared::Download(download) => {
+                let state = &mut self
+                    .app
+                    .plugins
+                    .instances
+                    .get_mut(&owner)
+                    .unwrap()
+                    .application;
+                state.next_handle += 1;
+                let handle = format!("t:{}:{}", state.generation, state.next_handle);
+                let path = download
+                    .path()
+                    .to_str()
+                    .ok_or_else(|| fail(Code::Unsupported, "Download staging path is not UTF-8"))?
+                    .to_owned();
+                if path.len() > 4096 || path.chars().any(char::is_control) {
+                    return Err(fail(
+                        Code::Unsupported,
+                        "Download staging path cannot be represented by the application protocol",
+                    ));
+                }
+                state.staging.insert(
+                    handle.clone(),
+                    crate::plugin::staging::Issued {
+                        job: pending.staging_job.unwrap(),
+                        download,
+                        busy: false,
+                        cancelled: pending.cancelled.unwrap(),
+                    },
+                );
+                state.retained_payload += crate::plugin::staging::STAGING_CHARGE;
+                Ok(ResultValue::Staging {
+                    staging: handle,
+                    path,
+                })
+            }
             local::Prepared::Stat(stat) => {
                 if pending
                     .expected_revision
@@ -356,13 +435,20 @@ impl WorkspaceHost {
                 if state.plans.len() >= local::MAX_PLANS {
                     return Err(fail(Code::LimitExceeded, "Prepared plan limit reached"));
                 }
-                let operations = plan
-                    .operations()
-                    .iter()
-                    .map(|operation| operation.description())
-                    .collect();
+                let operations = plan.lines();
                 state.next_handle += 1;
                 let handle = format!("f:{}:{}", state.generation, state.next_handle);
+                if let Some(job) = pending.staging_job {
+                    let issued = state
+                        .staging
+                        .remove(pending.staging_handle.as_ref().unwrap())
+                        .unwrap();
+                    issued
+                        .cancelled
+                        .store(true, std::sync::atomic::Ordering::SeqCst);
+                    state.retained_payload -= crate::plugin::staging::STAGING_CHARGE;
+                    state.staging_plans.insert(handle.clone(), job);
+                }
                 state.plans.insert(handle.clone(), plan);
                 state.retained_payload += local::DIRECTORY_CHARGE;
                 Ok(ResultValue::FilesystemPlan {

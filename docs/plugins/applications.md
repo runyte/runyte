@@ -5,7 +5,8 @@ Epoch 2 (`runyte-experimental-2`) is being implemented in the
 The current implementation supports typed commands, finite background jobs,
 retained native views, explicit buffer reads/edits, immutable snapshots and
 pane selections, local metadata/browsing, document lifecycle operations, native
-input, confirmed bounded recursive filesystem mutations and provider-backed
+input, confirmed bounded recursive filesystem mutations, private binary download
+staging and provider-backed
 UTF-8 document opening, conditional remote saves, native confirmation of weaker
 overwrites, explicit rebind and remote conflict inspection. Runnable SFTP and
 FTP/FTPS adapters share a native remote browser with explicit transport and
@@ -119,6 +120,9 @@ generation and must never be parsed, persisted, or used by another owner.
 | filesystem | `filesystem.prepare` | Directory handle, expected revision and typed intent; owned prepared plan and descriptions |
 | filesystem + jobs | `filesystem.apply` | Plan and invoking command; presents native confirmation, with no immediate filesystem mutation |
 | filesystem | `filesystem.cancel/release` | Cancel a plan or release a directory snapshot, idempotently |
+| filesystem + jobs | `staging.create` | Running owned job and exact byte count; private staging handle and writable path |
+| filesystem + jobs | `staging.prepare` | Staging handle, directory/revision, destination and SHA-256; seals bytes and returns a filesystem plan |
+| filesystem | `staging.close` | Releases an owned unprepared staging handle |
 | providers | `provider.register` | Unique provider name and independent conditional-write/atomic-replace declarations |
 | documents + jobs | `resource.open` | Configured plugin, provider, resource key and optional invocation; host-owned open job |
 | documents + jobs | `resource.rebind` | Buffer and expected revision; bounded remote reconciliation job |
@@ -221,7 +225,7 @@ These measure payload, not allocator RSS or the external process's memory.
 Buffer/pane issuance is bounded at 1,024/128 handles per connection generation.
 
 Still required by the active plan: revision-tagged field validation; source subscriptions
-and resynchronization; binary transfers; row patches and staged publication;
+and resynchronization; binary uploads; row patches and staged view publication;
 managed helpers, activity leases, state, settings and a plugin manager; media
 examples; broader SDK/conformance coverage and the complete performance/platform
 acceptance matrix.
@@ -694,7 +698,7 @@ plugins:
       - /path/to/runyte/docs/plugins/sftp.py
       - --config
       - /path/to/sftp-profile.json
-    capabilities: [views, providers, documents, jobs]
+    capabilities: [views, providers, documents, jobs, filesystem, interaction]
 ```
 
 For another configured plugin ID, also pass `--plugin-id` with that ID. Each
@@ -731,7 +735,8 @@ changing local text or its saved baseline; each side is limited to 4 MiB.
 an uncertain upload. An uncertain remote write keeps local data dirty and cannot
 be retried blindly; if settlement cannot be proved, rebind remains refused.
 Remote documents are limited to 8 MiB of UTF-8 and never acquire a local file path.
-Binary transfer and remote mkdir/rename/delete commands remain unfinished. The automated SFTP fixture uses temporary local credentials and
+Binary downloads use the staged workflow below. Binary uploads and remote
+mkdir/rename/delete commands remain unfinished. The automated SFTP fixture uses temporary local credentials and
 a loopback server, and never contacts a live account.
 
 
@@ -790,7 +795,7 @@ plugins:
       - /path/to/runyte/docs/plugins/ftp.py
       - --config
       - /path/to/ftps-profile.json
-    capabilities: [views, providers, documents, jobs]
+    capabilities: [views, providers, documents, jobs, filesystem, interaction]
 ```
 
 Pass `--plugin-id` as well when the configured ID differs from `ftp`. Run
@@ -818,6 +823,104 @@ baseline. After a disconnect during promotion, local text remains protected with
 an unknown write outcome. Explicit rebind succeeds only when the provider can
 prove the previous write has settled; reconnecting alone is not proof. If a
 server's rename behavior cannot complete replacement, the save is refused without
-weakening these guarantees. Binary transfers and remote mutation commands remain
-unfinished. Automated fixtures use isolated loopback FTP/FTPS servers and
+weakening these guarantees. Binary downloads use the staged workflow below. Binary uploads and remote
+mutation commands remain unfinished. Automated fixtures use isolated loopback FTP/FTPS servers and
 temporary credentials and certificates, never a live account.
+
+
+## Binary downloads and confirmed publication
+
+Binary bytes stay in the application process and local staging files; they are
+not encoded into extension messages or inserted into provider text buffers. The
+host issues a private destination, verifies and freezes the completed download,
+and uses the existing native filesystem confirmation to publish a new local file.
+The initial limit is 8 MiB per download, including arbitrary non-text formats and
+empty files. Larger downloads are refused.
+
+In either remote browser, select one regular file and run
+`:plugin.sftp.download` or `:plugin.ftp.download` from the palette or `Tab` actions.
+The native prompt asks for a new workspace-relative local destination. The
+application returns a finite transfer job immediately, then streams the file and
+prepares a plan outside the command handler. A browser status row reads
+`Download ready` and names the next command. Run `:plugin.sftp.confirm-download`
+or `:plugin.ftp.confirm-download` to present native filesystem confirmation using
+a fresh invocation; publication always requires this separate review step. `cancel-download` cancels the pending
+prompt, transfer or unpresented plan. Each application retains one download flow
+at a time; the transfer job stays running until confirmation is presented and
+expires after 60 seconds if the flow is not completed. Both examples require
+`filesystem` and `interaction` alongside their existing capabilities.
+
+The shared `remote_download.py` workflow reports only phase changes to
+`remote_status.py`. Status publication preserves file row identities, coalesces
+updates in one bounded worker, and rechecks the captured browser view and phase
+generation. A busy view gets at most two short retries during that pending update;
+there is no status polling or idle timer. Closing a browser never recreates it in
+the background.
+
+`staging.create {job, bytes}` requires an owned running transfer job and an exact
+byte count from 0 through 8,388,608. It returns `{staging, path}`: an opaque handle
+and the path of an exclusively created private file. Write only that issued path;
+it is temporary runtime state, not a document identity or a durable destination.
+The application must stream within the declared limit, close its writer, and
+compute the SHA-256 digest of the completed bytes. The host validates its limits
+when sealing; an enabled unsandboxed process still has its ordinary filesystem
+permissions while it writes.
+
+Obtain a destination directory through `filesystem.list`, then call:
+
+```json
+{
+  "type": "request",
+  "id": "p:702",
+  "method": "staging.prepare",
+  "params": {
+    "staging": "s:g:1",
+    "directory": "d:g:1",
+    "expected_revision": "d:1",
+    "destination": "download.bin",
+    "sha256": "8ed3f6ad685b959ead7022518e1af76cd816f8e8ec7ccdda1ed4018e8f2223f8"
+  }
+}
+```
+
+`destination` is workspace-relative, matching existing filesystem intent paths;
+the directory handle identifies the confirmation snapshot scope. It must remain
+within the workspace. An existing destination, stale directory revision, foreign
+handle,
+changed staging identity, wrong byte count or digest is refused before any user
+file is written. The SHA-256 value is exactly 64 lowercase hexadecimal characters.
+No arbitrary source path is accepted in this request.
+
+Preparation runs outside the editor loop. It copies the completed bytes into a
+separate host-owned file and checks their size and digest. The writable staging
+handle is consumed only after successful preparation, which returns the existing
+`{plan, operations}` filesystem-plan result. A writer that retained the original
+file descriptor cannot subsequently change the frozen copy or the published
+file. Path renaming or changing file permissions alone would not provide this
+separation.
+
+The transfer job must remain running through preparation and until
+`filesystem.apply {plan, invocation}` successfully presents native confirmation.
+A finish, cancellation, deadline or explicit staging close that overtakes pending
+preparation invalidates its result. Finishing or cancelling the transfer before
+confirmation also retires its unpresented plan. Preparation itself grants no
+foreground authority: application code must supply a fresh still-pending command
+or accepted native-input invocation when presenting the plan.
+
+Once `filesystem.apply` presents confirmation, ownership moves to that native
+surface and the original transfer job can finish. Pressing Enter starts the
+existing asynchronous filesystem apply job; acceptance is not completion. Escape
+cancels without publishing the file. Destination changes are revalidated before
+application. Pending publication uses the same document mutation barrier,
+owner-stop reconciliation and failure reporting as other application filesystem
+plans. No download automatically opens or executes its contents.
+
+`staging.close {staging}` releases an unprepared handle. Handles and prepared
+sources belong to one configured owner and connection generation; guessed or
+foreign handles grant no access. The host allows two writable staging files per
+owner, reserves 64 KiB for each
+issued handle and 24 MiB while sealing, and charges prepared plans through the
+existing filesystem budget. These reservations bound retained sealing work
+alongside the shared application budget. Cancellation and process cleanup release unaccepted
+staging, while an already accepted native filesystem operation retains its frozen
+source until that operation settles.

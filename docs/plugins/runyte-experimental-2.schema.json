@@ -1911,6 +1911,15 @@
         },
         {
           "$ref": "#/$defs/resource.inspect"
+        },
+        {
+          "$ref": "#/$defs/staging.create"
+        },
+        {
+          "$ref": "#/$defs/staging.prepare"
+        },
+        {
+          "$ref": "#/$defs/staging.close"
         }
       ]
     },
@@ -2429,6 +2438,9 @@
         },
         {
           "$ref": "#/$defs/filesystemStat"
+        },
+        {
+          "$ref": "#/$defs/stagingResult"
         }
       ]
     },
@@ -3893,6 +3905,166 @@
         "params"
       ],
       "additionalProperties": false
+    },
+    "staging.create": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "request"
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^p:[1-9][0-9]*$",
+          "maxLength": 22
+        },
+        "method": {
+          "const": "staging.create"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "job": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            },
+            "bytes": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 8388608
+            }
+          },
+          "required": [
+            "job",
+            "bytes"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "method",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    "staging.prepare": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "request"
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^p:[1-9][0-9]*$",
+          "maxLength": 22
+        },
+        "method": {
+          "const": "staging.prepare"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "staging": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            },
+            "directory": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            },
+            "expected_revision": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            },
+            "destination": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096
+            },
+            "sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          },
+          "required": [
+            "staging",
+            "directory",
+            "expected_revision",
+            "destination",
+            "sha256"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "method",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    "staging.close": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "request"
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^p:[1-9][0-9]*$",
+          "maxLength": 22
+        },
+        "method": {
+          "const": "staging.close"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "staging": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            }
+          },
+          "required": [
+            "staging"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "method",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    "stagingResult": {
+      "type": "object",
+      "properties": {
+        "staging": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        }
+      },
+      "required": [
+        "staging",
+        "path"
+      ],
+      "additionalProperties": true
     }
   },
   "anyOf": [

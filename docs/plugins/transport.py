@@ -2,6 +2,9 @@
 """Shared bounded remote workers and conservative mutation outcome errors."""
 import threading
 import time
+import hashlib
+import os
+import stat
 
 from application import PluginError
 
@@ -62,6 +65,49 @@ class _Operation:
 
 
 class BoundedTransport:
+    def download(self, path, staging_path, expected_bytes, cancel=None, progress=None):
+        """Stream raw bytes into an existing host staging file, never a destination."""
+        if type(expected_bytes) is not int or not 0 <= expected_bytes <= 8 * 1024 * 1024:
+            _fail('limit_exceeded', 'Download must fit the declared 8 MiB staging limit')
+
+        def action(client, operation):
+            canonical = self._path(client, operation, path)
+            operation.check()
+            descriptor = os.open(staging_path, os.O_WRONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK)
+            try:
+                attrs = os.fstat(descriptor)
+                if (not stat.S_ISREG(attrs.st_mode) or attrs.st_size != 0
+                        or attrs.st_uid != os.geteuid() or attrs.st_nlink != 1
+                        or attrs.st_mode & 0o077):
+                    _fail('conflict', 'Host staging file must be empty, private, owned and unlinked elsewhere')
+                digest, count = hashlib.sha256(), 0
+
+                def receive(data):
+                    nonlocal count
+                    operation.check()
+                    if count + len(data) > expected_bytes:
+                        _fail('conflict', 'Remote size changed; refresh the directory before downloading')
+                    remaining = memoryview(data)
+                    while remaining:
+                        operation.check()
+                        written = os.write(descriptor, remaining)
+                        if not written:
+                            _fail('unavailable', 'Staging write did not complete')
+                        remaining = remaining[written:]
+                    digest.update(data)
+                    count += len(data)
+                    if progress is not None:
+                        progress(count)
+
+                self._read(client, operation, canonical, sink=receive)
+                operation.check()
+                if count != expected_bytes:
+                    _fail('conflict', 'Remote size changed; refresh the directory before downloading')
+                return digest.hexdigest()
+            finally:
+                os.close(descriptor)
+        return self._run(action, cancel)
+
     def _run(self, action, cancel, *, timeout=8.0):
         if not self._slots.acquire(blocking=False):
             _fail('busy', 'Two remote operations are still running')
@@ -99,4 +145,3 @@ class BoundedTransport:
         if operation.error is not None:
             raise operation.error
         return operation.result
-

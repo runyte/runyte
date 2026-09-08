@@ -129,7 +129,7 @@ class SftpTransport(BoundedTransport):
             _fail('invalid_argument', 'Remote path is outside the configured root')
 
     @staticmethod
-    def _read(sftp, operation, path):
+    def _read(sftp, operation, path, sink=None):
         operation.check()
         attrs = sftp.stat(path)
         if attrs.st_mode is None or not stat.S_ISREG(attrs.st_mode):
@@ -137,6 +137,7 @@ class SftpTransport(BoundedTransport):
         if attrs.st_size is None or not 0 <= attrs.st_size <= MAX_BYTES:
             _fail('limit_exceeded', 'Remote file exceeds 8 MiB')
         content = bytearray()
+        count = 0
         with sftp.open(path, 'rb', bufsize=0) as stream:
             operation.check()
             opened = stream.stat()
@@ -146,18 +147,22 @@ class SftpTransport(BoundedTransport):
                 _fail('limit_exceeded', 'Remote file exceeds 8 MiB')
             while True:
                 operation.check()
-                chunk = stream.read(min(BLOCK_BYTES, MAX_BYTES + 1 - len(content)))
+                chunk = stream.read(min(BLOCK_BYTES, MAX_BYTES + 1 - count))
                 if not chunk:
                     break
-                content.extend(chunk)
-                if len(content) > MAX_BYTES:
+                count += len(chunk)
+                if count > MAX_BYTES:
                     _fail('limit_exceeded', 'Remote file exceeds 8 MiB')
+                if sink is None:
+                    content.extend(chunk)
+                else:
+                    sink(chunk)
             operation.check()
             final = stream.stat()
-            if (len(content) != opened.st_size or final.st_size != opened.st_size
+            if (count != opened.st_size or final.st_size != opened.st_size
                     or final.st_mtime != opened.st_mtime):
                 _fail('conflict', 'Remote file changed while reading')
-        return bytes(content)
+        return bytes(content) if sink is None else None
 
     def canonical(self, path, cancel=None):
         return self._run(lambda sftp, op: self._path(sftp, op, path), cancel)

@@ -84,6 +84,19 @@ impl Directory {
 
 #[derive(Debug)]
 pub(crate) enum Task {
+    DownloadCreate {
+        root: PathBuf,
+        bytes: usize,
+        cancelled: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    },
+    DownloadPrepare {
+        root: PathBuf,
+        download: super::staging::Download,
+        directory: Directory,
+        destination: String,
+        sha256: String,
+        cancelled: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    },
     Stat {
         root: PathBuf,
         path: String,
@@ -110,6 +123,7 @@ pub(crate) enum Task {
 
 #[derive(Debug)]
 pub enum Prepared {
+    Download(super::staging::Download),
     Stat(Stat),
     Directory(Directory),
     Plan(FsPlan),
@@ -163,6 +177,21 @@ impl Task {
             }
         };
         match self {
+            Self::DownloadCreate {
+                root,
+                bytes,
+                cancelled,
+            } => super::staging::Download::create(&root, bytes, &cancelled).map(Prepared::Download),
+            Self::DownloadPrepare {
+                root,
+                download,
+                directory,
+                destination,
+                sha256,
+                cancelled,
+            } => download
+                .prepare(&root, &directory, &destination, &sha256, &cancelled)
+                .map(Prepared::Plan),
             Self::Stat { root, path } => {
                 let resolved = project_path(&root, &path)?;
                 let fingerprint =
@@ -330,6 +359,9 @@ impl Task {
 }
 
 pub(crate) struct Pending {
+    pub staging_job: Option<String>,
+    pub staging_handle: Option<String>,
+    pub cancelled: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     pub creating: bool,
     pub invocation: Option<String>,
     pub offset: usize,

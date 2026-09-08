@@ -139,6 +139,9 @@ impl WorkspaceHost {
                         | api::Request::FilesystemApply { .. }
                         | api::Request::FilesystemCancel { .. }
                         | api::Request::FilesystemRelease { .. }
+                        | api::Request::StagingCreate { .. }
+                        | api::Request::StagingPrepare { .. }
+                        | api::Request::StagingClose { .. }
                         | api::Request::BufferOpen { .. }
                         | api::Request::BufferCreate { .. }
                 ) {
@@ -467,6 +470,9 @@ impl WorkspaceHost {
         if event.is_some() && !job.state.active() {
             state.finished_jobs.push_back(job.job.clone());
         }
+        if job.state != api::JobState::Running {
+            self.retire_plugin_staging_job(id, &job.job);
+        }
         if let Some((token, after_ms)) = deadline {
             self.plugin_send(id, plugin::HostMessage::Deadline { token, after_ms })
                 .map_err(|_| fail(Code::Unavailable, "Application queue unavailable"))?;
@@ -542,6 +548,7 @@ impl WorkspaceHost {
         }
         job.state = api::JobState::Cancelling;
         let job = job.clone();
+        self.retire_plugin_staging_job(id, &token);
         self.application_job_event(id, "job.cancel_requested", job)?;
         self.plugin_send(
             id,

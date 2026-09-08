@@ -41,6 +41,27 @@ days, and fails below 89% total line coverage. The floor is deliberately below
 the observed baseline because conditional Linux and macOS code changes both the
 instrumented denominator and the paths available to a run on one platform.
 
+## 2026-09-08 — private binary download staging
+
+Measured on `x86_64-unknown-linux-gnu` at `e586e39` plus the binary staging
+round, using Rust 1.97.1 and cargo-llvm-cov 0.9.0. Ordinary and canonical suites
+each passed 3,262 tests with 33 ignored. Formatting and warnings-as-errors Clippy
+passed; the floor remains 89%.
+
+| Measure | Covered | Total | Coverage |
+| --- | ---: | ---: | ---: |
+| Lines | 110,864 | 121,002 | 91.62% |
+| Functions | 10,077 | 10,926 | 92.23% |
+| Regions | 169,620 | 186,048 | 91.17% |
+
+Fourteen new Rust tests cover strict staging wire values, private storage and
+configured runtime roots, exact binary/empty publication, retained original write
+descriptors, confirmation cancellation/collisions, late sealing results, job
+retirement, owner-stop accounting, bounded admission and digest failure recovery.
+Python transport/UI checks separately exercise streamed downloads and finite-job
+callbacks; they are not counted as Rust coverage. Native macOS and the complete
+application performance matrix remain pending.
+
 ## 2026-09-08 — SFTP example and provider read-cache release
 
 Measured on `x86_64-unknown-linux-gnu` at `3b6bbe2` plus the SFTP round, using

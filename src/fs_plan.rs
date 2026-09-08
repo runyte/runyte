@@ -13,7 +13,7 @@ use std::{
     fmt,
     fs::{self, OpenOptions},
     path::{Component, Path, PathBuf},
-    sync::atomic::AtomicU64,
+    sync::{Arc, atomic::AtomicU64},
     time::UNIX_EPOCH,
 };
 
@@ -849,6 +849,7 @@ pub struct FsPlan {
     operations: Vec<FsOperation>,
     transfer_sources: Vec<(PathBuf, SourceFingerprint)>,
     confirmed_sources: Vec<(PathBuf, Option<SourceFingerprint>)>,
+    retained_sources: Vec<(PathBuf, Arc<crate::private_storage::OwnedFile>, String)>,
 }
 
 impl FsPlan {
@@ -1097,7 +1098,24 @@ impl FsPlan {
             operations: creates,
             transfer_sources,
             confirmed_sources,
+            retained_sources: Vec::new(),
         })
+    }
+
+    pub(crate) fn retain_source(
+        &mut self,
+        source: Arc<crate::private_storage::OwnedFile>,
+        label: &str,
+    ) -> Result<()> {
+        let relative = relative_from_root(&self.root, source.path())?;
+        ensure!(
+            self.operations.iter().any(|operation| {
+                matches!(operation, FsOperation::Copy { from, .. } if from == &relative)
+            }),
+            "retained source is not copied by this plan"
+        );
+        self.retained_sources.push((relative, source, label.into()));
+        Ok(())
     }
 
     pub fn root(&self) -> &Path {
@@ -1115,7 +1133,17 @@ impl FsPlan {
     pub fn lines(&self) -> Vec<String> {
         self.operations
             .iter()
-            .map(FsOperation::description)
+            .map(|operation| {
+                if let FsOperation::Copy { from, to, .. } = operation
+                    && let Some((_, _, label)) = self
+                        .retained_sources
+                        .iter()
+                        .find(|(path, _, _)| path == from)
+                {
+                    return format!("copy {label} → {}", to.display());
+                }
+                operation.description()
+            })
             .collect()
     }
 

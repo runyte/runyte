@@ -8,6 +8,8 @@ import threading
 from contextlib import contextmanager
 
 from application import Application, PluginError
+from remote_download import Downloads
+from remote_status import DownloadStatus, STATUS_HEADROOM
 
 MAX_ROWS = 1024
 MAX_MODEL_BYTES = 900 * 1024
@@ -56,18 +58,27 @@ class RemoteApplication:
             command('open', f'Open an {protocol_label} text document', 'path', context='workspace'),
             command('inspect', 'Compare current remote text with local edits', context='buffer'),
             command('rebind', 'Reconcile the remote document explicitly', context='buffer'),
-        ], ['views', 'providers', 'documents', 'jobs'])
+            command('download', 'Download the selected remote file through native confirmation'),
+            command('confirm-download', 'Confirm a completed download', context='workspace'),
+            command('cancel-download', 'Cancel the current download', context='workspace'),
+        ], ['views', 'providers', 'documents', 'jobs', 'filesystem', 'interaction'])
         self.lock = threading.Lock()
         self.registration_lock = threading.Lock()
         self.registered = False
         self.view = self.revision = self.path = None
         self.entries = {}
+        self.model = None
+        self.download_status = DownloadStatus(self)
+        self.downloads = Downloads(self.app, transport, on_status=self.download_status)
         self.handlers = {'browse': self.browse, 'enter': self.enter,
                          'parent': self.parent, 'refresh': self.refresh,
-                         'open': self.open, 'inspect': self.inspect, 'rebind': self.rebind}
+                         'open': self.open, 'inspect': self.inspect, 'rebind': self.rebind,
+                         'download': self.download, 'confirm-download': self.downloads.confirm,
+                         'cancel-download': self.downloads.cancel}
         self.app.handlers = self.handlers
         self.app.resource_handlers = provider.handlers
         self.app.on_event = self.event
+        self.app.on_input = self.downloads.submitted
 
     def register(self):
         with available(self.registration_lock):
@@ -102,16 +113,17 @@ class RemoteApplication:
             model['rows'].append({'id': row_id, 'text': display(name) + suffix,
                                   'role': 'heading' if kind == 'directory' else
                                           'ordinary' if kind == 'file' else 'muted'})
-            entries[row_id] = {'path': path, 'kind': kind}
-        if len(json.dumps(model, ensure_ascii=False).encode('utf-8')) > MAX_MODEL_BYTES:
+            entries[row_id] = {'path': path, 'kind': kind, 'size': row.get('size')}
+        if len(json.dumps(model, ensure_ascii=False).encode('utf-8')) > MAX_MODEL_BYTES - STATUS_HEADROOM:
             raise PluginError('limit_exceeded', 'Remote directory model exceeds message budget')
+        presented = self.download_status.model(model)
         if self.view is None:
-            result = self.app.request('view.create', model=model)
+            result = self.app.request('view.create', model=presented)
         else:
             result = self.app.request('view.publish', view=self.view,
-                                      expected_revision=self.revision, model=model)
+                                      expected_revision=self.revision, model=presented)
         self.view, self.revision = result['view'], result['revision']
-        self.path, self.entries = canonical, entries
+        self.path, self.entries, self.model = canonical, entries, model
 
     def browse(self, context):
         with available(self.lock):
@@ -166,7 +178,16 @@ class RemoteApplication:
                                   expected_revision=context['buffer_revision'])
         return {'job': result['job']}
 
+    def download(self, context):
+        with available(self.lock):
+            self.current(context)
+            rows = context.get('rows', [])
+            if len(rows) != 1 or rows[0] not in self.entries:
+                raise PluginError('invalid_argument', 'Select exactly one remote file')
+            self.downloads.prompt(context, self.entries[rows[0]])
+
     def event(self, name, data):
+        self.downloads.event(name, data)
         self.provider.on_event(name, data)
         # View closures may arrive while a command waits for a host response.
         # Defer the invalidation until that bounded command has released its lock.
@@ -175,4 +196,4 @@ class RemoteApplication:
                 if data['view'] == self.view:
                     self.view = self.revision = self.path = None
                     self.entries = {}
-
+                    self.model = None

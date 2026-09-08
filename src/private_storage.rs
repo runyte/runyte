@@ -22,6 +22,7 @@ mod platform {
         sync::atomic::{AtomicU64, Ordering},
     };
 
+    #[derive(Debug)]
     pub struct Directory(File);
 
     fn cstring(value: &OsStr) -> io::Result<CString> {
@@ -54,7 +55,7 @@ mod platform {
                 "runtime storage requires an owned regular file with no hard links",
             ));
         }
-        file.set_permissions(std::fs::Permissions::from_mode(0o600))
+        Ok(())
     }
 
     impl Directory {
@@ -135,13 +136,13 @@ mod platform {
             Ok(directory)
         }
 
-        fn open_file(&self, name: &OsStr, flags: i32) -> io::Result<File> {
-            let name = leaf(name)?;
+        fn open_file(&self, name: &OsStr, flags: i32, private: bool) -> io::Result<File> {
+            let name_c = leaf(name)?;
             // Nonblocking open ensures a supplied FIFO cannot stall startup.
             let fd = unsafe {
                 libc::openat(
                     self.0.as_raw_fd(),
-                    name.as_ptr(),
+                    name_c.as_ptr(),
                     flags | libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK,
                     0o600,
                 )
@@ -150,16 +151,63 @@ mod platform {
                 return Err(io::Error::last_os_error());
             }
             let file = unsafe { File::from_raw_fd(fd) };
-            owned_regular(&file)?;
+            let validated = owned_regular(&file).and_then(|()| {
+                if private {
+                    file.set_permissions(std::fs::Permissions::from_mode(0o600))
+                } else {
+                    Ok(())
+                }
+            });
+            if let Err(error) = validated {
+                // Exclusive creation owns the new directory entry even if
+                // subsequent metadata validation fails. Existing files must
+                // never be removed by a failed append/read admission.
+                if flags & libc::O_CREAT != 0 && flags & libc::O_EXCL != 0 {
+                    let _ = self.remove_owned(name, &file);
+                }
+                return Err(error);
+            }
             Ok(file)
         }
 
         pub fn append(&self, name: &OsStr) -> io::Result<File> {
-            self.open_file(name, libc::O_RDWR | libc::O_CREAT | libc::O_APPEND)
+            self.open_file(name, libc::O_RDWR | libc::O_CREAT | libc::O_APPEND, true)
+        }
+
+        pub fn create_new(&self, name: &OsStr) -> io::Result<File> {
+            self.open_file(name, libc::O_RDWR | libc::O_CREAT | libc::O_EXCL, true)
+        }
+
+        pub fn open_read(&self, name: &OsStr) -> io::Result<File> {
+            self.open_file(name, libc::O_RDONLY, false)
+        }
+
+        pub fn remove_owned(&self, name: &OsStr, file: &File) -> io::Result<()> {
+            let name_c = leaf(name)?;
+            let mut current = std::mem::MaybeUninit::<libc::stat>::uninit();
+            // SAFETY: the descriptor, C string and output pointer are valid.
+            if unsafe {
+                libc::fstatat(
+                    self.0.as_raw_fd(),
+                    name_c.as_ptr(),
+                    current.as_mut_ptr(),
+                    libc::AT_SYMLINK_NOFOLLOW,
+                )
+            } < 0
+            {
+                return Err(io::Error::last_os_error());
+            }
+            // SAFETY: successful fstatat initialized the complete structure.
+            let current = unsafe { current.assume_init() };
+            let expected = file.metadata()?;
+            if current.st_dev == expected.dev() && current.st_ino == expected.ino() {
+                self.remove(name)?;
+            }
+            Ok(())
         }
 
         pub fn read(&self, name: &OsStr, limit: usize) -> io::Result<Vec<u8>> {
-            let file = self.open_file(name, libc::O_RDONLY)?;
+            let file = self.open_file(name, libc::O_RDONLY, true)?;
             let mut bytes = Vec::new();
             file.take(limit as u64 + 1).read_to_end(&mut bytes)?;
             if bytes.len() > limit {
@@ -194,6 +242,7 @@ mod platform {
                 let mut file = match self.open_file(
                     pending.as_os_str(),
                     libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL,
+                    true,
                 ) {
                     Ok(file) => file,
                     Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
@@ -232,6 +281,7 @@ mod platform {
 mod platform {
     use super::*;
     use std::ffi::OsStr;
+    #[derive(Debug)]
     pub struct Directory;
     fn unsupported<T>() -> io::Result<T> {
         Err(io::Error::new(
@@ -244,6 +294,15 @@ mod platform {
             unsupported()
         }
         pub fn append(&self, _: &OsStr) -> io::Result<File> {
+            unsupported()
+        }
+        pub fn create_new(&self, _: &OsStr) -> io::Result<File> {
+            unsupported()
+        }
+        pub fn open_read(&self, _: &OsStr) -> io::Result<File> {
+            unsupported()
+        }
+        pub fn remove_owned(&self, _: &OsStr, _: &File) -> io::Result<()> {
             unsupported()
         }
         pub fn read(&self, _: &OsStr, _: usize) -> io::Result<Vec<u8>> {
@@ -262,3 +321,6 @@ mod platform {
 }
 
 pub(crate) use platform::Directory;
+
+mod owned_file;
+pub(crate) use owned_file::OwnedFile;

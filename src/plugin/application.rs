@@ -208,6 +208,18 @@ pub enum Request {
     FilesystemCancel { plan: String },
     #[serde(rename = "filesystem.release")]
     FilesystemRelease { directory: String },
+    #[serde(rename = "staging.create")]
+    StagingCreate { job: String, bytes: usize },
+    #[serde(rename = "staging.prepare")]
+    StagingPrepare {
+        staging: String,
+        directory: String,
+        expected_revision: String,
+        destination: String,
+        sha256: String,
+    },
+    #[serde(rename = "staging.close")]
+    StagingClose { staging: String },
     #[serde(rename = "buffer.open")]
     BufferOpen {
         path: String,
@@ -423,6 +435,10 @@ pub enum Response {
 #[derive(Clone, Debug, Serialize)]
 #[serde(untagged)]
 pub enum ResultValue {
+    Staging {
+        staging: String,
+        path: String,
+    },
     Stat(super::filesystem::Stat),
     Surface {
         surface: String,
@@ -514,6 +530,8 @@ pub(crate) struct Instance {
     pub input_surfaces: BTreeSet<String>,
     pub directories: BTreeMap<String, super::filesystem::Directory>,
     pub plans: BTreeMap<String, crate::fs_plan::FsPlan>,
+    pub staging: BTreeMap<String, super::staging::Issued>,
+    pub staging_plans: BTreeMap<String, String>,
     pub local_requests: BTreeMap<String, super::filesystem::Pending>,
     pub capabilities: BTreeSet<String>,
     pub requests: BTreeMap<String, CapturedContext>,
@@ -549,6 +567,8 @@ impl Default for Instance {
             input_surfaces: Default::default(),
             directories: Default::default(),
             plans: Default::default(),
+            staging: Default::default(),
+            staging_plans: Default::default(),
             local_requests: Default::default(),
             capabilities: Default::default(),
             requests: Default::default(),
@@ -675,6 +695,9 @@ pub(crate) fn decode(bytes: &[u8]) -> anyhow::Result<super::ClientMessage> {
                 | "filesystem.apply"
                 | "filesystem.cancel"
                 | "filesystem.release"
+                | "staging.create"
+                | "staging.prepare"
+                | "staging.close"
                 | "pane.list"
                 | "buffer.read"
                 | "buffer.edit"
@@ -996,6 +1019,15 @@ mod tests {
                     job: "j:g:4".into(),
                 },
             },
+            HostMessage::Response {
+                id: "p:701".into(),
+                outcome: Response::Success {
+                    result: ResultValue::Staging {
+                        staging: "s:g:1".into(),
+                        path: "/runtime/cache/downloads/generation/stage-1".into(),
+                    },
+                },
+            },
         ];
         let expected = fixtures
             .iter()
@@ -1004,6 +1036,38 @@ mod tests {
         assert_eq!(messages.len(), expected.len());
         for (message, fixture) in messages.into_iter().zip(expected) {
             assert_eq!(serde_json::to_value(message).unwrap(), fixture["message"]);
+        }
+    }
+
+    #[test]
+    fn staging_wire_requires_exact_request_fields_and_types() {
+        let fixtures: Vec<serde_json::Value> =
+            serde_json::from_str(include_str!("../../docs/plugins/epoch2-fixtures.json")).unwrap();
+        for fixture in fixtures.iter().filter(|fixture| {
+            fixture["message"]["method"]
+                .as_str()
+                .is_some_and(|method| method.starts_with("staging."))
+        }) {
+            let message = &fixture["message"];
+            for field in message["params"].as_object().unwrap().keys() {
+                let mut missing = message.clone();
+                missing["params"].as_object_mut().unwrap().remove(field);
+                assert!(decode(&serde_json::to_vec(&missing).unwrap()).is_err());
+            }
+            let mut extra = message.clone();
+            extra["params"]["path"] = serde_json::json!("/unissued");
+            assert!(decode(&serde_json::to_vec(&extra).unwrap()).is_err());
+        }
+        for bytes in [
+            serde_json::json!(-1),
+            serde_json::json!(true),
+            serde_json::json!("5"),
+        ] {
+            let message = serde_json::json!({
+                "type": "request", "id": "p:701", "method": "staging.create",
+                "params": {"job": "j:g:5", "bytes": bytes}
+            });
+            assert!(decode(&serde_json::to_vec(&message).unwrap()).is_err());
         }
     }
 

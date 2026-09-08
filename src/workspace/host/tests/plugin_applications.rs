@@ -33,6 +33,8 @@ mod provider_review;
 mod provider_writes;
 #[path = "plugin_providers.rs"]
 mod providers;
+#[path = "plugin_staging.rs"]
+mod staging;
 
 fn setup(
     host: &mut WorkspaceHost,
