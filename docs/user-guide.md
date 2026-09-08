@@ -3004,7 +3004,12 @@ fit the 4 MiB comparison limit. The runnable
 SSH host keys, uses explicit identity files or an existing SSH agent, and opens
 remote UTF-8 documents up to 8 MiB. Run `:plugin.sftp.browse .` with its documented
 profile; Enter opens a selected file, and native `:write` confirms the remaining
-remote overwrite race. Remote identities stay separate from local files. The
+remote overwrite race. The [FTP/FTPS example](plugins/applications.md#ftp-and-ftps-browser-and-editor)
+shares the browser and editor workflow using standard-library transport. It
+defaults to certificate-verified FTPS with encrypted data connections; unencrypted
+FTP is an explicit profile choice and is labeled in the UI. Both require native
+save confirmation of non-atomic replacement and read credentials from an explicit
+private file. Remote identities stay separate from local files. The
 [application guide](plugins/applications.md) also includes runnable task-list,
 local file-manager, document, memory-provider and background-job examples and
 lists the remaining work.

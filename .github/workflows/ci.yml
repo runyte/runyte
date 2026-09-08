@@ -53,12 +53,14 @@ jobs:
         run: |
           python3 -m venv "$RUNNER_TEMP/plugin-schema"
           plugin_schema_python="$RUNNER_TEMP/plugin-schema/bin/python"
-          "$plugin_schema_python" -m pip install jsonschema==4.23.0 -r docs/plugins/requirements-sftp.txt
+          "$plugin_schema_python" -m pip install jsonschema==4.23.0 -r docs/plugins/requirements-sftp.txt -r docs/plugins/requirements-ftp-test.txt
           "$plugin_schema_python" docs/plugins/check_schema.py
           "$plugin_schema_python" docs/plugins/check_applications.py
           "$plugin_schema_python" docs/plugins/check_remote_provider.py
           "$plugin_schema_python" docs/plugins/check_sftp_ui.py
           "$plugin_schema_python" docs/plugins/check_sftp.py
+          "$plugin_schema_python" docs/plugins/check_ftp_ui.py
+          "$plugin_schema_python" docs/plugins/check_ftp.py
 
       - name: Check formatting
         run: cargo fmt --check

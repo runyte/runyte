@@ -76,7 +76,7 @@ Milestone 3 now has a local file manager, document lifecycle, native interaction
 and bounded recursive filesystem operations, documented below. Milestone 4's
 provider-backed reads, conditional saves, explicit rebind and conflict inspection
 are implemented, together with native weaker-transport confirmation and the SFTP
-example. FTP/FTPS, binary staging and remote filesystem operations remain
+and FTP/FTPS examples. Binary staging and remote filesystem operations remain
 outstanding. Milestone 5 still needs managed processes, terminal/external handoffs, activity leases,
 settings/state and the plugin manager. Milestone 6 still needs the broader SDK,
 non-Python example, full conformance matrix and complete application performance
@@ -417,6 +417,38 @@ application performance evidence remain required.
 
 FTP/FTPS, remote operations and binary staging, subscriptions, richer models,
 helpers/leases/settings and manager/media examples remain active.
+
+## FTP/FTPS reference adapter round
+
+A separate standard-library adapter now uses the shared provider coordinator and
+browser through the same public API. Explicit FTPS is the default: control and
+data TLS verify certificates and hostnames, with no downgrade. Plain FTP requires
+an explicit profile choice and is labelled unencrypted. Credentials are read from
+a bounded, owned private file; protocol output and failures exclude their values.
+No FTP or SSH dependency enters the Rust editor.
+
+The transport streams bounded machine-readable listings and binary transfers,
+shares the two-worker cancellation/deadline boundary with SFTP, compares the
+remote hash before promotion and reports lost promotion replies as unknown.
+FTP registration declares both conditional writes and atomic replacement false.
+Uploads use newly created sibling staging directories with server-default
+permissions; cleanup never deletes the destination. Neither adapter promises
+confinement against a hostile server namespace or distributed transactions.
+
+Comprehensive subagent review corrected the plain-FTP configuration conversion
+example. All Python checks passed: epoch 1 (8), epoch 2/SDK (9), generic provider
+(10), SFTP browser (7), FTP browser (10), actual SFTP (18) and FTP/FTPS (18).
+The FTP import guard proves the adapter runs without Paramiko. Isolated TLS tests
+cover certificate/hostname/authentication/data-protection refusal, cancellation,
+conflicts, worker limits, empty/binary/Unicode data and uncertain rename outcomes.
+CI includes both new checkers. The native FTPS editor smoke passed browse, open,
+cancel, explicitly non-atomic confirmed save and diff, with zero output bytes in
+two settled seconds. Rust code is unchanged from the preceding validated round;
+its 91.63% Linux coverage remains the latest canonical measurement.
+
+Binary staging and remote operations are next. Subscriptions, richer models,
+helpers/leases/settings, manager/media examples and complete native-platform and
+performance evidence remain active.
 
 ## Investigation: existing foundation and missing boundaries
 

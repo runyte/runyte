@@ -7,10 +7,10 @@ retained native views, explicit buffer reads/edits, immutable snapshots and
 pane selections, local metadata/browsing, document lifecycle operations, native
 input, confirmed bounded recursive filesystem mutations and provider-backed
 UTF-8 document opening, conditional remote saves, native confirmation of weaker
-overwrites, explicit rebind and remote
-conflict inspection. The runnable SFTP adapter adds verified SSH transport and
-a native remote browser. FTP/FTPS, subscriptions and managed media backends remain
-unfinished. This is not completion of the application plan.
+overwrites, explicit rebind and remote conflict inspection. Runnable SFTP and
+FTP/FTPS adapters share a native remote browser with explicit transport and
+overwrite guarantees. Subscriptions and managed media backends
+remain unfinished. This is not completion of the application plan.
 Epoch 1 remains the default and its uppercase example is unchanged.
 
 Enable the runnable background-job example with absolute paths:
@@ -222,9 +222,9 @@ Buffer/pane issuance is bounded at 1,024/128 handles per connection generation.
 
 Still required by the active plan: revision-tagged field validation; source subscriptions
 and resynchronization; binary transfers; row patches and staged publication;
-managed helpers, activity leases, state, settings and a plugin manager; FTP/FTPS
-and media examples; broader SDK/conformance
-coverage and the complete performance/platform acceptance matrix.
+managed helpers, activity leases, state, settings and a plugin manager; media
+examples; broader SDK/conformance coverage and the complete performance/platform
+acceptance matrix.
 
 ## Local file manager
 
@@ -640,8 +640,9 @@ whether the provider and requesting application are the same process.
 
 ## SFTP browser and editor
 
-The runnable `sftp.py` application uses `remote_provider.py` and
-`sftp_transport.py` beside the shared `application.py` client. SSH stays in the
+The runnable `sftp.py` application uses `remote_provider.py`,
+`remote_application.py` and `sftp_transport.py` beside the shared `application.py`
+client and `transport.py` worker. SSH stays in the
 application process; Runyte gains no SSH library dependency. Install Paramiko in
 a separate Python environment and use that environment's interpreter:
 
@@ -730,6 +731,93 @@ changing local text or its saved baseline; each side is limited to 4 MiB.
 an uncertain upload. An uncertain remote write keeps local data dirty and cannot
 be retried blindly; if settlement cannot be proved, rebind remains refused.
 Remote documents are limited to 8 MiB of UTF-8 and never acquire a local file path.
-Binary transfer, remote mkdir/rename/delete commands and FTP/FTPS are separate
-unfinished work. The automated SFTP fixture uses temporary local credentials and
+Binary transfer and remote mkdir/rename/delete commands remain unfinished. The automated SFTP fixture uses temporary local credentials and
 a loopback server, and never contacts a live account.
+
+
+## FTP and FTPS browser and editor
+
+The runnable `ftp.py` application reuses the same `remote_application.py` browser,
+`remote_provider.py` engine, `application.py` client and `transport.py` worker
+as SFTP. Its `ftp_transport.py` adapter uses Python 3.10+ standard-library `ftplib` and `ssl`;
+Paramiko is not imported or required. Configure explicit TLS with a JSON profile
+outside the repository, for example `/path/to/ftps-profile.json`:
+
+```json
+{
+  "transport": "ftps",
+  "alias": "development",
+  "host": "development.example.org",
+  "port": 21,
+  "username": "editor",
+  "root": "/project",
+  "password_file": "/path/to/private/ftp-password",
+  "ca_file": "/path/to/trusted-ca.pem"
+}
+```
+
+`transport` defaults to `ftps` and `port` to 21. FTPS uses explicit TLS on the
+control connection and requires encrypted data connections (`PROT P`).
+Certificate chains and hostnames are verified; omit `ca_file` to use the system
+trust store or provide an absolute path to your trusted CA file. TLS failures
+never fall back to FTP. Implicit FTPS is not implemented.
+
+Store the password as one UTF-8 line in the absolute `password_file`, optionally
+ending with LF or CRLF. The file must be a regular file owned by the current user,
+with no group or other access (for example mode `0600`), and is read without
+following symbolic links.
+Its contents are bounded to 4,096 bytes. The profile contains a credential-file
+reference; it has no raw password field. Passwords are not sent through editor
+prompts, configuration arguments, resource keys, views, notifications or logs.
+The application reads the private file for authentication and does not create a
+credential cache. Keep this file outside tracked workspace content.
+
+To use plain FTP, explicitly set `"transport": "ftp"` and remove `ca_file`,
+which is only valid for FTPS. The application name,
+command descriptions and browser title display **FTP (unencrypted)**. FTP sends
+credentials and document data without transport encryption; it is a separate
+connection choice, never a compatibility fallback. The opaque connection identity
+includes the transport, so changing FTP to FTPS does not silently reuse a document
+binding from the other connection.
+
+```yaml
+plugins:
+  - id: ftp
+    enabled: true
+    api: runyte-experimental-2
+    executable: /usr/bin/python3
+    args:
+      - /path/to/runyte/docs/plugins/ftp.py
+      - --config
+      - /path/to/ftps-profile.json
+    capabilities: [views, providers, documents, jobs]
+```
+
+Pass `--plugin-id` as well when the configured ID differs from `ftp`. Run
+`:plugin.ftp.browse .`; Enter opens a selected directory or regular UTF-8 file.
+`:plugin.ftp.parent`, `:plugin.ftp.refresh`, `:plugin.ftp.open "notes/猫 notes.md"`,
+`:plugin.ftp.inspect` and `:plugin.ftp.rebind` have the same captured-context and
+revision behavior as SFTP. The browser requires structured server metadata and
+does not parse presentation-oriented `LIST` output. Directory listing is bounded
+to 1,024 entries and a 900 KiB encoded view; documents are bounded to 8 MiB of
+UTF-8. Remote path checks assume a trusted server namespace; enforce confinement
+with the server account's root or jail.
+
+Use native `:write` to save. Every FTP/FTPS save requires foreground confirmation:
+this adapter advertises **neither conditional writes nor atomic replacement**.
+It compares the observed content version before remote promotion, detecting
+observed changes while retaining the race with a concurrent remote writer. An
+upload or rename failure may leave partial remote state; the confirmation names
+that limitation. The adapter never deletes the destination as a rename fallback
+and does not automatically retry failed mutations. Remote staging permissions
+follow server policy; the adapter does not promise private staging files.
+
+Save-and-close waits for confirmed clean success, and edits during upload remain
+dirty. `:diff-remote` inspects remote changes without altering the local saved
+baseline. After a disconnect during promotion, local text remains protected with
+an unknown write outcome. Explicit rebind succeeds only when the provider can
+prove the previous write has settled; reconnecting alone is not proof. If a
+server's rename behavior cannot complete replacement, the save is refused without
+weakening these guarantees. Binary transfers and remote mutation commands remain
+unfinished. Automated fixtures use isolated loopback FTP/FTPS servers and
+temporary credentials and certificates, never a live account.
