@@ -77,6 +77,12 @@ fn activity_health_protects_every_global_quit_and_force_discard_spelling() {
                 assert!(app.persistent_exit_request.is_none());
                 assert!(app.quit_directory.is_none());
                 assert!(app.status.contains("activity leases"), "{}", app.status);
+                assert!(
+                    app.status.contains("stop its owner in :plugins"),
+                    "{}",
+                    app.status
+                );
+                assert_eq!(app.status.contains(":detach"), persistent, "{}", app.status);
                 app.plugins
                     .instances
                     .get_mut(&7)
@@ -156,7 +162,9 @@ fn active_plugin_jobs_share_the_standalone_quit_guard() {
     );
     app.execute_command("qa!").unwrap();
     assert!(!app.should_quit);
-    assert!(app.status.contains("1 active plugin jobs"));
+    assert!(app.status.contains("1 plugin jobs"));
+    assert!(app.status.contains(":plugins"));
+    assert!(!app.status.contains(":detach"));
     app.plugins
         .instances
         .get_mut(&7)

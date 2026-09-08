@@ -500,6 +500,7 @@ impl WorkspaceHost {
             }
             ClientMessage::Subscribe { request, buffer } => {
                 ensure!(request.len() <= 64, "request ID exceeds limit");
+                ensure!(buffer.len() <= 64, "buffer ID exceeds limit");
                 let Some(index) = buffer
                     .parse::<usize>()
                     .ok()

@@ -214,6 +214,38 @@ fn provider_reload_cancels_stale_context_and_binding_without_touching_baseline()
 }
 
 #[test]
+fn stale_provider_reload_returns_the_triggering_key_to_the_editor() {
+    let (mut app, buffer) = fixture(true);
+    let intent = queue(&mut app);
+    show(&mut app, intent);
+    app.buffers[buffer].provider_mut().unwrap().baseline_epoch += 1;
+    let before = app.active().selection.primary().head;
+    key(&mut app, KeyCode::Char('l'), Modifiers::NONE);
+    assert_eq!(app.active().selection.primary().head, before + 1);
+    assert!(app.plugins.provider_reload.is_none());
+    let decisions = app.take_provider_reload_decisions();
+    assert_eq!(decisions.len(), 1);
+    assert!(decisions[0].choice.is_none() && decisions[0].context.is_none());
+    assert_eq!(app.buffers[buffer].to_string(), "local original\n");
+}
+
+#[test]
+fn stale_provider_reload_does_not_redirect_enter_to_another_confirmation() {
+    let (mut app, buffer) = fixture(true);
+    let intent = queue(&mut app);
+    show(&mut app, intent);
+    app.buffer_discard_confirmation = Some(buffer);
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert!(app.plugins.provider_reload.is_none());
+    assert_eq!(app.buffer_discard_confirmation, Some(buffer));
+    let decisions = app.take_provider_reload_decisions();
+    assert_eq!(decisions.len(), 1);
+    assert!(decisions[0].choice.is_none() && decisions[0].context.is_none());
+    assert!(!app.host_buffer_is_closed(buffer));
+    assert_eq!(app.buffers[buffer].to_string(), "local original\n");
+}
+
+#[test]
 fn provider_reload_acceptance_preserves_old_history_and_undo_uses_new_remote_baseline() {
     let (mut app, buffer) = fixture(true);
     let intent = queue(&mut app);

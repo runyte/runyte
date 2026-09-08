@@ -74,6 +74,123 @@ fn observe_actions(app: &mut App) -> Source {
     source
 }
 
+fn palette_reason(app: &App, id: u64) -> Option<String> {
+    app.plugin_command_matches("")
+        .into_iter()
+        .find(|entry| entry.spec.id == CommandId::Plugin(id))
+        .unwrap()
+        .availability
+        .reason()
+        .map(str::to_owned)
+}
+
+#[test]
+fn plugin_palette_availability_tracks_owned_view_query_and_presentation() {
+    let (mut app, buffer, mut receiver) = application(model(&["a"]));
+    assert_eq!(palette_reason(&app, 1), None);
+    query(&mut app, 1, true);
+    let reason = palette_reason(&app, 1).unwrap();
+    assert!(reason.contains("query pending"));
+    assert_eq!(palette_reason(&app, 2), None);
+    app.invoke_plugin_arguments(1, "").unwrap();
+    assert!(app.status.contains(&reason));
+    assert!(receiver.try_recv().is_err());
+
+    query(&mut app, 1, false);
+    assert_eq!(palette_reason(&app, 1), None);
+    app.plugins.presented_views.clear();
+    assert!(
+        palette_reason(&app, 2)
+            .unwrap()
+            .contains("wait for refresh")
+    );
+    app.plugins
+        .presented_views
+        .insert(app.active_pane, (buffer, 1));
+    app.switch_buffer(0);
+    assert!(
+        palette_reason(&app, 2)
+            .unwrap()
+            .contains("owned application view")
+    );
+    app.present_plugin_view(buffer);
+    assert_eq!(palette_reason(&app, 2), None);
+}
+
+#[cfg(unix)]
+#[test]
+fn plugin_palette_preserves_workspace_readonly_buffer_and_native_stop_actions() {
+    let (mut app, _, mut receiver) = application(model(&["a"]));
+    assert!(app.active_buffer().is_read_only());
+    app.plugins.commands.get_mut(&1).unwrap().context = api::CommandContext::Buffer;
+    assert_eq!(palette_reason(&app, 1), None);
+    let terminal = app
+        .terminals
+        .open(
+            TerminalRequest {
+                program: "/bin/cat".into(),
+                arguments: vec![],
+                directory: std::env::temp_dir(),
+                label: "Palette context".into(),
+            },
+            80,
+            24,
+        )
+        .unwrap();
+    app.active_mut().terminal = Some(terminal);
+    assert!(
+        palette_reason(&app, 1)
+            .unwrap()
+            .contains("requires a buffer")
+    );
+    app.plugins.commands.get_mut(&1).unwrap().context = api::CommandContext::Workspace;
+    assert_eq!(palette_reason(&app, 1), None);
+    app.plugins.cancellations.insert(0);
+    assert_eq!(
+        palette_reason(&app, 1).as_deref(),
+        Some("Plugin is stopping")
+    );
+    app.plugins.commands.get_mut(&3).unwrap().local = "stop".into();
+    assert_eq!(palette_reason(&app, 3), None);
+    assert!(matches!(
+        app.invoke_plugin_arguments(3, "").unwrap(),
+        CommandOutcome::Completed
+    ));
+    assert!(receiver.try_recv().is_err());
+    app.close_terminal_id(terminal);
+}
+
+#[test]
+fn plugin_palette_reports_epoch1_editability_busy_and_view_action_allowlist() {
+    let mut value = model(&["a"]);
+    value.actions = vec!["enter".into(), "refresh".into()];
+    let (mut app, _, _receiver) = application(value);
+    assert!(
+        palette_reason(&app, 3)
+            .unwrap()
+            .contains("does not offer this action")
+    );
+    app.plugins.instances.get_mut(&0).unwrap().config.api = api::Api::Epoch1;
+    assert!(
+        palette_reason(&app, 1)
+            .unwrap()
+            .contains("live editable buffer")
+    );
+    app.switch_buffer(0);
+    assert_eq!(palette_reason(&app, 1), None);
+    app.plugins.instances.get_mut(&0).unwrap().pending =
+        Some(super::super::plugin_workflows::Pending {
+            action: None,
+            token: "1".into(),
+            buffer: 0,
+            revision: app.buffers[0].revision(),
+            selections: vec![],
+        });
+    assert_eq!(palette_reason(&app, 1).as_deref(), Some("plugin is busy"));
+    app.plugins.instances.get_mut(&0).unwrap().pending = None;
+    assert_eq!(palette_reason(&app, 1), None);
+}
+
 #[test]
 fn pending_query_refuses_primary_and_passes_empty_rows_to_nonprimary_callbacks() {
     let (mut app, _, mut receiver) = application(model(&["a", "b"]));

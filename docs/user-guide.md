@@ -3062,8 +3062,9 @@ minutes per grant. Session health and `:service-health` identify its owner, titl
 and state. Active leases and their two-second cancellation cleanup grace protect
 normal quit and idle retirement; detach keeps them running. An owner that does
 not acknowledge expiry or cancellation is stopped, cleaning up its managed
-helpers. The `:q!` spelling does not bypass this protection; explicit forced
-persistent-session stop remains available.
+helpers. The `:q!` spelling does not bypass this protection. Use `:plugins` to
+stop the owner before quitting; in persistent mode, `:detach` leaves its work
+running. Explicit forced persistent-session stop remains available.
 
 The optional [local media controller](plugins/applications.md#local-media-controller)
 plays workspace audio and video files through an installed mpv. Its native

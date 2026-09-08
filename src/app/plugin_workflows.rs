@@ -206,20 +206,10 @@ impl App {
             .get(&id)
             .ok_or_else(|| anyhow::anyhow!("plugin command is no longer registered"))?
             .clone();
-        ensure!(
-            !self.plugins.cancellations.contains(&command.plugin),
-            "Plugin is stopping"
-        );
+        self.plugin_command_preflight(&command)?;
         let arguments = plugin::arguments::parse(&command.arguments, arguments)
             .map_err(|error| anyhow::anyhow!(error.message))?;
         if self.plugins.instances[&command.plugin].config.api == plugin::application::Api::Epoch2 {
-            if command.context == plugin::application::CommandContext::Buffer {
-                ensure!(
-                    self.active_terminal().is_none()
-                        && !self.host_buffer_is_closed(self.active().buffer),
-                    "command requires a buffer"
-                );
-            }
             let capture = plugin::application::CapturedContext {
                 foreground_allowed: true,
                 action: self.active_action_id,
@@ -236,33 +226,14 @@ impl App {
                 .find(|(_, view)| {
                     view.buffer == self.active().buffer && self.active_terminal().is_none()
                 });
-            if command.context == plugin::application::CommandContext::View {
-                ensure!(view.is_some(), "command requires an owned application view");
-            }
             let (view_handle, model_revision, query_revision, rows) =
                 if let Some((handle, view)) = view {
-                    if command.context == plugin::application::CommandContext::View {
-                        ensure!(
-                            view.model.actions.is_empty()
-                                || view.model.actions.contains(&command.local),
-                            "Application view does not offer this action"
-                        );
-                        ensure!(
-                            self.plugins.presented_views.get(&self.active_pane)
-                                == Some(&(view.buffer, view.revision)),
-                            "Application view changed; wait for refresh"
-                        );
-                    }
                     let query_pending = view.query.as_ref().is_some_and(|query| query.pending);
                     let primary = command.context == plugin::application::CommandContext::View
                         && self.plugins.instances[&command.plugin]
                             .application
                             .primary_commands
                             .contains(&command.local);
-                    ensure!(
-                        !query_pending || !primary,
-                        "Application query pending; wait for matching results"
-                    );
                     let mut rows = std::collections::BTreeSet::new();
                     for range in self
                         .active()
@@ -306,11 +277,6 @@ impl App {
                 .is_none()
                 .then(|| format!("r:{}", self.buffers[capture.buffer].revision()));
             let instance = self.plugins.instances.get_mut(&command.plugin).unwrap();
-            ensure!(
-                instance.application.requests.len() + instance.application.provider_requests
-                    < plugin::application::MAX_REQUESTS,
-                "application request limit reached"
-            );
             let pane = instance
                 .application
                 .pane_handle(capture.pane)
@@ -413,24 +379,8 @@ impl App {
             }
             return Ok(token);
         }
-        ensure!(
-            self.active_terminal().is_none(),
-            "plugin commands require a document buffer"
-        );
         let buffer_id = self.active().buffer;
         let buffer = &self.buffers[buffer_id];
-        ensure!(
-            !self.host_buffer_is_closed(buffer_id) && !buffer.is_read_only(),
-            "plugin commands require a live editable buffer"
-        );
-        ensure!(
-            buffer.len_bytes() <= plugin::MAX_BYTES / 4,
-            "plugin snapshot exceeds 256 KiB"
-        );
-        ensure!(
-            self.active().selection.ranges().len() <= plugin::MAX_SELECTIONS,
-            "too many plugin selections"
-        );
         let selections = self
             .active()
             .selection
@@ -456,7 +406,6 @@ impl App {
             .instances
             .get_mut(&command.plugin)
             .expect("registered instance");
-        ensure!(instance.pending.is_none(), "plugin is busy");
         ensure!(
             instance.issued.contains(&buffer_id) || instance.issued.len() < 64,
             "plugin buffer handle limit reached; restart the host"
@@ -493,6 +442,86 @@ impl App {
 }
 
 impl App {
+    /// Shared discovery/admission checks use metadata only. Snapshot encoding,
+    /// selected-row capture and queue admission remain execution-time checks.
+    fn plugin_command_preflight(&self, command: &RuntimeCommand) -> Result<()> {
+        // Native Stop must remain available while work is busy or cancelling.
+        if command.local == "stop" {
+            return Ok(());
+        }
+        let instance = self
+            .plugins
+            .instances
+            .get(&command.plugin)
+            .ok_or_else(|| anyhow::anyhow!("plugin command is no longer registered"))?;
+        ensure!(
+            !self.plugins.cancellations.contains(&command.plugin),
+            "Plugin is stopping"
+        );
+        if instance.config.api == plugin::application::Api::Epoch2 {
+            use plugin::application::CommandContext;
+            if command.context == CommandContext::Buffer {
+                ensure!(
+                    self.active_terminal().is_none()
+                        && !self.host_buffer_is_closed(self.active().buffer),
+                    "command requires a buffer"
+                );
+            }
+            if command.context == CommandContext::View {
+                let view = instance
+                    .application
+                    .views
+                    .values()
+                    .find(|view| {
+                        view.buffer == self.active().buffer && self.active_terminal().is_none()
+                    })
+                    .ok_or_else(|| anyhow::anyhow!("command requires an owned application view"))?;
+                ensure!(
+                    view.model.actions.is_empty() || view.model.actions.contains(&command.local),
+                    "Application view does not offer this action"
+                );
+                ensure!(
+                    self.plugins.presented_views.get(&self.active_pane)
+                        == Some(&(view.buffer, view.revision)),
+                    "Application view changed; wait for refresh"
+                );
+                ensure!(
+                    !view.query.as_ref().is_some_and(|query| query.pending)
+                        || !instance
+                            .application
+                            .primary_commands
+                            .contains(&command.local),
+                    "Application query pending; wait for matching results"
+                );
+            }
+            ensure!(
+                instance.application.requests.len() + instance.application.provider_requests
+                    < plugin::application::MAX_REQUESTS,
+                "application request limit reached"
+            );
+        } else {
+            ensure!(
+                self.active_terminal().is_none(),
+                "plugin commands require a document buffer"
+            );
+            let buffer = self.active_buffer();
+            ensure!(
+                !self.host_buffer_is_closed(self.active().buffer) && !buffer.is_read_only(),
+                "plugin commands require a live editable buffer"
+            );
+            ensure!(
+                buffer.len_bytes() <= plugin::MAX_BYTES / 4,
+                "plugin snapshot exceeds 256 KiB"
+            );
+            ensure!(
+                self.active().selection.ranges().len() <= plugin::MAX_SELECTIONS,
+                "too many plugin selections"
+            );
+            ensure!(instance.pending.is_none(), "plugin is busy");
+        }
+        Ok(())
+    }
+
     pub(super) fn plugin_command_matches(&self, query: &str) -> Vec<super::CommandMatch<'_>> {
         self.plugins
             .commands
@@ -520,7 +549,10 @@ impl App {
                 },
                 name: &command.name,
                 category: crate::command::CommandCategory::Editing,
-                availability: super::CommandAvailability::Available,
+                availability: match self.plugin_command_preflight(command) {
+                    Ok(()) => super::CommandAvailability::Available,
+                    Err(error) => super::CommandAvailability::Unavailable(error.to_string()),
+                },
             })
             .collect()
     }

@@ -62,26 +62,6 @@ impl App {
             self.cancel_plugin_filesystem(*owner, None);
         }
     }
-
-    pub(super) fn finish_plugin_filesystem(
-        &mut self,
-        result: Option<(usize, String, u64, usize)>,
-        state: &'static str,
-        applied: usize,
-        recovery: bool,
-    ) {
-        if let Some((owner, plan, _, _)) = result {
-            self.plugins.filesystem_finished.push((
-                owner,
-                Finished {
-                    plan,
-                    state,
-                    applied,
-                    recovery,
-                },
-            ));
-        }
-    }
 }
 
 impl App {

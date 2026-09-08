@@ -920,10 +920,15 @@ impl App {
     }
 
     fn quit_allowed(&mut self, force: bool, force_command: &str) -> bool {
+        let detach_hint = if self.persistent_session {
+            "; use :detach to leave the work running"
+        } else {
+            ""
+        };
         if self.plugins.filesystem_applying || !self.plugins.document_saves.is_empty() {
             self.action_warning(
                 "Quit refused",
-                "Filesystem writes are still pending; wait for completion or detach",
+                format!("Filesystem writes are still pending; wait for completion{detach_hint}"),
             );
             return false;
         }
@@ -932,7 +937,7 @@ impl App {
         if leases > 0 || jobs > 0 {
             self.action_warning(
                 "Quit refused",
-                format!("{leases} plugin activity leases and {jobs} active plugin jobs; release or cancel them before quitting, or detach"),
+                format!("{leases} activity leases and {jobs} plugin jobs; cancel work or stop its owner in :plugins{detach_hint}"),
             );
             return false;
         }

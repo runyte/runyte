@@ -1599,6 +1599,7 @@ and idle retirement. Persistent-session health reports owner, title and state;
 `:service-health` shows the same continuing work. Detach retains it. Explicit
 forced persistent-session stop remains available; `:q!` only overrides the
 ordinary unsaved-document guard and does not silently abandon plugin activity.
+Use `:plugins` to stop the owner before quitting in either deployment mode.
 Plugin stop or host restart invalidates every lease.
 
 The SDK exposes `acquire_activity`, `renew_activity`, `get_activity`,

@@ -177,7 +177,7 @@ fn provider_overwrite_cancel_and_host_clear_never_issue_approval() {
 }
 
 #[test]
-fn provider_overwrite_stale_surface_cancels_and_consumes_the_triggering_enter() {
+fn provider_overwrite_stale_surface_cancels_without_redirecting_approval() {
     for change in [
         "edit",
         "detach",
@@ -214,6 +214,21 @@ fn provider_overwrite_stale_surface_cancels_and_consumes_the_triggering_enter() 
             assert!(app.buffer_discard_confirmation.is_some());
         }
     }
+}
+
+#[test]
+fn stale_provider_overwrite_returns_the_triggering_key_to_the_editor() {
+    let (mut app, intent) = fixture("write");
+    show(&mut app, &intent, true).unwrap();
+    app.buffers[intent.buffer].apply(&Transaction::insert(0, "newer "));
+    let before = app.active().selection.primary().head;
+    key(&mut app, KeyCode::Char('l'), Modifiers::NONE);
+    assert_eq!(app.active().selection.primary().head, before + 1);
+    assert!(app.plugins.provider_overwrite.is_none());
+    let decisions = app.take_provider_overwrite_decisions();
+    assert_eq!(decisions.len(), 1);
+    assert!(decisions[0].context.is_none());
+    assert_eq!(app.active_buffer().to_string(), "newer original  \n");
 }
 
 #[test]

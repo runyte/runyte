@@ -517,14 +517,21 @@ impl App {
             }
             return Ok(());
         }
-        if reload_owned_input {
+        if reload_owned_input && self.plugins.provider_reload.is_some() {
             self.last_interaction = Instant::now();
             self.handle_provider_reload_input(input);
             return Ok(());
         }
-        if overwrite_owned_input {
+        if overwrite_owned_input && self.plugins.provider_overwrite.is_some() {
             self.last_interaction = Instant::now();
             self.handle_provider_overwrite_input(input);
+            return Ok(());
+        }
+        // A stale surface no longer owns ordinary editor input. Keep its
+        // original ownership latched so the same event cannot approve another
+        // surface that replaced it (or enter a newly started macro).
+        if (reload_owned_input || overwrite_owned_input) && self.plugin_has_input_surface() {
+            self.last_interaction = Instant::now();
             return Ok(());
         }
         if self.plugins.input.is_some() {
@@ -2871,8 +2878,7 @@ impl App {
             return;
         };
         let root = confirmation.plan.root().to_path_buf();
-        let plugin_confirmation = self.plugins.filesystem_confirmation.take();
-        let initiating_buffer = plugin_confirmation.is_none().then_some(confirmation.buffer);
+        let initiating_buffer = Some(confirmation.buffer);
         match confirmation
             .plan
             .apply_with_trash(deletion, self.ports.trash())
@@ -2890,12 +2896,6 @@ impl App {
                     status.push_str(&warning);
                 }
                 self.status(status);
-                self.finish_plugin_filesystem(
-                    plugin_confirmation,
-                    "succeeded",
-                    count,
-                    !report.recovery.is_empty(),
-                );
             }
             Err(error) => {
                 let warning = self.reconcile_applied_filesystem(
@@ -2914,12 +2914,6 @@ impl App {
                 } else {
                     self.action_failed(message);
                 }
-                self.finish_plugin_filesystem(
-                    plugin_confirmation,
-                    "failed",
-                    error.report.applied.len(),
-                    !error.report.recovery.is_empty(),
-                );
             }
         }
     }
