@@ -1093,6 +1093,56 @@ build passes. The remaining work is the complete release workload/latency matrix
 fixes justified by that evidence, and supported-platform acceptance. The plan
 remains active until those gates have actually passed.
 
+## Final application acceptance round
+
+The authoring round was committed as `48a906e` (`Complete plugin authoring kit
+and cross-language conformance`). A final comprehensive audit found a remaining
+SDK responsiveness defect: a blocked stdout flush held the correlation lock,
+preventing the continuous reader from processing later replies, cancellation
+or EOF. `application.py` now uses one lazy nonblocking writer, sixteen
+queued/in-flight frames and a 4 MiB byte budget. An anonymous pipe wakes both
+I/O selectors on shutdown without polling. Local deadlines include output
+admission; a delivery timeout retires the connection before queued bytes can
+become a late operation. Host-returned errors remain ordinary responses, and
+uncertain state mutations retain `outcome_unknown`.
+
+Ten focused regressions exercise real full/broken pipes, cancellation and EOF,
+strict UTF-8, byte/count accounting including a partial frame, reliable-response
+overflow, FIFO delivery and the timeout-versus-write race. Independent review
+found and fixed reliable overflow that could lose a reply, non-UTF-8 JSON
+acceptance, and a selected writable descriptor racing connection closure.
+All 26 plugin suites pass on Linux, totaling 322 Python tests.
+
+Both handshake messages now include an optional `limits.resources` inventory of
+actual view/model, text/snapshot, subscription, input and retained-payload bounds.
+The advertisement shares constants with host admission. Old epoch 2 handshakes
+without the inventory still decode, and both shared fixtures and schema cover
+the compatible addition. Boxing the inventory avoids embedding its full size in
+every queued message. The authoring guide now gives a concrete epoch 1-to-2 command
+migration recipe instead of only a version policy.
+
+`tests/persistent_host/plugin_epoch2.rs` provides a reproducible native-host gate:
+one checked-in stand-in worker presents a retained view, accepts a finite job,
+survives repeated real attachments, publishes and finishes while detached, and
+is reaped by ordinary shutdown after protected state clears. It uses temporary
+data and existing bundled transport clients, with no Python/Node dependency.
+
+Formatting, warnings-as-errors Clippy, all 3,543 ordinary Rust tests and canonical
+workspace coverage pass, with 33 existing ignored tests. Linux line coverage is
+119,648 / 130,461 (**91.71%**), above the unchanged 89% floor. The complete release
+performance matrix and native macOS CI execution remain required before moving
+this record to `completed/`.
+
+The audit also records these implementation refinements: handshake registration
+atomically installs commands and capability grants; provider kinds are registered
+explicitly afterwards so applications can establish connections on demand. The
+`views` capability permits the three bounded native purposes without another
+per-purpose grant layer. The local manager's destructive filesystem action is
+confirmed Trash, as required by milestone 3, rather than an additional permanent
+delete operation. The native manager retains bounded static diagnostics; raw
+plugin stderr is not persisted. These choices add no marketplace, decoder,
+service-account or inline-video requirement to this plan.
+
 ## Investigation: existing foundation and missing boundaries
 
 The current [guide](../../../docs/plugins.md) and

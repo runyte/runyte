@@ -43,6 +43,23 @@ has passed. The floor is deliberately below
 the observed baseline because conditional Linux and macOS code changes both the
 instrumented denominator and the paths available to a run on one platform.
 
+## 2026-09-08 — application acceptance and advertised resources
+
+Measured on `x86_64-unknown-linux-gnu` at `48a906e` plus the application acceptance
+round, using Rust 1.97.1 and cargo-llvm-cov 0.9.0. Ordinary and canonical suites
+each passed 3,543 tests with 33 ignored. Formatting and warnings-as-errors Clippy
+passed. The new real persistent-attachment regression and optional handshake
+resource inventory are included. Python/Node conformance is measured separately.
+
+| Measure | Covered | Total | Coverage |
+| --- | ---: | ---: | ---: |
+| Lines | 119,648 | 130,461 | 91.71% |
+| Functions | 10,780 | 11,762 | 91.65% |
+| Regions | 181,228 | 198,797 | 91.16% |
+
+The enforced floor remains 89%. Native macOS execution of the expanded CI matrix
+is still required; this Linux run does not establish its result.
+
 ## 2026-09-08 — native provider reload and recovery
 
 Measured on `x86_64-unknown-linux-gnu` at `1ab2335` plus the recovery round,

@@ -2,6 +2,13 @@
 
 use serde::{Deserialize, Serialize};
 
+pub const MAX_CHUNK_BYTES: usize = 256 * 1024;
+pub const MAX_CHANGES: usize = 1024;
+pub const MAX_REPLACEMENT_BYTES: usize = 512 * 1024;
+pub const MAX_SNAPSHOTS: usize = 2;
+pub const MAX_SNAPSHOT_BYTES: usize = 16 * 1024 * 1024;
+pub const SNAPSHOT_IDLE_SECONDS: u64 = 30;
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Change {

@@ -358,6 +358,9 @@
         },
         "state_requests": {
           "const": 1
+        },
+        "resources": {
+          "$ref": "#/$defs/resourceLimits"
         }
       },
       "required": [
@@ -7705,6 +7708,102 @@
         "params"
       ],
       "additionalProperties": false
+    },
+    "resourceLimits": {
+      "type": "object",
+      "properties": {
+        "plugin_instances": {
+          "const": 8
+        },
+        "views": {
+          "const": 16
+        },
+        "model_bytes": {
+          "const": 4194304
+        },
+        "model_rows": {
+          "const": 10000
+        },
+        "model_projection_bytes": {
+          "const": 4194304
+        },
+        "model_stages": {
+          "const": 2
+        },
+        "model_snapshots": {
+          "const": 2
+        },
+        "model_chunk_bytes": {
+          "const": 131072
+        },
+        "model_idle_seconds": {
+          "const": 30
+        },
+        "text_chunk_bytes": {
+          "const": 262144
+        },
+        "transaction_changes": {
+          "const": 1024
+        },
+        "transaction_text_bytes": {
+          "const": 524288
+        },
+        "text_snapshots": {
+          "const": 2
+        },
+        "text_snapshot_bytes": {
+          "const": 16777216
+        },
+        "text_snapshot_idle_seconds": {
+          "const": 30
+        },
+        "retained_payload_bytes": {
+          "const": 50331648
+        },
+        "host_retained_payload_bytes": {
+          "const": 167772160
+        },
+        "subscriptions": {
+          "const": 32
+        },
+        "watched_sources": {
+          "const": 256
+        },
+        "observation_state_bytes": {
+          "const": 4096
+        },
+        "input_surfaces": {
+          "const": 1
+        },
+        "input_fields": {
+          "const": 16
+        }
+      },
+      "required": [
+        "plugin_instances",
+        "views",
+        "model_bytes",
+        "model_rows",
+        "model_projection_bytes",
+        "model_stages",
+        "model_snapshots",
+        "model_chunk_bytes",
+        "model_idle_seconds",
+        "text_chunk_bytes",
+        "transaction_changes",
+        "transaction_text_bytes",
+        "text_snapshots",
+        "text_snapshot_bytes",
+        "text_snapshot_idle_seconds",
+        "retained_payload_bytes",
+        "host_retained_payload_bytes",
+        "subscriptions",
+        "watched_sources",
+        "observation_state_bytes",
+        "input_surfaces",
+        "input_fields"
+      ],
+      "additionalProperties": true
     }
   },
   "anyOf": [

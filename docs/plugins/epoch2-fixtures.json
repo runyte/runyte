@@ -344,7 +344,31 @@
         "activity_seconds": 600,
         "settings_bytes": 65536,
         "state_document_bytes": 1044480,
-        "state_requests": 1
+        "state_requests": 1,
+        "resources": {
+          "plugin_instances": 8,
+          "views": 16,
+          "model_bytes": 4194304,
+          "model_rows": 10000,
+          "model_projection_bytes": 4194304,
+          "model_stages": 2,
+          "model_snapshots": 2,
+          "model_chunk_bytes": 131072,
+          "model_idle_seconds": 30,
+          "text_chunk_bytes": 262144,
+          "transaction_changes": 1024,
+          "transaction_text_bytes": 524288,
+          "text_snapshots": 2,
+          "text_snapshot_bytes": 16777216,
+          "text_snapshot_idle_seconds": 30,
+          "retained_payload_bytes": 50331648,
+          "host_retained_payload_bytes": 167772160,
+          "subscriptions": 32,
+          "watched_sources": 256,
+          "observation_state_bytes": 4096,
+          "input_surfaces": 1,
+          "input_fields": 16
+        }
       }
     }
   },
@@ -376,7 +400,31 @@
         "activity_seconds": 600,
         "settings_bytes": 65536,
         "state_document_bytes": 1044480,
-        "state_requests": 1
+        "state_requests": 1,
+        "resources": {
+          "plugin_instances": 8,
+          "views": 16,
+          "model_bytes": 4194304,
+          "model_rows": 10000,
+          "model_projection_bytes": 4194304,
+          "model_stages": 2,
+          "model_snapshots": 2,
+          "model_chunk_bytes": 131072,
+          "model_idle_seconds": 30,
+          "text_chunk_bytes": 262144,
+          "transaction_changes": 1024,
+          "transaction_text_bytes": 524288,
+          "text_snapshots": 2,
+          "text_snapshot_bytes": 16777216,
+          "text_snapshot_idle_seconds": 30,
+          "retained_payload_bytes": 50331648,
+          "host_retained_payload_bytes": 167772160,
+          "subscriptions": 32,
+          "watched_sources": 256,
+          "observation_state_bytes": 4096,
+          "input_surfaces": 1,
+          "input_fields": 16
+        }
       }
     }
   },

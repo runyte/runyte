@@ -28,7 +28,7 @@ schema, SDK, examples and checks from the same checkout.
 Run the remaining SDK/controller checks:
 
 ```sh
-for check in jobs observations validation models queries processes handoffs activity state \
+for check in jobs writer observations validation models queries processes handoffs activity state \
              remote_provider downloads uploads upload_review remote_status \
              remote_operations media media_review
 do
@@ -128,6 +128,7 @@ Companion review files add fault/race cases to several groups.
 | Group | Public/example checks | Host or App behavior checks |
 | --- | --- | --- |
 | Epoch negotiation, IDs, registration and bounded worker delivery | [check_schema.py](check_schema.py), [check_applications.py](check_applications.py), [check_node.py](check_node.py) | [worker tests](../../src/plugin/tests/worker.rs), [application tests](../../src/workspace/host/tests/plugin_applications.rs) |
+| SDK output backpressure, local deadlines, cancellation and EOF | [check_writer.py](check_writer.py) uses actual full/broken pipes and a live example process | [worker tests](../../src/plugin/tests/worker.rs) cover host-side bounded delivery |
 | Native views, staged models, patches and immutable reads | [check_models.py](check_models.py), [check_applications.py](check_applications.py) | [model tests](../../src/workspace/host/tests/plugin_models.rs), [model review](../../src/workspace/host/tests/plugin_model_review.rs) |
 | Queries, viewport metadata and accepted actions | [check_queries.py](check_queries.py) | [query tests](../../src/workspace/host/tests/plugin_view_queries.rs), [query review](../../src/workspace/host/tests/plugin_view_query_review.rs) |
 | Subscription baseline/order/coalescing/resynchronization | [check_observations.py](check_observations.py) | [host observations](../../src/workspace/host/tests/plugin_observations.rs), [registry tests](../../src/plugin/tests/observation.rs) |
@@ -142,6 +143,7 @@ Companion review files add fault/race cases to several groups.
 | Managed binary helpers and process-group lifetime | [check_processes.py](check_processes.py) | [host processes](../../src/workspace/host/tests/plugin_processes.rs), [runtime](../../src/plugin/tests/process_runtime.rs) |
 | Terminal/system handoffs and notifications | [check_handoffs.py](check_handoffs.py) | [handoffs](../../src/workspace/host/tests/plugin_handoffs.rs), [notifications](../../src/workspace/host/tests/plugin_notifications.rs) |
 | Finite jobs, activity leases and owner stop/restart | [check_jobs.py](check_jobs.py), [check_applications.py](check_applications.py), [check_activity.py](check_activity.py) | [activity](../../src/workspace/host/tests/plugin_activity.rs), [manager](../../src/workspace/host/tests/plugin_manager.rs), [worker-slot review](../../src/workspace/host/tests/plugin_manager_review.rs) |
+| Epoch 2 views and job completion across repeated real attachments | Checked-in stand-in behavior fixture; no Python/Node dependency | [persistent attachment regression](../../tests/persistent_host/plugin_epoch2.rs) |
 | Settings schemas and conditional private state | [check_state.py](check_state.py) | [settings](../../src/workspace/host/tests/plugin_settings.rs), [state](../../src/workspace/host/tests/plugin_state.rs) |
 | Media playlist, controls, cancellation and paused quietness | [check_mpv_backend.py](check_mpv_backend.py), [check_media.py](check_media.py), [media review](check_media_review.py) | Reuses managed-helper/activity contracts; real mpv remains an external dependency |
 

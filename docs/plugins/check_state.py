@@ -81,7 +81,8 @@ class StateSdkTests(unittest.TestCase):
                     operation()
                 self.assertEqual(caught.exception.code, code)
                 self.assertEqual(self.app._pending, {})
-        self.assertEqual(waits, [12, 12, 12])
+        self.assertEqual(len(waits), 3)
+        self.assertTrue(all(0 < remaining <= 12 for remaining in waits))
         self.assertEqual([message['method'] for message in sent], ['state.get', 'state.set', 'state.delete'])
 
     def test_registration_includes_only_explicit_settings_schema(self):

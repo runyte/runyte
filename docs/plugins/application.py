@@ -3,10 +3,14 @@
 import base64
 import binascii
 import concurrent.futures
+from collections import deque
 import json
 import math
+import os
+import selectors
 import sys
 import threading
+import time
 
 VERSION = 'runyte-experimental-2'
 LIMIT = 1024 * 1024
@@ -22,6 +26,98 @@ class PluginError(Exception):
 class _HostDisconnected(PluginError):
     def __init__(self):
         super().__init__('unavailable', 'Host disconnected')
+
+
+class _WireIO:
+    """One bounded writer; a persistent close signal wakes both I/O selectors."""
+    MAX_MESSAGES = 16
+    MAX_BYTES = 4 * LIMIT
+
+    def __init__(self, failed, output=None):
+        self.failed = failed
+        self.condition = threading.Condition()
+        self.queue = deque()
+        self.bytes = 0
+        self.closed = False
+        self.thread = None
+        self.output = output
+        self.wake_read, self.wake_write = os.pipe()
+        os.set_blocking(self.wake_write, False)
+
+    def enqueue(self, data):
+        with self.condition:
+            if self.closed:
+                raise _HostDisconnected()
+            if len(self.queue) >= self.MAX_MESSAGES or self.bytes + len(data) > self.MAX_BYTES:
+                raise PluginError('busy', 'Application output queue full')
+            if self.thread is None:
+                if self.output is None:
+                    self.output = sys.stdout.fileno()
+                os.set_blocking(self.output, False)
+                thread = threading.Thread(target=self._run, name='runyte-plugin-writer', daemon=True)
+                thread.start()
+                self.thread = thread
+            # The first element remains charged throughout every partial write.
+            self.queue.append(data)
+            self.bytes += len(data)
+            self.condition.notify()
+
+    def _run(self):
+        try:
+            with selectors.DefaultSelector() as selector:
+                selector.register(self.output, selectors.EVENT_WRITE, 'output')
+                selector.register(self.wake_read, selectors.EVENT_READ, 'closed')
+                while True:
+                    with self.condition:
+                        self.condition.wait_for(lambda: self.closed or self.queue)
+                        if self.closed:
+                            return
+                        data = self.queue[0]
+                    offset = 0
+                    while offset < len(data):
+                        for key, _ in selector.select():
+                            if key.data == 'closed':
+                                return
+                            with self.condition:
+                                if self.closed:
+                                    return
+                                try:
+                                    written = os.write(self.output, memoryview(data)[offset:])
+                                except BlockingIOError:
+                                    continue
+                            if written == 0:
+                                raise OSError('Output closed')
+                            offset += written
+                    with self.condition:
+                        if self.closed:
+                            return
+                        self.queue.popleft()
+                        self.bytes -= len(data)
+        except (OSError, ValueError):
+            self.failed()
+
+    def close(self):
+        with self.condition:
+            if self.closed:
+                return
+            self.closed = True
+            self.queue.clear()
+            self.bytes = 0
+            try:
+                os.write(self.wake_write, b'x')
+            except (BlockingIOError, OSError):
+                pass
+            self.condition.notify_all()
+
+    def finish(self):
+        self.close()
+        if self.thread is not None:
+            self.thread.join()
+        with self.condition:
+            if self.wake_read is not None:
+                os.close(self.wake_read)
+                os.close(self.wake_write)
+                self.wake_read = self.wake_write = None
 
 def _validate_state_document(document):
     # Keep only one iterator per nesting level; cycles hit the same depth bound.
@@ -92,6 +188,8 @@ class Application:
         self._control_slots = threading.BoundedSemaphore(16)
         self._control = concurrent.futures.ThreadPoolExecutor(max_workers=1)
         self._closed = threading.Event()
+        self._io = None
+        self._input = bytearray()
         self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=4)
 
     def _write(self, message):
@@ -99,8 +197,34 @@ class Application:
         if len(data) > LIMIT:
             raise PluginError('limit_exceeded', 'Encoded message exceeds limit')
         with self._lock:
-            sys.stdout.buffer.write(data)
-            sys.stdout.buffer.flush()
+            if self._closed.is_set():
+                raise _HostDisconnected()
+            try:
+                self._wire_io().enqueue(data)
+            except (PluginError, OSError, RuntimeError):
+                # Requests can fail before admission. A lost reliable reply or
+                # registration cannot leave a seemingly healthy connection.
+                if message.get('type') != 'request':
+                    self._disconnect()
+                raise
+
+    def _wire_io(self):
+        with self._lock:
+            if self._io is None:
+                self._io = _WireIO(self._disconnect)
+            return self._io
+
+    def _disconnect(self):
+        self._closed.set()
+        with self._lock:
+            for future in self._pending.values():
+                if not future.done():
+                    future.set_exception(_HostDisconnected())
+            self._pending.clear()
+            self._accept.clear()
+            self._subscriptions.clear()
+            if self._io is not None:
+                self._io.close()
 
     def request(self, method, **params):
         # Leave delivery headroom beyond the host's authoritative state deadline.
@@ -348,6 +472,7 @@ class Application:
                     future.set_result(message['result'])
 
     def _request(self, method, params, accept=None, *, timeout=10):
+        deadline = time.monotonic() + timeout
         if not self._slots.acquire(blocking=False):
             raise PluginError('busy', 'Too many outstanding requests')
         future = concurrent.futures.Future()
@@ -367,12 +492,17 @@ class Application:
                         raise PluginError('outcome_unknown', 'State mutation outcome is unknown; read state before retrying') from error
                     raise
             try:
-                return future.result(timeout=timeout)
+                return future.result(timeout=max(0, deadline - time.monotonic()))
             except _HostDisconnected as error:
                 if method in ('state.set', 'state.delete'):
                     raise PluginError('outcome_unknown', 'State mutation outcome is unknown; read state before retrying') from error
                 raise
             except concurrent.futures.TimeoutError as error:
+                # A queued or partial frame must not become a surprise mutation
+                # after its caller times out. Retire this real wire connection;
+                # host-reported timeout errors do not enter this branch.
+                if self._io is not None:
+                    self._disconnect()
                 if method in ('state.set', 'state.delete'):
                     raise PluginError('outcome_unknown', 'State mutation outcome is unknown; read state before retrying') from error
                 raise PluginError('timeout', 'Control request timed out') from error
@@ -384,12 +514,30 @@ class Application:
             self._slots.release()
 
     def _read(self):
-        data = sys.stdin.buffer.readline(LIMIT + 1)
-        if not data:
-            raise EOFError()
-        if len(data) > LIMIT or not data.endswith(b'\n'):
-            raise PluginError('limit_exceeded', 'Invalid host frame')
-        return json.loads(data)
+        wire = self._wire_io()
+        with selectors.DefaultSelector() as selector:
+            descriptor = sys.stdin.fileno()
+            selector.register(descriptor, selectors.EVENT_READ, 'input')
+            selector.register(wire.wake_read, selectors.EVENT_READ, 'closed')
+            while True:
+                if self._closed.is_set():
+                    raise EOFError()
+                newline = self._input.find(b'\n')
+                if newline >= 0:
+                    data = bytes(self._input[:newline + 1])
+                    del self._input[:newline + 1]
+                    return json.loads(data.decode('utf-8'))
+                if len(self._input) >= LIMIT:
+                    raise PluginError('limit_exceeded', 'Invalid host frame')
+                for key, _ in selector.select():
+                    if key.data == 'closed':
+                        raise EOFError()
+                    data = os.read(descriptor, min(65536, LIMIT - len(self._input)))
+                    if not data:
+                        if self._input:
+                            raise PluginError('limit_exceeded', 'Invalid host frame')
+                        raise EOFError()
+                    self._input.extend(data)
 
     def _submit(self, message):
         if message.get('event', '').startswith('event.'):
@@ -468,13 +616,9 @@ class Application:
         except EOFError:
             pass
         finally:
-            self._closed.set()
-            with self._lock:
-                for future in self._pending.values():
-                    future.set_exception(_HostDisconnected())
-                self._pending.clear()
-                self._accept.clear()
-                self._subscriptions.clear()
+            self._disconnect()
+            if self._io is not None:
+                self._io.finish()
             self._resource_executor.shutdown(wait=True, cancel_futures=True)
             self._validation_executor.shutdown(wait=True, cancel_futures=True)
             self._control.shutdown(wait=True, cancel_futures=True)

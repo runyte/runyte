@@ -10,6 +10,9 @@ pub const MAX_COMMANDS: usize = 64;
 pub const MAX_REQUESTS: usize = 16;
 pub const MAX_JOBS: usize = 4;
 pub const MAX_QUEUE_BYTES: usize = 4 * 1024 * 1024;
+pub const MAX_VIEWS: usize = 16;
+pub const MAX_RETAINED_BYTES: usize = 48 * 1024 * 1024;
+pub const MAX_HOST_RETAINED_BYTES: usize = 160 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
 pub enum Api {
@@ -474,6 +477,9 @@ pub struct Job {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Limits {
+    /// Compatible addition: older epoch 2 hosts omit this resource inventory.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resources: Option<Box<ResourceLimits>>,
     pub state_document_bytes: usize,
     pub state_requests: usize,
     pub settings_bytes: usize,
@@ -496,6 +502,7 @@ pub struct Limits {
 impl Default for Limits {
     fn default() -> Self {
         Self {
+            resources: Some(Box::default()),
             settings_bytes: super::settings::MAX_BYTES,
             state_document_bytes: super::state::MAX_DOCUMENT_BYTES,
             state_requests: 1,
@@ -514,6 +521,60 @@ impl Default for Limits {
             control_deadline_seconds: 10,
             job_deadline_seconds: 3600,
             cancellation_seconds: 2,
+        }
+    }
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ResourceLimits {
+    pub plugin_instances: usize,
+    pub views: usize,
+    pub model_bytes: usize,
+    pub model_rows: usize,
+    pub model_projection_bytes: usize,
+    pub model_stages: usize,
+    pub model_snapshots: usize,
+    pub model_chunk_bytes: usize,
+    pub model_idle_seconds: u64,
+    pub text_chunk_bytes: usize,
+    pub transaction_changes: usize,
+    pub transaction_text_bytes: usize,
+    pub text_snapshots: usize,
+    pub text_snapshot_bytes: usize,
+    pub text_snapshot_idle_seconds: u64,
+    pub retained_payload_bytes: usize,
+    pub host_retained_payload_bytes: usize,
+    pub subscriptions: usize,
+    pub watched_sources: usize,
+    pub observation_state_bytes: usize,
+    pub input_surfaces: usize,
+    pub input_fields: usize,
+}
+impl Default for ResourceLimits {
+    fn default() -> Self {
+        Self {
+            plugin_instances: super::MAX_PLUGINS,
+            views: MAX_VIEWS,
+            model_bytes: super::view::MAX_MODEL_BYTES,
+            model_rows: super::view::MAX_ROWS,
+            model_projection_bytes: super::view::MAX_PROJECTION_BYTES,
+            model_stages: super::view::MAX_STAGES,
+            model_snapshots: super::view::MAX_SNAPSHOTS,
+            model_chunk_bytes: super::view::MAX_CHUNK_BYTES,
+            model_idle_seconds: super::view::IDLE_SECONDS,
+            text_chunk_bytes: super::editor::MAX_CHUNK_BYTES,
+            transaction_changes: super::editor::MAX_CHANGES,
+            transaction_text_bytes: super::editor::MAX_REPLACEMENT_BYTES,
+            text_snapshots: super::editor::MAX_SNAPSHOTS,
+            text_snapshot_bytes: super::editor::MAX_SNAPSHOT_BYTES,
+            text_snapshot_idle_seconds: super::editor::SNAPSHOT_IDLE_SECONDS,
+            retained_payload_bytes: MAX_RETAINED_BYTES,
+            host_retained_payload_bytes: MAX_HOST_RETAINED_BYTES,
+            subscriptions: super::observation::MAX_SUBSCRIPTIONS,
+            watched_sources: super::observation::MAX_SOURCES,
+            observation_state_bytes: super::observation::MAX_STATE_BYTES,
+            input_surfaces: 1,
+            input_fields: super::interaction::MAX_FIELDS,
         }
     }
 }
@@ -1013,6 +1074,20 @@ pub(crate) fn decode(bytes: &[u8]) -> anyhow::Result<super::ClientMessage> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn resource_inventory_is_optional_for_older_epoch_two_handshakes() {
+        let current = serde_json::to_value(super::Limits::default()).unwrap();
+        assert_eq!(current["resources"]["views"], 16);
+        assert_eq!(current["resources"]["retained_payload_bytes"], 50_331_648);
+        let mut previous = current.clone();
+        previous.as_object_mut().unwrap().remove("resources");
+        let decoded: super::Limits = serde_json::from_value(previous.clone()).unwrap();
+        assert!(decoded.resources.is_none());
+        assert_eq!(serde_json::to_value(decoded).unwrap(), previous);
+        let decoded: super::Limits = serde_json::from_value(current.clone()).unwrap();
+        assert_eq!(serde_json::to_value(decoded).unwrap(), current);
+    }
+
     use super::*;
 
     #[test]

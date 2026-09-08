@@ -45,6 +45,14 @@ responses and dispatches bounded concurrent handlers separately from that reader
 Cancellation callbacks have their own bounded worker so waiting command handlers
 cannot starve them. Keep cancellation callbacks short: signal the running work
 and return, without waiting for a command handler or its lock.
+The client also has a bounded, nonblocking output lane: sixteen queued/in-flight
+frames and 4 MiB of encoded bytes. A stalled host reader does not hold the reply
+correlation lock or stop cancellation/EOF processing. Request deadlines include
+output admission. An SDK delivery timeout retires the connection so an unsent
+frame cannot become a late mutation; explicitly restart the plugin before making
+new requests. An ordinary error response from the host, including `timeout`,
+does not itself retire the connection. State mutations with an uncertain reply
+retain `outcome_unknown` and are never replayed automatically.
 
 ## Plugin manager
 
@@ -117,6 +125,19 @@ no shell evaluation. Boolean spellings are `true`/`false`; integers are signed
 64-bit values. Command handlers receive an `arguments` object of typed values.
 
 ## Wire contract
+
+Both `hello` and `registered` advertise effective control, job, helper, activity,
+settings and state limits. Their optional `limits.resources` inventory adds view,
+model, text/snapshot, subscription, input and retained-payload ceilings. Current
+hosts always provide it; older epoch 2 hosts may omit it. Use the documented epoch
+defaults when it is absent, and ignore unknown host fields for compatible
+additions. Counts are per owner except `plugin_instances` and
+`host_retained_payload_bytes` (per host), and `input_surfaces` (per attached
+frontend). Byte fields count UTF-8 or encoded payload as specified by the relevant
+operation; the inventory does not override wire-envelope or temporary-reservation
+limits and does not promise that all independently valid resources fit together.
+`watched_sources` bounds aggregate subscription/source pairs as well as the unique
+source table; `observation_state_bytes` bounds one captured source's metadata.
 
 UTF-8 newline-delimited JSON, one exact epoch per process. The
 [epoch 2 schema](runyte-experimental-2.schema.json) covers implemented messages;

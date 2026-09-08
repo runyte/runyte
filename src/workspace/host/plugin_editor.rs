@@ -133,12 +133,12 @@ impl WorkspaceHost {
                 if value.is_read_only() {
                     return Err(Error::new(Code::ReadOnly, "Buffer is read-only"));
                 }
-                if changes.len() > 1024
+                if changes.len() > wire::MAX_CHANGES
                     || changes
                         .iter()
                         .map(|change| change.text.len())
                         .sum::<usize>()
-                        > 512 * 1024
+                        > wire::MAX_REPLACEMENT_BYTES
                 {
                     return Err(Error::new(
                         Code::LimitExceeded,
@@ -189,7 +189,7 @@ impl WorkspaceHost {
                 if expected_revision != format!("r:{}", buffer.revision()) {
                     return Err(Error::new(Code::Stale, "Buffer changed"));
                 }
-                if buffer.len_bytes() > 16 * 1024 * 1024 {
+                if buffer.len_bytes() > wire::MAX_SNAPSHOT_BYTES {
                     return Err(Error::new(Code::LimitExceeded, "Snapshot exceeds 16 MiB"));
                 }
                 self.reserve_application_payload(owner, buffer.len_bytes())?;
@@ -200,7 +200,7 @@ impl WorkspaceHost {
                     .get_mut(&owner)
                     .unwrap()
                     .application;
-                if state.snapshots.len() >= 2 {
+                if state.snapshots.len() >= wire::MAX_SNAPSHOTS {
                     return Err(Error::new(Code::LimitExceeded, "Snapshot limit reached"));
                 }
                 state.next_handle += 1;
@@ -219,7 +219,7 @@ impl WorkspaceHost {
                     owner,
                     HostMessage::Deadline {
                         token: handle.clone(),
-                        after_ms: Some(30_000),
+                        after_ms: Some(wire::SNAPSHOT_IDLE_SECONDS * 1000),
                     },
                 )
                 .map_err(|_| Error::new(Code::Unavailable, "Application queue unavailable"))?;
@@ -240,7 +240,7 @@ impl WorkspaceHost {
                     owner,
                     HostMessage::Deadline {
                         token: snapshot,
-                        after_ms: Some(30_000),
+                        after_ms: Some(wire::SNAPSHOT_IDLE_SECONDS * 1000),
                     },
                 )
                 .map_err(|_| Error::new(Code::Unavailable, "Application queue unavailable"))?;
@@ -345,7 +345,7 @@ fn read(
         return Err(Error::new(Code::InvalidArgument, "Invalid text range"));
     }
     let slice = text.rope().slice(from..to);
-    if slice.len_bytes() > 256 * 1024 {
+    if slice.len_bytes() > wire::MAX_CHUNK_BYTES {
         return Err(Error::new(
             Code::LimitExceeded,
             "Text chunk exceeds 256 KiB",

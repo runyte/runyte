@@ -786,7 +786,7 @@ impl WorkspaceHost {
                     .sum::<usize>(),
             )
             .saturating_add(bytes)
-            > 48 * 1024 * 1024
+            > api::MAX_RETAINED_BYTES
             || self
                 .app
                 .plugins
@@ -796,7 +796,7 @@ impl WorkspaceHost {
                 .sum::<usize>()
                 .saturating_add(self.app.plugins.orphaned_payload)
                 .saturating_add(bytes)
-                > 160 * 1024 * 1024
+                > api::MAX_HOST_RETAINED_BYTES
         {
             return Err(api::Error::new(
                 api::ErrorCode::LimitExceeded,

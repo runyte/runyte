@@ -74,6 +74,11 @@ The optional client handles the handshake, request IDs, response correlation,
 bounded dispatch and ordered observation callbacks. Every host method remains
 available through `app.request(method, **params)`; convenience methods add model
 staging, snapshots, subscriptions, managed binary pipes and state operations.
+Its output lane remains bounded while the host stops reading. A local delivery
+timeout closes the connection to prevent queued late operations; explicitly
+restart before issuing new requests. Host-returned errors remain ordinary
+responses. A disconnected or timed-out state mutation can still be uncertain,
+so restart alone is not permission to replay it.
 
 ```python
 from application import Application
@@ -215,6 +220,10 @@ callbacks `resource.stat/read/reconcile` and
 ## Budgets, persistence and migration
 
 Read negotiated limits and the relevant operation section before retaining data.
+Current hosts include `limits.resources` in both handshake messages for model,
+snapshot, subscription, input and payload ceilings. That additive inventory is
+optional when connecting to an older epoch 2 host; use that epoch's documented
+defaults if it is absent. Its values share the constants used by host admission.
 Important ceilings are 1 MiB per encoded line including newline, 16 outstanding
 host control requests, four active finite jobs, sixteen views, and 48 MiB of
 retained host payload per owner / 160 MiB host-wide. Models have independent
@@ -237,6 +246,47 @@ additions, but emit only documented plugin fields. Plugin request IDs increase
 in send order and responses may arrive out of order. Treat returned handles and revision tokens as opaque. After restart, reacquire
 live handles and current revisions instead of reusing saved authority. Restart
 registers afresh and does not replay old requests.
+
+### Move an epoch 1 command to epoch 2
+
+Keep the old program/configuration available while migrating; changing only its
+version string does not translate its messages. For a selection transformation
+such as [uppercase.py](uppercase.py):
+
+1. Set `api: runyte-experimental-2` and grant `text` and `selections` in the
+   configuration. Register the command with `context: buffer` and request those
+   same capabilities. The Python `Application` client handles the new handshake.
+2. Replace the `invoke` message loop with an `app.handlers` callback. Its context
+   contains the captured `buffer`, `buffer_revision`, `pane` and
+   `selection_revision`; the SDK also supplies `invocation`. Epoch 2 does not
+   include the whole document or selected text in each command.
+3. Call `selection.get` for that captured pane and refuse a returned revision
+   different from `selection_revision`. Read text from the captured buffer at
+   `buffer_revision`, using bounded `buffer.read` calls or a retained snapshot.
+   Do not rediscover the currently active buffer when an asynchronous read ends.
+4. Compute one sorted, non-overlapping `changes` array containing
+   `{from, to, text}`. Offsets count Unicode scalars. Preserve epoch 1's caret
+   behavior deliberately: a collapsed selection covers its character when one
+   exists, and the EOF caret is an empty insertion range. Normalize overlapping
+   ranges before sending the transaction; arbitrary overlapping edits are refused.
+5. Send `buffer.edit` with the captured buffer and revision. This replaces
+   epoch 1's `replace {invocation, replacements}` message. A successful response
+   gives the new text revision, and the host maps pane selections through the
+   single undoable transaction. Handle `stale` or `closed` without replaying the
+   transformation against newer text. Return from the command handler after its
+   work finishes; use an explicitly issued job if work outlives the command.
+
+| Epoch 1 | Epoch 2 |
+| --- | --- |
+| `register {version, commands}` | Named application, contextual commands and explicit required/optional capabilities |
+| `invoke` carries text/selections | `command.invoke` carries captured handles/revisions; explicit reads fetch data |
+| `replace` plus `complete` | Correlated `buffer.edit` request/response plus the command's own response |
+| Buffer `subscribe` / `buffer_state` | `event.subscribe` with a buffer source, baseline, sequence and resynchronization |
+| Invocation token authorizes the replacement | Buffer revision fences the edit; invocation separately authorizes foreground presentation |
+
+Run both epoch schema/example suites during migration. Add stale-revision,
+backward/multiple-selection, Unicode and single-step-undo cases for the migrated
+command; a schema-valid example alone does not preserve its editing semantics.
 
 Use an application-defined numeric version inside `state.set` documents. Read
 the current revision, validate and migrate data in application code, then perform

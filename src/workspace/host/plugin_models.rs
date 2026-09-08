@@ -432,7 +432,7 @@ impl WorkspaceHost {
                     .values()
                     .filter(|pending| pending.creating)
                     .count()
-                >= 16
+                >= api::MAX_VIEWS
         {
             return Err(Error::new(Code::LimitExceeded, "View limit reached"));
         }
