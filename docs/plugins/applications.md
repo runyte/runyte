@@ -8,8 +8,9 @@ pane selections, local metadata/browsing, document lifecycle operations, native
 input, confirmed bounded recursive filesystem mutations and provider-backed
 UTF-8 document opening, conditional remote saves, native confirmation of weaker
 overwrites, explicit rebind and remote
-conflict inspection. Network transports, subscriptions and managed media backends
-remain unfinished. This is not completion of the application plan.
+conflict inspection. The runnable SFTP adapter adds verified SSH transport and
+a native remote browser. FTP/FTPS, subscriptions and managed media backends remain
+unfinished. This is not completion of the application plan.
 Epoch 1 remains the default and its uppercase example is unchanged.
 
 Enable the runnable background-job example with absolute paths:
@@ -220,9 +221,9 @@ These measure payload, not allocator RSS or the external process's memory.
 Buffer/pane issuance is bounded at 1,024/128 handles per connection generation.
 
 Still required by the active plan: revision-tagged field validation; source subscriptions
-and resynchronization; confirmed weaker-transport overwrites, conflict inspection and binary transfers;
-row patches and staged publication; managed helpers, activity leases, state,
-settings and a plugin manager; SFTP/FTP and media examples; broader SDK/conformance
+and resynchronization; binary transfers; row patches and staged publication;
+managed helpers, activity leases, state, settings and a plugin manager; FTP/FTPS
+and media examples; broader SDK/conformance
 coverage and the complete performance/platform acceptance matrix.
 
 ## Local file manager
@@ -528,6 +529,15 @@ conflict while explicit reconciliation is refused. Even when the snapshot equals
 an uncertain upload, comparison alone cannot prove that the previous remote
 mutation has settled. Rebind still requires the settlement proof described below.
 
+The provider receives reliable `resource.released {job}` on every read terminal
+path, including cancellation, timeout, identity reuse and requester stop. This
+notification belongs to the provider even when another application owns the job.
+Release immutable cached data and cancel any still-running read for that job;
+a release can overtake a queued resource handler or arrive before its response.
+It does not establish settlement of a remote write. Failure to deliver the
+notification stops the provider. The Python SDK dispatches these events through
+its control worker so waiting command handlers cannot starve cache cleanup.
+
 ### Uploads and recovery
 
 `buffer.save` uses the same host coordinator as native saves. It requires the
@@ -626,3 +636,100 @@ recovery. Reconciliation compares directly against the two known baselines witho
 allocating another text copy. Success or explicit document retirement releases the
 reservation; failed/cancelled rebind retains it. This accounting is independent from
 whether the provider and requesting application are the same process.
+
+
+## SFTP browser and editor
+
+The runnable `sftp.py` application uses `remote_provider.py` and
+`sftp_transport.py` beside the shared `application.py` client. SSH stays in the
+application process; Runyte gains no SSH library dependency. Install Paramiko in
+a separate Python environment and use that environment's interpreter:
+
+```sh
+python3 -m venv /path/to/sftp-env
+/path/to/sftp-env/bin/python -m pip install paramiko
+```
+
+Create a JSON connection profile outside the repository, for example
+`/path/to/sftp-profile.json`:
+
+```json
+{
+  "alias": "development",
+  "host": "development.example.org",
+  "port": 22,
+  "username": "editor",
+  "root": "/srv/project",
+  "known_hosts": "/path/to/verified_known_hosts",
+  "identity_files": ["/path/to/ssh_identity"],
+  "allow_agent": false
+}
+```
+
+The root is an absolute remote directory. Relative command paths resolve below
+it, and paths outside it are refused. These canonical path checks assume a
+trusted server namespace; SFTP cannot hold a directory-relative identity across
+all operations. Use a server-side chroot when confinement is required. The
+profile accepts only the documented
+fields; `port` defaults to 22, `identity_files` to an empty list and `allow_agent`
+to false. Supply an explicit identity file or enable the existing SSH agent.
+There is no password field, interactive password prompt, automatic credential
+search, or plaintext credential persistence. To use an encrypted identity, load
+it into the SSH agent and set `allow_agent` to true. Connection errors never
+include library exception details or credential paths in application messages.
+
+Populate `known_hosts` through a trusted host-key verification process before
+starting the application. Unknown or changed host keys are refused; the example
+does not accept keys automatically. It does not invoke a shell or interpret
+`~/.ssh/config`. Use absolute local paths in the profile.
+
+```yaml
+plugins:
+  - id: sftp
+    enabled: true
+    api: runyte-experimental-2
+    executable: /path/to/sftp-env/bin/python
+    args:
+      - /path/to/runyte/docs/plugins/sftp.py
+      - --config
+      - /path/to/sftp-profile.json
+    capabilities: [views, providers, documents, jobs]
+```
+
+For another configured plugin ID, also pass `--plugin-id` with that ID. Each
+process has one profile and registers provider `remote`. The connection identity
+includes the endpoint and remote root, while labels use the profile alias;
+credential paths are not resource keys.
+
+Run `:plugin.sftp.browse .`. Enter browses the selected directory or opens a
+regular UTF-8 file as a normal editable provider document. `Tab` exposes the same
+registered actions as the palette: `:plugin.sftp.parent` and
+`:plugin.sftp.refresh`. Row identities survive reorder and refresh, while actions
+from stale view revisions are refused. Symbolic links are displayed but not
+followed. `:plugin.sftp.open "notes/猫 notes.md"` opens a path directly. The browser
+is bounded to 1,024 entries and a 900 KiB encoded model; larger directories are
+refused without replacing the previous view. Network work runs outside the SDK
+reader, has a finite transport deadline, and does not poll while idle. Overlapping
+browser commands return `busy` instead of waiting behind a network operation.
+
+Edit with normal Runyte commands, then use `:write`. Every SFTP save presents the
+native overwrite confirmation. The provider compares the previously observed
+content version before promoting a temporary upload with the server's atomic
+POSIX-rename extension. This detects observed conflicts but is **not an atomic
+compare-and-swap**: a remote writer can still change the file between comparison
+and replacement. The confirmation describes that remaining race. A server
+without the required replacement extension cannot complete the save; the adapter
+does not fall back to deleting the destination first. There is no plugin-facing
+save command that bypasses native approval, and `:write!` does not bypass it.
+
+`:write-quit` and `:write-buffer-close` close only after confirmed clean success
+in the original foreground context. Edits made during an upload remain dirty.
+`:diff-remote` or `:plugin.sftp.inspect` compares a fresh remote snapshot without
+changing local text or its saved baseline; each side is limited to 4 MiB.
+`:plugin.sftp.rebind` explicitly reconciles a document after provider restart or
+an uncertain upload. An uncertain remote write keeps local data dirty and cannot
+be retried blindly; if settlement cannot be proved, rebind remains refused.
+Remote documents are limited to 8 MiB of UTF-8 and never acquire a local file path.
+Binary transfer, remote mkdir/rename/delete commands and FTP/FTPS are separate
+unfinished work. The automated SFTP fixture uses temporary local credentials and
+a loopback server, and never contacts a live account.

@@ -20,6 +20,16 @@ pub(super) fn document(
     chunk(host, id, 0, text, true);
     let handle = opened(&mut requester).buffer.unwrap();
     let index = host.app.plugins.instances[&0].application.buffers[&handle];
+    while let Ok(message) = provider.try_recv() {
+        assert!(matches!(
+            message,
+            HostMessage::Deadline { .. }
+                | HostMessage::Application(api::HostMessage::Event {
+                    event: "resource.released",
+                    ..
+                })
+        ));
+    }
     (requester, provider, handle, index)
 }
 

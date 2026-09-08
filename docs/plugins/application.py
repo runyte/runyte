@@ -72,7 +72,7 @@ class Application:
 
     def _submit(self, message):
         # Cancellation must still run while command handlers await host replies.
-        control = message.get('event') == 'job.cancel_requested'
+        control = message.get('event') in ('job.cancel_requested', 'resource.released')
         resource = message.get('method', '').startswith('resource.')
         slots = self._resource_slots if resource else self._control_slots if control else self._dispatch
         executor = self._resource_executor if resource else self._control if control else self._executor

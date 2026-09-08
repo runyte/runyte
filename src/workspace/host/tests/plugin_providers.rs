@@ -340,7 +340,14 @@ fn provider_metadata_bounds_and_capabilities_are_enforced_before_reading() {
         assert!(opened(&mut requester).error.is_some(), "{fault}");
         assert!(host.provider_reads.is_empty());
         while let Ok(message) = provider.try_recv() {
-            assert!(matches!(message, HostMessage::Deadline { .. }));
+            assert!(matches!(
+                message,
+                HostMessage::Deadline { .. }
+                    | HostMessage::Application(api::HostMessage::Event {
+                        event: "resource.released",
+                        ..
+                    })
+            ));
         }
     }
     for capabilities in [vec![], vec!["documents"], vec!["jobs"]] {

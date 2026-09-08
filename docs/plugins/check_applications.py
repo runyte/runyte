@@ -20,10 +20,11 @@ class ApplicationSchemaTests(unittest.TestCase):
         app = Application('Test', [], [])
         requests = queue.Queue()
         cancelled = threading.Event()
+        released = threading.Event()
         resource = threading.Event()
         app._write = lambda message: requests.put(message) if message['type'] == 'request' else None
         app.handlers['wait'] = lambda _: app.request('workspace.info') and None
-        app.on_event = lambda name, data: cancelled.set() if name == 'job.cancel_requested' else None
+        app.on_event = lambda name, data: {'job.cancel_requested': cancelled, 'resource.released': released}[name].set()
         app.resource_handlers['resource.stat'] = lambda _: resource.set() or {'kind': 'stat', 'value': {}}
         try:
             for index in range(4):
@@ -32,6 +33,8 @@ class ApplicationSchemaTests(unittest.TestCase):
                 requests.get(timeout=2)
             app._submit({'type': 'event', 'event': 'job.cancel_requested', 'data': {'job': 'j:1'}})
             self.assertTrue(cancelled.wait(1), 'Cancellation was starved by waiting commands')
+            app._submit({'type': 'event', 'event': 'resource.released', 'data': {'job': 'j:2'}})
+            self.assertTrue(released.wait(1), 'Cache release was starved by waiting commands')
             app._submit({'type': 'request', 'id': 'h:5', 'method': 'resource.stat', 'params': {}})
             self.assertTrue(resource.wait(1), 'Provider was starved by waiting commands')
         finally:

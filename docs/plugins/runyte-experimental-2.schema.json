@@ -1726,7 +1726,8 @@
             "filesystem.started",
             "resource.opened",
             "resource.saved",
-            "resource.inspected"
+            "resource.inspected",
+            "resource.released"
           ]
         },
         "data": {
@@ -1755,6 +1756,19 @@
             },
             {
               "$ref": "#/$defs/resourceFinished"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "job": {
+                  "type": "string",
+                  "maxLength": 64
+                }
+              },
+              "required": [
+                "job"
+              ],
+              "additionalProperties": false
             }
           ]
         }

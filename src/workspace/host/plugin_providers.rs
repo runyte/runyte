@@ -764,10 +764,39 @@ impl WorkspaceHost {
                     after_ms: None,
                 },
             );
-            self.provider_ignored
-                .push_back((pending.owner, pending.generation, pending.request));
+            self.provider_ignored.push_back((
+                pending.owner,
+                pending.generation.clone(),
+                pending.request,
+            ));
             while self.provider_ignored.len() > 64 {
                 self.provider_ignored.pop_front();
+            }
+        }
+        // The provider owns its immutable read cache even when another plugin
+        // owns the job. Release it on every terminal path, including cancellation
+        // before the first response; no polling or cache-expiry delay is needed.
+        if let Some(instance) = self
+            .app
+            .plugins
+            .instances
+            .get_mut(&pending.owner)
+            .filter(|instance| instance.application.generation == pending.generation)
+        {
+            instance.application.sequence += 1;
+            let sequence = format!("e:{}", instance.application.sequence);
+            if self
+                .application_send(
+                    pending.owner,
+                    api::HostMessage::Event {
+                        sequence,
+                        event: "resource.released",
+                        data: api::EventData::ResourceReleased { job: token.into() },
+                    },
+                )
+                .is_err()
+            {
+                self.stop_plugin(pending.owner, "resource cache release consumer is too slow");
             }
         }
         let Some(instance) = self

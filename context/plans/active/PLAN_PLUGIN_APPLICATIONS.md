@@ -75,8 +75,9 @@ Concrete decisions in this slice:
 Milestone 3 now has a local file manager, document lifecycle, native interaction
 and bounded recursive filesystem operations, documented below. Milestone 4's
 provider-backed reads, conditional saves, explicit rebind and conflict inspection
-are implemented. Native weaker-transport confirmation is implemented; transport
-examples remain outstanding. Milestone 5 still needs managed processes, terminal/external handoffs, activity leases,
+are implemented, together with native weaker-transport confirmation and the SFTP
+example. FTP/FTPS, binary staging and remote filesystem operations remain
+outstanding. Milestone 5 still needs managed processes, terminal/external handoffs, activity leases,
 settings/state and the plugin manager. Milestone 6 still needs the broader SDK,
 non-Python example, full conformance matrix and complete application performance
 and supported-platform evidence. Milestones 1–2 also retain their full overload,
@@ -374,6 +375,48 @@ seconds. Native macOS remains unmeasured.
 SFTP/FTP adapters, binary staging and remote operations, subscriptions, richer
 models, helpers/leases/settings, manager/media examples and complete native-platform
 and performance evidence remain active.
+
+## SFTP reference browser and editor round
+
+The public Python example now browses an authenticated SFTP connection, opens
+version-bound UTF-8 provider documents, and uses native editing, syntax hints,
+confirmed saves and remote inspection. SSH host keys are verified against an
+explicit known-hosts file; credentials come from configured key files or an SSH
+agent. Endpoint identity is separate from labels and local editor paths. No SSH
+library is linked into the Rust editor.
+
+The transport bounds connections and active workers, downloaded text, directory
+metadata and staged uploads. Each operation has an eight-second caller deadline;
+a cancelled worker retains its slot until it actually exits. Cancellation and
+promotion use one synchronized gate. Empty private sibling probes check POSIX
+replacement support before uploading document contents. Hash comparison before
+promotion is best effort and is not advertised as compare-and-swap. A failed
+actual promotion remains unknown; neither connection close nor a missing history
+record certifies settlement. Disconnected cleanup may leave private staging files.
+
+Immutable reads, chunk boundaries, upload tokens and bounded proof records live
+in a transport-neutral example coordinator. The new reliable `resource.released`
+event tells the actual provider to release a finished/cancelled read even when a
+different plugin owns the job. Delivery failure stops the provider; the Python
+control executor handles releases without waiting for blocked command handlers.
+The authoring contract, schemas, fixtures and CI checks describe this boundary.
+
+Review separated committed/rejected/aborted/unknown and unseen-abort states,
+prevented expired history or read release from manufacturing settlement proof,
+fixed Unicode control validation, and added definite unsupported-rename refusal
+before document upload. Local fixtures generate temporary SSH keys, known-hosts
+records and data and require no user account/configuration changes.
+
+Formatting, warnings-as-errors Clippy, full Rust tests and canonical coverage
+passed: 3,248 tests with 33 ignored, 110,284/120,354 Linux lines (91.63%), above the
+unchanged 89% floor. Python checks passed epoch 1 (8), epoch 2/SDK (9), generic
+provider (10), browser (7), and real SFTP/public-wire fixture tests (18). The real
+editor PTY passed browsing, Enter-open, cancelled and confirmed saves and remote
+diff, with zero output bytes during two settled seconds. Native macOS and full
+application performance evidence remain required.
+
+FTP/FTPS, remote operations and binary staging, subscriptions, richer models,
+helpers/leases/settings and manager/media examples remain active.
 
 ## Investigation: existing foundation and missing boundaries
 

@@ -2999,11 +2999,15 @@ Newer edits remain
 dirty during uploads; save-and-close waits for confirmed success. Explicit rebind
 reconciles restarted providers and uncertain writes. `:diff-remote` compares fresh
 remote text with local edits without changing the saved baseline; both sides must
-fit the 4 MiB comparison limit. Network adapters remain in
-development, and remote identities stay separate from local files. The
-[application guide](plugins/applications.md) includes runnable task-list, local
-file-manager, document, memory-provider and background-job examples and lists the
-remaining work.
+fit the 4 MiB comparison limit. The runnable
+[SFTP browser and editor](plugins/applications.md#sftp-browser-and-editor) verifies
+SSH host keys, uses explicit identity files or an existing SSH agent, and opens
+remote UTF-8 documents up to 8 MiB. Run `:plugin.sftp.browse .` with its documented
+profile; Enter opens a selected file, and native `:write` confirms the remaining
+remote overwrite race. Remote identities stay separate from local files. The
+[application guide](plugins/applications.md) also includes runnable task-list,
+local file-manager, document, memory-provider and background-job examples and
+lists the remaining work.
 
 The runnable example, installation and configuration, command bindings, errors,
 subscription behavior, limits and experimental API are in the

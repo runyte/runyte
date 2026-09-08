@@ -401,6 +401,7 @@ pub enum HostMessage {
 #[derive(Clone, Debug, Serialize)]
 #[serde(untagged)]
 pub enum EventData {
+    ResourceReleased { job: String },
     ResourceFinished(super::provider::Finished),
     FilesystemFinished(super::filesystem::Finished),
     FilesystemStarted { plan: String, job: String },
@@ -986,6 +987,13 @@ mod tests {
                     upload: "upload-2".into(),
                     expected_version: "v1".into(),
                     mode: super::super::provider::WriteMode::ConfirmedBestEffort,
+                },
+            },
+            HostMessage::Event {
+                sequence: "e:16".into(),
+                event: "resource.released",
+                data: EventData::ResourceReleased {
+                    job: "j:g:4".into(),
                 },
             },
         ];

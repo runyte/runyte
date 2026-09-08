@@ -41,6 +41,26 @@ days, and fails below 89% total line coverage. The floor is deliberately below
 the observed baseline because conditional Linux and macOS code changes both the
 instrumented denominator and the paths available to a run on one platform.
 
+## 2026-09-08 — SFTP example and provider read-cache release
+
+Measured on `x86_64-unknown-linux-gnu` at `3b6bbe2` plus the SFTP round, using
+Rust 1.97.1 and cargo-llvm-cov 0.9.0. Canonical coverage and the full suite each
+passed 3,248 tests with 33 ignored. Formatting and warnings-as-errors Clippy passed.
+
+| Measure | Covered | Total | Coverage |
+| --- | ---: | ---: | ---: |
+| Lines | 110,284 | 120,354 | 91.63% |
+| Functions | 10,032 | 10,875 | 92.25% |
+| Regions | 168,807 | 185,123 | 91.19% |
+
+Three Rust regressions cover reliable provider cache release on terminal reads,
+live identity reuse and failed release delivery. The full provider filter passed
+98 tests. Python checks passed schema/SDK (8+9), generic provider (10), browser (7)
+and authenticated SFTP/public-wire fixtures (18). Native editor PTY checks passed
+browsing, Enter-open, cancelled/confirmed remote saving and comparison, with no
+output in two settled seconds. The 89% floor stays unchanged; native macOS and
+full application workload measurements remain pending.
+
 ## 2026-09-08 — native weaker-provider overwrite confirmation
 
 Measured on `x86_64-unknown-linux-gnu` at `6ee24e2` plus the native overwrite

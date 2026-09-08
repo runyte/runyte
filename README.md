@@ -67,7 +67,8 @@ multiple selections in one undoable edit. The opt-in
 [application API](docs/plugins/applications.md) adds native application views,
 a local file manager, background jobs, explicit text operations and provider-backed
 UTF-8 editing with conditional or explicitly confirmed remote saves and conflict
-comparison while the broader application platform
+comparison. A runnable [SFTP browser and editor](docs/plugins/applications.md#sftp-browser-and-editor)
+uses verified SSH keys while the broader application platform
 remains in development.
 See the [user guide](docs/user-guide.md) for complete behavior and limits.
 

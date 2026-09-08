@@ -1085,5 +1085,16 @@
         "mode": "confirmed_best_effort"
       }
     }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "event",
+      "sequence": "e:16",
+      "event": "resource.released",
+      "data": {
+        "job": "j:g:4"
+      }
+    }
   }
 ]

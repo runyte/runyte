@@ -25,6 +25,8 @@ mod provider_inspect;
 mod provider_overwrite;
 #[path = "plugin_provider_rebind.rs"]
 mod provider_rebind;
+#[path = "plugin_provider_release.rs"]
+mod provider_release;
 #[path = "plugin_provider_review.rs"]
 mod provider_review;
 #[path = "plugin_provider_writes.rs"]
@@ -63,6 +65,10 @@ fn setup(
 fn next(receiver: &mut mpsc::Receiver<HostMessage>) -> api::HostMessage {
     loop {
         match receiver.try_recv().unwrap() {
+            HostMessage::Application(api::HostMessage::Event {
+                event: "resource.released",
+                ..
+            }) => {}
             HostMessage::Application(message) => return message,
             HostMessage::Deadline { .. } => {}
             other => panic!("unexpected {other:?}"),
