@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: MPL-2.0
 """Small epoch 2 authoring client. Python 3.10+, standard library only."""
+import base64
+import binascii
 import concurrent.futures
 import json
 import sys
@@ -52,6 +54,45 @@ class Application:
 
     def request(self, method, **params):
         return self._request(method, params)
+
+    def start_process(self, label, executable, args=(), *, cwd=None, capture_stderr=False):
+        """Start one host-managed argument vector; stdout stays outside the protocol."""
+        params = {'label': label, 'executable': executable, 'args': list(args),
+                  'capture_stderr': capture_stderr}
+        if cwd is not None:
+            params['cwd'] = cwd
+        return self.request('process.start', **params)
+
+    def read_process(self, process, stream, offset, limit=65536):
+        """Read retained output once. The returned data field contains decoded bytes."""
+        if not 1 <= limit <= 65536:
+            raise PluginError('invalid_argument', 'Helper read limit must be 1–65536 bytes')
+        result = self.request('process.read', process=process, stream=stream, offset=offset, limit=limit)
+        encoded = result['data']
+        if not isinstance(encoded, str) or len(encoded) > ((limit + 2) // 3) * 4:
+            raise PluginError('invalid_argument', 'Invalid helper output encoding')
+        try:
+            data = base64.b64decode(encoded, validate=True)
+        except (binascii.Error, ValueError) as error:
+            raise PluginError('invalid_argument', 'Invalid helper output encoding') from error
+        if (len(data) > limit or result['process'] != process or result['stream'] != stream
+                or result['offset'] != offset or result['next'] != offset + len(data)):
+            raise PluginError('invalid_argument', 'Invalid helper output chunk')
+        return {**result, 'data': data}
+
+    def write_process(self, process, data, *, eof=False):
+        """Acknowledge bytes written to the pipe, without claiming helper consumption."""
+        if not isinstance(data, (bytes, bytearray, memoryview)):
+            raise PluginError('invalid_argument', 'Helper input must be bytes')
+        size = data.nbytes if isinstance(data, memoryview) else len(data)
+        if size > 65536:
+            raise PluginError('limit_exceeded', 'Helper input exceeds 65536 bytes')
+        result = self.request('process.write', process=process,
+                              data=base64.b64encode(bytes(data)).decode('ascii'), eof=eof)
+        if (result['process'] != process or result['written'] != size
+                or eof and not result['stdin_closed']):
+            raise PluginError('outcome_unknown', 'Helper input acknowledgement was incomplete')
+        return result
 
     def publish_model(self, view, expected_revision, model, *, expected_query_revision=None):
         """Atomically publish a model, staging large JSON without exposing partial rows."""

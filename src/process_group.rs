@@ -36,6 +36,9 @@
 //! never influences whether a signal is sent. Normal application use sets no
 //! such variable and writes nothing.
 
+mod observer;
+pub(crate) use observer::ChildExitObserver;
+
 use std::{
     io::Write,
     path::PathBuf,

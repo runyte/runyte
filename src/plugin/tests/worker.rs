@@ -269,12 +269,72 @@ fn all_noisy_owner_quotas_leave_the_quiet_owner_and_local_io_their_full_admissio
             })
             .unwrap();
     }
+    // Helper traffic has its own three ordinary slots plus one reserved reap
+    // event. Saturating every helper must leave the existing owner/local proof
+    // intact, and lifetime permits must survive until final event consumption.
+    let helpers = Arc::new(tokio::sync::Semaphore::new(32));
+    for helper in 0..32 {
+        let ordinary = Arc::new(tokio::sync::Semaphore::new(3));
+        let terminal = Arc::new(tokio::sync::Semaphore::new(1));
+        for part in 0..4 {
+            let (kind, permit, lifetime) = if part < 3 {
+                (
+                    super::super::process::runtime::Kind::Output {
+                        stream: super::super::process::Stream::Stdout,
+                        bytes: vec![0; 16 * 1024],
+                    },
+                    ordinary.clone().try_acquire_owned().unwrap(),
+                    None,
+                )
+            } else {
+                (
+                    super::super::process::runtime::Kind::Exited {
+                        code: Some(0),
+                        signal: None,
+                        error: None,
+                        stdout: vec![],
+                        stderr: vec![],
+                        output_truncated: false,
+                        write: None,
+                    },
+                    terminal.clone().try_acquire_owned().unwrap(),
+                    Some(helpers.clone().try_acquire_owned().unwrap()),
+                )
+            };
+            events
+                .try_send(Event {
+                    plugin: helper / 4,
+                    result: Ok(ClientMessage::Process(
+                        super::super::process::runtime::Event {
+                            generation: "generation".into(),
+                            process: format!("helper-{helper}"),
+                            kind,
+                            _permit: permit,
+                            _lifetime: lifetime,
+                        },
+                    )),
+                })
+                .unwrap();
+        }
+        assert_eq!(ordinary.available_permits(), 0);
+        assert_eq!(terminal.available_permits(), 0);
+    }
+    assert_eq!(helpers.available_permits(), 0);
     assert_eq!(events.capacity(), 0);
     let mut quiet = 0;
+    let mut quiet_helpers = 0;
     while let Ok(event) = receiver.try_recv() {
-        quiet += usize::from(event.plugin == MAX_PLUGINS - 1);
+        if event.plugin == MAX_PLUGINS - 1 {
+            if matches!(event.result, Ok(ClientMessage::Process(_))) {
+                quiet_helpers += 1;
+            } else {
+                quiet += 1;
+            }
+        }
     }
     assert_eq!(quiet, PRODUCER_EVENTS + 2);
+    assert_eq!(quiet_helpers, 4 * 4);
+    assert_eq!(helpers.available_permits(), 32);
     assert_eq!(events.capacity(), EVENT_CAPACITY);
 }
 

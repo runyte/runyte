@@ -15,6 +15,9 @@ pub const MAX_STATE_BYTES: usize = 4096;
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Source {
+    Process {
+        process: String,
+    },
     /// A subscription filter only; returned states always identify a concrete buffer.
     Buffers,
     Buffer {
@@ -42,6 +45,15 @@ pub enum Source {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Snapshot {
+    Process {
+        state: super::process::State,
+        stdout: super::process::Bounds,
+        stderr: super::process::Bounds,
+        stdin_closed: bool,
+        output_truncated: bool,
+        exit_code: Option<i32>,
+        signal: Option<i32>,
+    },
     Buffer {
         revision: String,
         saved_revision: Option<String>,
@@ -83,6 +95,18 @@ impl Snapshot {
     pub fn reliable_change(&self, previous: &Self) -> bool {
         match (previous, self) {
             (_, Self::Closed {}) => true,
+            (
+                Self::Process {
+                    state: old,
+                    stdin_closed: old_closed,
+                    ..
+                },
+                Self::Process {
+                    state: new,
+                    stdin_closed: new_closed,
+                    ..
+                },
+            ) => old != new || old_closed != new_closed,
             (
                 Self::Buffer {
                     saved_revision: old,
@@ -231,6 +255,7 @@ impl Registry {
 
     fn validate_source(source: &Source) -> Result<(), Error> {
         let handles: &[&str] = match source {
+            Source::Process { process } => &[process],
             Source::Buffer { buffer } => &[buffer],
             Source::Pane { pane } => &[pane],
             Source::View { view } | Source::ViewActions { view } => &[view],
@@ -250,7 +275,8 @@ impl Registry {
         Self::validate_source(source)?;
         let matches = matches!(
             (source, snapshot),
-            (Source::Buffer { .. }, Snapshot::Buffer { .. })
+            (Source::Process { .. }, Snapshot::Process { .. })
+                | (Source::Buffer { .. }, Snapshot::Buffer { .. })
                 | (Source::Pane { .. }, Snapshot::Pane { .. })
                 | (Source::View { .. }, Snapshot::View { .. })
                 | (Source::Viewport { .. }, Snapshot::Viewport { .. })
@@ -291,7 +317,7 @@ impl Registry {
                 .sum(),
             Snapshot::ViewActions { accepted } => accepted.len(),
             Snapshot::Attachment { generation, .. } => generation.len(),
-            Snapshot::Job { .. } | Snapshot::Closed {} => 0,
+            Snapshot::Process { .. } | Snapshot::Job { .. } | Snapshot::Closed {} => 0,
         };
         if text_bytes > MAX_STATE_BYTES {
             return Err(limit("Observation source metadata is too large"));

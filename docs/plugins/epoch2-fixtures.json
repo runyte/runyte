@@ -309,6 +309,7 @@
       "type": "hello",
       "version": "runyte-experimental-2",
       "capabilities": [
+        "processes",
         "providers",
         "interaction",
         "workspace",
@@ -328,7 +329,11 @@
         "control_queue_bytes": 4194304,
         "control_deadline_seconds": 10,
         "job_deadline_seconds": 3600,
-        "cancellation_seconds": 2
+        "cancellation_seconds": 2,
+        "process_handles": 4,
+        "process_io_bytes": 65536,
+        "process_output_bytes": 1048576,
+        "process_write_seconds": 5
       }
     }
   },
@@ -351,7 +356,11 @@
         "control_queue_bytes": 4194304,
         "control_deadline_seconds": 10,
         "job_deadline_seconds": 3600,
-        "cancellation_seconds": 2
+        "cancellation_seconds": 2,
+        "process_handles": 4,
+        "process_io_bytes": 65536,
+        "process_output_bytes": 1048576,
+        "process_write_seconds": 5
       }
     }
   },
@@ -661,7 +670,7 @@
         "surface": "u:g:1",
         "accepted": true,
         "values": {
-          "name": "\u00e9"
+          "name": "é"
         }
       }
     }
@@ -674,7 +683,7 @@
       "method": "buffer.create",
       "params": {
         "path": "notes.txt",
-        "text": "\u00e9\u732b\n",
+        "text": "é猫\n",
         "invocation": null
       }
     }
@@ -795,7 +804,7 @@
         "value": {
           "version": "v1",
           "offset": 0,
-          "text": "\u00e9\u732b",
+          "text": "é猫",
           "eof": true
         }
       }
@@ -970,7 +979,7 @@
         "job": "j:g:1",
         "upload": "upload-1",
         "offset": 0,
-        "text": "\u00e9\u732b"
+        "text": "é猫"
       }
     }
   },
@@ -1816,6 +1825,160 @@
             }
           ]
         }
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:1000",
+      "method": "process.start",
+      "params": {
+        "label": "Echo helper",
+        "executable": "python3",
+        "args": [
+          "echo_helper.py"
+        ],
+        "capture_stderr": false
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:1001",
+      "method": "process.get",
+      "params": {
+        "process": "pr:1"
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:1002",
+      "method": "process.read",
+      "params": {
+        "process": "pr:1",
+        "stream": "stdout",
+        "offset": 0,
+        "limit": 65536
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:1003",
+      "method": "process.write",
+      "params": {
+        "process": "pr:1",
+        "data": "aGVsbG8K",
+        "eof": true
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:1004",
+      "method": "process.close",
+      "params": {
+        "process": "pr:1"
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "response",
+      "id": "p:1000",
+      "result": {
+        "process": "pr:1",
+        "label": "Echo helper",
+        "state": "running",
+        "stdout": {
+          "start": 0,
+          "end": 6
+        },
+        "stderr": {
+          "start": 0,
+          "end": 0
+        },
+        "capture_stderr": false,
+        "stdin_closed": false,
+        "exit_code": null,
+        "signal": null,
+        "output_truncated": false
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "response",
+      "id": "p:1002",
+      "result": {
+        "process": "pr:1",
+        "stream": "stdout",
+        "offset": 0,
+        "data": "aGVsbG8K",
+        "next": 6,
+        "eof": false
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "response",
+      "id": "p:1003",
+      "result": {
+        "process": "pr:1",
+        "written": 6,
+        "stdin_closed": true
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "event",
+      "sequence": "e:1000",
+      "event": "event.changed",
+      "data": {
+        "subscription": "o:g:1",
+        "coalesced": 0,
+        "sources": [
+          {
+            "source": {
+              "kind": "process",
+              "process": "pr:1"
+            },
+            "revision": "o:2",
+            "state": {
+              "kind": "process",
+              "state": "exited",
+              "stdout": {
+                "start": 2,
+                "end": 8
+              },
+              "stderr": {
+                "start": 0,
+                "end": 0
+              },
+              "stdin_closed": true,
+              "output_truncated": true,
+              "exit_code": 0,
+              "signal": null
+            }
+          }
+        ]
       }
     }
   }

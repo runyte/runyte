@@ -52,6 +52,11 @@ impl WorkspaceHost {
                         .is_some_and(|pane| !self.app.panes.contains_key(pane)),
             ),
             wire::Source::Job { job } => ("jobs", state.jobs.contains_key(job), false),
+            wire::Source::Process { process } => (
+                "processes",
+                state.processes.contains(process),
+                self.process_info(owner, process).is_none(),
+            ),
             wire::Source::Attachment | wire::Source::Buffers => ("workspace", true, false),
         };
         if !state.capabilities.contains(capability) {
@@ -166,6 +171,20 @@ impl WorkspaceHost {
                             })
                     }
                     _ => wire::Snapshot::Closed {},
+                }
+            }
+            wire::Source::Process { process } => {
+                match self.process_observation_info(owner, process) {
+                    Some(info) => wire::Snapshot::Process {
+                        state: info.state,
+                        stdout: info.stdout,
+                        stderr: info.stderr,
+                        stdin_closed: info.stdin_closed,
+                        output_truncated: info.output_truncated,
+                        exit_code: info.exit_code,
+                        signal: info.signal,
+                    },
+                    None => wire::Snapshot::Closed {},
                 }
             }
             wire::Source::Job { job } => match state.jobs.get(job) {

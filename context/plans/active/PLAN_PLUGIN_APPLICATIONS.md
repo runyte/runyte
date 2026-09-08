@@ -79,7 +79,8 @@ are implemented, together with native weaker-transport confirmation and the SFTP
 and FTP/FTPS examples. Binary download staging now uses native confirmed
 publication, and the examples now provide native-confirmed remote mkdir, rename
 and delete. The remaining provider conflict/lifecycle refinements and later
-milestones remain active. Milestone 5 still needs managed processes, terminal/external handoffs, activity leases,
+milestones remain active. Milestone 5 now includes bounded managed processes and still needs
+terminal/external handoffs, activity leases,
 settings/state and the plugin manager. Milestone 6 still needs the broader SDK,
 non-Python example, full conformance matrix and complete application performance
 and supported-platform evidence. Milestones 1–2 also retain their full overload,
@@ -683,6 +684,55 @@ cancellation, empty-query reset and viewport/action observations, with zero
 terminal bytes over two settled seconds. Native macOS and the complete release
 workload matrix remain required.
 
+## Managed helper round — 2026-09-08
+
+Added capability `processes` with bounded `process.start/get/read/write/close`.
+Helpers use executable/argument vectors and workspace-contained working
+folders. Startup and stdin writes have five-second deadlines; a delayed spawn
+never publishes a late successful handle, and accepted pipe writes report actual
+OS delivery without claiming helper consumption. Natural exit retains readable
+handles; close settles only after actual group cleanup and reap. Four handles per
+configured identity and 32 globally include pending spawns, exited records and
+old-generation cleanup. Every helper reserves 2 MiB, with 1 MiB retained output,
+64 KiB read/write chunks and three ordinary plus one terminal event slot.
+
+The event-driven worker registers child-exit readiness before checking status,
+uses the existing Linux/macOS non-reaping process-group anchor, and shares the
+Darwin stable-zombie observer with Git. Kill precedes reap even on natural exit
+or runtime shutdown. Final output and pending write acknowledgement use the
+reserved terminal event; a shared 64 KiB/80 ms final drain reports truncation.
+The host never logs argv, stdin or raw output. Process metadata subscriptions
+coalesce byte bounds and reliably report lifecycle changes. Pending operations
+protect retirement; an otherwise idle helper does not replace an activity lease.
+
+The Python SDK provides bounded binary helpers, and `helper.py` controls a
+checked-in deterministic echo/flood backend through a native view. Its retained
+output tail and one pending refresh intent keep output pressure bounded; nothing
+refreshes while idle. Protocol fixtures cover all requests/results and process
+observations, and the handshake advertises the helper budgets.
+
+Comprehensive reviews fixed cancellation while waiting for output capacity,
+stdout-priority starvation, delayed-spawn handles, pending-write acknowledgement
+blocking reap, final-drain deadline resets, streaming argument-count allocation,
+and truthful capture-failure metadata. The ordinary sandbox holds an exited
+leader's background descendant differently from native execution; the exact
+regression is verified in the native process-test environment. Native macOS and
+the complete workload matrix remain acceptance requirements.
+
+Validation: formatting, warnings-as-errors Clippy, ordinary tests and canonical
+`cargo llvm-cov --locked --workspace` passed on Linux. Both suites passed 3,415
+tests with 33 ignored. Coverage is 91.68% lines, 92.09% functions and 91.20%
+regions; the 89% floor is unchanged. Thirty-five new Rust tests cover wire/ring
+bounds, shared non-reaping observation, startup/write deadlines, full queues,
+late cleanup, ownership, generation fences and deferred close ordering. The
+shared 288-slot admission proof now fills all helper reservations as well as
+existing owner/local slots. Python checks passed: applications/schema 10,
+processes 11, models 12 and queries 11. Native PTY start/echo/flood/EOF/owner-stop
+checks passed; naturally exited and stopped helpers were reaped, and two settled
+idle seconds emitted zero terminal bytes. This smoke is not the full performance
+gate. Terminal/external handoffs, notifications, leases, settings/state,
+management, remaining provider decisions and media/acceptance work continue.
+
 ## Investigation: existing foundation and missing boundaries
 
 The current [guide](../../../docs/plugins.md) and
@@ -1165,7 +1215,7 @@ or model update. Count queued bytes as well as message count.
 | Outstanding control requests / finite jobs | 16 / 4 per plugin |
 | Continuing activity leases | 2 per plugin, 10 minutes each |
 | One encoded JSON line including newline | 1 MiB |
-| Text or helper-data chunk | 256 KiB decoded; must also fit encoded line |
+| Text / helper-data chunk | 256 KiB / 64 KiB decoded; must also fit encoded line |
 | One explicit text transaction | 1,024 changes, 512 KiB replacement text |
 | Retained text snapshots | 2 per plugin, 16 MiB each, 30-second idle expiry |
 | View model / stable rows | 4 MiB / 10,000 per view; larger datasets page |

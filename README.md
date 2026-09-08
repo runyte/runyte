@@ -70,8 +70,9 @@ UTF-8 editing with conditional or explicitly confirmed remote saves and conflict
 comparison. Runnable [SFTP](docs/plugins/applications.md#sftp-browser-and-editor)
 and [FTP/FTPS](docs/plugins/applications.md#ftp-and-ftps-browser-and-editor) browsers
 state their transport and overwrite guarantees explicitly and can download binary
-files through native confirmation. The broader application
-platform remains in development.
+files through native confirmation. Applications can also control
+[managed helpers](docs/plugins/applications.md#managed-helpers) with bounded binary
+pipes and process-group cleanup. The broader application platform remains in development.
 See the [user guide](docs/user-guide.md) for complete behavior and limits.
 
 ### Workspaces, panes, and navigation

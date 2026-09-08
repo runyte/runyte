@@ -140,6 +140,15 @@ impl WorkspaceHost {
         // Observation delivery or a queued stop can retire this same instance.
         // Check membership after that boundary before looking up its state.
         self.sync_plugin_observers();
+        if let Ok(ClientMessage::Process(process)) = event.result {
+            if let Err(error) = self.application_process_event(event.plugin, process)
+                && self.app.plugins.instances.contains_key(&event.plugin)
+            {
+                self.stop_plugin(event.plugin, &error.to_string());
+            }
+            self.sync_application_observers();
+            return before != presentation(self);
+        }
         if let Ok(
             ClientMessage::Local {
                 generation,
@@ -180,6 +189,7 @@ impl WorkspaceHost {
 
     /// Administrative cancellation also removes commands and subscriptions.
     pub fn stop_plugin(&mut self, id: usize, reason: &str) {
+        self.stop_plugin_processes(id);
         self.stop_provider_reads(id);
         self.stop_provider_writes(id);
         self.orphan_document_saves(id);
@@ -270,6 +280,7 @@ impl WorkspaceHost {
 
     pub(super) fn plugin_message(&mut self, id: usize, message: ClientMessage) -> Result<()> {
         match message {
+            ClientMessage::Process(event) => return self.application_process_event(id, event),
             ClientMessage::ModelPrepared {
                 generation,
                 request,
@@ -572,7 +583,8 @@ impl WorkspaceHost {
             | ClientMessage::Deadline { .. }
             | ClientMessage::FilesystemApplied { .. }
             | ClientMessage::DocumentSaved { .. }
-            | ClientMessage::ModelPrepared { .. } => anyhow::bail!("wrong API epoch"),
+            | ClientMessage::ModelPrepared { .. }
+            | ClientMessage::Process(_) => anyhow::bail!("wrong API epoch"),
         }
         Ok(())
     }

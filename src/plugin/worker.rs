@@ -20,7 +20,8 @@ const RESERVED_MESSAGES: usize = 8;
 const RESERVED_BYTES: usize = 512 * 1024;
 /// Each worker owns 16 input/deadline permits, one state-ready notice and one
 /// failure. Local IO retains its separate 16 permits until its result is read.
-pub const EVENT_CAPACITY: usize = MAX_PLUGINS * (PRODUCER_EVENTS + 2) + 16;
+/// Each of 32 managed helpers reserves three ordinary events and one final reap.
+pub const EVENT_CAPACITY: usize = MAX_PLUGINS * (PRODUCER_EVENTS + 2) + 16 + 32 * 4;
 
 #[derive(Debug)]
 pub struct Event {

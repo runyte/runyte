@@ -331,6 +331,18 @@
         },
         "cancellation_seconds": {
           "const": 2
+        },
+        "process_handles": {
+          "const": 4
+        },
+        "process_io_bytes": {
+          "const": 65536
+        },
+        "process_output_bytes": {
+          "const": 1048576
+        },
+        "process_write_seconds": {
+          "const": 5
         }
       },
       "required": [
@@ -342,7 +354,11 @@
         "control_queue_bytes",
         "control_deadline_seconds",
         "job_deadline_seconds",
-        "cancellation_seconds"
+        "cancellation_seconds",
+        "process_handles",
+        "process_io_bytes",
+        "process_output_bytes",
+        "process_write_seconds"
       ],
       "additionalProperties": true
     },
@@ -1752,6 +1768,15 @@
             },
             {
               "$ref": "#/$defs/viewQueryResult"
+            },
+            {
+              "$ref": "#/$defs/processInfo"
+            },
+            {
+              "$ref": "#/$defs/processRead"
+            },
+            {
+              "$ref": "#/$defs/processWrite"
             }
           ]
         }
@@ -2132,6 +2157,21 @@
         },
         {
           "$ref": "#/$defs/view.query.set"
+        },
+        {
+          "$ref": "#/$defs/process.start"
+        },
+        {
+          "$ref": "#/$defs/process.get"
+        },
+        {
+          "$ref": "#/$defs/process.read"
+        },
+        {
+          "$ref": "#/$defs/process.write"
+        },
+        {
+          "$ref": "#/$defs/process.close"
         }
       ]
     },
@@ -4420,6 +4460,24 @@
             "view"
           ],
           "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "process"
+            },
+            "process": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          "required": [
+            "kind",
+            "process"
+          ],
+          "additionalProperties": false
         }
       ]
     },
@@ -4560,6 +4618,24 @@
           "required": [
             "kind",
             "view"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "process"
+            },
+            "process": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          "required": [
+            "kind",
+            "process"
           ],
           "additionalProperties": false
         }
@@ -4801,6 +4877,94 @@
           "required": [
             "kind",
             "accepted"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "process"
+            },
+            "state": {
+              "enum": [
+                "running",
+                "closing",
+                "exited"
+              ]
+            },
+            "stdout": {
+              "type": "object",
+              "properties": {
+                "start": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 18446744073709551615
+                },
+                "end": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 18446744073709551615
+                }
+              },
+              "required": [
+                "start",
+                "end"
+              ],
+              "additionalProperties": false
+            },
+            "stderr": {
+              "type": "object",
+              "properties": {
+                "start": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 18446744073709551615
+                },
+                "end": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 18446744073709551615
+                }
+              },
+              "required": [
+                "start",
+                "end"
+              ],
+              "additionalProperties": false
+            },
+            "stdin_closed": {
+              "type": "boolean"
+            },
+            "exit_code": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": -2147483648,
+              "maximum": 2147483647
+            },
+            "signal": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": -2147483648,
+              "maximum": 2147483647
+            },
+            "output_truncated": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "kind",
+            "state",
+            "stdout",
+            "stderr",
+            "stdin_closed",
+            "exit_code",
+            "signal",
+            "output_truncated"
           ],
           "additionalProperties": false
         }
@@ -6150,6 +6314,411 @@
         "source",
         "revision",
         "action"
+      ],
+      "additionalProperties": false
+    },
+    "processInfo": {
+      "type": "object",
+      "properties": {
+        "process": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "state": {
+          "enum": [
+            "running",
+            "closing",
+            "exited"
+          ]
+        },
+        "stdout": {
+          "type": "object",
+          "properties": {
+            "start": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 18446744073709551615
+            },
+            "end": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 18446744073709551615
+            }
+          },
+          "required": [
+            "start",
+            "end"
+          ],
+          "additionalProperties": false
+        },
+        "stderr": {
+          "type": "object",
+          "properties": {
+            "start": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 18446744073709551615
+            },
+            "end": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 18446744073709551615
+            }
+          },
+          "required": [
+            "start",
+            "end"
+          ],
+          "additionalProperties": false
+        },
+        "capture_stderr": {
+          "type": "boolean"
+        },
+        "stdin_closed": {
+          "type": "boolean"
+        },
+        "exit_code": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        },
+        "signal": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        },
+        "output_truncated": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "process",
+        "label",
+        "state",
+        "stdout",
+        "stderr",
+        "capture_stderr",
+        "stdin_closed",
+        "exit_code",
+        "signal",
+        "output_truncated"
+      ],
+      "additionalProperties": false
+    },
+    "processRead": {
+      "type": "object",
+      "properties": {
+        "process": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "stream": {
+          "enum": [
+            "stdout",
+            "stderr"
+          ]
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "data": {
+          "type": "string",
+          "maxLength": 87384,
+          "contentEncoding": "base64"
+        },
+        "next": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "eof": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "process",
+        "stream",
+        "offset",
+        "data",
+        "next",
+        "eof"
+      ],
+      "additionalProperties": false
+    },
+    "processWrite": {
+      "type": "object",
+      "properties": {
+        "process": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "written": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65536
+        },
+        "stdin_closed": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "process",
+        "written",
+        "stdin_closed"
+      ],
+      "additionalProperties": false
+    },
+    "process.start": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "request"
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^p:[1-9][0-9]*$",
+          "maxLength": 22
+        },
+        "method": {
+          "const": "process.start"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "label": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160
+            },
+            "executable": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096
+            },
+            "args": {
+              "type": "array",
+              "maxItems": 64,
+              "items": {
+                "type": "string",
+                "maxLength": 4096
+              }
+            },
+            "cwd": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "minLength": 1,
+              "maxLength": 4096
+            },
+            "capture_stderr": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "label",
+            "executable"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "method",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    "process.get": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "request"
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^p:[1-9][0-9]*$",
+          "maxLength": 22
+        },
+        "method": {
+          "const": "process.get"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "process": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          "required": [
+            "process"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "method",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    "process.read": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "request"
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^p:[1-9][0-9]*$",
+          "maxLength": 22
+        },
+        "method": {
+          "const": "process.read"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "process": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "stream": {
+              "enum": [
+                "stdout",
+                "stderr"
+              ]
+            },
+            "offset": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 18446744073709551615
+            },
+            "limit": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65536
+            }
+          },
+          "required": [
+            "process",
+            "stream",
+            "offset",
+            "limit"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "method",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    "process.write": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "request"
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^p:[1-9][0-9]*$",
+          "maxLength": 22
+        },
+        "method": {
+          "const": "process.write"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "process": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "data": {
+              "type": "string",
+              "maxLength": 87384,
+              "contentEncoding": "base64"
+            },
+            "eof": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "process",
+            "data"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "method",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    "process.close": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "request"
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^p:[1-9][0-9]*$",
+          "maxLength": 22
+        },
+        "method": {
+          "const": "process.close"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "process": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          "required": [
+            "process"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "method",
+        "params"
       ],
       "additionalProperties": false
     }

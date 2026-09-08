@@ -3025,6 +3025,14 @@ local files. The
 local file-manager, document, memory-provider and background-job examples and
 lists the remaining work.
 
+Applications can launch [managed helpers](plugins/applications.md#managed-helpers)
+with bounded binary input and retained output. Their output stays separate from
+the plugin protocol. Closing a helper or stopping its plugin cleans up and reaps
+the owned process group; naturally exited output stays readable until released.
+The runnable helper controller demonstrates Send, Flood, EOF and Close actions
+without a network service. Enabled idle helpers alone do not prevent persistent
+host retirement.
+
 The SFTP and FTP/FTPS reference browsers also provide `mkdir`, `rename` and
 `delete` actions for one remote file or empty directory. After preparation,
 `confirm-operation` opens native confirmation; `cancel-operation` cancels pending

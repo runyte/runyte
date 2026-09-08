@@ -41,6 +41,30 @@ days, and fails below 89% total line coverage. The floor is deliberately below
 the observed baseline because conditional Linux and macOS code changes both the
 instrumented denominator and the paths available to a run on one platform.
 
+## 2026-09-08 — managed helper processes
+
+Measured on `x86_64-unknown-linux-gnu` at `b7b40c8` plus the managed-helper
+round, using Rust 1.97.1 and cargo-llvm-cov 0.9.0. Ordinary and canonical suites
+each passed 3,415 tests with 33 ignored. Formatting and warnings-as-errors Clippy
+passed; the floor remains 89%.
+
+| Measure | Covered | Total | Coverage |
+| --- | ---: | ---: | ---: |
+| Lines | 115,625 | 126,115 | 91.68% |
+| Functions | 10,445 | 11,342 | 92.09% |
+| Regions | 176,101 | 193,090 | 91.20% |
+
+Thirty-five new Rust tests cover helper wire/byte-ring bounds, non-reaping exit
+observation, startup/write deadlines, reserved terminal delivery under pressure,
+late-spawn/runtime-shutdown cleanup, ownership, generation accounting and deferred
+close ordering. The existing admission proof now fills the complete 288-slot
+queue including helper reservations. Eleven Python checks cover binary SDK I/O,
+structural fixtures and the deterministic example. Native PTY start, echo, flood,
+EOF and owner-stop checks passed; two settled idle seconds emitted zero terminal
+bytes. Process/PTY checks run in the native environment: the ordinary sandbox's
+background-descendant lifetime differs. Native macOS and the full application
+workload matrix remain pending.
+
 ## 2026-09-08 — query and view observations
 
 Measured on `x86_64-unknown-linux-gnu` at `ae90877` plus the query/observation

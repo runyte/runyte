@@ -25,6 +25,8 @@ mod model_review;
 mod models;
 #[path = "plugin_observations.rs"]
 mod observations;
+#[path = "plugin_processes.rs"]
+mod processes;
 #[path = "plugin_provider_inspect.rs"]
 mod provider_inspect;
 #[path = "plugin_provider_overwrite.rs"]

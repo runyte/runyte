@@ -131,6 +131,26 @@ pub struct CommandResult {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "method", content = "params", deny_unknown_fields)]
 pub enum Request {
+    #[serde(rename = "process.start")]
+    ProcessStart(super::process::Start),
+    #[serde(rename = "process.get")]
+    ProcessGet { process: String },
+    #[serde(rename = "process.read")]
+    ProcessRead {
+        process: String,
+        stream: super::process::Stream,
+        offset: u64,
+        limit: usize,
+    },
+    #[serde(rename = "process.write")]
+    ProcessWrite {
+        process: String,
+        data: String,
+        #[serde(default)]
+        eof: bool,
+    },
+    #[serde(rename = "process.close")]
+    ProcessClose { process: String },
     #[serde(rename = "event.subscribe")]
     EventSubscribe {
         sources: Vec<super::observation::Source>,
@@ -414,6 +434,10 @@ pub struct Job {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Limits {
+    pub process_handles: usize,
+    pub process_io_bytes: usize,
+    pub process_output_bytes: usize,
+    pub process_write_seconds: u64,
     pub line_bytes: usize,
     pub commands: usize,
     pub requests: usize,
@@ -427,6 +451,10 @@ pub struct Limits {
 impl Default for Limits {
     fn default() -> Self {
         Self {
+            process_handles: super::process::MAX_HANDLES,
+            process_io_bytes: super::process::MAX_IO_BYTES,
+            process_output_bytes: super::process::MAX_OUTPUT_BYTES,
+            process_write_seconds: 5,
             line_bytes: super::MAX_BYTES,
             commands: MAX_COMMANDS,
             requests: MAX_REQUESTS,
@@ -515,6 +543,9 @@ pub enum Response {
 #[derive(Clone, Debug, Serialize)]
 #[serde(untagged)]
 pub enum ResultValue {
+    Process(super::process::Info),
+    ProcessRead(super::process::Read),
+    ProcessWrite(super::process::Write),
     ViewQuery {
         view: String,
         revision: String,
@@ -640,6 +671,7 @@ pub(crate) struct CapturedContext {
 
 /// Bounded host ownership, independent of a frontend and the ten-second control timer.
 pub(crate) struct Instance {
+    pub processes: BTreeSet<String>,
     pub model_requests: BTreeMap<String, super::view::Pending>,
     pub view_stages: BTreeMap<String, super::view::Stage>,
     pub view_snapshots: BTreeMap<String, super::view::OwnedSnapshot>,
@@ -684,6 +716,7 @@ impl Default for Instance {
             .unwrap_or_default()
             .as_nanos();
         Self {
+            processes: Default::default(),
             model_requests: Default::default(),
             view_stages: Default::default(),
             view_snapshots: Default::default(),
@@ -769,6 +802,7 @@ impl Instance {
 }
 
 pub const CAPABILITIES: &[&str] = &[
+    "processes",
     "providers",
     "interaction",
     "workspace",
@@ -804,7 +838,12 @@ pub(crate) fn decode(bytes: &[u8]) -> anyhow::Result<super::ClientMessage> {
         );
         if !matches!(
             method,
-            "event.subscribe"
+            "process.start"
+                | "process.get"
+                | "process.read"
+                | "process.write"
+                | "process.close"
+                | "event.subscribe"
                 | "event.unsubscribe"
                 | "event.resync"
                 | "provider.register"
@@ -1399,6 +1438,69 @@ mod tests {
                     },
                 },
             },
+            HostMessage::Response {
+                id: "p:1000".into(),
+                outcome: Response::Success {
+                    result: ResultValue::Process(super::super::process::Info {
+                        process: "pr:1".into(),
+                        label: "Echo helper".into(),
+                        state: super::super::process::State::Running,
+                        stdout: super::super::process::Bounds { start: 0, end: 6 },
+                        stderr: Default::default(),
+                        capture_stderr: false,
+                        stdin_closed: false,
+                        output_truncated: false,
+                        exit_code: None,
+                        signal: None,
+                    }),
+                },
+            },
+            HostMessage::Response {
+                id: "p:1002".into(),
+                outcome: Response::Success {
+                    result: ResultValue::ProcessRead(super::super::process::Read {
+                        process: "pr:1".into(),
+                        stream: super::super::process::Stream::Stdout,
+                        offset: 0,
+                        data: "aGVsbG8K".into(),
+                        next: 6,
+                        eof: false,
+                    }),
+                },
+            },
+            HostMessage::Response {
+                id: "p:1003".into(),
+                outcome: Response::Success {
+                    result: ResultValue::ProcessWrite(super::super::process::Write {
+                        process: "pr:1".into(),
+                        written: 6,
+                        stdin_closed: true,
+                    }),
+                },
+            },
+            HostMessage::Event {
+                sequence: "e:1000".into(),
+                event: "event.changed",
+                data: EventData::Observation(observe::Change {
+                    subscription: "o:g:1".into(),
+                    coalesced: 0,
+                    sources: vec![observe::SourceState {
+                        source: observe::Source::Process {
+                            process: "pr:1".into(),
+                        },
+                        revision: "o:2".into(),
+                        state: observe::Snapshot::Process {
+                            state: super::super::process::State::Exited,
+                            stdout: super::super::process::Bounds { start: 2, end: 8 },
+                            stderr: Default::default(),
+                            stdin_closed: true,
+                            output_truncated: true,
+                            exit_code: Some(0),
+                            signal: None,
+                        },
+                    }],
+                }),
+            },
         ];
         let expected = fixtures
             .iter()
@@ -1429,6 +1531,63 @@ mod tests {
                     dirty: false,
                 }
             },
+        }
+    }
+
+    #[test]
+    fn process_wire_rejects_ambiguous_operating_system_values() {
+        for (method, params) in [
+            (
+                "process.start",
+                serde_json::json!({"label":"Helper","executable":"helper","args":"--flag"}),
+            ),
+            (
+                "process.start",
+                serde_json::json!({"label":"Helper","executable":"helper","args":[null]}),
+            ),
+            (
+                "process.start",
+                serde_json::json!({"label":"Helper","executable":"helper","cwd":false}),
+            ),
+            (
+                "process.start",
+                serde_json::json!({"label":"Helper","executable":"helper","capture_stderr":1}),
+            ),
+            (
+                "process.start",
+                serde_json::json!({"label":"Helper","executable":"helper","shell":true}),
+            ),
+            (
+                "process.read",
+                serde_json::json!({"process":"pr:1","stream":"stdout","offset":-1,"limit":1}),
+            ),
+            (
+                "process.read",
+                serde_json::json!({"process":"pr:1","stream":"stdout","offset":0,"limit":1.5}),
+            ),
+            (
+                "process.read",
+                serde_json::json!({"process":"pr:1","stream":"stdout","offset":1e30,"limit":1}),
+            ),
+            (
+                "process.write",
+                serde_json::json!({"process":"pr:1","data":[65],"eof":false}),
+            ),
+            (
+                "process.write",
+                serde_json::json!({"process":"pr:1","data":"","eof":"true"}),
+            ),
+            (
+                "process.close",
+                serde_json::json!({"process":"pr:1","signal":9}),
+            ),
+        ] {
+            let frame =
+                serde_json::json!({"type":"request","id":"p:1","method":method,"params":params});
+            assert!(
+                decode(&serde_json::to_vec(&frame).unwrap()).is_err(),
+                "{frame}"
+            );
         }
     }
 

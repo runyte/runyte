@@ -245,6 +245,7 @@ mod plugin_filesystem_apply;
 mod plugin_interaction;
 mod plugin_models;
 mod plugin_observations;
+mod plugin_processes;
 mod plugin_provider_writes;
 mod plugin_providers;
 mod plugin_staging;
@@ -263,6 +264,7 @@ pub struct WorkspaceHost {
     document_saves: std::collections::BTreeMap<String, plugin_documents::PendingSave>,
     filesystem_apply: Option<plugin_filesystem_apply::PendingApply>,
     plugin_workers: std::collections::BTreeMap<usize, crate::plugin::Worker>,
+    plugin_processes: std::collections::BTreeMap<String, plugin_processes::Managed>,
     observation_buffers: Option<((usize, usize), Vec<usize>)>,
     plugin_events_sender: Option<tokio::sync::mpsc::Sender<crate::plugin::Event>>,
     plugin_local_slots: Option<std::sync::Arc<tokio::sync::Semaphore>>,
@@ -355,6 +357,7 @@ impl WorkspaceHost {
             document_saves: Default::default(),
             filesystem_apply: None,
             plugin_workers: Default::default(),
+            plugin_processes: Default::default(),
             observation_buffers: None,
             plugin_events_sender: None,
             plugin_local_slots: None,
@@ -599,6 +602,7 @@ impl WorkspaceHost {
                         .count()
                 })
                 .sum::<usize>()
+                + self.pending_process_requests(None)
                 + self.app.plugins.provider_save_intents.len()
                 + self.provider_writes.values().filter(|p| p.orphaned).count()
                 + usize::from(

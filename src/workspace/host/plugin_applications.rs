@@ -131,6 +131,16 @@ impl WorkspaceHost {
                 request,
             } => {
                 self.application_request_id(id, &request_id)?;
+                if super::plugin_processes::is_process_request(&request) {
+                    let result = self.application_process_request(id, &request_id, request);
+                    return match result {
+                        Ok(None) => Ok(()),
+                        Ok(Some(result)) => {
+                            self.application_local_reply(id, request_id, Ok(result))
+                        }
+                        Err(error) => self.application_local_reply(id, request_id, Err(error)),
+                    };
+                }
                 if super::plugin_models::is_model_request(&request) {
                     let result = self.application_model_request(id, &request_id, request);
                     return match result {

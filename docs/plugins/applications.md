@@ -111,6 +111,7 @@ generation and must never be parsed, persisted, or used by another owner.
 | jobs | `job.update` | Handle and integer progress 0–100; updated job |
 | jobs | `job.finish` | Handle and terminal state; completed job |
 | jobs | `job.cancel` | Handle; cancellation requested or existing terminal state |
+| processes | `process.start/get/read/write/close` | Managed argument-vector helper, bounded binary pipes and explicit cleanup |
 | views | `view.create/get/publish/patch/close` | Semantic model, owned handle and model revision |
 | views | `view.query.set` | Explicit revision-bound query intent; matching publication settles it |
 | views | `view.stage.open/write/commit/close` | Bounded construction and atomic publication |
@@ -234,7 +235,7 @@ These measure payload, not allocator RSS or the external process's memory.
 Buffer/pane issuance is bounded at 1,024/128 handles per connection generation.
 
 Still required by the active plan: binary uploads;
-managed helpers, activity leases, state, settings and a plugin manager; media
+activity leases, state, settings and a plugin manager; media
 examples; broader SDK/conformance coverage and the complete performance/platform
 acceptance matrix.
 
@@ -1258,3 +1259,83 @@ Authors using generic `app.request('event.subscribe', sources=...)` receive upda
 through `on_observation(event, sequence, data)`, which defaults to forwarding to
 `on_event(event, data)`. Use the convenience helper when baseline and update
 processing must run through the same ordered callback lane.
+
+## Managed helpers
+
+`helper.py` is a runnable, network-free controller with capabilities `processes`,
+`views` and `interaction`. Configure it like the jobs example with ID `helper`,
+then run `:plugin.helper.open`. Tab offers Send, Flood, EOF and Close. Its
+checked-in `echo_helper.py` backend demonstrates binary pipe separation, retained
+output eviction, natural EOF exit and explicit stop. The native view renders only
+a bounded output tail and groups pending output observations; it has no idle
+refresh timer. Closing its view retains the helper; Close stops and releases it,
+and stopping the plugin always cleans up its managed helper group.
+
+`process.start {label,executable,args?,cwd?,capture_stderr?}` runs an argument
+vector without shell interpolation. A successful reply arrives only after
+spawn and returns an opaque `process` handle plus the metadata described below.
+The safe display label is 1–160 UTF-8 bytes. Executable and optional working
+directory are at most 4,096 bytes, and at most 64 arguments each contain at most
+4,096 bytes and 64 KiB in aggregate. Null bytes are refused. The default working
+directory is the workspace root; an explicit directory must resolve to an
+existing directory inside it. Path resolution and spawn run off the editor loop.
+Startup has a five-second deadline. A late spawn cannot issue a successful
+handle; it is immediately cleaned up, while its reserved ownership and quota
+remain until actual completion. The helper inherits ordinary user permissions
+and environment. This API provides
+ownership and data bounds, not an OS security sandbox.
+
+`process.get {process}` returns `{process,label,state,stdout,stderr,
+capture_stderr,stdin_closed,exit_code,signal,output_truncated}`. State is `running`,
+`closing` or `exited`. Each stream exposes `{start,end}` monotonic byte offsets
+for its retained ring. Exit code and signal are nullable. A naturally exited
+handle retains readable output and continues to count against quotas until
+explicitly closed. Nothing silently evicts another helper to make room.
+
+`process.read {process,stream,offset,limit}` returns
+`{process,stream,offset,data,next,eof}`. Streams are `stdout` and `stderr`; `data`
+is standard base64, and `limit` is 1–65,536 decoded bytes. Reading before retained
+`start` returns `stale`; reading beyond `end` returns `invalid_argument`. An empty
+chunk with `eof:false` is valid. `eof` means this captured stream has ended and the
+cursor reached its retained end; inspect `output_truncated` before assuming it
+contains every byte the helper produced. Subscribe to process metadata instead
+of repeatedly polling an empty stream. Stderr defaults to a null sink; reading
+it returns `unsupported` unless capture was explicitly enabled. The host never
+copies raw helper output, arguments or stdin into diagnostic logs.
+
+`process.write {process,data,eof?}` accepts at most 65,536 decoded base64 bytes
+and one outstanding write per helper. The deferred result
+`{process,written,stdin_closed}` acknowledges bytes written to the OS pipe; it
+does not claim the child consumed them or performed an action. `eof:true` closes
+stdin after those bytes. A write that cannot finish within five seconds stops
+the helper and reports `outcome_unknown`; partial delivery is never retried.
+
+`process.close {process}` requests group cleanup and returns `{}` only after
+actual reap and handle removal. Repeated closes join the cleanup; closing an
+unknown handle is idempotent. Running/closing state and stdin closure are reliable
+observations through source `{kind:"process",process}`; stdout/stderr bounds are
+coalescible invalidations, without raw bytes. Close acknowledgements precede the
+resulting source-closed observation. `get` can report `closing` while a deferred
+close waits. The final drain is at most 64 KiB across both pipes and waits only a
+bounded time for escaped pipe holders; `output_truncated` reports an incomplete
+drain. This final output travels in the reserved terminal event, so filling the
+ordinary output queue cannot prevent reap or terminal-result delivery.
+
+The handshake advertises `process_handles`, `process_io_bytes`,
+`process_output_bytes` and `process_write_seconds`.
+
+Four retained helpers per configured plugin identity and 32 across the host
+include pending spawns and cleanup from stopped generations. Each reserves 2 MiB
+of retained payload budget. Output retention is 1 MiB for stdout alone, or 512 KiB
+per stream when stderr capture is enabled. Every helper has three ordinary event
+slots and one reserved terminal slot. Pending start/write/close requests share
+the owner's sixteen-request bound and temporarily protect persistent-host idle
+retirement. An idle running helper alone does not protect retirement.
+
+Linux/macOS cleanup kills the owned process group while its leader remains
+unreaped, then reaps it. The same anchoring rule covers natural exit, explicit
+close, owner stop and abandoned spawn tasks. Descendants that deliberately escape
+the group are outside this guarantee. Exit handling uses child-exit notifications,
+with no per-helper polling timer. The Python SDK's `start_process`, `read_process`
+and `write_process` helpers preserve these bounds; reads return decoded bytes,
+and invalid write acknowledgements produce `outcome_unknown` without replay.
