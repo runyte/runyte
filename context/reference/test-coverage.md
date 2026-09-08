@@ -41,6 +41,36 @@ days, and fails below 89% total line coverage. The floor is deliberately below
 the observed baseline because conditional Linux and macOS code changes both the
 instrumented denominator and the paths available to a run on one platform.
 
+## 2026-09-07 — experimental process plugins
+
+Measured on `x86_64-unknown-linux-gnu`, at base `ef1bf58` plus the experimental
+process plugin slice, using Rust 1.97.1 and cargo-llvm-cov 0.9.0. Both ordinary
+`cargo test` and canonical `cargo llvm-cov --locked --workspace` passed 3,079
+tests, with 33 ignored. Formatting and warnings-as-errors Clippy passed.
+
+| Measure | Covered | Total | Coverage |
+| --- | ---: | ---: | ---: |
+| Lines | 103,417 | 112,706 | 91.76% |
+| Functions | 9,576 | 10,340 | 92.61% |
+| Regions | 159,971 | 175,221 | 91.30% |
+
+New tests in `src/workspace/host/tests/plugins.rs` cover Unicode and multiple
+selections, invoking-context capture, active-pane changes, transaction mapping,
+single-step undo and preceding insert groups, stale edits including undo to the
+same text, closure and read-only results, registration and binding collisions,
+grammar-reserved keys, live help/hints and cleanup, monotonic command identities,
+subscription baseline/order/unsubscribe/closure/backpressure, queued-stop and
+overflow races, isolated process failure and timeout, and completion feedback
+that preserves newer input. The persistent-host integration test in
+`tests/persistent_host.rs` completes a held plugin result while detached, checks
+one process after reattachment, and undoes it in one step. The Python example's
+handshake and Unicode multiple-selection transformation were also smoke-tested.
+
+Tests and coverage used normal PTY, process and local-socket access with
+`RUNYTE_PARENT_CONTEXT` removed. The 89% floor, CI threshold and README badge
+are unchanged. Native macOS validation remains for CI or a macOS host; this
+Linux measurement does not supersede the macOS baseline.
+
 ## 2026-09-07 — Markdown cursor correspondence
 
 Measured on `x86_64-unknown-linux-gnu`, at base `4b81eea` plus Markdown

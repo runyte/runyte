@@ -2978,6 +2978,18 @@ are guarded at the revisions from which a request was made, including targets
 other than the command's source buffer. Versioned diagnostic publications are
 likewise ignored after their open document advances.
 
+### Experimental plugins
+
+Explicitly enabled process plugins can register commands, read the invoking
+buffer's text and selections, and return replacements as one undoable edit.
+They run asynchronously; changing the invoking text rejects stale results.
+Persistent hosts retain their plugin processes across TUI detach and reattach.
+
+The runnable example, installation and configuration, command bindings, errors,
+subscription behavior, limits and experimental API are in the
+[plugin guide](plugins.md). There is no package manager or automatic plugin
+discovery. Enabled programs run with your permissions; they are not sandboxed.
+
 ### Commands
 
 Pressing `:` opens the categorized command palette with every command, its
@@ -3442,7 +3454,9 @@ still accepted.
 
 ### Key remapping
 
-Key remapping moves bindings Runyte already ships. It cannot unbind a command,
+Key remapping moves bindings Runyte already ships. Plugin commands use the separate
+`plugins[].bindings` configuration described in the [plugin guide](plugins.md).
+`keys.rebind` cannot unbind a command,
 bind a command that has no default, or move most direct single-key editing
 bindings. The left side of each `rebind` entry is always a default spelling;
 Runyte reports it at startup if a later release no longer has that default.

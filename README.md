@@ -61,7 +61,9 @@ Community: [r/runyte](https://www.reddit.com/r/runyte/)
 Language servers require permission per workspace; editing and Tree-sitter
 features remain available without them. Use `:lsp-trust` to change permission.
 
-Runyte uses optional YAML configuration and does not currently support plugins.
+Runyte uses optional YAML configuration. Explicitly enabled
+[experimental process plugins](docs/plugins.md) can register commands and transform
+multiple selections in one undoable edit.
 See the [user guide](docs/user-guide.md) for complete behavior and limits.
 
 ### Workspaces, panes, and navigation

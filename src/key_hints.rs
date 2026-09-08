@@ -35,7 +35,7 @@ pub struct KeyHintRow {
     /// current mode, so ordinary same-mode aliases stay compact.
     pub alias_modes: Option<&'static [Mode]>,
     pub target: Option<BindingTarget>,
-    pub description: &'static str,
+    pub description: std::borrow::Cow<'static, str>,
     pub availability: BindingAvailability,
     pub capability: Option<CommandCapability>,
     pub unavailable_reason: Option<String>,
@@ -51,7 +51,7 @@ impl KeyHintRow {
             alias: binding.alias.clone(),
             alias_modes: binding.alias_modes,
             target: Some(binding.target),
-            description: binding.description,
+            description: binding.description.clone(),
             availability: binding.availability,
             capability: binding.target.id().capability(),
             unavailable_reason: None,
@@ -67,7 +67,7 @@ impl KeyHintRow {
             alias: None,
             alias_modes: None,
             target: None,
-            description: namespace.description,
+            description: namespace.description.into(),
             availability: BindingAvailability::Implemented,
             capability: namespace.capability,
             unavailable_reason: None,
@@ -135,15 +135,21 @@ pub fn key_hint_description(row: &KeyHintRow) -> String {
     };
     let compose =
         |description: &str, availability: &str| format!("{description}{marker}{availability}");
-    let full = compose(row.description, &full_availability);
+    let full = compose(&row.description, &full_availability);
     if UnicodeWidthStr::width(full.as_str()) <= KEY_HINT_MAX_DESCRIPTION_WIDTH {
         return full;
     }
 
     let compact = row.target.map_or_else(
-        || row.description.to_owned(),
+        || row.description.to_string(),
         |target| match target {
             BindingTarget::Editor(EditorCommand::OpenFilePicker) => "open finder".to_owned(),
+            BindingTarget::Plugin(_) => row
+                .description
+                .split(" — ")
+                .next()
+                .unwrap_or("plugin")
+                .to_owned(),
             _ => target.name().replace('-', " "),
         },
     );
@@ -675,7 +681,7 @@ mod tests {
             .map(BindingTarget::Editor)
             .chain(COMMANDS.iter().filter_map(|spec| match spec.id {
                 CommandId::Colon(command) => Some(BindingTarget::Colon(command)),
-                CommandId::Editor(_) => None,
+                CommandId::Editor(_) | CommandId::Plugin(_) => None,
             }))
             .collect::<Vec<_>>();
         assert_eq!(targets.len(), 312, "the command inventory changed");
@@ -685,7 +691,7 @@ mod tests {
                 alias: None,
                 alias_modes: None,
                 target: Some(target),
-                description: target.description(),
+                description: target.description().into(),
                 availability: BindingAvailability::Implemented,
                 capability: target.id().capability(),
                 unavailable_reason: None,
@@ -708,7 +714,7 @@ mod tests {
         }
 
         let mut variants = KeyHintRow::from_binding(&default_keymap().bindings()[0], false);
-        variants.description = "A deliberately expansive registry description";
+        variants.description = "A deliberately expansive registry description".into();
         variants.availability = BindingAvailability::Planned("requires a parser");
         assert_fits(&variants);
         variants.availability = BindingAvailability::Unsupported("not on this platform");
@@ -1068,7 +1074,7 @@ mod tests {
             scope: BindingScope::Global,
             sequence: [Key::char('x'), Key::char('y')].into(),
             target: BindingTarget::Editor(EditorCommand::SelectLine),
-            description: "Unavailable action",
+            description: "Unavailable action".into(),
             availability: BindingAvailability::Planned("requires a parser"),
             role: BindingRole::Primary,
             alias: None,

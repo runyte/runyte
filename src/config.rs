@@ -22,6 +22,7 @@ mod zenbones;
 #[derive(Clone, Debug, Deserialize)]
 #[serde(default)]
 pub struct Config {
+    pub plugins: Vec<crate::plugin::PluginConfig>,
     pub editor: EditorConfig,
     pub workspace: WorkspaceConfig,
     pub lsp: LspConfig,
@@ -791,6 +792,7 @@ impl Default for Config {
             lsp: LspConfig::default(),
             git: GitConfig::default(),
             notifications: NotificationsConfig::default(),
+            plugins: Vec::new(),
             keys: None,
             theme: None,
             themes: built_in_themes(),

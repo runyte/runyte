@@ -30,7 +30,7 @@ use crate::{
     command::{
         ArgumentKind, COMMANDS, ColonCommand, CommandArguments, CommandCategory,
         CommandExecutionContext, CommandId, CommandInvocation, CommandSpec, CommandUnavailable,
-        EditorCommand, HelpInvocation, InvocationParameters, parse_colon_command, resolve_command,
+        EditorCommand, HelpInvocation, InvocationParameters, resolve_command,
     },
     config::{self, Config, Theme, ThemeAppearance, WorkspaceMode},
     content_alignment::{ContentAlignment, ContentLayout},
@@ -269,6 +269,7 @@ mod mouse_autoscroll;
 mod movement;
 mod navigation_workflows;
 mod picker_workflows;
+pub(crate) mod plugin_workflows;
 mod presentation;
 mod prompt_editing;
 mod search_history;
@@ -2293,11 +2294,23 @@ impl TrackedRequest {
 /// listed under that alias rather than under a canonical name the person is
 /// not typing: `:sp` offers `:split`, not `:hsplit`.
 #[derive(Clone, Debug)]
-pub struct CommandMatch {
-    pub spec: &'static CommandSpec,
-    pub name: &'static str,
+pub struct CommandMatch<'a> {
+    pub spec: MatchedCommandSpec<'a>,
+    pub name: &'a str,
     pub category: CommandCategory,
     pub availability: CommandAvailability,
+}
+
+/// Borrowed discovery metadata for either a built-in or runtime command.
+/// Runtime strings live with their registration; no leaked static allocations.
+#[derive(Clone, Copy, Debug)]
+pub struct MatchedCommandSpec<'a> {
+    pub id: CommandId,
+    pub name: &'a str,
+    pub aliases: &'a [&'a str],
+    pub usage: &'a str,
+    pub description: &'a str,
+    pub arguments: CommandArguments,
 }
 
 #[derive(Clone, Debug)]
@@ -2326,14 +2339,21 @@ pub struct PathHint {
     pub is_directory: bool,
 }
 
-impl CommandMatch {
+impl CommandMatch<'_> {
     fn new(
         spec: &'static CommandSpec,
         name: &'static str,
         capabilities: &AppCapabilitySnapshot,
     ) -> Self {
         Self {
-            spec,
+            spec: MatchedCommandSpec {
+                id: spec.id,
+                name: spec.name,
+                aliases: spec.aliases,
+                usage: spec.usage,
+                description: spec.description,
+                arguments: spec.arguments,
+            },
             name,
             category: spec.category(),
             availability: capabilities.command_availability(spec),
@@ -2353,9 +2373,9 @@ impl CommandMatch {
     }
 
     /// The command's remaining spellings, canonical name included.
-    pub fn other_names(&self) -> Vec<&'static str> {
-        self.spec
-            .names()
+    pub fn other_names(&self) -> Vec<&str> {
+        std::iter::once(self.spec.name)
+            .chain(self.spec.aliases.iter().copied())
             .filter(|name| *name != self.name)
             .collect()
     }
@@ -2913,6 +2933,7 @@ pub struct App {
     /// ends. Unlike `v`, a line selection is transient: it survives only
     /// consecutive `x`/`X` presses, and any other command drops it.
     line_select: Option<Mode>,
+    pub(crate) plugins: plugin_workflows::Plugins,
     keymap: Arc<Keymap>,
     /// Precompiled variants indexed by `editor.fast_pane_keys` when the
     /// optional key-remapping section exists.
@@ -3411,6 +3432,7 @@ impl App {
             jump: None,
             line_select: None,
             keymap,
+            plugins: Default::default(),
             configured_keymaps,
             grammar,
             directory_views: HashMap::new(),

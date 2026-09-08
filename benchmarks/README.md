@@ -513,3 +513,23 @@ about fuzzy matching.
 `tests/performance.rs` holds in-process budgets for large-document operations.
 Those are assertions that fail in CI; the harnesses here are measurements that
 are run deliberately and whose results are recorded by hand.
+
+# Experimental plugin comparison
+
+`plugins.py` uses this harness's existing first-document-output and idle functions
+to compare a retained pre-change release binary with the current release, first
+with plugins disabled and then with the Python uppercase example enabled:
+
+```sh
+python3 benchmarks/plugins.py --before /path/to/retained/base/runyte
+```
+
+Build both binaries and finish tests before measuring. `--after` selects another
+current binary; `--runs` defaults to ten startup/quit samples, and `--idle-runs`
+to three independent ten-second windows. The representative fixtures are
+`short.txt`, `medium.lua`, and `long.lua`; idle uses `medium.lua`. Python is the
+interpreter running the harness. All configuration and runtime files remain in
+ignored `.work/` storage, and LSP is disabled. The example starts after document
+presentation; first document output does not measure plugin registration readiness.
+Each line prints the full result summary, including completion counts and idle
+ranges, so incomplete samples cannot masquerade as a zero-cost measurement.

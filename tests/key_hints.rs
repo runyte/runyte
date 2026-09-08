@@ -735,7 +735,7 @@ fn unavailable_action_is_dimmed_and_labeled() {
             scope: BindingScope::Global,
             sequence: [Key::char(' '), Key::char('x')].into(),
             target: BindingTarget::Editor(EditorCommand::SelectLine),
-            description: "Parser action",
+            description: "Parser action".into(),
             availability: BindingAvailability::Planned("requires parser"),
             role: BindingRole::Primary,
             alias: None,

@@ -2492,3 +2492,113 @@ async fn first_open_lsp_choice_is_host_owned_and_refusal_survives_restart() {
     }
     fs::remove_dir_all(root).unwrap();
 }
+
+#[tokio::test]
+async fn plugin_completion_while_detached_and_reattachment_keep_one_process() {
+    let sandbox = TestSandbox::new();
+    let root = project();
+    let program = sandbox.runtime.join("plugin-worker");
+    std::os::unix::fs::symlink(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("src/fixtures/stand-in"),
+        &program,
+    )
+    .unwrap();
+    fs::write(sandbox.runtime.join("plugin-worker.behavior"), r#"
+printf 'started\n' >> "$0.starts"
+read -r hello
+printf '%s\n' '{"type":"register","version":"runyte-experimental-1","commands":[{"name":"upper","description":"Uppercase selections"}]}'
+read -r registered
+printf 'ready\n' > "$0.ready"
+while read -r message; do
+    case "$message" in
+        *'"type":"invoke"'*)
+            printf 'invoked\n' > "$0.invoked"
+            while [ ! -e "$0.release" ]; do sleep 0.01; done
+            printf '%s\n' '{"type":"replace","invocation":"1","replacements":["BASE\n"]}'
+            ;;
+    esac
+done
+"#).unwrap();
+    fs::write(sandbox.cache.join("runyte/config.yaml"), format!(
+        "lsp:\n  enable: false\nplugins:\n  - id: case\n    enabled: true\n    executable: {}\n    bindings:\n      upper: F12\n", program.display()
+    )).unwrap();
+    let child = sandbox
+        .bundled_runyte()
+        .args(["--serve", "note.txt"])
+        .current_dir(&root)
+        .env("XDG_RUNTIME_DIR", sandbox.runtime_dir())
+        .env("XDG_CACHE_HOME", sandbox.cache_dir())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut child = ChildGuard(Some(child));
+    let endpoint = LocalEndpoint::discover_with_runtime(
+        &root.join(".runyte"),
+        &root,
+        Some(sandbox.runtime_dir()),
+    )
+    .unwrap();
+    assert!(wait_for_endpoint(&mut child, &endpoint).await);
+    let deadline = Instant::now() + HOST_RESPONSE_TIMEOUT;
+    while !sandbox.runtime.join("plugin-worker.ready").exists() {
+        assert!(Instant::now() < deadline, "plugin did not register");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let mut first = LocalClient::connect(&endpoint, geometry(), true)
+        .await
+        .unwrap();
+    assert!(matches!(
+        response(&mut first).await,
+        HostResponse::Welcome { .. }
+    ));
+    let _ = response(&mut first).await;
+    let _ = send_input(&mut first, KeyStroke::plain(KeyCode::Char('%'))).await;
+    let _ = send_input(&mut first, KeyStroke::parse("F12").unwrap()).await;
+    let deadline = Instant::now() + HOST_RESPONSE_TIMEOUT;
+    while !sandbox.runtime.join("plugin-worker.invoked").exists() {
+        assert!(Instant::now() < deadline, "plugin was not invoked");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    detach(&mut first, "detaching during plugin work").await;
+    fs::write(sandbox.runtime.join("plugin-worker.release"), "continue").unwrap();
+    let mut control = LocalClient::connect(&endpoint, geometry(), false)
+        .await
+        .unwrap();
+    assert!(matches!(
+        response(&mut control).await,
+        HostResponse::Welcome { .. }
+    ));
+    wait_for_session_preview(&mut control, "plugin result while detached", |preview| {
+        preview
+            .panes
+            .iter()
+            .any(|pane| pane.lines.iter().any(|line| line.contains("BASE")))
+    })
+    .await;
+    let (mut attached, _) = connect_interactive_when_available(&endpoint, geometry()).await;
+    let frame = response(&mut attached).await;
+    assert!(frame_text(&frame).contains("BASE"));
+    assert_eq!(
+        fs::read_to_string(sandbox.runtime.join("plugin-worker.starts")).unwrap(),
+        "started\n"
+    );
+    let _ = send_input(&mut attached, KeyStroke::plain(KeyCode::Char('u'))).await;
+    detach(&mut attached, "detaching after plugin undo").await;
+    wait_for_session_preview(&mut control, "single-step plugin undo", |preview| {
+        preview
+            .panes
+            .iter()
+            .any(|pane| pane.lines.iter().any(|line| line.contains("base")))
+    })
+    .await;
+    shutdown(&mut control, ClientRequest::Shutdown).await;
+    let status = tokio::task::spawn_blocking(move || child.0.take().unwrap().wait())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(status.success());
+    assert_eq!(fs::read_to_string(root.join("note.txt")).unwrap(), "base\n");
+    fs::remove_dir_all(root).unwrap();
+}

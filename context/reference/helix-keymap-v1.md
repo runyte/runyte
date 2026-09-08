@@ -481,3 +481,14 @@ live-terminal, and pending-wait guards remain in force. Successful attachment
 history takes priority over catalog activity; stopped, incompatible, and
 occupied sessions are skipped. With no available destination, the TUI exits.
 `:detach` and shell-directory handoff through `:qh` always return to the shell.
+
+## Experimental plugin commands
+
+Enabled process plugins register namespaced `plugin.<id>.<command>` commands.
+Their optional physical bindings enter the same keymap in Normal and Select
+modes and appear in view help and key hints. Effective-scope validation rejects
+collisions in both fast-pane variants; built-in keys are unchanged. Plugin
+bindings are configured under `plugins[].bindings`; `keys.rebind` continues to
+address authored built-in defaults. `plugin.<id>.stop` removes the runtime
+commands and bindings. These are Runyte extension commands, not Helix bindings.
+The wire and lifecycle contract is [the plugin guide](../../docs/plugins.md).

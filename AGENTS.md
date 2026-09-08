@@ -172,6 +172,12 @@ and the order of the push. Do not infer any of those from the commit history.
   All JSON-RPC lives in one Tokio task; the editor holds a non-blocking
   handle and drains events from the main loop, so no language server can
   stall rendering or input.
+- `src/plugin.rs`: bounded experimental extension wire values and the external
+  process worker. `src/app/plugin_workflows.rs` coordinates runtime command
+  metadata and captured invocations; `src/workspace/host/plugins.rs` owns process
+  lifecycle, explicit-target result application, and buffer observations. The
+  extension contract lives in `docs/plugins.md`, separately from private bundled
+  client DTOs and the headless testing facade.
 - `src/headless.rs`: a frontend-independent, test-oriented facade over semantic
   editor commands, transactions, text, selections, and snapshots. It is not an
   RPC or plugin contract.
