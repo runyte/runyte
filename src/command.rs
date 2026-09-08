@@ -735,7 +735,7 @@ editor_commands! {
     ),
     OpenTerminalDirectoryRoot => (
         "open-terminal-directory-root",
-        "Run a terminal at the active directory root"
+        "Open terminal here"
     ),
     OpenTerminalSelectedDirectory => (
         "open-terminal-selected-directory",

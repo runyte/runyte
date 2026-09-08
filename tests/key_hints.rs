@@ -966,6 +966,10 @@ fn help_opens_a_buffer_describing_the_current_view() {
     assert!(normal.contains("Direct keys"), "{normal}");
 
     let mut app = App::new(Config::default(), Some(directory.clone())).unwrap();
+    app.handle_key(KeyStroke::plain(KeyCode::Tab)).unwrap();
+    let actions = render(100, 25, &mut app, &KeyHintState::default());
+    assert!(actions.contains("Open terminal here"), "{actions}");
+    app.handle_key(KeyStroke::plain(KeyCode::Escape)).unwrap();
     app.execute(CommandInvocation::help(HelpInvocation::ActiveView))
         .unwrap();
     let explorer = app.active_buffer().to_string();
@@ -979,6 +983,7 @@ fn help_opens_a_buffer_describing_the_current_view() {
     );
     assert!(explorer.contains("Buffer keys"), "{explorer}");
     assert!(explorer.contains("Show or hide dotfiles"), "{explorer}");
+    assert!(explorer.contains("Open terminal here"), "{explorer}");
 
     std::fs::remove_dir_all(directory).unwrap();
 }

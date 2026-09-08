@@ -2141,6 +2141,11 @@ the editable projection refuse to open, because such a name cannot be
 distinguished safely from the explorer's row syntax. New rows are held to the
 same boundary before a confirmation opens.
 
+`Tab t` opens an integrated terminal in the same pane, starting in the directory
+the explorer currently shows. The explorer remains available behind the terminal,
+including any unsaved edits. The directory under the cursor does not change where
+the terminal starts.
+
 Three settings decide how an explorer shows a directory, and `Tab` offers all
 of them: `editor.show_hidden_files` lists dotfiles or leaves them out,
 `editor.explorer_details` shows the detail columns described above, and
