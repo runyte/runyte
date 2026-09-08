@@ -80,8 +80,9 @@ and FTP/FTPS examples. Binary download staging now uses native confirmed
 publication, and the examples now provide native-confirmed remote mkdir, rename
 and delete. The remaining provider conflict/lifecycle refinements and later
 milestones remain active. Milestone 5 now includes bounded managed processes, terminal/external handoffs
-and retained notifications plus continuing activity leases. Settings/state and
-the plugin manager remain. Milestone 6 still needs the broader SDK,
+and retained notifications, continuing activity leases, validated settings and
+conditional workspace state. The plugin manager and media controller remain.
+Milestone 6 still needs the broader SDK,
 non-Python example, full conformance matrix and complete application performance
 and supported-platform evidence. Milestones 1–2 also retain their full overload,
 real-attachment and performance acceptance work; the implemented primitives do
@@ -818,6 +819,49 @@ checks alignment and unchanged-refresh stability. Five Python activity checks
 and ten application/schema checks pass. Actual worker deadlines and helper
 reaping are functional evidence; native macOS and the complete release workload
 matrix remain outstanding.
+
+## Settings and workspace state round — 2026-09-08
+
+Added separate `settings` and `state` capabilities. Settings are immutable,
+namespaced configuration with an optional bounded registration schema for string,
+integer and boolean fields. Schema validation precedes all registration effects;
+queued reads share canonical JSON rather than retaining parsed tree copies.
+Diagnostics omit configured values and unknown keys.
+
+State is one bounded versioned JSON document per configured identity, under the
+injectable workspace runtime root. Reads return an opaque content revision;
+set/delete compare that revision and never migrate or retry automatically.
+Descriptor-relative private storage rejects links and unsafe existing leaves,
+uses a stable nonblocking lock and bounded staging leaf, and synchronizes file
+and directory links around atomic promotion. Raw traversal rejects oversized
+structures and integer literals outside the signed-negative/unsigned-positive
+64-bit range before tree construction or numeric rounding.
+
+Storage work runs off the editor loop with one operation per configured identity,
+including stopped generations. A 16 MiB reservation and shared service permit
+remain held until actual work completion. Cancellation before mutation admission
+preserves the old document; failures after an attempted mutation report an unknown
+outcome. Pending and orphaned operations protect ordinary retirement. No startup
+storage scan or periodic state timer was introduced.
+
+Comprehensive review fixed container-tail rejection, expanded-tree memory
+accounting, permit retention through runtime teardown, ancestor synchronization
+after an interrupted prior attempt, and integer precision. The SDK freezes and
+bounds documents before sending, treats lost mutation acknowledgements as unknown,
+and gives state replies delivery headroom without extending command lifetimes.
+The standard-library preferences example validates defaults, conditionally saves
+or deletes a destination, refuses implicit migrations, and prevents older reads
+from replacing newer view content.
+
+Ordinary tests pass: 3,487 tests with 33 ignored, including 31 new Rust tests.
+Formatting and warnings-as-errors Clippy pass. Sixteen Python state checks and
+ten application/schema checks pass. A native Linux PTY smoke verifies configured
+settings, no startup storage IO, conditional save/delete, private permissions,
+preservation across editor restart and zero output bytes over two settled seconds.
+Canonical Linux coverage passes the same 3,487 tests with 33 ignored and measures
+118,094/128,818 lines (91.68%), 10,662/11,618 functions (91.77%) and
+179,219/196,594 regions (91.16%). The floor remains 89%. Native macOS and the
+complete release workload matrix remain outstanding.
 
 ## Investigation: existing foundation and missing boundaries
 

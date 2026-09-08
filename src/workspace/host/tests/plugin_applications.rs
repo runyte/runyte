@@ -48,8 +48,12 @@ mod provider_review;
 mod provider_writes;
 #[path = "plugin_providers.rs"]
 mod providers;
+#[path = "plugin_settings.rs"]
+mod settings;
 #[path = "plugin_staging.rs"]
 mod staging;
+#[path = "plugin_state.rs"]
+mod state;
 #[path = "plugin_validation.rs"]
 mod validation;
 #[path = "plugin_validation_review.rs"]
@@ -71,6 +75,7 @@ fn setup(
     host.application_message(
         id,
         api::ClientMessage::Register {
+            settings_schema: None,
             version: api::VERSION.into(),
             name: "Tasks".into(),
             commands: vec![api::Registration {
@@ -163,6 +168,7 @@ fn application_palette_validates_arguments_before_closing_and_submits_quoted_val
     host.application_message(
         0,
         api::ClientMessage::Register {
+            settings_schema: None,
             version: api::VERSION.into(),
             name: "Arguments".into(),
             commands: vec![api::Registration {
@@ -460,6 +466,7 @@ fn required_capabilities_registration_rollback_and_request_reuse_are_bounded() {
         host.application_message(
             2,
             api::ClientMessage::Register {
+                settings_schema: None,
                 version: api::VERSION.into(),
                 name: "Denied".into(),
                 commands: vec![],
@@ -654,6 +661,7 @@ fn view_setup(host: &mut WorkspaceHost) -> mpsc::Receiver<HostMessage> {
     host.application_message(
         0,
         api::ClientMessage::Register {
+            settings_schema: None,
             version: api::VERSION.into(),
             name: "Tasks".into(),
             commands: vec![

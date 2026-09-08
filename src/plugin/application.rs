@@ -87,6 +87,8 @@ pub enum CommandContext {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ClientMessage {
     Register {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        settings_schema: Option<super::settings::Schema>,
         version: String,
         name: String,
         commands: Vec<Registration>,
@@ -131,6 +133,17 @@ pub struct CommandResult {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "method", content = "params", deny_unknown_fields)]
 pub enum Request {
+    #[serde(rename = "state.get")]
+    StateGet(Empty),
+    #[serde(rename = "state.set")]
+    StateSet {
+        expected_revision: String,
+        document: super::state::Document,
+    },
+    #[serde(rename = "state.delete")]
+    StateDelete { expected_revision: String },
+    #[serde(rename = "settings.get")]
+    SettingsGet {},
     #[serde(rename = "activity.acquire")]
     ActivityAcquire {
         title: String,
@@ -461,6 +474,9 @@ pub struct Job {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Limits {
+    pub state_document_bytes: usize,
+    pub state_requests: usize,
+    pub settings_bytes: usize,
     pub activity_leases: usize,
     pub activity_seconds: u64,
     pub process_handles: usize,
@@ -480,6 +496,9 @@ pub struct Limits {
 impl Default for Limits {
     fn default() -> Self {
         Self {
+            settings_bytes: super::settings::MAX_BYTES,
+            state_document_bytes: super::state::MAX_DOCUMENT_BYTES,
+            state_requests: 1,
             activity_leases: super::activity::MAX_LEASES,
             activity_seconds: super::activity::MAX_SECONDS,
             process_handles: super::process::MAX_HANDLES,
@@ -575,6 +594,10 @@ pub enum Response {
 #[derive(Clone, Debug, Serialize)]
 #[serde(untagged)]
 pub enum ResultValue {
+    State(super::state::Info),
+    Settings {
+        settings: std::sync::Arc<serde_json::value::RawValue>,
+    },
     Activity(super::activity::Info),
     TerminalOpened {
         terminal: String,
@@ -707,6 +730,7 @@ pub(crate) struct CapturedContext {
 
 /// Bounded host ownership, independent of a frontend and the ten-second control timer.
 pub(crate) struct Instance {
+    pub state_pending: bool,
     pub activities: BTreeMap<String, super::activity::Lease>,
     pub notification_at: Option<std::time::Instant>,
     pub processes: BTreeSet<String>,
@@ -754,6 +778,7 @@ impl Default for Instance {
             .unwrap_or_default()
             .as_nanos();
         Self {
+            state_pending: false,
             activities: Default::default(),
             notification_at: None,
             processes: Default::default(),
@@ -842,6 +867,8 @@ impl Instance {
 }
 
 pub const CAPABILITIES: &[&str] = &[
+    "state",
+    "settings",
     "activity",
     "terminals",
     "external",
@@ -861,112 +888,127 @@ pub const CAPABILITIES: &[&str] = &[
 /// Validate framing independently of method dispatch so unknown methods receive
 /// `unsupported`, while malformed known requests cannot be interpreted as others.
 pub(crate) fn decode(bytes: &[u8]) -> anyhow::Result<super::ClientMessage> {
-    let value: serde_json::Value = serde_json::from_slice(bytes)?;
-    if value.get("type").and_then(|v| v.as_str()) == Some("request") {
-        let object = value.as_object().unwrap();
-        anyhow::ensure!(
-            object.len() == 4 && object.contains_key("params"),
-            "invalid request envelope"
-        );
-        let id = value
-            .get("id")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow::anyhow!("missing request ID"))?;
-        let method = value
-            .get("method")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow::anyhow!("missing method"))?;
-        anyhow::ensure!(
-            id.len() <= 64 && method.len() <= 96,
-            "invalid request ID or method"
-        );
-        if !matches!(
-            method,
-            "activity.acquire"
-                | "activity.renew"
-                | "activity.get"
-                | "activity.release"
-                | "activity.cancel"
-                | "terminal.open"
-                | "external.open"
-                | "notification.publish"
-                | "process.start"
-                | "process.get"
-                | "process.read"
-                | "process.write"
-                | "process.close"
-                | "event.subscribe"
-                | "event.unsubscribe"
-                | "event.resync"
-                | "provider.register"
-                | "resource.open"
-                | "resource.rebind"
-                | "resource.inspect"
-                | "buffer.list"
-                | "buffer.open"
-                | "buffer.save"
-                | "buffer.close"
-                | "buffer.create"
-                | "ui.form"
-                | "ui.prompt"
-                | "ui.pick"
-                | "ui.confirm"
-                | "ui.dismiss"
-                | "filesystem.stat"
-                | "filesystem.list"
-                | "filesystem.prepare"
-                | "filesystem.apply"
-                | "filesystem.cancel"
-                | "filesystem.release"
-                | "staging.create"
-                | "staging.prepare"
-                | "staging.close"
-                | "pane.list"
-                | "buffer.read"
-                | "buffer.edit"
-                | "buffer.snapshot.open"
-                | "buffer.snapshot.read"
-                | "buffer.snapshot.close"
-                | "selection.get"
-                | "selection.set"
-                | "view.create"
-                | "view.get"
-                | "view.publish"
-                | "view.query.set"
-                | "view.patch"
-                | "view.stage.open"
-                | "view.stage.write"
-                | "view.stage.commit"
-                | "view.stage.close"
-                | "view.snapshot.open"
-                | "view.snapshot.read"
-                | "view.snapshot.close"
-                | "view.close"
-                | "pane.show"
-                | "workspace.info"
-                | "job.create"
-                | "job.get"
-                | "job.update"
-                | "job.finish"
-                | "job.cancel"
-        ) {
-            return Ok(super::ClientMessage::Unsupported { id: id.to_owned() });
+    let (state, settings_schema) = super::state::wire::preflight(bytes)?;
+    if let Some(state) = state {
+        return Ok(state);
+    }
+    let decoded = (|| -> anyhow::Result<super::ClientMessage> {
+        let value: serde_json::Value = serde_json::from_slice(bytes)?;
+        if value.get("type").and_then(|v| v.as_str()) == Some("request") {
+            let object = value.as_object().unwrap();
+            anyhow::ensure!(
+                object.len() == 4 && object.contains_key("params"),
+                "invalid request envelope"
+            );
+            let id = value
+                .get("id")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow::anyhow!("missing request ID"))?;
+            let method = value
+                .get("method")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow::anyhow!("missing method"))?;
+            anyhow::ensure!(
+                id.len() <= 64 && method.len() <= 96,
+                "invalid request ID or method"
+            );
+            if !matches!(
+                method,
+                "settings.get"
+                    | "activity.acquire"
+                    | "activity.renew"
+                    | "activity.get"
+                    | "activity.release"
+                    | "activity.cancel"
+                    | "terminal.open"
+                    | "external.open"
+                    | "notification.publish"
+                    | "process.start"
+                    | "process.get"
+                    | "process.read"
+                    | "process.write"
+                    | "process.close"
+                    | "event.subscribe"
+                    | "event.unsubscribe"
+                    | "event.resync"
+                    | "provider.register"
+                    | "resource.open"
+                    | "resource.rebind"
+                    | "resource.inspect"
+                    | "buffer.list"
+                    | "buffer.open"
+                    | "buffer.save"
+                    | "buffer.close"
+                    | "buffer.create"
+                    | "ui.form"
+                    | "ui.prompt"
+                    | "ui.pick"
+                    | "ui.confirm"
+                    | "ui.dismiss"
+                    | "filesystem.stat"
+                    | "filesystem.list"
+                    | "filesystem.prepare"
+                    | "filesystem.apply"
+                    | "filesystem.cancel"
+                    | "filesystem.release"
+                    | "staging.create"
+                    | "staging.prepare"
+                    | "staging.close"
+                    | "pane.list"
+                    | "buffer.read"
+                    | "buffer.edit"
+                    | "buffer.snapshot.open"
+                    | "buffer.snapshot.read"
+                    | "buffer.snapshot.close"
+                    | "selection.get"
+                    | "selection.set"
+                    | "view.create"
+                    | "view.get"
+                    | "view.publish"
+                    | "view.query.set"
+                    | "view.patch"
+                    | "view.stage.open"
+                    | "view.stage.write"
+                    | "view.stage.commit"
+                    | "view.stage.close"
+                    | "view.snapshot.open"
+                    | "view.snapshot.read"
+                    | "view.snapshot.close"
+                    | "view.close"
+                    | "pane.show"
+                    | "workspace.info"
+                    | "job.create"
+                    | "job.get"
+                    | "job.update"
+                    | "job.finish"
+                    | "job.cancel"
+            ) {
+                return Ok(super::ClientMessage::Unsupported { id: id.to_owned() });
+            }
         }
+        if value.get("type").and_then(|v| v.as_str()) == Some("register") {
+            let object = value.as_object().unwrap();
+            anyhow::ensure!(
+                object.len() == 6 + usize::from(object.contains_key("settings_schema")),
+                "invalid registration envelope"
+            );
+        }
+        if value.get("type").and_then(|v| v.as_str()) == Some("response") {
+            let object = value.as_object().unwrap();
+            anyhow::ensure!(
+                object.len() == 3 && (object.contains_key("result") ^ object.contains_key("error")),
+                "invalid response envelope"
+            );
+        }
+        Ok(super::ClientMessage::Application(serde_json::from_value(
+            value,
+        )?))
+    })();
+    if settings_schema {
+        decoded.map_err(|_| anyhow::anyhow!("Invalid application settings schema"))
+    } else {
+        decoded
     }
-    if value.get("type").and_then(|v| v.as_str()) == Some("register") {
-        let object = value.as_object().unwrap();
-        anyhow::ensure!(object.len() == 6, "invalid registration envelope");
-    }
-    if value.get("type").and_then(|v| v.as_str()) == Some("response") {
-        let object = value.as_object().unwrap();
-        anyhow::ensure!(
-            object.len() == 3 && (object.contains_key("result") ^ object.contains_key("error")),
-            "invalid response envelope"
-        );
-    }
-    Ok(super::ClientMessage::Application(serde_json::from_value(
-        value,
-    )?))
 }
 
 #[cfg(test)]
@@ -1606,6 +1648,53 @@ mod tests {
                     lease: "a:g:1".into(),
                     reason: super::super::activity::Reason::Expired,
                 }),
+            },
+            HostMessage::Response {
+                id: "p:1300".into(),
+                outcome: Response::Success {
+                    result: ResultValue::Settings {
+                        settings: serde_json::value::RawValue::from_string(
+                            r#"{"default_destination":"."}"#.into(),
+                        )
+                        .unwrap()
+                        .into(),
+                    },
+                },
+            },
+            HostMessage::Response {
+                id: "p:1301".into(),
+                outcome: Response::Success {
+                    result: ResultValue::State(super::super::state::Info {
+                        revision: "s:missing".into(),
+                        document: None,
+                    }),
+                },
+            },
+            HostMessage::Response {
+                id: "p:1302".into(),
+                outcome: Response::Success {
+                    result: ResultValue::State(super::super::state::Info {
+                        revision:
+                            "s:a85b2e79e932efefd64f6a680e100c2a4fdc5ad68ff3279d8d9338c83cc020cc"
+                                .into(),
+                        document: Some(
+                            serde_json::value::RawValue::from_string(
+                                r#"{"data":{"destination":"sample"},"version":1}"#.into(),
+                            )
+                            .unwrap()
+                            .into(),
+                        ),
+                    }),
+                },
+            },
+            HostMessage::Response {
+                id: "p:1303".into(),
+                outcome: Response::Success {
+                    result: ResultValue::State(super::super::state::Info {
+                        revision: "s:missing".into(),
+                        document: None,
+                    }),
+                },
             },
         ];
         let expected = fixtures

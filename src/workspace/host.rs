@@ -252,6 +252,7 @@ mod plugin_processes;
 mod plugin_provider_writes;
 mod plugin_providers;
 mod plugin_staging;
+mod plugin_state;
 mod plugin_validation;
 /// The only owner allowed to mutate one live editor/application workspace.
 ///
@@ -272,6 +273,9 @@ pub struct WorkspaceHost {
     plugin_events_sender: Option<tokio::sync::mpsc::Sender<crate::plugin::Event>>,
     #[cfg(test)]
     plugin_external_launcher: Option<std::path::PathBuf>,
+    plugin_state_requests: std::collections::BTreeMap<String, plugin_state::Pending>,
+    #[cfg(test)]
+    plugin_state_hook: Option<crate::plugin::state::Hook>,
     plugin_handoffs: std::collections::BTreeMap<(usize, String, String), plugin_handoffs::Pending>,
     plugin_local_slots: Option<std::sync::Arc<tokio::sync::Semaphore>>,
     plugin_local_orphans: std::collections::BTreeMap<(usize, String, String), usize>,
@@ -373,6 +377,9 @@ impl WorkspaceHost {
             plugin_events_sender: None,
             #[cfg(test)]
             plugin_external_launcher: None,
+            plugin_state_requests: Default::default(),
+            #[cfg(test)]
+            plugin_state_hook: None,
             plugin_handoffs: Default::default(),
             plugin_local_slots: None,
             plugin_local_orphans: Default::default(),

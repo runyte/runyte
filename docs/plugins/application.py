@@ -4,6 +4,7 @@ import base64
 import binascii
 import concurrent.futures
 import json
+import math
 import sys
 import threading
 
@@ -11,15 +12,64 @@ VERSION = 'runyte-experimental-2'
 LIMIT = 1024 * 1024
 MODEL_LIMIT = 4 * 1024 * 1024
 MODEL_CHUNK = 128 * 1024
+STATE_LIMIT = LIMIT - 4096
 
 class PluginError(Exception):
     def __init__(self, code, message):
         super().__init__(message)
         self.code = code
 
+class _HostDisconnected(PluginError):
+    def __init__(self):
+        super().__init__('unavailable', 'Host disconnected')
+
+def _validate_state_document(document):
+    # Keep only one iterator per nesting level; cycles hit the same depth bound.
+    stack = [(iter((document,)), 1)]
+    nodes = characters = 0
+    while stack:
+        iterator, depth = stack[-1]
+        try:
+            value = next(iterator)
+        except StopIteration:
+            stack.pop()
+            continue
+        nodes += 1
+        if depth > 16 or nodes > 16384:
+            raise PluginError('limit_exceeded', 'State document exceeds its structure limits')
+        if value is None or isinstance(value, bool):
+            continue
+        if isinstance(value, int):
+            if not -(1 << 63) <= value <= (1 << 64) - 1:
+                raise PluginError('invalid_argument', 'State integer is outside the supported 64-bit range; use a string for larger identifiers')
+        elif isinstance(value, float):
+            if not math.isfinite(value):
+                raise PluginError('invalid_argument', 'State must be finite JSON data')
+        elif isinstance(value, str):
+            characters += len(value)
+        elif isinstance(value, (dict, list)):
+            if len(value) > 1024:
+                raise PluginError('limit_exceeded', 'State container exceeds 1024 entries')
+            if isinstance(value, dict):
+                for key in value:
+                    if not isinstance(key, str):
+                        raise PluginError('invalid_argument', 'State object keys must be strings')
+                    characters += len(key)
+                children = value.values()
+            else:
+                children = value
+            stack.append((iter(children), depth + 1))
+        else:
+            raise PluginError('invalid_argument', 'State must be finite JSON data')
+        # A cheap lower bound prevents huge strings from reaching the encoder;
+        # the exact UTF-8/escaping budget is checked on the resulting bytes.
+        if characters > STATE_LIMIT:
+            raise PluginError('limit_exceeded', 'State document exceeds its byte limit')
+
 class Application:
-    def __init__(self, name, commands, capabilities):
+    def __init__(self, name, commands, capabilities, *, settings_schema=None):
         self.name, self.commands, self.capabilities = name, commands, capabilities
+        self.settings_schema = settings_schema
         self.handlers = {}
         self.resource_handlers = {}
         self.on_event = lambda event, data: None
@@ -53,7 +103,9 @@ class Application:
             sys.stdout.buffer.flush()
 
     def request(self, method, **params):
-        return self._request(method, params)
+        # Leave delivery headroom beyond the host's authoritative state deadline.
+        timeout = 12 if method in ('state.get', 'state.set', 'state.delete') else 10
+        return self._request(method, params, timeout=timeout)
 
     def start_process(self, label, executable, args=(), *, cwd=None, capture_stderr=False):
         """Start one host-managed argument vector; stdout stays outside the protocol."""
@@ -85,6 +137,36 @@ class Application:
     def cancel_activity(self, lease):
         """Request cooperative cleanup; release acknowledges its completion."""
         return self.request('activity.cancel', lease=lease)
+
+    def get_settings(self):
+        """Read this owner's immutable configured settings after registration."""
+        return self.request('settings.get')['settings']
+
+    def get_state(self):
+        """Read nonsecret workspace state and its opaque content revision."""
+        return self.request('state.get')
+
+    def set_state(self, expected_revision, version, data):
+        """Replace one versioned document by content-CAS; never retry or migrate."""
+        if isinstance(version, bool) or not isinstance(version, int) or not 0 <= version <= 0xffffffff:
+            raise PluginError('invalid_argument', 'State version must be an unsigned 32-bit integer')
+        document = {'version': version, 'data': data}
+        try:
+            _validate_state_document(document)
+            encoded = json.dumps(document, ensure_ascii=False, allow_nan=False,
+                                 separators=(',', ':')).encode('utf-8')
+            if len(encoded) > STATE_LIMIT:
+                raise PluginError('limit_exceeded', 'State document exceeds its byte limit')
+            # Request admission may wait on another writer; retain the exact validated value.
+            document = json.loads(encoded)
+            _validate_state_document(document)
+        except (TypeError, ValueError, OverflowError, UnicodeError, RuntimeError) as error:
+            raise PluginError('invalid_argument', 'State must be finite JSON data') from error
+        return self.request('state.set', expected_revision=expected_revision, document=document)
+
+    def delete_state(self, expected_revision):
+        """Delete only the observed revision; inspect conflicts or unknown outcomes."""
+        return self.request('state.delete', expected_revision=expected_revision)
 
     def open_terminal(self, invocation, label, executable, args=(), *, cwd=None):
         """Hand a native terminal session to the user with exact argument boundaries."""
@@ -265,7 +347,7 @@ class Application:
                         raise
                     future.set_result(message['result'])
 
-    def _request(self, method, params, accept=None):
+    def _request(self, method, params, accept=None, *, timeout=10):
         if not self._slots.acquire(blocking=False):
             raise PluginError('busy', 'Too many outstanding requests')
         future = concurrent.futures.Future()
@@ -278,10 +360,21 @@ class Application:
                 self._pending[request_id] = future
                 if accept is not None:
                     self._accept[request_id] = accept
-                self._write({'type': 'request', 'id': request_id, 'method': method, 'params': params})
+                try:
+                    self._write({'type': 'request', 'id': request_id, 'method': method, 'params': params})
+                except OSError as error:
+                    if method in ('state.set', 'state.delete'):
+                        raise PluginError('outcome_unknown', 'State mutation outcome is unknown; read state before retrying') from error
+                    raise
             try:
-                return future.result(timeout=10)
+                return future.result(timeout=timeout)
+            except _HostDisconnected as error:
+                if method in ('state.set', 'state.delete'):
+                    raise PluginError('outcome_unknown', 'State mutation outcome is unknown; read state before retrying') from error
+                raise
             except concurrent.futures.TimeoutError as error:
+                if method in ('state.set', 'state.delete'):
+                    raise PluginError('outcome_unknown', 'State mutation outcome is unknown; read state before retrying') from error
                 raise PluginError('timeout', 'Control request timed out') from error
         finally:
             with self._lock:
@@ -358,9 +451,12 @@ class Application:
             hello = self._read()
             if hello.get('type') != 'hello' or hello.get('version') != VERSION:
                 raise PluginError('unsupported', 'Application requires epoch 2')
-            self._write({'type': 'register', 'version': VERSION, 'name': self.name,
-                         'commands': self.commands, 'required_capabilities': self.capabilities,
-                         'optional_capabilities': []})
+            registration = {'type': 'register', 'version': VERSION, 'name': self.name,
+                            'commands': self.commands, 'required_capabilities': self.capabilities,
+                            'optional_capabilities': []}
+            if self.settings_schema is not None:
+                registration['settings_schema'] = self.settings_schema
+            self._write(registration)
             if self._read().get('type') != 'registered':
                 raise PluginError('unavailable', 'Registration refused')
             while True:
@@ -375,7 +471,7 @@ class Application:
             self._closed.set()
             with self._lock:
                 for future in self._pending.values():
-                    future.set_exception(PluginError('unavailable', 'Host disconnected'))
+                    future.set_exception(_HostDisconnected())
                 self._pending.clear()
                 self._accept.clear()
                 self._subscriptions.clear()

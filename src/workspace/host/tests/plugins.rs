@@ -29,6 +29,7 @@ fn host() -> (TestRuntimeRoot, WorkspaceHost) {
 }
 fn config(id: &str) -> PluginConfig {
     PluginConfig {
+        settings: Default::default(),
         id: id.into(),
         api: Default::default(),
         capabilities: vec![],

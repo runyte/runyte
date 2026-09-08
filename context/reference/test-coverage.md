@@ -41,6 +41,29 @@ days, and fails below 89% total line coverage. The floor is deliberately below
 the observed baseline because conditional Linux and macOS code changes both the
 instrumented denominator and the paths available to a run on one platform.
 
+## 2026-09-08 — plugin settings and workspace state
+
+Measured on `x86_64-unknown-linux-gnu` at `62f49c9` plus the settings/state
+round, using Rust 1.97.1 and cargo-llvm-cov 0.9.0. Ordinary and canonical suites
+each passed 3,487 tests with 33 ignored. Formatting and warnings-as-errors Clippy
+passed; the floor remains 89%.
+
+| Measure | Covered | Total | Coverage |
+| --- | ---: | ---: | ---: |
+| Lines | 118,094 | 128,818 | 91.68% |
+| Functions | 10,662 | 11,618 | 91.77% |
+| Regions | 179,219 | 196,594 | 91.16% |
+
+Thirty-one new Rust tests cover bounded JSON traversal and integer precision,
+schema registration rollback and settings ownership, private state storage and
+content revisions, cancellation and unknown outcomes, stopped-generation gates,
+payload accounting, runtime teardown and quit protection. Sixteen Python state
+checks and ten application/schema checks pass. A native Linux PTY smoke verifies
+configured defaults, no startup storage IO, private permissions, conditional
+save/delete and persistence across editor restart, with zero settled output bytes
+over two seconds. Native macOS and the complete application performance matrix
+remain outstanding; this smoke is functional evidence.
+
 ## 2026-09-08 — continuing activity leases
 
 Measured on `x86_64-unknown-linux-gnu` at `9e2d672` plus the activity round,

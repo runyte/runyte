@@ -309,6 +309,8 @@
       "type": "hello",
       "version": "runyte-experimental-2",
       "capabilities": [
+        "state",
+        "settings",
         "activity",
         "terminals",
         "external",
@@ -339,7 +341,10 @@
         "process_output_bytes": 1048576,
         "process_write_seconds": 5,
         "activity_leases": 2,
-        "activity_seconds": 600
+        "activity_seconds": 600,
+        "settings_bytes": 65536,
+        "state_document_bytes": 1044480,
+        "state_requests": 1
       }
     }
   },
@@ -368,7 +373,10 @@
         "process_output_bytes": 1048576,
         "process_write_seconds": 5,
         "activity_leases": 2,
-        "activity_seconds": 600
+        "activity_seconds": 600,
+        "settings_bytes": 65536,
+        "state_document_bytes": 1044480,
+        "state_requests": 1
       }
     }
   },
@@ -2185,6 +2193,133 @@
       "data": {
         "lease": "a:g:1",
         "reason": "expired"
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:1300",
+      "method": "settings.get",
+      "params": {}
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "response",
+      "id": "p:1300",
+      "result": {
+        "settings": {
+          "default_destination": "."
+        }
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:1301",
+      "method": "state.get",
+      "params": {}
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "response",
+      "id": "p:1301",
+      "result": {
+        "revision": "s:missing",
+        "document": null
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:1302",
+      "method": "state.set",
+      "params": {
+        "expected_revision": "s:missing",
+        "document": {
+          "version": 1,
+          "data": {
+            "destination": "sample"
+          }
+        }
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "response",
+      "id": "p:1302",
+      "result": {
+        "revision": "s:a85b2e79e932efefd64f6a680e100c2a4fdc5ad68ff3279d8d9338c83cc020cc",
+        "document": {
+          "version": 1,
+          "data": {
+            "destination": "sample"
+          }
+        }
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:1303",
+      "method": "state.delete",
+      "params": {
+        "expected_revision": "s:a85b2e79e932efefd64f6a680e100c2a4fdc5ad68ff3279d8d9338c83cc020cc"
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "response",
+      "id": "p:1303",
+      "result": {
+        "revision": "s:missing",
+        "document": null
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "register",
+      "version": "runyte-experimental-2",
+      "name": "Preferences",
+      "commands": [
+        {
+          "name": "open",
+          "description": "Inspect preferences",
+          "context": "workspace",
+          "primary": false,
+          "arguments": []
+        }
+      ],
+      "required_capabilities": [
+        "settings",
+        "state"
+      ],
+      "optional_capabilities": [],
+      "settings_schema": {
+        "fields": [
+          {
+            "name": "default_destination",
+            "type": "string",
+            "max_length": 256
+          }
+        ]
       }
     }
   }

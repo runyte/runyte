@@ -15,6 +15,8 @@ pub const TIMEOUT: Duration = Duration::from_secs(10);
 pub struct PluginConfig {
     pub id: String,
     #[serde(default)]
+    pub settings: super::settings::Settings,
+    #[serde(default)]
     pub api: super::application::Api,
     #[serde(default)]
     pub capabilities: Vec<String>,
@@ -48,6 +50,8 @@ pub struct Registration {
 pub enum ClientMessage {
     #[serde(skip)]
     Process(super::process::runtime::Event),
+    #[serde(skip)]
+    State(super::state::Event),
     #[serde(skip)]
     Handoff(super::handoff::Event),
     #[serde(skip)]

@@ -61,7 +61,7 @@ ratatui = { version = "0.30", default-features = false, features = ["crossterm"]
 regex = "1.13.1"
 ropey = { version = "1.6.1", default-features = false, features = ["simd"] }
 serde = { version = "1.0", features = ["derive", "rc"] }
-serde_json = "1.0"
+serde_json = { version = "1.0", features = ["raw_value"] }
 serde_yaml = "0.9"
 shlex = "2.0"
 tokio = { version = "1.47", features = ["io-std", "io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }

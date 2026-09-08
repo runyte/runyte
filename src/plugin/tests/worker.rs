@@ -354,6 +354,7 @@ async fn actual_worker_delivers_final_capacity_notice_without_input_and_then_sta
     )
     .unwrap();
     let config = PluginConfig {
+        settings: Default::default(),
         id: "output-ready".into(),
         api: application::Api::Epoch2,
         capabilities: vec![],
@@ -417,6 +418,7 @@ async fn simultaneous_host_deadlines_wait_for_owner_admission_without_stopping_w
     )
     .unwrap();
     let config = PluginConfig {
+        settings: Default::default(),
         id: "deadline-admission".into(),
         api: application::Api::Epoch2,
         capabilities: vec![],

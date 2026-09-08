@@ -3052,6 +3052,13 @@ not acknowledge expiry or cancellation is stopped, cleaning up its managed
 helpers. The `:q!` spelling does not bypass this protection; explicit forced
 persistent-session stop remains available.
 
+Applications can read their configured settings and save bounded nonsecret
+workspace preferences through the [settings and state API](plugins/applications.md#settings-and-workspace-state).
+State updates check the revision observed by the application and preserve existing
+data on conflict. The runnable `preferences.py` example demonstrates a configured
+default and a saved destination that survives restarting the editor. Secrets
+belong in an established credential manager or authentication helper.
+
 The SFTP and FTP/FTPS reference browsers also provide `mkdir`, `rename` and
 `delete` actions for one remote file or empty directory. After preparation,
 `confirm-operation` opens native confirmation; `cancel-operation` cancels pending

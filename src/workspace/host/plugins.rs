@@ -140,6 +140,15 @@ impl WorkspaceHost {
         // Observation delivery or a queued stop can retire this same instance.
         // Check membership after that boundary before looking up its state.
         self.sync_plugin_observers();
+        if let Ok(ClientMessage::State(state)) = event.result {
+            if let Err(error) = self.application_state_event(event.plugin, state)
+                && self.app.plugins.instances.contains_key(&event.plugin)
+            {
+                self.stop_plugin(event.plugin, &error.to_string());
+            }
+            self.sync_application_observers();
+            return before != presentation(self);
+        }
         if let Ok(ClientMessage::Handoff(handoff)) = event.result {
             if let Err(error) = self.application_handoff_event(event.plugin, handoff)
                 && self.app.plugins.instances.contains_key(&event.plugin)
@@ -198,6 +207,7 @@ impl WorkspaceHost {
 
     /// Administrative cancellation also removes commands and subscriptions.
     pub fn stop_plugin(&mut self, id: usize, reason: &str) {
+        self.stop_plugin_state(id);
         self.stop_plugin_handoffs(id);
         self.stop_plugin_processes(id);
         self.stop_provider_reads(id);
@@ -290,6 +300,7 @@ impl WorkspaceHost {
 
     pub(super) fn plugin_message(&mut self, id: usize, message: ClientMessage) -> Result<()> {
         match message {
+            ClientMessage::State(event) => return self.application_state_event(id, event),
             ClientMessage::Handoff(event) => return self.application_handoff_event(id, event),
             ClientMessage::Process(event) => return self.application_process_event(id, event),
             ClientMessage::ModelPrepared {
@@ -596,7 +607,8 @@ impl WorkspaceHost {
             | ClientMessage::DocumentSaved { .. }
             | ClientMessage::ModelPrepared { .. }
             | ClientMessage::Process(_)
-            | ClientMessage::Handoff(_) => anyhow::bail!("wrong API epoch"),
+            | ClientMessage::Handoff(_)
+            | ClientMessage::State(_) => anyhow::bail!("wrong API epoch"),
         }
         Ok(())
     }

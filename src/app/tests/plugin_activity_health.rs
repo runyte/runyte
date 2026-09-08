@@ -27,6 +27,7 @@ fn with_activity(state: activity::State) -> App {
         7,
         Instance {
             config: plugin::PluginConfig {
+                settings: Default::default(),
                 id: "remote-watch".into(),
                 api: api::Api::Epoch2,
                 capabilities: vec!["activity".into()],
@@ -243,4 +244,29 @@ fn activity_health_session_status_and_preview_keep_protected_owners_visible() {
     assert!(!app.refresh_workspace_activity_at(1000));
     row.incompatible_protocol = Some(51);
     assert_eq!(terminal_output_status(&row, 1000), "");
+}
+
+#[test]
+fn pending_plugin_state_storage_protects_quit_until_the_worker_settles() {
+    let mut app = with_activity(activity::State::Active);
+    let state = &mut app.plugins.instances.get_mut(&7).unwrap().application;
+    state.activities.clear();
+    state.state_pending = true;
+    app.execute_command("qa!").unwrap();
+    assert!(!app.should_quit);
+    assert_eq!(app.plugin_active_job_count(), 1);
+    app.plugins
+        .instances
+        .get_mut(&7)
+        .unwrap()
+        .application
+        .state_pending = false;
+    app.plugins.instances.remove(&7);
+    app.plugins.state_orphans = 1;
+    app.execute_command("qa!").unwrap();
+    assert!(!app.should_quit);
+    assert_eq!(app.plugin_active_job_count(), 1);
+    app.plugins.state_orphans = 0;
+    app.execute_command("qa!").unwrap();
+    assert!(app.should_quit);
 }

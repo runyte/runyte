@@ -116,6 +116,8 @@ generation and must never be parsed, persisted, or used by another owner.
 | external | `external.open` | One foreground system-handler handoff for a URL or workspace file |
 | notifications | `notification.publish` | Bounded owner-labelled feedback without taking focus |
 | activity | `activity.acquire/renew/get/release/cancel` | Renewable continuing-work lease, explicit cleanup and expiry |
+| settings | `settings.get` | Immutable validated configuration for this owner |
+| state | `state.get/set/delete` | Versioned nonsecret workspace document with conditional atomic replacement |
 | views | `view.create/get/publish/patch/close` | Semantic model, owned handle and model revision |
 | views | `view.query.set` | Explicit revision-bound query intent; matching publication settles it |
 | views | `view.stage.open/write/commit/close` | Bounded construction and atomic publication |
@@ -238,8 +240,8 @@ budgets are reserved for bounded queues, decoding and publication copies.
 These measure payload, not allocator RSS or the external process's memory.
 Buffer/pane issuance is bounded at 1,024/128 handles per connection generation.
 
-Still required by the active plan: binary uploads;
-state, settings and a plugin manager; media
+Still required by the active plan: binary uploads and remaining remote conflict
+decisions; a plugin manager; media
 examples; broader SDK/conformance coverage and the complete performance/platform
 acceptance matrix.
 
@@ -1473,3 +1475,115 @@ cannot starve cleanup. Keep that callback independent of locks held by command
 handlers; signal cancellation promptly and acknowledge only after the work stops.
 The host uses its existing one-shot deadline scheduler, with no activity timer
 when no lease or cleanup grace is present.
+
+## Settings and workspace state
+
+`settings` and `state` are separate explicit capabilities. Configured settings are
+immutable for one plugin instance; global preferences belong in user configuration.
+The state store holds nonsecret workspace preferences and last destinations. Use
+an established credential manager or authentication helper for secrets.
+
+`settings.get {}` returns `{settings:{...}}` for the requesting configured owner.
+The optional `settings` mapping on its configuration defaults to `{}` and contains
+at most 64 KiB of canonical JSON, eight levels and 4,096 value nodes. Nested JSON
+is allowed without a registered schema. Nothing reads a disabled plugin bundle,
+scans for settings, or reads state storage during startup.
+
+Registration may include `settings_schema:{fields:[...]}` with at most 64 fields.
+Each field has a unique `name`, `type`, and optional boolean `required` (default
+false). Names start with an ASCII letter or underscore, continue with letters,
+digits, underscores or hyphens, and contain at most 48 bytes. Supported types are:
+
+- `string`, optionally bounded by `max_length` Unicode scalar values and an
+  `enum` of one to 64 distinct strings, each at most 4,096 UTF-8 bytes.
+- `integer`, a signed 64-bit value with optional inclusive `min` and `max`.
+- `boolean`.
+
+A supplied schema rejects unknown configured keys, missing required fields and
+values of the wrong type. There are no defaults, coercion, regular expressions,
+references or automatic migrations. Schema text is bounded at 64 KiB with the
+same eight-level/4,096-node limits. Optional schema/constraint fields may be null
+to mean absent; `required` must be a boolean when provided. Validation happens
+before any commands or capabilities are installed. Diagnostics do not echo
+configured values or unrecognized keys.
+
+State is one whole document per exact configured plugin ID:
+
+```json
+{"version":1,"data":{"destination":"sample"}}
+```
+
+`version` is the plugin's unsigned 32-bit migration version. `data` is bounded
+JSON. `state.get {}` returns `{revision,document}`; an absent document returns
+`{"revision":"s:missing","document":null}`. Otherwise the opaque revision is a
+hash of canonical document content. The host does not interpret migration
+versions, restore live handles, or migrate state automatically.
+
+`state.set {expected_revision,document}` atomically replaces the observed document;
+`state.delete {expected_revision}` deletes it. Both return the resulting state
+metadata. A different current revision yields `conflict`, preserving the current
+file. This compares content: changing away and back to identical canonical JSON
+has the same revision. It is not an edit sequence or an exactly-once operation ID.
+Read state and make a new explicit decision after a conflict or uncertain result.
+Do not retry a mutation merely because a response was lost.
+
+Canonical documents contain at most 1,044,480 bytes (1 MiB minus 4 KiB of wire
+headroom), 16 levels, 16,384 value nodes and 1,024 entries per object or array.
+Arbitrary maps are permitted inside `data`; the document and request envelopes
+remain strict. Structural checks run before materializing unbounded JSON trees.
+The committed state quota remains below 1 MiB per owner.
+
+Integer literals must fit the range from signed 64-bit minimum through unsigned
+64-bit maximum; larger integer literals are rejected before parsing can round
+them. Decimal or exponent numbers use finite IEEE 754 double precision. Store
+larger exact identifiers as strings. These semantic checks supplement the schema.
+
+Storage lives under the configured workspace state root, normally
+`.runyte/plugins/<configured-id>/state.json`, separate from tracked `context/`. Private directories and files use descriptor-relative access
+without following links. A stable nonblocking lock serializes cooperating hosts'
+content checks and writes; contention returns `busy`. Atomic replacement and
+file/directory synchronization preserve the old document before promotion. A
+fixed temporary leaf bounds interrupted-write leftovers and is recovered only
+on an explicit state operation. Corrupt or unsafe existing storage is refused,
+with static diagnostics, rather than silently overwritten.
+
+Only one state operation per configured owner may run, including unfinished
+workers from a stopped generation. Work runs off the editor loop, reserving a
+shared local-worker slot and 16 MiB of the existing payload budget until actual
+completion. The host deadline is ten seconds. Before mutation admission,
+cancellation prevents promotion; after an attempted mutation, timeout or failure
+can yield `outcome_unknown`. Stopping a plugin discards its late reply while
+retaining accounting and the owner gate until the worker finishes. Pending work
+protects ordinary quit/retirement. State operations start no periodic timer.
+
+The SDK exposes `get_settings()`, `get_state()`,
+`set_state(expected_revision, version, data)` and `delete_state(expected_revision)`.
+State replies get two seconds of delivery headroom beyond the host deadline. A
+lost mutation acknowledgement is `outcome_unknown`; the SDK neither retries nor
+migrates. This delivery margin does not extend an enclosing command’s ten-second
+lifetime; longer workflows should run behind an explicit finite job. Plugin
+authors must decide which versions they can read and perform
+any migration as an explicit conditional replacement.
+
+The standard-library example `preferences.py` uses a validated configured default
+and saves one nonsecret destination:
+
+```yaml
+plugins:
+  - id: preferences
+    enabled: true
+    api: runyte-experimental-2
+    executable: /usr/bin/python3
+    args: [/path/to/runyte/docs/plugins/preferences.py]
+    capabilities: [settings, state, views]
+    settings:
+      default_destination: .
+```
+
+`:plugin.preferences.open` inspects the current preference.
+`:plugin.preferences.remember "sample directory"` saves it and
+`:plugin.preferences.forget` conditionally deletes it; open the view again to
+inspect the result. Restarting the editor preserves the document. Opening or remembering refuses unknown stored versions and leaves migration
+to an explicit future implementation; forget remains an explicit conditional
+deletion. It performs no startup state read and does not automatically
+recreate an old view or replay an old command.

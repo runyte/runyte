@@ -349,6 +349,15 @@
         },
         "activity_seconds": {
           "const": 600
+        },
+        "settings_bytes": {
+          "const": 65536
+        },
+        "state_document_bytes": {
+          "const": 1044480
+        },
+        "state_requests": {
+          "const": 1
         }
       },
       "required": [
@@ -366,7 +375,10 @@
         "process_output_bytes",
         "process_write_seconds",
         "activity_leases",
-        "activity_seconds"
+        "activity_seconds",
+        "settings_bytes",
+        "state_document_bytes",
+        "state_requests"
       ],
       "additionalProperties": true
     },
@@ -405,6 +417,16 @@
             "maxLength": 48
           },
           "maxItems": 32
+        },
+        "settings_schema": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/settingsSchema"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
@@ -1791,6 +1813,12 @@
             },
             {
               "$ref": "#/$defs/activityInfo"
+            },
+            {
+              "$ref": "#/$defs/settingsResult"
+            },
+            {
+              "$ref": "#/$defs/stateResult"
             }
           ]
         }
@@ -2230,6 +2258,18 @@
         },
         {
           "$ref": "#/$defs/activity.cancel"
+        },
+        {
+          "$ref": "#/$defs/settings.get"
+        },
+        {
+          "$ref": "#/$defs/state.get"
+        },
+        {
+          "$ref": "#/$defs/state.set"
+        },
+        {
+          "$ref": "#/$defs/state.delete"
         }
       ]
     },
@@ -7238,6 +7278,431 @@
       "required": [
         "lease",
         "reason"
+      ],
+      "additionalProperties": false
+    },
+    "settingsValue": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "string",
+          "maxLength": 65536
+        },
+        {
+          "type": "array",
+          "maxItems": 4096,
+          "items": {
+            "$ref": "#/$defs/settingsValue"
+          }
+        },
+        {
+          "type": "object",
+          "maxProperties": 4096,
+          "additionalProperties": {
+            "$ref": "#/$defs/settingsValue"
+          }
+        }
+      ]
+    },
+    "settingsObject": {
+      "type": "object",
+      "maxProperties": 4096,
+      "additionalProperties": {
+        "$ref": "#/$defs/settingsValue"
+      }
+    },
+    "settingsResult": {
+      "type": "object",
+      "properties": {
+        "settings": {
+          "$ref": "#/$defs/settingsObject"
+        }
+      },
+      "required": [
+        "settings"
+      ],
+      "additionalProperties": false
+    },
+    "settingsField": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "pattern": "^[A-Za-z_][A-Za-z0-9_-]{0,47}$",
+              "maxLength": 48
+            },
+            "required": {
+              "type": "boolean",
+              "default": false
+            },
+            "type": {
+              "const": "string"
+            },
+            "enum": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "minItems": 1,
+                  "maxItems": 64,
+                  "uniqueItems": true,
+                  "items": {
+                    "type": "string",
+                    "maxLength": 4096
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "max_length": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 65536
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "name",
+            "type"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "pattern": "^[A-Za-z_][A-Za-z0-9_-]{0,47}$",
+              "maxLength": 48
+            },
+            "required": {
+              "type": "boolean",
+              "default": false
+            },
+            "type": {
+              "const": "integer"
+            },
+            "min": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": -9223372036854775808,
+                  "maximum": 9223372036854775807
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "max": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": -9223372036854775808,
+                  "maximum": 9223372036854775807
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "name",
+            "type"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "pattern": "^[A-Za-z_][A-Za-z0-9_-]{0,47}$",
+              "maxLength": 48
+            },
+            "required": {
+              "type": "boolean",
+              "default": false
+            },
+            "type": {
+              "const": "boolean"
+            }
+          },
+          "required": [
+            "name",
+            "type"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "settingsSchema": {
+      "type": "object",
+      "properties": {
+        "fields": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "$ref": "#/$defs/settingsField"
+          }
+        }
+      },
+      "required": [
+        "fields"
+      ],
+      "additionalProperties": false
+    },
+    "stateValue": {
+      "description": "Host semantic limits additionally bound depth and total nodes. Integer literals must fit signed 64-bit minimum through unsigned 64-bit maximum; finite decimal/exponent numbers use IEEE 754 double precision. Larger exact identifiers must be strings.",
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "string",
+          "maxLength": 1044480
+        },
+        {
+          "type": "array",
+          "maxItems": 1024,
+          "items": {
+            "$ref": "#/$defs/stateValue"
+          }
+        },
+        {
+          "type": "object",
+          "maxProperties": 1024,
+          "additionalProperties": {
+            "$ref": "#/$defs/stateValue"
+          }
+        }
+      ]
+    },
+    "stateDocument": {
+      "type": "object",
+      "properties": {
+        "version": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "data": {
+          "$ref": "#/$defs/stateValue"
+        }
+      },
+      "required": [
+        "version",
+        "data"
+      ],
+      "additionalProperties": false
+    },
+    "stateResult": {
+      "type": "object",
+      "properties": {
+        "revision": {
+          "type": "string",
+          "pattern": "^s:(missing|[0-9a-f]{64})$",
+          "maxLength": 66
+        },
+        "document": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/stateDocument"
+            }
+          ]
+        }
+      },
+      "required": [
+        "revision",
+        "document"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "revision": {
+                "const": "s:missing"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "document": {
+                "type": "null"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "document": {
+                "$ref": "#/$defs/stateDocument"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "settings.get": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "request"
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^p:[1-9][0-9]*$",
+          "maxLength": 22
+        },
+        "method": {
+          "const": "settings.get"
+        },
+        "params": {
+          "type": "object",
+          "properties": {},
+          "required": [],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "method",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    "state.get": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "request"
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^p:[1-9][0-9]*$",
+          "maxLength": 22
+        },
+        "method": {
+          "const": "state.get"
+        },
+        "params": {
+          "type": "object",
+          "properties": {},
+          "required": [],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "method",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    "state.set": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "request"
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^p:[1-9][0-9]*$",
+          "maxLength": 22
+        },
+        "method": {
+          "const": "state.set"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "expected_revision": {
+              "type": "string",
+              "pattern": "^s:(missing|[0-9a-f]{64})$",
+              "maxLength": 66
+            },
+            "document": {
+              "$ref": "#/$defs/stateDocument"
+            }
+          },
+          "required": [
+            "expected_revision",
+            "document"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "method",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    "state.delete": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "request"
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^p:[1-9][0-9]*$",
+          "maxLength": 22
+        },
+        "method": {
+          "const": "state.delete"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "expected_revision": {
+              "type": "string",
+              "pattern": "^s:(missing|[0-9a-f]{64})$",
+              "maxLength": 66
+            }
+          },
+          "required": [
+            "expected_revision"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "method",
+        "params"
       ],
       "additionalProperties": false
     }

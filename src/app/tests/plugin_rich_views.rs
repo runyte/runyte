@@ -179,6 +179,7 @@ pub(super) fn commands(
         0,
         Instance {
             config: plugin::PluginConfig {
+                settings: Default::default(),
                 id: "test".into(),
                 api: api::Api::Epoch2,
                 capabilities: vec!["views".into()],

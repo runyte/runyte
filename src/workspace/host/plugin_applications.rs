@@ -13,6 +13,7 @@ impl WorkspaceHost {
     ) -> Result<()> {
         match message {
             api::ClientMessage::Register {
+                settings_schema,
                 version,
                 name,
                 commands,
@@ -25,6 +26,11 @@ impl WorkspaceHost {
                     "application already registered"
                 );
                 ensure!(safe_label(&name, 80), "invalid application name");
+                if let Some(schema) = settings_schema {
+                    schema
+                        .validate(&self.app.plugins.instances[&id].config.settings)
+                        .map_err(|error| anyhow::anyhow!(error.message))?;
+                }
                 ensure!(
                     required_capabilities.len() + optional_capabilities.len() <= 32,
                     "too many capabilities"
@@ -131,6 +137,26 @@ impl WorkspaceHost {
                 request,
             } => {
                 self.application_request_id(id, &request_id)?;
+                if matches!(request, api::Request::SettingsGet {}) {
+                    let instance = &self.app.plugins.instances[&id];
+                    let result = if instance.application.capabilities.contains("settings") {
+                        Ok(api::ResultValue::Settings {
+                            settings: instance.config.settings.encoded(),
+                        })
+                    } else {
+                        Err(api::Error::new(
+                            api::ErrorCode::CapabilityDenied,
+                            "Settings capability was not granted",
+                        ))
+                    };
+                    return self.application_local_reply(id, request_id, result);
+                }
+                if super::plugin_state::is_state_request(&request) {
+                    return match self.application_state_request(id, &request_id, request) {
+                        Ok(()) => Ok(()),
+                        Err(error) => self.application_local_reply(id, request_id, Err(error)),
+                    };
+                }
                 if super::plugin_activity::is_activity_request(&request) {
                     return self.application_activity_request(id, request_id, request);
                 }
@@ -569,6 +595,9 @@ impl WorkspaceHost {
             return Ok(());
         }
         instance.application.deadlines.remove(&token);
+        if self.state_deadline(id, &token)? {
+            return Ok(());
+        }
         if self.activity_deadline(id, &token)? {
             return Ok(());
         }

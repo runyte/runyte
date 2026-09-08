@@ -47,6 +47,7 @@ pub(crate) struct Instance {
 
 #[derive(Default)]
 pub(crate) struct Plugins {
+    pub state_orphans: usize,
     pub document_saves: BTreeSet<usize>,
     pub provider_save_intents: VecDeque<super::plugin_providers::ProviderSaveIntent>,
     pub provider_inspect_intents: VecDeque<super::plugin_providers::ProviderInspectIntent>,

@@ -77,6 +77,8 @@ pipes and process-group cleanup, publish retained notifications, and make explic
 Continuing work can use bounded, renewable
 [activity leases](docs/plugins/applications.md#continuing-activity) that appear in
 session health and protect normal shutdown.
+Applications can read validated [settings and workspace state](docs/plugins/applications.md#settings-and-workspace-state),
+with conditional updates for nonsecret saved preferences.
 The broader application platform remains in development.
 See the [user guide](docs/user-guide.md) for complete behavior and limits.
 

@@ -36,8 +36,10 @@ impl App {
                     .values()
                     .filter(|job| job.state.active())
                     .count()
+                    + usize::from(instance.application.state_pending)
             })
-            .sum()
+            .sum::<usize>()
+            + self.plugins.state_orphans
     }
 
     pub fn plugin_activity_health(&self) -> Vec<crate::service_health::ActivityLeaseHealth> {
