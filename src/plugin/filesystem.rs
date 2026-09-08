@@ -298,3 +298,10 @@ pub struct Finished {
     pub applied: usize,
     pub recovery: bool,
 }
+
+#[derive(Debug)]
+pub struct Applied {
+    pub(crate) result: Result<crate::fs_plan::ApplyReport, crate::fs_plan::ApplyError>,
+    pub(crate) updates: Vec<crate::buffer::FilesystemUpdate>,
+    pub(crate) cancelled_before_start: bool,
+}

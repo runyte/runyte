@@ -1715,7 +1715,8 @@
             "job.changed",
             "job.cancel_requested",
             "view.closed",
-            "filesystem.finished"
+            "filesystem.finished",
+            "filesystem.started"
           ]
         },
         "data": {
@@ -1738,6 +1739,9 @@
             },
             {
               "$ref": "#/$defs/filesystemFinished"
+            },
+            {
+              "$ref": "#/$defs/filesystemStarted"
             }
           ]
         }
@@ -2370,7 +2374,8 @@
           "enum": [
             "succeeded",
             "failed",
-            "cancelled"
+            "cancelled",
+            "outcome_unknown"
           ]
         },
         "applied": {
@@ -2861,6 +2866,24 @@
         "params"
       ],
       "additionalProperties": false
+    },
+    "filesystemStarted": {
+      "type": "object",
+      "properties": {
+        "plan": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "job": {
+          "type": "string",
+          "maxLength": 64
+        }
+      },
+      "required": [
+        "plan",
+        "job"
+      ],
+      "additionalProperties": true
     }
   },
   "anyOf": [

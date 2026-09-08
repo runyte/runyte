@@ -7,6 +7,9 @@
 //! a multi-cursor edit a single undo step and keeps undo memory proportional to
 //! edit size rather than document size.
 
+mod filesystem;
+pub(crate) use filesystem::{FilesystemInput, FilesystemUpdate};
+
 use std::{
     collections::HashMap,
     fs::{self, File, OpenOptions},

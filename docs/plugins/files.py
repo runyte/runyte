@@ -24,7 +24,7 @@ app = Application('Local files', [
     command('new-directory', 'Create a directory using a native prompt'),
     command('rename-selected', 'Rename the selected file using a native prompt'),
     command('copy-selected', 'Copy the selected file using a native prompt'),
-], ['views', 'filesystem', 'documents', 'interaction'])
+], ['views', 'filesystem', 'documents', 'interaction', 'jobs'])
 
 lock = threading.RLock()
 view = revision = directory = directory_revision = None

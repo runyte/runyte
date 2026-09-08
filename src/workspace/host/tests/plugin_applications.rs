@@ -9,6 +9,10 @@ mod document_jobs;
 mod documents;
 #[path = "plugin_filesystem.rs"]
 mod filesystem;
+#[path = "plugin_filesystem_apply.rs"]
+mod filesystem_apply;
+#[path = "plugin_filesystem_review.rs"]
+mod filesystem_review;
 #[path = "plugin_interaction.rs"]
 mod interaction;
 

@@ -272,15 +272,21 @@ impl WorkspaceHost {
         request: api::Request,
     ) -> Result<(api::ResultValue, Option<&'static str>), api::Error> {
         use api::{ErrorCode as Code, Request};
-        if let Request::JobFinish { job, .. } | Request::JobUpdate { job, .. } = &request
-            && self
-                .document_saves
-                .get(job)
-                .is_some_and(|pending| pending.owner == id)
+        let host_cancel = match &request {
+            Request::JobGet { job }
+            | Request::JobCancel { job }
+            | Request::JobFinish { job, .. }
+            | Request::JobUpdate { job, .. } => self.host_job_cancellation(id, job),
+            _ => None,
+        };
+        if matches!(
+            request,
+            Request::JobFinish { .. } | Request::JobUpdate { .. }
+        ) && host_cancel.is_some()
         {
             return Err(api::Error::new(
                 Code::Conflict,
-                "Host-owned document jobs finish through IO completion",
+                "Host-owned jobs finish through IO completion",
             ));
         }
         if matches!(
@@ -323,6 +329,9 @@ impl WorkspaceHost {
             .contains(capability)
         {
             return Err(fail(Code::CapabilityDenied, "Capability was not granted"));
+        }
+        if let Request::JobCancel { job } = &request {
+            self.cancel_queued_filesystem_job(id, job)?;
         }
         if matches!(request, Request::WorkspaceInfo(_)) {
             return Ok((
@@ -415,16 +424,8 @@ impl WorkspaceHost {
                             event = None;
                         } else {
                             job.state = api::JobState::Cancelling;
-                            if let Some(pending) = self
-                                .document_saves
-                                .get(&job.job)
-                                .filter(|p| p.owner == id && p.generation == state.generation)
-                            {
-                                // Only the host can settle its disk operation. The
-                                // plugin cannot acknowledge or accelerate blocking IO.
-                                pending
-                                    .cancelled
-                                    .store(true, std::sync::atomic::Ordering::SeqCst);
+                            if let Some(cancelled) = &host_cancel {
+                                cancelled.store(true, std::sync::atomic::Ordering::SeqCst);
                                 deadline = Some((job.job.clone(), None));
                                 event = Some("job.changed");
                             } else {
@@ -449,6 +450,11 @@ impl WorkspaceHost {
     }
 
     pub(super) fn application_deadline(&mut self, id: usize, token: String) -> Result<()> {
+        let host_cancel = self.host_job_cancellation(id, &token);
+        let filesystem_running = self
+            .filesystem_apply
+            .as_ref()
+            .is_some_and(|p| p.owner == id && p.job == token);
         let instance = self.app.plugins.instances.get_mut(&id).unwrap();
         if instance
             .application
@@ -459,14 +465,13 @@ impl WorkspaceHost {
             return Ok(());
         }
         instance.application.deadlines.remove(&token);
-        if let Some(pending) = self
-            .document_saves
-            .get(&token)
-            .filter(|p| p.owner == id && p.generation == instance.application.generation)
-        {
-            pending
-                .cancelled
-                .store(true, std::sync::atomic::Ordering::SeqCst);
+        if filesystem_running && self.cancel_queued_filesystem_job(id, &token).is_err() {
+            // OS mutations cannot be interrupted or rolled back by a control deadline.
+            return Ok(());
+        }
+        let instance = self.app.plugins.instances.get_mut(&id).unwrap();
+        if let Some(cancelled) = host_cancel {
+            cancelled.store(true, std::sync::atomic::Ordering::SeqCst);
             let changed = instance.application.jobs.get_mut(&token).and_then(|job| {
                 if job.state != api::JobState::Running {
                     return None;

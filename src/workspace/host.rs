@@ -241,6 +241,7 @@ mod plugin_applications;
 mod plugin_documents;
 mod plugin_editor;
 mod plugin_filesystem;
+mod plugin_filesystem_apply;
 mod plugin_interaction;
 /// The only owner allowed to mutate one live editor/application workspace.
 ///
@@ -250,6 +251,7 @@ mod plugins;
 
 pub struct WorkspaceHost {
     document_saves: std::collections::BTreeMap<String, plugin_documents::PendingSave>,
+    filesystem_apply: Option<plugin_filesystem_apply::PendingApply>,
     plugin_workers: std::collections::BTreeMap<usize, crate::plugin::Worker>,
     plugin_events_sender: Option<tokio::sync::mpsc::Sender<crate::plugin::Event>>,
     plugin_local_slots: Option<std::sync::Arc<tokio::sync::Semaphore>>,
@@ -335,6 +337,7 @@ impl WorkspaceHost {
         Self {
             identity,
             document_saves: Default::default(),
+            filesystem_apply: None,
             plugin_workers: Default::default(),
             plugin_events_sender: None,
             plugin_local_slots: None,
@@ -578,6 +581,11 @@ impl WorkspaceHost {
                         .count()
                 })
                 .sum::<usize>()
+                + usize::from(
+                    self.filesystem_apply
+                        .as_ref()
+                        .is_some_and(|pending| pending.orphaned),
+                )
                 + self
                     .document_saves
                     .values()
@@ -876,7 +884,7 @@ impl WorkspaceHost {
             .live_buffer_index(buffer)
             .map_err(anyhow::Error::from)?;
         anyhow::ensure!(
-            !self.app.buffers[index].dirty && !self.app.plugins.document_saves.contains(&index),
+            !self.app.buffers[index].dirty && !self.app.document_mutation_pending(index),
             "modified wait buffers must be saved, closed with confirmation, or explicitly discarded before completion"
         );
         let request = self
@@ -906,7 +914,7 @@ impl WorkspaceHost {
                         .map_err(anyhow::Error::from)?;
                     anyhow::ensure!(
                         !self.app.buffers[index].dirty
-                            && !self.app.plugins.document_saves.contains(&index),
+                            && !self.app.document_mutation_pending(index),
                         "modified wait buffers must be saved before completing the request"
                     );
                 }

@@ -404,6 +404,30 @@ impl App {
         );
         spec.staged_paths.sort();
         spec.staged_paths.dedup();
+        self.queue_filesystem_git_reconciliation(repository, spec);
+    }
+
+    /// Paths were contained and canonicalized by the filesystem worker.
+    pub(super) fn reconcile_plugin_filesystem_git(&mut self, paths: Vec<PathBuf>) {
+        let Some(repository) = self.git.repository().cloned() else {
+            return;
+        };
+        if self.ports.git_service.is_none() {
+            self.git_state.snapshot_stale = true;
+            return;
+        }
+        let paths = paths
+            .into_iter()
+            .filter(|path| repository.contains(path))
+            .collect::<HashSet<_>>();
+        let mut spec = self.git_refresh_spec_with_paths(|path| paths.contains(path));
+        spec.staged_paths.extend(paths);
+        spec.staged_paths.sort();
+        spec.staged_paths.dedup();
+        self.queue_filesystem_git_reconciliation(repository, spec);
+    }
+
+    fn queue_filesystem_git_reconciliation(&mut self, repository: Repository, spec: RefreshSpec) {
         let reconciliation = FilesystemReconciliation { repository, spec };
         match self.git_state.pending_filesystem_reconciliation.as_mut() {
             Some(pending) if pending.repository == reconciliation.repository => {
@@ -469,6 +493,12 @@ impl App {
     }
 
     pub(super) fn git_refresh_spec(&self, repository: &Repository) -> RefreshSpec {
+        self.git_refresh_spec_with_paths(|path| {
+            self.workspace_contains_path(path) && repository.contains(path)
+        })
+    }
+
+    fn git_refresh_spec_with_paths(&self, contained: impl Fn(&Path) -> bool) -> RefreshSpec {
         let visible_panes = self
             .maximized
             .as_ref()
@@ -494,7 +524,7 @@ impl App {
                 (!self.closed_buffers.contains(index) && buffer.kind == BufferKind::File)
                     .then_some(buffer.path.as_ref())
                     .flatten()
-                    .filter(|path| self.workspace_contains_path(path) && repository.contains(path))
+                    .filter(|path| contained(path))
                     .cloned()
             })
             .collect::<Vec<_>>();

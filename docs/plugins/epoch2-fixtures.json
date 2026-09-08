@@ -701,5 +701,17 @@
         "expected_revision": "r:3"
       }
     }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "event",
+      "sequence": "e:12",
+      "event": "filesystem.started",
+      "data": {
+        "plan": "f:g:2",
+        "job": "j:g:3"
+      }
+    }
   }
 ]

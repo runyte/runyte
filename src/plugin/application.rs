@@ -370,6 +370,7 @@ pub enum HostMessage {
 #[serde(untagged)]
 pub enum EventData {
     FilesystemFinished(super::filesystem::Finished),
+    FilesystemStarted { plan: String, job: String },
     Job(Job),
     ViewClosed { view: String },
 }
@@ -806,6 +807,14 @@ mod tests {
                         super::super::interaction::Value::Text("é".into()),
                     )]
                     .into(),
+                },
+            },
+            HostMessage::Event {
+                sequence: "e:12".into(),
+                event: "filesystem.started",
+                data: EventData::FilesystemStarted {
+                    plan: "f:g:2".into(),
+                    job: "j:g:3".into(),
                 },
             },
         ];

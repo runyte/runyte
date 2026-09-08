@@ -48,6 +48,8 @@ pub(crate) struct Instance {
 #[derive(Default)]
 pub(crate) struct Plugins {
     pub document_saves: BTreeSet<usize>,
+    pub filesystem_accepted: Option<crate::fs_plan::DeletionMode>,
+    pub filesystem_applying: bool,
     pub orphaned_payload: usize,
     pub input: Option<super::plugin_interaction::Surface>,
     pub input_finished: Vec<(

@@ -41,6 +41,27 @@ days, and fails below 89% total line coverage. The floor is deliberately below
 the observed baseline because conditional Linux and macOS code changes both the
 instrumented denominator and the paths available to a run on one platform.
 
+## 2026-09-08 — asynchronous application filesystem apply
+
+Measured on `x86_64-unknown-linux-gnu` at `1c27b77` plus the asynchronous filesystem
+round, using Rust 1.97.1 and cargo-llvm-cov 0.9.0. Canonical workspace coverage
+and the ordinary full suite each passed 3,142 tests with 33 ignored. Formatting,
+warnings-as-errors Clippy and both schema/example checkers passed.
+
+| Measure | Covered | Total | Coverage |
+| --- | ---: | ---: | ---: |
+| Lines | 107,502 | 117,376 | 91.59% |
+| Functions | 9,852 | 10,678 | 92.26% |
+| Regions | 165,267 | 181,353 | 91.13% |
+
+New regressions cover asynchronous confirmation/application, input during blocked
+trash IO, edits during rename, orphan reconciliation and accounting, both mutation
+barrier directions, wait/quit/detach, late opens, scratch/view retirement, capacity
+exhaustion, outbound startup failure and atomic cancellation phases. A native PTY
+smoke confirmed a create, opened text and returned to the retained manager; its
+two-second settled observation emitted no terminal bytes. The floor remains 89%;
+this Linux evidence does not replace native macOS validation.
+
 ## 2026-09-08 — explicit application document lifecycle
 
 Measured on `x86_64-unknown-linux-gnu` at `a4b3804` plus the document lifecycle

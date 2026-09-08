@@ -822,10 +822,10 @@ impl App {
     }
 
     fn quit_allowed(&mut self, force: bool, force_command: &str) -> bool {
-        if !self.plugins.document_saves.is_empty() {
+        if self.plugins.filesystem_applying || !self.plugins.document_saves.is_empty() {
             self.action_warning(
                 "Quit refused",
-                "Document writes are still pending; wait for completion or detach",
+                "Filesystem writes are still pending; wait for completion or detach",
             );
             return false;
         }

@@ -47,6 +47,12 @@ pub struct Registration {
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ClientMessage {
     #[serde(skip)]
+    FilesystemApplied {
+        job: String,
+        result: Result<super::filesystem::Applied, String>,
+        _permit: tokio::sync::OwnedSemaphorePermit,
+    },
+    #[serde(skip)]
     DocumentSaved {
         job: String,
         result: Result<Option<crate::buffer::SavedDocument>, String>,

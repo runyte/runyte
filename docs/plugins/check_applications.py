@@ -58,7 +58,7 @@ class ApplicationSchemaTests(unittest.TestCase):
             send(host[0])
             registration = receive()
             self.assertIn('filesystem', registration['required_capabilities'])
-            send({**host[1], 'capabilities': ['views', 'filesystem', 'documents', 'interaction']})
+            send({**host[1], 'capabilities': ['views', 'filesystem', 'documents', 'interaction', 'jobs']})
             opening = {**host[2], 'params': {**host[2]['params'], 'arguments': {'path': '.'}}}
             send(opening)
             read = receive()

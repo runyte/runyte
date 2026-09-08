@@ -2817,11 +2817,15 @@ impl App {
     }
 
     fn apply_fs_confirmation(&mut self, deletion: DeletionMode) {
-        if !self.plugins.document_saves.is_empty() {
+        if self.plugins.filesystem_applying || !self.plugins.document_saves.is_empty() {
             self.action_warning(
                 "Save pending",
                 "Wait for document writes before applying filesystem changes",
             );
+            return;
+        }
+        if self.plugins.filesystem_confirmation.is_some() {
+            self.plugins.filesystem_accepted = Some(deletion);
             return;
         }
         let Some(confirmation) = self.fs_confirmation.take() else {

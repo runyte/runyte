@@ -122,6 +122,15 @@ impl WorkspaceHost {
                     local::Task::Open { root, path }
                 }
                 Request::FilesystemApply { plan, invocation } => {
+                    if !state.capabilities.contains("jobs") {
+                        return Err(fail(
+                            Code::CapabilityDenied,
+                            "Filesystem application also requires jobs capability",
+                        ));
+                    }
+                    if self.app.plugins.filesystem_applying {
+                        return Err(fail(Code::Busy, "Filesystem application is pending"));
+                    }
                     let context = state
                         .requests
                         .get(&invocation)
@@ -336,6 +345,12 @@ impl WorkspaceHost {
                 })
             }
             local::Prepared::Document(buffer) => {
+                if self.app.plugins.filesystem_applying {
+                    return Err(fail(
+                        Code::Busy,
+                        "Wait for filesystem changes before publishing a document",
+                    ));
+                }
                 if let Some(invocation) = &pending.invocation {
                     let context = self.app.plugins.instances[&owner]
                         .application
@@ -375,6 +390,11 @@ impl WorkspaceHost {
 
     pub(super) fn sync_plugin_filesystem(&mut self) {
         self.app.sync_plugin_filesystem_confirmation();
+        if let Some(deletion) = self.app.plugins.filesystem_accepted.take()
+            && let Err(error) = self.start_plugin_filesystem_apply(deletion)
+        {
+            self.app.plugin_filesystem_start_failed(error.to_string());
+        }
         for (owner, finished) in std::mem::take(&mut self.app.plugins.filesystem_finished) {
             let Some(instance) = self.app.plugins.instances.get_mut(&owner) else {
                 continue;

@@ -2393,7 +2393,7 @@ impl CommandMatch<'_> {
 /// choose isolated ports; its fields and operations remain narrow.
 pub(crate) struct HostPorts {
     clipboard: Box<dyn SystemClipboard>,
-    trash: Box<dyn TrashBackend>,
+    trash: std::sync::Arc<dyn TrashBackend>,
     lsp: Option<LspHandle>,
     /// The Git boundary, absent when no `git` executable was found. Every Git
     /// surface is off in that case rather than reporting failures.
@@ -2412,7 +2412,7 @@ impl HostPorts {
     pub(crate) fn isolated(clipboard: Box<dyn SystemClipboard>) -> Self {
         Self {
             clipboard,
-            trash: Box::new(SystemTrash),
+            trash: std::sync::Arc::new(SystemTrash),
             lsp: None,
             git: None,
             git_service: None,
@@ -2427,7 +2427,7 @@ impl HostPorts {
     }
 
     fn replace_trash(&mut self, trash: Box<dyn TrashBackend>) {
-        self.trash = trash;
+        self.trash = trash.into();
     }
 
     fn trash(&self) -> &dyn TrashBackend {
@@ -3000,7 +3000,7 @@ impl App {
     pub(crate) fn apply_file_observation(&mut self, event: FileObservationEvent) {
         if event.buffer >= self.buffers.len()
             || self.closed_buffers.contains(&event.buffer)
-            || self.plugins.document_saves.contains(&event.buffer)
+            || self.document_mutation_pending(event.buffer)
         {
             return;
         }

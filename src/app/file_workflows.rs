@@ -465,6 +465,10 @@ impl App {
     }
 
     pub(super) fn reload_directory_buffer(&mut self, buffer: usize) -> Result<()> {
+        ensure!(
+            !self.document_mutation_pending(buffer),
+            "Filesystem write is pending"
+        );
         let view = self.listing_view();
         self.buffers
             .get_mut(buffer)
@@ -703,6 +707,10 @@ impl App {
     }
 
     pub(super) fn open_file(&mut self, path: PathBuf) -> Result<()> {
+        ensure!(
+            !self.plugins.filesystem_applying,
+            "Wait for filesystem changes before opening a path"
+        );
         let path = self.resolve_working_path(path);
         let requested_identity = crate::path_safety::path_identity(&path)?;
         self.remember_active_directory_view();
@@ -951,7 +959,7 @@ impl App {
                     && !self.buffers[index].dirty
                     && self.buffers[index].kind == BufferKind::File
                     && !pending_wait_buffers.contains(&index)
-                    && !self.plugins.document_saves.contains(&index)
+                    && !self.document_mutation_pending(index)
                     && !refreshed
                         .iter()
                         .any(|(refreshed_index, _)| *refreshed_index == index)
@@ -966,6 +974,10 @@ impl App {
                 prepared.push(Prepared::Live(index));
                 continue;
             }
+            ensure!(
+                !self.plugins.filesystem_applying,
+                "Wait for filesystem changes before opening a new path"
+            );
             if let Some(slot) = staged
                 .iter()
                 .position(|(_, staged_identity, _)| staged_identity == identity)
@@ -1093,7 +1105,7 @@ impl App {
 
     pub(crate) fn host_close_buffer(&mut self, buffer: usize, discard: bool) -> Result<()> {
         ensure!(
-            !self.plugins.document_saves.contains(&buffer),
+            !self.document_mutation_pending(buffer),
             "Document save is pending"
         );
         ensure!(
@@ -1276,7 +1288,7 @@ impl App {
         path: Option<PathBuf>,
         replace: bool,
     ) -> Result<()> {
-        if self.plugins.document_saves.contains(&buffer_id) {
+        if self.plugins.filesystem_applying || self.document_mutation_pending(buffer_id) {
             self.action_warning(
                 "Save pending",
                 "A captured document revision is still being written",
@@ -1502,7 +1514,7 @@ impl App {
     pub(super) fn reload_file(&mut self) -> Result<()> {
         let buffer_id = self.active().buffer;
         ensure!(
-            !self.plugins.document_saves.contains(&buffer_id),
+            !self.document_mutation_pending(buffer_id),
             "Document save is pending"
         );
         let was_dirty = self.buffers[buffer_id].dirty;
@@ -1559,7 +1571,7 @@ impl App {
         observation: &FileObservation,
     ) -> Result<()> {
         ensure!(
-            !self.plugins.document_saves.contains(&buffer_id),
+            !self.document_mutation_pending(buffer_id),
             "Document save is pending"
         );
         let language_before = buffer_language(&self.buffers[buffer_id], &self.registry);

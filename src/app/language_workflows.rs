@@ -3292,7 +3292,7 @@ impl App {
 
     pub(super) fn discard_buffer_changes(&mut self, buffer: usize) -> Result<()> {
         anyhow::ensure!(
-            !self.plugins.document_saves.contains(&buffer),
+            !self.document_mutation_pending(buffer),
             "Document save is pending"
         );
         if self.closed_buffers.contains(&buffer) || self.buffers[buffer].is_directory() {
@@ -3354,7 +3354,7 @@ impl App {
     /// returns to its own most recently displayed live buffer, or uses another
     /// live buffer and finally a new scratch when no history remains.
     pub(super) fn close_active_buffer(&mut self, force: bool) {
-        if self.plugins.document_saves.contains(&self.active().buffer) {
+        if self.document_mutation_pending(self.active().buffer) {
             self.action_warning("Save pending", "Wait for the document write before closing");
             return;
         }
@@ -3379,7 +3379,7 @@ impl App {
 
     /// Closes a buffer whose unsaved text the person has agreed to lose.
     pub(super) fn close_buffer_discarding(&mut self, buffer: usize) {
-        if self.plugins.document_saves.contains(&buffer) {
+        if self.document_mutation_pending(buffer) {
             self.action_warning(
                 "Save pending",
                 "Wait for the document write before discarding",
@@ -3417,7 +3417,7 @@ impl App {
     }
 
     fn retire_buffer(&mut self, buffer: usize, announce: bool) {
-        if self.plugins.document_saves.contains(&buffer) {
+        if self.document_mutation_pending(buffer) {
             self.action_warning("Save pending", "Wait for the document write before closing");
             return;
         }
@@ -3618,6 +3618,7 @@ impl App {
             }
             let candidate = self.special_buffer_recency.iter().copied().find(|index| {
                 !visible.contains(index)
+                    && !self.document_mutation_pending(*index)
                     && !self.closed_buffers.contains(index)
                     && self.buffers[*index].is_special()
                     && !self.buffers[*index].dirty
@@ -3648,7 +3649,10 @@ impl App {
                     && (buffer.dirty || !buffer.is_special() && !buffer.is_empty_clean_scratch())
             });
             let candidate = self.buffers.iter().enumerate().find_map(|(index, buffer)| {
-                if self.closed_buffers.contains(&index) || buffer.dirty {
+                if self.closed_buffers.contains(&index)
+                    || buffer.dirty
+                    || self.document_mutation_pending(index)
+                {
                     return None;
                 }
                 (buffer.is_empty_clean_scratch()

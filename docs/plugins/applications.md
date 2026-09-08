@@ -113,7 +113,7 @@ generation and must never be parsed, persisted, or used by another owner.
 | selections | `selection.get/set` | Explicit pane, displayed buffer and selection revision |
 | filesystem | `filesystem.list` | Workspace-relative path, offset, limit and optional expected revision; retained directory handle and metadata page |
 | filesystem | `filesystem.prepare` | Directory handle, expected revision and typed intent; owned prepared plan and descriptions |
-| filesystem | `filesystem.apply` | Plan and invoking command; presents native confirmation, with no immediate filesystem mutation |
+| filesystem + jobs | `filesystem.apply` | Plan and invoking command; presents native confirmation, with no immediate filesystem mutation |
 | filesystem | `filesystem.cancel/release` | Cancel a plan or release a directory snapshot, idempotently |
 | documents | `buffer.open` | Existing workspace-relative text path and optional invoking command; explicit buffer/revision |
 | documents | `buffer.create` | New workspace-relative path, initial text and optional invocation; named unsaved document |
@@ -212,8 +212,8 @@ budgets are reserved for bounded queues, decoding and publication copies.
 These measure payload, not allocator RSS or the external process's memory.
 Buffer/pane issuance is bounded at 1,024/128 handles per connection generation.
 
-Still required by the active plan: recursive filesystem mutations and asynchronous
-application of confirmed plans; revision-tagged field validation; source subscriptions
+Still required by the active plan: recursive filesystem mutations; revision-tagged
+field validation; source subscriptions
 and resynchronization; provider reads, asynchronous saves and transfer outcomes;
 row patches and staged publication; managed helpers, activity leases, state,
 settings and a plugin manager; SFTP/FTP and media examples; broader SDK/conformance
@@ -230,7 +230,7 @@ plugins:
     api: runyte-experimental-2
     executable: /usr/bin/python3
     args: [/path/to/runyte/docs/plugins/files.py]
-    capabilities: [views, filesystem, documents, interaction]
+    capabilities: [views, filesystem, documents, interaction, jobs]
 ```
 
 Run `:plugin.files.open .`. Enter opens the selected regular text file or browses
@@ -269,11 +269,39 @@ of at most 8 MiB. Preparation uses the existing directory baseline and plan
 collision checks. `filesystem.apply` only opens the host's confirmation, requires
 a current foreground grant, and returns `busy` while another input surface owns
 the frontend. The plugin has no API that supplies the user's confirmation.
-Applying uses the existing interactive filesystem workflow and reconciliation;
-file operations are not editor undo steps. `filesystem.finished` reports
-`succeeded`, `failed` or `cancelled`, an applied-operation count and whether
-recovery artifacts remain. Host notifications retain the actual recovery details.
-Dismissal, detach, source-buffer closure and owner stop cancel a displayed plan.
+Accepting the confirmation starts a host-owned job and emits `job.changed` followed
+by `filesystem.started {plan, job}`. Filesystem application requires `jobs` as well
+as `filesystem`. Capacity is checked at acceptance; when no worker or payload
+budget is available, the confirmation stays visible for retry. Human waiting has
+no job deadline. The worker uses the existing `FsPlan` collision, trash and recovery
+logic, then prepares moved-file baselines and bounded directory refreshes off the
+editor loop. Completion installs those facts only against matching identities and
+revisions; newer text edits and dirty explorer proposals remain intact.
+
+One filesystem apply can run at a time. It retains the plan's 8 MiB charge and an
+additional 16 MiB through completion, including owner stop. Reconciliation admits
+at most 128 live filesystem buffers, 1,024 rows per refreshed directory and 4 MiB
+of retained directory refresh payload. Oversized refreshes retain the explorer and
+report that it needs manual refresh. New document opens/publication and all saves
+are refused during apply; existing `--wait` paths may be reused without reload.
+Filesystem-buffer close/reload/discard and ordinary/force quit wait for completion.
+Scratch and generated-view retirement, text editing and detach remain available.
+
+File operations are not editor undo steps. `filesystem.finished` reports
+`succeeded`, `failed`, `cancelled` or `outcome_unknown`, an applied-operation count
+and whether recovery artifacts remain. Host notifications retain recovery paths
+and reasons. Dismissal, detach, source-buffer closure and owner stop cancel a
+*displayed* plan. Once accepted, the host retains responsibility for reconciliation
+even while detached or after the owner stops.
+
+`job.cancel` accepts cancellation only while this host operation is queued. Its
+atomic transition races safely with worker startup; once disk mutation begins it
+returns `conflict` and the eventual report states what happened. The 60-second
+control deadline can cancel queued work; it cannot interrupt a running OS mutation.
+Running work remains protected until its result arrives and never requires a
+plugin acknowledgement. Worker failure without a report is an unknown outcome:
+inspect the workspace before retrying, and reconcile preserved dirty buffers.
+No failed or uncertain mutation is automatically replayed.
 
 `buffer.open` reads at most 8 MiB using the ordinary text/binary classifier and
 disk baseline. It reuses an existing buffer, preserving unsaved text. Omitting

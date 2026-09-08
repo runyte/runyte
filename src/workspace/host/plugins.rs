@@ -104,6 +104,10 @@ impl WorkspaceHost {
     }
 
     pub fn handle_plugin_event(&mut self, event: Event) -> bool {
+        if let Ok(ClientMessage::FilesystemApplied { job, result, .. }) = event.result {
+            self.complete_plugin_filesystem_apply(job, result);
+            return true;
+        }
         if let Ok(ClientMessage::DocumentSaved { job, result, .. }) = event.result {
             self.complete_document_save(job, result);
             return true;
@@ -153,6 +157,7 @@ impl WorkspaceHost {
     /// Administrative cancellation also removes commands and subscriptions.
     pub fn stop_plugin(&mut self, id: usize, reason: &str) {
         self.orphan_document_saves(id);
+        self.orphan_plugin_filesystem_apply(id);
         self.app.cancel_plugin_input(id, None);
         self.app.cancel_plugin_filesystem(id, None);
         let Some(instance) = self.app.plugins.instances.remove(&id) else {
@@ -499,6 +504,7 @@ impl WorkspaceHost {
             | ClientMessage::Application(_)
             | ClientMessage::Unsupported { .. }
             | ClientMessage::Deadline { .. }
+            | ClientMessage::FilesystemApplied { .. }
             | ClientMessage::DocumentSaved { .. } => anyhow::bail!("wrong API epoch"),
         }
         Ok(())

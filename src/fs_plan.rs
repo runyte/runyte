@@ -1026,6 +1026,25 @@ impl FsPlan {
         trash: &dyn TrashBackend,
         io: &mut ApplyIo,
     ) -> Result<ApplyReport, ApplyError> {
+        self.apply_with_io_bounded(deletion, trash, io, usize::MAX)
+    }
+
+    pub(crate) fn apply_bounded(
+        &self,
+        deletion: DeletionMode,
+        trash: &dyn TrashBackend,
+        limit: usize,
+    ) -> Result<ApplyReport, ApplyError> {
+        self.apply_with_io_bounded(deletion, trash, &mut ApplyIo::default(), limit)
+    }
+
+    fn apply_with_io_bounded(
+        &self,
+        deletion: DeletionMode,
+        trash: &dyn TrashBackend,
+        io: &mut ApplyIo,
+        limit: usize,
+    ) -> Result<ApplyReport, ApplyError> {
         for (source, expected) in &self.transfer_sources {
             let absolute = self.root.join(source);
             let current = SourceFingerprint::capture(&absolute)
@@ -1041,8 +1060,9 @@ impl FsPlan {
                 ));
             }
         }
-        let current = DirectorySnapshot::read_with(&self.root, self.expected.show_hidden())
-            .map_err(|error| ApplyError::new(ApplyReport::default(), None, error))?;
+        let current =
+            DirectorySnapshot::read_bounded(&self.root, self.expected.show_hidden(), limit)
+                .map_err(|error| ApplyError::new(ApplyReport::default(), None, error))?;
         if !self.expected.matches_current(&current)
             || !self.operation_sources_unchanged()
             || !self.confirmed_sources_unchanged()

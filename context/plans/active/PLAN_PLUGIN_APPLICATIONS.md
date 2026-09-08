@@ -73,7 +73,7 @@ Concrete decisions in this slice:
   subscriptions, coalescing and resynchronization are not advertised yet.
 
 Milestone 3 now has an initial local file manager, documented below; document
-recursive mutations and asynchronous apply remain. Milestone 4's providers, remote
+recursive mutations remain. Milestone 4's providers, remote
 save reconciliation and transport examples remain unimplemented. Milestone 5
 still needs managed processes, terminal/external handoffs, activity leases,
 settings/state and the plugin manager. Milestone 6 still needs the broader SDK,
@@ -188,6 +188,32 @@ suite passed (3,132 tests, 33 ignored). Canonical Linux workspace coverage is
 re-review found no further concrete defects in this local lifecycle round.
 Recursive mutations, asynchronous filesystem apply and all later milestones
 remain active.
+
+## Asynchronous filesystem application round
+
+Confirmed application filesystem plans now start host-owned jobs with a reliable
+`filesystem.started` event. Disk application, moved-file baseline inspection and
+bounded explorer refreshes run in one worker; completion applies prepared facts
+against captured identities and revisions. Dirty/newer text is preserved. Git
+reconciliation enqueues worker-validated paths without editor-thread path IO.
+Capacity failure preserves the confirmation. Accepted work retains its protection
+and accounting through detach and owner stop; recovery details survive completion.
+
+Cancellation uses an atomic queued/running transition. It is refused once the
+worker starts a filesystem mutation; deadlines cannot interrupt an OS mutation.
+This keeps completion truthful without claiming rollback. The pending-operation
+barrier covers filesystem writes, new opens/publication, filesystem-buffer close,
+reload/discard, `--wait` completion, idle retirement and quit. Ordinary editing,
+scratch/special-buffer retirement and detach remain available.
+
+Review corrected special-buffer eviction loops, late-open reconciliation races,
+scratch save-as admission, cancellation ordering, outbound job-start failure and
+residual Git path IO. Recursive operations and the later application milestones
+remain active. Final subagent re-review found no further concrete defects.
+Formatting, warnings-as-errors Clippy, both schema/example checkers, the full suite
+(3,142 passed, 33 ignored) and canonical Linux coverage (107,502 / 117,376 lines,
+91.59%) passed. A native PTY smoke confirmed a create, opened text and returned to
+the retained manager; a two-second settled observation emitted no terminal bytes.
 
 ## Investigation: existing foundation and missing boundaries
 

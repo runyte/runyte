@@ -37,7 +37,69 @@ pub(super) fn response(
         other => panic!("unexpected {other:?}"),
     }
 }
-async fn list(
+pub(super) fn started(output: &mut mpsc::Receiver<HostMessage>) -> (String, String) {
+    let api::HostMessage::Event {
+        event: "job.changed",
+        data: api::EventData::Job(job),
+        ..
+    } = next(output)
+    else {
+        panic!()
+    };
+    assert!(job.state.active());
+    let api::HostMessage::Event {
+        event: "filesystem.started",
+        data: api::EventData::FilesystemStarted { plan, job: token },
+        ..
+    } = next(output)
+    else {
+        panic!()
+    };
+    assert_eq!(job.job, token);
+    (plan, token)
+}
+pub(super) async fn applied_event(events: &mut mpsc::Receiver<Event>) -> Event {
+    let event = tokio::time::timeout(std::time::Duration::from_secs(3), events.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(matches!(
+        &event.result,
+        Ok(ClientMessage::FilesystemApplied { .. })
+    ));
+    event
+}
+pub(super) async fn applied(
+    host: &mut WorkspaceHost,
+    events: &mut mpsc::Receiver<Event>,
+    output: &mut mpsc::Receiver<HostMessage>,
+) -> crate::plugin::filesystem::Finished {
+    host.handle_plugin_event(applied_event(events).await);
+    finished(output)
+}
+pub(super) fn finished(
+    output: &mut mpsc::Receiver<HostMessage>,
+) -> crate::plugin::filesystem::Finished {
+    let api::HostMessage::Event {
+        event: "job.changed",
+        data: api::EventData::Job(job),
+        ..
+    } = next(output)
+    else {
+        panic!()
+    };
+    assert!(!job.state.active());
+    let api::HostMessage::Event {
+        event: "filesystem.finished",
+        data: api::EventData::FilesystemFinished(result),
+        ..
+    } = next(output)
+    else {
+        panic!()
+    };
+    result
+}
+pub(super) async fn list(
     host: &mut WorkspaceHost,
     events: &mut mpsc::Receiver<Event>,
     output: &mut mpsc::Receiver<HostMessage>,
@@ -65,7 +127,10 @@ async fn list(
     };
     (directory, revision, entries)
 }
-fn foreground(host: &mut WorkspaceHost, output: &mut mpsc::Receiver<HostMessage>) -> String {
+pub(super) fn foreground(
+    host: &mut WorkspaceHost,
+    output: &mut mpsc::Receiver<HostMessage>,
+) -> String {
     host.app.note_plugin_frontend(true);
     invoke(host, "plugin.app-0.open");
     let api::HostMessage::Request { id, .. } = next(output) else {
@@ -78,8 +143,8 @@ fn foreground(host: &mut WorkspaceHost, output: &mut mpsc::Receiver<HostMessage>
 async fn local_directory_pages_are_revision_bound_owned_and_releasable() {
     let (root, mut host) = host();
     std::fs::write(root.path().join("é.txt"), "hello").unwrap();
-    let mut output = setup(&mut host, 0, &["filesystem"]);
-    let mut other = setup(&mut host, 1, &["filesystem"]);
+    let mut output = setup(&mut host, 0, &["filesystem", "jobs"]);
+    let mut other = setup(&mut host, 1, &["filesystem", "jobs"]);
     next(&mut output);
     next(&mut other);
     let mut events = local_service(&mut host);
@@ -149,7 +214,7 @@ async fn local_directory_pages_are_revision_bound_owned_and_releasable() {
 #[tokio::test]
 async fn local_mutations_require_real_confirmation_and_revalidate_collisions() {
     let (root, mut host) = host();
-    let mut output = setup(&mut host, 0, &["filesystem"]);
+    let mut output = setup(&mut host, 0, &["filesystem", "jobs"]);
     next(&mut output);
     let mut events = local_service(&mut host);
     let (directory, revision, _) = list(&mut host, &mut events, &mut output, 1).await;
@@ -231,13 +296,8 @@ async fn local_mutations_require_real_confirmation_and_revalidate_collisions() {
             .handle_key(KeyStroke::parse("Enter").unwrap())
             .unwrap();
         host.sync_plugin_observers();
-        let api::HostMessage::Event {
-            data: api::EventData::FilesystemFinished(result),
-            ..
-        } = next(&mut output)
-        else {
-            panic!()
-        };
+        started(&mut output);
+        let result = applied(&mut host, &mut events, &mut output).await;
         assert_eq!(result.state, if collide { "failed" } else { "succeeded" });
         assert_eq!(
             std::fs::read_to_string(root.path().join(destination)).unwrap(),
@@ -254,7 +314,7 @@ async fn local_copy_rename_and_trash_use_existing_plan_and_preserve_editor_text(
         .app
         .host_open_file(root.path().join("source.txt"), false)
         .unwrap();
-    let mut output = setup(&mut host, 0, &["filesystem"]);
+    let mut output = setup(&mut host, 0, &["filesystem", "jobs"]);
     next(&mut output);
     let mut events = local_service(&mut host);
     for (index, (name, operation)) in [
@@ -317,8 +377,10 @@ async fn local_copy_rename_and_trash_use_existing_plan_and_preserve_editor_text(
             })
             .unwrap();
         host.sync_plugin_observers();
-        assert!(
-            matches!(next(&mut output), api::HostMessage::Event { data: api::EventData::FilesystemFinished(value), .. } if value.state == "succeeded")
+        started(&mut output);
+        assert_eq!(
+            applied(&mut host, &mut events, &mut output).await.state,
+            "succeeded"
         );
     }
     assert_eq!(
@@ -401,7 +463,7 @@ async fn local_open_reuses_unsaved_text_and_does_not_steal_changed_focus() {
 #[tokio::test]
 async fn local_confirmation_detach_stop_and_foreign_requests_cannot_apply() {
     let (root, mut host) = host();
-    let mut output = setup(&mut host, 0, &["filesystem"]);
+    let mut output = setup(&mut host, 0, &["filesystem", "jobs"]);
     next(&mut output);
     let mut events = local_service(&mut host);
     for (serial, stop) in [(1, false), (4, true)] {
@@ -548,7 +610,7 @@ async fn application_confirmation_preserves_active_and_inactive_directory_edits(
         host.app.buffers[index].apply(&crate::text::Transaction::insert(end, "unsaved.txt\n"));
         texts.push(host.app.buffers[index].to_string());
     }
-    let mut output = setup(&mut host, 0, &["filesystem"]);
+    let mut output = setup(&mut host, 0, &["filesystem", "jobs"]);
     next(&mut output);
     let mut events = local_service(&mut host);
     let (directory, revision, _) = list(&mut host, &mut events, &mut output, 1).await;
@@ -580,6 +642,12 @@ async fn application_confirmation_preserves_active_and_inactive_directory_edits(
     host.app
         .handle_key(KeyStroke::parse("Enter").unwrap())
         .unwrap();
+    host.sync_plugin_observers();
+    started(&mut output);
+    assert_eq!(
+        applied(&mut host, &mut events, &mut output).await.state,
+        "succeeded"
+    );
     assert!(child.join("created.txt").is_file());
     for (index, text) in [active, inactive].into_iter().zip(texts) {
         assert!(host.app.buffers[index].dirty);

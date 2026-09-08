@@ -66,7 +66,7 @@ impl WorkspaceHost {
         if format!("r:{}", self.app.buffers[buffer].revision()) != revision {
             return Err(fail(api::ErrorCode::Stale, "Document changed"));
         }
-        if self.app.plugins.document_saves.contains(&buffer) {
+        if self.app.document_mutation_pending(buffer) {
             return Err(fail(api::ErrorCode::Busy, "Document save is pending"));
         }
         if !save {
