@@ -1229,6 +1229,8 @@ pub const GRAMMAR_ONLY_EDITOR_COMMANDS: &[EditorCommand] =
 /// One identity shared by every currently inventoried command surface.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum CommandId {
+    /// Host-lifetime runtime identity; never serialized as an extension API.
+    Plugin(u64),
     Editor(EditorCommand),
     Colon(ColonCommand),
 }
@@ -1248,6 +1250,7 @@ impl From<ColonCommand> for CommandId {
 impl CommandId {
     pub const fn category(self) -> CommandCategory {
         match self {
+            Self::Plugin(_) => CommandCategory::Editing,
             Self::Editor(command) => command.category(),
             Self::Colon(command) => command.category(),
         }
@@ -1255,6 +1258,7 @@ impl CommandId {
 
     pub const fn capability(self) -> Option<CommandCapability> {
         match self {
+            Self::Plugin(_) => None,
             Self::Editor(command) => command.capability(),
             Self::Colon(ColonCommand::Format) => Some(CommandCapability::LspDocument),
             Self::Colon(ColonCommand::LspRestart | ColonCommand::LspStatus) => {
@@ -2236,6 +2240,10 @@ impl CommandInvocation {
         execution: CommandExecutionContext,
     ) -> Result<Self, CommandInvocationError> {
         let valid = match id {
+            CommandId::Plugin(_) => {
+                matches!(parameters, InvocationParameters::None)
+                    && execution == CommandExecutionContext::default()
+            }
             CommandId::Editor(EditorCommand::ShowHelp) => {
                 matches!(parameters, InvocationParameters::Help(_))
                     && execution == CommandExecutionContext::default()
@@ -2664,6 +2672,7 @@ fn invocation_from_parts(
 ) -> Result<CommandInvocation, CommandParseError> {
     let invalid = || CommandParseError::InvalidInventory(id);
     match id {
+        CommandId::Plugin(_) => Err(invalid()),
         CommandId::Editor(command) => match (command, argument) {
             (EditorCommand::CloseWindow, ParsedArgument::None)
             | (EditorCommand::OpenFilePicker, ParsedArgument::None)
@@ -3057,7 +3066,7 @@ mod tests {
             .iter()
             .filter_map(|spec| match spec.id {
                 CommandId::Colon(command) => Some(command),
-                CommandId::Editor(_) => None,
+                CommandId::Editor(_) | CommandId::Plugin(_) => None,
             })
             .collect::<Vec<_>>();
         let registered = registered_commands.iter().copied().collect::<HashSet<_>>();

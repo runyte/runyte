@@ -111,3 +111,13 @@ themes:
     change_added: "#a3be8c"
     change_modified: "#ebcb8b"
     change_removed: "#bf616a"
+
+# Experimental process plugins are disabled unless explicitly enabled.
+# See docs/plugins.md. Use trusted programs and absolute paths.
+# plugins:
+#   - id: case
+#     enabled: true
+#     executable: /usr/bin/python3
+#     args: [/home/example/.local/share/runyte/plugins/uppercase.py]
+#     bindings:
+#       uppercase: F12

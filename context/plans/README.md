@@ -18,6 +18,10 @@ current sources take precedence.
 
 The retained completed records cover:
 
+- [Experimental process plugins](completed/PLAN_MINIMAL_PLUGINS.md): captured
+  invoking context, namespaced runtime commands, revision-checked selected-text
+  transactions, bounded observations, host ownership and explicit enablement;
+
 - [Document readiness before syntax parsing](completed/PLAN_ASYNC_INITIAL_SYNTAX.md):
   deferred initial/full parsing, bounded background work, edits before a tree is
   available, command readiness, worker-owned retirement, and non-blocking quit;

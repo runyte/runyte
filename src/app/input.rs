@@ -25,10 +25,10 @@ use super::{
     buffer_language, char_to_byte, display_path, enclosing_area, expand_home_path, external_open,
     hint_is_not_before, hover_content_rows, is_path_separator, is_path_token_boundary,
     is_terminal_normal_key, is_word, is_word_completion_character, keymap_for, mapped_applied_path,
-    operative_span, parse_colon_command, persistent_session_availability, pointer_pane,
-    pointer_resize_pair, prompt_backspace, prompt_delete, prompt_delete_range, prompt_insert,
-    prompt_word_backward, prompt_word_forward, quote_path_hint, rect_contains, resolve_command,
-    resolved_operation_path, row_characters, unclosed_or_complete_quoted_path,
+    operative_span, persistent_session_availability, pointer_pane, pointer_resize_pair,
+    prompt_backspace, prompt_delete, prompt_delete_range, prompt_insert, prompt_word_backward,
+    prompt_word_forward, quote_path_hint, rect_contains, resolve_command, resolved_operation_path,
+    row_characters, unclosed_or_complete_quoted_path,
 };
 
 impl App {
@@ -291,7 +291,7 @@ impl App {
         }
     }
 
-    pub fn matching_commands(&self) -> Vec<CommandMatch> {
+    pub fn matching_commands(&self) -> Vec<CommandMatch<'_>> {
         let capabilities = self.command_capabilities();
         self.matching_commands_with_capabilities(&capabilities)
     }
@@ -299,7 +299,7 @@ impl App {
     pub(super) fn matching_commands_with_capabilities(
         &self,
         capabilities: &AppCapabilitySnapshot,
-    ) -> Vec<CommandMatch> {
+    ) -> Vec<CommandMatch<'_>> {
         let trimmed = self.command.trim();
         let query = trimmed.split_whitespace().next().unwrap_or_default();
         if query.is_empty() {
@@ -309,6 +309,7 @@ impl App {
                 .iter()
                 .map(|spec| CommandMatch::canonical(spec, capabilities))
                 .collect::<Vec<_>>();
+            commands.extend(self.plugin_command_matches(""));
             commands.sort_by_key(|matched| matched.name);
             return commands;
         }
@@ -347,6 +348,7 @@ impl App {
             .collect::<Vec<_>>();
         // Direct canonical/alias prefixes remain the first completion even
         // when the same short query also occurs in several descriptions.
+        matches.extend(self.plugin_command_matches(trimmed));
         matches.sort_by_key(|matched| usize::from(!matched.name.starts_with(query)));
         matches
     }
@@ -3179,7 +3181,7 @@ impl App {
                 // Schema errors are correctable input, so unlike a successful
                 // command they leave the palette and its text open. This is
                 // also where argumentless commands reject accidental extras.
-                let invocation = match parse_colon_command(&command) {
+                let invocation = match self.parse_command(&command) {
                     Ok(invocation) => invocation,
                     Err(error) => {
                         self.action_failed(error.to_string());
@@ -4667,6 +4669,9 @@ impl App {
         self.status_error = false;
         let before = CommandState::capture(self);
         let (id, parameters, execution, unavailable) = invocation.into_parts();
+        if let CommandId::Plugin(id) = id {
+            return self.invoke_plugin(id);
+        }
         if let Some(unavailable) = unavailable {
             let CommandId::Editor(command) = id else {
                 unreachable!("only editor registry bindings carry availability")
@@ -4731,6 +4736,7 @@ impl App {
             _ => CommandOutcomeHint::Infer,
         };
         let execution_result = match id {
+            CommandId::Plugin(_) => unreachable!("handled before interactive dispatch"),
             CommandId::Editor(command) => {
                 self.execute_editor_invocation(command, parameters, execution)
             }
@@ -5387,7 +5393,7 @@ impl App {
     /// point without manufacturing terminal input.
     #[cfg(test)]
     pub(super) fn execute_command(&mut self, command: &str) -> Result<CommandOutcome> {
-        match parse_colon_command(command) {
+        match self.parse_command(command) {
             Ok(invocation) => self.execute(invocation),
             Err(error) => {
                 self.action_failed(error.to_string());
@@ -5485,8 +5491,10 @@ impl App {
             .map(|(_, argument)| argument.trim_start().to_owned());
         // Completing to the spelling the row shows, not the canonical name
         // behind it, so Tab never rewrites what someone deliberately typed.
-        self.command = matched.name.to_owned();
-        if matched.spec.arguments.accepts_arguments() {
+        let name = matched.name.to_owned();
+        let accepts_arguments = matched.spec.arguments.accepts_arguments();
+        self.command = name;
+        if accepts_arguments {
             self.command.push(' ');
             if let Some(argument) = argument {
                 self.command.push_str(&argument);

@@ -9,6 +9,7 @@ use std::{
 };
 
 use super::*;
+use crate::command::parse_colon_command;
 use crate::command::{
     CommandExposure, GRAMMAR_ONLY_EDITOR_COMMANDS, GrammarKind, INTERNAL_EDITOR_COMMANDS,
 };

@@ -445,3 +445,13 @@ syntax uses the ordinary text rendering path and introduces no loading overlay.
 hints and the palette distinguish `Syntax is still parsing` from an unsupported
 language or failed parse. Routine completion is silent. Language-service health
 reports pending work or failure through the existing service-health surface.
+
+## Experimental plugins
+
+Plugin commands use the colon palette and the existing keymap help and hints.
+They introduce no new pane content or overlay. Acceptance and completion use
+the interaction line; stale, closed and read-only results produce protective
+warning notifications, process/protocol failures produce errors, and explicit
+plugin stop is informational. Captured buffer targets never change focus when
+results arrive. Generated help remains a snapshot of the view where it was
+opened; reopening it uses the current registered bindings.

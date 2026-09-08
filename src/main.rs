@@ -1530,7 +1530,12 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
         let hint_timeout = key_hints.time_until_expiry(Instant::now());
         let picker_pacing = app.picker_pacing_delay(Instant::now());
         let pointer_autoscroll = app.pointer_autoscroll_delay(Instant::now());
+        app.sync_plugin_observers();
         tokio::select! {
+            event = runyte::plugin::receive(&mut services.plugin_events) => {
+                if let Some(event) = event { app.handle_plugin_event(event); }
+                else { services.plugin_events = None; }
+            }
             input = terminal_events.next() => {
                 match input.transpose()? {
                     // Fall through to the draw at the bottom of the loop
@@ -1997,7 +2002,12 @@ async fn run_host_server(
             host.cancel_pointer_drag();
         }
         let pointer_autoscroll = host.pointer_autoscroll_delay(Instant::now());
+        host.sync_plugin_observers();
         tokio::select! {
+            event = runyte::plugin::receive(&mut services.plugin_events) => {
+                if let Some(event) = event { host.handle_plugin_event(event); }
+                else { services.plugin_events = None; }
+            }
             event = server.recv() => {
                 let Some(event) = event else {
                     log_error!("host", "the connection listener stopped; this session cannot be reached again");
@@ -4942,6 +4952,7 @@ async fn recover_wait_after_lifecycle_loss(
 }
 
 struct HostServices {
+    plugin_events: Option<tokio::sync::mpsc::Receiver<runyte::plugin::Event>>,
     syntax_events: SyntaxEvents,
     git_events: Option<tokio::sync::mpsc::Receiver<GitServiceEvent>>,
     language_servers: LspHandle,
@@ -5021,7 +5032,9 @@ fn start_host_services(
     let terminal_events = app
         .take_terminal_events()
         .expect("terminal output is claimed once, when services start");
+    let plugin_events = app.start_plugins();
     Ok(HostServices {
+        plugin_events,
         syntax_events,
         git_events,
         language_servers,

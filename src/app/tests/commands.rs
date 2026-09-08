@@ -1420,7 +1420,7 @@ fn command_inventory_classifies_every_command_and_current_binding() {
         .iter()
         .filter_map(|spec| match spec.id {
             CommandId::Editor(command) => Some(command),
-            CommandId::Colon(_) => None,
+            CommandId::Colon(_) | CommandId::Plugin(_) => None,
         })
         .collect::<HashSet<_>>();
     let mut exposures = Vec::new();

@@ -858,13 +858,15 @@ impl RunyteGrammar {
     ) -> Result<EditorIntent, CommandInvocationError> {
         match target {
             BindingTarget::Editor(command) => self.editor_binding_intent(command, availability),
-            BindingTarget::Colon(_) if self.count.take().is_some() => Ok(EditorIntent::Notice(
-                GrammarNotice::CountNotSupported(target),
-            )),
-            BindingTarget::Colon(_) if availability.is_implemented() => {
+            BindingTarget::Colon(_) | BindingTarget::Plugin(_) if self.count.take().is_some() => {
+                Ok(EditorIntent::Notice(GrammarNotice::CountNotSupported(
+                    target,
+                )))
+            }
+            BindingTarget::Colon(_) | BindingTarget::Plugin(_) if availability.is_implemented() => {
                 Ok(EditorIntent::Command(target.invocation()?))
             }
-            BindingTarget::Colon(_) => {
+            BindingTarget::Colon(_) | BindingTarget::Plugin(_) => {
                 Ok(EditorIntent::Notice(GrammarNotice::UnavailableBinding {
                     target,
                     availability,

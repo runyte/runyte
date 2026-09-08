@@ -17,6 +17,59 @@ cargo build --release
 benchmarks/run.py
 ```
 
+## 2026-09-07 — experimental process plugins
+
+Measured on Linux `x86_64-unknown-linux-gnu`, AMD Ryzen AI 9 365 (20 logical
+CPUs), with Rust 1.97.1. A retained release binary from `ef1bf58` was compared
+with the plugin implementation on that base, built with `cargo build --release
+--locked`. Builds, tests and coverage finished before measurement. No dependency
+was added. The stripped binary grew from 45,093,088 to 45,335,520 bytes (0.54%).
+
+The comparison uses the existing `ptybench.median_startup` and `median_idle`
+functions, now exposed for repetition by `benchmarks/plugins.py`. Each startup
+cell is the median of ten launches in a 120×40 PTY; every sample emitted the
+document marker, reached the quiet guard and quit successfully. Home and XDG
+storage were isolated, LSP was disabled, syntax stayed enabled, and the example
+case explicitly enabled `docs/plugins/uppercase.py` through the Python interpreter
+running the harness. These are representative fixtures, not a complete matrix.
+
+| First document output | Base, plugins absent | Branch, plugins disabled | Branch, example enabled |
+| --- | ---: | ---: | ---: |
+| `short.txt` (500 lines) | 6.2 ms | 5.5 ms | 6.2 ms |
+| `medium.lua` (5,000 lines) | 6.6 ms | 6.7 ms | 6.3 ms |
+| `long.lua` (50,000 lines) | 11.1 ms | 11.5 ms | 11.8 ms |
+
+| Quit after settlement | Base, plugins absent | Branch, plugins disabled | Branch, example enabled |
+| --- | ---: | ---: | ---: |
+| `short.txt` | 2.9 ms | 2.9 ms | 3.6 ms |
+| `medium.lua` | 7.0 ms | 6.5 ms | 6.8 ms |
+| `long.lua` | 22.7 ms | 22.5 ms | 22.6 ms |
+
+Idle used three independent ten-second windows on `medium.lua`, after the
+harness's 2.5-second settlement delay. CPU includes the editor and descendants;
+all windows completed. Values below are median (minimum–maximum).
+
+| Idle measurement | Base, plugins absent | Branch, plugins disabled | Branch, example enabled |
+| --- | ---: | ---: | ---: |
+| CPU | 0.00% (0.00–0.00) | 0.00% (0.00–0.10) | 0.00% (0.00–0.00) |
+| Screen writes | 0 (0–0) | 0 (0–0) | 0 (0–0) |
+
+The nonzero disabled-plugin window remains visible rather than being erased by
+its zero median. These small samples do not establish a statistically precise
+startup difference. They show similar first-document-output medians and no idle
+screen writes. First document output does not measure full syntax completion,
+input readiness or plugin registration readiness. Plugins start with the optional
+host services after the first standalone frame. When disabled they start no task,
+process, channel or timer; enabled workers wait on pipes/channels, and buffer
+observations share existing host turns rather than adding polling. Work performed
+by arbitrary enabled plugins is outside these example measurements.
+
+Reproduce with a retained base release binary and the current release:
+
+```sh
+python3 benchmarks/plugins.py --before /path/to/base/runyte
+```
+
 ## Reading these numbers
 
 Comparisons of Runyte against its own later result sets are the intended use.

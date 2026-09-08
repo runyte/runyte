@@ -75,3 +75,6 @@ pub mod word_index;
 pub mod workspace;
 pub mod workspace_search;
 pub mod wrap;
+
+/// Experimental extension wire contract and process service.
+pub mod plugin;

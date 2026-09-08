@@ -241,7 +241,11 @@ struct CompletedGitSnapshot {
 ///
 /// Standalone mode uses this value directly. Persistent mode will keep the
 /// same owner and place a bounded transport adapter in front of it.
+mod plugins;
+
 pub struct WorkspaceHost {
+    plugin_workers: std::collections::BTreeMap<usize, crate::plugin::Worker>,
+    plugins_started: bool,
     identity: WorkspaceIdentity,
     app: App,
     services: ServiceLifecycle,
@@ -315,6 +319,8 @@ impl WorkspaceHost {
         let identity = WorkspaceIdentity::from_canonical(app.project_root.clone());
         Self {
             identity,
+            plugin_workers: Default::default(),
+            plugins_started: false,
             app,
             services: ServiceLifecycle::new(256),
             next_frame: 1,
@@ -558,7 +564,14 @@ impl WorkspaceHost {
     /// Whether an unattached persistent host may retire without losing work
     /// or abandoning a caller waiting for a buffer.
     pub fn may_retire_idle(&self) -> bool {
-        self.protected_state().is_empty() && self.app.terminals.is_empty()
+        self.protected_state().is_empty()
+            && self.app.terminals.is_empty()
+            && self
+                .app
+                .plugins
+                .instances
+                .values()
+                .all(|instance| instance.pending.is_none())
     }
 
     pub fn read_buffer(&self, id: BufferId) -> Result<BufferContents, BufferRequestError> {

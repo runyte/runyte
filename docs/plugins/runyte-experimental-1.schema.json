@@ -1,0 +1,299 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:runyte:plugins:runyte-experimental-1",
+  "$comment": "SPDX-License-Identifier: MPL-2.0. x-runyte-* keywords are documentation annotations, not standard validation assertions.",
+  "title": "Runyte experimental plugin protocol, epoch 1",
+  "description": "One decoded JSON message, in either direction. See ../plugins.md for framing, byte limits and stateful semantics. Schema validity does not guarantee a request is accepted or an edit is applied.",
+  "oneOf": [
+    { "$ref": "#/$defs/hostMessage" },
+    { "$ref": "#/$defs/pluginMessage" }
+  ],
+  "$defs": {
+    "hostMessage": {
+      "description": "Runyte to plugin stdin. Unknown fields are allowed for compatible additions; unknown message types are not defined by this epoch.",
+      "oneOf": [
+        { "$ref": "#/$defs/hello" },
+        { "$ref": "#/$defs/registered" },
+        { "$ref": "#/$defs/invoke" },
+        { "$ref": "#/$defs/complete" },
+        { "$ref": "#/$defs/subscribed" },
+        { "$ref": "#/$defs/unsubscribed" },
+        { "$ref": "#/$defs/error" },
+        { "$ref": "#/$defs/buffer_state" }
+      ]
+    },
+    "pluginMessage": {
+      "description": "Plugin stdout to Runyte. Unknown fields and message types are rejected.",
+      "oneOf": [
+        { "$ref": "#/$defs/register" },
+        { "$ref": "#/$defs/replace" },
+        { "$ref": "#/$defs/fail" },
+        { "$ref": "#/$defs/subscribe" },
+        { "$ref": "#/$defs/unsubscribe" }
+      ]
+    },
+    "version": {
+      "type": "string",
+      "const": "runyte-experimental-1"
+    },
+    "token": {
+      "type": "string",
+      "description": "Opaque token. Echo it unchanged; do not interpret its current numeric spelling. Identity and lifetime are checked by the host."
+    },
+    "request": {
+      "type": "string",
+      "maxLength": 64,
+      "x-runyte-maxUtf8Bytes": 64,
+      "description": "Plugin-chosen correlation string, at most 64 UTF-8 bytes. Empty strings are permitted. maxLength alone cannot enforce the byte limit."
+    },
+    "localName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 48,
+      "pattern": "^[a-z0-9-]+(?![\\s\\S])",
+      "not": { "const": "stop" },
+      "description": "Local command name. stop is reserved for the host-owned lifecycle command."
+    },
+    "qualifiedName": {
+      "type": "string",
+      "pattern": "^plugin\\.[a-z0-9-]{1,48}\\.[a-z0-9-]{1,48}(?![\\s\\S])",
+      "description": "plugin.<configured-id>.<local-name>. Registration acknowledgements omit the host-supplied stop command."
+    },
+    "offset": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Offset from the start of the captured text, in Unicode scalar values. The host additionally checks bounds. Emit an integer JSON token, without a fraction or exponent."
+    },
+    "selection": {
+      "type": "object",
+      "required": ["anchor", "head", "from", "to"],
+      "properties": {
+        "anchor": { "$ref": "#/$defs/offset", "description": "Native anchor caret position." },
+        "head": { "$ref": "#/$defs/offset", "description": "Native head caret position; head < anchor means backward." },
+        "from": { "$ref": "#/$defs/offset", "description": "Inclusive start of the authoritative operative span." },
+        "to": { "$ref": "#/$defs/offset", "description": "Exclusive end of the authoritative operative span." }
+      },
+      "additionalProperties": true,
+      "description": "Use from..to to slice text, not min/max(anchor, head). Native caret semantics can include an endpoint character."
+    },
+    "registration": {
+      "type": "object",
+      "required": ["name", "description"],
+      "properties": {
+        "name": { "$ref": "#/$defs/localName" },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160,
+          "not": { "pattern": "[\u0000-\u001f\u007f-\u009f]" },
+          "x-runyte-maxUtf8Bytes": 160,
+          "description": "1–160 UTF-8 bytes with no Unicode control characters."
+        }
+      },
+      "additionalProperties": false
+    },
+    "hello": {
+      "type": "object",
+      "required": ["type", "version"],
+      "properties": {
+        "type": { "const": "hello" },
+        "version": { "$ref": "#/$defs/version" }
+      },
+      "additionalProperties": true,
+      "examples": [{ "type": "hello", "version": "runyte-experimental-1" }]
+    },
+    "register": {
+      "type": "object",
+      "required": ["type", "version", "commands"],
+      "properties": {
+        "type": { "const": "register" },
+        "version": { "$ref": "#/$defs/version" },
+        "commands": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "items": { "$ref": "#/$defs/registration" },
+          "description": "Names must be distinct and configured bindings must resolve without collisions. These are host checks."
+        }
+      },
+      "additionalProperties": false,
+      "description": "Sent once after hello, within ten seconds. Registration is atomic.",
+      "examples": [{ "type": "register", "version": "runyte-experimental-1", "commands": [{ "name": "uppercase", "description": "Uppercase every selection" }] }]
+    },
+    "registered": {
+      "type": "object",
+      "required": ["type", "commands"],
+      "properties": {
+        "type": { "const": "registered" },
+        "commands": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/qualifiedName" }
+        }
+      },
+      "additionalProperties": true,
+      "examples": [{ "type": "registered", "commands": ["plugin.case.uppercase"] }]
+    },
+    "invoke": {
+      "type": "object",
+      "required": ["type", "invocation", "command", "buffer", "revision", "text", "selections", "primary"],
+      "properties": {
+        "type": { "const": "invoke" },
+        "invocation": { "$ref": "#/$defs/token" },
+        "command": { "$ref": "#/$defs/localName" },
+        "buffer": { "$ref": "#/$defs/token" },
+        "revision": { "$ref": "#/$defs/token" },
+        "text": { "type": "string", "maxLength": 262144, "x-runyte-maxUtf8Bytes": 262144 },
+        "selections": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1024,
+          "items": { "$ref": "#/$defs/selection" }
+        },
+        "primary": { "type": "integer", "minimum": 0, "maximum": 1023, "description": "Zero-based index into selections in document order; must be less than its length." }
+      },
+      "additionalProperties": true,
+      "description": "Captured invoking context. One pending invocation per plugin, with a ten-second result deadline.",
+      "examples": [{ "type": "invoke", "invocation": "1", "command": "uppercase", "buffer": "0", "revision": "42", "text": "éß 😀", "selections": [{ "anchor": 1, "head": 0, "from": 0, "to": 2 }, { "anchor": 3, "head": 3, "from": 3, "to": 4 }], "primary": 0 }]
+    },
+    "replace": {
+      "type": "object",
+      "required": ["type", "invocation", "replacements"],
+      "properties": {
+        "type": { "const": "replace" },
+        "invocation": { "$ref": "#/$defs/token" },
+        "replacements": {
+          "type": "array",
+          "items": { "type": "string" },
+          "x-runyte-maxTotalUtf8Bytes": 524288,
+          "description": "Exactly one string per captured selection in the same order, at most 512 KiB UTF-8 in total. Count and size errors receive invalid_replacements; they are semantic checks."
+        }
+      },
+      "additionalProperties": false,
+      "description": "Addresses only the pending captured invocation. The host validates its lifetime, revision, editability, spans and replacements before one undoable transaction.",
+      "examples": [{ "type": "replace", "invocation": "1", "replacements": ["ÉSS", "😀"] }]
+    },
+    "fail": {
+      "type": "object",
+      "required": ["type", "invocation", "message"],
+      "properties": {
+        "type": { "const": "fail" },
+        "invocation": { "$ref": "#/$defs/token" },
+        "message": {
+          "type": "string",
+          "maxLength": 1024,
+          "not": { "pattern": "[\u0000-\u001f\u007f-\u009f]" },
+          "x-runyte-maxUtf8Bytes": 1024,
+          "description": "At most 1,024 UTF-8 bytes, no Unicode control characters. May be empty."
+        }
+      },
+      "additionalProperties": false,
+      "description": "Reports a command failure without stopping the plugin; the host replies with complete/failed.",
+      "examples": [{ "type": "fail", "invocation": "1", "message": "Transformation unavailable" }]
+    },
+    "complete": {
+      "type": "object",
+      "required": ["type", "invocation", "status", "revision", "message"],
+      "properties": {
+        "type": { "const": "complete" },
+        "invocation": { "$ref": "#/$defs/token" },
+        "status": { "enum": ["applied", "stale", "closed", "read_only", "invalid_replacements", "refused", "failed"] },
+        "revision": { "type": ["string", "null"] },
+        "message": { "type": "string" }
+      },
+      "if": { "properties": { "status": { "const": "applied" } } },
+      "then": { "properties": { "revision": { "$ref": "#/$defs/token" }, "message": { "const": "" } } },
+      "else": { "properties": { "revision": { "type": "null" } } },
+      "additionalProperties": true,
+      "description": "One completion per matched result on a live connection. applied includes the resulting revision, which can be unchanged for an empty no-op. Disconnect or stop does not guarantee a final wire message.",
+      "examples": [
+        { "type": "complete", "invocation": "1", "status": "applied", "revision": "43", "message": "" },
+        { "type": "complete", "invocation": "1", "status": "stale", "revision": null, "message": "invoking buffer changed" },
+        { "type": "complete", "invocation": "1", "status": "failed", "revision": null, "message": "Transformation unavailable" }
+      ]
+    },
+    "subscribe": {
+      "type": "object",
+      "required": ["type", "request", "buffer"],
+      "properties": {
+        "type": { "const": "subscribe" },
+        "request": { "$ref": "#/$defs/request" },
+        "buffer": { "$ref": "#/$defs/token" }
+      },
+      "additionalProperties": false,
+      "description": "Watch a live handle previously issued to this connection. Repeating subscribe resets its baseline.",
+      "examples": [{ "type": "subscribe", "request": "watch-1", "buffer": "0" }]
+    },
+    "subscribed": {
+      "type": "object",
+      "required": ["type", "request", "buffer", "revision"],
+      "properties": {
+        "type": { "const": "subscribed" },
+        "request": { "$ref": "#/$defs/request" },
+        "buffer": { "$ref": "#/$defs/token" },
+        "revision": { "$ref": "#/$defs/token" }
+      },
+      "additionalProperties": true,
+      "description": "Acknowledgement with the current revision baseline.",
+      "examples": [{ "type": "subscribed", "request": "watch-1", "buffer": "0", "revision": "43" }]
+    },
+    "unsubscribe": {
+      "type": "object",
+      "required": ["type", "request", "buffer"],
+      "properties": {
+        "type": { "const": "unsubscribe" },
+        "request": { "$ref": "#/$defs/request" },
+        "buffer": { "$ref": "#/$defs/token", "maxLength": 64, "x-runyte-maxUtf8Bytes": 64 }
+      },
+      "additionalProperties": false,
+      "description": "Idempotently remove a watch. The current host also bounds this buffer string to 64 UTF-8 bytes.",
+      "examples": [{ "type": "unsubscribe", "request": "watch-2", "buffer": "0" }]
+    },
+    "unsubscribed": {
+      "type": "object",
+      "required": ["type", "request", "buffer"],
+      "properties": {
+        "type": { "const": "unsubscribed" },
+        "request": { "$ref": "#/$defs/request" },
+        "buffer": { "$ref": "#/$defs/token", "maxLength": 64, "x-runyte-maxUtf8Bytes": 64 }
+      },
+      "additionalProperties": true,
+      "description": "Earlier queued observations precede this acknowledgement; no further observations for the removed watch follow it.",
+      "examples": [{ "type": "unsubscribed", "request": "watch-2", "buffer": "0" }]
+    },
+    "error": {
+      "type": "object",
+      "required": ["type", "request", "code"],
+      "properties": {
+        "type": { "const": "error" },
+        "request": { "$ref": "#/$defs/request" },
+        "code": { "enum": ["unknown_buffer", "closed"] }
+      },
+      "additionalProperties": true,
+      "description": "Subscription target error. Other protocol faults stop the connection rather than producing this message.",
+      "examples": [
+        { "type": "error", "request": "watch-1", "code": "unknown_buffer" },
+        { "type": "error", "request": "watch-1", "code": "closed" }
+      ]
+    },
+    "buffer_state": {
+      "type": "object",
+      "required": ["type", "sequence", "buffer", "revision", "closed"],
+      "properties": {
+        "type": { "const": "buffer_state" },
+        "sequence": { "$ref": "#/$defs/token" },
+        "buffer": { "$ref": "#/$defs/token" },
+        "revision": { "$ref": "#/$defs/token" },
+        "closed": { "type": "boolean" }
+      },
+      "additionalProperties": true,
+      "description": "Coalesced revision/closure observation, ordered by sequence within one connection. Closure retains a string revision. A plugin edit's completion precedes its resulting observation. No text, replay, or selection-only events.",
+      "examples": [
+        { "type": "buffer_state", "sequence": "1", "buffer": "0", "revision": "44", "closed": false },
+        { "type": "buffer_state", "sequence": "2", "buffer": "0", "revision": "44", "closed": true }
+      ]
+    }
+  }
+}

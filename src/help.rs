@@ -340,7 +340,7 @@ pub(crate) fn render_document(
             key_cells.push(row(
                 &mut out,
                 &binding.sequence.to_string(),
-                binding.description,
+                &binding.description,
             ));
         }
         if !actions.is_empty() {
@@ -608,6 +608,7 @@ fn hides_a_refusal(
         .any(|binding| match binding.target {
             crate::keymap::BindingTarget::Editor(command) => command.is_mutating(),
             crate::keymap::BindingTarget::Colon(_) => false,
+            crate::keymap::BindingTarget::Plugin(_) => true,
         })
 }
 

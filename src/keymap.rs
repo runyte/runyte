@@ -122,6 +122,7 @@ pub enum BindingRole {
 /// Semantic command identity reached by a key binding.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum BindingTarget {
+    Plugin(u64),
     Editor(EditorCommand),
     Colon(ColonCommand),
 }
@@ -129,6 +130,7 @@ pub enum BindingTarget {
 impl BindingTarget {
     pub const fn id(self) -> CommandId {
         match self {
+            Self::Plugin(id) => CommandId::Plugin(id),
             Self::Editor(command) => CommandId::Editor(command),
             Self::Colon(command) => CommandId::Colon(command),
         }
@@ -136,6 +138,7 @@ impl BindingTarget {
 
     pub fn description(self) -> &'static str {
         match self {
+            Self::Plugin(_) => "Run plugin command",
             Self::Editor(command) => command.metadata().description,
             Self::Colon(command) => {
                 COMMANDS
@@ -149,6 +152,7 @@ impl BindingTarget {
 
     pub fn name(self) -> &'static str {
         match self {
+            Self::Plugin(_) => "plugin",
             Self::Editor(command) => command.metadata().name,
             Self::Colon(command) => {
                 COMMANDS
@@ -162,6 +166,11 @@ impl BindingTarget {
 
     pub fn invocation(self) -> Result<CommandInvocation, CommandInvocationError> {
         match self {
+            Self::Plugin(id) => CommandInvocation::from_parts(
+                CommandId::Plugin(id),
+                crate::command::InvocationParameters::None,
+                Default::default(),
+            ),
             Self::Editor(command) => CommandInvocation::editor(command, Default::default()),
             Self::Colon(ColonCommand::Format) => CommandInvocation::from_parts(
                 CommandId::Colon(ColonCommand::Format),
@@ -286,7 +295,7 @@ pub struct Binding {
     pub scope: BindingScope,
     pub sequence: KeySequence,
     pub target: BindingTarget,
-    pub description: &'static str,
+    pub description: std::borrow::Cow<'static, str>,
     pub availability: BindingAvailability,
     pub role: BindingRole,
     /// Another sequence reaching the same command, named here so discovery can
@@ -311,7 +320,7 @@ impl Binding {
             scope: BindingScope::Global,
             sequence: sequence.into(),
             target,
-            description: target.description(),
+            description: target.description().into(),
             availability: BindingAvailability::Implemented,
             role: BindingRole::Primary,
             alias: None,
@@ -331,7 +340,7 @@ impl Binding {
             scope,
             sequence: sequence.into(),
             target,
-            description: target.description(),
+            description: target.description().into(),
             availability: BindingAvailability::Implemented,
             role: BindingRole::Primary,
             alias: None,
@@ -376,7 +385,7 @@ impl Binding {
             scope: BindingScope::Global,
             sequence: sequence.into(),
             target,
-            description: target.description(),
+            description: target.description().into(),
             availability: BindingAvailability::Planned(reason),
             role: BindingRole::Primary,
             alias: None,
@@ -396,7 +405,7 @@ impl Binding {
             scope: BindingScope::Global,
             sequence: sequence.into(),
             target,
-            description: target.description(),
+            description: target.description().into(),
             availability: BindingAvailability::Unsupported(reason),
             role: BindingRole::Primary,
             alias: None,
@@ -518,10 +527,10 @@ impl BindingNamespace {
 /// can name its own starting points instead of assuming the reader has the
 /// keymap memorised.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct EntryPoint {
+pub struct EntryPoint<'a> {
     pub key: Key,
     /// What the key does, or what its namespace holds.
-    pub description: &'static str,
+    pub description: &'a str,
     /// Whether more keys are expected. A prefix opens the hint popup; a leaf
     /// runs on the first press and never shows a hint at all.
     pub prefix: bool,
@@ -580,6 +589,46 @@ impl Default for Keymap {
 }
 
 impl Keymap {
+    pub(crate) fn with_plugin_bindings(&self, bindings: Vec<Binding>) -> anyhow::Result<Self> {
+        for binding in &bindings {
+            anyhow::ensure!(
+                binding
+                    .sequence
+                    .as_slice()
+                    .iter()
+                    .enumerate()
+                    .all(|(index, key)| {
+                        !(index == 0
+                            && key.modifiers.is_empty()
+                            && matches!(key.code, KeyCode::Char('1'..='9')))
+                            && !(index > 0
+                                && matches!(key.code, KeyCode::Escape | KeyCode::Backspace))
+                    }),
+                "plugin binding {} uses a grammar-reserved count or cancellation key",
+                binding.sequence
+            );
+        }
+        let mut candidate = self.clone();
+        candidate
+            .bindings
+            .retain(|b| !matches!(b.target, BindingTarget::Plugin(_)));
+        candidate.bindings.extend(bindings);
+        let violations = validate::validate(
+            &candidate.bindings,
+            &candidate.namespaces,
+            &candidate.context_actions,
+        );
+        anyhow::ensure!(
+            violations.is_empty(),
+            "plugin binding collision: {}",
+            violations
+                .first()
+                .map(|v| v.message.as_str())
+                .unwrap_or_default()
+        );
+        Ok(candidate)
+    }
+
     pub fn new(bindings: Vec<Binding>) -> Result<Self, DuplicateBinding> {
         for (index, binding) in bindings.iter().enumerate() {
             for mode in binding.modes {
@@ -803,8 +852,8 @@ impl Keymap {
     ///
     /// Scope-specific keys come first, then the global ones, each group in
     /// key order.
-    pub fn entry_points(&self, mode: Mode, scope: BindingScope) -> Vec<EntryPoint> {
-        let mut entries: Vec<EntryPoint> = Vec::new();
+    pub fn entry_points(&self, mode: Mode, scope: BindingScope) -> Vec<EntryPoint<'_>> {
+        let mut entries: Vec<EntryPoint<'_>> = Vec::new();
         for binding in self.bindings_for_scope(mode, scope) {
             let Some(key) = binding.sequence.as_slice().first().copied() else {
                 continue;
@@ -815,7 +864,7 @@ impl Keymap {
                 // An exact single-key binding names the key; longer sequences
                 // only establish that more keys are expected.
                 if leaf {
-                    entry.description = binding.description;
+                    entry.description = &binding.description;
                 } else {
                     entry.prefix = true;
                 }
@@ -823,7 +872,7 @@ impl Keymap {
             } else {
                 entries.push(EntryPoint {
                     key,
-                    description: if leaf { binding.description } else { "" },
+                    description: if leaf { &binding.description } else { "" },
                     prefix: !leaf,
                     scoped,
                 });
@@ -2445,7 +2494,7 @@ mod tests {
                             (
                                 binding.sequence.to_string(),
                                 binding.target,
-                                binding.description,
+                                binding.description.clone(),
                                 binding.availability,
                                 binding.role,
                                 binding.alias.clone(),
