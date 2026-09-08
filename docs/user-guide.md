@@ -2030,10 +2030,20 @@ cancellation keys.
 
 ### Files and splits
 
+`g f` opens `https://`, `http://`, and `www.` links in the default browser;
+`www.` addresses use HTTPS. With a bare caret, surrounding Markdown wrappers
+and trailing prose punctuation are excluded. An explicit selection is used
+exactly. The same command works in terminal NORMAL/review mode, using the
+frozen review text and resolving relative paths against the terminal's latest
+validated directory (or its launch directory) and the project root. Multiple
+existing file matches open a picker. Opening a file leaves the terminal
+process running; opening a link keeps the terminal view in place. Inferred
+targets stay within one buffer line or terminal review row.
+
 | Key | Action |
 | --- | --- |
 | `Space c y` / `Space c p` / `Space c P` | System clipboard yank / replace the selection, or paste after a bare caret / paste before |
-| `g f` | Open the selected path, or the complete path under the cursor; choose between matches beside the active file/explorer and at the project root |
+| `g f` | Open the selected path or web link, or the complete target under the cursor; relative files are matched beside the active file/explorer and at the project root |
 | `Space e` | Open the active buffer's directory as an editable explorer; from a file, select that file |
 | `Space E` | Open the working directory (controlled by `:cd`) as an editable explorer |
 | `Space 1`–`Space 9` | Attach directly to the numbered persistent session without opening the manager |
@@ -2389,6 +2399,7 @@ message without affecting the internal registers.
 | `C` / `Alt-C` in terminal review | Add carets below / above at the same occupied terminal-cell column, skipping short rows |
 | `Ctrl-u` / `Ctrl-d`, `Ctrl-b` / `Ctrl-f` | Move the review caret by half / full pages, keeping it visible |
 | `gg` / `ge` in a terminal | Move to the oldest / newest rows in the captured review snapshot |
+| `gf` in terminal review | Open the selected file path or web link, or the target under the caret; web links use the default browser |
 | `gw` in terminal review | Label visible terminal words and jump to the chosen one |
 | `s` / `/`, then `n` / `N` | Search an immutable terminal review snapshot by literal / regular expression and move among matches |
 | `y` / `Space c y` in terminal review | Copy the caret character or every selection, joined by newlines, to the unnamed register / system clipboard |

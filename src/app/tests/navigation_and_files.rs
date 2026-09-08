@@ -3047,3 +3047,184 @@ fn filesystem_confirmation_retains_recovery_paths_in_an_error_notification() {
     }
     fs::remove_dir_all(directory).unwrap();
 }
+
+#[test]
+fn goto_file_opens_web_links_without_using_the_binary_program_cache() {
+    let root = temporary("goto-web-links");
+    fs::create_dir_all(&root).unwrap();
+    let opened = Arc::new(Mutex::new(Vec::new()));
+    let mut ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    let recorded = Arc::clone(&opened);
+    ports.browser = Box::new(move |url| {
+        recorded.lock().unwrap().push(url.to_owned());
+        Ok(())
+    });
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    let source = root.join("links.txt");
+    fs::write(&source, "界 [docs](https://example.com/a_(b)?q=a,b&x=2#part).\nhttp://example.com\nwww.example.com/a\nprefix/https://example.com/exact?/suffix\n").unwrap();
+    app.open_file(source.clone()).unwrap();
+    app.programs = external_open::ProgramCache::load(None);
+    app.programs
+        .set_default(Some("binary-viewer-that-must-not-run"))
+        .unwrap();
+    for (row, column) in [(0, 35), (1, 8), (2, 6)] {
+        set_cursor(&mut app, row, column);
+        press(&mut app, 'g');
+        press(&mut app, 'f');
+        assert_eq!(app.active_buffer().path.as_ref(), Some(&source));
+        assert!(app.external_target.is_none());
+    }
+    let start = app.active_buffer().line_to_offset(3) + "prefix/".chars().count();
+    app.active_mut()
+        .replace_selection(Selection::single(Range::new(
+            start,
+            start + "https://example.com/exact?".chars().count() - 1,
+        )));
+    press(&mut app, 'g');
+    press(&mut app, 'f');
+    assert_eq!(
+        *opened.lock().unwrap(),
+        [
+            "https://example.com/a_(b)?q=a,b&x=2#part",
+            "http://example.com",
+            "https://www.example.com/a",
+            "https://example.com/exact?",
+        ]
+    );
+    app.ports.browser = Box::new(|_| bail!("test browser unavailable"));
+    press(&mut app, 'g');
+    press(&mut app, 'f');
+    assert_eq!(app.unread_notification_counts().errors, 1);
+    assert_eq!(app.active_buffer().path.as_ref(), Some(&source));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn goto_file_in_terminal_review_uses_its_directory_and_preserves_the_child() {
+    let root = temporary("goto-terminal-file");
+    let terminal_directory = root.join("terminal");
+    let buffer_directory = root.join("buffer");
+    fs::create_dir_all(&terminal_directory).unwrap();
+    fs::create_dir_all(&buffer_directory).unwrap();
+    let source = buffer_directory.join("source.txt");
+    fs::write(&source, "hidden-buffer-only.txt\n").unwrap();
+    for directory in [&root, &terminal_directory, &buffer_directory] {
+        fs::write(directory.join("file.txt"), "target\n").unwrap();
+    }
+    let ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    app.open_file(source).unwrap();
+    app.open_terminal_at(Some("/bin/cat".to_owned()), terminal_directory.clone());
+    let terminal = app.active_terminal().unwrap();
+    app.apply_terminal_output(TerminalOutput::Bytes {
+        id: terminal,
+        bytes: "界 file.txt\r\nprefix/file.txt/suffix\r\n"
+            .as_bytes()
+            .to_vec(),
+    });
+    app.mode = Mode::Normal;
+    let session = app.terminals.get_mut(terminal).unwrap();
+    session.begin_review();
+    session.goto_review_offset(5, false);
+    press(&mut app, 'g');
+    press(&mut app, 'f');
+    let picker = app.list.as_ref().expect("terminal and project matches");
+    assert_eq!(picker.items.len(), 2);
+    assert_eq!(
+        picker.items[0].label,
+        terminal_directory.join("file.txt").display().to_string()
+    );
+    assert_eq!(
+        picker.items[1].label,
+        root.join("file.txt").display().to_string()
+    );
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert_eq!(app.active_terminal(), None);
+    assert_eq!(
+        app.active_buffer().path.as_ref(),
+        Some(&terminal_directory.join("file.txt"))
+    );
+    assert!(app.terminals.get(terminal).unwrap().live());
+    assert!(app.terminals.get(terminal).unwrap().reviewing());
+
+    app.show_terminal(terminal);
+    let session = app.terminals.get_mut(terminal).unwrap();
+    session
+        .search_review("prefix/file.txt/suffix", false)
+        .unwrap();
+    let start = session.review_selection_anchor().unwrap() + "prefix/".len();
+    session.set_review_selection(start + "file.txt".len() - 1, start);
+    app.mode = Mode::Select;
+    press(&mut app, 'g');
+    press(&mut app, 'f');
+    assert_eq!(
+        app.list.as_ref().unwrap().items.len(),
+        2,
+        "the exact reverse selection opens the same files"
+    );
+    key(&mut app, KeyCode::Escape, Modifiers::NONE);
+    app.close_terminal_id(terminal);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn goto_file_in_terminal_review_opens_links_from_the_frozen_snapshot() {
+    let root = temporary("goto-terminal-link");
+    fs::create_dir_all(&root).unwrap();
+    let opened = Arc::new(Mutex::new(Vec::new()));
+    let mut ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    let recorded = Arc::clone(&opened);
+    ports.browser = Box::new(move |url| {
+        recorded.lock().unwrap().push(url.to_owned());
+        Ok(())
+    });
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    app.open_terminal_at(Some("/bin/cat".to_owned()), root.clone());
+    let terminal = app.active_terminal().unwrap();
+    let buffer = app.active().buffer;
+    let original = app.active_buffer().to_string();
+    app.apply_terminal_output(TerminalOutput::Bytes {
+        id: terminal,
+        bytes: b"https://example.com/a?q=1&b=2#c\r\nwww.example.com\r\n".to_vec(),
+    });
+    app.mode = Mode::Normal;
+    let session = app.terminals.get_mut(terminal).unwrap();
+    session.begin_review();
+    session.goto_review_offset(10, false);
+    app.apply_terminal_output(TerminalOutput::Bytes {
+        id: terminal,
+        bytes: b"\x1b[2J\x1b[Hhttp://changed.example.com".to_vec(),
+    });
+    press(&mut app, 'g');
+    press(&mut app, 'f');
+    app.terminals
+        .get_mut(terminal)
+        .unwrap()
+        .search_review("www.example.com", false)
+        .unwrap();
+    press(&mut app, 'g');
+    press(&mut app, 'f');
+    assert_eq!(
+        *opened.lock().unwrap(),
+        ["https://example.com/a?q=1&b=2#c", "https://www.example.com"]
+    );
+    assert_eq!(app.active_terminal(), Some(terminal));
+    assert!(app.terminals.get(terminal).unwrap().reviewing());
+    assert_eq!(app.active().buffer, buffer);
+    assert_eq!(app.active_buffer().to_string(), original);
+    app.terminals.get_mut(terminal).unwrap().select_all_review();
+    press(&mut app, 'g');
+    press(&mut app, 'f');
+    assert_eq!(app.status, "no path or link under the cursor");
+    assert_eq!(opened.lock().unwrap().len(), 2);
+    app.close_terminal_id(terminal);
+    fs::remove_dir_all(root).unwrap();
+}

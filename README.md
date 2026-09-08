@@ -28,8 +28,9 @@ Press `?` to read Markdown as a **formatted page**, including tables.
 **Paste images** with `Ctrl+V`. Runyte saves them in the project's temporary cache
 and inserts a Markdown link into your document.
 
-Press `gf` on a file path in your text to open it. Images and other binary
-files open in an external program you choose.
+Press `gf` on a file path in a buffer or terminal review to open it. Images
+and other binary files open in an external program you choose. Web links
+(`https://`, `http://`, and `www.`) open in your default browser.
 
 Project goals:
 

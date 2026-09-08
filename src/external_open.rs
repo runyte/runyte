@@ -329,6 +329,12 @@ impl ProgramCache {
     }
 }
 
+/// Opens a web URL through the desktop's default handler, independent of the
+/// remembered binary-file program. The URL remains one literal argument.
+pub fn launch_browser(url: &str) -> Result<()> {
+    launch("", Path::new(url))
+}
+
 /// Hands `path` to `program` and returns without waiting for it.
 ///
 /// Detached with no stdio of its own, because Runyte owns the terminal in raw

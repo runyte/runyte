@@ -2381,6 +2381,8 @@ impl CommandMatch<'_> {
     }
 }
 
+type BrowserOpener = Box<dyn Fn(&str) -> Result<()> + Send + Sync>;
+
 /// Host-owned capabilities and outbound service work used by the editor.
 ///
 /// Keeping these handles together makes the core coordinator constructible
@@ -2388,6 +2390,7 @@ impl CommandMatch<'_> {
 /// The value is crate-visible only so the headless facade can explicitly
 /// choose isolated ports; its fields and operations remain narrow.
 pub(crate) struct HostPorts {
+    browser: BrowserOpener,
     clipboard: Box<dyn SystemClipboard>,
     trash: Box<dyn TrashBackend>,
     lsp: Option<LspHandle>,
@@ -2402,12 +2405,15 @@ pub(crate) struct HostPorts {
 
 impl HostPorts {
     fn live() -> Self {
-        Self::isolated(Box::new(CommandClipboard))
+        let mut ports = Self::isolated(Box::new(CommandClipboard));
+        ports.browser = Box::new(external_open::launch_browser);
+        ports
     }
 
     pub(crate) fn isolated(clipboard: Box<dyn SystemClipboard>) -> Self {
         Self {
             clipboard,
+            browser: Box::new(|_| bail!("browser opening is unavailable in an isolated editor")),
             trash: Box::new(SystemTrash),
             lsp: None,
             git: None,

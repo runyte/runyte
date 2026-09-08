@@ -730,6 +730,33 @@ impl TerminalSession {
         true
     }
 
+    /// The primary selected target, or the token under the review caret.
+    pub(crate) fn review_navigation_target(&mut self) -> Option<String> {
+        let review = self.ensure_review();
+        let range = review.selection.primary();
+        if !range.is_empty() {
+            return Some(
+                review
+                    .text
+                    .chars()
+                    .skip(range.from())
+                    .take(range.len() + 1)
+                    .collect(),
+            );
+        }
+        let line = review
+            .lines
+            .iter()
+            .find(|line| line.text_start <= range.head && range.head < line.text_end)?;
+        let text: String = review
+            .text
+            .chars()
+            .skip(line.text_start)
+            .take(line.text_end - line.text_start)
+            .collect();
+        crate::navigation_target::under_cursor(&text, range.head - line.text_start)
+    }
+
     pub fn review_selection_text(&mut self) -> String {
         let review = self.ensure_review();
         let text = review.text.chars().collect::<Vec<_>>();

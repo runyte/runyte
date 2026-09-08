@@ -446,7 +446,7 @@ fn g_f_opens_the_file_under_the_cursor() {
         default_keymap().lookup(Mode::Normal, &sequence),
         Lookup::Exact(binding)
             if binding.target == BindingTarget::Editor(EditorCommand::GotoFile)
-                && binding.description == "Go to the file under the cursor"
+                && binding.description == "Open the file or web link under the cursor"
     ));
 }
 
