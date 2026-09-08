@@ -6,7 +6,8 @@ The current implementation supports typed commands, finite background jobs,
 retained native views, explicit buffer reads/edits, immutable snapshots and
 pane selections, local metadata/browsing, document lifecycle operations, native
 input, confirmed bounded recursive filesystem mutations and provider-backed
-UTF-8 document opening, conditional remote saves, explicit rebind and remote
+UTF-8 document opening, conditional remote saves, native confirmation of weaker
+overwrites, explicit rebind and remote
 conflict inspection. Network transports, subscriptions and managed media backends
 remain unfinished. This is not completion of the application plan.
 Epoch 1 remains the default and its uppercase example is unchanged.
@@ -436,16 +437,25 @@ preserved, including CRLF. Native `:write`, `:wq` and `:write-buffer-close`, plu
 `:plugin.memory.save`, use the conditional upload protocol below. Normal save
 trimming hooks still apply. `:plugin.memory.rebind` explicitly reconciles the
 current provider document. `:plugin.memory.inspect` and native `:diff-remote`
-compare fresh remote text with the editable document. Forced overwrite, local
-write-to-path and ordinary `:reload` remain refused; confirmed weaker transports
-are subsequent work. Discard restores the accepted in-memory baseline, preserving any
+compare fresh remote text with the editable document. Local write-to-path and
+ordinary `:reload` remain refused. Native writes to weaker providers require
+foreground confirmation. Discard restores the accepted in-memory baseline, preserving any
 unknown write and its dirty protection. Stopping a provider leaves editable text
 marked unavailable. The memory example resets remote content on process restart.
 
+Add `--weak` after the memory script path in its configured argument list to
+advertise `conditional_write: false` while retaining `atomic_replace: true`.
+Native saves then show the overwrite confirmation described below. The memory
+implementation still compares and replaces under its local lock; this mode
+demonstrates a weaker capability declaration without using a remote account.
+`:plugin.memory.save` is refused in this mode because plugin-facing `buffer.save`
+does not yet carry foreground overwrite approval.
+
 An instance grants `providers` before `provider.register {name, conditional_write,
 atomic_replace}` can register up to eight unique names. Declarations describe
-transport capabilities independently. Native and plugin saves currently require
-conditional writes; atomic replacement is a separate guarantee. `resource.open {plugin, provider, key, invocation?}` requires
+transport capabilities independently. Plugin-facing saves require conditional
+writes; native saves can request explicit confirmation for weaker providers.
+Atomic replacement is a separate guarantee. `resource.open {plugin, provider, key, invocation?}` requires
 `documents` and `jobs` on the requesting application. The provider can be another
 configured application. Its generation, provider name and canonical key are
 correlated independently from the requesting application's job and buffer handle.
@@ -518,7 +528,7 @@ conflict while explicit reconciliation is refused. Even when the snapshot equals
 an uncertain upload, comparison alone cannot prove that the previous remote
 mutation has settled. Rebind still requires the settlement proof described below.
 
-### Conditional uploads and recovery
+### Uploads and recovery
 
 `buffer.save` uses the same host coordinator as native saves. It requires the
 captured buffer revision, `documents` and `jobs`; native saves use host-owned jobs
@@ -528,21 +538,43 @@ close, discard, reload, quit and wait completion immediately. A text change befo
 host admission rejects that intent before trimming; after admission, the captured
 snapshot is immutable and editing can continue.
 
-The host sends `resource.write.begin {job, provider, key, expected_version, bytes,
+The host sends `resource.write.begin {job, provider, key, expected_version, mode, bytes,
 encoding}`, which returns `{kind: "write_started", value: {upload}}`. Begin and
 all `resource.write.chunk {job, upload, offset, text}` calls must affect staging
 only. Chunk replies are `{kind: "write_chunk", value: {offset}}`, acknowledging
 the exact next UTF-8 byte offset. Document/chunk/encoded-frame limits match reads;
 NUL text is refused before transport. Empty text still needs a final commit.
 
-`resource.write.commit {job, upload, expected_version}` must enforce the original
-remote precondition at the mutation, even if Begin checked it too. Success is
+`resource.write.commit {job, upload, expected_version, mode}` carries the same
+explicit mode as Begin. `conditional` requires the provider to enforce the original
+remote precondition at the mutation, even if Begin checked it too.
+`confirmed_best_effort` means the user approved a weaker overwrite: `expected_version`
+still names the observed baseline, and the provider must compare it as closely as
+possible before promoting the upload. That comparison does not establish an atomic
+compare-and-swap and cannot exclude another writer between comparison and replacement.
+Providers must reject an unsupported mode or a mode change between Begin and Commit.
+Success is
 `{kind: "write_committed", value: {version}}`. A confirmed non-commit is
 `{kind: "write_rejected", value: {error}}`. `atomic_replace` independently declares
 whether replacement is all-or-nothing for remote readers; neither declaration may
-be inferred from a preflight stat followed by an unguarded upload. Providers without
-conditional writes are refused until the foreground overwrite-confirmation
-workflow is implemented; `:write!` does not bypass this boundary.
+be inferred from a preflight stat followed by an unguarded upload. A failed
+non-atomic replacement can leave partial content: return `outcome_unknown` unless
+`write_rejected` can explicitly establish that the destination did not change.
+Cancellation or a lost acknowledgement cannot establish non-commit.
+
+For a provider without conditional writes, native save commands present a native
+foreground overwrite confirmation. Only a physical Enter accepts it; generated
+input cannot approve the overwrite. The host checks the captured document revision,
+provider binding and foreground context again before admission. No provider call
+is sent before approval, and cancelling leaves text, undo history and save hooks
+untouched. Accepted approval permits one captured save, including its normal
+trimming hooks; it does not authorize future saves or automatic retries. The prompt
+describes the remaining external-edit race and whether replacement is atomic.
+The captured preview reserves 16 MiB plus 512 KiB for bounded hook metadata.
+Whitespace trimming is limited to 4,096 changes in a preview; a larger preview is
+refused without editing the document. Trim it explicitly before retrying the save.
+`:write!` does not bypass confirmation. Plugin-facing `buffer.save` continues to
+refuse weak providers in this slice because it has no foreground approval field.
 
 A confirmed save adopts only the uploaded text as the saved baseline. Later edits
 stay dirty and undoing back to the uploaded snapshot becomes clean. Reliable

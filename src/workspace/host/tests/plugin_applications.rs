@@ -21,6 +21,8 @@ mod filesystem_stat;
 mod interaction;
 #[path = "plugin_provider_inspect.rs"]
 mod provider_inspect;
+#[path = "plugin_provider_overwrite.rs"]
+mod provider_overwrite;
 #[path = "plugin_provider_rebind.rs"]
 mod provider_rebind;
 #[path = "plugin_provider_review.rs"]

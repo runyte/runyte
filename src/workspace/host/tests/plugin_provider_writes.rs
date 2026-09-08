@@ -68,6 +68,7 @@ pub(super) fn upload(
 ) -> (String, String) {
     let (id, begin) = begin;
     let wire::Request::WriteBegin {
+        mode,
         bytes,
         expected_version,
         encoding,
@@ -113,10 +114,12 @@ pub(super) fn upload(
                 );
             }
             wire::Request::WriteCommit {
+                mode: commit_mode,
                 upload,
                 expected_version,
                 ..
             } => {
+                assert_eq!(mode, commit_mode);
                 assert_eq!(upload, "upload-1");
                 assert_eq!(expected_version, "version-1");
                 assert_eq!(captured.len(), bytes);

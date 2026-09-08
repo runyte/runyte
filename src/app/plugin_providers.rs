@@ -24,6 +24,7 @@ pub(crate) struct ProviderSaveIntent {
     pub buffer: usize,
     /// Admission must reject edits made after the native save command.
     pub expected_revision: u64,
+    pub context: CapturedContext,
     pub continuation: Option<ProviderSaveContinuation>,
 }
 
@@ -247,6 +248,15 @@ impl App {
             attachment: self.plugins.attachment_generation,
             foreground: self.plugins.foreground_generation,
         });
+        let context = CapturedContext {
+            foreground_allowed: self.recording_macro.is_none() && self.macro_replay.is_none(),
+            action: self.active_action_id,
+            pane: self.active_pane,
+            buffer,
+            terminal: self.active().terminal,
+            attachment: self.plugins.attachment_generation,
+            foreground: self.plugins.foreground_generation,
+        };
         // Protect even clean documents between native command dispatch and host
         // admission. The host releases this guard on refusal or completion.
         self.plugins.document_saves.insert(buffer);
@@ -255,6 +265,7 @@ impl App {
             .push_back(ProviderSaveIntent {
                 buffer,
                 expected_revision: self.buffers[buffer].revision(),
+                context,
                 continuation,
             });
         self.status("Provider save pending");
@@ -293,6 +304,24 @@ impl App {
                 }
             }
         }
+    }
+
+    pub(crate) fn refresh_provider_save_continuation(
+        &self,
+        continuation: Option<ProviderSaveContinuation>,
+        context: &CapturedContext,
+    ) -> Option<ProviderSaveContinuation> {
+        let mut continuation = continuation?;
+        if self.plugin_foreground(context).is_err()
+            || context.terminal.is_some()
+            || continuation.pane != context.pane
+            || continuation.buffer != context.buffer
+            || continuation.attachment != context.attachment
+        {
+            return None;
+        }
+        continuation.foreground = context.foreground;
+        Some(continuation)
     }
 }
 

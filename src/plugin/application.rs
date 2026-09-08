@@ -908,6 +908,7 @@ mod tests {
                     provider: "memory".into(),
                     key: "notes".into(),
                     expected_version: "v1".into(),
+                    mode: super::super::provider::WriteMode::Conditional,
                     bytes: 5,
                     encoding: "utf-8",
                 },
@@ -927,6 +928,7 @@ mod tests {
                     job: "j:g:1".into(),
                     upload: "upload-1".into(),
                     expected_version: "v1".into(),
+                    mode: super::super::provider::WriteMode::Conditional,
                 },
             },
             HostMessage::ResourceRequest {
@@ -964,6 +966,27 @@ mod tests {
                     revision: Some("r:1".into()),
                     error: None,
                 }),
+            },
+            HostMessage::ResourceRequest {
+                id: "h:11".into(),
+                request: super::super::provider::Request::WriteBegin {
+                    job: "j:g:4".into(),
+                    provider: "memory".into(),
+                    key: "notes".into(),
+                    expected_version: "v1".into(),
+                    mode: super::super::provider::WriteMode::ConfirmedBestEffort,
+                    bytes: 5,
+                    encoding: "utf-8",
+                },
+            },
+            HostMessage::ResourceRequest {
+                id: "h:12".into(),
+                request: super::super::provider::Request::WriteCommit {
+                    job: "j:g:4".into(),
+                    upload: "upload-2".into(),
+                    expected_version: "v1".into(),
+                    mode: super::super::provider::WriteMode::ConfirmedBestEffort,
+                },
             },
         ];
         let expected = fixtures

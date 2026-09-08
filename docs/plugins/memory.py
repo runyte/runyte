@@ -10,6 +10,7 @@ from collections import OrderedDict
 from application import Application, PluginError
 
 TEXT = ('# Provider document\r\n\r\nEditable Unicode: é猫 🦀\r\n' * 4096).encode('utf-8')
+WEAK = False
 app = Application('Memory provider', [
     {'name': 'open', 'description': 'Open a deterministic provider document',
      'context': 'workspace', 'arguments': [{'name': 'key', 'type': 'string'}]},
@@ -38,7 +39,7 @@ def register():
     global registered
     with registration_lock:
         if not registered:
-            app.request('provider.register', name='memory', conditional_write=True, atomic_replace=True)
+            app.request('provider.register', name='memory', conditional_write=not WEAK, atomic_replace=True)
             registered = True
 
 
@@ -113,6 +114,9 @@ def read(context):
 def begin(context):
     with state_lock:
         metadata(context)
+        mode = 'confirmed_best_effort' if WEAK else 'conditional'
+        if context.get('mode') != mode:
+            raise PluginError('invalid_argument', 'Unexpected write mode')
         job = context['job']
         if job in settled or job in staging:
             raise PluginError('conflict', 'Upload is already known')
@@ -122,7 +126,8 @@ def begin(context):
             raise PluginError('limit_exceeded', 'Unsupported upload size or encoding')
         if context['expected_version'] != version():
             raise PluginError('conflict', 'Memory resource changed')
-        staging[job] = {'text': bytearray(), 'bytes': context['bytes'], 'version': context['expected_version']}
+        staging[job] = {'text': bytearray(), 'bytes': context['bytes'],
+                        'version': context['expected_version'], 'mode': mode}
         return {'kind': 'write_started', 'value': {'upload': job}}
 
 
@@ -146,11 +151,15 @@ def commit(context):
     global TEXT
     with state_lock:
         upload = upload_for(context)
+        if context.get('mode') != upload['mode']:
+            raise PluginError('invalid_argument', 'Write mode changed after staging')
         if context['expected_version'] != upload['version'] or version() != upload['version'] or len(upload['text']) != upload['bytes']:
             del staging[context['job']]
             remember(context['job'], 'rejected')
             return {'kind': 'write_rejected', 'value': {'error': {'code': 'conflict', 'message': 'Memory resource changed or upload is incomplete'}}}
         # Precondition and replacement occur together under the same lock.
+        # --weak advertises less than this local implementation guarantees so
+        # native confirmation can be exercised without a real remote service.
         TEXT = bytes(upload['text'])
         del staging[context['job']]
         remember(context['job'], 'committed')
@@ -171,4 +180,9 @@ app.resource_handlers = {'resource.stat': stat, 'resource.read': read, 'resource
     'resource.write.begin': begin, 'resource.write.chunk': write_chunk,
     'resource.write.commit': commit, 'resource.write.abort': abort}
 if __name__ == '__main__':
+    import argparse
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--weak', action='store_true',
+                        help='advertise best-effort writes to exercise native confirmation')
+    WEAK = parser.parse_args().weak
     app.run()

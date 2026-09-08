@@ -925,7 +925,8 @@ impl App {
     }
 
     pub(crate) fn has_native_input_overlay(&self) -> bool {
-        self.picker.is_some()
+        self.plugins.provider_overwrite.is_some()
+            || self.picker.is_some()
             || self.fs_confirmation.is_some()
             || self.directory_reload_confirmation.is_some()
             || self.file_reload_confirmation.is_some()
@@ -953,6 +954,14 @@ impl App {
     /// line. Service feedback and action echoes may change while a decision is
     /// open; its popup must continue to name the exact operation Enter accepts.
     fn confirmation_overlay(&self) -> Option<ConfirmationOverlay> {
+        if let Some(confirmation) = &self.plugins.provider_overwrite {
+            return Some(ConfirmationOverlay {
+                title: "Overwrite remote document",
+                accept: "overwrite remote document",
+                message: confirmation.message(),
+                input: None,
+            });
+        }
         if let Some(menu) = &self.terminal_action_menu
             && menu.close_armed
             && menu.selected_action() == Some(super::TerminalAction::ForceKill)

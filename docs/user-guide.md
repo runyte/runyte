@@ -2992,7 +2992,10 @@ choices and forms with masked secret fields. Applications can also create named
 unsaved documents and save them asynchronously: later edits stay dirty, and
 pending or uncertain writes cannot silently complete a close or `--wait` request.
 Provider applications can also open version-bound UTF-8 documents with normal
-editing, syntax highlighting and conditional remote saves. Newer edits remain
+editing, syntax highlighting and remote saves. Providers with conditional writes
+save normally; weaker providers require native foreground confirmation describing
+the overwrite race and replacement guarantee. Cancelling preserves text and undo.
+Newer edits remain
 dirty during uploads; save-and-close waits for confirmed success. Explicit rebind
 reconciles restarted providers and uncertain writes. `:diff-remote` compares fresh
 remote text with local edits without changing the saved baseline; both sides must

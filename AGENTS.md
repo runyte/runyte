@@ -173,7 +173,9 @@ and the order of the push. Do not infer any of those from the commit history.
   handle and drains events from the main loop, so no language server can
   stall rendering or input.
 - `src/plugin.rs`: bounded experimental extension wire values and the external
-  process worker. `src/app/plugin_workflows.rs` coordinates runtime command
+  process worker. `src/app/plugin_provider_overwrite.rs` owns native approval of captured
+  best-effort remote saves; only physical frontend input can approve them.
+  `src/app/plugin_workflows.rs` coordinates runtime command
   metadata and captured invocations; `src/workspace/host/plugins.rs` owns process
   lifecycle, explicit-target result application, and buffer observations.
   `src/plugin/filesystem.rs` prepares bounded local operations off the editor

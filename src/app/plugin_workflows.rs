@@ -50,6 +50,9 @@ pub(crate) struct Plugins {
     pub document_saves: BTreeSet<usize>,
     pub provider_save_intents: VecDeque<super::plugin_providers::ProviderSaveIntent>,
     pub provider_inspect_intents: VecDeque<super::plugin_providers::ProviderInspectIntent>,
+    pub provider_overwrite: Option<super::plugin_provider_overwrite::ProviderOverwrite>,
+    pub provider_overwrite_decision:
+        Option<super::plugin_provider_overwrite::ProviderOverwriteDecision>,
     pub filesystem_accepted: Option<crate::fs_plan::DeletionMode>,
     pub filesystem_applying: bool,
     pub orphaned_payload: usize,

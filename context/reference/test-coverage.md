@@ -41,6 +41,27 @@ days, and fails below 89% total line coverage. The floor is deliberately below
 the observed baseline because conditional Linux and macOS code changes both the
 instrumented denominator and the paths available to a run on one platform.
 
+## 2026-09-08 — native weaker-provider overwrite confirmation
+
+Measured on `x86_64-unknown-linux-gnu` at `6ee24e2` plus the native overwrite
+round, using Rust 1.97.1 and cargo-llvm-cov 0.9.0. Canonical coverage and the full
+suite each passed 3,245 tests with 33 ignored. Formatting, warnings-as-errors
+Clippy and both schema/example checkers passed.
+
+| Measure | Covered | Total | Coverage |
+| --- | ---: | ---: | ---: |
+| Lines | 110,250 | 120,321 | 91.63% |
+| Functions | 10,032 | 10,874 | 92.26% |
+| Regions | 168,773 | 185,098 | 91.18% |
+
+Twenty-three behavior tests cover immutable bounded hook previews, native-only
+approval, macro/replay refusal, stale/busy contexts, confirmation cancellation,
+reserved completion handles, save-close continuations and uncertainty accounting.
+The complete provider filter passed 95 tests. Native PTY checks passed cancelled
+and confirmed writes, save-close, reopened uploads and rebind, with no output in
+two settled seconds. The floor remains 89%; native macOS and full application
+workload measurements remain outstanding.
+
 ## 2026-09-08 — remote conflict inspection
 
 Measured on `x86_64-unknown-linux-gnu` at `e399acc` plus the remote inspection

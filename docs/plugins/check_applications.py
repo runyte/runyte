@@ -42,9 +42,10 @@ class ApplicationSchemaTests(unittest.TestCase):
             app._control.shutdown(wait=True, cancel_futures=True)
             app._executor.shutdown(wait=True, cancel_futures=True)
 
-    def test_memory_provider_reads_version_bound_unicode_chunks(self):
+    def _check_memory_provider(self, weak=False):
         host = [f['message'] for f in FIXTURES if f['direction'] == 'host']
-        child = subprocess.Popen([sys.executable, str(DIRECTORY / 'memory.py')],
+        mode = 'confirmed_best_effort' if weak else 'conditional'
+        child = subprocess.Popen([sys.executable, str(DIRECTORY / 'memory.py')] + (['--weak'] if weak else []),
                                  stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                  stderr=subprocess.PIPE, bufsize=0)
         def send(message):
@@ -65,6 +66,8 @@ class ApplicationSchemaTests(unittest.TestCase):
             send({**host[2], 'params': {**host[2]['params'], 'arguments': {'key': 'alias'}}})
             register = receive()
             self.assertEqual(register['method'], 'provider.register')
+            self.assertEqual(register['params']['conditional_write'], not weak)
+            self.assertTrue(register['params']['atomic_replace'])
             reply(register, {})
             opening = receive()
             self.assertEqual(opening['method'], 'resource.open')
@@ -92,20 +95,21 @@ class ApplicationSchemaTests(unittest.TestCase):
                 send({'type': 'request', 'id': f'h:{number}', 'method': method, 'params': params})
                 return receive()
             started = resource('resource.write.begin', 100, job='j:g:save', provider='memory', key='notes',
-                               expected_version=metadata['version'], bytes=5, encoding='utf-8')
+                               expected_version=metadata['version'], mode=mode, bytes=5, encoding='utf-8')
             upload = started['result']['value']['upload']
             accepted = resource('resource.write.chunk', 101, job='j:g:save', upload=upload, offset=0, text='é猫')
             self.assertEqual(accepted['result']['value']['offset'], 5)
-            committed = resource('resource.write.commit', 102, job='j:g:save', upload=upload, expected_version=metadata['version'])
+            committed = resource('resource.write.commit', 102, job='j:g:save', upload=upload,
+                                 expected_version=metadata['version'], mode=mode)
             self.assertEqual(committed['result']['kind'], 'write_committed')
             current = resource('resource.stat', 103, job='j:g:read', provider='memory', key='notes')['result']['value']
             self.assertEqual(current['bytes'], 5)
             self.assertNotEqual(current['version'], metadata['version'])
             rejected = resource('resource.write.begin', 104, job='j:g:stale', provider='memory', key='notes',
-                                expected_version=metadata['version'], bytes=0, encoding='utf-8')
+                                expected_version=metadata['version'], mode=mode, bytes=0, encoding='utf-8')
             self.assertEqual(rejected['error']['code'], 'conflict')
             resource('resource.write.begin', 105, job='j:g:abort', provider='memory', key='notes',
-                     expected_version=current['version'], bytes=0, encoding='utf-8')
+                     expected_version=current['version'], mode=mode, bytes=0, encoding='utf-8')
             self.assertEqual(resource('resource.write.abort', 106, job='j:g:abort', upload=None)['result']['kind'], 'write_aborted')
             reconciled = resource('resource.reconcile', 107, job='j:g:rebind', provider='memory', key='notes', previous_write='j:g:save')
             self.assertEqual(reconciled['result']['value']['previous_write'], 'j:g:save')
@@ -126,6 +130,12 @@ class ApplicationSchemaTests(unittest.TestCase):
             child.wait(timeout=3)
             child.stdout.close()
             child.stderr.close()
+
+    def test_memory_provider_reads_version_bound_unicode_chunks(self):
+        self._check_memory_provider()
+
+    def test_weak_memory_provider_accepts_confirmed_best_effort_write_mode(self):
+        self._check_memory_provider(weak=True)
 
     def test_file_manager_browses_then_requests_native_confirmation(self):
         host = [f['message'] for f in FIXTURES if f['direction'] == 'host']
@@ -286,6 +296,16 @@ class ApplicationSchemaTests(unittest.TestCase):
             if invocation == 'missing':
                 del params['invocation']
             self.assertFalse(validator.is_valid({**fixture, 'params': params}))
+
+    def test_provider_write_modes_are_explicit_and_bounded(self):
+        validator = Draft202012Validator({**SCHEMA, 'anyOf': [{'$ref': '#/$defs/hostMessage'}]})
+        for method in ['resource.write.begin', 'resource.write.commit']:
+            fixture = next(f['message'] for f in FIXTURES if f['message'].get('method') == method)
+            for mode in [None, 'best_effort', 'missing']:
+                params = {**fixture['params'], 'mode': mode}
+                if mode == 'missing':
+                    del params['mode']
+                self.assertFalse(validator.is_valid({**fixture, 'params': params}))
 
     def test_task_application_runs_through_public_messages(self):
         host = [f['message'] for f in FIXTURES if f['direction'] == 'host']

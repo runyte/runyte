@@ -921,7 +921,8 @@ impl App {
         description: &str,
         outcome: CommandOutcome,
     ) {
-        if self.fs_confirmation.is_some()
+        if self.plugins.provider_overwrite.is_some()
+            || self.fs_confirmation.is_some()
             || self.directory_reload_confirmation.is_some()
             || self.file_reload_confirmation.is_some()
             || self.buffer_discard_confirmation.is_some()

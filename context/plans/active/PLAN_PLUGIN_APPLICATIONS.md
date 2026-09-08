@@ -75,8 +75,8 @@ Concrete decisions in this slice:
 Milestone 3 now has a local file manager, document lifecycle, native interaction
 and bounded recursive filesystem operations, documented below. Milestone 4's
 provider-backed reads, conditional saves, explicit rebind and conflict inspection
-are implemented; weaker-transport confirmation and transport examples remain
-outstanding. Milestone 5 still needs managed processes, terminal/external handoffs, activity leases,
+are implemented. Native weaker-transport confirmation is implemented; transport
+examples remain outstanding. Milestone 5 still needs managed processes, terminal/external handoffs, activity leases,
 settings/state and the plugin manager. Milestone 6 still needs the broader SDK,
 non-Python example, full conformance matrix and complete application performance
 and supported-platform evidence. Milestones 1–2 also retain their full overload,
@@ -338,6 +338,42 @@ inventory by one. Native macOS remains unmeasured.
 
 Weaker-transport overwrite confirmation, remote reload decisions, binary staging,
 network adapters and the remaining application/platform acceptance work stay active.
+
+## Native weaker-provider overwrite confirmation round
+
+Native saves to providers without conditional writes now hold a bounded immutable
+hook preview behind a host-owned confirmation. Only physical, unmodified Enter
+can authorize its upload. Escape, cancellation, timeout, detach, changed context,
+provider stop or changed binding releases protection without provider calls or
+text/undo mutation. Macro/replay origin remains ineligible after playback ends;
+plugin `buffer.save` still cannot request an unattended weak overwrite.
+
+The host revalidates the captured document revision, binding, baseline and displayed
+capabilities on approval. A busy provider keeps a visible confirmation requiring
+another Enter. Accepted hooks use the captured transaction even if settings change,
+and the resulting live revision becomes the immutable upload snapshot. Save-close
+continuations use the fresh approval context. Wire modes distinguish conditional
+writes from confirmed best-effort comparison; neither preflight checks nor atomic
+replacement are described as compare-and-swap. The memory example's `--weak` mode
+exercises confirmation while retaining its deterministic stronger implementation.
+
+Review added a reserved completion handle, typed/actionable preview limits and
+constant-time waiting-state checks. Trim previews collect at most 4,096 changes;
+512 KiB extra payload reservation accounts for their metadata and construction.
+Unknown outcomes release that preview allowance and retain the existing 16 MiB
+recovery reservation. Tests cover physical approval, replay/recording refusal,
+unchanged cancellation/undo, settings changes, stale contexts/baselines, busy
+reapproval, close continuations, handle saturation and uncertain outcome accounting.
+Formatting, warnings-as-errors Clippy, both schema/example checkers and the full
+suite passed. Ordinary and canonical instrumented suites each passed 3,245 tests
+with 33 ignored; Linux line coverage is 110,250/120,321 (91.63%), above the unchanged
+89% floor. Native PTY checks passed cancellation, confirmed save, save-and-close,
+reopening uploaded text and rebind, with zero output bytes during two settled
+seconds. Native macOS remains unmeasured.
+
+SFTP/FTP adapters, binary staging and remote operations, subscriptions, richer
+models, helpers/leases/settings, manager/media examples and complete native-platform
+and performance evidence remain active.
 
 ## Investigation: existing foundation and missing boundaries
 

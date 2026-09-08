@@ -955,7 +955,8 @@
         "key": "notes",
         "expected_version": "v1",
         "bytes": 5,
-        "encoding": "utf-8"
+        "encoding": "utf-8",
+        "mode": "conditional"
       }
     }
   },
@@ -982,7 +983,8 @@
       "params": {
         "job": "j:g:1",
         "upload": "upload-1",
-        "expected_version": "v1"
+        "expected_version": "v1",
+        "mode": "conditional"
       }
     }
   },
@@ -1050,6 +1052,37 @@
         "buffer": "b:g:2",
         "revision": "r:1",
         "error": null
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "request",
+      "id": "h:11",
+      "method": "resource.write.begin",
+      "params": {
+        "job": "j:g:4",
+        "provider": "memory",
+        "key": "notes",
+        "expected_version": "v1",
+        "bytes": 5,
+        "encoding": "utf-8",
+        "mode": "confirmed_best_effort"
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "request",
+      "id": "h:12",
+      "method": "resource.write.commit",
+      "params": {
+        "job": "j:g:4",
+        "upload": "upload-2",
+        "expected_version": "v1",
+        "mode": "confirmed_best_effort"
       }
     }
   }

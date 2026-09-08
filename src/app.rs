@@ -261,6 +261,7 @@ impl FinderContentSource {
 mod completion_support;
 mod editing;
 mod file_workflows;
+pub(crate) use file_workflows::{ProviderSavePreview, ProviderSavePreviewLimit};
 mod git_workflows;
 mod input;
 mod language_workflows;
@@ -272,6 +273,7 @@ mod picker_workflows;
 mod plugin_documents;
 mod plugin_filesystem;
 pub(crate) mod plugin_interaction;
+pub(crate) mod plugin_provider_overwrite;
 pub(crate) mod plugin_providers;
 mod plugin_views;
 pub(crate) mod plugin_workflows;

@@ -18,6 +18,29 @@ use crate::{
     settings::{SettingId, SettingValue},
 };
 
+/// Bounds retained hook metadata before a native overwrite is approved.
+pub(crate) const PROVIDER_SAVE_HOOK_LIMIT: usize = 4096;
+
+#[derive(Debug)]
+pub(crate) struct ProviderSavePreviewLimit;
+
+impl std::fmt::Display for ProviderSavePreviewLimit {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(
+            "Overwrite preview exceeds 4096 whitespace changes; trim the document before saving",
+        )
+    }
+}
+
+impl std::error::Error for ProviderSavePreviewLimit {}
+
+/// An immutable hook preview; only this module constructs its transaction.
+pub(crate) struct ProviderSavePreview {
+    pub source_revision: u64,
+    pub snapshot: crate::buffer::ProviderSave,
+    hooks: Transaction,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum ReloadDispatch {
     Provider,
@@ -1557,6 +1580,80 @@ impl App {
         self.buffers[buffer_id]
             .prepare_document_save()
             .expect("validated document save")
+    }
+
+    /// Captures save hooks without changing text, selections, or undo history.
+    pub(crate) fn preview_provider_save(&self, buffer_id: usize) -> Result<ProviderSavePreview> {
+        ensure!(
+            buffer_id < self.buffers.len() && !self.host_buffer_is_closed(buffer_id),
+            "unknown or closed buffer"
+        );
+        let buffer = &self.buffers[buffer_id];
+        let mut snapshot = buffer.prepare_provider_save()?;
+        let source_revision = buffer.revision();
+        let hooks = if self.config.editor.trim_trailing_whitespace {
+            let mut changes = Vec::with_capacity(PROVIDER_SAVE_HOOK_LIMIT);
+            for change in
+                super::movement::trailing_whitespace_changes_iter(buffer, 0..buffer.len_lines())
+            {
+                if changes.len() >= PROVIDER_SAVE_HOOK_LIMIT {
+                    return Err(ProviderSavePreviewLimit.into());
+                }
+                changes.push(change);
+            }
+            Transaction::new(changes)
+        } else {
+            Transaction::default()
+        };
+        if !hooks.is_empty() {
+            snapshot.text.apply(&hooks);
+        }
+        Ok(ProviderSavePreview {
+            source_revision,
+            snapshot,
+            hooks,
+        })
+    }
+
+    /// Applies exactly the approved hooks after validating the captured input.
+    /// The caller owns foreground approval and resource admission.
+    pub(crate) fn apply_provider_save_preview(
+        &mut self,
+        buffer_id: usize,
+        mut preview: ProviderSavePreview,
+    ) -> Result<crate::buffer::ProviderSave> {
+        ensure!(
+            buffer_id < self.buffers.len() && !self.host_buffer_is_closed(buffer_id),
+            "unknown or closed buffer"
+        );
+        let current = self.buffers[buffer_id].prepare_provider_save()?;
+        ensure!(
+            self.buffers[buffer_id].revision() == preview.source_revision,
+            "Document changed after overwrite review"
+        );
+        ensure!(
+            current.identity == preview.snapshot.identity
+                && current.generation == preview.snapshot.generation
+                && current.epoch == preview.snapshot.epoch
+                && current.version == preview.snapshot.version,
+            "Resource save baseline changed after overwrite review"
+        );
+        self.buffers[buffer_id].commit_undo_group();
+        if !preview.hooks.is_empty() {
+            let applied = self.apply_to_buffer(buffer_id, &preview.hooks);
+            debug_assert!(applied, "validated provider save hooks must apply");
+        }
+        self.buffers[buffer_id].commit_undo_group();
+        debug_assert!(
+            self.buffers[buffer_id]
+                .text()
+                .same_content(&preview.snapshot.text),
+            "captured save hooks must reproduce the approved bytes"
+        );
+        // Text revisions are allocated globally. Applying the same hooks to the
+        // preview and live text produces identical bytes at different revisions.
+        preview.snapshot.text = self.buffers[buffer_id].text().clone();
+        Ok(preview.snapshot)
     }
 
     pub(crate) fn prepare_provider_save_text(

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Transport-neutral, version-bound UTF-8 resource reads.
+//! Transport-neutral, version-bound UTF-8 resource reads and writes.
 use super::application::{Error, ErrorCode};
 use serde::{Deserialize, Serialize};
 
@@ -8,6 +8,13 @@ pub const MAX_DOCUMENT_BYTES: usize = 8 * 1024 * 1024;
 // Worst-case JSON escaping still fits the independent 1 MiB encoded frame.
 pub const CHUNK_BYTES: usize = 128 * 1024;
 pub(crate) const READ_CHARGE: usize = MAX_DOCUMENT_BYTES * 2;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WriteMode {
+    Conditional,
+    ConfirmedBestEffort,
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -82,6 +89,7 @@ pub enum Request {
         provider: String,
         key: String,
         expected_version: String,
+        mode: WriteMode,
         bytes: usize,
         encoding: &'static str,
     },
@@ -97,6 +105,7 @@ pub enum Request {
         job: String,
         upload: String,
         expected_version: String,
+        mode: WriteMode,
     },
     #[serde(rename = "resource.write.abort")]
     WriteAbort { job: String, upload: Option<String> },

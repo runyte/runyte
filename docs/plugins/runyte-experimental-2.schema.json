@@ -3661,6 +3661,12 @@
             },
             "encoding": {
               "const": "utf-8"
+            },
+            "mode": {
+              "enum": [
+                "conditional",
+                "confirmed_best_effort"
+              ]
             }
           },
           "required": [
@@ -3669,7 +3675,8 @@
             "key",
             "expected_version",
             "bytes",
-            "encoding"
+            "encoding",
+            "mode"
           ],
           "additionalProperties": false
         }
@@ -3760,12 +3767,19 @@
             "expected_version": {
               "type": "string",
               "maxLength": 256
+            },
+            "mode": {
+              "enum": [
+                "conditional",
+                "confirmed_best_effort"
+              ]
             }
           },
           "required": [
             "job",
             "upload",
-            "expected_version"
+            "expected_version",
+            "mode"
           ],
           "additionalProperties": false
         }

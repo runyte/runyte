@@ -496,6 +496,8 @@ impl App {
     /// Literal text stays one event and one edit transaction. Macro recording
     /// stores the same raw event ordering that arrived at this boundary.
     pub fn handle_input(&mut self, input: InputEvent) -> Result<()> {
+        let overwrite_owned_input = self.plugins.provider_overwrite.is_some();
+        self.sync_provider_overwrite();
         self.sync_plugin_input();
         if !matches!(input, InputEvent::Pointer(_)) {
             self.plugins.foreground_generation += 1;
@@ -509,6 +511,11 @@ impl App {
             }
             return Ok(());
         }
+        if overwrite_owned_input {
+            self.last_interaction = Instant::now();
+            self.handle_provider_overwrite_input(input);
+            return Ok(());
+        }
         if self.plugins.input.is_some() {
             self.last_interaction = Instant::now();
             self.handle_plugin_input(input);
@@ -518,6 +525,9 @@ impl App {
     }
 
     pub(super) fn handle_replayed_input(&mut self, input: InputEvent) -> Result<()> {
+        if self.plugins.provider_overwrite.is_some() {
+            return Ok(());
+        }
         self.handle_input_inner(input, true)
     }
 
@@ -602,6 +612,11 @@ impl App {
         view: &PreparedView,
         repetitions: u16,
     ) -> Result<PointerOutcome> {
+        let overwrite_owned_input = self.plugins.provider_overwrite.is_some();
+        self.sync_provider_overwrite();
+        if overwrite_owned_input {
+            return Ok(PointerOutcome::Unchanged);
+        }
         if self.macro_replay.is_some() {
             return Ok(PointerOutcome::Unchanged);
         }
@@ -1304,6 +1319,9 @@ impl App {
     }
 
     fn handle_key_stroke(&mut self, mut key: KeyStroke) -> Result<()> {
+        if self.plugins.provider_overwrite.is_some() {
+            return Ok(());
+        }
         if self.session_inventory_open() {
             return self.handle_session_inventory_key(key);
         }
@@ -1488,6 +1506,9 @@ impl App {
     }
 
     fn handle_text(&mut self, text: &str) -> Result<()> {
+        if self.plugins.provider_overwrite.is_some() {
+            return Ok(());
+        }
         if text.is_empty() {
             return Ok(());
         }
@@ -4706,6 +4727,7 @@ impl App {
     /// the application boundary.
     pub fn execute(&mut self, invocation: CommandInvocation) -> Result<CommandOutcome> {
         self.plugins.foreground_generation += 1;
+        self.sync_provider_overwrite();
         self.cancel_pointer_drag();
         // Protocol and headless semantic commands bypass `handle_input`, but
         // they can move the originating selection just as surely as a key.

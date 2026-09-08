@@ -8,8 +8,12 @@ use crate::{
 };
 use api::{Error, ErrorCode as Code};
 
+// Bounded trim transactions and their construction headroom for native previews.
+const OVERWRITE_CHARGE: usize = wire::READ_CHARGE + 512 * 1024;
+
 #[derive(Clone, Debug)]
 enum Phase {
+    AwaitApproval,
     Begin,
     Chunk { next: usize },
     Commit,
@@ -24,7 +28,11 @@ pub(super) struct PendingWrite {
     pub buffer: usize,
     pub orphaned: bool,
     charge_owner: String,
+    charge: usize,
     snapshot: ProviderSave,
+    preview: Option<crate::app::ProviderSavePreview>,
+    mode: wire::WriteMode,
+    atomic_replace: bool,
     request: String,
     phase: Phase,
     upload: Option<String>,
@@ -39,6 +47,16 @@ impl WorkspaceHost {
         requester: usize,
         buffer: usize,
         continuation: Option<ProviderSaveContinuation>,
+    ) -> Result<api::Job, Error> {
+        self.start_provider_write_with_context(requester, buffer, continuation, None)
+    }
+
+    pub(super) fn start_provider_write_with_context(
+        &mut self,
+        requester: usize,
+        buffer: usize,
+        continuation: Option<ProviderSaveContinuation>,
+        context: Option<api::CapturedContext>,
     ) -> Result<api::Job, Error> {
         if self.app.host_buffer_is_closed(buffer) {
             return Err(Error::new(Code::Closed, "Document closed"));
@@ -97,12 +115,23 @@ impl WorkspaceHost {
                 )
             })?;
         let owner = *owner;
-        if !instance.application.providers[&document.identity.provider].conditional_write {
-            return Err(Error::new(
-                Code::Unsupported,
-                "Provider cannot conditionally overwrite; foreground overwrite confirmation is required",
-            ));
-        }
+        let registration = &instance.application.providers[&document.identity.provider];
+        let mode = if registration.conditional_write {
+            wire::WriteMode::Conditional
+        } else {
+            let context = context.as_ref().ok_or_else(|| Error::new(Code::Unsupported,
+                "Provider cannot conditionally overwrite; native foreground confirmation is required"))?;
+            self.app.plugin_foreground(context)?;
+            if context.buffer != buffer || context.terminal.is_some() {
+                return Err(Error::new(
+                    Code::ContextChanged,
+                    "Overwrite requires the visible provider document",
+                ));
+            }
+            wire::WriteMode::ConfirmedBestEffort
+        };
+        let atomic_replace = registration.atomic_replace;
+        let label = document.label.clone();
         if instance.application.requests.len() + instance.application.provider_requests
             >= api::MAX_REQUESTS
             || self
@@ -115,7 +144,12 @@ impl WorkspaceHost {
             return Err(Error::new(Code::Busy, "Resource provider is busy"));
         }
         let generation = instance.application.generation.clone();
-        self.reserve_application_payload(requester, wire::READ_CHARGE)?;
+        let charge = if mode == wire::WriteMode::ConfirmedBestEffort {
+            OVERWRITE_CHARGE
+        } else {
+            wire::READ_CHARGE
+        };
+        self.reserve_application_payload(requester, charge)?;
         let state = &self.app.plugins.instances[&requester].application;
         if state.buffers.len() >= 1024 && !state.buffers.values().any(|index| *index == buffer) {
             return Err(Error::new(
@@ -126,9 +160,18 @@ impl WorkspaceHost {
         // A host-owned job does not require the provider to grant itself the
         // plugin-facing job.create capability; API callers are checked separately.
         let job = self.create_provider_job(requester, "Save resource")?;
-        let snapshot = match self.app.prepare_provider_save_text(buffer) {
-            Ok(snapshot) => snapshot,
-            Err(_) => {
+        let prepared = if mode == wire::WriteMode::ConfirmedBestEffort {
+            self.app
+                .preview_provider_save(buffer)
+                .map(|preview| (preview.snapshot.clone(), Some(preview)))
+        } else {
+            self.app
+                .prepare_provider_save_text(buffer)
+                .map(|snapshot| (snapshot, None))
+        };
+        let (snapshot, preview) = match prepared {
+            Ok(value) => value,
+            Err(error) => {
                 self.app
                     .plugins
                     .instances
@@ -144,9 +187,41 @@ impl WorkspaceHost {
                         after_ms: None,
                     },
                 );
-                return Err(Error::new(Code::Conflict, "Resource save baseline changed"));
+                let code = if error.is::<crate::app::ProviderSavePreviewLimit>() {
+                    Code::LimitExceeded
+                } else {
+                    Code::Conflict
+                };
+                return Err(Error::new(code, &error.to_string()));
             }
         };
+        if let Some(preview) = &preview
+            && let Err(error) = self.app.show_provider_overwrite(
+                job.job.clone(),
+                buffer,
+                preview.source_revision,
+                context.unwrap(),
+                label,
+                atomic_replace,
+            )
+        {
+            self.app
+                .plugins
+                .instances
+                .get_mut(&requester)
+                .unwrap()
+                .application
+                .jobs
+                .remove(&job.job);
+            let _ = self.plugin_send(
+                requester,
+                plugin::HostMessage::Deadline {
+                    token: job.job,
+                    after_ms: None,
+                },
+            );
+            return Err(Error::new(Code::ContextChanged, &error.to_string()));
+        }
         let state = &mut self
             .app
             .plugins
@@ -154,7 +229,13 @@ impl WorkspaceHost {
             .get_mut(&requester)
             .unwrap()
             .application;
-        state.retained_payload += wire::READ_CHARGE;
+        // Admission and handle publication share this host turn. Keep the target
+        // issued throughout confirmation/upload so completion cannot lose it to
+        // unrelated handle allocation while the operation is pending.
+        state
+            .buffer_handle(buffer)
+            .expect("buffer capacity checked during admission");
+        state.retained_payload += charge;
         let requester_generation = state.generation.clone();
         let charge_owner = self.app.plugins.instances[&requester].config.id.clone();
         self.app.plugins.document_saves.insert(buffer);
@@ -168,15 +249,26 @@ impl WorkspaceHost {
                 buffer,
                 orphaned: false,
                 charge_owner,
+                charge,
                 snapshot,
+                preview,
+                mode,
+                atomic_replace,
                 request: String::new(),
-                phase: Phase::Begin,
+                phase: if mode == wire::WriteMode::ConfirmedBestEffort {
+                    Phase::AwaitApproval
+                } else {
+                    Phase::Begin
+                },
                 upload: None,
                 offset: 0,
                 commit_sent: false,
                 continuation,
             },
         );
+        if mode == wire::WriteMode::ConfirmedBestEffort {
+            return Ok(job);
+        }
         if self.send_provider_write(&job.job).is_err() {
             let pending = self.provider_writes.remove(&job.job).unwrap();
             self.release_write_call(&pending);
@@ -188,7 +280,7 @@ impl WorkspaceHost {
                 .get_mut(&requester)
                 .unwrap()
                 .application;
-            state.retained_payload -= wire::READ_CHARGE;
+            state.retained_payload -= pending.charge;
             state.jobs.remove(&job.job);
             let _ = self.plugin_send(
                 requester,
@@ -254,6 +346,10 @@ impl WorkspaceHost {
     }
 
     fn send_provider_write(&mut self, token: &str) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            !matches!(self.provider_writes[token].phase, Phase::AwaitApproval),
+            "Overwrite awaits native confirmation"
+        );
         let owner = self.provider_writes[token].owner;
         let state = &mut self
             .app
@@ -273,11 +369,13 @@ impl WorkspaceHost {
         pending.request = id.clone();
         let job = token.to_owned();
         let request = match &pending.phase {
+            Phase::AwaitApproval => unreachable!("checked before reserving a call"),
             Phase::Begin => wire::Request::WriteBegin {
                 job,
                 provider: pending.snapshot.identity.provider.clone(),
                 key: pending.snapshot.identity.key.clone(),
                 expected_version: pending.snapshot.version.clone(),
+                mode: pending.mode,
                 bytes: pending.snapshot.text.len_bytes(),
                 encoding: "utf-8",
             },
@@ -297,6 +395,7 @@ impl WorkspaceHost {
                 job,
                 upload: pending.upload.clone().unwrap(),
                 expected_version: pending.snapshot.version.clone(),
+                mode: pending.mode,
             },
             Phase::Abort(_) => wire::Request::WriteAbort {
                 job,
@@ -349,7 +448,12 @@ impl WorkspaceHost {
         let Some(token) = self
             .provider_writes
             .iter()
-            .find(|(_, p)| p.owner == owner && &p.generation == generation && p.request == id)
+            .find(|(_, p)| {
+                p.owner == owner
+                    && &p.generation == generation
+                    && !p.request.is_empty()
+                    && p.request == id
+            })
             .map(|(token, _)| token.clone())
         else {
             return Ok(false);
@@ -482,6 +586,10 @@ impl WorkspaceHost {
     }
 
     fn cancel_provider_write(&mut self, token: &str, reason: Error) -> anyhow::Result<()> {
+        if matches!(self.provider_writes[token].phase, Phase::AwaitApproval) {
+            self.finish_provider_write(token, Err(reason), false);
+            return Ok(());
+        }
         if self.provider_writes[token].commit_sent {
             self.finish_provider_write(token, Err(reason), true);
             return Ok(());
@@ -513,6 +621,7 @@ impl WorkspaceHost {
         let Some(pending) = self.provider_writes.remove(token) else {
             return;
         };
+        self.app.clear_provider_overwrite(token);
         self.release_write_call(&pending);
         self.app.plugins.document_saves.remove(&pending.buffer);
         let live = self
@@ -522,7 +631,7 @@ impl WorkspaceHost {
             .get(&pending.requester)
             .is_some_and(|i| i.application.generation == pending.requester_generation);
         if pending.orphaned {
-            self.app.plugins.orphaned_payload -= wire::READ_CHARGE;
+            self.app.plugins.orphaned_payload -= pending.charge;
         } else if live {
             self.app
                 .plugins
@@ -530,7 +639,7 @@ impl WorkspaceHost {
                 .get_mut(&pending.requester)
                 .unwrap()
                 .application
-                .retained_payload -= wire::READ_CHARGE;
+                .retained_payload -= pending.charge;
         }
         let accepted = if let Ok(version) = &result {
             let accepted = !self.app.host_buffer_is_closed(pending.buffer)
@@ -732,7 +841,7 @@ impl WorkspaceHost {
             let Some(pending) = self.provider_writes.get(&job) else {
                 continue;
             };
-            if pending.owner == owner {
+            if pending.owner == owner || matches!(pending.phase, Phase::AwaitApproval) {
                 let unknown = pending.commit_sent;
                 self.finish_provider_write(
                     &job,
@@ -744,7 +853,7 @@ impl WorkspaceHost {
                 let pending = self.provider_writes.get_mut(&job).unwrap();
                 if !pending.orphaned {
                     pending.orphaned = true;
-                    self.app.plugins.orphaned_payload += wire::READ_CHARGE;
+                    self.app.plugins.orphaned_payload += pending.charge;
                 }
                 pending.continuation = None;
                 if self
@@ -760,7 +869,164 @@ impl WorkspaceHost {
         }
     }
 
+    fn provider_overwrite_valid(&self, token: &str) -> bool {
+        let pending = &self.provider_writes[token];
+        let Some(preview) = &pending.preview else {
+            return false;
+        };
+        if self.app.host_buffer_is_closed(pending.buffer)
+            || self.app.buffers[pending.buffer].revision() != preview.source_revision
+        {
+            return false;
+        }
+        // Unchanged text was validated at admission. Pending-overlay checks must
+        // stay constant-time rather than rescan an 8 MiB document on each input.
+        let Some(current) = self.app.buffers[pending.buffer].provider() else {
+            return false;
+        };
+        let snapshot = &pending.snapshot;
+        if !current.available
+            || current.uncertain.is_some()
+            || current.identity != snapshot.identity
+            || current.generation != snapshot.generation
+            || current.baseline_epoch != snapshot.epoch
+            || current.version != snapshot.version
+        {
+            return false;
+        }
+        self.app
+            .plugins
+            .instances
+            .get(&pending.owner)
+            .is_some_and(|instance| {
+                instance.registered
+                    && instance.application.generation == pending.generation
+                    && instance
+                        .application
+                        .providers
+                        .get(&snapshot.identity.provider)
+                        .is_some_and(|registration| {
+                            !registration.conditional_write
+                                && registration.atomic_replace == pending.atomic_replace
+                        })
+            })
+    }
+
+    fn sync_provider_overwrite_approvals(&mut self) {
+        self.app.sync_provider_overwrite();
+        for decision in self.app.take_provider_overwrite_decisions() {
+            let token = decision.job;
+            if !self
+                .provider_writes
+                .get(&token)
+                .is_some_and(|p| matches!(p.phase, Phase::AwaitApproval))
+            {
+                continue;
+            }
+            let Some(context) = decision.context else {
+                self.finish_provider_write(
+                    &token,
+                    Err(Error::new(Code::Cancelled, "Remote overwrite cancelled")),
+                    false,
+                );
+                continue;
+            };
+            if self.app.plugin_foreground(&context).is_err()
+                || !self.provider_overwrite_valid(&token)
+            {
+                self.finish_provider_write(
+                    &token,
+                    Err(Error::new(
+                        Code::ContextChanged,
+                        "Overwrite context or resource changed; review the save again",
+                    )),
+                    false,
+                );
+                continue;
+            }
+            let pending = &self.provider_writes[&token];
+            if context.buffer != pending.buffer || context.terminal.is_some() {
+                self.finish_provider_write(
+                    &token,
+                    Err(Error::new(Code::ContextChanged, "Overwrite target changed")),
+                    false,
+                );
+                continue;
+            }
+            let state = &self.app.plugins.instances[&pending.owner].application;
+            if state.requests.len() + state.provider_requests >= api::MAX_REQUESTS {
+                // A busy retry remains a visible decision requiring another Enter.
+                let result = self.app.show_provider_overwrite(
+                    token.clone(),
+                    pending.buffer,
+                    pending.preview.as_ref().unwrap().source_revision,
+                    context,
+                    self.app.buffers[pending.buffer]
+                        .provider()
+                        .unwrap()
+                        .label
+                        .clone(),
+                    pending.atomic_replace,
+                );
+                if result.is_err() {
+                    self.finish_provider_write(
+                        &token,
+                        Err(Error::new(Code::Busy, "Provider is busy; retry the save")),
+                        false,
+                    );
+                }
+                continue;
+            }
+            let pending = self.provider_writes.get_mut(&token).unwrap();
+            let preview = pending.preview.take().unwrap();
+            let prepared = self
+                .app
+                .apply_provider_save_preview(pending.buffer, preview);
+            match prepared {
+                Ok(snapshot) => {
+                    pending.snapshot = snapshot;
+                    pending.continuation = self
+                        .app
+                        .refresh_provider_save_continuation(pending.continuation, &context);
+                    pending.phase = Phase::Begin;
+                    let owner = pending.owner;
+                    if self.send_provider_write(&token).is_err() {
+                        self.stop_plugin(owner, "Provider overwrite queue unavailable");
+                    }
+                }
+                Err(_) => self.finish_provider_write(
+                    &token,
+                    Err(Error::new(
+                        Code::Conflict,
+                        "Resource changed before overwrite acceptance",
+                    )),
+                    false,
+                ),
+            }
+        }
+        let stale: Vec<_> = self
+            .provider_writes
+            .iter()
+            .filter(|(token, pending)| {
+                matches!(pending.phase, Phase::AwaitApproval)
+                    && !self.provider_overwrite_valid(token)
+            })
+            .map(|(token, _)| token.clone())
+            .collect();
+        for token in stale {
+            self.finish_provider_write(
+                &token,
+                Err(Error::new(
+                    Code::ContextChanged,
+                    "Resource changed while awaiting overwrite confirmation",
+                )),
+                false,
+            );
+        }
+    }
+
     pub(super) fn sync_provider_writes(&mut self) {
+        self.sync_provider_overwrite_approvals();
         for intent in self.app.take_provider_save_intents() {
             if self.app.buffers[intent.buffer].revision() != intent.expected_revision {
                 self.app.plugins.document_saves.remove(&intent.buffer);
@@ -786,8 +1052,13 @@ impl WorkspaceHost {
             let result = provider
                 .ok_or_else(|| Error::new(Code::Unavailable, "Resource provider is unavailable"))
                 .and_then(|owner| {
-                    self.start_provider_write(owner, intent.buffer, intent.continuation)
-                        .map(|job| (owner, job))
+                    self.start_provider_write_with_context(
+                        owner,
+                        intent.buffer,
+                        intent.continuation,
+                        Some(intent.context),
+                    )
+                    .map(|job| (owner, job))
                 });
             match result {
                 Ok((owner, job)) => {
