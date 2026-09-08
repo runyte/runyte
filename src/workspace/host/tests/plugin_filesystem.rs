@@ -4,13 +4,13 @@ use super::*;
 use crate::input::KeyStroke;
 use crate::plugin::filesystem::Intent;
 
-fn local_service(host: &mut WorkspaceHost) -> mpsc::Receiver<Event> {
+pub(super) fn local_service(host: &mut WorkspaceHost) -> mpsc::Receiver<Event> {
     let (sender, receiver) = mpsc::channel(16);
     host.plugin_events_sender = Some(sender);
     receiver
 }
 
-async fn complete(
+pub(super) async fn complete(
     host: &mut WorkspaceHost,
     events: &mut mpsc::Receiver<Event>,
     output: &mut mpsc::Receiver<HostMessage>,
@@ -22,7 +22,9 @@ async fn complete(
     host.handle_plugin_event(event);
     response(output)
 }
-fn response(output: &mut mpsc::Receiver<HostMessage>) -> Result<api::ResultValue, api::Error> {
+pub(super) fn response(
+    output: &mut mpsc::Receiver<HostMessage>,
+) -> Result<api::ResultValue, api::Error> {
     match next(output) {
         api::HostMessage::Response {
             outcome: api::Response::Success { result },

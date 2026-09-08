@@ -822,6 +822,13 @@ impl App {
     }
 
     fn quit_allowed(&mut self, force: bool, force_command: &str) -> bool {
+        if !self.plugins.document_saves.is_empty() {
+            self.action_warning(
+                "Quit refused",
+                "Document writes are still pending; wait for completion or detach",
+            );
+            return false;
+        }
         if !force && self.buffers.iter().any(|buffer| buffer.dirty) {
             self.action_warning(
                 "Quit refused",

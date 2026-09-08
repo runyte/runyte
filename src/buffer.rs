@@ -263,6 +263,7 @@ pub struct Buffer {
     disk_state: Option<DiskState>,
     /// Monotonic identity of the accepted disk baseline and path ownership.
     disk_generation: u64,
+    write_uncertain: bool,
     external_status: ExternalFileStatus,
     external_observation: Option<FileObservation>,
     last_reported_observation: Option<FileObservation>,
@@ -1707,6 +1708,57 @@ fn sync_parent(_parent: &Path) -> io::Result<()> {
     Ok(())
 }
 
+/// Immutable local save input; constructing it does not clone undo or layout state.
+#[derive(Debug)]
+pub(crate) struct DocumentSave {
+    pub path: PathBuf,
+    text: Text,
+    expected: Option<DiskState>,
+    generation: u64,
+}
+#[derive(Debug)]
+pub struct SavedDocument {
+    path: PathBuf,
+    text: Text,
+    state: Option<DiskState>,
+    generation: u64,
+    pub warning: Option<String>,
+}
+impl DocumentSave {
+    pub fn run(self, root: &Path) -> Result<SavedDocument> {
+        crate::path_safety::ensure_within_root(root, &self.path)?;
+        let identity = crate::path_safety::path_identity(&self.path)?;
+        ensure_disk_unchanged(&self.path, self.expected.as_ref())?;
+        let policy = self
+            .expected
+            .as_ref()
+            .map_or(ReplacePolicy::NoReplace, ReplacePolicy::Expected);
+        let status = atomic_write_checked(
+            &self.path,
+            self.text.to_string().as_bytes(),
+            policy,
+            &identity,
+        )?;
+        let verified = DiskState::inspect(&self.path)
+            .ok()
+            .flatten()
+            .filter(|current| current.same_contents(&status.installed_state));
+        let mut warning = status.durability_warning;
+        if verified.is_none() {
+            warning
+                .get_or_insert_with(String::new)
+                .push_str("; saved file could not be verified; inspect disk before closing");
+        }
+        Ok(SavedDocument {
+            path: self.path,
+            text: self.text,
+            state: verified,
+            generation: self.generation,
+            warning,
+        })
+    }
+}
+
 impl Buffer {
     pub fn scratch() -> Self {
         Self {
@@ -1724,6 +1776,7 @@ impl Buffer {
             undo_group: None,
             disk_state: None,
             disk_generation: 0,
+            write_uncertain: false,
             external_status: ExternalFileStatus::Synchronized,
             external_observation: None,
             last_reported_observation: None,
@@ -1758,6 +1811,7 @@ impl Buffer {
             undo_group: None,
             disk_state: Some(disk_state),
             disk_generation: 1,
+            write_uncertain: false,
             external_status: ExternalFileStatus::Synchronized,
             external_observation: None,
             last_reported_observation: None,
@@ -1869,7 +1923,9 @@ impl Buffer {
     }
 
     fn apply_observed_file(&mut self, event: &FileObservationEvent) -> ObservationApply {
-        if let FileObservation::Text { text, state } = &event.observation {
+        if let FileObservation::Text { text, state } = &event.observation
+            && !self.write_uncertain
+        {
             if self.disk_state.as_ref() == Some(state) {
                 self.clear_external_file_state();
                 return ObservationApply::Synchronized;
@@ -1967,6 +2023,7 @@ impl Buffer {
             undo_group: None,
             disk_state: None,
             disk_generation: 0,
+            write_uncertain: false,
             external_status: ExternalFileStatus::Synchronized,
             external_observation: None,
             last_reported_observation: None,
@@ -2016,6 +2073,7 @@ impl Buffer {
             undo_group: None,
             disk_state: None,
             disk_generation: 0,
+            write_uncertain: false,
             external_status: ExternalFileStatus::Synchronized,
             external_observation: None,
             last_reported_observation: None,
@@ -2050,6 +2108,7 @@ impl Buffer {
             undo_group: None,
             disk_state: None,
             disk_generation: 0,
+            write_uncertain: false,
             external_status: ExternalFileStatus::Synchronized,
             external_observation: None,
             last_reported_observation: None,
@@ -2131,6 +2190,7 @@ impl Buffer {
             undo_group: None,
             disk_state: None,
             disk_generation: 0,
+            write_uncertain: false,
             external_status: ExternalFileStatus::Synchronized,
             external_observation: None,
             last_reported_observation: None,
@@ -2156,6 +2216,7 @@ impl Buffer {
             undo_group: None,
             disk_state: None,
             disk_generation: 0,
+            write_uncertain: false,
             external_status: ExternalFileStatus::Synchronized,
             external_observation: None,
             last_reported_observation: None,
@@ -2181,6 +2242,7 @@ impl Buffer {
             undo_group: None,
             disk_state: None,
             disk_generation: 0,
+            write_uncertain: false,
             external_status: ExternalFileStatus::Synchronized,
             external_observation: None,
             last_reported_observation: None,
@@ -2206,6 +2268,7 @@ impl Buffer {
             undo_group: None,
             disk_state: None,
             disk_generation: 0,
+            write_uncertain: false,
             external_status: ExternalFileStatus::Synchronized,
             external_observation: None,
             last_reported_observation: None,
@@ -2230,6 +2293,7 @@ impl Buffer {
             undo_group: None,
             disk_state: None,
             disk_generation: 0,
+            write_uncertain: false,
             external_status: ExternalFileStatus::Synchronized,
             external_observation: None,
             last_reported_observation: None,
@@ -2254,6 +2318,7 @@ impl Buffer {
             undo_group: None,
             disk_state: None,
             disk_generation: 0,
+            write_uncertain: false,
             external_status: ExternalFileStatus::Synchronized,
             external_observation: None,
             last_reported_observation: None,
@@ -2278,6 +2343,7 @@ impl Buffer {
             undo_group: None,
             disk_state: None,
             disk_generation: 0,
+            write_uncertain: false,
             external_status: ExternalFileStatus::Synchronized,
             external_observation: None,
             last_reported_observation: None,
@@ -2311,6 +2377,7 @@ impl Buffer {
             undo_group: None,
             disk_state: None,
             disk_generation: 0,
+            write_uncertain: false,
             external_status: ExternalFileStatus::Synchronized,
             external_observation: None,
             last_reported_observation: None,
@@ -2336,6 +2403,7 @@ impl Buffer {
             undo_group: None,
             disk_state: None,
             disk_generation: 0,
+            write_uncertain: false,
             external_status: ExternalFileStatus::Synchronized,
             external_observation: None,
             last_reported_observation: None,
@@ -2360,6 +2428,7 @@ impl Buffer {
             undo_group: None,
             disk_state: None,
             disk_generation: 0,
+            write_uncertain: false,
             external_status: ExternalFileStatus::Synchronized,
             external_observation: None,
             last_reported_observation: None,
@@ -2386,6 +2455,7 @@ impl Buffer {
             undo_group: None,
             disk_state: None,
             disk_generation: 0,
+            write_uncertain: false,
             external_status: ExternalFileStatus::Synchronized,
             external_observation: None,
             last_reported_observation: None,
@@ -2946,6 +3016,49 @@ impl Buffer {
         true
     }
 
+    pub(crate) fn unsaved_document(path: PathBuf, text: String) -> Self {
+        let mut buffer = Self::scratch();
+        buffer.path = Some(path);
+        buffer.kind = BufferKind::File;
+        buffer.saved_text = None;
+        buffer.apply(&Transaction::insert(0, text));
+        buffer.update_dirty();
+        buffer
+    }
+
+    pub(crate) fn prepare_document_save(&self) -> Result<DocumentSave> {
+        ensure!(
+            self.kind == BufferKind::File,
+            "Only ordinary file documents can be saved by this adapter"
+        );
+        ensure!(
+            self.text.len_bytes() <= 8 * 1024 * 1024,
+            "Document exceeds the local save limit"
+        );
+        Ok(DocumentSave {
+            path: self.path.clone().context("Document has no path")?,
+            text: self.text.clone(),
+            expected: self.disk_state.clone(),
+            generation: self.disk_generation,
+        })
+    }
+
+    pub(crate) fn accept_document_save(&mut self, saved: SavedDocument) -> bool {
+        if self.path.as_ref() != Some(&saved.path) || self.disk_generation != saved.generation {
+            return false;
+        }
+        let Some(state) = saved.state else {
+            return false;
+        };
+        self.disk_state = Some(state);
+        self.saved_text = Some(saved.text);
+        self.write_uncertain = false;
+        self.disk_generation = self.disk_generation.wrapping_add(1);
+        self.clear_external_file_state();
+        self.update_dirty();
+        true
+    }
+
     /// Writes the buffer back to its own path.
     ///
     /// Refuses when the file changed underneath the buffer unless `replace` is
@@ -3342,16 +3455,23 @@ impl Buffer {
         Ok(())
     }
 
+    pub(crate) fn mark_write_uncertain(&mut self) {
+        self.write_uncertain = true;
+        self.dirty = true;
+    }
+
     pub fn mark_saved(&mut self) {
+        self.write_uncertain = false;
         self.saved_text = Some(self.text.clone());
         self.dirty = false;
     }
 
     fn update_dirty(&mut self) {
-        self.dirty = self
-            .saved_text
-            .as_ref()
-            .is_none_or(|saved| !self.text.same_content(saved));
+        self.dirty = self.write_uncertain
+            || self
+                .saved_text
+                .as_ref()
+                .is_none_or(|saved| !self.text.same_content(saved));
     }
 
     #[cfg(test)]

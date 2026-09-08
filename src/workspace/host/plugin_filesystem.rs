@@ -31,7 +31,10 @@ impl WorkspaceHost {
     ) -> Result<Option<ResultValue>, Error> {
         let fail = Error::new;
         let state = &self.app.plugins.instances[&owner].application;
-        let capability = if matches!(operation, Request::BufferOpen { .. }) {
+        let capability = if matches!(
+            operation,
+            Request::BufferOpen { .. } | Request::BufferCreate { .. }
+        ) {
             "documents"
         } else {
             "filesystem"
@@ -40,6 +43,7 @@ impl WorkspaceHost {
             return Err(fail(Code::CapabilityDenied, "Capability was not granted"));
         }
         let mut pending = local::Pending {
+            creating: false,
             invocation: None,
             offset: 0,
             limit: 128,
@@ -47,113 +51,135 @@ impl WorkspaceHost {
             expected_revision: None,
         };
         let root = self.app.project_root.clone();
-        let task = match operation {
-            Request::FilesystemList {
-                path,
-                offset,
-                limit,
-                expected_revision,
-            } => {
-                if !(1..=128).contains(&limit) {
-                    return Err(fail(Code::InvalidArgument, "Page limit must be 1–128"));
+        let task =
+            match operation {
+                Request::FilesystemList {
+                    path,
+                    offset,
+                    limit,
+                    expected_revision,
+                } => {
+                    if !(1..=128).contains(&limit) {
+                        return Err(fail(Code::InvalidArgument, "Page limit must be 1–128"));
+                    }
+                    pending.offset = offset;
+                    pending.limit = limit;
+                    pending.expected_revision = expected_revision;
+                    local::Task::List { root, path }
                 }
-                pending.offset = offset;
-                pending.limit = limit;
-                pending.expected_revision = expected_revision;
-                local::Task::List { root, path }
-            }
-            Request::FilesystemPrepare {
-                directory,
-                expected_revision,
-                intent,
-            } => {
-                let directory = state
-                    .directories
-                    .get(&directory)
-                    .ok_or_else(|| fail(Code::NotFound, "Unknown directory"))?;
-                if directory.revision != expected_revision {
-                    return Err(fail(Code::Stale, "Directory listing changed"));
-                }
-                if state.plans.len() >= local::MAX_PLANS {
-                    return Err(fail(Code::LimitExceeded, "Prepared plan limit reached"));
-                }
-                local::Task::Prepare {
-                    root,
-                    directory: directory.clone(),
+                Request::FilesystemPrepare {
+                    directory,
+                    expected_revision,
                     intent,
+                } => {
+                    let directory = state
+                        .directories
+                        .get(&directory)
+                        .ok_or_else(|| fail(Code::NotFound, "Unknown directory"))?;
+                    if directory.revision != expected_revision {
+                        return Err(fail(Code::Stale, "Directory listing changed"));
+                    }
+                    if state.plans.len() >= local::MAX_PLANS {
+                        return Err(fail(Code::LimitExceeded, "Prepared plan limit reached"));
+                    }
+                    local::Task::Prepare {
+                        root,
+                        directory: directory.clone(),
+                        intent,
+                    }
                 }
-            }
-            Request::BufferOpen { path, invocation } => {
-                if let Some(invocation) = &invocation {
+                Request::BufferCreate {
+                    path,
+                    text,
+                    invocation,
+                } => {
+                    if let Some(invocation) = &invocation {
+                        let context = state.requests.get(invocation).ok_or_else(|| {
+                            fail(Code::ContextChanged, "Invoking command finished")
+                        })?;
+                        self.app.plugin_foreground(context)?;
+                    }
+                    if text.len() > 512 * 1024 {
+                        return Err(fail(
+                            Code::LimitExceeded,
+                            "Initial text exceeds document limit",
+                        ));
+                    }
+                    pending.creating = true;
+                    pending.invocation = invocation;
+                    pending.charge = local::MAX_DOCUMENT_BYTES * 2;
+                    local::Task::Create { root, path, text }
+                }
+                Request::BufferOpen { path, invocation } => {
+                    if let Some(invocation) = &invocation {
+                        let context = state.requests.get(invocation).ok_or_else(|| {
+                            fail(Code::ContextChanged, "Invoking command finished")
+                        })?;
+                        self.app.plugin_foreground(context)?;
+                    }
+                    pending.invocation = invocation;
+                    pending.charge = local::MAX_DOCUMENT_BYTES * 2;
+                    local::Task::Open { root, path }
+                }
+                Request::FilesystemApply { plan, invocation } => {
                     let context = state
                         .requests
-                        .get(invocation)
+                        .get(&invocation)
                         .ok_or_else(|| fail(Code::ContextChanged, "Invoking command finished"))?;
                     self.app.plugin_foreground(context)?;
+                    if self.app.plugin_has_input_surface() {
+                        return Err(fail(
+                            Code::Busy,
+                            "An input surface already owns the frontend",
+                        ));
+                    }
+                    let prepared = state
+                        .plans
+                        .get(&plan)
+                        .ok_or_else(|| fail(Code::NotFound, "Unknown prepared plan"))?
+                        .clone();
+                    self.app
+                        .present_plugin_filesystem(owner, plan.clone(), prepared);
+                    let state = &mut self
+                        .app
+                        .plugins
+                        .instances
+                        .get_mut(&owner)
+                        .unwrap()
+                        .application;
+                    state.plans.remove(&plan);
+                    // Charge stays with the displayed confirmation until it settles.
+                    return Ok(Some(ResultValue::Empty(api::Empty {})));
                 }
-                pending.invocation = invocation;
-                pending.charge = local::MAX_DOCUMENT_BYTES * 2;
-                local::Task::Open { root, path }
-            }
-            Request::FilesystemApply { plan, invocation } => {
-                let context = state
-                    .requests
-                    .get(&invocation)
-                    .ok_or_else(|| fail(Code::ContextChanged, "Invoking command finished"))?;
-                self.app.plugin_foreground(context)?;
-                if self.app.plugin_has_input_surface() {
-                    return Err(fail(
-                        Code::Busy,
-                        "An input surface already owns the frontend",
-                    ));
+                Request::FilesystemCancel { plan } => {
+                    self.app.cancel_plugin_filesystem(owner, Some(&plan));
+                    let state = &mut self
+                        .app
+                        .plugins
+                        .instances
+                        .get_mut(&owner)
+                        .unwrap()
+                        .application;
+                    if state.plans.remove(&plan).is_some() {
+                        state.retained_payload -= local::DIRECTORY_CHARGE;
+                    }
+                    return Ok(Some(ResultValue::Empty(api::Empty {})));
                 }
-                let prepared = state
-                    .plans
-                    .get(&plan)
-                    .ok_or_else(|| fail(Code::NotFound, "Unknown prepared plan"))?
-                    .clone();
-                self.app
-                    .present_plugin_filesystem(owner, plan.clone(), prepared);
-                let state = &mut self
-                    .app
-                    .plugins
-                    .instances
-                    .get_mut(&owner)
-                    .unwrap()
-                    .application;
-                state.plans.remove(&plan);
-                // Charge stays with the displayed confirmation until it settles.
-                return Ok(Some(ResultValue::Empty(api::Empty {})));
-            }
-            Request::FilesystemCancel { plan } => {
-                self.app.cancel_plugin_filesystem(owner, Some(&plan));
-                let state = &mut self
-                    .app
-                    .plugins
-                    .instances
-                    .get_mut(&owner)
-                    .unwrap()
-                    .application;
-                if state.plans.remove(&plan).is_some() {
-                    state.retained_payload -= local::DIRECTORY_CHARGE;
+                Request::FilesystemRelease { directory } => {
+                    let state = &mut self
+                        .app
+                        .plugins
+                        .instances
+                        .get_mut(&owner)
+                        .unwrap()
+                        .application;
+                    if state.directories.remove(&directory).is_some() {
+                        state.retained_payload -= local::DIRECTORY_CHARGE;
+                    }
+                    return Ok(Some(ResultValue::Empty(api::Empty {})));
                 }
-                return Ok(Some(ResultValue::Empty(api::Empty {})));
-            }
-            Request::FilesystemRelease { directory } => {
-                let state = &mut self
-                    .app
-                    .plugins
-                    .instances
-                    .get_mut(&owner)
-                    .unwrap()
-                    .application;
-                if state.directories.remove(&directory).is_some() {
-                    state.retained_payload -= local::DIRECTORY_CHARGE;
-                }
-                return Ok(Some(ResultValue::Empty(api::Empty {})));
-            }
-            _ => unreachable!(),
-        };
+                _ => unreachable!(),
+            };
         if state.local_requests.len() >= 2 {
             return Err(fail(
                 Code::Busy,
@@ -319,6 +345,9 @@ impl WorkspaceHost {
                     self.app.plugin_foreground(context)?;
                 }
                 let path = buffer.path.as_deref().expect("prepared ordinary file");
+                if pending.creating && self.app.plugin_document_path_is_open(path) {
+                    return Err(fail(Code::Conflict, "Document path is already open"));
+                }
                 crate::path_safety::ensure_within_root(&self.app.project_root, path)
                     .map_err(|_| fail(Code::Conflict, "Document path changed"))?;
                 let state = &self.app.plugins.instances[&owner].application;

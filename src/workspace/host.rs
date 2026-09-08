@@ -238,6 +238,7 @@ struct CompletedGitSnapshot {
 }
 
 mod plugin_applications;
+mod plugin_documents;
 mod plugin_editor;
 mod plugin_filesystem;
 mod plugin_interaction;
@@ -248,6 +249,7 @@ mod plugin_interaction;
 mod plugins;
 
 pub struct WorkspaceHost {
+    document_saves: std::collections::BTreeMap<String, plugin_documents::PendingSave>,
     plugin_workers: std::collections::BTreeMap<usize, crate::plugin::Worker>,
     plugin_events_sender: Option<tokio::sync::mpsc::Sender<crate::plugin::Event>>,
     plugin_local_slots: Option<std::sync::Arc<tokio::sync::Semaphore>>,
@@ -332,6 +334,7 @@ impl WorkspaceHost {
         let identity = WorkspaceIdentity::from_canonical(app.project_root.clone());
         Self {
             identity,
+            document_saves: Default::default(),
             plugin_workers: Default::default(),
             plugin_events_sender: None,
             plugin_local_slots: None,
@@ -574,7 +577,19 @@ impl WorkspaceHost {
                         .filter(|job| job.state.active())
                         .count()
                 })
-                .sum(),
+                .sum::<usize>()
+                + self
+                    .document_saves
+                    .values()
+                    .filter(|pending| {
+                        !self
+                            .app
+                            .plugins
+                            .instances
+                            .get(&pending.owner)
+                            .is_some_and(|i| i.application.generation == pending.generation)
+                    })
+                    .count(),
             unsaved_buffers: self.unsaved_buffers(),
             pending_wait_requests: self
                 .wait_requests
@@ -861,7 +876,7 @@ impl WorkspaceHost {
             .live_buffer_index(buffer)
             .map_err(anyhow::Error::from)?;
         anyhow::ensure!(
-            !self.app.buffers[index].dirty,
+            !self.app.buffers[index].dirty && !self.app.plugins.document_saves.contains(&index),
             "modified wait buffers must be saved, closed with confirmation, or explicitly discarded before completion"
         );
         let request = self
@@ -890,7 +905,8 @@ impl WorkspaceHost {
                         .live_buffer_index(*buffer)
                         .map_err(anyhow::Error::from)?;
                     anyhow::ensure!(
-                        !self.app.buffers[index].dirty,
+                        !self.app.buffers[index].dirty
+                            && !self.app.plugins.document_saves.contains(&index),
                         "modified wait buffers must be saved before completing the request"
                     );
                 }

@@ -69,6 +69,11 @@ impl Directory {
 
 #[derive(Debug)]
 pub(crate) enum Task {
+    Create {
+        root: PathBuf,
+        path: String,
+        text: String,
+    },
     List {
         root: PathBuf,
         path: String,
@@ -137,6 +142,17 @@ impl Task {
             }
         };
         match self {
+            Self::Create { root, path, text } => {
+                let path = project_path(&root, &path)?;
+                if std::fs::symlink_metadata(&path).is_ok() {
+                    return Err(Error::new(
+                        ErrorCode::Conflict,
+                        "Document path already exists",
+                    ));
+                }
+                let buffer = crate::buffer::Buffer::unsaved_document(path, text);
+                Ok(Prepared::Document(Box::new(buffer)))
+            }
             Self::List { root, path } => {
                 let path = project_path(&root, &path)?
                     .canonicalize()
@@ -267,6 +283,7 @@ impl Task {
 }
 
 pub(crate) struct Pending {
+    pub creating: bool,
     pub invocation: Option<String>,
     pub offset: usize,
     pub limit: usize,

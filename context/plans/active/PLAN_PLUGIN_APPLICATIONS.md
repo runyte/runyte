@@ -73,7 +73,7 @@ Concrete decisions in this slice:
   subscriptions, coalescing and resynchronization are not advertised yet.
 
 Milestone 3 now has an initial local file manager, documented below; document
-save/close/create, recursive mutations, asynchronous apply and forms remain. Milestone 4's providers, remote
+recursive mutations and asynchronous apply remain. Milestone 4's providers, remote
 save reconciliation and transport examples remain unimplemented. Milestone 5
 still needs managed processes, terminal/external handoffs, activity leases,
 settings/state and the plugin manager. Milestone 6 still needs the broader SDK,
@@ -165,6 +165,29 @@ entry, prepared confirmation, text-file opening and return to the retained view;
 a two-second settled observation produced no terminal output. Revision-tagged asynchronous
 field validation will build on the observation/subscription boundary; it is not
 advertised as delivered here.
+
+## Explicit local document round
+
+`buffer.create/save/close` now complete the first local document adapter. Named
+new documents retain no accepted saved baseline until their first write, including
+empty text. Saves validate an explicit revision and known disk conflicts before
+the normal undoable whitespace hook, then capture immutable text and disk identity.
+A bounded blocking worker performs the conditional atomic write. Completion adopts
+only the captured baseline, preserving newer edits and undo. Host-owned jobs
+retain pending protection and payload charges through cancellation, deadline
+expiry and owner stop; uncertain writes stay dirty until explicit reconciliation.
+
+Review corrected quit/reload/discard/`--wait` refresh seams, file-observation
+baseline races, host-owned cancellation acknowledgement, whitespace hook ordering,
+empty-document baselines and preservation of actionable save warnings. The public
+schema/fixtures and `documents.py` exercise explicit create/save/close. Automated
+regressions cover the lifecycle in both the App and workspace-host boundaries.
+Formatting, warnings-as-errors Clippy, both schema/example checkers and the full
+suite passed (3,132 tests, 33 ignored). Canonical Linux workspace coverage is
+106,891 / 116,639 lines (91.64%), above the unchanged 89% floor. Final subagent
+re-review found no further concrete defects in this local lifecycle round.
+Recursive mutations, asynchronous filesystem apply and all later milestones
+remain active.
 
 ## Investigation: existing foundation and missing boundaries
 

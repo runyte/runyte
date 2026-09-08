@@ -41,6 +41,25 @@ days, and fails below 89% total line coverage. The floor is deliberately below
 the observed baseline because conditional Linux and macOS code changes both the
 instrumented denominator and the paths available to a run on one platform.
 
+## 2026-09-08 — explicit application document lifecycle
+
+Measured on `x86_64-unknown-linux-gnu` at `a4b3804` plus the document lifecycle
+round, using Rust 1.97.1 and cargo-llvm-cov 0.9.0. Canonical workspace coverage
+and the ordinary full suite each passed 3,132 tests with 33 ignored. Formatting,
+warnings-as-errors Clippy and both schema/example checkers passed.
+
+| Measure | Covered | Total | Coverage |
+| --- | ---: | ---: | ---: |
+| Lines | 106,891 | 116,639 | 91.64% |
+| Functions | 9,806 | 10,626 | 92.28% |
+| Regions | 164,555 | 180,457 | 91.19% |
+
+New regressions exercise asynchronous save baselines, later-edit undo, whitespace
+hooks, empty new documents, collisions, cancellation/stop uncertainty, retained
+recovery warnings, file observation ordering and pending close/reload/discard/quit
+and `--wait` protection. Host-owned cancellation does not depend on plugin
+acknowledgement. The floor remains 89%; native macOS validation remains required.
+
 ## 2026-09-08 — native application interaction
 
 Measured on `x86_64-unknown-linux-gnu` at `364fa1c` plus the native interaction

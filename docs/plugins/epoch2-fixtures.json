@@ -664,5 +664,42 @@
         }
       }
     }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:71",
+      "method": "buffer.create",
+      "params": {
+        "path": "notes.txt",
+        "text": "é猫\n",
+        "invocation": null
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:72",
+      "method": "buffer.save",
+      "params": {
+        "buffer": "b:g:1",
+        "expected_revision": "r:3"
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:73",
+      "method": "buffer.close",
+      "params": {
+        "buffer": "b:g:1",
+        "expected_revision": "r:3"
+      }
+    }
   }
 ]

@@ -139,6 +139,7 @@ impl WorkspaceHost {
                         | api::Request::FilesystemCancel { .. }
                         | api::Request::FilesystemRelease { .. }
                         | api::Request::BufferOpen { .. }
+                        | api::Request::BufferCreate { .. }
                 ) {
                     let result = self.application_filesystem_request(id, &request_id, request);
                     return match result {
@@ -159,6 +160,12 @@ impl WorkspaceHost {
                 ) {
                     let result = self.application_input_request(id, request);
                     return self.application_local_reply(id, request_id, result);
+                }
+                if matches!(
+                    request,
+                    api::Request::BufferSave { .. } | api::Request::BufferClose { .. }
+                ) {
+                    return self.application_document_request(id, request_id, request);
                 }
                 let result = self.application_request(id, request);
                 let event = result
@@ -259,12 +266,23 @@ impl WorkspaceHost {
         self.plugin_send(id, plugin::HostMessage::Application(message))
     }
 
-    fn application_request(
+    pub(super) fn application_request(
         &mut self,
         id: usize,
         request: api::Request,
     ) -> Result<(api::ResultValue, Option<&'static str>), api::Error> {
         use api::{ErrorCode as Code, Request};
+        if let Request::JobFinish { job, .. } | Request::JobUpdate { job, .. } = &request
+            && self
+                .document_saves
+                .get(job)
+                .is_some_and(|pending| pending.owner == id)
+        {
+            return Err(api::Error::new(
+                Code::Conflict,
+                "Host-owned document jobs finish through IO completion",
+            ));
+        }
         if matches!(
             request,
             Request::BufferList { .. }
@@ -397,8 +415,22 @@ impl WorkspaceHost {
                             event = None;
                         } else {
                             job.state = api::JobState::Cancelling;
-                            deadline = Some((job.job.clone(), Some(2000)));
-                            event = Some("job.cancel_requested");
+                            if let Some(pending) = self
+                                .document_saves
+                                .get(&job.job)
+                                .filter(|p| p.owner == id && p.generation == state.generation)
+                            {
+                                // Only the host can settle its disk operation. The
+                                // plugin cannot acknowledge or accelerate blocking IO.
+                                pending
+                                    .cancelled
+                                    .store(true, std::sync::atomic::Ordering::SeqCst);
+                                deadline = Some((job.job.clone(), None));
+                                event = Some("job.changed");
+                            } else {
+                                deadline = Some((job.job.clone(), Some(2000)));
+                                event = Some("job.cancel_requested");
+                            }
                         }
                     }
                     _ => unreachable!(),
@@ -427,6 +459,35 @@ impl WorkspaceHost {
             return Ok(());
         }
         instance.application.deadlines.remove(&token);
+        if let Some(pending) = self
+            .document_saves
+            .get(&token)
+            .filter(|p| p.owner == id && p.generation == instance.application.generation)
+        {
+            pending
+                .cancelled
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+            let changed = instance.application.jobs.get_mut(&token).and_then(|job| {
+                if job.state != api::JobState::Running {
+                    return None;
+                }
+                job.state = api::JobState::Cancelling;
+                Some(job.clone())
+            });
+            if let Some(job) = changed {
+                self.application_job_event(id, "job.changed", job)?;
+                self.plugin_send(
+                    id,
+                    plugin::HostMessage::Deadline {
+                        token,
+                        after_ms: None,
+                    },
+                )?;
+            }
+            // Keep the job, snapshot and buffer guard until actual completion;
+            // repeated queued deadlines cannot punish the plugin for host IO.
+            return Ok(());
+        }
         if let Some(snapshot) = instance.application.snapshots.remove(&token) {
             instance.application.retained_payload -= snapshot.text.len_bytes();
             return Ok(());
@@ -455,7 +516,7 @@ impl WorkspaceHost {
         )
     }
 
-    fn application_job_event(
+    pub(super) fn application_job_event(
         &mut self,
         id: usize,
         event: &'static str,
@@ -655,6 +716,7 @@ impl WorkspaceHost {
                 .values()
                 .map(|instance| instance.application.retained_payload)
                 .sum::<usize>()
+                .saturating_add(self.app.plugins.orphaned_payload)
                 .saturating_add(bytes)
                 > 160 * 1024 * 1024
         {

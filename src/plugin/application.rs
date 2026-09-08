@@ -121,6 +121,22 @@ pub struct CommandResult {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "method", content = "params", deny_unknown_fields)]
 pub enum Request {
+    #[serde(rename = "buffer.save")]
+    BufferSave {
+        buffer: String,
+        expected_revision: String,
+    },
+    #[serde(rename = "buffer.close")]
+    BufferClose {
+        buffer: String,
+        expected_revision: String,
+    },
+    #[serde(rename = "buffer.create")]
+    BufferCreate {
+        path: String,
+        text: String,
+        invocation: Option<String>,
+    },
     #[serde(rename = "ui.form")]
     UiForm {
         invocation: String,
@@ -600,6 +616,9 @@ pub(crate) fn decode(bytes: &[u8]) -> anyhow::Result<super::ClientMessage> {
             method,
             "buffer.list"
                 | "buffer.open"
+                | "buffer.save"
+                | "buffer.close"
+                | "buffer.create"
                 | "ui.form"
                 | "ui.prompt"
                 | "ui.pick"

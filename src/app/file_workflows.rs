@@ -951,6 +951,7 @@ impl App {
                     && !self.buffers[index].dirty
                     && self.buffers[index].kind == BufferKind::File
                     && !pending_wait_buffers.contains(&index)
+                    && !self.plugins.document_saves.contains(&index)
                     && !refreshed
                         .iter()
                         .any(|(refreshed_index, _)| *refreshed_index == index)
@@ -1091,6 +1092,10 @@ impl App {
     }
 
     pub(crate) fn host_close_buffer(&mut self, buffer: usize, discard: bool) -> Result<()> {
+        ensure!(
+            !self.plugins.document_saves.contains(&buffer),
+            "Document save is pending"
+        );
         ensure!(
             buffer < self.buffers.len() && !self.closed_buffers.contains(&buffer),
             "unknown or closed buffer"
@@ -1271,6 +1276,13 @@ impl App {
         path: Option<PathBuf>,
         replace: bool,
     ) -> Result<()> {
+        if self.plugins.document_saves.contains(&buffer_id) {
+            self.action_warning(
+                "Save pending",
+                "A captured document revision is still being written",
+            );
+            return Ok(());
+        }
         if let Some(reason) = self.buffers[buffer_id].read_only_reason() {
             self.action_warning("Save refused", reason);
             return Ok(());
@@ -1465,6 +1477,20 @@ impl App {
         })
     }
 
+    pub(crate) fn prepare_plugin_document_save(
+        &mut self,
+        buffer_id: usize,
+    ) -> crate::buffer::DocumentSave {
+        self.buffers[buffer_id].commit_undo_group();
+        if self.config.editor.trim_trailing_whitespace {
+            self.trim_trailing_whitespace(buffer_id);
+        }
+        self.buffers[buffer_id].commit_undo_group();
+        self.buffers[buffer_id]
+            .prepare_document_save()
+            .expect("validated document save")
+    }
+
     fn trim_trailing_whitespace(&mut self, buffer_id: usize) {
         let buffer = &self.buffers[buffer_id];
         let changes = trailing_whitespace_changes(buffer, 0..buffer.len_lines());
@@ -1475,6 +1501,10 @@ impl App {
 
     pub(super) fn reload_file(&mut self) -> Result<()> {
         let buffer_id = self.active().buffer;
+        ensure!(
+            !self.plugins.document_saves.contains(&buffer_id),
+            "Document save is pending"
+        );
         let was_dirty = self.buffers[buffer_id].dirty;
         ensure!(
             self.buffers[buffer_id].kind == BufferKind::File,
@@ -1528,6 +1558,10 @@ impl App {
         buffer_id: usize,
         observation: &FileObservation,
     ) -> Result<()> {
+        ensure!(
+            !self.plugins.document_saves.contains(&buffer_id),
+            "Document save is pending"
+        );
         let language_before = buffer_language(&self.buffers[buffer_id], &self.registry);
         self.buffers[buffer_id].reload_from_observation(observation)?;
         self.resync_replaced_buffer(buffer_id, language_before);

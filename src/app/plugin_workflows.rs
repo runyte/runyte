@@ -47,6 +47,8 @@ pub(crate) struct Instance {
 
 #[derive(Default)]
 pub(crate) struct Plugins {
+    pub document_saves: BTreeSet<usize>,
+    pub orphaned_payload: usize,
     pub input: Option<super::plugin_interaction::Surface>,
     pub input_finished: Vec<(
         usize,

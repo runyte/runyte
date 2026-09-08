@@ -3291,6 +3291,10 @@ impl App {
     }
 
     pub(super) fn discard_buffer_changes(&mut self, buffer: usize) -> Result<()> {
+        anyhow::ensure!(
+            !self.plugins.document_saves.contains(&buffer),
+            "Document save is pending"
+        );
         if self.closed_buffers.contains(&buffer) || self.buffers[buffer].is_directory() {
             self.action_failed("this buffer cannot be discarded here");
             return Ok(());
@@ -3350,6 +3354,10 @@ impl App {
     /// returns to its own most recently displayed live buffer, or uses another
     /// live buffer and finally a new scratch when no history remains.
     pub(super) fn close_active_buffer(&mut self, force: bool) {
+        if self.plugins.document_saves.contains(&self.active().buffer) {
+            self.action_warning("Save pending", "Wait for the document write before closing");
+            return;
+        }
         if self.active_terminal().is_some() {
             self.action_failed("a terminal is not a buffer; close it explicitly in :terminals");
             return;
@@ -3371,6 +3379,13 @@ impl App {
 
     /// Closes a buffer whose unsaved text the person has agreed to lose.
     pub(super) fn close_buffer_discarding(&mut self, buffer: usize) {
+        if self.plugins.document_saves.contains(&buffer) {
+            self.action_warning(
+                "Save pending",
+                "Wait for the document write before discarding",
+            );
+            return;
+        }
         if self.closed_buffers.contains(&buffer) {
             return;
         }
@@ -3402,6 +3417,10 @@ impl App {
     }
 
     fn retire_buffer(&mut self, buffer: usize, announce: bool) {
+        if self.plugins.document_saves.contains(&buffer) {
+            self.action_warning("Save pending", "Wait for the document write before closing");
+            return;
+        }
         if self.closed_buffers.contains(&buffer) {
             return;
         }

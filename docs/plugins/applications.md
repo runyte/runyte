@@ -5,7 +5,7 @@ Epoch 2 (`runyte-experimental-2`) is being implemented in the
 The current implementation supports typed commands, finite background jobs,
 retained native views, explicit buffer reads/edits, immutable snapshots and
 pane selections, bounded local directory browsing, document opens and reviewed
-regular-file mutations. Input forms, recursive filesystem mutations, remote providers,
+regular-file mutations. Recursive filesystem mutations, remote providers,
 subscriptions and managed media backends remain unfinished and are not
 advertised capabilities. This is not completion of the application plan.
 Epoch 1 remains the default and its uppercase example is unchanged.
@@ -116,6 +116,9 @@ generation and must never be parsed, persisted, or used by another owner.
 | filesystem | `filesystem.apply` | Plan and invoking command; presents native confirmation, with no immediate filesystem mutation |
 | filesystem | `filesystem.cancel/release` | Cancel a plan or release a directory snapshot, idempotently |
 | documents | `buffer.open` | Existing workspace-relative text path and optional invoking command; explicit buffer/revision |
+| documents | `buffer.create` | New workspace-relative path, initial text and optional invocation; named unsaved document |
+| documents + jobs | `buffer.save` | Owned buffer and expected revision; asynchronous host-owned save job |
+| documents | `buffer.close` | Owned buffer and expected revision; closes only a clean document without a pending write |
 
 `command.invoke` is a host request naming the registered command and its declared
 `workspace`, `buffer` or `view` context. Workspace commands work on read-only content and
@@ -209,9 +212,8 @@ budgets are reserved for bounded queues, decoding and publication copies.
 These measure payload, not allocator RSS or the external process's memory.
 Buffer/pane issuance is bounded at 1,024/128 handles per connection generation.
 
-Still required by the active plan: further local document operations, recursive
-filesystem mutations and asynchronous application of confirmed plans;
-prompts/forms with secret handling; source subscriptions
+Still required by the active plan: recursive filesystem mutations and asynchronous
+application of confirmed plans; revision-tagged field validation; source subscriptions
 and resynchronization; provider reads, asynchronous saves and transfer outcomes;
 row patches and staged publication; managed helpers, activity leases, state,
 settings and a plugin manager; SFTP/FTP and media examples; broader SDK/conformance
@@ -318,3 +320,51 @@ Input state is ephemeral and is not persisted. Plugins must keep secret values
 out of their own logs and state. Remote field validation is not implemented yet;
 plugins can validate returned values and request a fresh form from an accepted
 callback, subject to the same foreground checks.
+
+### Explicit document lifecycle
+
+`buffer.create` creates a named unsaved local document with up to 512 KiB of initial
+UTF-8 text. The path must be inside the workspace, absent from disk, and not owned
+by another live buffer. It returns the same buffer/revision result as `buffer.open`.
+Neither operation changes focus without a valid optional invocation grant. Creating
+the document does not write a file; the normal editor save command or `buffer.save`
+persists it later, refusing a file that appeared in the meantime.
+
+`buffer.save` requires both `documents` and `jobs`. It validates the explicit
+buffer and expected revision before applying the ordinary trailing-whitespace
+save hook as an undoable transaction, then captures immutable text and disk
+identity. At most 8 MiB of document text is supported. Disk IO runs off the editor
+loop, shares the 16 local worker slots, and reserves 16 MiB of the retained payload
+budget until completion. The immediate result is a host-owned job with a 60-second
+deadline. Only host IO completion may finish/update that job. The final
+`job.changed` event is also recoverable with `job.get`.
+
+A successful save advances the saved baseline to the captured text; edits made
+while it was running stay dirty, and undoing those edits returns to the saved
+baseline. External changes are checked before replacement. Save warnings retain
+the ordinary notification details, including any recovery location. A missing
+verification result keeps the buffer dirty. Matching background file observations
+cannot clear an uncertain outcome; explicitly inspect and reload, discard, or save
+to reconcile it.
+
+A second save, close, reload, discard, filesystem-plan application, normal quit or
+force-quit command is refused while a document write is pending. Detaching leaves
+the host and write running. Explicit host termination can still interrupt it.
+Cancellation and deadline expiry request cancellation without requiring a plugin
+acknowledgement. They cannot roll back an OS write already in flight: protection
+and payload accounting remain until IO settles. If that write may have committed,
+the job becomes `outcome_unknown` and the text remains dirty. Stopping the plugin
+likewise preserves the pending write's protection until the host receives its
+result. `--wait` does not complete a pending or dirty document.
+
+`buffer.close` has no force option. It checks revision, pending writes and dirty
+state before using ordinary buffer retirement, so plugins cannot silently discard
+user changes.
+
+`documents.py` is a small public-operation example with workspace `create` and
+buffer-context `save`/`close` commands. Configure it like `files.py`, using
+`id: documents`, `args: [docs/plugins/documents.py]` and
+`capabilities: [documents, jobs]`. For example,
+`:plugin.documents.create notes.txt "first note"` opens the new unsaved document;
+`:plugin.documents.save` returns its save job. Normal `:write`, movement, editing
+and buffer management remain available.

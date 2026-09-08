@@ -1853,6 +1853,15 @@
         },
         {
           "$ref": "#/$defs/ui.dismiss"
+        },
+        {
+          "$ref": "#/$defs/buffer.save"
+        },
+        {
+          "$ref": "#/$defs/buffer.close"
+        },
+        {
+          "$ref": "#/$defs/buffer.create"
         }
       ]
     },
@@ -2722,6 +2731,136 @@
         "params"
       ],
       "additionalProperties": true
+    },
+    "buffer.save": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "request"
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^p:[1-9][0-9]*$",
+          "maxLength": 22
+        },
+        "method": {
+          "const": "buffer.save"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "buffer": {
+              "type": "string",
+              "maxLength": 64
+            },
+            "expected_revision": {
+              "type": "string",
+              "maxLength": 64
+            }
+          },
+          "required": [
+            "buffer",
+            "expected_revision"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "method",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    "buffer.close": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "request"
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^p:[1-9][0-9]*$",
+          "maxLength": 22
+        },
+        "method": {
+          "const": "buffer.close"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "buffer": {
+              "type": "string",
+              "maxLength": 64
+            },
+            "expected_revision": {
+              "type": "string",
+              "maxLength": 64
+            }
+          },
+          "required": [
+            "buffer",
+            "expected_revision"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "method",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    "buffer.create": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "request"
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^p:[1-9][0-9]*$",
+          "maxLength": 22
+        },
+        "method": {
+          "const": "buffer.create"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "maxLength": 4096
+            },
+            "invocation": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "maxLength": 64
+            },
+            "text": {
+              "type": "string",
+              "maxLength": 524288
+            }
+          },
+          "required": [
+            "path",
+            "text"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "method",
+        "params"
+      ],
+      "additionalProperties": false
     }
   },
   "anyOf": [

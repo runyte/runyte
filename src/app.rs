@@ -269,6 +269,7 @@ mod mouse_autoscroll;
 mod movement;
 mod navigation_workflows;
 mod picker_workflows;
+mod plugin_documents;
 mod plugin_filesystem;
 pub(crate) mod plugin_interaction;
 mod plugin_views;
@@ -2997,7 +2998,10 @@ impl App {
     }
 
     pub(crate) fn apply_file_observation(&mut self, event: FileObservationEvent) {
-        if event.buffer >= self.buffers.len() || self.closed_buffers.contains(&event.buffer) {
+        if event.buffer >= self.buffers.len()
+            || self.closed_buffers.contains(&event.buffer)
+            || self.plugins.document_saves.contains(&event.buffer)
+        {
             return;
         }
         let result = self.buffers[event.buffer].apply_file_observation(&event);

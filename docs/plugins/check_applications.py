@@ -115,6 +115,53 @@ class ApplicationSchemaTests(unittest.TestCase):
             if not child.stdin.closed:
                 child.stdin.close()
 
+    def test_document_example_uses_captured_buffer_revision_and_returns_host_job(self):
+        host = [f['message'] for f in FIXTURES if f['direction'] == 'host']
+        child = subprocess.Popen([sys.executable, str(DIRECTORY / 'documents.py')],
+                                 stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                 stderr=subprocess.PIPE, bufsize=0)
+        def send(message):
+            child.stdin.write((json.dumps(message) + '\n').encode())
+            child.stdin.flush()
+        def receive():
+            with selectors.DefaultSelector() as selector:
+                selector.register(child.stdout, selectors.EVENT_READ)
+                self.assertTrue(selector.select(3), 'document example timed out')
+            message = json.loads(child.stdout.readline(1048577))
+            Draft202012Validator({**SCHEMA, 'anyOf': [{'$ref': '#/$defs/pluginMessage'}]}).validate(message)
+            return message
+        try:
+            send(host[0])
+            registration = receive()
+            self.assertEqual(registration['required_capabilities'], ['documents', 'jobs'])
+            send({**host[1], 'capabilities': ['documents', 'jobs']})
+            for n, command in enumerate(['create', 'save', 'close'], 1):
+                context = {**host[2]['params'], 'command': command,
+                           'buffer': 'b:g:1', 'buffer_revision': 'r:7',
+                           'arguments': {'path': 'notes.txt', 'text': 'é猫'} if command == 'create' else {}}
+                send({'type': 'request', 'id': f'h:{n}', 'method': 'command.invoke', 'params': context})
+                request = receive()
+                self.assertEqual(request['method'], f'buffer.{command}')
+                if command == 'create':
+                    self.assertEqual(request['params'], {'path': 'notes.txt', 'text': 'é猫', 'invocation': f'h:{n}'})
+                    result = {'buffer': 'b:g:1', 'revision': 'r:7', 'shown': True}
+                else:
+                    self.assertEqual(request['params'], {'buffer': 'b:g:1', 'expected_revision': 'r:7'})
+                    result = {'job': 'j:g:2', 'state': 'running'} if command == 'save' else {}
+                send({'type': 'response', 'id': request['id'], 'result': result})
+                self.assertEqual(receive(), {'type': 'response', 'id': f'h:{n}',
+                    'result': {'job': 'j:g:2' if command == 'save' else None}})
+            child.stdin.close()
+            self.assertEqual(child.wait(timeout=3), 0)
+        finally:
+            if child.poll() is None:
+                child.kill()
+                child.wait(timeout=3)
+            child.stdout.close()
+            child.stderr.close()
+            if not child.stdin.closed:
+                child.stdin.close()
+
     def test_all_fixtures(self):
         Draft202012Validator.check_schema(SCHEMA)
         for fixture in FIXTURES:
