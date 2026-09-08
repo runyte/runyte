@@ -74,8 +74,9 @@ Concrete decisions in this slice:
 
 Milestone 3 now has a local file manager, document lifecycle, native interaction
 and bounded recursive filesystem operations, documented below. Milestone 4's
-provider-backed reads are implemented; remote save reconciliation and transport
-examples remain outstanding. Milestone 5 still needs managed processes, terminal/external handoffs, activity leases,
+provider-backed reads, conditional saves and explicit rebind are implemented;
+weaker-transport confirmation, conflict inspection and transport examples remain
+outstanding. Milestone 5 still needs managed processes, terminal/external handoffs, activity leases,
 settings/state and the plugin manager. Milestone 6 still needs the broader SDK,
 non-Python example, full conformance matrix and complete application performance
 and supported-platform evidence. Milestones 1–2 also retain their full overload,
@@ -268,6 +269,44 @@ terminal bytes during a two-second settled observation. Native macOS remains
 required before plan completion. Provider writes, save continuations,
 unknown-outcome reconciliation and restart rebind are the next implementation
 round; transport examples and the remaining plan gates are still active.
+
+## Conditional provider save and reconciliation round
+
+Native save, save-and-close and plugin `buffer.save` now share bounded staged
+conditional uploads. Native intents capture the revision before admission and
+protect close/discard/quit/waits immediately. Admission checks precede normal
+trimming hooks; the immutable uploaded snapshot becomes the saved baseline only
+after an explicit committed response. Newer edits remain dirty, and deferred close
+runs only against its captured clean pane/buffer/attachment/foreground context.
+The synchronous bundled-client save endpoint continues to refuse provider writes.
+
+Begin/chunk/commit/abort calls share the host control slots and retained payload
+budgets. Pre-commit cancellation keeps protection through bounded abort cleanup;
+after commit submission, unknown outcomes retain the uploaded snapshot and forbid
+retry. `resource.rebind` reads and reconciles known content while preserving live
+edits. Unknown writes require an exact prior-job settlement proof from
+`resource.reconcile`, rather than treating an ordinary stat as proof that an earlier
+commit cannot still finish. Recovery reuses the uncertain write's reserved read
+headroom even at full per-owner/global quotas. The memory provider demonstrates
+conditional commit, abort, conflict and reconciliation through public messages.
+
+Review fixed wrong-owner abort deadlines, contradictory unknown commit rejection,
+uncertainty charge ownership, stale queued native intent revisions, captured saved
+revision reporting, duplicate terminal cancellation events, rebind's live-buffer
+shortcut and leaked mutation guard, stale baseline epochs, and recovery at quota
+saturation. Reads and writes both reject NUL text. The schema, shared fixtures,
+authoring example and public guide describe these guarantees and their limits.
+Formatting, warnings-as-errors Clippy and both schema/example checkers passed.
+The full suite and canonical coverage each passed 3,208 tests with 33 ignored;
+Linux line coverage is 109,444/119,474 (91.60%), above the unchanged 89% floor.
+The native PTY smoke passed save, save-and-close, reopened uploaded text and
+explicit rebind, with zero output bytes during a two-second settled observation.
+An inherited Git quiet-period test now uses an explicit timestamp so instrumented
+scheduler delays cannot invalidate its assertion. Native macOS remains unmeasured.
+
+Confirmed overwrites for weaker transports, divergent conflict inspection, binary
+staging, SFTP/FTP adapters, subscriptions, richer models, helpers/leases/settings,
+manager/media examples and complete platform/performance evidence remain active.
 
 ## Investigation: existing foundation and missing boundaries
 

@@ -8,6 +8,10 @@ use crate::{
 use api::{Error, ErrorCode as Code};
 
 pub(super) struct PendingRead {
+    pub charge: usize,
+    pub rebind: Option<usize>,
+    rebind_epoch: Option<u64>,
+    reconcile_write: Option<String>,
     pub requester: usize,
     pub requester_generation: String,
     pub owner: usize,
@@ -25,8 +29,64 @@ impl WorkspaceHost {
         owner: usize,
         request: api::Request,
     ) -> Result<(api::ResultValue, Option<&'static str>), Error> {
+        self.application_provider_request_with_rebind(owner, request, None)
+    }
+
+    fn application_provider_request_with_rebind(
+        &mut self,
+        owner: usize,
+        request: api::Request,
+        rebind: Option<usize>,
+    ) -> Result<(api::ResultValue, Option<&'static str>), Error> {
         let state = &self.app.plugins.instances[&owner].application;
         match request {
+            api::Request::ResourceRebind {
+                buffer,
+                expected_revision,
+            } => {
+                if !state.capabilities.contains("documents") || !state.capabilities.contains("jobs")
+                {
+                    return Err(Error::new(
+                        Code::CapabilityDenied,
+                        "Resource rebind requires documents and jobs capabilities",
+                    ));
+                }
+                let index = *state
+                    .buffers
+                    .get(&buffer)
+                    .ok_or_else(|| Error::new(Code::NotFound, "Unknown document"))?;
+                if self.app.host_buffer_is_closed(index) {
+                    return Err(Error::new(Code::Closed, "Document closed"));
+                }
+                if format!("r:{}", self.app.buffers[index].revision()) != expected_revision {
+                    return Err(Error::new(Code::Stale, "Document changed"));
+                }
+                if self.app.document_mutation_pending(index) {
+                    return Err(Error::new(Code::Busy, "Document operation is pending"));
+                }
+                let document = self.app.buffers[index].provider().ok_or_else(|| {
+                    Error::new(Code::Unsupported, "Document has no resource provider")
+                })?;
+                if document.uncertain.is_some() && !self.provider_uncertain.contains_key(&index) {
+                    return Err(Error::new(
+                        Code::OutcomeUnknown,
+                        "Previous write settlement reference is unavailable",
+                    ));
+                }
+                let identity = document.identity.clone();
+                let result = self.application_provider_request_with_rebind(
+                    owner,
+                    api::Request::ResourceOpen {
+                        plugin: identity.configured_plugin,
+                        provider: identity.provider,
+                        key: identity.key,
+                        invocation: None,
+                    },
+                    Some(index),
+                )?;
+                self.app.plugins.document_saves.insert(index);
+                Ok(result)
+            }
             api::Request::ProviderRegister(registration) => {
                 if !state.capabilities.contains("providers") {
                     return Err(Error::new(
@@ -129,7 +189,15 @@ impl WorkspaceHost {
                         "Two resource opens are already pending",
                     ));
                 }
-                self.reserve_application_payload(owner, wire::READ_CHARGE)?;
+                // An uncertain write reserves both its captured text and the
+                // bounded recovery read, so quota exhaustion cannot trap recovery.
+                let charge =
+                    if rebind.is_some_and(|index| self.provider_uncertain.contains_key(&index)) {
+                        0
+                    } else {
+                        wire::READ_CHARGE
+                    };
+                self.reserve_application_payload(owner, charge)?;
                 let identity = ProviderIdentity {
                     configured_plugin: plugin,
                     provider,
@@ -162,10 +230,20 @@ impl WorkspaceHost {
                     .get_mut(&owner)
                     .unwrap()
                     .application
-                    .retained_payload += wire::READ_CHARGE;
+                    .retained_payload += charge;
                 self.provider_reads.insert(
                     job.job.clone(),
                     PendingRead {
+                        charge,
+                        rebind,
+                        rebind_epoch: rebind.and_then(|index| {
+                            self.app.buffers[index].provider().map(|d| d.baseline_epoch)
+                        }),
+                        reconcile_write: rebind.and_then(|index| {
+                            self.provider_uncertain
+                                .get(&index)
+                                .map(|(_, _, job)| job.clone())
+                        }),
                         requester: owner,
                         requester_generation,
                         owner: provider_owner,
@@ -179,6 +257,9 @@ impl WorkspaceHost {
                 );
                 if self.send_provider_read(&job.job).is_err() {
                     let pending = self.provider_reads.remove(&job.job).unwrap();
+                    if let Some(index) = pending.rebind {
+                        self.app.plugins.document_saves.remove(&index);
+                    }
                     if !pending.request.is_empty() {
                         self.app
                             .plugins
@@ -195,7 +276,7 @@ impl WorkspaceHost {
                         .get_mut(&owner)
                         .unwrap()
                         .application;
-                    state.retained_payload -= wire::READ_CHARGE;
+                    state.retained_payload -= pending.charge;
                     state.jobs.remove(&job.job);
                     let _ = self.plugin_send(
                         owner,
@@ -249,6 +330,13 @@ impl WorkspaceHost {
                 version: metadata.version.clone(),
                 offset: pending.text.len(),
                 limit: wire::CHUNK_BYTES,
+            }
+        } else if let Some(previous_write) = &pending.reconcile_write {
+            wire::Request::Reconcile {
+                job: job.into(),
+                provider: pending.identity.provider.clone(),
+                key: pending.identity.key.clone(),
+                previous_write: previous_write.clone(),
             }
         } else {
             wire::Request::Stat {
@@ -330,6 +418,25 @@ impl WorkspaceHost {
         job: &str,
         response: wire::Response,
     ) -> Result<Option<usize>, Error> {
+        let pending = &self.provider_reads[job];
+        let response = if pending.metadata.is_none()
+            && let Some(previous) = &pending.reconcile_write
+        {
+            match response {
+                wire::Response::Reconciled {
+                    metadata,
+                    previous_write,
+                } if &previous_write == previous => wire::Response::Stat(metadata),
+                _ => {
+                    return Err(Error::new(
+                        Code::OutcomeUnknown,
+                        "Provider must establish that the previous write is settled before reconciliation",
+                    ));
+                }
+            }
+        } else {
+            response
+        };
         if let wire::Response::Stat(metadata) = &response {
             let identity = &self.provider_reads[job].identity;
             if self.provider_reads.iter().any(|(other, p)| {
@@ -348,14 +455,21 @@ impl WorkspaceHost {
         match (pending.metadata.as_ref(), response) {
             (None, wire::Response::Stat(metadata)) => {
                 metadata.validate()?;
+                if pending.rebind.is_some() && pending.identity.key != metadata.key {
+                    return Err(Error::new(
+                        Code::Conflict,
+                        "Canonical resource identity changed during rebind",
+                    ));
+                }
                 pending.identity.key = metadata.key.clone();
-                if let Some((index, _)) =
-                    self.app.buffers.iter().enumerate().find(|(index, buffer)| {
-                        !self.app.host_buffer_is_closed(*index)
-                            && buffer
-                                .provider()
-                                .is_some_and(|provider| provider.identity == pending.identity)
-                    })
+                if pending.rebind.is_none()
+                    && let Some((index, _)) =
+                        self.app.buffers.iter().enumerate().find(|(index, buffer)| {
+                            !self.app.host_buffer_is_closed(*index)
+                                && buffer
+                                    .provider()
+                                    .is_some_and(|provider| provider.identity == pending.identity)
+                        })
                 {
                     return Ok(Some(index));
                 }
@@ -388,6 +502,22 @@ impl WorkspaceHost {
                 if !chunk.eof {
                     return Ok(None);
                 }
+                if let Some(index) = pending.rebind {
+                    if self.app.host_buffer_is_closed(index) {
+                        return Err(Error::new(Code::Closed, "Document closed during rebind"));
+                    }
+                    if self.app.buffers[index].provider().map(|d| d.baseline_epoch)
+                        != pending.rebind_epoch
+                    {
+                        return Err(Error::new(
+                            Code::Conflict,
+                            "Resource baseline changed during rebind",
+                        ));
+                    }
+                    self.app.buffers[index].reconcile_provider(&pending.identity, pending.generation.clone(), metadata.version.clone(), &pending.text)
+                        .map_err(|_| Error::new(Code::Conflict, "Remote text differs from accepted and uncertain baselines; inspect the conflict before overwriting"))?;
+                    return Ok(Some(index));
+                }
                 let handles = &self.app.plugins.instances[&pending.requester]
                     .application
                     .buffers;
@@ -418,6 +548,8 @@ impl WorkspaceHost {
                     version: metadata.version.clone(),
                     generation: pending.generation.clone(),
                     available: true,
+                    baseline_epoch: 0,
+                    uncertain: None,
                 };
                 // Publication can only reuse a live identity; a concurrent open never
                 // replaces edits made after another request published that identity.
@@ -435,6 +567,10 @@ impl WorkspaceHost {
         let Some(pending) = self.provider_reads.remove(token) else {
             return;
         };
+        if let Some(index) = pending.rebind {
+            self.app.plugins.document_saves.remove(&index);
+        }
+        self.reconcile_provider_payload();
         if !pending.request.is_empty() {
             if let Some(instance) = self
                 .app
@@ -467,7 +603,7 @@ impl WorkspaceHost {
         else {
             return;
         };
-        instance.application.retained_payload -= wire::READ_CHARGE;
+        instance.application.retained_payload -= pending.charge;
         let result = result.and_then(|index| {
             let handle = instance.application.buffer_handle(index)?;
             Ok((

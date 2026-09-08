@@ -6,9 +6,8 @@ The current implementation supports typed commands, finite background jobs,
 retained native views, explicit buffer reads/edits, immutable snapshots and
 pane selections, local metadata/browsing, document lifecycle operations, native
 input, confirmed bounded recursive filesystem mutations and provider-backed
-UTF-8 document opening. Remote saves and transports, subscriptions and managed
-media backends remain unfinished and are not
-advertised capabilities. This is not completion of the application plan.
+UTF-8 document opening, conditional remote saves and explicit rebind. Network
+transports, subscriptions and managed media backends remain unfinished. This is not completion of the application plan.
 Epoch 1 remains the default and its uppercase example is unchanged.
 
 Enable the runnable background-job example with absolute paths:
@@ -119,6 +118,7 @@ generation and must never be parsed, persisted, or used by another owner.
 | filesystem | `filesystem.cancel/release` | Cancel a plan or release a directory snapshot, idempotently |
 | providers | `provider.register` | Unique provider name and independent conditional-write/atomic-replace declarations |
 | documents + jobs | `resource.open` | Configured plugin, provider, resource key and optional invocation; host-owned open job |
+| documents + jobs | `resource.rebind` | Buffer and expected revision; bounded remote reconciliation job |
 | documents | `buffer.open` | Existing workspace-relative text path and optional invoking command; explicit buffer/revision |
 | documents | `buffer.create` | New workspace-relative path, initial text and optional invocation; named unsaved document |
 | documents + jobs | `buffer.save` | Owned buffer and expected revision; asynchronous host-owned save job |
@@ -217,7 +217,7 @@ These measure payload, not allocator RSS or the external process's memory.
 Buffer/pane issuance is bounded at 1,024/128 handles per connection generation.
 
 Still required by the active plan: revision-tagged field validation; source subscriptions
-and resynchronization; provider saves, rebind reconciliation and transfer outcomes;
+and resynchronization; confirmed weaker-transport overwrites, conflict inspection and binary transfers;
 row patches and staged publication; managed helpers, activity leases, state,
 settings and a plugin manager; SFTP/FTP and media examples; broader SDK/conformance
 coverage and the complete performance/platform acceptance matrix.
@@ -430,16 +430,19 @@ absolute path to `docs/plugins/memory.py`, epoch as `runyte-experimental-2` and
 capabilities as `[providers, documents, jobs]`. Run `:plugin.memory.open notes`;
 `alias` resolves to the same live document. The document supports normal editing,
 search, selection, splits, undo and syntax highlighting. Newline bytes are
-preserved, including CRLF. This round opens provider documents; remote saving,
-explicit restart rebind and SFTP/FTP transports remain active implementation work.
-Native write, write-to-path and reload refuse provider documents until those
-operations have their provider implementation. Discard restores the last accepted
-in-memory baseline. A stopped provider leaves editable text marked unavailable.
+preserved, including CRLF. Native `:write`, `:wq` and `:write-buffer-close`, plus
+`:plugin.memory.save`, use the conditional upload protocol below. Normal save
+trimming hooks still apply. `:plugin.memory.rebind` explicitly reconciles the
+current provider document. Forced overwrite, local write-to-path and ordinary
+`:reload` remain refused; confirmed weaker transports and conflict inspection are
+subsequent work. Discard restores the accepted in-memory baseline, preserving any
+unknown write and its dirty protection. Stopping a provider leaves editable text
+marked unavailable. The memory example resets remote content on process restart.
 
 An instance grants `providers` before `provider.register {name, conditional_write,
 atomic_replace}` can register up to eight unique names. Declarations describe
-transport capabilities independently; neither implies an upload is implemented
-by this round. `resource.open {plugin, provider, key, invocation?}` requires
+transport capabilities independently. Native and plugin saves currently require
+conditional writes; atomic replacement is a separate guarantee. `resource.open {plugin, provider, key, invocation?}` requires
 `documents` and `jobs` on the requesting application. The provider can be another
 configured application. Its generation, provider name and canonical key are
 correlated independently from the requesting application's job and buffer handle.
@@ -483,3 +486,81 @@ there is no remote mutation to reconcile. Up to 64 retired in-flight request IDs
 are remembered for late replies; other duplicate, foreign or out-of-order replies
 are protocol failures. Provider failure, timeout or stop settles the open without
 publishing partial text. No read creates a polling timer after completion.
+
+
+### Conditional uploads and recovery
+
+`buffer.save` uses the same host coordinator as native saves. It requires the
+captured buffer revision, `documents` and `jobs`; native saves use host-owned jobs
+even when the provider did not request the plugin-facing `jobs` capability.
+Only one save or rebind per document is admitted. Native queued intents protect
+close, discard, reload, quit and wait completion immediately. A text change before
+host admission rejects that intent before trimming; after admission, the captured
+snapshot is immutable and editing can continue.
+
+The host sends `resource.write.begin {job, provider, key, expected_version, bytes,
+encoding}`, which returns `{kind: "write_started", value: {upload}}`. Begin and
+all `resource.write.chunk {job, upload, offset, text}` calls must affect staging
+only. Chunk replies are `{kind: "write_chunk", value: {offset}}`, acknowledging
+the exact next UTF-8 byte offset. Document/chunk/encoded-frame limits match reads;
+NUL text is refused before transport. Empty text still needs a final commit.
+
+`resource.write.commit {job, upload, expected_version}` must enforce the original
+remote precondition at the mutation, even if Begin checked it too. Success is
+`{kind: "write_committed", value: {version}}`. A confirmed non-commit is
+`{kind: "write_rejected", value: {error}}`. `atomic_replace` independently declares
+whether replacement is all-or-nothing for remote readers; neither declaration may
+be inferred from a preflight stat followed by an unguarded upload. Providers without
+conditional writes are refused until the foreground overwrite-confirmation
+workflow is implemented; `:write!` does not bypass this boundary.
+
+A confirmed save adopts only the uploaded text as the saved baseline. Later edits
+stay dirty and undoing back to the uploaded snapshot becomes clean. Reliable
+`resource.saved {job, buffer, revision, error}` identifies the uploaded revision on
+success, with null revision on failure, followed by terminal `job.changed`. The
+live buffer revision can be newer. Save-and-close runs only after accepted success,
+when that captured buffer is still clean in the same pane, attachment and foreground
+context. Acceptance alone never closes or completes a wait. The synchronous bundled
+client SaveBuffer endpoint refuses provider documents rather than acknowledging
+pending durability. Remote resource keys never enter local write, Git or LSP paths.
+
+Before Commit is queued, cancellation or deadline requests
+`resource.write.abort {job, upload?}` and keeps protection until
+`{kind: "write_aborted", value: {}}`. Abort has a two-second deadline; unresponsive
+providers are stopped. Providers must remember aborted job identities sufficiently
+to prevent a late Begin from reviving staging, including when `upload` is null.
+Abort is staging cleanup and cannot undo an already committed write. Ordinary
+control calls have ten-second deadlines and the complete save job has sixty seconds.
+A stopped requester leaves bounded cleanup work protected until it settles.
+
+Once Commit entered the outbound queue, cancellation, response loss, timeout,
+malformed acknowledgement or provider stop can mean `outcome_unknown`. Even a
+`write_rejected` carrying that error code retains uncertainty. Runyte preserves the
+uploaded snapshot and dirty protection, never retries automatically, and ignores
+late acknowledgements as editor mutations. Explicit discard cannot clear this
+uncertainty or permit an unverified retry.
+
+`resource.rebind {buffer, expected_revision}` binds a restarted provider only after
+reading version-bound content. Matching the accepted baseline preserves local edits;
+matching an uncertain uploaded snapshot establishes that snapshot as saved. Divergent
+content returns `conflict` without changing either text or baseline. Rebind guards
+baseline-changing operations while allowing live editing and rechecks the baseline
+epoch before adoption.
+
+For an uncertain write, an ordinary stat is insufficient: its commit could still
+be in flight. The host sends `resource.reconcile {job, provider, key, previous_write}`.
+The provider must return `{kind: "reconciled", value: {metadata, previous_write}}`
+only after proving that exact previous mutation has settled and cannot commit later.
+The following read chunks pin that metadata version. If the transport cannot
+establish settlement, it must return `outcome_unknown`; reconnecting and reading old
+bytes is not proof. The memory example serializes commit and reconciliation under
+one lock and has no mutation that can outlive its process. A network provider must
+supply its own honest settlement mechanism.
+
+Unknown uploads retain a 16 MiB reservation under the originally charged configured
+requester, across provider/requester restarts. That reservation covers the captured
+8 MiB text and its bounded recovery read, so full retained quotas cannot prevent
+recovery. Reconciliation compares directly against the two known baselines without
+allocating another text copy. Success or explicit document retirement releases the
+reservation; failed/cancelled rebind retains it. This accounting is independent from
+whether the provider and requesting application are the same process.

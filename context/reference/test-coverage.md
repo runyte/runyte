@@ -41,6 +41,28 @@ days, and fails below 89% total line coverage. The floor is deliberately below
 the observed baseline because conditional Linux and macOS code changes both the
 instrumented denominator and the paths available to a run on one platform.
 
+## 2026-09-08 — conditional provider saves and reconciliation
+
+Measured on `x86_64-unknown-linux-gnu` at `36fb36f` plus the provider save round,
+using Rust 1.97.1 and cargo-llvm-cov 0.9.0. Canonical workspace coverage and the
+ordinary full suite each passed 3,208 tests with 33 ignored. Formatting,
+warnings-as-errors Clippy and both schema/example checkers passed.
+
+| Measure | Covered | Total | Coverage |
+| --- | ---: | ---: | ---: |
+| Lines | 109,444 | 119,474 | 91.60% |
+| Functions | 9,977 | 10,817 | 92.23% |
+| Regions | 167,722 | 183,979 | 91.16% |
+
+Behavior tests cover immutable uploaded baselines, native admission and deferred
+close, conditional staging, cancellation and unknown outcomes, exact settlement
+proofs, requester/provider lifecycle, stale revisions and recovery at saturated
+payload quotas. The inherited Git quiet-period test uses an explicit timestamp
+instead of depending on a short wall-clock interval under instrumentation.
+The native PTY example passed save, save-and-close, reopening uploaded text and
+rebind, with no output during two settled seconds. The floor remains 89%; native
+macOS and complete application workload measurements remain outstanding.
+
 ## 2026-09-08 — provider-backed document opening
 
 Measured on `x86_64-unknown-linux-gnu` at `bb03f2f` plus the provider read round,

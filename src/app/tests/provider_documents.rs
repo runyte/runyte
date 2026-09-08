@@ -16,6 +16,8 @@ fn document(key: &str, text: &str) -> Buffer {
             version: "v1".into(),
             generation: "g1".into(),
             available: true,
+            baseline_epoch: 0,
+            uncertain: None,
         },
         text.into(),
     )
@@ -66,12 +68,10 @@ fn provider_commands_refuse_local_save_reload_and_dirty_close_before_edit_hooks(
     let before = app.buffers[id].to_string();
     let revision = app.buffers[id].revision();
     for command in [
-        "write",
         "write!",
         "write unused-local-file",
         "write! unused-local-file",
         "reload",
-        "wq",
         "close",
     ] {
         app.execute_command(command).unwrap();

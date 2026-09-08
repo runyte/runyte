@@ -66,7 +66,8 @@ Runyte uses optional YAML configuration. Explicitly enabled
 multiple selections in one undoable edit. The opt-in
 [application API](docs/plugins/applications.md) adds native application views,
 a local file manager, background jobs, explicit text operations and provider-backed
-UTF-8 document opening while the broader application platform remains in development.
+UTF-8 editing with conditional remote saves while the broader application platform
+remains in development.
 See the [user guide](docs/user-guide.md) for complete behavior and limits.
 
 ### Workspaces, panes, and navigation

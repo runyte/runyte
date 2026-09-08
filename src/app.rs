@@ -272,6 +272,7 @@ mod picker_workflows;
 mod plugin_documents;
 mod plugin_filesystem;
 pub(crate) mod plugin_interaction;
+pub(crate) mod plugin_providers;
 mod plugin_views;
 pub(crate) mod plugin_workflows;
 mod presentation;

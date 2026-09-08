@@ -243,6 +243,7 @@ mod plugin_editor;
 mod plugin_filesystem;
 mod plugin_filesystem_apply;
 mod plugin_interaction;
+mod plugin_provider_writes;
 mod plugin_providers;
 /// The only owner allowed to mutate one live editor/application workspace.
 ///
@@ -251,6 +252,8 @@ mod plugin_providers;
 mod plugins;
 
 pub struct WorkspaceHost {
+    provider_writes: std::collections::BTreeMap<String, plugin_provider_writes::PendingWrite>,
+    provider_uncertain: std::collections::BTreeMap<usize, (String, usize, String)>,
     provider_reads: std::collections::BTreeMap<String, plugin_providers::PendingRead>,
     provider_ignored: std::collections::VecDeque<(usize, String, String)>,
     document_saves: std::collections::BTreeMap<String, plugin_documents::PendingSave>,
@@ -339,6 +342,8 @@ impl WorkspaceHost {
         let identity = WorkspaceIdentity::from_canonical(app.project_root.clone());
         Self {
             identity,
+            provider_writes: Default::default(),
+            provider_uncertain: Default::default(),
             provider_reads: Default::default(),
             provider_ignored: Default::default(),
             document_saves: Default::default(),
@@ -586,6 +591,8 @@ impl WorkspaceHost {
                         .count()
                 })
                 .sum::<usize>()
+                + self.app.plugins.provider_save_intents.len()
+                + self.provider_writes.values().filter(|p| p.orphaned).count()
                 + usize::from(
                     self.filesystem_apply
                         .as_ref()

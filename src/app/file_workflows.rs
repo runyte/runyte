@@ -1140,7 +1140,7 @@ impl App {
         );
         ensure!(
             self.buffers[buffer].provider().is_none(),
-            "provider document saving is not available"
+            "provider documents require an asynchronous save request"
         );
         self.buffers[buffer].commit_undo_group();
         self.save_buffer(buffer, None, false)
@@ -1321,7 +1321,9 @@ impl App {
 
     pub(super) fn save(&mut self, path: Option<PathBuf>, replace: bool) -> Result<()> {
         let buffer_id = self.active().buffer;
-        self.buffers[buffer_id].commit_undo_group();
+        if self.buffers[buffer_id].provider().is_none() {
+            self.buffers[buffer_id].commit_undo_group();
+        }
         self.save_buffer(buffer_id, path, replace)
     }
 
@@ -1332,7 +1334,14 @@ impl App {
         replace: bool,
     ) -> Result<()> {
         if self.buffers[buffer_id].provider().is_some() {
-            self.action_warning("Save refused", "Provider document saving is not available");
+            if path.is_some() || replace {
+                self.action_warning(
+                    "Save refused",
+                    "Provider save-as and forced overwrite are not available",
+                );
+            } else {
+                self.queue_provider_save(buffer_id, None);
+            }
             return Ok(());
         }
         if self.plugins.filesystem_applying || self.document_mutation_pending(buffer_id) {
@@ -1548,6 +1557,24 @@ impl App {
         self.buffers[buffer_id]
             .prepare_document_save()
             .expect("validated document save")
+    }
+
+    pub(crate) fn prepare_provider_save_text(
+        &mut self,
+        buffer_id: usize,
+    ) -> Result<crate::buffer::ProviderSave> {
+        ensure!(
+            buffer_id < self.buffers.len() && !self.host_buffer_is_closed(buffer_id),
+            "unknown or closed buffer"
+        );
+        // Validate before applying hooks: rejected writes leave text untouched.
+        self.buffers[buffer_id].prepare_provider_save()?;
+        self.buffers[buffer_id].commit_undo_group();
+        if self.config.editor.trim_trailing_whitespace {
+            self.trim_trailing_whitespace(buffer_id);
+        }
+        self.buffers[buffer_id].commit_undo_group();
+        self.buffers[buffer_id].prepare_provider_save()
     }
 
     fn trim_trailing_whitespace(&mut self, buffer_id: usize) {

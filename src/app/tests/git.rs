@@ -797,21 +797,23 @@ fn automatic_refresh_waits_out_a_short_quiet_period_after_the_last_keystroke() {
     // Just acted: a refresh now would move the cursor mid-navigation.
     app.handle_input(InputEvent::Key(KeyStroke::char('j')))
         .unwrap();
-    assert!(app.interaction_defers_git_refresh());
+    let now = app.last_interaction;
+    assert!(app.interaction_defers_git_refresh_at(now));
 
     // Still inside the interaction quiet period, independently from the much
     // longer fallback reconciliation interval.
-    app.last_interaction = Instant::now() - Duration::from_millis(100);
-    assert!(app.interaction_defers_git_refresh());
+    app.last_interaction = now - Duration::from_millis(100);
+    assert!(app.interaction_defers_git_refresh_at(now));
 
     // Paused beyond the short quiet period, so reconciliation is welcome.
-    app.last_interaction = Instant::now() - Duration::from_secs(1);
-    assert!(!app.interaction_defers_git_refresh());
+    app.last_interaction = now - Duration::from_secs(1);
+    assert!(!app.interaction_defers_git_refresh_at(now));
 
     // Any further input restarts the wait, including pointer input.
     app.handle_input(InputEvent::Key(KeyStroke::char('k')))
         .unwrap();
-    assert!(app.interaction_defers_git_refresh());
+    assert!(app.last_interaction >= now);
+    assert!(app.interaction_defers_git_refresh_at(app.last_interaction));
     fs::remove_dir_all(root).unwrap();
 }
 

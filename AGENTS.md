@@ -180,8 +180,10 @@ and the order of the push. Do not infer any of those from the commit history.
   loop; `src/workspace/host/plugin_filesystem.rs` owns their handles and results,
   and `src/app/plugin_filesystem.rs` coordinates native confirmation ownership.
   `src/plugin/provider.rs` defines transport-neutral resource values;
-  `src/workspace/host/plugin_providers.rs` owns bounded provider calls and remote
-  document publication. The
+  `src/workspace/host/plugin_providers.rs` owns bounded provider reads, reconciliation
+  and remote document publication. `src/workspace/host/plugin_provider_writes.rs`
+  owns staged conditional uploads and uncertain outcomes; `src/app/plugin_providers.rs`
+  captures native save intents and deferred close actions. The
   extension contract lives in `docs/plugins.md`, separately from private bundled
   client DTOs and the headless testing facade.
 - `src/headless.rs`: a frontend-independent, test-oriented facade over semantic

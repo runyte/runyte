@@ -157,6 +157,7 @@ impl WorkspaceHost {
     /// Administrative cancellation also removes commands and subscriptions.
     pub fn stop_plugin(&mut self, id: usize, reason: &str) {
         self.stop_provider_reads(id);
+        self.stop_provider_writes(id);
         self.orphan_document_saves(id);
         self.orphan_plugin_filesystem_apply(id);
         self.app.cancel_plugin_input(id, None);
@@ -582,6 +583,7 @@ impl WorkspaceHost {
     /// Observation checkpoints coalesce changes within a host turn, including
     /// undo/reload paths. No scan or wakeup exists when there are no subscribers.
     pub fn sync_plugin_observers(&mut self) {
+        self.sync_provider_writes();
         self.sync_plugin_inputs();
         self.sync_plugin_filesystem();
         self.sync_plugin_views();

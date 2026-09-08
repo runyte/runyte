@@ -122,6 +122,11 @@ pub struct CommandResult {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "method", content = "params", deny_unknown_fields)]
 pub enum Request {
+    #[serde(rename = "resource.rebind")]
+    ResourceRebind {
+        buffer: String,
+        expected_revision: String,
+    },
     #[serde(rename = "provider.register")]
     ProviderRegister(super::provider::Registration),
     #[serde(rename = "resource.open")]
@@ -645,6 +650,7 @@ pub(crate) fn decode(bytes: &[u8]) -> anyhow::Result<super::ClientMessage> {
             method,
             "provider.register"
                 | "resource.open"
+                | "resource.rebind"
                 | "buffer.list"
                 | "buffer.open"
                 | "buffer.save"
@@ -881,6 +887,60 @@ mod tests {
             HostMessage::Event {
                 sequence: "e:13".into(),
                 event: "resource.opened",
+                data: EventData::ResourceFinished(super::super::provider::Finished {
+                    job: "j:g:1".into(),
+                    buffer: Some("b:g:1".into()),
+                    revision: Some("r:0".into()),
+                    error: None,
+                }),
+            },
+            HostMessage::ResourceRequest {
+                id: "h:5".into(),
+                request: super::super::provider::Request::WriteBegin {
+                    job: "j:g:1".into(),
+                    provider: "memory".into(),
+                    key: "notes".into(),
+                    expected_version: "v1".into(),
+                    bytes: 5,
+                    encoding: "utf-8",
+                },
+            },
+            HostMessage::ResourceRequest {
+                id: "h:6".into(),
+                request: super::super::provider::Request::WriteChunk {
+                    job: "j:g:1".into(),
+                    upload: "upload-1".into(),
+                    offset: 0,
+                    text: "é猫".into(),
+                },
+            },
+            HostMessage::ResourceRequest {
+                id: "h:7".into(),
+                request: super::super::provider::Request::WriteCommit {
+                    job: "j:g:1".into(),
+                    upload: "upload-1".into(),
+                    expected_version: "v1".into(),
+                },
+            },
+            HostMessage::ResourceRequest {
+                id: "h:8".into(),
+                request: super::super::provider::Request::WriteAbort {
+                    job: "j:g:1".into(),
+                    upload: Some("upload-1".into()),
+                },
+            },
+            HostMessage::ResourceRequest {
+                id: "h:9".into(),
+                request: super::super::provider::Request::Reconcile {
+                    job: "j:g:2".into(),
+                    provider: "memory".into(),
+                    key: "notes".into(),
+                    previous_write: "j:g:1".into(),
+                },
+            },
+            HostMessage::Event {
+                sequence: "e:14".into(),
+                event: "resource.saved",
                 data: EventData::ResourceFinished(super::super::provider::Finished {
                     job: "j:g:1".into(),
                     buffer: Some("b:g:1".into()),

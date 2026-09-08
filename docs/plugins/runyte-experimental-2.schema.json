@@ -1724,7 +1724,8 @@
             "view.closed",
             "filesystem.finished",
             "filesystem.started",
-            "resource.opened"
+            "resource.opened",
+            "resource.saved"
           ]
         },
         "data": {
@@ -1889,6 +1890,9 @@
         },
         {
           "$ref": "#/$defs/resourceResponse"
+        },
+        {
+          "$ref": "#/$defs/resource.rebind"
         }
       ]
     },
@@ -1920,6 +1924,21 @@
         },
         {
           "$ref": "#/$defs/resource.read"
+        },
+        {
+          "$ref": "#/$defs/resource.reconcile"
+        },
+        {
+          "$ref": "#/$defs/resource.write.begin"
+        },
+        {
+          "$ref": "#/$defs/resource.write.chunk"
+        },
+        {
+          "$ref": "#/$defs/resource.write.commit"
+        },
+        {
+          "$ref": "#/$defs/resource.write.abort"
         }
       ]
     },
@@ -3198,6 +3217,159 @@
                 "value"
               ],
               "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "reconciled"
+                },
+                "value": {
+                  "type": "object",
+                  "properties": {
+                    "metadata": {
+                      "$ref": "#/$defs/resourceMetadata"
+                    },
+                    "previous_write": {
+                      "type": "string",
+                      "maxLength": 64
+                    }
+                  },
+                  "required": [
+                    "metadata",
+                    "previous_write"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "kind",
+                "value"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "write_started"
+                },
+                "value": {
+                  "type": "object",
+                  "properties": {
+                    "upload": {
+                      "type": "string",
+                      "maxLength": 256
+                    }
+                  },
+                  "required": [
+                    "upload"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "kind",
+                "value"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "write_chunk"
+                },
+                "value": {
+                  "type": "object",
+                  "properties": {
+                    "offset": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 8388608
+                    }
+                  },
+                  "required": [
+                    "offset"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "kind",
+                "value"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "write_committed"
+                },
+                "value": {
+                  "type": "object",
+                  "properties": {
+                    "version": {
+                      "type": "string",
+                      "maxLength": 256
+                    }
+                  },
+                  "required": [
+                    "version"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "kind",
+                "value"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "write_rejected"
+                },
+                "value": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "$ref": "#/$defs/error"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "kind",
+                "value"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "write_aborted"
+                },
+                "value": {
+                  "type": "object",
+                  "properties": {},
+                  "required": [],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "kind",
+                "value"
+              ],
+              "additionalProperties": false
             }
           ]
         }
@@ -3355,6 +3527,295 @@
         "error"
       ],
       "additionalProperties": true
+    },
+    "resource.rebind": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "request"
+        },
+        "id": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "method": {
+          "const": "resource.rebind"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "buffer": {
+              "type": "string",
+              "maxLength": 64
+            },
+            "expected_revision": {
+              "type": "string",
+              "maxLength": 64
+            }
+          },
+          "required": [
+            "buffer",
+            "expected_revision"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "method",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    "resource.reconcile": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "request"
+        },
+        "id": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "method": {
+          "const": "resource.reconcile"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "job": {
+              "type": "string",
+              "maxLength": 64
+            },
+            "provider": {
+              "type": "string",
+              "maxLength": 64
+            },
+            "key": {
+              "type": "string",
+              "maxLength": 4096
+            },
+            "previous_write": {
+              "type": "string",
+              "maxLength": 64
+            }
+          },
+          "required": [
+            "job",
+            "provider",
+            "key",
+            "previous_write"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "method",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    "resource.write.begin": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "request"
+        },
+        "id": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "method": {
+          "const": "resource.write.begin"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "job": {
+              "type": "string",
+              "maxLength": 64
+            },
+            "provider": {
+              "type": "string",
+              "maxLength": 64
+            },
+            "key": {
+              "type": "string",
+              "maxLength": 4096
+            },
+            "expected_version": {
+              "type": "string",
+              "maxLength": 256
+            },
+            "bytes": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 8388608
+            },
+            "encoding": {
+              "const": "utf-8"
+            }
+          },
+          "required": [
+            "job",
+            "provider",
+            "key",
+            "expected_version",
+            "bytes",
+            "encoding"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "method",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    "resource.write.chunk": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "request"
+        },
+        "id": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "method": {
+          "const": "resource.write.chunk"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "job": {
+              "type": "string",
+              "maxLength": 64
+            },
+            "upload": {
+              "type": "string",
+              "maxLength": 256
+            },
+            "offset": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 8388608
+            },
+            "text": {
+              "type": "string",
+              "maxLength": 131072
+            }
+          },
+          "required": [
+            "job",
+            "upload",
+            "offset",
+            "text"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "method",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    "resource.write.commit": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "request"
+        },
+        "id": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "method": {
+          "const": "resource.write.commit"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "job": {
+              "type": "string",
+              "maxLength": 64
+            },
+            "upload": {
+              "type": "string",
+              "maxLength": 256
+            },
+            "expected_version": {
+              "type": "string",
+              "maxLength": 256
+            }
+          },
+          "required": [
+            "job",
+            "upload",
+            "expected_version"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "method",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    "resource.write.abort": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "request"
+        },
+        "id": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "method": {
+          "const": "resource.write.abort"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "job": {
+              "type": "string",
+              "maxLength": 64
+            },
+            "upload": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "maxLength": 256
+            }
+          },
+          "required": [
+            "job",
+            "upload"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "method",
+        "params"
+      ],
+      "additionalProperties": false
     }
   },
   "anyOf": [

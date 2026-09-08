@@ -2991,8 +2991,10 @@ choices and forms with masked secret fields. Applications can also create named
 unsaved documents and save them asynchronously: later edits stay dirty, and
 pending or uncertain writes cannot silently complete a close or `--wait` request.
 Provider applications can also open version-bound UTF-8 documents with normal
-editing and syntax highlighting; remote saving and network adapters remain in
-development. Their identities stay separate from local files. The
+editing, syntax highlighting and conditional remote saves. Newer edits remain
+dirty during uploads; save-and-close waits for confirmed success. Explicit rebind
+reconciles restarted providers and uncertain writes. Network adapters remain in
+development, and remote identities stay separate from local files. The
 [application guide](plugins/applications.md) includes runnable task-list, local
 file-manager, document, memory-provider and background-job examples and lists the
 remaining work.

@@ -843,5 +843,187 @@
         "error": null
       }
     }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:83",
+      "method": "resource.rebind",
+      "params": {
+        "buffer": "b:g:1",
+        "expected_revision": "r:0"
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "response",
+      "id": "h:5",
+      "result": {
+        "kind": "write_started",
+        "value": {
+          "upload": "upload-1"
+        }
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "response",
+      "id": "h:6",
+      "result": {
+        "kind": "write_chunk",
+        "value": {
+          "offset": 5
+        }
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "response",
+      "id": "h:7",
+      "result": {
+        "kind": "write_committed",
+        "value": {
+          "version": "v2"
+        }
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "response",
+      "id": "h:8",
+      "result": {
+        "kind": "write_rejected",
+        "value": {
+          "error": {
+            "code": "conflict",
+            "message": "Remote resource changed"
+          }
+        }
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "response",
+      "id": "h:9",
+      "result": {
+        "kind": "write_aborted",
+        "value": {}
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "response",
+      "id": "h:10",
+      "result": {
+        "kind": "reconciled",
+        "value": {
+          "metadata": {
+            "key": "notes",
+            "label": "Memory notes",
+            "syntax_hint": "markdown",
+            "version": "v2",
+            "encoding": "utf-8",
+            "bytes": 5
+          },
+          "previous_write": "j:g:1"
+        }
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "request",
+      "id": "h:5",
+      "method": "resource.write.begin",
+      "params": {
+        "job": "j:g:1",
+        "provider": "memory",
+        "key": "notes",
+        "expected_version": "v1",
+        "bytes": 5,
+        "encoding": "utf-8"
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "request",
+      "id": "h:6",
+      "method": "resource.write.chunk",
+      "params": {
+        "job": "j:g:1",
+        "upload": "upload-1",
+        "offset": 0,
+        "text": "é猫"
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "request",
+      "id": "h:7",
+      "method": "resource.write.commit",
+      "params": {
+        "job": "j:g:1",
+        "upload": "upload-1",
+        "expected_version": "v1"
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "request",
+      "id": "h:8",
+      "method": "resource.write.abort",
+      "params": {
+        "job": "j:g:1",
+        "upload": "upload-1"
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "request",
+      "id": "h:9",
+      "method": "resource.reconcile",
+      "params": {
+        "job": "j:g:2",
+        "provider": "memory",
+        "key": "notes",
+        "previous_write": "j:g:1"
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "event",
+      "sequence": "e:14",
+      "event": "resource.saved",
+      "data": {
+        "job": "j:g:1",
+        "buffer": "b:g:1",
+        "revision": "r:0",
+        "error": null
+      }
+    }
   }
 ]

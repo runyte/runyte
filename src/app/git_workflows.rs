@@ -655,6 +655,10 @@ impl App {
     /// the timer does not record the skipped tick, so the refresh runs as
     /// soon as the interaction ends, and `:git-refresh` stays available.
     pub(super) fn interaction_defers_git_refresh(&self) -> bool {
+        self.interaction_defers_git_refresh_at(Instant::now())
+    }
+
+    pub(super) fn interaction_defers_git_refresh_at(&self, now: Instant) -> bool {
         // Every prompt, including the `s` and `/` searches, opens in command mode.
         if self.mode == Mode::Command || self.has_input_overlay() {
             return true;
@@ -664,9 +668,7 @@ impl App {
         // reading or navigating. The filesystem monitor already debounces a
         // write burst; this shorter interaction quiet period avoids tying UI
         // responsiveness to the much longer fallback reconciliation cadence.
-        if Instant::now().saturating_duration_since(self.last_interaction)
-            < AUTOMATIC_GIT_INTERACTION_QUIET
-        {
+        if now.saturating_duration_since(self.last_interaction) < AUTOMATIC_GIT_INTERACTION_QUIET {
             return true;
         }
         // Only selections inside a projection are at risk. A selection in a

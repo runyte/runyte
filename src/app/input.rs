@@ -5369,6 +5369,13 @@ impl App {
             }
             (Colon::WriteQuit, InvocationParameters::None) => {
                 let buffer = self.active().buffer;
+                if self.buffers[buffer].provider().is_some() {
+                    self.queue_provider_save(
+                        buffer,
+                        Some(super::plugin_providers::ProviderSaveClose::QuitView),
+                    );
+                    return Ok(());
+                }
                 let commit_message = self.buffers[buffer].is_commit_message();
                 self.save(None, false)?;
                 // Writing a commit message consumes that workflow buffer and
@@ -5382,6 +5389,13 @@ impl App {
             }
             (Colon::WriteBufferClose, InvocationParameters::None) => {
                 let buffer = self.active().buffer;
+                if self.buffers[buffer].provider().is_some() {
+                    self.queue_provider_save(
+                        buffer,
+                        Some(super::plugin_providers::ProviderSaveClose::CloseBuffer),
+                    );
+                    return Ok(());
+                }
                 let commit_message = self.buffers[buffer].is_commit_message();
                 self.save(None, false)?;
                 if !commit_message

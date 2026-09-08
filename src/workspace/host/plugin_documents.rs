@@ -81,6 +81,16 @@ impl WorkspaceHost {
                 .map_err(|_| fail(api::ErrorCode::Conflict, "Document could not close"))?;
             return Ok((api::ResultValue::Empty(api::Empty {}), None));
         }
+        if self.app.buffers[buffer].provider().is_some() {
+            if !state.capabilities.contains("jobs") {
+                return Err(fail(
+                    api::ErrorCode::CapabilityDenied,
+                    "Resource save also requires jobs capability",
+                ));
+            }
+            let job = self.start_provider_write(owner, buffer, None)?;
+            return Ok((api::ResultValue::Job(job.clone()), Some(job)));
+        }
         let status = self.app.buffers[buffer].external_file_status();
         if status.is_stale() && status != crate::buffer::ExternalFileStatus::Deleted {
             return Err(fail(

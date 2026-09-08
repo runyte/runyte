@@ -88,6 +88,28 @@ class ApplicationSchemaTests(unittest.TestCase):
                 self.assertEqual(chunk['eof'], len(content) == metadata['bytes'])
             self.assertGreater(reads, 1)
             self.assertIn('é猫 🦀\r\n'.encode(), content)
+            def resource(method, number, **params):
+                send({'type': 'request', 'id': f'h:{number}', 'method': method, 'params': params})
+                return receive()
+            started = resource('resource.write.begin', 100, job='j:g:save', provider='memory', key='notes',
+                               expected_version=metadata['version'], bytes=5, encoding='utf-8')
+            upload = started['result']['value']['upload']
+            accepted = resource('resource.write.chunk', 101, job='j:g:save', upload=upload, offset=0, text='é猫')
+            self.assertEqual(accepted['result']['value']['offset'], 5)
+            committed = resource('resource.write.commit', 102, job='j:g:save', upload=upload, expected_version=metadata['version'])
+            self.assertEqual(committed['result']['kind'], 'write_committed')
+            current = resource('resource.stat', 103, job='j:g:read', provider='memory', key='notes')['result']['value']
+            self.assertEqual(current['bytes'], 5)
+            self.assertNotEqual(current['version'], metadata['version'])
+            rejected = resource('resource.write.begin', 104, job='j:g:stale', provider='memory', key='notes',
+                                expected_version=metadata['version'], bytes=0, encoding='utf-8')
+            self.assertEqual(rejected['error']['code'], 'conflict')
+            resource('resource.write.begin', 105, job='j:g:abort', provider='memory', key='notes',
+                     expected_version=current['version'], bytes=0, encoding='utf-8')
+            self.assertEqual(resource('resource.write.abort', 106, job='j:g:abort', upload=None)['result']['kind'], 'write_aborted')
+            reconciled = resource('resource.reconcile', 107, job='j:g:rebind', provider='memory', key='notes', previous_write='j:g:save')
+            self.assertEqual(reconciled['result']['value']['previous_write'], 'j:g:save')
+            self.assertEqual(reconciled['result']['value']['metadata']['version'], current['version'])
         finally:
             child.stdin.close()
             child.wait(timeout=3)

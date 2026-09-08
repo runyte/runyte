@@ -10,7 +10,9 @@
 mod filesystem;
 pub(crate) use filesystem::{FilesystemInput, FilesystemUpdate};
 mod provider;
-pub use provider::{ProviderDocument, ProviderIdentity};
+pub use provider::{
+    ProviderConflict, ProviderDocument, ProviderIdentity, ProviderSave, ProviderUncertain,
+};
 
 use std::{
     collections::HashMap,
@@ -2742,6 +2744,10 @@ impl Buffer {
     /// person confirms it, undo must not resurrect the changes they chose to
     /// throw away.
     pub fn discard_changes_to(&mut self, text: &str) -> Result<()> {
+        ensure!(
+            self.provider().is_none(),
+            "Provider documents must discard to their accepted remote baseline"
+        );
         if let Some(reason) = self.read_only_reason() {
             bail!("{reason}");
         }

@@ -9,7 +9,7 @@ use crate::{
 };
 use anyhow::{Result, ensure};
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, VecDeque},
     sync::Arc,
 };
 
@@ -48,6 +48,7 @@ pub(crate) struct Instance {
 #[derive(Default)]
 pub(crate) struct Plugins {
     pub document_saves: BTreeSet<usize>,
+    pub provider_save_intents: VecDeque<super::plugin_providers::ProviderSaveIntent>,
     pub filesystem_accepted: Option<crate::fs_plan::DeletionMode>,
     pub filesystem_applying: bool,
     pub orphaned_payload: usize,

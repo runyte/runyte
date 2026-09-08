@@ -195,7 +195,9 @@ impl WorkspaceHost {
                 id: request_id,
                 outcome,
             } => {
-                if self.provider_response(id, &request_id, &outcome)? {
+                if self.provider_response(id, &request_id, &outcome)?
+                    || self.provider_write_response(id, &request_id, &outcome)?
+                {
                     return Ok(());
                 }
                 ensure!(
@@ -282,9 +284,14 @@ impl WorkspaceHost {
         use api::{ErrorCode as Code, Request};
         if matches!(
             request,
-            Request::ProviderRegister(_) | Request::ResourceOpen { .. }
+            Request::ProviderRegister(_)
+                | Request::ResourceOpen { .. }
+                | Request::ResourceRebind { .. }
         ) {
             return self.application_provider_request(id, request);
+        }
+        if let Some(result) = self.provider_write_job_request(id, &request) {
+            return result;
         }
         if let Some(result) = self.provider_job_request(id, &request) {
             return result;
@@ -482,6 +489,9 @@ impl WorkspaceHost {
             return Ok(());
         }
         instance.application.deadlines.remove(&token);
+        if self.provider_write_deadline(id, &token)? {
+            return Ok(());
+        }
         if self.provider_deadline(id, &token) {
             return Ok(());
         }
@@ -732,6 +742,15 @@ impl WorkspaceHost {
         if self.app.plugins.instances[&owner]
             .application
             .retained_payload
+            .saturating_add(
+                self.provider_uncertain
+                    .values()
+                    .filter(|(configured, _, _)| {
+                        configured == &self.app.plugins.instances[&owner].config.id
+                    })
+                    .map(|(_, charge, _)| charge)
+                    .sum::<usize>(),
+            )
             .saturating_add(bytes)
             > 48 * 1024 * 1024
             || self

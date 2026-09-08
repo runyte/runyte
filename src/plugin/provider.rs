@@ -45,13 +45,61 @@ pub struct Chunk {
     deny_unknown_fields
 )]
 pub enum Response {
+    Reconciled {
+        metadata: Metadata,
+        previous_write: String,
+    },
     Stat(Metadata),
     Read(Chunk),
+    WriteStarted {
+        upload: String,
+    },
+    WriteChunk {
+        offset: usize,
+    },
+    WriteCommitted {
+        version: String,
+    },
+    WriteRejected {
+        error: Error,
+    },
+    WriteAborted {},
 }
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(tag = "method", content = "params")]
 pub enum Request {
+    #[serde(rename = "resource.reconcile")]
+    Reconcile {
+        job: String,
+        provider: String,
+        key: String,
+        previous_write: String,
+    },
+    #[serde(rename = "resource.write.begin")]
+    WriteBegin {
+        job: String,
+        provider: String,
+        key: String,
+        expected_version: String,
+        bytes: usize,
+        encoding: &'static str,
+    },
+    #[serde(rename = "resource.write.chunk")]
+    WriteChunk {
+        job: String,
+        upload: String,
+        offset: usize,
+        text: String,
+    },
+    #[serde(rename = "resource.write.commit")]
+    WriteCommit {
+        job: String,
+        upload: String,
+        expected_version: String,
+    },
+    #[serde(rename = "resource.write.abort")]
+    WriteAbort { job: String, upload: Option<String> },
     #[serde(rename = "resource.stat")]
     Stat {
         job: String,
