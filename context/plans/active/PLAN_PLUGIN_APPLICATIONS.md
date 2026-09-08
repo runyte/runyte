@@ -7,6 +7,13 @@ Active implementation plan, originally written 2026-09-08 against `c7c18bd`
 Implementation authorized 2026-09-08. Milestones are being implemented in order;
 this record remains active until all acceptance gates have evidence.
 
+As of 2026-09-09, all six milestones' feature implementations and examples are
+delivered, reviewed and committed. Linux formatting, Clippy, 3,543 Rust tests,
+322 plugin conformance tests, 91.71% canonical line coverage and the complete
+release performance matrix pass. Native macOS CI execution is the remaining
+completion gate; the historical implementation rounds below retain their
+original intermediate scope descriptions.
+
 The objective is an extension system that can host useful applications: a file
 manager, a remote file browser/editor with transfers, and a media controller.
 Plugins should own application logic and external connections. Runyte should
@@ -1142,6 +1149,33 @@ confirmed Trash, as required by milestone 3, rather than an additional permanent
 delete operation. The native manager retains bounded static diagnostics; raw
 plugin stderr is not persisted. These choices add no marketplace, decoder,
 service-account or inline-video requirement to this plan.
+
+## Release performance acceptance — 2026-09-09
+
+The complete serial workload matrix passed using application implementation
+`f67289c` and harness `104b31f` against the retained `c7c18bd` release binary.
+All 150 startup samples and 27 independent ten-second workload windows
+completed, including epoch 1/2 registration proofs, first usable native views,
+an admitted 10,000-row, 4 MiB model, a detached finite job checked after
+reattachment, a noisy managed helper with its descendant, and repeated
+maximum-model publication beside a quiet plugin.
+
+Quiescent attached workloads emitted no PTY bytes and idle CPU remained at the
+0.00–0.10% measurement floor. Disabled first-document medians differed from
+the base by at most 0.57 ms; demonstrated first-edit medians differed by
+−0.50 to +1.22 ms, with overlapping ranges. The 120 verified input-to-frame
+samples per active workload measured 2.16 ms p95 beside helper output and
+2.36 ms p95 beside maximum-model publication, below the 16 ms target. Every
+input phase includes independent progress evidence; saved document bytes prove
+every measured edit. Ordinary cleanup verified owned descendant exit.
+
+Independent benchmark review fixed epoch 1 registration and detached-job
+liveness proof, output-metric naming and emergency cleanup before measurement.
+Twenty-one pure harness tests pass. The
+[performance register](../../reference/startup-performance.md) retains machine,
+binary identities, methods, medians, ranges, limitations and a link to every raw
+sample. Native macOS tests, conformance and canonical coverage remain unrun;
+this plan stays active until those CI gates pass.
 
 ## Investigation: existing foundation and missing boundaries
 

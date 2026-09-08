@@ -17,6 +17,110 @@ cargo build --release
 benchmarks/run.py
 ```
 
+## 2026-09-09 — complete Linux application workload matrix
+
+Application implementation `f67289c`, measured with harness `104b31f` against
+the retained `c7c18bd` release binary. Both builds use
+`cargo build --release --locked`. Machine: Linux x86_64,
+`7.1.13-200.fc44.x86_64`, AMD Ryzen AI 9 365, 20 logical CPUs,
+approximately 27.2 GiB RAM, Rust 1.97.1 and Python 3.14. The measurement ran
+serially after builds, tests and coverage finished, on September 9 in
+Europe/Warsaw (September 8 UTC).
+
+The [raw artifact](../../benchmarks/results/plugin-applications-2026-09-09.json)
+retains all 150 startup samples, 27 workload windows, 240 input latencies,
+workload progress checkpoints, binary sizes and SHA-256 identities. Only binary
+paths were replaced with repository-relative labels. Binary size increased from
+45,335,520 to 48,735,392 bytes (7.50%). The branch SHA-256 is
+`4951842e178fc1d591e8e270a7fd258162f6fde1506a7014b85beae28b96e3a1`;
+the base is `724984cd14f457584ec0162926dfa0ea74f60bbce10ab7c9f1ef31dedbdbc2ec`.
+
+Every sample uses a fresh temporary Git workspace, isolated home/XDG storage,
+disabled LSP, enabled syntax and a 120×40 PTY. Ten samples per startup cell
+measure completed document output and a demonstrated first edit separately.
+First-byte timing remains diagnostic and is available in the raw artifact.
+Epoch 1 readiness is proved by invoking the checked-in uppercase example and
+undoing its result outside the captured startup interval. Epoch 2 registration
+must be acknowledged by the host. A separate fresh-process series measures the
+first rendered, admitted native view following an explicit command.
+
+Values below are median (minimum–maximum), in milliseconds.
+
+| First document output | Base, disabled | Branch, disabled | Epoch 1, quiescent | Epoch 2, quiescent |
+| --- | ---: | ---: | ---: | ---: |
+| `short.txt` | 7.77 (6.89–10.64) | 8.23 (7.00–9.47) | 8.85 (7.64–10.07) | 8.85 (8.10–9.90) |
+| `medium.lua` | 8.34 (7.13–9.87) | 8.90 (7.66–9.90) | 8.97 (7.89–10.55) | 8.72 (6.37–10.32) |
+| `long.lua` | 15.00 (12.96–18.02) | 15.13 (13.44–17.63) | 14.59 (12.87–18.33) | 15.99 (13.45–21.55) |
+
+| Demonstrated first edit | Base, disabled | Branch, disabled | Epoch 1, quiescent | Epoch 2, quiescent |
+| --- | ---: | ---: | ---: | ---: |
+| `short.txt` | 11.51 (10.70–13.98) | 12.57 (11.33–15.73) | 13.36 (11.47–16.90) | 13.09 (11.97–17.56) |
+| `medium.lua` | 13.00 (11.40–17.69) | 12.50 (11.33–25.77) | 13.25 (11.96–33.54) | 13.10 (12.06–17.71) |
+| `long.lua` | 18.84 (16.85–20.82) | 20.07 (17.26–23.51) | 18.88 (17.93–23.60) | 19.60 (18.02–25.35) |
+
+| Separate native-view startup | Acknowledged registration | First usable view |
+| --- | ---: | ---: |
+| `short.txt` | 47.95 (44.33–56.99) | 65.96 (61.48–75.41) |
+| `medium.lua` | 51.01 (44.82–59.44) | 75.46 (67.20–86.95) |
+| `long.lua` | 57.64 (51.44–69.41) | 77.57 (69.03–92.30) |
+
+Disabled first-document medians differ by at most 0.57 ms; demonstrated-edit
+medians differ by −0.50 to +1.22 ms, with overlapping ranges. These samples show
+no material disabled-startup regression on this machine, without claiming
+statistical equivalence or turning the 16 ms sustained-input target into a
+startup limit.
+
+Each workload has three ten-second windows after 2.5 seconds of settlement.
+CPU includes the editor/host and its descendants, including reaped-child CPU;
+100% means one logical CPU. One 10 ms scheduler tick across a ten-second window
+is approximately 0.10%, the measurement floor. Output counts observed PTY bytes
+and read chunks, not editor write syscalls. A detached job has no frontend, so
+its output measurement is unavailable. Reattachment and an authoritative job
+query prove the same host still owns the running job after each window.
+
+| Workload | CPU %, median (range) | PTY bytes, median (range) |
+| --- | ---: | ---: |
+| Base, disabled | 0.00 (0.00–0.00) | 0 (0–0) |
+| Branch, disabled | 0.00 (0.00–0.00) | 0 (0–0) |
+| Epoch 1, quiescent | 0.10 (0.00–0.10) | 0 (0–0) |
+| Epoch 2, quiescent | 0.10 (0.00–0.10) | 0 (0–0) |
+| Visible native view | 0.00 (0.00–0.10) | 0 (0–0) |
+| 10,000-row, 4 MiB model | 0.00 (0.00–0.10) | 0 (0–0) |
+| Detached finite job | 0.00 (0.00–0.00) | unavailable |
+| Noisy helper and descendant | 7.00 (6.60–7.30) | 0 (0–0) |
+| Repeated maximum-model publication | 60.30 (59.60–60.50) | 2,542 (2,542–2,573) |
+
+The active publisher changes visible content, so its output is expected;
+quiescent workloads introduce no output. Publication CPU includes Python model
+encoding and all host work and is not an idle cost. Exact canonical model size
+and row count are checked after host admission before measurement.
+
+Each active-load case also measures 40 individual edits in each of three
+windows. Timing runs from key write through the exact edited marker in a
+completed synchronized terminal frame, including harness decoding. Untimed
+60–81 ms spacing spans multiple publication cycles. Full saved-document bytes
+must equal the original plus all 40 inserted characters. Bounded histories
+prove helper output or accepted model commits during the input phase: every
+publication phase contains 24 acknowledged commits and every helper phase
+contains 15 increasing output checkpoints.
+
+| Input under load, 120 samples each | Median | Range | p95 |
+| --- | ---: | ---: | ---: |
+| Noisy helper and descendant | 1.64 ms | 1.22–2.60 ms | 2.16 ms |
+| Repeated maximum-model publication | 1.64 ms | 1.12–4.08 ms | 2.36 ms |
+
+Both p95 values are below the recorded-machine target of 16 ms. An independent
+quiet plugin also answered beside each busy owner. Its end-to-end command
+probe took 94.11 ms (94.02–94.74) beside helper output and 95.71 ms
+(93.79–96.45) beside publication; these include the harness's fixed 80 ms Escape
+guard and command-prompt rendering and are not the per-keystroke metric.
+
+All normal cleanup checks passed, including owned helper/descendant exit.
+This completes the Linux release workload matrix; it does not supply macOS
+test or coverage evidence. The application plan remains active until its
+required supported-platform CI passes. These results do not measure physical
+display/audio latency, remote network performance or service-account behavior.
+
 ## 2026-09-08 — application API development
 
 Measured on Linux `x86_64-unknown-linux-gnu`, kernel `7.1.13-200.fc44.x86_64`,
