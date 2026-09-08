@@ -214,6 +214,11 @@ impl App {
             let (view_handle, model_revision, rows) = if let Some((handle, view)) = view {
                 if command.context == plugin::application::CommandContext::View {
                     ensure!(
+                        view.model.actions.is_empty()
+                            || view.model.actions.contains(&command.local),
+                        "Application view does not offer this action"
+                    );
+                    ensure!(
                         self.plugins.presented_views.get(&self.active_pane)
                             == Some(&(view.buffer, view.revision)),
                         "Application view changed; wait for refresh"
@@ -226,10 +231,23 @@ impl App {
                             range.to().saturating_sub(usize::from(!range.is_empty())),
                         )
                     {
-                        if let Some(row) = view.model.rows.get(row) {
-                            rows.insert(row.id.clone());
+                        if let Some(Some(index)) = view.projection.line_rows.get(row)
+                            && let Some(projected) = view.projection.rows.get(*index)
+                        {
+                            rows.insert(projected.id.clone());
                         }
                     }
+                }
+                if command.context == plugin::application::CommandContext::View
+                    && self.plugins.instances[&command.plugin]
+                        .application
+                        .primary_commands
+                        .contains(&command.local)
+                {
+                    ensure!(
+                        !rows.is_empty(),
+                        "Select an application row before invoking its primary action"
+                    );
                 }
                 (
                     Some(handle.clone()),

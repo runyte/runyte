@@ -66,7 +66,9 @@ adds the host request ID to handler context as `invocation`.
 `view.publish` replaces an entire model at `expected_revision`. Updates validate
 before publication, preserve selections and scroll rows by row ID, and return
 `busy` above ten publications per second. No publication timer runs while idle.
-A removed row falls back to the nearest remaining row by index. Closing or
+A removed row falls back to the nearest surviving row in the previous order,
+with the lower previous index breaking ties. Selection direction is preserved
+even when a reorder crosses its endpoints. Closing or
 ordinary special-buffer eviction produces `view.closed` after any close response.
 A stopped plugin leaves its readable view marked `[unavailable]`.
 
@@ -109,7 +111,9 @@ generation and must never be parsed, persisted, or used by another owner.
 | jobs | `job.update` | Handle and integer progress 0–100; updated job |
 | jobs | `job.finish` | Handle and terminal state; completed job |
 | jobs | `job.cancel` | Handle; cancellation requested or existing terminal state |
-| views | `view.create/get/publish/close` | Semantic model, owned handle and model revision |
+| views | `view.create/get/publish/patch/close` | Semantic model, owned handle and model revision |
+| views | `view.stage.open/write/commit/close` | Bounded construction and atomic publication |
+| views | `view.snapshot.open/read/close` | Immutable canonical model JSON and UTF-8 byte chunks |
 | views | `pane.show` | Pending invocation ID and view handle |
 | workspace | `buffer.list` | Offset and page size 1–128; live buffer metadata and next offset |
 | workspace | `pane.list` | Empty parameters; pane handles and selection revisions |
@@ -219,19 +223,81 @@ source buffer, explicit release, expiry or disconnect releases the snapshot.
 An expired snapshot returns `closed`. Chunks never combine different revisions.
 
 An instance can hold sixteen native views, each with at most 10,000 rows.
-Single-message models must fit the encoded line with envelope headroom;
-staged 4 MiB models and row patches are not implemented yet. View projections
+Models contain at most 4 MiB of canonical JSON and project to at most 4 MiB of
+text. Single-message models must fit the encoded line with envelope headroom;
+larger models use the staging operations described below. View projections
 and immutable snapshots share a 48 MiB retained payload allowance per plugin
 and 160 MiB across the host. The remaining portions of the plan's 64/256 MiB
 budgets are reserved for bounded queues, decoding and publication copies.
 These measure payload, not allocator RSS or the external process's memory.
 Buffer/pane issuance is bounded at 1,024/128 handles per connection generation.
 
-Still required by the active plan: richer view/query/action observations;
-binary uploads; row patches and staged view publication;
+Still required by the active plan: query/viewport/action observations;
+binary uploads;
 managed helpers, activity leases, state, settings and a plugin manager; media
 examples; broader SDK/conformance coverage and the complete performance/platform
 acceptance matrix.
+
+## Columns, blocks and atomic model updates
+
+`dashboard.py` is a runnable example with capability `views`. Its `open` command
+shows twelve rows; `large` stages 8,000 rows. Enter toggles a row, and Tab offers
+reverse, inspect and immutable-model verification actions. There is no idle
+polling. Configure it like `tasks.py`, using ID `dashboard` and its script path.
+
+Models optionally contain up to eight `columns: [{id,label}]`. Every row then
+has empty `text` and exactly one `{text,role}` cell per column. Without columns,
+rows use their original single-line text and have no cells. Runyte clips each
+column at 32 terminal cells on grapheme boundaries, retaining the complete value
+in the model. Optional `detail` and `preview` blocks are `{text,role}`, at most
+64 KiB and 1,024 lines each; `status` uses the same shape but one line and 1,024
+bytes. Line feeds are permitted in multiline blocks; other control characters
+are rejected. Headers and blocks do not identify selectable data rows. Enter
+requires a selected data row; other view commands remain available on empty
+views. An optional `actions` list restricts view commands to those registered
+local names; an omitted or empty list retains all registered view commands.
+
+`view.patch` takes `view`, `expected_revision`, optional complete `header`
+(the model without `rows`) and at most 1,024 `operations`. Operations are
+`{kind:"insert",before:row_id_or_null,row}`, `{kind:"update",row}`,
+`{kind:"remove",ids}` and `{kind:"reorder",ids}`. Insert with null appends;
+update identifies the existing row by its unchanged ID. Reorder must name every
+current row exactly once. Operations run in order on a candidate model and
+publish atomically only if the whole candidate validates. Errors preserve the
+old model and revision. Concurrent preparations for the same view return `busy`.
+A patch may reference at most 20,000 row IDs across all operations (including
+insert anchors), and each ID list holds at most 10,000 entries. Structural array
+limits are enforced while decoding: oversized inline arrays are protocol errors,
+and oversized staged arrays refuse the candidate before excess values are retained.
+
+For larger updates, `view.stage.open` captures a view and `expected_revision`,
+`kind: model|patch`, and exact UTF-8 `bytes` (1 byte–4 MiB). Write JSON text with
+`view.stage.write {stage,offset,text}` in contiguous chunks of at most 128 KiB;
+each reply gives the next offset. A staged patch is `{header?,operations}`.
+`view.stage.commit` prepares and publishes the complete document once; stale
+revisions, malformed candidates and cancelled stages never partly publish.
+Incomplete commits retain the stage for further writes. Two stages may exist
+per owner and writes renew a 30-second idle expiry. Closing a stage also
+cancels its already admitted, unfinished publication. Creation can start with
+a small empty view followed by staged publication.
+
+`view.get` and publication return `{view,revision,model}` for small models;
+large models return `{view,revision,bytes,rows}`. To read a large model, open
+`view.snapshot.open {view,expected_revision}` and use its `{snapshot,revision,bytes}`
+result. Read with `{snapshot,offset,limit}` (limit 1–128 KiB); replies are
+`{offset,text,eof}`, with UTF-8 byte offsets. Chunks come from one immutable
+canonical JSON encoding even if the live view changes. Two snapshots per owner
+have 30-second refreshed idle expiry. Closing the view or owner releases them;
+`view.snapshot.close` is idempotent. Unknown reads return `not_found`.
+
+The Python SDK's `publish_model`, `patch_view` and `get_model` choose the bounded
+inline or chunked path and close temporary handles. They do not retry a refused
+publication. Model validation, JSON encoding, projection, row maps and text
+transaction preparation run outside the editor loop. Installation checks the
+captured model and buffer revisions and maps the selections and viewport that
+exist at commit time. The host reserves preparation memory before work starts,
+shares its finite worker admission bound with local filesystem work, and retains
+stopped-owner reservations until actual worker completion.
 
 ## Local file manager
 

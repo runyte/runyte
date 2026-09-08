@@ -47,6 +47,13 @@ pub struct Registration {
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ClientMessage {
     #[serde(skip)]
+    ModelPrepared {
+        generation: String,
+        request: String,
+        result: Result<super::view::Prepared, super::application::Error>,
+        _permit: tokio::sync::OwnedSemaphorePermit,
+    },
+    #[serde(skip)]
     OutputReady {
         _notification: super::OutputReadyGuard,
     },

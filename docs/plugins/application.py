@@ -7,6 +7,8 @@ import threading
 
 VERSION = 'runyte-experimental-2'
 LIMIT = 1024 * 1024
+MODEL_LIMIT = 4 * 1024 * 1024
+MODEL_CHUNK = 128 * 1024
 
 class PluginError(Exception):
     def __init__(self, code, message):
@@ -50,6 +52,77 @@ class Application:
 
     def request(self, method, **params):
         return self._request(method, params)
+
+    def publish_model(self, view, expected_revision, model):
+        """Atomically publish a model, staging large JSON without exposing partial rows."""
+        return self._model_update(view, expected_revision, 'model', model)
+
+    def patch_view(self, view, expected_revision, operations, header=None):
+        patch = {'operations': operations}
+        if header is not None:
+            patch['header'] = header
+        return self._model_update(view, expected_revision, 'patch', patch)
+
+    def _model_update(self, view, expected_revision, kind, value):
+        data = json.dumps(value, ensure_ascii=False, allow_nan=False,
+                          separators=(',', ':')).encode('utf-8')
+        if len(data) > MODEL_LIMIT:
+            raise PluginError('limit_exceeded', 'Encoded model update exceeds limit')
+        if len(data) <= LIMIT - 8192:
+            params = {'model': value} if kind == 'model' else value
+            return self.request('view.publish' if kind == 'model' else 'view.patch',
+                                view=view, expected_revision=expected_revision, **params)
+        stage = self.request('view.stage.open', view=view, expected_revision=expected_revision,
+                             kind=kind, bytes=len(data))['stage']
+        try:
+            offset = 0
+            while offset < len(data):
+                end = min(offset + MODEL_CHUNK, len(data))
+                while end < len(data) and data[end] & 0xc0 == 0x80:
+                    end -= 1
+                result = self.request('view.stage.write', stage=stage, offset=offset,
+                                      text=data[offset:end].decode('utf-8'))
+                if result['offset'] != end:
+                    raise PluginError('invalid_argument', 'Staging offset mismatch')
+                offset = end
+            return self.request('view.stage.commit', stage=stage)
+        finally:
+            try:
+                self.request('view.stage.close', stage=stage)
+            except PluginError:
+                pass
+
+    def get_model(self, view):
+        """Read one immutable model revision, including models larger than a frame."""
+        result = self.request('view.get', view=view)
+        if 'model' in result:
+            return result
+        snapshot = self.request('view.snapshot.open', view=view,
+                                expected_revision=result['revision'])
+        handle = snapshot['snapshot']
+        try:
+            if not 0 <= snapshot['bytes'] <= MODEL_LIMIT:
+                raise PluginError('limit_exceeded', 'Model snapshot exceeds limit')
+            data = bytearray()
+            while True:
+                chunk = self.request('view.snapshot.read', snapshot=handle,
+                                     offset=len(data), limit=MODEL_CHUNK)
+                encoded = chunk['text'].encode('utf-8')
+                if (chunk['offset'] != len(data) or len(encoded) > MODEL_CHUNK
+                        or len(data) + len(encoded) > snapshot['bytes']
+                        or not encoded and not chunk['eof']):
+                    raise PluginError('invalid_argument', 'Invalid model snapshot chunk')
+                data.extend(encoded)
+                if chunk['eof']:
+                    if len(data) != snapshot['bytes']:
+                        raise PluginError('invalid_argument', 'Incomplete model snapshot')
+                    return {'view': view, 'revision': snapshot['revision'],
+                            'model': json.loads(data)}
+        finally:
+            try:
+                self.request('view.snapshot.close', snapshot=handle)
+            except PluginError:
+                pass
 
     def subscribe(self, sources, callback):
         """Deliver baseline and ordered updates as callback(event, sequence, data).

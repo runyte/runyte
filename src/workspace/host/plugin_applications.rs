@@ -131,6 +131,16 @@ impl WorkspaceHost {
                 request,
             } => {
                 self.application_request_id(id, &request_id)?;
+                if super::plugin_models::is_model_request(&request) {
+                    let result = self.application_model_request(id, &request_id, request);
+                    return match result {
+                        Ok(None) => Ok(()),
+                        Ok(Some(result)) => {
+                            self.application_local_reply(id, request_id, Ok(result))
+                        }
+                        Err(error) => self.application_local_reply(id, request_id, Err(error)),
+                    };
+                }
                 if matches!(
                     request,
                     api::Request::EventSubscribe { .. }
@@ -321,6 +331,12 @@ impl WorkspaceHost {
         }
         if let Some(result) = self.provider_job_request(id, &request) {
             return result;
+        }
+        if super::plugin_models::is_model_request(&request) {
+            return Err(api::Error::new(
+                Code::InvalidArgument,
+                "View mutations require asynchronous preparation",
+            ));
         }
         if matches!(
             request,
@@ -529,6 +545,9 @@ impl WorkspaceHost {
             return Ok(());
         }
         instance.application.deadlines.remove(&token);
+        if self.model_deadline(id, &token) {
+            return Ok(());
+        }
         if self.validation_deadline(id, &token)? {
             return Ok(());
         }
@@ -636,6 +655,12 @@ impl WorkspaceHost {
         request: api::Request,
     ) -> Result<api::ResultValue, api::Error> {
         use api::{ErrorCode as Code, Request};
+        if super::plugin_models::is_model_request(&request) {
+            return Err(api::Error::new(
+                Code::InvalidArgument,
+                "View mutations require asynchronous preparation",
+            ));
+        }
         let fail = api::Error::new;
         if !self.app.plugins.instances[&id]
             .application
@@ -647,41 +672,7 @@ impl WorkspaceHost {
                 "Views capability was not granted",
             ));
         }
-        if let Request::ViewCreate { model } = request {
-            model.validate()?;
-            self.reserve_application_payload(id, model.payload_bytes() * 2)?;
-            let state = &mut self.app.plugins.instances.get_mut(&id).unwrap().application;
-            if state.views.len() >= 16 {
-                return Err(fail(Code::LimitExceeded, "View limit reached"));
-            }
-            state.retained_payload += model.payload_bytes() * 2;
-            state.next_handle += 1;
-            let handle = format!("v:{}:{}", state.generation, state.next_handle);
-            let buffer = self.app.create_plugin_view(id, &handle, &model);
-            self.app
-                .plugins
-                .instances
-                .get_mut(&id)
-                .unwrap()
-                .application
-                .views
-                .insert(
-                    handle.clone(),
-                    crate::plugin::view::View {
-                        buffer,
-                        model: model.clone(),
-                        revision: 1,
-                        published: None,
-                    },
-                );
-            return Ok(api::ResultValue::View {
-                view: handle,
-                revision: "m:1".into(),
-                model,
-            });
-        }
         let (Request::ViewGet { view }
-        | Request::ViewPublish { view, .. }
         | Request::ViewClose { view }
         | Request::PaneShow { view, .. }) = &request
         else {
@@ -697,11 +688,7 @@ impl WorkspaceHost {
             return Err(fail(Code::Closed, "View is closed"));
         }
         match request {
-            Request::ViewGet { view } => Ok(api::ResultValue::View {
-                view,
-                revision: format!("m:{}", live.revision),
-                model: live.model.clone(),
-            }),
+            Request::ViewGet { view } => Ok(self.model_result(id, view)),
             Request::PaneShow { invocation, .. } => {
                 let context = state
                     .requests
@@ -717,59 +704,6 @@ impl WorkspaceHost {
                     .map_err(|_| fail(Code::Busy, "View cannot close"))?;
                 let _ = view;
                 Ok(api::ResultValue::Empty(api::Empty {}))
-            }
-            Request::ViewPublish {
-                view,
-                expected_revision,
-                model,
-            } => {
-                if expected_revision != format!("m:{}", live.revision) {
-                    return Err(fail(Code::Stale, "View model changed"));
-                }
-                model.validate()?;
-                if live
-                    .published
-                    .is_some_and(|at| at.elapsed() < std::time::Duration::from_millis(100))
-                {
-                    return Err(fail(
-                        Code::Busy,
-                        "View publication is paced at ten updates per second",
-                    ));
-                }
-                let old = live.model.clone();
-                self.reserve_application_payload(
-                    id,
-                    (model.payload_bytes() * 2).saturating_sub(old.payload_bytes() * 2),
-                )?;
-                self.app
-                    .plugins
-                    .instances
-                    .get_mut(&id)
-                    .unwrap()
-                    .application
-                    .retained_payload =
-                    self.app.plugins.instances[&id].application.retained_payload
-                        - old.payload_bytes() * 2
-                        + model.payload_bytes() * 2;
-                self.app.publish_plugin_view(buffer, Some(&old), &model);
-                let live = self
-                    .app
-                    .plugins
-                    .instances
-                    .get_mut(&id)
-                    .unwrap()
-                    .application
-                    .views
-                    .get_mut(&view)
-                    .unwrap();
-                live.revision += 1;
-                live.published = Some(std::time::Instant::now());
-                live.model = model.clone();
-                Ok(api::ResultValue::View {
-                    view,
-                    revision: format!("m:{}", live.revision),
-                    model,
-                })
             }
             _ => unreachable!(),
         }

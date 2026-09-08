@@ -299,6 +299,49 @@ pub struct Buffer {
     layout: ContentLayout,
 }
 
+/// Cheap immutable input for a worker-prepared generated projection.
+#[derive(Clone, Debug)]
+pub(crate) struct PluginProjectionSource {
+    text: Text,
+    layout: ContentLayout,
+    revision: Option<u64>,
+}
+
+#[derive(Debug)]
+pub(crate) struct PreparedPluginProjection {
+    text: Text,
+    layout: ContentLayout,
+    longest_line: usize,
+    revision: Option<u64>,
+}
+
+impl PluginProjectionSource {
+    pub fn empty() -> Self {
+        Self {
+            text: Text::new(),
+            layout: ContentLayout::default(),
+            revision: None,
+        }
+    }
+
+    /// Run on the bounded publication worker. The owned body becomes one
+    /// transaction; inverse text and display measurements never run at commit.
+    pub fn prepare(self, body: String) -> PreparedPluginProjection {
+        let layout = self.layout.remeasured(&body);
+        let longest_line = body.split('\n').map(str::len).max().unwrap_or_default();
+        let mut text = self.text;
+        let transaction =
+            Transaction::new(vec![crate::text::Change::new(0, text.len_chars(), body)]);
+        text.apply(&transaction);
+        PreparedPluginProjection {
+            text,
+            layout,
+            longest_line,
+            revision: self.revision,
+        }
+    }
+}
+
 /// Enough of a file's metadata to notice that something else rewrote it.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct DiskState {
@@ -2997,24 +3040,35 @@ impl Buffer {
         Some(group)
     }
 
-    /// Transactional generated publication, without a user undo checkpoint.
-    pub(crate) fn replace_plugin_projection(&mut self, text: &str) {
-        debug_assert!(matches!(
+    pub(crate) fn plugin_projection_source(&self) -> PluginProjectionSource {
+        PluginProjectionSource {
+            text: self.text.clone(),
+            layout: self.layout,
+            revision: Some(self.revision()),
+        }
+    }
+
+    /// Adopt only a transaction computed from this exact generated document.
+    pub(crate) fn install_plugin_projection(&mut self, prepared: PreparedPluginProjection) -> bool {
+        if !matches!(
             self.generated_view_identity(),
             Some(GeneratedViewIdentity::Plugin { .. })
-        ));
-        self.text
-            .apply(&Transaction::new(vec![crate::text::Change::new(
-                0,
-                self.len_chars(),
-                text,
-            )]));
-        self.longest_line = self.text.longest_line_bytes();
-        self.layout = self.layout.remeasured(text);
+        ) || prepared
+            .revision
+            .map_or(self.text.len_chars() != 0, |revision| {
+                revision != self.revision()
+            })
+        {
+            return false;
+        }
+        self.text = prepared.text;
+        self.layout = prepared.layout;
+        self.longest_line = prepared.longest_line;
         self.undo.clear();
         self.redo.clear();
         self.undo_group = None;
         self.mark_saved();
+        true
     }
 
     /// Replaces the contents of a read-only virtual buffer.

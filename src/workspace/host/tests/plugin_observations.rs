@@ -350,17 +350,20 @@ fn pane_observations_follow_selection_and_target_without_reading_text() {
     assert!(target["data"]["sources"][0]["state"].get("text").is_none());
 }
 
-#[test]
-fn owned_view_and_job_sources_capture_models_progress_and_final_state() {
+#[tokio::test]
+async fn owned_view_and_job_sources_capture_models_progress_and_final_state() {
     let (_root, mut host) = host();
     let mut receiver = observations(&mut host, &["views", "jobs"]);
-    let created = call(
+    model_request(
         &mut host,
-        &mut receiver,
+        0,
         1,
-        "view.create",
-        json!({"model": model(&[("row", "Before")])}),
-    );
+        api::Request::ViewCreate {
+            model: model(&[("row", "Before")]),
+        },
+    )
+    .await;
+    let created = serde_json::to_value(next(&mut receiver)).unwrap();
     let view = created["result"]["view"].clone();
     let created_job = call(
         &mut host,
@@ -379,13 +382,18 @@ fn owned_view_and_job_sources_capture_models_progress_and_final_state() {
         json!([{"kind": "view", "view": view}, {"kind": "job", "job": job}]),
     );
     assert_eq!(initial["sources"].as_array().unwrap().len(), 2);
-    let reply = call(
+    model_request(
         &mut host,
-        &mut receiver,
+        0,
         4,
-        "view.publish",
-        json!({"view": view, "expected_revision": created["result"]["revision"], "model": model(&[("row", "After")])}),
-    );
+        api::Request::ViewPublish {
+            view: view.as_str().unwrap().into(),
+            expected_revision: created["result"]["revision"].as_str().unwrap().into(),
+            model: model(&[("row", "After")]),
+        },
+    )
+    .await;
+    let reply = serde_json::to_value(next(&mut receiver)).unwrap();
     assert!(reply.get("error").is_none(), "{reply}");
     host.sync_plugin_observers();
     let updated = change(&mut receiver, "event.changed");

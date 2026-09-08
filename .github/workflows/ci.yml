@@ -58,6 +58,7 @@ jobs:
           "$plugin_schema_python" docs/plugins/check_applications.py
           "$plugin_schema_python" docs/plugins/check_observations.py
           "$plugin_schema_python" docs/plugins/check_validation.py
+          "$plugin_schema_python" docs/plugins/check_models.py
           "$plugin_schema_python" docs/plugins/check_remote_provider.py
           "$plugin_schema_python" docs/plugins/check_downloads.py
           "$plugin_schema_python" docs/plugins/check_remote_status.py

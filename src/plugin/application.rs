@@ -292,6 +292,45 @@ pub enum Request {
         expected_revision: String,
         model: super::view::Model,
     },
+    #[serde(rename = "view.patch")]
+    ViewPatch {
+        view: String,
+        expected_revision: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        header: Option<super::view::Header>,
+        #[serde(deserialize_with = "super::view::decode_operations")]
+        operations: Vec<super::view::Operation>,
+    },
+    #[serde(rename = "view.stage.open")]
+    ViewStageOpen {
+        view: String,
+        expected_revision: String,
+        kind: super::view::StageKind,
+        bytes: usize,
+    },
+    #[serde(rename = "view.stage.write")]
+    ViewStageWrite {
+        stage: String,
+        offset: usize,
+        text: String,
+    },
+    #[serde(rename = "view.stage.commit")]
+    ViewStageCommit { stage: String },
+    #[serde(rename = "view.stage.close")]
+    ViewStageClose { stage: String },
+    #[serde(rename = "view.snapshot.open")]
+    ViewSnapshotOpen {
+        view: String,
+        expected_revision: String,
+    },
+    #[serde(rename = "view.snapshot.read")]
+    ViewSnapshotRead {
+        snapshot: String,
+        offset: usize,
+        limit: usize,
+    },
+    #[serde(rename = "view.snapshot.close")]
+    ViewSnapshotClose { snapshot: String },
     #[serde(rename = "view.close")]
     ViewClose { view: String },
     #[serde(rename = "pane.show")]
@@ -461,6 +500,29 @@ pub enum Response {
 #[derive(Clone, Debug, Serialize)]
 #[serde(untagged)]
 pub enum ResultValue {
+    ViewInfo {
+        view: String,
+        revision: String,
+        bytes: usize,
+        rows: usize,
+    },
+    ViewStage {
+        stage: String,
+        bytes: usize,
+    },
+    ViewOffset {
+        offset: usize,
+    },
+    ViewSnapshot {
+        snapshot: String,
+        revision: String,
+        bytes: usize,
+    },
+    ViewChunk {
+        offset: usize,
+        text: String,
+        eof: bool,
+    },
     Observation(super::observation::Baseline),
     Staging {
         staging: String,
@@ -520,7 +582,7 @@ pub enum ResultValue {
     View {
         view: String,
         revision: String,
-        model: super::view::Model,
+        model: std::sync::Arc<super::view::Model>,
     },
     Empty(Empty),
     Job(Job),
@@ -552,6 +614,9 @@ pub(crate) struct CapturedContext {
 
 /// Bounded host ownership, independent of a frontend and the ten-second control timer.
 pub(crate) struct Instance {
+    pub model_requests: BTreeMap<String, super::view::Pending>,
+    pub view_stages: BTreeMap<String, super::view::Stage>,
+    pub view_snapshots: BTreeMap<String, super::view::OwnedSnapshot>,
     pub sensitive_input_requests: BTreeSet<String>,
     pub validation: Option<super::interaction::PendingValidation>,
     pub retired_validations: BTreeSet<String>,
@@ -593,6 +658,9 @@ impl Default for Instance {
             .unwrap_or_default()
             .as_nanos();
         Self {
+            model_requests: Default::default(),
+            view_stages: Default::default(),
+            view_snapshots: Default::default(),
             sensitive_input_requests: Default::default(),
             validation: None,
             retired_validations: Default::default(),
@@ -747,6 +815,14 @@ pub(crate) fn decode(bytes: &[u8]) -> anyhow::Result<super::ClientMessage> {
                 | "view.create"
                 | "view.get"
                 | "view.publish"
+                | "view.patch"
+                | "view.stage.open"
+                | "view.stage.write"
+                | "view.stage.commit"
+                | "view.stage.close"
+                | "view.snapshot.open"
+                | "view.snapshot.read"
+                | "view.snapshot.close"
                 | "view.close"
                 | "pane.show"
                 | "workspace.info"
@@ -1126,6 +1202,52 @@ mod tests {
                         revision: "i:1".into(),
                     },
                 ),
+            },
+            HostMessage::Response {
+                id: "p:900".into(),
+                outcome: Response::Success {
+                    result: ResultValue::ViewInfo {
+                        view: "v:g:1".into(),
+                        revision: "m:2".into(),
+                        bytes: 1_500_000,
+                        rows: 1,
+                    },
+                },
+            },
+            HostMessage::Response {
+                id: "p:902".into(),
+                outcome: Response::Success {
+                    result: ResultValue::ViewStage {
+                        stage: "vs:g:1".into(),
+                        bytes: 2,
+                    },
+                },
+            },
+            HostMessage::Response {
+                id: "p:903".into(),
+                outcome: Response::Success {
+                    result: ResultValue::ViewOffset { offset: 2 },
+                },
+            },
+            HostMessage::Response {
+                id: "p:906".into(),
+                outcome: Response::Success {
+                    result: ResultValue::ViewSnapshot {
+                        snapshot: "vr:g:1".into(),
+                        revision: "m:2".into(),
+                        bytes: 2,
+                    },
+                },
+            },
+            HostMessage::Response {
+                id: "p:907".into(),
+                outcome: Response::Success {
+                    result: ResultValue::ViewChunk {
+                        offset: 0,
+                        text: "{}".into(),
+                        eof: true,
+                    },
+                },
             },
         ];
         let expected = fixtures

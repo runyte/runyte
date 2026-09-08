@@ -243,6 +243,7 @@ mod plugin_editor;
 mod plugin_filesystem;
 mod plugin_filesystem_apply;
 mod plugin_interaction;
+mod plugin_models;
 mod plugin_observations;
 mod plugin_provider_writes;
 mod plugin_providers;

@@ -661,7 +661,7 @@
         "surface": "u:g:1",
         "accepted": true,
         "values": {
-          "name": "é"
+          "name": "\u00e9"
         }
       }
     }
@@ -674,7 +674,7 @@
       "method": "buffer.create",
       "params": {
         "path": "notes.txt",
-        "text": "é猫\n",
+        "text": "\u00e9\u732b\n",
         "invocation": null
       }
     }
@@ -795,7 +795,7 @@
         "value": {
           "version": "v1",
           "offset": 0,
-          "text": "é猫",
+          "text": "\u00e9\u732b",
           "eof": true
         }
       }
@@ -970,7 +970,7 @@
         "job": "j:g:1",
         "upload": "upload-1",
         "offset": 0,
-        "text": "é猫"
+        "text": "\u00e9\u732b"
       }
     }
   },
@@ -1351,6 +1351,233 @@
         "request": "h:21",
         "surface": "u:g:1",
         "revision": "i:1"
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:900",
+      "method": "view.create",
+      "params": {
+        "model": {
+          "title": "Transfer dashboard",
+          "purpose": "dashboard",
+          "rows": [
+            {
+              "id": "transfer-1",
+              "text": "",
+              "role": "ordinary",
+              "cells": [
+                {
+                  "text": "notes.txt",
+                  "role": "ordinary"
+                },
+                {
+                  "text": "Ready",
+                  "role": "muted"
+                }
+              ]
+            }
+          ],
+          "columns": [
+            {
+              "id": "name",
+              "label": "Name"
+            },
+            {
+              "id": "state",
+              "label": "State"
+            }
+          ],
+          "detail": {
+            "text": "One transfer",
+            "role": "heading"
+          },
+          "preview": {
+            "text": "First line\nSecond line",
+            "role": "muted"
+          },
+          "status": {
+            "text": "Connected",
+            "role": "ordinary"
+          },
+          "actions": [
+            "refresh"
+          ]
+        }
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:901",
+      "method": "view.patch",
+      "params": {
+        "view": "v:g:1",
+        "expected_revision": "m:1",
+        "operations": [
+          {
+            "kind": "update",
+            "row": {
+              "id": "row",
+              "text": "Updated",
+              "role": "ordinary"
+            }
+          },
+          {
+            "kind": "reorder",
+            "ids": [
+              "row"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:902",
+      "method": "view.stage.open",
+      "params": {
+        "view": "v:g:1",
+        "expected_revision": "m:1",
+        "kind": "model",
+        "bytes": 2
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:903",
+      "method": "view.stage.write",
+      "params": {
+        "stage": "vs:g:1",
+        "offset": 0,
+        "text": "{}"
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:904",
+      "method": "view.stage.commit",
+      "params": {
+        "stage": "vs:g:1"
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:905",
+      "method": "view.stage.close",
+      "params": {
+        "stage": "vs:g:1"
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:906",
+      "method": "view.snapshot.open",
+      "params": {
+        "view": "v:g:1",
+        "expected_revision": "m:2"
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:907",
+      "method": "view.snapshot.read",
+      "params": {
+        "snapshot": "vr:g:1",
+        "offset": 0,
+        "limit": 128
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:908",
+      "method": "view.snapshot.close",
+      "params": {
+        "snapshot": "vr:g:1"
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "response",
+      "id": "p:900",
+      "result": {
+        "view": "v:g:1",
+        "revision": "m:2",
+        "bytes": 1500000,
+        "rows": 1
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "response",
+      "id": "p:902",
+      "result": {
+        "stage": "vs:g:1",
+        "bytes": 2
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "response",
+      "id": "p:903",
+      "result": {
+        "offset": 2
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "response",
+      "id": "p:906",
+      "result": {
+        "snapshot": "vr:g:1",
+        "revision": "m:2",
+        "bytes": 2
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "response",
+      "id": "p:907",
+      "result": {
+        "offset": 0,
+        "text": "{}",
+        "eof": true
       }
     }
   }

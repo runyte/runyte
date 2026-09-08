@@ -59,7 +59,7 @@ notify = "8.2"
 ratatui = { version = "0.30", default-features = false, features = ["crossterm"] }
 regex = "1.13.1"
 ropey = { version = "1.6.1", default-features = false, features = ["simd"] }
-serde = { version = "1.0", features = ["derive"] }
+serde = { version = "1.0", features = ["derive", "rc"] }
 serde_json = "1.0"
 serde_yaml = "0.9"
 shlex = "2.0"

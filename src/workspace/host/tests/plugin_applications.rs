@@ -19,6 +19,10 @@ mod filesystem_review;
 mod filesystem_stat;
 #[path = "plugin_interaction.rs"]
 mod interaction;
+#[path = "plugin_model_review.rs"]
+mod model_review;
+#[path = "plugin_models.rs"]
+mod models;
 #[path = "plugin_observations.rs"]
 mod observations;
 #[path = "plugin_provider_inspect.rs"]
@@ -573,6 +577,46 @@ while read -r message; do :; done
     assert!(host.plugin_workers.is_empty());
 }
 
+fn model_service(host: &mut WorkspaceHost) -> mpsc::Receiver<Event> {
+    let (sender, receiver) = mpsc::channel(plugin::EVENT_CAPACITY);
+    host.plugin_events_sender = Some(sender);
+    receiver
+}
+
+async fn model_complete(host: &mut WorkspaceHost, events: &mut mpsc::Receiver<Event>) -> bool {
+    let event = tokio::time::timeout(std::time::Duration::from_secs(5), events.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    host.handle_plugin_event(event)
+}
+
+async fn model_request(host: &mut WorkspaceHost, owner: usize, n: u64, operation: api::Request) {
+    assert!(
+        host.app
+            .plugins
+            .instances
+            .values()
+            .all(|instance| instance.application.model_requests.is_empty())
+    );
+    let mut events = model_service(host);
+    request(host, owner, n, operation);
+    while host
+        .app
+        .plugins
+        .instances
+        .get(&owner)
+        .is_some_and(|instance| {
+            instance
+                .application
+                .model_requests
+                .contains_key(&format!("p:{n}"))
+        })
+    {
+        model_complete(host, &mut events).await;
+    }
+}
+
 fn model(rows: &[(&str, &str)]) -> crate::plugin::view::Model {
     crate::plugin::view::Model {
         title: "Tasks".into(),
@@ -583,8 +627,10 @@ fn model(rows: &[(&str, &str)]) -> crate::plugin::view::Model {
                 id: (*id).into(),
                 text: (*text).into(),
                 role: crate::plugin::view::Role::Ordinary,
+                ..Default::default()
             })
             .collect(),
+        ..Default::default()
     }
 }
 fn view_setup(host: &mut WorkspaceHost) -> mpsc::Receiver<HostMessage> {
@@ -663,18 +709,19 @@ fn show_view(
     ));
 }
 
-#[test]
-fn native_view_preserves_split_selections_by_row_and_rejects_unseen_actions() {
+#[tokio::test]
+async fn native_view_preserves_split_selections_by_row_and_rejects_unseen_actions() {
     let (_root, mut host) = host();
     let mut receiver = view_setup(&mut host);
-    request(
+    model_request(
         &mut host,
         0,
         1,
         api::Request::ViewCreate {
             model: model(&[("one", "α first"), ("two", "second"), ("three", "third")]),
         },
-    );
+    )
+    .await;
     let (view, revision) = view_result(&mut receiver);
     assert_eq!(host.app.active().buffer, 0, "creation cannot take focus");
     show_view(&mut host, &mut receiver, &view, 2);
@@ -696,7 +743,7 @@ fn native_view_preserves_split_selections_by_row_and_rejects_unseen_actions() {
         pane.selection = Selection::single(Range::new(second + 3, second + 1));
     }
     host.app.prepare_view(Default::default());
-    request(
+    model_request(
         &mut host,
         0,
         3,
@@ -705,7 +752,8 @@ fn native_view_preserves_split_selections_by_row_and_rejects_unseen_actions() {
             expected_revision: revision,
             model: model(&[("three", "third"), ("one", "α first"), ("two", "second")]),
         },
-    );
+    )
+    .await;
     view_result(&mut receiver);
     let second = host.app.buffers[buffer].line_to_offset(2);
     for pane in host.app.panes.values().filter(|p| p.buffer == buffer) {
@@ -740,18 +788,19 @@ fn native_view_preserves_split_selections_by_row_and_rejects_unseen_actions() {
     ));
 }
 
-#[test]
-fn presentation_grant_expires_on_input_and_detach_but_hidden_models_keep_updating() {
+#[tokio::test]
+async fn presentation_grant_expires_on_input_and_detach_but_hidden_models_keep_updating() {
     let (_root, mut host) = host();
     let mut receiver = view_setup(&mut host);
-    request(
+    model_request(
         &mut host,
         0,
         1,
         api::Request::ViewCreate {
             model: model(&[("one", "original")]),
         },
-    );
+    )
+    .await;
     let (view, revision) = view_result(&mut receiver);
     invoke(&mut host, "plugin.tasks.open");
     let api::HostMessage::Request { id: invocation, .. } = next(&mut receiver) else {
@@ -803,6 +852,7 @@ fn presentation_grant_expires_on_input_and_detach_but_hidden_models_keep_updatin
             ..
         }
     ));
+    let mut events = model_service(&mut host);
     let changed = host.handle_plugin_event(Event {
         plugin: 0,
         result: Ok(ClientMessage::Application(api::ClientMessage::Request {
@@ -815,6 +865,10 @@ fn presentation_grant_expires_on_input_and_detach_but_hidden_models_keep_updatin
         })),
     });
     assert!(!changed, "hidden publication must not request a frame");
+    assert!(
+        !model_complete(&mut host, &mut events).await,
+        "hidden completion must not request a frame"
+    );
     view_result(&mut receiver);
     host.app.note_plugin_frontend(true);
     show_view(&mut host, &mut receiver, &view, 5);
@@ -829,20 +883,21 @@ fn presentation_grant_expires_on_input_and_detach_but_hidden_models_keep_updatin
     );
 }
 
-#[test]
-fn invalid_model_is_atomic_and_close_releases_owned_handle_after_response() {
+#[tokio::test]
+async fn invalid_model_is_atomic_and_close_releases_owned_handle_after_response() {
     let (_root, mut host) = host();
     let mut receiver = view_setup(&mut host);
-    request(
+    model_request(
         &mut host,
         0,
         1,
         api::Request::ViewCreate {
             model: model(&[("one", "original")]),
         },
-    );
+    )
+    .await;
     let (view, revision) = view_result(&mut receiver);
-    request(
+    model_request(
         &mut host,
         0,
         2,
@@ -851,7 +906,8 @@ fn invalid_model_is_atomic_and_close_releases_owned_handle_after_response() {
             expected_revision: revision,
             model: model(&[("one", "changed"), ("one", "duplicate")]),
         },
-    );
+    )
+    .await;
     assert!(matches!(
         next(&mut receiver),
         api::HostMessage::Response {
@@ -1173,14 +1229,14 @@ fn pane_selection_targets_revision_and_foreign_buffer_handles_are_rejected() {
     ));
 }
 
-#[test]
-fn native_view_survives_private_frame_round_trip_with_theme_roles_in_narrow_panes() {
+#[tokio::test]
+async fn native_view_survives_private_frame_round_trip_with_theme_roles_in_narrow_panes() {
     let (_root, mut host) = host();
     let mut receiver = view_setup(&mut host);
     let mut model = model(&[("warn", "Careful"), ("error", "Failed")]);
     model.rows[0].role = crate::plugin::view::Role::Warning;
     model.rows[1].role = crate::plugin::view::Role::Error;
-    request(&mut host, 0, 1, api::Request::ViewCreate { model });
+    model_request(&mut host, 0, 1, api::Request::ViewCreate { model }).await;
     let (view, _) = view_result(&mut receiver);
     show_view(&mut host, &mut receiver, &view, 2);
     let geometry = crate::ui::frame_geometry(ratatui::layout::Rect::new(0, 0, 40, 12));
@@ -1229,11 +1285,11 @@ fn native_view_survives_private_frame_round_trip_with_theme_roles_in_narrow_pane
     }
 }
 
-#[test]
-fn view_actions_use_half_open_row_selections_in_both_directions() {
+#[tokio::test]
+async fn view_actions_use_half_open_row_selections_in_both_directions() {
     let (_root, mut host) = host();
     let mut output = view_setup(&mut host);
-    request(
+    model_request(
         &mut host,
         0,
         1,
@@ -1245,7 +1301,8 @@ fn view_actions_use_half_open_row_selections_in_both_directions() {
                 ("four", "fourth"),
             ]),
         },
-    );
+    )
+    .await;
     let (view, _) = view_result(&mut output);
     show_view(&mut host, &mut output, &view, 2);
     let buffer = host.app.active().buffer;

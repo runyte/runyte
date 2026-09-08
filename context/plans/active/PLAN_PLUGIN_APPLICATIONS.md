@@ -614,6 +614,41 @@ Richer view models, row patches/staging and remaining view observations, managed
 helpers/leases/handoffs, settings/state and manager/media examples, broader
 conformance, and complete native platform/performance gates remain active.
 
+## Rich model publication round — 2026-09-08
+
+This round extends retained views with semantic columns, detail/preview/status
+blocks and registered action restrictions. Atomic patches insert, update, remove
+and reorder stable rows. Larger models use bounded UTF-8 staging and a single
+commit; immutable model snapshots provide a paged read of one canonical encoding.
+The runnable `dashboard.py` exercises native columns, primary row patches,
+reordering and an 8,000-row staged model through the Python SDK.
+
+Model validation, encoding, projection, row remapping and transaction preparation
+run on bounded background workers. Commit checks owner generation and model/buffer
+revisions, then preserves the current per-pane selection direction and viewport
+by stable row identity. Non-row headers do not become primary-action targets.
+Closing a stage cancels unfinished publication; old view state stays intact on
+failure. Captured-source and construction reservations survive view closure and
+owner stop until actual completion delivery.
+
+Comprehensive subagent review found and fixed unrelated deadline cancellation by
+unknown close handles, deadline-admission resource leaks, captured-source charge
+release before worker completion, staged decoding amplification and returning-view
+position loss. Regression coverage spans wire constraints, pure projection/patch
+semantics, App transaction/selection behavior, host lifecycle/accounting and SDK
+failure cleanup. This completes the richer-model work item; query/viewport/action
+observations remain the next subround, followed by managed helpers and the later
+application lifecycle milestones. The complete plan remains active.
+
+Validation: formatting, warnings-as-errors Clippy, ordinary and canonical Rust
+suites passed (3,348 tests, 33 ignored). Canonical Linux line coverage is
+113,744 / 124,095 (91.66%), above the unchanged 89% floor. Epoch 1 schema checks,
+epoch 2 schema/SDK checks and twelve model checks passed. The native dashboard
+smoke exercised columns/blocks, primary row patches, reordering, staged 8,000-row
+publication and immutable readback, with zero terminal bytes over two settled
+seconds. This functional smoke does not replace the remaining release workload
+and native macOS gates.
+
 ## Investigation: existing foundation and missing boundaries
 
 The current [guide](../../../docs/plugins.md) and

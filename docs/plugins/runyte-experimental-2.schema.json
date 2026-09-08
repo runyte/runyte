@@ -186,6 +186,13 @@
             "warning",
             "error"
           ]
+        },
+        "cells": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/viewCell"
+          },
+          "maxItems": 8
         }
       },
       "required": [
@@ -215,6 +222,52 @@
             "$ref": "#/$defs/row"
           },
           "maxItems": 10000
+        },
+        "columns": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/viewColumn"
+          },
+          "maxItems": 8
+        },
+        "detail": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/viewBlock"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "preview": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/viewBlock"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "status": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/viewStatus"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "actions": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9-]{1,48}$"
+          },
+          "maxItems": 64,
+          "uniqueItems": true
         }
       },
       "required": [
@@ -1668,6 +1721,21 @@
             },
             {
               "$ref": "#/$defs/observationBaseline"
+            },
+            {
+              "$ref": "#/$defs/viewInfo"
+            },
+            {
+              "$ref": "#/$defs/viewStage"
+            },
+            {
+              "$ref": "#/$defs/viewStageOffset"
+            },
+            {
+              "$ref": "#/$defs/viewReadSnapshot"
+            },
+            {
+              "$ref": "#/$defs/viewSnapshotChunk"
             }
           ]
         }
@@ -2001,6 +2069,30 @@
         },
         {
           "$ref": "#/$defs/validationResponse"
+        },
+        {
+          "$ref": "#/$defs/view.patch"
+        },
+        {
+          "$ref": "#/$defs/view.stage.open"
+        },
+        {
+          "$ref": "#/$defs/view.stage.write"
+        },
+        {
+          "$ref": "#/$defs/view.stage.commit"
+        },
+        {
+          "$ref": "#/$defs/view.stage.close"
+        },
+        {
+          "$ref": "#/$defs/view.snapshot.open"
+        },
+        {
+          "$ref": "#/$defs/view.snapshot.read"
+        },
+        {
+          "$ref": "#/$defs/view.snapshot.close"
         }
       ]
     },
@@ -4887,6 +4979,767 @@
         "request",
         "surface",
         "revision"
+      ],
+      "additionalProperties": false
+    },
+    "viewColumn": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        }
+      },
+      "required": [
+        "id",
+        "label"
+      ],
+      "additionalProperties": false
+    },
+    "viewCell": {
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string",
+          "maxLength": 4194304
+        },
+        "role": {
+          "enum": [
+            "ordinary",
+            "muted",
+            "heading",
+            "warning",
+            "error"
+          ]
+        }
+      },
+      "required": [
+        "text",
+        "role"
+      ],
+      "additionalProperties": false
+    },
+    "viewBlock": {
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string",
+          "maxLength": 65536
+        },
+        "role": {
+          "enum": [
+            "ordinary",
+            "muted",
+            "heading",
+            "warning",
+            "error"
+          ]
+        }
+      },
+      "required": [
+        "text",
+        "role"
+      ],
+      "additionalProperties": false
+    },
+    "viewStatus": {
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string",
+          "maxLength": 1024
+        },
+        "role": {
+          "enum": [
+            "ordinary",
+            "muted",
+            "heading",
+            "warning",
+            "error"
+          ]
+        }
+      },
+      "required": [
+        "text",
+        "role"
+      ],
+      "additionalProperties": false
+    },
+    "viewHeader": {
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string",
+          "maxLength": 160
+        },
+        "purpose": {
+          "enum": [
+            "document",
+            "list",
+            "dashboard"
+          ]
+        },
+        "columns": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/viewColumn"
+          },
+          "maxItems": 8
+        },
+        "detail": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/viewBlock"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "preview": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/viewBlock"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "status": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/viewStatus"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "actions": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9-]{1,48}$"
+          },
+          "maxItems": 64,
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "title",
+        "purpose"
+      ],
+      "additionalProperties": false
+    },
+    "viewOperation": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "insert"
+            },
+            "before": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "row": {
+              "$ref": "#/$defs/row"
+            }
+          },
+          "required": [
+            "kind",
+            "before",
+            "row"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "update"
+            },
+            "row": {
+              "$ref": "#/$defs/row"
+            }
+          },
+          "required": [
+            "kind",
+            "row"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "remove"
+            },
+            "ids": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              },
+              "maxItems": 10000,
+              "uniqueItems": true
+            }
+          },
+          "required": [
+            "kind",
+            "ids"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "reorder"
+            },
+            "ids": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              },
+              "maxItems": 10000,
+              "uniqueItems": true
+            }
+          },
+          "required": [
+            "kind",
+            "ids"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "viewPatch": {
+      "type": "object",
+      "properties": {
+        "header": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/viewHeader"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "operations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/viewOperation"
+          },
+          "maxItems": 1024
+        }
+      },
+      "required": [
+        "operations"
+      ],
+      "additionalProperties": false
+    },
+    "view.patch": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "request"
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^p:[1-9][0-9]*$",
+          "maxLength": 22
+        },
+        "method": {
+          "const": "view.patch"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "view": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            },
+            "expected_revision": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            },
+            "header": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/viewHeader"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "operations": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/viewOperation"
+              },
+              "maxItems": 1024
+            }
+          },
+          "required": [
+            "view",
+            "expected_revision",
+            "operations"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "method",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    "view.stage.open": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "request"
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^p:[1-9][0-9]*$",
+          "maxLength": 22
+        },
+        "method": {
+          "const": "view.stage.open"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "view": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            },
+            "expected_revision": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            },
+            "kind": {
+              "enum": [
+                "model",
+                "patch"
+              ]
+            },
+            "bytes": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 4194304
+            }
+          },
+          "required": [
+            "view",
+            "expected_revision",
+            "kind",
+            "bytes"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "method",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    "view.stage.write": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "request"
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^p:[1-9][0-9]*$",
+          "maxLength": 22
+        },
+        "method": {
+          "const": "view.stage.write"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "stage": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            },
+            "offset": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4194304
+            },
+            "text": {
+              "type": "string",
+              "maxLength": 131072,
+              "minLength": 1
+            }
+          },
+          "required": [
+            "stage",
+            "offset",
+            "text"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "method",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    "view.stage.commit": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "request"
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^p:[1-9][0-9]*$",
+          "maxLength": 22
+        },
+        "method": {
+          "const": "view.stage.commit"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "stage": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            }
+          },
+          "required": [
+            "stage"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "method",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    "view.stage.close": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "request"
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^p:[1-9][0-9]*$",
+          "maxLength": 22
+        },
+        "method": {
+          "const": "view.stage.close"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "stage": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            }
+          },
+          "required": [
+            "stage"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "method",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    "view.snapshot.open": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "request"
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^p:[1-9][0-9]*$",
+          "maxLength": 22
+        },
+        "method": {
+          "const": "view.snapshot.open"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "view": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            },
+            "expected_revision": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            }
+          },
+          "required": [
+            "view",
+            "expected_revision"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "method",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    "view.snapshot.read": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "request"
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^p:[1-9][0-9]*$",
+          "maxLength": 22
+        },
+        "method": {
+          "const": "view.snapshot.read"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "snapshot": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            },
+            "offset": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4194304
+            },
+            "limit": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 131072
+            }
+          },
+          "required": [
+            "snapshot",
+            "offset",
+            "limit"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "method",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    "view.snapshot.close": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "request"
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^p:[1-9][0-9]*$",
+          "maxLength": 22
+        },
+        "method": {
+          "const": "view.snapshot.close"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "snapshot": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            }
+          },
+          "required": [
+            "snapshot"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "method",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    "viewInfo": {
+      "type": "object",
+      "properties": {
+        "view": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "revision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4194304
+        },
+        "rows": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        }
+      },
+      "required": [
+        "view",
+        "revision",
+        "bytes",
+        "rows"
+      ],
+      "additionalProperties": false
+    },
+    "viewStage": {
+      "type": "object",
+      "properties": {
+        "stage": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4194304
+        }
+      },
+      "required": [
+        "stage",
+        "bytes"
+      ],
+      "additionalProperties": false
+    },
+    "viewStageOffset": {
+      "type": "object",
+      "properties": {
+        "offset": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4194304
+        }
+      },
+      "required": [
+        "offset"
+      ],
+      "additionalProperties": false
+    },
+    "viewReadSnapshot": {
+      "type": "object",
+      "properties": {
+        "snapshot": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "revision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4194304
+        }
+      },
+      "required": [
+        "snapshot",
+        "revision",
+        "bytes"
+      ],
+      "additionalProperties": false
+    },
+    "viewSnapshotChunk": {
+      "type": "object",
+      "properties": {
+        "offset": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4194304
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 131072
+        },
+        "eof": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "offset",
+        "text",
+        "eof"
       ],
       "additionalProperties": false
     }

@@ -464,6 +464,7 @@ pub struct Pane {
     /// Buffer fallback is view-local: closing a shared buffer can reveal a
     /// different predecessor in each pane without coupling it to jumps.
     buffer_history: Vec<usize>,
+    plugin_view_positions: BTreeMap<usize, plugin_views::PluginViewPosition>,
     destination_history: Vec<OpenDestination>,
     /// The live terminal this pane shows instead of its buffer, if any.
     ///
@@ -533,6 +534,7 @@ impl Pane {
         Self {
             buffer,
             buffer_history: Vec::new(),
+            plugin_view_positions: BTreeMap::new(),
             destination_history: Vec::new(),
             terminal: None,
             covered_terminal: None,
@@ -562,6 +564,10 @@ impl Pane {
         self.terminal = None;
         self.covered_terminal = None;
         if self.buffer != buffer {
+            if self.plugin_view_positions.contains_key(&self.buffer) {
+                self.plugin_view_positions
+                    .insert(self.buffer, plugin_views::PluginViewPosition::capture(self));
+            }
             self.remember_buffer(self.buffer);
             self.buffer = buffer;
             self.selection_semantics = SelectionSemantics::Runyte;

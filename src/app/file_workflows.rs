@@ -1224,6 +1224,11 @@ impl App {
         } else {
             self.active().directory_buffer
         };
+        let is_plugin_view = matches!(
+            self.buffers[buffer_id].generated_view_identity(),
+            Some(crate::buffer::GeneratedViewIdentity::Plugin { .. })
+        );
+        let saved_plugin_position = self.active().plugin_view_positions.get(&buffer_id).cloned();
         let selection = self
             .take_pending_launch_selection(buffer_id)
             .unwrap_or_else(|| Selection::point(0));
@@ -1235,6 +1240,18 @@ impl App {
         pane.scroll_wrap = 0;
         pane.scroll_col = 0;
         pane.preserve_scroll = false;
+        if let Some(saved) = saved_plugin_position {
+            saved.restore(pane);
+        }
+        if is_plugin_view
+            && (pane.plugin_view_positions.len() < 128
+                || pane.plugin_view_positions.contains_key(&buffer_id))
+        {
+            pane.plugin_view_positions.insert(
+                buffer_id,
+                super::plugin_views::PluginViewPosition::capture(pane),
+            );
+        }
         self.lsp_touch(buffer_id);
         self.status(format!("buffer {}", self.buffers[buffer_id].display_name()));
     }

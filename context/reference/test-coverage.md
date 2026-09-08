@@ -41,6 +41,28 @@ days, and fails below 89% total line coverage. The floor is deliberately below
 the observed baseline because conditional Linux and macOS code changes both the
 instrumented denominator and the paths available to a run on one platform.
 
+## 2026-09-08 — richer model publication
+
+Measured on `x86_64-unknown-linux-gnu` at `dd621e3` plus the richer-view
+round, using Rust 1.97.1 and cargo-llvm-cov 0.9.0. Ordinary and canonical suites
+each passed 3,348 tests with 33 ignored. Formatting and warnings-as-errors Clippy
+passed; the floor remains 89%.
+
+| Measure | Covered | Total | Coverage |
+| --- | ---: | ---: | ---: |
+| Lines | 113,744 | 124,095 | 91.66% |
+| Functions | 10,297 | 11,181 | 92.09% |
+| Regions | 173,481 | 190,276 | 91.17% |
+
+Thirty-six new Rust regressions cover semantic columns and blocks, stable-row
+patches, malformed staged decoding, Unicode chunks, immutable model snapshots,
+commit-time selections, hidden/split view positions and jump history, cancellation,
+source retirement and worker memory accounting. Twelve Python checks exercise
+inline/staged publication, exact chunk progress, cleanup, rollback and dashboard
+conformance. A native PTY smoke passed row toggles, reordering, 8,000 staged rows
+and immutable large-model readback; two settled seconds emitted zero terminal
+bytes. Native macOS and the full application workload matrix remain pending.
+
 ## 2026-09-08 — asynchronous form validation
 
 Measured on `x86_64-unknown-linux-gnu` at `97a45c0` plus the validation

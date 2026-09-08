@@ -3541,6 +3541,9 @@ impl App {
             *page != buffer && self.buffers[*page].markdown_render_source() != Some(buffer)
         });
         self.closed_buffers.insert(buffer);
+        for pane in self.panes.values_mut() {
+            pane.plugin_view_positions.remove(&buffer);
+        }
         if let Some(path) = git_path
             && !self.buffers.iter().enumerate().any(|(candidate, entry)| {
                 candidate != buffer

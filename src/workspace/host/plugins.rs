@@ -140,11 +140,18 @@ impl WorkspaceHost {
         // Observation delivery or a queued stop can retire this same instance.
         // Check membership after that boundary before looking up its state.
         self.sync_plugin_observers();
-        if let Ok(ClientMessage::Local {
-            generation,
-            request,
-            ..
-        }) = &event.result
+        if let Ok(
+            ClientMessage::Local {
+                generation,
+                request,
+                ..
+            }
+            | ClientMessage::ModelPrepared {
+                generation,
+                request,
+                ..
+            },
+        ) = &event.result
             && let Some(charge) = self.plugin_local_orphans.remove(&(
                 event.plugin,
                 generation.clone(),
@@ -182,6 +189,16 @@ impl WorkspaceHost {
         let Some(instance) = self.app.plugins.instances.remove(&id) else {
             return;
         };
+        for (request, pending) in &instance.application.model_requests {
+            pending
+                .cancelled
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+            self.plugin_local_orphans.insert(
+                (id, instance.application.generation.clone(), request.clone()),
+                pending.charge + pending.source_charge,
+            );
+            self.app.plugins.orphaned_payload += pending.charge + pending.source_charge;
+        }
         for (request, pending) in &instance.application.local_requests {
             if let Some(cancelled) = &pending.cancelled {
                 cancelled.store(true, std::sync::atomic::Ordering::SeqCst);
@@ -252,6 +269,14 @@ impl WorkspaceHost {
 
     pub(super) fn plugin_message(&mut self, id: usize, message: ClientMessage) -> Result<()> {
         match message {
+            ClientMessage::ModelPrepared {
+                generation,
+                request,
+                result,
+                ..
+            } => {
+                return self.application_model_result(id, generation, request, result);
+            }
             ClientMessage::Local {
                 generation,
                 request,
@@ -545,7 +570,8 @@ impl WorkspaceHost {
             | ClientMessage::Unsupported { .. }
             | ClientMessage::Deadline { .. }
             | ClientMessage::FilesystemApplied { .. }
-            | ClientMessage::DocumentSaved { .. } => anyhow::bail!("wrong API epoch"),
+            | ClientMessage::DocumentSaved { .. }
+            | ClientMessage::ModelPrepared { .. } => anyhow::bail!("wrong API epoch"),
         }
         Ok(())
     }
@@ -731,11 +757,18 @@ impl WorkspaceHost {
             })
             .collect::<Vec<_>>();
         for (owner, view) in closed {
+            if !self.app.plugins.instances.contains_key(&owner) {
+                continue;
+            }
+            if self.retire_view_models(owner, &view).is_err() {
+                self.stop_plugin(owner, "view lifecycle consumer is too slow");
+                continue;
+            }
             let Some(instance) = self.app.plugins.instances.get_mut(&owner) else {
                 continue;
             };
             if let Some(view) = instance.application.views.remove(&view) {
-                instance.application.retained_payload -= view.model.payload_bytes() * 2;
+                instance.application.retained_payload -= view.charge;
             }
             instance.application.sequence += 1;
             let sequence = format!("e:{}", instance.application.sequence);
