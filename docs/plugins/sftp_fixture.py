@@ -146,7 +146,9 @@ class _Filesystem(paramiko.SFTPServerInterface):
     def remove(self, path):
         self.fixture.record('remove', path)
         try:
+            self.fixture.namespace_begin('delete', path)
             self._path(path, False).unlink()
+            self.fixture.namespace_finish('delete', path)
             return paramiko.SFTP_OK
         except OSError as error:
             return paramiko.SFTPServer.convert_errno(error.errno)
@@ -161,7 +163,38 @@ class _Filesystem(paramiko.SFTPServerInterface):
 
     def rename(self, oldpath, newpath):
         self.fixture.record('rename', oldpath, newpath)
-        return paramiko.SFTP_OP_UNSUPPORTED
+        if not self.fixture.is_namespace(oldpath):
+            return paramiko.SFTP_OP_UNSUPPORTED
+        try:
+            self.fixture.namespace_begin('rename', oldpath)
+            source, destination = self._path(oldpath, False), self._path(newpath, False)
+            if destination.exists() or destination.is_symlink():
+                return paramiko.SFTP_FAILURE
+            source.rename(destination)
+            self.fixture.namespace_finish('rename', oldpath)
+            return paramiko.SFTP_OK
+        except OSError as error:
+            return paramiko.SFTPServer.convert_errno(error.errno)
+
+    def mkdir(self, path, attributes):
+        self.fixture.record('mkdir', path)
+        try:
+            self.fixture.namespace_begin('mkdir', path)
+            self._path(path, False).mkdir(mode=attributes.st_mode or 0o700)
+            self.fixture.namespace_finish('mkdir', path)
+            return paramiko.SFTP_OK
+        except OSError as error:
+            return paramiko.SFTPServer.convert_errno(error.errno)
+
+    def rmdir(self, path):
+        self.fixture.record('rmdir', path)
+        try:
+            self.fixture.namespace_begin('delete', path)
+            self._path(path, False).rmdir()
+            self.fixture.namespace_finish('delete', path)
+            return paramiko.SFTP_OK
+        except OSError as error:
+            return paramiko.SFTPServer.convert_errno(error.errno)
 
     def posix_rename(self, oldpath, newpath):
         self.fixture.record('posix_rename', oldpath, newpath)
@@ -203,6 +236,11 @@ class SftpFixture:
         self.operations = []
         self.errors = []
         self.on_write_close = self.before_rename = None
+        self.before_namespace = self.after_namespace = None
+        self.namespace_entered, self.namespace_done = threading.Event(), threading.Event()
+        self.namespace_release = threading.Event()
+        self.namespace_release.set()
+        self.drop_namespace_reply = False
         self.drop_rename_reply = False
         self.rename_entered = threading.Event()
         self.rename_done = threading.Event()
@@ -235,6 +273,26 @@ class SftpFixture:
         with self._lock:
             if len(self.operations) < 4096:
                 self.operations.append(operation)
+
+    @staticmethod
+    def is_namespace(path):
+        return not any(part.startswith(('.runyte-upload-', '.runyte-probe-')) for part in Path(path).parts)
+
+    def namespace_begin(self, kind, path):
+        if self.is_namespace(path):
+            self.namespace_entered.set()
+            if self.before_namespace:
+                self.before_namespace(kind, Path(path))
+
+    def namespace_finish(self, kind, path):
+        if self.is_namespace(path):
+            self.namespace_done.set()
+            if self.after_namespace:
+                self.after_namespace(kind, Path(path))
+            if self.drop_namespace_reply:
+                self.disconnect_clients()
+            else:
+                self.namespace_release.wait(15)
 
     def _accept(self):
         while not self._closed.is_set():
@@ -278,6 +336,7 @@ class SftpFixture:
     def close(self):
         self._closed.set()
         self.rename_release.set()
+        self.namespace_release.set()
         self.read_release.set()
         self.listener.close()
         self.disconnect_clients()

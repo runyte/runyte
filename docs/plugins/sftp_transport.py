@@ -74,6 +74,7 @@ class SftpTransport(BoundedTransport):
         self.connection_id = hashlib.sha256(json.dumps(
             identity, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
         self._slots = threading.BoundedSemaphore(2)
+        self._mutation_slot = threading.BoundedSemaphore(1)
 
     def _connect(self, operation):
         client = paramiko.SSHClient()
@@ -96,7 +97,7 @@ class SftpTransport(BoundedTransport):
     def _error(error, promotion):
         if promotion:
             return TransportError('outcome_unknown',
-                                  'Remote replacement may have completed; settlement is unknown',
+                                  'Remote mutation may have completed; settlement is unknown',
                                   outcome_unknown=True, settled=False)
         if isinstance(error, TransportError):
             return error
@@ -105,8 +106,8 @@ class SftpTransport(BoundedTransport):
         # Paramiko errors may contain usernames, paths or authentication data.
         return TransportError('unavailable', 'SFTP operation failed; verify connection and trust settings')
 
-    def _run(self, action, cancel):
-        return super()._run(action, cancel, timeout=OPERATION_TIMEOUT)
+    def _run(self, action, cancel, *, mutation=False):
+        return super()._run(action, cancel, timeout=OPERATION_TIMEOUT, mutation=mutation)
 
     def _path(self, sftp, operation, path):
         if (not _safe(path, MAX_PATH) or '..' in path.split('/')
@@ -198,6 +199,65 @@ class SftpTransport(BoundedTransport):
     def list(self, path, cancel=None):
         return self.browse(path, cancel)[1]
 
+    def _operation_path(self, sftp, operation, path, *, new):
+        if not _safe(path, MAX_PATH) or '..' in path.split('/') or path.startswith('//'):
+            _fail('invalid_argument', 'Invalid remote operation path')
+        requested = posixpath.normpath(posixpath.join(self.root, path))
+        self._contained(requested)
+        parent = self._path(sftp, operation, posixpath.dirname(requested))
+        operation.check()
+        if not stat.S_ISDIR(sftp.stat(parent).st_mode or 0):
+            _fail('unsupported', 'Remote operation parent is not a directory')
+        canonical = posixpath.join(parent, posixpath.basename(requested))
+        self._contained(canonical)
+        if not new:
+            operation.check()
+            if stat.S_ISLNK(sftp.lstat(canonical).st_mode or 0):
+                _fail('unsupported', 'Remote operations do not follow source symbolic links')
+            if self._path(sftp, operation, canonical) != canonical:
+                _fail('conflict', 'Remote source identity changed while resolving it')
+        return canonical
+
+    @staticmethod
+    def _operation_absent(sftp, operation, path):
+        operation.check()
+        try:
+            sftp.lstat(path)
+        except OSError as error:
+            if error.errno == errno.ENOENT:
+                return
+            raise
+        _fail('conflict', 'Remote destination already exists')
+
+    def _operation_state(self, sftp, operation, path):
+        operation.check()
+        attrs = sftp.lstat(path)
+        mode = attrs.st_mode or 0
+        if stat.S_ISREG(mode):
+            kind = 'file'
+            digest = hashlib.sha256(self._read(sftp, operation, path)).hexdigest()
+        elif stat.S_ISDIR(mode):
+            kind, digest = 'directory', None
+            for _ in sftp.listdir_iter(path, read_aheads=1):
+                operation.check()
+                _fail('unsupported', 'Remote directory operations require an empty directory')
+        else:
+            _fail('unsupported', 'Remote operations require a regular file or empty directory')
+        return kind, (mode, attrs.st_size, attrs.st_mtime, attrs.st_uid, attrs.st_gid, digest)
+
+    @staticmethod
+    def _operation_apply(sftp, prepared):
+        if prepared.kind == 'mkdir':
+            sftp.mkdir(prepared.source)
+        elif prepared.kind == 'rename':
+            # The normal SFTP request requires an absent destination. Never use
+            # the overwrite extension for an ordinary namespace rename.
+            sftp.rename(prepared.source, prepared.destination)
+        elif prepared.entry_kind == 'directory':
+            sftp.rmdir(prepared.source)
+        else:
+            sftp.remove(prepared.source)
+
     @staticmethod
     def _cleanup(sftp, operation, paths):
         for path in paths:
@@ -282,4 +342,4 @@ class SftpTransport(BoundedTransport):
                 # rename settles it. A disconnected upload may leave its temp.
                 if created and not operation.promotion_started:
                     self._cleanup(sftp, operation, [temporary])
-        return self._run(action, cancel)
+        return self._run(action, cancel, mutation=True)

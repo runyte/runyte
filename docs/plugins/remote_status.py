@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MPL-2.0
-"""Bounded phase-only publication of remote download status in an existing view."""
+"""Bounded phase publication for remote application work in an existing view."""
 import threading
 import time
 
@@ -9,9 +9,9 @@ STATUS_ROW = 'download-status'
 STATUS_HEADROOM = 512
 
 
-class DownloadStatus:
-    def __init__(self, owner):
-        self.owner = owner
+class PhaseStatus:
+    def __init__(self, owner, row, messages, start):
+        self.owner, self.row, self.messages, self.start = owner, row, messages, start
         self.lock = threading.Lock()
         self.phase = None
         self.generation = self.serial = 0
@@ -25,24 +25,18 @@ class DownloadStatus:
             with self.lock:
                 phase = self.phase
         rows = list(base['rows'])
-        messages = {
-            'transferring': ('Downloading remote file', 'muted'),
-            'ready': (f'Download ready · run :plugin.{self.owner.plugin_id}.confirm-download', 'heading'),
-            'failed': (f'Download failed · retry :plugin.{self.owner.plugin_id}.download', 'error'),
-            'cancelled': ('Download cancelled', 'muted'),
-        }
-        if phase in messages:
-            text, role = messages[phase]
-            rows.append({'id': STATUS_ROW, 'text': text, 'role': role})
+        if phase in self.messages:
+            text, role = self.messages[phase]
+            rows.append({'id': self.row, 'text': text, 'role': role})
         return {**base, 'rows': rows}
 
     def __call__(self, phase):
-        if phase not in ('transferring', 'ready', 'failed', 'cancelled', 'completed'):
+        if phase not in self.messages and phase != 'completed':
             return
         # A Downloads callback can hold its own lock. Never acquire the browser
         # lock or wait for a host response at this boundary.
         with self.lock:
-            if phase == 'transferring':
+            if phase == self.start:
                 self.generation += 1
             self.phase = phase
             self.serial += 1
@@ -52,7 +46,7 @@ class DownloadStatus:
             self.active = True
             self.idle.clear()
         try:
-            threading.Thread(target=self.publish, name='runyte-download-status', daemon=True).start()
+            threading.Thread(target=self.publish, name='runyte-remote-status', daemon=True).start()
         except Exception:
             with self.lock:
                 self.active = False
@@ -77,7 +71,9 @@ class DownloadStatus:
                     if view is not None and self.owner.view == view and self.owner.model is not None:
                         result = self.owner.app.request('view.publish', view=view,
                             expected_revision=self.owner.revision,
-                            model=self.model(self.owner.model, phase))
+                            model=(self.owner.status_model((self, phase))
+                                   if hasattr(self.owner, 'status_model')
+                                   else self.model(self.owner.model, phase)))
                         self.owner.revision = result['revision']
             except PluginError as error:
                 busy = error.code == 'busy'
@@ -96,3 +92,27 @@ class DownloadStatus:
                     self.active = False
                     self.idle.set()
                     return
+
+
+class DownloadStatus(PhaseStatus):
+    def __init__(self, owner):
+        super().__init__(owner, STATUS_ROW, {
+            'transferring': ('Downloading remote file', 'muted'),
+            'ready': (f'Download ready · run :plugin.{owner.plugin_id}.confirm-download', 'heading'),
+            'failed': (f'Download failed · retry :plugin.{owner.plugin_id}.download', 'error'),
+            'cancelled': ('Download cancelled', 'muted'),
+        }, 'transferring')
+
+
+class OperationStatus(PhaseStatus):
+    def __init__(self, owner):
+        super().__init__(owner, 'operation-status', {
+            'preparing': ('Inspecting remote operation', 'muted'),
+            'ready': (f'Remote operation ready · run :plugin.{owner.plugin_id}.confirm-operation', 'heading'),
+            'confirming': ('Review the remote operation in the native confirmation', 'muted'),
+            'applying': ('Applying remote operation', 'muted'),
+            'completed': (f'Remote operation completed · run :plugin.{owner.plugin_id}.refresh', 'heading'),
+            'failed': ('Remote operation failed · inspect remote state before trying again', 'error'),
+            'cancelled': ('Remote operation cancelled', 'muted'),
+            'outcome_unknown': ('Remote operation outcome unknown · inspect remote state; do not retry', 'error'),
+        }, 'preparing')

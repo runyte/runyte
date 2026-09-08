@@ -16,6 +16,7 @@ from unittest.mock import patch
 from application import PluginError
 from download_transport_checks import DownloadTransportChecks
 from download_wire_checks import check_download_wire
+from operation_transport_checks import OperationTransportChecks
 from ftp_fixture import FtpFixture
 from ftp_transport import FtpTransport
 
@@ -26,7 +27,7 @@ def version(data):
     return hashlib.sha256(data).hexdigest()
 
 
-class FtpTransportTests(DownloadTransportChecks, unittest.TestCase):
+class FtpTransportTests(OperationTransportChecks, DownloadTransportChecks, unittest.TestCase):
     def fixture(self, **options):
         fixture = FtpFixture(**options)
         self.addCleanup(fixture.close)
@@ -46,6 +47,15 @@ class FtpTransportTests(DownloadTransportChecks, unittest.TestCase):
             (fixture.root / name).write_bytes(data)
             self.assertEqual(transport.read(name), data)
         self.assertEqual([op[1] for op in fixture.operations if op[0] == 'PROT'], ['P'] * 3)
+
+    def test_explicit_plain_ftp_namespace_operations_preserve_the_selected_protocol(self):
+        fixture = self.fixture(tls=False)
+        transport = self.transport(fixture)
+        transport.apply_operation(transport.prepare_operation('mkdir', 'new'))
+        self.assertTrue((fixture.root / 'new').is_dir())
+        transport.apply_operation(transport.prepare_operation('delete', 'new'))
+        self.assertFalse((fixture.root / 'new').exists())
+        self.assertFalse(any(op[0] == 'PROT' for op in fixture.operations))
 
     def test_document_limit_and_regular_file_requirement(self):
         fixture = self.fixture()

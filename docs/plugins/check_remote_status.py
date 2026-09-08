@@ -109,6 +109,32 @@ class StatusTests(unittest.TestCase):
         self.assertFalse(self.ui.download_status.active)
         self.assertIsNone(self.ui.download_status.pending)
 
+    def test_operation_and_download_rows_preserve_each_other_and_exact_actions(self):
+        original = set(self.ui.entries)
+        self.ui.download_status('ready')
+        self.settle()
+        self.ui.operation_status('ready')
+        self.assertTrue(self.ui.operation_status.idle.wait(2))
+        rows = self.publications()[-1]['model']['rows']
+        self.assertEqual({row['id'] for row in rows}, original | {STATUS_ROW, 'operation-status'})
+        self.assertEqual(rows[-1]['text'], 'Remote operation ready · run :plugin.custom-sftp.confirm-operation')
+        self.ui.operation_status('outcome_unknown')
+        self.assertTrue(self.ui.operation_status.idle.wait(2))
+        self.assertEqual(self.publications()[-1]['model']['rows'][-1]['role'], 'error')
+        self.assertIn('do not retry', self.publications()[-1]['model']['rows'][-1]['text'])
+        self.ui.download_status('completed')
+        self.settle()
+        rows = self.publications()[-1]['model']['rows']
+        self.assertEqual({row['id'] for row in rows}, original | {'operation-status'})
+        self.assertEqual(self.ui.entries.keys(), dict.fromkeys(original).keys())
+
+    def test_operation_completion_keeps_a_refresh_action_without_background_network_io(self):
+        self.ui.operation_status('completed')
+        self.assertTrue(self.ui.operation_status.idle.wait(2))
+        self.assertEqual(self.publications()[-1]['model']['rows'][-1]['text'],
+                         'Remote operation completed · run :plugin.custom-sftp.refresh')
+        self.assertEqual([method for method, _ in self.port.calls], ['view.publish'])
+
 
 if __name__ == '__main__':
     unittest.main()

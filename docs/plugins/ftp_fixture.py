@@ -70,6 +70,11 @@ class FtpFixture:
         self.ca_file, cert_file, key_file = certificate_files(self.base, valid_hostname=valid_hostname)
         self.operations = []
         self.on_write_close = self.before_rename = None
+        self.before_namespace = self.after_namespace = None
+        self.namespace_entered, self.namespace_done = threading.Event(), threading.Event()
+        self.namespace_release = threading.Event()
+        self.namespace_release.set()
+        self.drop_namespace_reply = False
         self.drop_rename_reply = False
         self.rename_entered, self.rename_done = threading.Event(), threading.Event()
         self.rename_release = threading.Event()
@@ -86,6 +91,47 @@ class FtpFixture:
 
         class Handler(TLS_FTPHandler if tls else FTPHandler):
             auth_failed_timeout = 0
+            def namespace(self, kind, path, action):
+                if not fixture.is_namespace(path):
+                    return action()
+                fixture.namespace_entered.set()
+                if fixture.before_namespace:
+                    fixture.before_namespace(kind, Path(path))
+                self._namespace_response = (kind, path)
+                try:
+                    return action()
+                finally:
+                    self._namespace_response = None
+
+            def respond(self, response, *args, **kwargs):
+                pending = getattr(self, '_namespace_response', None)
+                if pending and response.startswith('2'):
+                    fixture.namespace_done.set()
+                    if fixture.after_namespace:
+                        fixture.after_namespace(pending[0], Path(pending[1]))
+                    if fixture.drop_namespace_reply:
+                        self.close()
+                        return
+                    if not fixture.namespace_release.is_set():
+                        def reply():
+                            if self._closed:
+                                return
+                            if fixture.namespace_release.is_set():
+                                super(Handler, self).respond(response, *args, **kwargs)
+                            else:
+                                self.ioloop.call_later(0.01, reply)
+                        self.ioloop.call_later(0.01, reply)
+                        return
+                return super().respond(response, *args, **kwargs)
+
+            def ftp_MKD(self, path):
+                fixture.record('MKD', path)
+                return self.namespace('mkdir', path, lambda: super(Handler, self).ftp_MKD(path))
+
+            def ftp_RMD(self, path):
+                fixture.record('RMD', path)
+                return self.namespace('delete', path, lambda: super(Handler, self).ftp_RMD(path))
+
             def ftp_PROT(self, line):
                 fixture.record('PROT', line)
                 if reject_protection:
@@ -117,13 +163,16 @@ class FtpFixture:
 
             def ftp_DELE(self, path):
                 fixture.record('DELE', path)
-                return super().ftp_DELE(path)
+                return self.namespace('delete', path, lambda: super(Handler, self).ftp_DELE(path))
 
             def ftp_RNFR(self, path):
                 fixture.record('RNFR', path)
                 return super().ftp_RNFR(path)
 
             def ftp_RNTO(self, path):
+                return self.namespace('rename', self._rnfr or path, lambda: self.rename(path))
+
+            def rename(self, path):
                 fixture.record('RNTO', path)
                 source, self._rnfr = self._rnfr, None
                 if source is None:
@@ -178,6 +227,10 @@ class FtpFixture:
         if len(self.operations) < 4096:
             self.operations.append(operation)
 
+    @staticmethod
+    def is_namespace(path):
+        return not any(part.startswith(('.runyte-upload-', '.runyte-probe-')) for part in Path(path).parts)
+
     def _serve(self):
         try:
             while not self._closed.is_set():
@@ -190,6 +243,7 @@ class FtpFixture:
         self._closed.set()
         self.read_release.set()
         self.rename_release.set()
+        self.namespace_release.set()
         self.thread.join(timeout=3)
         if self.thread.is_alive():
             raise RuntimeError('FTP fixture did not stop')

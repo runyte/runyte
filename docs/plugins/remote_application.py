@@ -9,7 +9,8 @@ from contextlib import contextmanager
 
 from application import Application, PluginError
 from remote_download import Downloads
-from remote_status import DownloadStatus, STATUS_HEADROOM
+from remote_operations import Operations
+from remote_status import DownloadStatus, OperationStatus, STATUS_HEADROOM
 
 MAX_ROWS = 1024
 MAX_MODEL_BYTES = 900 * 1024
@@ -61,6 +62,11 @@ class RemoteApplication:
             command('download', 'Download the selected remote file through native confirmation'),
             command('confirm-download', 'Confirm a completed download', context='workspace'),
             command('cancel-download', 'Cancel the current download', context='workspace'),
+            command('mkdir', 'Prepare a remote directory creation'),
+            command('rename', 'Prepare a selected remote file or empty directory rename'),
+            command('delete', 'Prepare permanent deletion of a remote file or empty directory'),
+            command('confirm-operation', 'Review the prepared remote operation', context='workspace'),
+            command('cancel-operation', 'Cancel the pending remote operation', context='workspace'),
         ], ['views', 'providers', 'documents', 'jobs', 'filesystem', 'interaction'])
         self.lock = threading.Lock()
         self.registration_lock = threading.Lock()
@@ -69,16 +75,21 @@ class RemoteApplication:
         self.entries = {}
         self.model = None
         self.download_status = DownloadStatus(self)
+        self.operation_status = OperationStatus(self)
         self.downloads = Downloads(self.app, transport, on_status=self.download_status)
+        self.operations = Operations(self.app, transport, on_status=self.operation_status)
         self.handlers = {'browse': self.browse, 'enter': self.enter,
                          'parent': self.parent, 'refresh': self.refresh,
                          'open': self.open, 'inspect': self.inspect, 'rebind': self.rebind,
                          'download': self.download, 'confirm-download': self.downloads.confirm,
-                         'cancel-download': self.downloads.cancel}
+                         'cancel-download': self.downloads.cancel,
+                         'mkdir': self.mkdir, 'rename': self.rename, 'delete': self.delete,
+                         'confirm-operation': self.operations.confirm,
+                         'cancel-operation': self.operations.cancel}
         self.app.handlers = self.handlers
         self.app.resource_handlers = provider.handlers
         self.app.on_event = self.event
-        self.app.on_input = self.downloads.submitted
+        self.app.on_input = self.submitted
 
     def register(self):
         with available(self.registration_lock):
@@ -114,9 +125,9 @@ class RemoteApplication:
                                   'role': 'heading' if kind == 'directory' else
                                           'ordinary' if kind == 'file' else 'muted'})
             entries[row_id] = {'path': path, 'kind': kind, 'size': row.get('size')}
-        if len(json.dumps(model, ensure_ascii=False).encode('utf-8')) > MAX_MODEL_BYTES - STATUS_HEADROOM:
+        if len(json.dumps(model, ensure_ascii=False).encode('utf-8')) > MAX_MODEL_BYTES - 2 * STATUS_HEADROOM:
             raise PluginError('limit_exceeded', 'Remote directory model exceeds message budget')
-        presented = self.download_status.model(model)
+        presented = self.status_model(base=model)
         if self.view is None:
             result = self.app.request('view.create', model=presented)
         else:
@@ -188,6 +199,7 @@ class RemoteApplication:
 
     def event(self, name, data):
         self.downloads.event(name, data)
+        self.operations.event(name, data)
         self.provider.on_event(name, data)
         # View closures may arrive while a command waits for a host response.
         # Defer the invalidation until that bounded command has released its lock.
@@ -197,3 +209,33 @@ class RemoteApplication:
                     self.view = self.revision = self.path = None
                     self.entries = {}
                     self.model = None
+
+    def status_model(self, override=None, base=None):
+        model = self.model if base is None else base
+        for status in (self.download_status, self.operation_status):
+            phase = override[1] if override is not None and override[0] is status else None
+            model = status.model(model, phase)
+        return model
+
+    def submitted(self, context):
+        result = self.operations.submitted(context)
+        return self.downloads.submitted(context) if result is None else result
+
+    def mkdir(self, context):
+        with available(self.lock):
+            self.current(context)
+            return self.operations.start(context, 'mkdir', {'path': self.path, 'kind': 'directory', 'size': 0})
+
+    def selected_operation(self, context, kind):
+        with available(self.lock):
+            self.current(context)
+            rows = context.get('rows', [])
+            if len(rows) != 1 or rows[0] not in self.entries:
+                raise PluginError('invalid_argument', 'Select exactly one remote entry')
+            return self.operations.start(context, kind, self.entries[rows[0]])
+
+    def rename(self, context):
+        return self.selected_operation(context, 'rename')
+
+    def delete(self, context):
+        return self.selected_operation(context, 'delete')

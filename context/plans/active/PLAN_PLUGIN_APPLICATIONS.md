@@ -77,7 +77,9 @@ and bounded recursive filesystem operations, documented below. Milestone 4's
 provider-backed reads, conditional saves, explicit rebind and conflict inspection
 are implemented, together with native weaker-transport confirmation and the SFTP
 and FTP/FTPS examples. Binary download staging now uses native confirmed
-publication. Remote filesystem operations remain outstanding. Milestone 5 still needs managed processes, terminal/external handoffs, activity leases,
+publication, and the examples now provide native-confirmed remote mkdir, rename
+and delete. The remaining provider conflict/lifecycle refinements and later
+milestones remain active. Milestone 5 still needs managed processes, terminal/external handoffs, activity leases,
 settings/state and the plugin manager. Milestone 6 still needs the broader SDK,
 non-Python example, full conformance matrix and complete application performance
 and supported-platform evidence. Milestones 1–2 also retain their full overload,
@@ -489,6 +491,41 @@ found no remaining concrete defect in this round. Remote filesystem mutations,
 subscriptions, richer models, managed helpers, leases,
 settings/state, manager/media examples and complete platform/performance evidence
 remain active.
+
+## Confirmed remote namespace round
+
+The SFTP and FTP/FTPS examples now prepare mkdir, rename and permanent delete
+through existing native input and finite-job APIs. No service-specific host
+method was needed: plugins own remote preconditions and IO, while Runyte owns
+confirmation and job lifecycle. Preparation returns promptly, and a fresh
+confirm-operation action displays immutable quoted paths and explicit warnings.
+Only the accepted native callback starts the mutation worker.
+
+Operations handle regular files up to 8 MiB and empty directories, preserve
+remote-root containment checks, and revalidate source hashes/metadata and absent
+destinations. Namespace operations and document replacements share one mutation
+slot, retained until the actual worker exits. FTP warnings name the remaining
+concurrent-destination overwrite race; neither adapter claims compare-and-swap.
+Unknown outcomes are not retried or declared settled by reconnect/stat. Existing
+provider documents retain their identity and all local text after rename/delete.
+
+Review fixed native confirmation control-character/size handling, exact path and
+connection-label quoting, destination validation, and a cancelled-success terminal
+acknowledgement race that could otherwise leave the host stopping a responsive
+plugin. Dual phase rows preserve download and operation results without idle
+polling. Comprehensive final review found no remaining concrete defect.
+
+Python validation passed epoch 1 (8), epoch 2/SDK (10), generic provider (10),
+download lifecycle (14), phase publication (8), operation lifecycle (17), SFTP UI
+(7), FTP UI (10), and actual SFTP and FTP/FTPS fixtures (35 each). The real FTPS
+editor smoke passed mkdir cancellation/application, rename with its weaker
+transport warning, preserved dirty provider text, refusal to recreate a renamed
+source on save, and file/empty-directory deletion. Two settled seconds produced
+zero terminal bytes. Rust is unchanged from `a036f02` and its canonical 91.62%
+Linux coverage measurement. Native macOS and full performance gates remain open.
+
+Source subscriptions, asynchronous field validation, richer models, managed
+helpers, leases, settings/state and manager/media examples remain active.
 
 ## Investigation: existing foundation and missing boundaries
 

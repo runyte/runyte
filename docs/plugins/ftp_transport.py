@@ -116,6 +116,7 @@ class FtpTransport(BoundedTransport):
         self.connection_id = hashlib.sha256(json.dumps(
             identity, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
         self._slots = threading.BoundedSemaphore(2)
+        self._mutation_slot = threading.BoundedSemaphore(1)
 
     def _password(self):
         flags = os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW | os.O_CLOEXEC
@@ -175,7 +176,7 @@ class FtpTransport(BoundedTransport):
     def _error(error, promotion):
         if promotion:
             return TransportError('outcome_unknown',
-                                  'Remote replacement may have completed; settlement is unknown',
+                                  'Remote mutation may have completed; settlement is unknown',
                                   outcome_unknown=True, settled=False)
         if isinstance(error, TransportError):
             return error
@@ -185,8 +186,8 @@ class FtpTransport(BoundedTransport):
             return TransportError('not_found', 'Configured credential or trust file was not found')
         return TransportError('unavailable', 'FTP operation failed; verify connection, credentials and trust settings')
 
-    def _run(self, action, cancel):
-        return super()._run(action, cancel, timeout=OPERATION_TIMEOUT)
+    def _run(self, action, cancel, *, mutation=False):
+        return super()._run(action, cancel, timeout=OPERATION_TIMEOUT, mutation=mutation)
 
     @staticmethod
     def _tick(client, operation):
@@ -230,7 +231,7 @@ class FtpTransport(BoundedTransport):
             result[key.lower()] = value
         return name, result
 
-    def _stat(self, client, operation, path):
+    def _metadata(self, client, operation, path):
         self._tick(client, operation)
         response = client.sendcmd('MLST ' + path)
         records = [line[1:] for line in response.split('\n')[1:-1] if line.startswith(' ')]
@@ -239,6 +240,10 @@ class FtpTransport(BoundedTransport):
         name, facts = self._facts(records[0])
         if name not in (path, posixpath.basename(path)):
             _fail('conflict', 'FTP metadata names a different resource')
+        return facts
+
+    def _stat(self, client, operation, path):
+        facts = self._metadata(client, operation, path)
         if facts.get('type', '').lower() != 'file':
             _fail('unsupported', 'Remote resource is not a regular file')
         raw_size = facts.get('size', '')
@@ -284,42 +289,83 @@ class FtpTransport(BoundedTransport):
     def read(self, path, cancel=None):
         return self.observe(path, cancel)[1]
 
+    def _listing(self, client, operation, canonical):
+        entries, metadata, count = [], 0, 0
+
+        def received(line):
+            nonlocal metadata, count
+            operation.check()
+            count += 1
+            metadata += len(line.encode('utf-8')) + 1
+            if count > MAX_ENTRIES + 2 or metadata > MAX_METADATA:
+                _fail('limit_exceeded', 'Remote directory exceeds listing limits')
+            name, facts = self._facts(line)
+            kind = facts.get('type', '').lower()
+            if kind in ('cdir', 'pdir'):
+                return
+            if (not _safe(name, MAX_PATH) or '/' in name or name in ('.', '..')):
+                _fail('invalid_argument', 'Server returned an invalid directory entry')
+            if len(entries) >= MAX_ENTRIES:
+                _fail('limit_exceeded', 'Remote directory exceeds 1024 entries')
+            kind = ('directory' if kind == 'dir' else 'file' if kind == 'file'
+                    else 'symlink' if 'slink' in kind else 'other')
+            size = facts.get('size', '0')
+            if not size.isascii() or not size.isdigit() or len(size) > 20:
+                _fail('unsupported', 'Server returned an invalid directory entry size')
+            entries.append({'name': name, 'kind': kind, 'size': int(size)})
+
+        self._tick(client, operation)
+        # ftplib.mlsd stores the complete listing before yielding records.
+        # retrlines invokes a bounded callback as each MLSD line arrives.
+        client.retrlines('MLSD ' + canonical, received)
+        return sorted(entries, key=lambda entry: entry['name'])
+
     def browse(self, path, cancel=None):
         def action(client, operation):
             canonical = self._path(client, operation, path, directory=True)
-            entries, metadata, count = [], 0, 0
-
-            def received(line):
-                nonlocal metadata, count
-                operation.check()
-                count += 1
-                metadata += len(line.encode('utf-8')) + 1
-                if count > MAX_ENTRIES + 2 or metadata > MAX_METADATA:
-                    _fail('limit_exceeded', 'Remote directory exceeds listing limits')
-                name, facts = self._facts(line)
-                kind = facts.get('type', '').lower()
-                if kind in ('cdir', 'pdir'):
-                    return
-                if (not _safe(name, MAX_PATH) or '/' in name or name in ('.', '..')):
-                    _fail('invalid_argument', 'Server returned an invalid directory entry')
-                if len(entries) >= MAX_ENTRIES:
-                    _fail('limit_exceeded', 'Remote directory exceeds 1024 entries')
-                kind = ('directory' if kind == 'dir' else 'file' if kind == 'file'
-                        else 'symlink' if 'slink' in kind else 'other')
-                size = facts.get('size', '0')
-                if not size.isascii() or not size.isdigit() or len(size) > 20:
-                    _fail('unsupported', 'Server returned an invalid directory entry size')
-                entries.append({'name': name, 'kind': kind, 'size': int(size)})
-
-            self._tick(client, operation)
-            # ftplib.mlsd stores the complete listing before yielding records.
-            # retrlines invokes a bounded callback as each MLSD line arrives.
-            client.retrlines('MLSD ' + canonical, received)
-            return canonical, sorted(entries, key=lambda entry: entry['name'])
+            return canonical, self._listing(client, operation, canonical)
         return self._run(action, cancel)
 
     def list(self, path, cancel=None):
         return self.browse(path, cancel)[1]
+
+    def _operation_path(self, client, operation, path, *, new):
+        # PWD resolves the containing directory. MLST is the server's type
+        # authority; FTP cannot identify links a server reports as normal files.
+        return self._path(client, operation, path)
+
+    def _operation_absent(self, client, operation, path):
+        # A 550 response alone could mean permission denied rather than absence.
+        # Require a successful bounded parent listing to establish absence.
+        entries = self._listing(client, operation, posixpath.dirname(path))
+        if any(entry['name'] == posixpath.basename(path) for entry in entries):
+            _fail('conflict', 'Remote destination already exists')
+
+    def _operation_state(self, client, operation, path):
+        facts = self._metadata(client, operation, path)
+        kind = facts.get('type', '').lower()
+        if kind == 'file':
+            digest = hashlib.sha256(self._read(client, operation, path)).hexdigest()
+        elif kind == 'dir':
+            kind, digest = 'directory', None
+            if self._listing(client, operation, path):
+                _fail('unsupported', 'Remote directory operations require an empty directory')
+        else:
+            _fail('unsupported', 'Remote operations require a regular file or empty directory')
+        return kind, (facts.get('size'), facts.get('modify'), facts.get('unique'), digest)
+
+    @staticmethod
+    def _operation_apply(client, prepared):
+        if prepared.kind == 'mkdir':
+            client.mkd(prepared.source)
+        elif prepared.kind == 'rename':
+            # FTP has no portable no-replace RNTO. The prepared warning names
+            # the concurrent-destination overwrite race explicitly.
+            client.rename(prepared.source, prepared.destination)
+        elif prepared.entry_kind == 'directory':
+            client.rmd(prepared.source)
+        else:
+            client.delete(prepared.source)
 
     @staticmethod
     def _cleanup(client, operation, directory, staged):
@@ -373,4 +419,4 @@ class FtpTransport(BoundedTransport):
                 # and disconnect may leave them behind. Never unlink the target.
                 if created:
                     self._cleanup(client, operation, directory, staged)
-        return self._run(action, cancel)
+        return self._run(action, cancel, mutation=True)

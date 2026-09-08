@@ -18,6 +18,7 @@ import paramiko
 from application import PluginError
 from download_transport_checks import DownloadTransportChecks
 from download_wire_checks import check_download_wire
+from operation_transport_checks import OperationTransportChecks
 from sftp_fixture import SftpFixture
 from sftp_transport import SftpTransport
 
@@ -28,7 +29,7 @@ def version(data):
     return hashlib.sha256(data).hexdigest()
 
 
-class SftpTransportTests(DownloadTransportChecks, unittest.TestCase):
+class SftpTransportTests(OperationTransportChecks, DownloadTransportChecks, unittest.TestCase):
     def fixture(self, **options):
         fixture = SftpFixture(**options)
         self.addCleanup(fixture.close)
@@ -54,6 +55,22 @@ class SftpTransportTests(DownloadTransportChecks, unittest.TestCase):
             (fixture.root / name).write_bytes(contents)
             with self.subTest(name=name):
                 self.assertEqual(transport.read(name), contents)
+
+    def test_namespace_operations_refuse_final_source_symlinks_before_resolving_aliases(self):
+        fixture = self.fixture()
+        transport = self.transport(fixture)
+        target = fixture.root / 'target'
+        target.write_bytes(b'keep target')
+        outside = fixture.base / 'outside'
+        outside.write_bytes(b'keep outside')
+        for name, destination in [('inside-link', target), ('outside-link', outside)]:
+            (fixture.root / name).symlink_to(destination)
+            for kind in ['rename', 'delete']:
+                with self.subTest(name=name, kind=kind), self.assertRaises(PluginError):
+                    transport.prepare_operation(kind, name, 'renamed' if kind == 'rename' else None)
+        self.assertEqual(target.read_bytes(), b'keep target')
+        self.assertEqual(outside.read_bytes(), b'keep outside')
+        self.assertFalse(fixture.namespace_entered.is_set())
 
     def test_read_document_limit_and_regular_file_requirement(self):
         fixture = self.fixture()

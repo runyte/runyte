@@ -646,7 +646,9 @@ whether the provider and requesting application are the same process.
 
 The runnable `sftp.py` application uses `remote_provider.py`,
 `remote_application.py` and `sftp_transport.py` beside the shared `application.py`
-client and `transport.py` worker. SSH stays in the
+client and `transport.py` worker. The shared `remote_download.py`,
+`remote_operations.py` and `remote_status.py` modules provide transfer and
+namespace-operation workflows. SSH stays in the
 application process; Runyte gains no SSH library dependency. Install Paramiko in
 a separate Python environment and use that environment's interpreter:
 
@@ -735,9 +737,10 @@ changing local text or its saved baseline; each side is limited to 4 MiB.
 an uncertain upload. An uncertain remote write keeps local data dirty and cannot
 be retried blindly; if settlement cannot be proved, rebind remains refused.
 Remote documents are limited to 8 MiB of UTF-8 and never acquire a local file path.
-Binary downloads use the staged workflow below. Binary uploads and remote
-mkdir/rename/delete commands remain unfinished. The automated SFTP fixture uses temporary local credentials and
-a loopback server, and never contacts a live account.
+Binary downloads use the staged workflow below. Binary uploads remain
+unfinished; remote mkdir/rename/delete commands use the confirmed workflow below.
+The automated SFTP fixture uses temporary local credentials and a loopback server,
+and never contacts a live account.
 
 
 ## FTP and FTPS browser and editor
@@ -823,8 +826,8 @@ baseline. After a disconnect during promotion, local text remains protected with
 an unknown write outcome. Explicit rebind succeeds only when the provider can
 prove the previous write has settled; reconnecting alone is not proof. If a
 server's rename behavior cannot complete replacement, the save is refused without
-weakening these guarantees. Binary downloads use the staged workflow below. Binary uploads and remote
-mutation commands remain unfinished. Automated fixtures use isolated loopback FTP/FTPS servers and
+weakening these guarantees. Binary downloads use the staged workflow below. Binary uploads remain unfinished; remote
+mutation commands use the confirmed workflow below. Automated fixtures use isolated loopback FTP/FTPS servers and
 temporary credentials and certificates, never a live account.
 
 
@@ -924,3 +927,77 @@ existing filesystem budget. These reservations bound retained sealing work
 alongside the shared application budget. Cancellation and process cleanup release unaccepted
 staging, while an already accepted native filesystem operation retains its frozen
 source until that operation settles.
+
+
+## Confirmed remote directory operations
+
+Both reference browsers use the existing `ui.prompt`, `ui.confirm` and finite-job
+APIs for remote mkdir, rename and permanent delete. No additional editor method
+or transport library is needed. The application owns remote IO and preconditions;
+Runyte owns the input surface and sends the accepted callback only after native
+confirmation. A trusted application already has ordinary OS/network permissions:
+this is an application workflow, not a sandbox for its network traffic.
+
+Use these actions in an SFTP or FTP/FTPS browser (replace `sftp` with `ftp` for the
+second adapter):
+
+- `:plugin.sftp.mkdir` prompts for a destination relative to the displayed directory.
+- `:plugin.sftp.rename` prompts for a destination relative to the selected entry's parent.
+- `:plugin.sftp.delete` prepares deletion of the selected entry.
+- `:plugin.sftp.confirm-operation` shows the prepared operation in native confirmation.
+- `:plugin.sftp.cancel-operation` cancels the pending prompt, inspection or operation.
+
+Preparation returns a finite job immediately and inspects remote state in a
+bounded worker. A retained browser row reports `Remote operation ready` and names
+the confirmation command. Run it with a fresh invocation, review the quoted exact
+paths and transport warning, then press Enter to apply or Escape to cancel.
+Neither preparing an operation nor invoking the confirmation command performs
+the mutation. Confirmation cancellation changes no remote entry. Completion
+leaves a visible result and a refresh action; a closed browser is never reopened
+by background work. Download and operation status rows preserve one another.
+
+Each application retains one operation and one worker. Its job lasts at most
+60 seconds, including preparation and human review. Each network operation uses
+the adapter's eight-second caller deadline. Namespace mutations and document
+replacements share one mutation slot, retained until the actual worker exits,
+even if its caller has already timed out. Reads remain independently bounded.
+Cancellation before the mutation gate prevents the mutation; a remote command
+already sent may finish despite cancellation.
+
+The initial operations handle one regular file or empty directory as reported by
+the server. File inspection is limited to 8 MiB; directory metadata keeps the
+existing 1,024-entry/4 MiB bounds. Nonempty directories, recursive deletion,
+configured-root mutation, parent traversal and existing destinations are refused.
+The native confirmation currently accepts 160 UTF-8 bytes each for title and
+message. If exact quoted paths, the connection label and mandatory warnings do
+not fit, preparation is refused; they are never truncated to obtain approval.
+
+Prepared values are immutable and bound to the connection identity. Apply resolves
+the paths again, compares source metadata and content hash, and rechecks destination
+absence before sending the mutation. These are best-effort checks, not
+compare-and-swap. SFTP uses ordinary rename and never the overwrite extension for
+a namespace rename. FTP/FTPS has no portable no-replace rename guarantee: a target
+created after the check may be overwritten, and the native warning says so.
+The adapter never deletes a target as a rename fallback. Deletion is permanent;
+there is no filesystem undo. SFTP rejects source symbolic links; FTP relies on
+server-reported types and cannot identify a link reported as an ordinary file.
+Use the server account's root/jail for confinement against namespace races.
+
+A dropped reply, timeout or unproved failure after mutation submission produces
+`outcome_unknown`. The status tells the user to inspect remote state and not
+retry. The application never automatically repeats an operation, and reconnecting
+or reading current metadata is not proof that an earlier command cannot still
+finish. If cancellation reaches the host before a successful acknowledgement can
+finish its job, the application records a conservative unknown terminal outcome
+instead of leaving the job stuck cancelling.
+
+Remote namespace changes never retarget, close or replace editor buffers. An open
+provider document keeps its original resource identity, saved baseline, undo and
+local edits after remote rename or deletion. A later save to a missing or changed
+source fails its existing preconditions, preserving unsaved text; it does not
+recreate the removed path. Open the new resource explicitly after a rename.
+Document versions use content hashes: replacing a path with identical bytes is
+indistinguishable from unchanged content, so these checks do not prove that the
+server retained the same filesystem object.
+The isolated server fixtures cover cancellation, changed sources, collisions,
+empty-directory limits, uncertain replies and serialization with document saves.
