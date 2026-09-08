@@ -41,6 +41,7 @@ impl WorkspaceHost {
         }
         let mut names = BTreeSet::new();
         let (events, receiver) = tokio::sync::mpsc::channel(136);
+        self.plugin_events_sender = Some(events.clone());
         for (id, config) in configs.into_iter().enumerate() {
             if !plugin::valid_name(&config.id)
                 || !names.insert(config.id.clone())
@@ -147,6 +148,7 @@ impl WorkspaceHost {
 
     /// Administrative cancellation also removes commands and subscriptions.
     pub fn stop_plugin(&mut self, id: usize, reason: &str) {
+        self.app.cancel_plugin_filesystem(id, None);
         let Some(instance) = self.app.plugins.instances.remove(&id) else {
             return;
         };
@@ -205,6 +207,14 @@ impl WorkspaceHost {
 
     pub(super) fn plugin_message(&mut self, id: usize, message: ClientMessage) -> Result<()> {
         match message {
+            ClientMessage::Local {
+                generation,
+                request,
+                result,
+                ..
+            } => {
+                return self.application_local_result(id, generation, request, result);
+            }
             ClientMessage::Queued { message, .. } => return self.plugin_message(id, *message),
             ClientMessage::Application(message) => {
                 ensure!(
@@ -479,6 +489,7 @@ impl WorkspaceHost {
             }
             ClientMessage::Register { .. } => unreachable!(),
             ClientMessage::Queued { .. }
+            | ClientMessage::Local { .. }
             | ClientMessage::Application(_)
             | ClientMessage::Unsupported { .. }
             | ClientMessage::Deadline { .. } => anyhow::bail!("wrong API epoch"),
@@ -557,6 +568,7 @@ impl WorkspaceHost {
     /// Observation checkpoints coalesce changes within a host turn, including
     /// undo/reload paths. No scan or wakeup exists when there are no subscribers.
     pub fn sync_plugin_observers(&mut self) {
+        self.sync_plugin_filesystem();
         self.sync_plugin_views();
         for id in std::mem::take(&mut self.app.plugins.cancellations) {
             self.stop_plugin(id, "stopped by user");

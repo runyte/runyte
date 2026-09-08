@@ -63,6 +63,15 @@ impl ApplyIo {
 
 static NEXT_TEMP: AtomicU64 = AtomicU64::new(1);
 
+#[derive(Debug)]
+pub(crate) struct DirectoryLimitExceeded;
+impl std::fmt::Display for DirectoryLimitExceeded {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("directory exceeds entry limit")
+    }
+}
+impl std::error::Error for DirectoryLimitExceeded {}
+
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct EntryId(u64);
 
@@ -319,6 +328,14 @@ impl DirectoryListing {
 /// the editable explorer can represent, so a staleness check and a plan
 /// baseline never disagree about what the directory contains.
 fn read_listed_rows(root: &Path, show_hidden: bool) -> Result<Vec<(PathBuf, EntryKind)>> {
+    read_listed_rows_bounded(root, show_hidden, usize::MAX)
+}
+
+fn read_listed_rows_bounded(
+    root: &Path,
+    show_hidden: bool,
+    limit: usize,
+) -> Result<Vec<(PathBuf, EntryKind)>> {
     ensure!(root.is_dir(), "{} is not a directory", root.display());
     let mut rows = fs::read_dir(root)
         .with_context(|| format!("failed to read directory {}", root.display()))?
@@ -356,7 +373,11 @@ fn read_listed_rows(root: &Path, show_hidden: bool) -> Result<Vec<(PathBuf, Entr
                 Ok((PathBuf::from(&name), kind))
             })
         })
+        .take(limit.saturating_add(1))
         .collect::<Result<Vec<_>>>()?;
+    if rows.len() > limit {
+        return Err(DirectoryLimitExceeded.into());
+    }
     rows.sort_by(|left, right| left.0.cmp(&right.0));
     Ok(rows)
 }
@@ -393,7 +414,11 @@ impl DirectorySnapshot {
     /// it showed: an unlisted dotfile is neither deleted for being absent nor
     /// reported as a change when it appears.
     pub fn read_with(root: &Path, show_hidden: bool) -> Result<Self> {
-        let entries = read_listed_rows(root, show_hidden)?
+        Self::read_bounded(root, show_hidden, usize::MAX)
+    }
+
+    pub(crate) fn read_bounded(root: &Path, show_hidden: bool, limit: usize) -> Result<Self> {
+        let entries = read_listed_rows_bounded(root, show_hidden, limit)?
             .into_iter()
             .enumerate()
             .map(|(index, (path, _))| {
@@ -1438,7 +1463,7 @@ fn normalize_desired_path(root: &Path, path: &Path) -> Result<PathBuf> {
     Ok(relative)
 }
 
-fn relative_from_root(root: &Path, target: &Path) -> Result<PathBuf> {
+pub(crate) fn relative_from_root(root: &Path, target: &Path) -> Result<PathBuf> {
     let root_components = root.components().collect::<Vec<_>>();
     let target_components = target.components().collect::<Vec<_>>();
     let common = root_components

@@ -173,7 +173,10 @@ and the order of the push. Do not infer any of those from the commit history.
 - `src/plugin.rs`: bounded experimental extension wire values and the external
   process worker. `src/app/plugin_workflows.rs` coordinates runtime command
   metadata and captured invocations; `src/workspace/host/plugins.rs` owns process
-  lifecycle, explicit-target result application, and buffer observations. The
+  lifecycle, explicit-target result application, and buffer observations.
+  `src/plugin/filesystem.rs` prepares bounded local operations off the editor
+  loop; `src/workspace/host/plugin_filesystem.rs` owns their handles and results,
+  and `src/app/plugin_filesystem.rs` coordinates native confirmation ownership. The
   extension contract lives in `docs/plugins.md`, separately from private bundled
   client DTOs and the headless testing facade.
 - `src/headless.rs`: a frontend-independent, test-oriented facade over semantic

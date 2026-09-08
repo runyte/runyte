@@ -131,6 +131,24 @@ impl WorkspaceHost {
                 request,
             } => {
                 self.application_request_id(id, &request_id)?;
+                if matches!(
+                    request,
+                    api::Request::FilesystemList { .. }
+                        | api::Request::FilesystemPrepare { .. }
+                        | api::Request::FilesystemApply { .. }
+                        | api::Request::FilesystemCancel { .. }
+                        | api::Request::FilesystemRelease { .. }
+                        | api::Request::BufferOpen { .. }
+                ) {
+                    let result = self.application_filesystem_request(id, &request_id, request);
+                    return match result {
+                        Ok(None) => Ok(()),
+                        Ok(Some(result)) => {
+                            self.application_local_reply(id, request_id, Ok(result))
+                        }
+                        Err(error) => self.application_local_reply(id, request_id, Err(error)),
+                    };
+                }
                 let result = self.application_request(id, request);
                 let event = result
                     .as_ref()
@@ -307,12 +325,7 @@ impl WorkspaceHost {
                 }
                 // Retain a bounded recent terminal history for job.get.
                 if state.jobs.len() >= 64 {
-                    let oldest = state
-                        .jobs
-                        .iter()
-                        .find(|(_, j)| !j.state.active())
-                        .map(|(key, _)| key.clone())
-                        .unwrap();
+                    let oldest = state.finished_jobs.pop_front().unwrap();
                     state.jobs.remove(&oldest);
                     state.job_actions.remove(&oldest);
                 }
@@ -382,6 +395,9 @@ impl WorkspaceHost {
                 job.clone()
             }
         };
+        if event.is_some() && !job.state.active() {
+            state.finished_jobs.push_back(job.job.clone());
+        }
         if let Some((token, after_ms)) = deadline {
             self.plugin_send(id, plugin::HostMessage::Deadline { token, after_ms })
                 .map_err(|_| fail(Code::Unavailable, "Application queue unavailable"))?;

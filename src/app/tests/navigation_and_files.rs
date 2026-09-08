@@ -2935,7 +2935,7 @@ fn filesystem_recovery_keeps_unsaved_source_and_replacement_protected() {
     };
 
     let warning = app
-        .reconcile_applied_filesystem(&directory, explorer, &report, false)
+        .reconcile_applied_filesystem(&directory, Some(explorer), &report, false)
         .unwrap();
     assert!(warning.contains(&retained.display().to_string()));
     assert!(warning.contains("refresh before retrying"));

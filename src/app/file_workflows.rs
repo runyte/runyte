@@ -776,6 +776,31 @@ impl App {
         Ok(opened[0])
     }
 
+    /// Publishes a file already read on the application IO worker. A live
+    /// buffer wins over that disk snapshot, including its unsaved edits.
+    pub(crate) fn install_plugin_document(&mut self, buffer: Buffer, activate: bool) -> usize {
+        let path = buffer.path.clone().expect("prepared ordinary file");
+        let index = if let Some(index) = self.live_buffer_for_identity(&path) {
+            index
+        } else {
+            let index = self.buffers.len();
+            self.buffers.push(buffer);
+            self.syntax.push(None);
+            self.reparse_whole(index);
+            self.track_in_git(&path);
+            self.lsp_touch(index);
+            index
+        };
+        if activate {
+            let covered = self.active_terminal();
+            self.switch_buffer(index);
+            if let Some(terminal) = covered {
+                self.active_mut().covered_terminal = Some((index, terminal));
+            }
+        }
+        index
+    }
+
     fn live_buffer_for_path(&self, path: &Path) -> Option<usize> {
         let identity = crate::path_safety::path_identity(path).ok()?;
         self.live_buffer_for_identity(&identity)

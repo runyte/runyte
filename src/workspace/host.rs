@@ -239,6 +239,7 @@ struct CompletedGitSnapshot {
 
 mod plugin_applications;
 mod plugin_editor;
+mod plugin_filesystem;
 /// The only owner allowed to mutate one live editor/application workspace.
 ///
 /// Standalone mode uses this value directly. Persistent mode will keep the
@@ -247,6 +248,8 @@ mod plugins;
 
 pub struct WorkspaceHost {
     plugin_workers: std::collections::BTreeMap<usize, crate::plugin::Worker>,
+    plugin_events_sender: Option<tokio::sync::mpsc::Sender<crate::plugin::Event>>,
+    plugin_local_slots: Option<std::sync::Arc<tokio::sync::Semaphore>>,
     plugins_started: bool,
     identity: WorkspaceIdentity,
     app: App,
@@ -329,6 +332,8 @@ impl WorkspaceHost {
         Self {
             identity,
             plugin_workers: Default::default(),
+            plugin_events_sender: None,
+            plugin_local_slots: None,
             plugins_started: false,
             app,
             services: ServiceLifecycle::new(256),
@@ -591,6 +596,7 @@ impl WorkspaceHost {
             && self.app.terminals.is_empty()
             && self.app.plugins.instances.values().all(|instance| {
                 instance.pending.is_none()
+                    && instance.application.local_requests.is_empty()
                     && instance.application.requests.is_empty()
                     && !instance
                         .application

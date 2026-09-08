@@ -3,6 +3,9 @@
 use super::*;
 use crate::plugin::application as api;
 
+#[path = "plugin_filesystem.rs"]
+mod filesystem;
+
 fn setup(
     host: &mut WorkspaceHost,
     id: usize,
@@ -1182,6 +1185,198 @@ fn native_view_survives_private_frame_round_trip_with_theme_roles_in_narrow_pane
         assert_eq!(
             cells.content[start + 1].fg,
             ratatui::style::Color::Rgb(red, green, blue)
+        );
+    }
+}
+
+#[test]
+fn view_actions_use_half_open_row_selections_in_both_directions() {
+    let (_root, mut host) = host();
+    let mut output = view_setup(&mut host);
+    request(
+        &mut host,
+        0,
+        1,
+        api::Request::ViewCreate {
+            model: model(&[
+                ("one", "α first"),
+                ("two", "second"),
+                ("three", "third"),
+                ("four", "fourth"),
+            ]),
+        },
+    );
+    let (view, _) = view_result(&mut output);
+    show_view(&mut host, &mut output, &view, 2);
+    let buffer = host.app.active().buffer;
+    let second = host.app.buffers[buffer].line_to_offset(1);
+    let third = host.app.buffers[buffer].line_to_offset(2);
+    let fourth = host.app.buffers[buffer].line_to_offset(3);
+    for (ranges, expected) in [
+        (vec![Range::new(0, second)], vec!["one"]),
+        (vec![Range::new(second, 0)], vec!["one"]),
+        (vec![Range::new(second, second)], vec!["two"]),
+        (
+            vec![Range::new(0, second), Range::new(fourth, third)],
+            vec!["one", "three"],
+        ),
+        (vec![Range::new(0, third)], vec!["one", "two"]),
+    ] {
+        host.app
+            .panes
+            .get_mut(&host.app.active_pane)
+            .unwrap()
+            .selection = Selection::new(ranges, 0);
+        host.app.prepare_view(Default::default());
+        assert!(matches!(
+            invoke(&mut host, "plugin.tasks.toggle"),
+            CommandOutcome::AsynchronousRequest(_)
+        ));
+        let api::HostMessage::Request { id, params, .. } = next(&mut output) else {
+            panic!()
+        };
+        assert_eq!(params.rows, expected);
+        host.application_message(
+            0,
+            api::ClientMessage::Response {
+                id,
+                outcome: api::CommandResponse::Success {
+                    result: api::CommandResult { job: None },
+                },
+            },
+        )
+        .unwrap();
+    }
+}
+
+#[test]
+fn snapshot_close_cannot_clear_command_or_job_deadlines() {
+    let (_root, mut host) = host();
+    let mut output = setup(&mut host, 0, &["text", "jobs"]);
+    next(&mut output);
+    invoke(&mut host, "plugin.app-0.open");
+    let api::HostMessage::Request { id: command, .. } = next(&mut output) else {
+        panic!()
+    };
+    assert!(
+        matches!(output.try_recv().unwrap(), HostMessage::Deadline { token, after_ms: Some(10000) } if token == command)
+    );
+    request(
+        &mut host,
+        0,
+        1,
+        api::Request::JobCreate {
+            title: "Slow".into(),
+            deadline_seconds: 1,
+        },
+    );
+    let created = job(&mut output);
+    next(&mut output);
+    for (index, token) in [&command, &created.job].into_iter().enumerate() {
+        let due = host.app.plugins.instances[&0]
+            .application
+            .deadlines
+            .get(token)
+            .copied();
+        request(
+            &mut host,
+            0,
+            index as u64 + 2,
+            api::Request::SnapshotClose {
+                snapshot: token.clone(),
+            },
+        );
+        assert!(matches!(
+            output.try_recv().unwrap(),
+            HostMessage::Application(api::HostMessage::Response {
+                outcome: api::Response::Success { .. },
+                ..
+            })
+        ));
+        assert_eq!(
+            host.app.plugins.instances[&0]
+                .application
+                .deadlines
+                .get(token),
+            due.as_ref()
+        );
+    }
+    host.app
+        .plugins
+        .instances
+        .get_mut(&0)
+        .unwrap()
+        .application
+        .deadlines
+        .insert(created.job.clone(), std::time::Instant::now());
+    host.handle_plugin_event(Event {
+        plugin: 0,
+        result: Ok(ClientMessage::Deadline { token: created.job }),
+    });
+    assert!(matches!(
+        next(&mut output),
+        api::HostMessage::Event {
+            event: "job.cancel_requested",
+            ..
+        }
+    ));
+    host.app
+        .plugins
+        .instances
+        .get_mut(&0)
+        .unwrap()
+        .application
+        .deadlines
+        .insert(command.clone(), std::time::Instant::now());
+    host.handle_plugin_event(Event {
+        plugin: 0,
+        result: Ok(ClientMessage::Deadline { token: command }),
+    });
+    assert!(!host.app.plugins.instances.contains_key(&0));
+}
+
+#[test]
+fn terminal_job_history_retains_completion_order_across_handle_widths() {
+    let (_root, mut host) = host();
+    let mut output = setup(&mut host, 0, &["jobs"]);
+    next(&mut output);
+    let mut completed = std::collections::VecDeque::new();
+    for index in 0..110 {
+        request(
+            &mut host,
+            0,
+            index * 2 + 1,
+            api::Request::JobCreate {
+                title: "Work".into(),
+                deadline_seconds: 60,
+            },
+        );
+        let created = job(&mut output);
+        next(&mut output);
+        request(
+            &mut host,
+            0,
+            index * 2 + 2,
+            api::Request::JobFinish {
+                job: created.job.clone(),
+                state: api::TerminalState::Succeeded,
+            },
+        );
+        job(&mut output);
+        next(&mut output);
+        completed.push_back(created.job);
+        if completed.len() > 64 {
+            completed.pop_front();
+        }
+        let state = &host.app.plugins.instances[&0].application;
+        assert_eq!(state.finished_jobs, completed);
+        assert_eq!(
+            state
+                .jobs
+                .keys()
+                .cloned()
+                .collect::<std::collections::BTreeSet<_>>(),
+            completed.iter().cloned().collect()
         );
     }
 }

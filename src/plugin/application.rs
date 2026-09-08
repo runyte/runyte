@@ -121,6 +121,30 @@ pub struct CommandResult {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "method", content = "params", deny_unknown_fields)]
 pub enum Request {
+    #[serde(rename = "filesystem.list")]
+    FilesystemList {
+        path: String,
+        offset: usize,
+        limit: usize,
+        expected_revision: Option<String>,
+    },
+    #[serde(rename = "filesystem.prepare")]
+    FilesystemPrepare {
+        directory: String,
+        expected_revision: String,
+        intent: super::filesystem::Intent,
+    },
+    #[serde(rename = "filesystem.apply")]
+    FilesystemApply { plan: String, invocation: String },
+    #[serde(rename = "filesystem.cancel")]
+    FilesystemCancel { plan: String },
+    #[serde(rename = "filesystem.release")]
+    FilesystemRelease { directory: String },
+    #[serde(rename = "buffer.open")]
+    BufferOpen {
+        path: String,
+        invocation: Option<String>,
+    },
     #[serde(rename = "buffer.list")]
     BufferList { offset: usize, limit: usize },
     #[serde(rename = "pane.list")]
@@ -297,6 +321,7 @@ pub enum HostMessage {
 #[derive(Clone, Debug, Serialize)]
 #[serde(untagged)]
 pub enum EventData {
+    FilesystemFinished(super::filesystem::Finished),
     Job(Job),
     ViewClosed { view: String },
 }
@@ -315,6 +340,20 @@ pub enum Response {
 #[derive(Clone, Debug, Serialize)]
 #[serde(untagged)]
 pub enum ResultValue {
+    Directory {
+        directory: String,
+        revision: String,
+        entries: Vec<super::filesystem::Entry>,
+        next: Option<usize>,
+    },
+    FilesystemPlan {
+        plan: String,
+        operations: Vec<String>,
+    },
+    Opened {
+        buffer: String,
+        revision: String,
+    },
     Buffers {
         buffers: Vec<super::editor::Buffer>,
         next: Option<usize>,
@@ -381,6 +420,9 @@ pub(crate) struct CapturedContext {
 
 /// Bounded host ownership, independent of a frontend and the ten-second control timer.
 pub(crate) struct Instance {
+    pub directories: BTreeMap<String, super::filesystem::Directory>,
+    pub plans: BTreeMap<String, crate::fs_plan::FsPlan>,
+    pub local_requests: BTreeMap<String, super::filesystem::Pending>,
     pub capabilities: BTreeSet<String>,
     pub requests: BTreeMap<String, CapturedContext>,
     pub views: BTreeMap<String, super::view::View>,
@@ -393,6 +435,7 @@ pub(crate) struct Instance {
     pub primary_commands: BTreeSet<String>,
     pub command_arguments: BTreeMap<String, Vec<super::arguments::Argument>>,
     pub jobs: BTreeMap<String, Job>,
+    pub finished_jobs: std::collections::VecDeque<String>,
     pub job_actions: BTreeMap<String, Option<u64>>,
     pub last_request: u64,
     pub next_handle: u64,
@@ -409,6 +452,9 @@ impl Default for Instance {
             .unwrap_or_default()
             .as_nanos();
         Self {
+            directories: Default::default(),
+            plans: Default::default(),
+            local_requests: Default::default(),
             capabilities: Default::default(),
             requests: Default::default(),
             views: Default::default(),
@@ -421,6 +467,7 @@ impl Default for Instance {
             primary_commands: Default::default(),
             command_arguments: Default::default(),
             jobs: Default::default(),
+            finished_jobs: Default::default(),
             job_actions: Default::default(),
             last_request: 0,
             next_handle: 0,
@@ -477,7 +524,15 @@ impl Instance {
     }
 }
 
-pub const CAPABILITIES: &[&str] = &["workspace", "jobs", "views", "text", "selections"];
+pub const CAPABILITIES: &[&str] = &[
+    "workspace",
+    "jobs",
+    "views",
+    "text",
+    "selections",
+    "filesystem",
+    "documents",
+];
 
 /// Validate framing independently of method dispatch so unknown methods receive
 /// `unsupported`, while malformed known requests cannot be interpreted as others.
@@ -504,6 +559,12 @@ pub(crate) fn decode(bytes: &[u8]) -> anyhow::Result<super::ClientMessage> {
         if !matches!(
             method,
             "buffer.list"
+                | "buffer.open"
+                | "filesystem.list"
+                | "filesystem.prepare"
+                | "filesystem.apply"
+                | "filesystem.cancel"
+                | "filesystem.release"
                 | "pane.list"
                 | "buffer.read"
                 | "buffer.edit"
@@ -617,6 +678,50 @@ mod tests {
                 sequence: "e:1".into(),
                 event: "job.changed",
                 data: job.into(),
+            },
+            HostMessage::Response {
+                id: "p:100".into(),
+                outcome: Response::Success {
+                    result: ResultValue::Directory {
+                        directory: "d:g:1".into(),
+                        revision: "d:1".into(),
+                        next: None,
+                        entries: vec![super::super::filesystem::Entry {
+                            entry: "n:1".into(),
+                            name: "note.txt".into(),
+                            kind: "file",
+                            bytes: 5,
+                        }],
+                    },
+                },
+            },
+            HostMessage::Response {
+                id: "p:100".into(),
+                outcome: Response::Success {
+                    result: ResultValue::FilesystemPlan {
+                        plan: "f:g:2".into(),
+                        operations: vec!["create note.txt".into()],
+                    },
+                },
+            },
+            HostMessage::Response {
+                id: "p:100".into(),
+                outcome: Response::Success {
+                    result: ResultValue::Opened {
+                        buffer: "b:g:3".into(),
+                        revision: "r:0".into(),
+                    },
+                },
+            },
+            HostMessage::Event {
+                sequence: "e:2".into(),
+                event: "filesystem.finished",
+                data: EventData::FilesystemFinished(super::super::filesystem::Finished {
+                    plan: "f:g:2".into(),
+                    state: "succeeded",
+                    applied: 1,
+                    recovery: false,
+                }),
             },
         ];
         let expected = fixtures

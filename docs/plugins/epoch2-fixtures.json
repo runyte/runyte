@@ -313,7 +313,9 @@
         "jobs",
         "views",
         "text",
-        "selections"
+        "selections",
+        "filesystem",
+        "documents"
       ],
       "limits": {
         "line_bytes": 1048576,
@@ -416,6 +418,140 @@
         "title": "Download",
         "state": "running",
         "progress": 0
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:100",
+      "method": "filesystem.list",
+      "params": {
+        "path": ".",
+        "offset": 0,
+        "limit": 128,
+        "expected_revision": null
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:101",
+      "method": "filesystem.prepare",
+      "params": {
+        "directory": "d:g:1",
+        "expected_revision": "d:1",
+        "intent": {
+          "operation": "create_file",
+          "destination": "note.txt"
+        }
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:102",
+      "method": "filesystem.apply",
+      "params": {
+        "plan": "f:g:2",
+        "invocation": "h:1"
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:103",
+      "method": "filesystem.cancel",
+      "params": {
+        "plan": "f:g:2"
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:104",
+      "method": "filesystem.release",
+      "params": {
+        "directory": "d:g:1"
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:105",
+      "method": "buffer.open",
+      "params": {
+        "path": "note.txt",
+        "invocation": null
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "response",
+      "id": "p:100",
+      "result": {
+        "directory": "d:g:1",
+        "revision": "d:1",
+        "entries": [
+          {
+            "entry": "n:1",
+            "name": "note.txt",
+            "kind": "file",
+            "bytes": 5
+          }
+        ],
+        "next": null
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "response",
+      "id": "p:100",
+      "result": {
+        "plan": "f:g:2",
+        "operations": [
+          "create note.txt"
+        ]
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "response",
+      "id": "p:100",
+      "result": {
+        "buffer": "b:g:3",
+        "revision": "r:0"
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "event",
+      "sequence": "e:2",
+      "event": "filesystem.finished",
+      "data": {
+        "plan": "f:g:2",
+        "state": "succeeded",
+        "applied": 1,
+        "recovery": false
       }
     }
   }

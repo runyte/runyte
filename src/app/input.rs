@@ -2815,6 +2815,8 @@ impl App {
             return;
         };
         let root = confirmation.plan.root().to_path_buf();
+        let plugin_confirmation = self.plugins.filesystem_confirmation.take();
+        let initiating_buffer = plugin_confirmation.is_none().then_some(confirmation.buffer);
         match confirmation
             .plan
             .apply_with_trash(deletion, self.ports.trash())
@@ -2822,7 +2824,7 @@ impl App {
             Ok(report) => {
                 let count = report.applied.len();
                 let warning =
-                    self.reconcile_applied_filesystem(&root, confirmation.buffer, &report, true);
+                    self.reconcile_applied_filesystem(&root, initiating_buffer, &report, true);
                 let mut status = format!(
                     "applied {count} filesystem operation{}",
                     if count == 1 { "" } else { "s" }
@@ -2832,11 +2834,17 @@ impl App {
                     status.push_str(&warning);
                 }
                 self.status(status);
+                self.finish_plugin_filesystem(
+                    plugin_confirmation,
+                    "succeeded",
+                    count,
+                    !report.recovery.is_empty(),
+                );
             }
             Err(error) => {
                 let warning = self.reconcile_applied_filesystem(
                     &root,
-                    confirmation.buffer,
+                    initiating_buffer,
                     &error.report,
                     false,
                 );
@@ -2850,6 +2858,12 @@ impl App {
                 } else {
                     self.action_failed(message);
                 }
+                self.finish_plugin_filesystem(
+                    plugin_confirmation,
+                    "failed",
+                    error.report.applied.len(),
+                    !error.report.recovery.is_empty(),
+                );
             }
         }
     }
@@ -2857,7 +2871,7 @@ impl App {
     pub(super) fn reconcile_applied_filesystem(
         &mut self,
         root: &Path,
-        initiating_buffer: usize,
+        initiating_buffer: Option<usize>,
         report: &ApplyReport,
         completed: bool,
     ) -> Option<String> {
@@ -2958,7 +2972,7 @@ impl App {
             if !buffer.is_directory() {
                 continue;
             }
-            let affected = index == initiating_buffer
+            let affected = Some(index) == initiating_buffer
                 || affected_directories.contains(path)
                 || affected_directories
                     .iter()
@@ -2966,13 +2980,13 @@ impl App {
             if !affected {
                 continue;
             }
-            if index == initiating_buffer && !completed {
+            if Some(index) == initiating_buffer && !completed {
                 warnings.push(
                     "directory edits retained after partial application; refresh before retrying"
                         .to_owned(),
                 );
             } else if buffer.dirty
-                && index != initiating_buffer
+                && Some(index) != initiating_buffer
                 && !self.contains_only_deletions(index, &moved_sources)
             {
                 rebase.push((index, path.to_path_buf()));
@@ -2993,7 +3007,7 @@ impl App {
         for index in reload {
             self.forget_directory_view(index);
             self.forget_directory_jumps(index);
-            let refresh = if index == initiating_buffer && completed {
+            let refresh = if Some(index) == initiating_buffer && completed {
                 self.buffers[index].accept_directory_plan(self.config.editor.show_hidden_files)
             } else {
                 self.buffers[index].reload_directory(view)

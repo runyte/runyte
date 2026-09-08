@@ -465,3 +465,10 @@ views retain ordinary buffer navigation and management. Filtering is an explicit
 registered action, while Tab opens a transient action picker from runtime command
 metadata. Clean hidden views share normal special-buffer eviction; visible views
 remain retained. Plugin stop preserves readable content labelled unavailable.
+
+Application filesystem plans use the existing native filesystem confirmation.
+Showing a plan requires a current foreground invocation and no competing input
+surface. Detach, owner stop and source-buffer closure cancel the confirmation.
+Acceptance applies the reviewed plan through ordinary filesystem reconciliation;
+application plans preserve unsaved directory projections, including the active
+explorer. Cancellation is delivered to the owner as a lifecycle event.

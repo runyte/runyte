@@ -48,6 +48,15 @@ impl std::fmt::Display for BinaryFileError {
 
 impl std::error::Error for BinaryFileError {}
 
+#[derive(Debug)]
+pub(crate) struct ReadLimitExceeded;
+impl std::fmt::Display for ReadLimitExceeded {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("document exceeds open limit")
+    }
+}
+impl std::error::Error for ReadLimitExceeded {}
+
 /// The display name of the changed-file list, which is also how the editor
 /// finds the buffer again rather than opening a second one.
 pub const GIT_STATUS_NAME: &str = "[git status]";
@@ -568,14 +577,43 @@ fn file_acl_digest(_file: &File) -> Result<Option<String>> {
 }
 
 fn read_text_and_state(path: &Path, action: &str) -> Result<(String, DiskState)> {
-    let mut file =
-        File::open(path).with_context(|| format!("failed to {action} {}", path.display()))?;
+    read_text_and_state_limit(path, action, None)
+}
+
+fn read_text_and_state_limit(
+    path: &Path,
+    action: &str,
+    limit: Option<usize>,
+) -> Result<(String, DiskState)> {
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    if limit.is_some() {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NONBLOCK);
+    }
+    let mut file = options
+        .open(path)
+        .with_context(|| format!("failed to {action} {}", path.display()))?;
     let metadata = file
         .metadata()
         .with_context(|| format!("failed to inspect {}", path.display()))?;
     let mut contents = Vec::new();
-    file.read_to_end(&mut contents)
-        .with_context(|| format!("failed to {action} {}", path.display()))?;
+    if let Some(limit) = limit {
+        ensure!(
+            metadata.is_file(),
+            "bounded document opens require a regular file"
+        );
+        (&mut file)
+            .take(limit as u64 + 1)
+            .read_to_end(&mut contents)?;
+        if contents.len() > limit {
+            return Err(ReadLimitExceeded.into());
+        }
+    } else {
+        file.read_to_end(&mut contents)
+            .with_context(|| format!("failed to {action} {}", path.display()))?;
+    }
     if crate::external_open::is_binary(&contents, true) {
         return Err(BinaryFileError)
             .with_context(|| format!("failed to {action} {}", path.display()));
@@ -1695,8 +1733,17 @@ impl Buffer {
 
     pub fn open(path: &Path) -> Result<Self> {
         let (contents, disk_state) = read_text_and_state(path, "open")?;
+        Ok(Self::from_opened_text(path, contents, disk_state))
+    }
+
+    pub(crate) fn open_bounded(path: &Path, limit: usize) -> Result<Self> {
+        let (contents, disk_state) = read_text_and_state_limit(path, "open", Some(limit))?;
+        Ok(Self::from_opened_text(path, contents, disk_state))
+    }
+
+    fn from_opened_text(path: &Path, contents: String, disk_state: DiskState) -> Self {
         let text = Text::from_str(&contents);
-        Ok(Self {
+        Self {
             wrap_cache: crate::wrap::Cache::default(),
             longest_line: text.longest_line_bytes(),
             saved_text: Some(text.clone()),
@@ -1715,7 +1762,7 @@ impl Buffer {
             external_observation: None,
             last_reported_observation: None,
             layout: ContentLayout::default(),
-        })
+        }
     }
 
     pub fn external_file_status(&self) -> ExternalFileStatus {

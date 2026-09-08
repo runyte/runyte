@@ -72,8 +72,8 @@ Concrete decisions in this slice:
 - Job progress is recovered through `job.get` in this slice. General source
   subscriptions, coalescing and resynchronization are not advertised yet.
 
-Milestone 3 still needs local document/filesystem operations, confirmations and
-forms, and the actual file-manager application. Milestone 4's providers, remote
+Milestone 3 now has an initial local file manager, documented below; document
+save/close/create, recursive mutations, asynchronous apply and forms remain. Milestone 4's providers, remote
 save reconciliation and transport examples remain unimplemented. Milestone 5
 still needs managed processes, terminal/external handoffs, activity leases,
 settings/state and the plugin manager. Milestone 6 still needs the broader SDK,
@@ -104,6 +104,43 @@ These representative measurements do not complete the latency/workload gates.
 
 Native macOS validation and the full application workload matrix are required
 before this record can move to `completed/`.
+
+## Second implementation round
+
+The foundation was committed as `0731e51` (`Add epoch 2 plugin application
+foundation`). This round adds bounded asynchronous local directory reads,
+revision-checked pages and retained entry identities, regular-file plan intents,
+native filesystem confirmation/reconciliation, and explicit asynchronous text-file
+opens that preserve live unsaved buffers. `docs/plugins/files.py` exercises these
+operations as a retained local manager. The public schema and shared wire fixtures
+cover the additions.
+
+This round deliberately leaves recursive filesystem mutations, asynchronous
+application of confirmed plans, document save/close/create, input prompts/forms
+and the remaining milestones active. Reads and preparation run off the editor
+loop; application uses the existing interactive `FsPlan` path.
+
+A comprehensive subagent review covered the committed foundation and this round.
+All six findings were fixed: static symlink aliases now use consistent canonical
+plan identities and final containment checks; application confirmation preserves
+active and inactive dirty directory projections; snapshot close cannot clear
+another resource's deadline; half-open selections exclude the next unselected
+row; Python cancellation has reserved dispatch capacity; and terminal job history
+uses completion order independently of handle spelling. A focused re-review found
+no further blocking production issue. Rust regressions live in
+`src/workspace/host/tests/plugin_applications.rs` and its `plugin_filesystem.rs`
+module; the SDK saturation regression lives in `docs/plugins/check_applications.py`.
+
+`cargo fmt --check`, warnings-as-errors Clippy and the ordinary full suite passed:
+3,108 tests, with 33 ignored. Both public schema/example checkers passed (eight
+epoch 1 checks and four epoch 2 checks). A native 120×40 PTY smoke test used an
+isolated temporary workspace and configuration, displayed the local file manager,
+confirmed a create through the actual frontend, opened a text file and returned
+to the retained view. The settled view emitted no
+terminal bytes during its two-second observation window. This functional debug
+smoke is not a replacement for the plan's release performance matrix. Canonical
+Linux coverage also passed all 3,108 tests: 105,891 / 115,525 lines (**91.66%**),
+above the unchanged 89% floor; see the coverage register.
 
 ## Investigation: existing foundation and missing boundaries
 

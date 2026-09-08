@@ -41,6 +41,31 @@ days, and fails below 89% total line coverage. The floor is deliberately below
 the observed baseline because conditional Linux and macOS code changes both the
 instrumented denominator and the paths available to a run on one platform.
 
+## 2026-09-08 — local file-manager round and application review
+
+Measured on `x86_64-unknown-linux-gnu` at `0731e51` plus the local filesystem
+adapter and comprehensive application-review fixes, using Rust 1.97.1 and
+cargo-llvm-cov 0.9.0. The canonical `cargo llvm-cov --locked --workspace`
+passed 3,108 tests, with 33 ignored, using native local socket/process access.
+The ordinary full suite, formatting and warnings-as-errors Clippy also passed.
+
+| Measure | Covered | Total | Coverage |
+| --- | ---: | ---: | ---: |
+| Lines | 105,891 | 115,525 | 91.66% |
+| Functions | 9,754 | 10,558 | 92.38% |
+| Regions | 163,249 | 178,991 | 91.21% |
+
+The added host-boundary tests cover revision-bound directory pages, ownership,
+release and in-flight limits, actual confirmation/cancellation, collision
+revalidation, copy/rename/delete reconciliation, unsaved document reuse and
+foreground changes. Review regressions cover static symlink aliases, active and
+inactive dirty directory preservation, wrong-kind snapshot deadline isolation,
+half-open view selections and chronological job history. The separate Python
+checker covers cancellation dispatch while command workers await host replies.
+
+The enforced floor remains 89%. Native macOS coverage and the full application
+acceptance matrix remain outstanding; this Linux result does not complete them.
+
 ## 2026-09-08 — application API development slice
 
 Measured on `x86_64-unknown-linux-gnu` at base `e86fe54` plus the in-progress

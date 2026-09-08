@@ -47,6 +47,8 @@ pub(crate) struct Instance {
 
 #[derive(Default)]
 pub(crate) struct Plugins {
+    pub filesystem_confirmation: Option<(usize, String, u64, usize)>,
+    pub filesystem_finished: Vec<(usize, plugin::filesystem::Finished)>,
     pub commands: BTreeMap<u64, RuntimeCommand>,
     pub instances: BTreeMap<usize, Instance>,
     pub cancellations: BTreeSet<usize>,
@@ -204,7 +206,9 @@ impl App {
                 let mut rows = std::collections::BTreeSet::new();
                 for range in self.active().selection.ranges() {
                     for row in self.buffers[view.buffer].offset_to_row(range.from())
-                        ..=self.buffers[view.buffer].offset_to_row(range.to())
+                        ..=self.buffers[view.buffer].offset_to_row(
+                            range.to().saturating_sub(usize::from(!range.is_empty())),
+                        )
                     {
                         if let Some(row) = view.model.rows.get(row) {
                             rows.insert(row.id.clone());

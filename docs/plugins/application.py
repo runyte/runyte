@@ -23,6 +23,8 @@ class Application:
         self._serial = 0
         self._slots = threading.BoundedSemaphore(16)
         self._dispatch = threading.BoundedSemaphore(16)
+        self._control_slots = threading.BoundedSemaphore(16)
+        self._control = concurrent.futures.ThreadPoolExecutor(max_workers=1)
         self._closed = threading.Event()
         self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=4)
 
@@ -64,7 +66,16 @@ class Application:
             raise PluginError('limit_exceeded', 'Invalid host frame')
         return json.loads(data)
 
-    def _handle(self, message):
+    def _submit(self, message):
+        # Cancellation must still run while command handlers await host replies.
+        control = message.get('event') == 'job.cancel_requested'
+        slots = self._control_slots if control else self._dispatch
+        executor = self._control if control else self._executor
+        if not slots.acquire(blocking=False):
+            raise PluginError('busy', 'Application dispatch queue full')
+        executor.submit(self._handle, message, slots)
+
+    def _handle(self, message, slots):
         try:
             if message['type'] == 'event':
                 self.on_event(message['event'], message['data'])
@@ -80,7 +91,7 @@ class Application:
                 # Do not put exception details, paths or credentials on the wire.
                 self._write({'type': 'response', 'id': message['id'], 'error': {'code': 'internal', 'message': 'Application command failed'}})
         finally:
-            self._dispatch.release()
+            slots.release()
 
     def run(self):
         try:
@@ -103,9 +114,7 @@ class Application:
                         else:
                             future.set_result(message['result'])
                 elif message['type'] in ('request', 'event'):
-                    if not self._dispatch.acquire(blocking=False):
-                        raise PluginError('busy', 'Application dispatch queue full')
-                    self._executor.submit(self._handle, message)
+                    self._submit(message)
         except EOFError:
             pass
         finally:
@@ -114,4 +123,5 @@ class Application:
                 for future in self._pending.values():
                     future.set_exception(PluginError('unavailable', 'Host disconnected'))
                 self._pending.clear()
+            self._control.shutdown(wait=True, cancel_futures=True)
             self._executor.shutdown(wait=True, cancel_futures=True)

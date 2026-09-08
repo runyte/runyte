@@ -269,6 +269,7 @@ mod mouse_autoscroll;
 mod movement;
 mod navigation_workflows;
 mod picker_workflows;
+mod plugin_filesystem;
 mod plugin_views;
 pub(crate) mod plugin_workflows;
 mod presentation;

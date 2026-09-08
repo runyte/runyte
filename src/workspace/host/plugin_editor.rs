@@ -256,15 +256,15 @@ impl WorkspaceHost {
                     .application;
                 if let Some(value) = state.snapshots.remove(&snapshot) {
                     state.retained_payload -= value.text.len_bytes();
+                    self.plugin_send(
+                        owner,
+                        HostMessage::Deadline {
+                            token: snapshot,
+                            after_ms: None,
+                        },
+                    )
+                    .map_err(|_| Error::new(Code::Unavailable, "Application queue unavailable"))?;
                 }
-                self.plugin_send(
-                    owner,
-                    HostMessage::Deadline {
-                        token: snapshot,
-                        after_ms: None,
-                    },
-                )
-                .map_err(|_| Error::new(Code::Unavailable, "Application queue unavailable"))?;
                 Ok(ResultValue::Empty(api::Empty {}))
             }
             Request::SelectionGet { ref pane } | Request::SelectionSet { ref pane, .. } => {

@@ -6,6 +6,7 @@ pub mod application;
 pub mod arguments;
 pub mod editor;
 mod epoch1;
+pub mod filesystem;
 pub mod view;
 mod worker;
 pub use epoch1::*;

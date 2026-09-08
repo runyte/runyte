@@ -5015,7 +5015,7 @@ fn an_explorer_move_reconciles_git_with_monitoring_disabled() {
     };
 
     assert_eq!(
-        app.reconcile_applied_filesystem(&root, file, &report, true),
+        app.reconcile_applied_filesystem(&root, Some(file), &report, true),
         None
     );
 
@@ -5055,7 +5055,7 @@ fn a_partial_explorer_report_retries_one_async_post_change_barrier() {
     };
 
     assert_eq!(
-        app.reconcile_applied_filesystem(&root, file, &report, false),
+        app.reconcile_applied_filesystem(&root, Some(file), &report, false),
         None
     );
 
@@ -5260,7 +5260,7 @@ fn explorer_moves_outside_git_boundaries_are_not_batched_as_staged_reads() {
         ],
     };
 
-    app.reconcile_applied_filesystem(&workspace, second_buffer, &report, true);
+    app.reconcile_applied_filesystem(&workspace, Some(second_buffer), &report, true);
 
     assert_eq!(
         app.buffers[first_buffer].path.as_deref(),

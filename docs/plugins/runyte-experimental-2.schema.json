@@ -1652,6 +1652,9 @@
                 "name"
               ],
               "additionalProperties": true
+            },
+            {
+              "$ref": "#/$defs/localResult"
             }
           ]
         }
@@ -1708,7 +1711,8 @@
           "enum": [
             "job.changed",
             "job.cancel_requested",
-            "view.closed"
+            "view.closed",
+            "filesystem.finished"
           ]
         },
         "data": {
@@ -1728,6 +1732,9 @@
                 "view"
               ],
               "additionalProperties": true
+            },
+            {
+              "$ref": "#/$defs/filesystemFinished"
             }
           ]
         }
@@ -1810,6 +1817,24 @@
         },
         {
           "$ref": "#/$defs/commandError"
+        },
+        {
+          "$ref": "#/$defs/filesystem.list"
+        },
+        {
+          "$ref": "#/$defs/filesystem.prepare"
+        },
+        {
+          "$ref": "#/$defs/filesystem.apply"
+        },
+        {
+          "$ref": "#/$defs/filesystem.cancel"
+        },
+        {
+          "$ref": "#/$defs/filesystem.release"
+        },
+        {
+          "$ref": "#/$defs/buffer.open"
         }
       ]
     },
@@ -1834,6 +1859,505 @@
           "$ref": "#/$defs/event"
         }
       ]
+    },
+    "filesystemIntent": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "operation": {
+              "const": "create_file"
+            },
+            "destination": {
+              "type": "string",
+              "maxLength": 4096
+            }
+          },
+          "required": [
+            "operation",
+            "destination"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "operation": {
+              "const": "create_directory"
+            },
+            "destination": {
+              "type": "string",
+              "maxLength": 4096
+            }
+          },
+          "required": [
+            "operation",
+            "destination"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "operation": {
+              "const": "rename"
+            },
+            "entry": {
+              "type": "string",
+              "maxLength": 64
+            },
+            "destination": {
+              "type": "string",
+              "maxLength": 4096
+            }
+          },
+          "required": [
+            "operation",
+            "entry",
+            "destination"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "operation": {
+              "const": "copy"
+            },
+            "entry": {
+              "type": "string",
+              "maxLength": 64
+            },
+            "destination": {
+              "type": "string",
+              "maxLength": 4096
+            }
+          },
+          "required": [
+            "operation",
+            "entry",
+            "destination"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "operation": {
+              "const": "trash"
+            },
+            "entry": {
+              "type": "string",
+              "maxLength": 64
+            }
+          },
+          "required": [
+            "operation",
+            "entry"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "filesystem.list": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "request"
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^p:[1-9][0-9]*$",
+          "maxLength": 22
+        },
+        "method": {
+          "const": "filesystem.list"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "maxLength": 4096
+            },
+            "offset": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "limit": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 128
+            },
+            "expected_revision": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "maxLength": 64
+            }
+          },
+          "required": [
+            "path",
+            "offset",
+            "limit"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "method",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    "filesystem.prepare": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "request"
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^p:[1-9][0-9]*$",
+          "maxLength": 22
+        },
+        "method": {
+          "const": "filesystem.prepare"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "directory": {
+              "type": "string",
+              "maxLength": 64
+            },
+            "expected_revision": {
+              "type": "string",
+              "maxLength": 64
+            },
+            "intent": {
+              "$ref": "#/$defs/filesystemIntent"
+            }
+          },
+          "required": [
+            "directory",
+            "expected_revision",
+            "intent"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "method",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    "filesystem.apply": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "request"
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^p:[1-9][0-9]*$",
+          "maxLength": 22
+        },
+        "method": {
+          "const": "filesystem.apply"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "plan": {
+              "type": "string",
+              "maxLength": 64
+            },
+            "invocation": {
+              "type": "string",
+              "maxLength": 64
+            }
+          },
+          "required": [
+            "plan",
+            "invocation"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "method",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    "filesystem.cancel": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "request"
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^p:[1-9][0-9]*$",
+          "maxLength": 22
+        },
+        "method": {
+          "const": "filesystem.cancel"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "plan": {
+              "type": "string",
+              "maxLength": 64
+            }
+          },
+          "required": [
+            "plan"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "method",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    "filesystem.release": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "request"
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^p:[1-9][0-9]*$",
+          "maxLength": 22
+        },
+        "method": {
+          "const": "filesystem.release"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "directory": {
+              "type": "string",
+              "maxLength": 64
+            }
+          },
+          "required": [
+            "directory"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "method",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    "buffer.open": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "request"
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^p:[1-9][0-9]*$",
+          "maxLength": 22
+        },
+        "method": {
+          "const": "buffer.open"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "maxLength": 4096
+            },
+            "invocation": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "maxLength": 64
+            }
+          },
+          "required": [
+            "path"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "method",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    "filesystemEntry": {
+      "type": "object",
+      "properties": {
+        "entry": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "kind": {
+          "enum": [
+            "file",
+            "directory",
+            "symlink",
+            "other"
+          ]
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "entry",
+        "name",
+        "kind",
+        "bytes"
+      ],
+      "additionalProperties": true
+    },
+    "localResult": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "directory": {
+              "type": "string",
+              "maxLength": 64
+            },
+            "revision": {
+              "type": "string",
+              "maxLength": 64
+            },
+            "entries": {
+              "type": "array",
+              "maxItems": 128,
+              "items": {
+                "$ref": "#/$defs/filesystemEntry"
+              }
+            },
+            "next": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0
+            }
+          },
+          "required": [
+            "directory",
+            "revision",
+            "entries",
+            "next"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "plan": {
+              "type": "string",
+              "maxLength": 64
+            },
+            "operations": {
+              "type": "array",
+              "maxItems": 2,
+              "items": {
+                "type": "string",
+                "maxLength": 4096
+              }
+            }
+          },
+          "required": [
+            "plan",
+            "operations"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "buffer": {
+              "type": "string",
+              "maxLength": 64
+            },
+            "revision": {
+              "type": "string",
+              "maxLength": 64
+            }
+          },
+          "required": [
+            "buffer",
+            "revision"
+          ],
+          "additionalProperties": true,
+          "not": {
+            "required": [
+              "changes"
+            ]
+          }
+        }
+      ]
+    },
+    "filesystemFinished": {
+      "type": "object",
+      "properties": {
+        "plan": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "state": {
+          "enum": [
+            "succeeded",
+            "failed",
+            "cancelled"
+          ]
+        },
+        "applied": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "recovery": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "plan",
+        "state",
+        "applied",
+        "recovery"
+      ],
+      "additionalProperties": true
     }
   },
   "anyOf": [

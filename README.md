@@ -64,8 +64,8 @@ features remain available without them. Use `:lsp-trust` to change permission.
 Runyte uses optional YAML configuration. Explicitly enabled
 [experimental process plugins](docs/plugins.md) can register commands and transform
 multiple selections in one undoable edit. The opt-in
-[application API](docs/plugins/applications.md) adds native task-list views,
-background jobs and explicit text operations while its broader application
+[application API](docs/plugins/applications.md) adds native application views,
+a local file manager, background jobs and explicit text operations while its broader application
 platform remains in development.
 See the [user guide](docs/user-guide.md) for complete behavior and limits.
 

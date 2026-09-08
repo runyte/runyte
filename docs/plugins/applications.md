@@ -4,7 +4,8 @@ Epoch 2 (`runyte-experimental-2`) is being implemented in the
 [application plan](../../context/plans/active/PLAN_PLUGIN_APPLICATIONS.md).
 The current implementation supports typed commands, finite background jobs,
 retained native views, explicit buffer reads/edits, immutable snapshots and
-pane selections. Local filesystem workflows, input forms, remote providers,
+pane selections, bounded local directory browsing, document opens and reviewed
+regular-file mutations. Input forms, recursive filesystem mutations, remote providers,
 subscriptions and managed media backends remain unfinished and are not
 advertised capabilities. This is not completion of the application plan.
 Epoch 1 remains the default and its uppercase example is unchanged.
@@ -29,6 +30,9 @@ retirement; enabled idle processes alone do not. Forced host shutdown discards
 live plugin work. The example needs Python 3.10+ and no packages or accounts.
 The optional `application.py` client keeps a continuous reader, correlates
 responses and dispatches bounded concurrent handlers separately from that reader.
+Cancellation callbacks have their own bounded worker so waiting command handlers
+cannot starve them. Keep cancellation callbacks short: signal the running work
+and return, without waiting for a command handler or its lock.
 
 ## Native task list
 
@@ -107,6 +111,11 @@ generation and must never be parsed, persisted, or used by another owner.
 | text | `buffer.edit` | Buffer, expected revision and explicit changes; resulting revision |
 | text | `buffer.snapshot.open/read/close` | Immutable rope snapshot and explicit scalar chunks |
 | selections | `selection.get/set` | Explicit pane, displayed buffer and selection revision |
+| filesystem | `filesystem.list` | Workspace-relative path, offset, limit and optional expected revision; retained directory handle and metadata page |
+| filesystem | `filesystem.prepare` | Directory handle, expected revision and typed intent; owned prepared plan and descriptions |
+| filesystem | `filesystem.apply` | Plan and invoking command; presents native confirmation, with no immediate filesystem mutation |
+| filesystem | `filesystem.cancel/release` | Cancel a plan or release a directory snapshot, idempotently |
+| documents | `buffer.open` | Existing workspace-relative text path and optional invoking command; explicit buffer/revision |
 
 `command.invoke` is a host request naming the registered command and its declared
 `workspace`, `buffer` or `view` context. Workspace commands work on read-only content and
@@ -200,9 +209,71 @@ budgets are reserved for bounded queues, decoding and publication copies.
 These measure payload, not allocator RSS or the external process's memory.
 Buffer/pane issuance is bounded at 1,024/128 handles per connection generation.
 
-Still required by the active plan: local document/filesystem operations and
-confirmed mutations; prompts/forms with secret handling; source subscriptions
+Still required by the active plan: further local document operations, recursive
+filesystem mutations and asynchronous application of confirmed plans;
+prompts/forms with secret handling; source subscriptions
 and resynchronization; provider reads, asynchronous saves and transfer outcomes;
 row patches and staged publication; managed helpers, activity leases, state,
 settings and a plugin manager; SFTP/FTP and media examples; broader SDK/conformance
 coverage and the complete performance/platform acceptance matrix.
+
+## Local file manager
+
+Enable the checked-in `files.py` beside `application.py`:
+
+```yaml
+plugins:
+  - id: files
+    enabled: true
+    api: runyte-experimental-2
+    executable: /usr/bin/python3
+    args: [/path/to/runyte/docs/plugins/files.py]
+    capabilities: [views, filesystem, documents]
+```
+
+Run `:plugin.files.open .`. Enter opens the selected regular text file or browses
+the selected directory; Tab offers Parent, Refresh and Trash. Destination-taking
+actions use the colon palette: `:plugin.files.create "new note.txt"`,
+`:plugin.files.mkdir subdir`, `:plugin.files.rename renamed.txt`, and
+`:plugin.files.copy copy.txt`. Destinations are relative to the directory shown.
+Rename, Copy and Trash operate on exactly one selected entry. The native
+confirmation shows the proposed operations; Enter applies with trash semantics,
+Escape cancels, and its existing `P` key explicitly chooses permanent deletion.
+There is no background polling. Refresh reads again, and a completed filesystem
+operation refreshes the retained view without taking focus.
+
+The local API accepts UTF-8 workspace-relative paths without `..`, absolute
+paths or controls. Existing symlink components must resolve inside the workspace.
+This reuses project-path checks and the existing `FsPlan` boundary; it does not
+resolve the deferred hostile-process symlink-race issue or sandbox the plugin.
+The example browses ordinary directories and opens ordinary UTF-8 text files;
+it labels symlinks without following them as actions.
+
+Directory reads, plan preparation and document loading run on a bounded blocking
+pool, with two pending local requests per owner and sixteen across the host.
+Reads and results retain their slot even if the owner stops before IO finishes;
+late results cannot recreate resources for that owner. Each directory snapshot
+contains at most 1,024 entries, including dotfiles. Pages contain at most 128
+entries; pass `expected_revision` from the first page to reject changes between
+pages. At most two directory snapshots and two prepared plans are retained per
+owner. `filesystem.release` releases a snapshot; `filesystem.cancel` releases an
+unpresented plan or dismisses that owner's confirmation. Each snapshot, plan or
+preparation reserves 8 MiB within the shared retained-payload allowance.
+
+Intents are `create_file`, `create_directory`, `rename`, `copy`, and `trash`.
+The latter three name an entry from the issued directory and admit regular files
+of at most 8 MiB. Preparation uses the existing directory baseline and plan
+collision checks. `filesystem.apply` only opens the host's confirmation, requires
+a current foreground grant, and returns `busy` while another input surface owns
+the frontend. The plugin has no API that supplies the user's confirmation.
+Applying uses the existing interactive filesystem workflow and reconciliation;
+file operations are not editor undo steps. `filesystem.finished` reports
+`succeeded`, `failed` or `cancelled`, an applied-operation count and whether
+recovery artifacts remain. Host notifications retain the actual recovery details.
+Dismissal, detach, source-buffer closure and owner stop cancel a displayed plan.
+
+`buffer.open` reads at most 8 MiB using the ordinary text/binary classifier and
+disk baseline. It reuses an existing buffer, preserving unsaved text. Omitting
+`invocation` opens in the background; supplying it requests presentation in the
+originating pane. A changed foreground context rejects publication without
+switching panes. Opening an existing file does not save, reload or close it.
