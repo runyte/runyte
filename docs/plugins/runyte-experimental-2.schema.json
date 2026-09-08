@@ -343,6 +343,12 @@
         },
         "process_write_seconds": {
           "const": 5
+        },
+        "activity_leases": {
+          "const": 2
+        },
+        "activity_seconds": {
+          "const": 600
         }
       },
       "required": [
@@ -358,7 +364,9 @@
         "process_handles",
         "process_io_bytes",
         "process_output_bytes",
-        "process_write_seconds"
+        "process_write_seconds",
+        "activity_leases",
+        "activity_seconds"
       ],
       "additionalProperties": true
     },
@@ -1780,6 +1788,9 @@
             },
             {
               "$ref": "#/$defs/terminalOpened"
+            },
+            {
+              "$ref": "#/$defs/activityInfo"
             }
           ]
         }
@@ -1847,7 +1858,8 @@
             "event.closed",
             "event.resync_required",
             "ui.validation_cancelled",
-            "event.action"
+            "event.action",
+            "activity.cancel_requested"
           ]
         },
         "data": {
@@ -1901,6 +1913,9 @@
             },
             {
               "$ref": "#/$defs/viewActionEvent"
+            },
+            {
+              "$ref": "#/$defs/activityCancelled"
             }
           ]
         }
@@ -1976,6 +1991,22 @@
             "properties": {
               "data": {
                 "$ref": "#/$defs/viewActionEvent"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "event": {
+                "const": "activity.cancel_requested"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "data": {
+                "$ref": "#/$defs/activityCancelled"
               }
             }
           }
@@ -2184,6 +2215,21 @@
         },
         {
           "$ref": "#/$defs/external.open"
+        },
+        {
+          "$ref": "#/$defs/activity.acquire"
+        },
+        {
+          "$ref": "#/$defs/activity.renew"
+        },
+        {
+          "$ref": "#/$defs/activity.get"
+        },
+        {
+          "$ref": "#/$defs/activity.release"
+        },
+        {
+          "$ref": "#/$defs/activity.cancel"
         }
       ]
     },
@@ -6941,6 +6987,257 @@
       },
       "required": [
         "terminal"
+      ],
+      "additionalProperties": false
+    },
+    "activity.acquire": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "request"
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^p:[1-9][0-9]*$",
+          "maxLength": 22
+        },
+        "method": {
+          "const": "activity.acquire"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "title": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160
+            },
+            "duration_seconds": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 600,
+              "default": 600
+            }
+          },
+          "required": [
+            "title"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "method",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    "activity.renew": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "request"
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^p:[1-9][0-9]*$",
+          "maxLength": 22
+        },
+        "method": {
+          "const": "activity.renew"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "lease": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "duration_seconds": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 600,
+              "default": 600
+            }
+          },
+          "required": [
+            "lease"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "method",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    "activity.get": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "request"
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^p:[1-9][0-9]*$",
+          "maxLength": 22
+        },
+        "method": {
+          "const": "activity.get"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "lease": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          "required": [
+            "lease"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "method",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    "activity.release": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "request"
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^p:[1-9][0-9]*$",
+          "maxLength": 22
+        },
+        "method": {
+          "const": "activity.release"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "lease": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          "required": [
+            "lease"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "method",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    "activity.cancel": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "request"
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^p:[1-9][0-9]*$",
+          "maxLength": 22
+        },
+        "method": {
+          "const": "activity.cancel"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "lease": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          "required": [
+            "lease"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "method",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    "activityInfo": {
+      "type": "object",
+      "properties": {
+        "lease": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "state": {
+          "enum": [
+            "active",
+            "cancelling"
+          ]
+        },
+        "duration_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 600
+        }
+      },
+      "required": [
+        "lease",
+        "title",
+        "state",
+        "duration_seconds"
+      ],
+      "additionalProperties": false
+    },
+    "activityCancelled": {
+      "type": "object",
+      "properties": {
+        "lease": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "reason": {
+          "enum": [
+            "expired",
+            "cancelled"
+          ]
+        }
+      },
+      "required": [
+        "lease",
+        "reason"
       ],
       "additionalProperties": false
     }

@@ -17,6 +17,55 @@ use crate::{
 };
 
 impl App {
+    pub(crate) fn plugin_activity_count(&self) -> usize {
+        self.plugins
+            .instances
+            .values()
+            .map(|instance| instance.application.activities.len())
+            .sum()
+    }
+
+    pub(crate) fn plugin_active_job_count(&self) -> usize {
+        self.plugins
+            .instances
+            .values()
+            .map(|instance| {
+                instance
+                    .application
+                    .jobs
+                    .values()
+                    .filter(|job| job.state.active())
+                    .count()
+            })
+            .sum()
+    }
+
+    pub fn plugin_activity_health(&self) -> Vec<crate::service_health::ActivityLeaseHealth> {
+        use crate::{
+            plugin::activity::State,
+            service_health::{ActivityLeaseHealth, ActivityLeaseState},
+        };
+        self.plugins
+            .instances
+            .values()
+            .flat_map(|instance| {
+                instance
+                    .application
+                    .activities
+                    .values()
+                    .map(move |lease| ActivityLeaseHealth {
+                        owner: instance.config.id.clone(),
+                        title: lease.info.title.clone(),
+                        state: match lease.info.state {
+                            State::Active => ActivityLeaseState::Active,
+                            State::Cancelling => ActivityLeaseState::Cancelling,
+                        },
+                    })
+            })
+            .take(16)
+            .collect()
+    }
+
     /// Returns a complete optional-service report without starting a provider
     /// or requiring any of the reported services to be present.
     pub fn service_health_snapshot(&self) -> ServiceHealthSnapshot {
@@ -125,6 +174,22 @@ impl App {
                 .unwrap_or("repository discovery succeeded"),
         ));
 
+        for lease in self.plugin_activity_health() {
+            entries.push(ServiceHealthEntry::new(
+                "plugin activity",
+                if lease.state == crate::service_health::ActivityLeaseState::Active {
+                    ServiceState::Ready
+                } else {
+                    ServiceState::Degraded
+                },
+                format!(
+                    "{} · {} · {}",
+                    lease.owner,
+                    lease.title,
+                    lease.state.label()
+                ),
+            ));
+        }
         entries.push(self.logging_health());
         ServiceHealthSnapshot { entries }
     }
@@ -839,6 +904,15 @@ impl App {
             self.action_warning(
                 "Quit refused",
                 "Filesystem writes are still pending; wait for completion or detach",
+            );
+            return false;
+        }
+        let leases = self.plugin_activity_count();
+        let jobs = self.plugin_active_job_count();
+        if leases > 0 || jobs > 0 {
+            self.action_warning(
+                "Quit refused",
+                format!("{leases} plugin activity leases and {jobs} active plugin jobs; release or cancel them before quitting, or detach"),
             );
             return false;
         }

@@ -54,8 +54,8 @@ Views are special buffers backed by bounded semantic models. Purposes are
 `document`, `list` and `dashboard`; each row has a stable ID, one line of text
 and an `ordinary`, `muted`, `heading`, `warning` or `error` role. Controls and
 ANSI sequences are rejected. Warning/error spans use the theme's diagnostic
-colors. The bundled frontend protocol is version 51 to carry those new scope
-names; the extension epoch remains independent.
+colors. The bundled frontend protocol is version 52, including application
+activity in persistent-session health; the extension epoch remains independent.
 
 Creation stays in the background. `pane.show` requires the ID of a still-pending
 invoking command, the same frontend attachment, pane target, and command/input
@@ -115,6 +115,7 @@ generation and must never be parsed, persisted, or used by another owner.
 | terminals | `terminal.open` | Foreground handoff to a native terminal session with exact arguments |
 | external | `external.open` | One foreground system-handler handoff for a URL or workspace file |
 | notifications | `notification.publish` | Bounded owner-labelled feedback without taking focus |
+| activity | `activity.acquire/renew/get/release/cancel` | Renewable continuing-work lease, explicit cleanup and expiry |
 | views | `view.create/get/publish/patch/close` | Semantic model, owned handle and model revision |
 | views | `view.query.set` | Explicit revision-bound query intent; matching publication settles it |
 | views | `view.stage.open/write/commit/close` | Bounded construction and atomic publication |
@@ -238,7 +239,7 @@ These measure payload, not allocator RSS or the external process's memory.
 Buffer/pane issuance is bounded at 1,024/128 handles per connection generation.
 
 Still required by the active plan: binary uploads;
-activity leases, state, settings and a plugin manager; media
+state, settings and a plugin manager; media
 examples; broader SDK/conformance coverage and the complete performance/platform
 acceptance matrix.
 
@@ -1421,3 +1422,54 @@ consumes its invocation, preventing repeated windows from the same action.
 The SDK's `open_url` and `open_file_externally` preserve explicit target kinds and
 never replay failures. These handoffs complement managed helpers; they do not
 provide a browser widget, decoder, credential store or inline video surface.
+
+## Continuing activity
+
+Capability `activity` lets a deliberately continuing service protect its workspace
+while it works. Registration, an idle helper and a retained view alone do not
+protect idle retirement. Each owner may retain two activity leases, counting
+both active work and cancellation awaiting cleanup. Each lease costs 1 KiB of
+the existing retained-payload allowance. Leases are connection-generation handles;
+never save one in configuration or workspace state.
+
+`activity.acquire {title,duration_seconds?}` returns
+`{lease,title,state:"active",duration_seconds}`. The immutable title is 1–160 UTF-8
+bytes with no controls. Duration is an integer from 1 through 600 seconds and
+defaults to 600. Acquisition does not need a frontend or captured command grant.
+`activity.renew {lease,duration_seconds?}` sets a still-active lease's deadline
+relative to that request; it cannot revive an expired or cancelling lease.
+`activity.get {lease}` returns its current metadata. Duration describes the most
+recent grant, not a ticking remaining-time counter.
+
+`activity.cancel {lease}` changes active work to `cancelling` and sends the owner
+one reliable `activity.cancel_requested {lease,reason:"cancelled"}` event after
+the response. Expiry follows the same cleanup path with `reason:"expired"`.
+Renewal cannot beat an already-passed deadline merely because its timer event is
+still queued. Repeated cancellation does not extend the cleanup grace period.
+
+The owner must stop its continuing work and acknowledge completed cleanup with
+`activity.release {lease}` within two seconds. Release returns an empty result;
+it is also the ordinary completion operation when work stops voluntarily.
+Repeated release of an issued handle in the same generation is harmless.
+Do not release before cleanup has actually finished. A missed acknowledgement
+stops the owner through ordinary plugin teardown, including managed helper
+cleanup. Native terminals and accepted external-handler handoffs keep their
+independent ownership. One cancelled lease can therefore stop other work owned
+by an unresponsive plugin.
+
+Both active leases and the bounded cancellation grace protect normal shutdown
+and idle retirement. Persistent-session health reports owner, title and state;
+`:service-health` shows the same continuing work. Detach retains it. Explicit
+forced persistent-session stop remains available; `:q!` only overrides the
+ordinary unsaved-document guard and does not silently abandon plugin activity.
+Plugin stop or host restart invalidates every lease.
+
+The SDK exposes `acquire_activity`, `renew_activity`, `get_activity`,
+`cancel_activity` and `release_activity`. It starts no renewal thread and never
+replays a failed renewal. Decide explicitly whether playback or service work is
+still wanted before renewing. `activity.cancel_requested` uses the separate
+bounded cancellation worker, so ordinary command handlers waiting for replies
+cannot starve cleanup. Keep that callback independent of locks held by command
+handlers; signal cancellation promptly and acknowledge only after the work stops.
+The host uses its existing one-shot deadline scheduler, with no activity timer
+when no lease or cleanup grace is present.

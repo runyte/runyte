@@ -390,7 +390,7 @@ may still manage the host.
 
 `runyte --session-list` (or `runyte -l`) lists running and recently visited
 persistent sessions with `ID`, `NAME`, `DIRECTORY`, `STATE`, `UNSAVED`, `TERMINALS`,
-`WAITING`, and `TUI` columns,
+`WAITING`, `JOBS`, `ACTIVITIES`, and `TUI` columns,
 in the manager's order: numbered sessions first in digit order, then the rest
 least recently visited first. The listing has no number column of its own, so
 that reads as the running sessions ahead of the stopped ones. By default it
@@ -446,7 +446,8 @@ Omitting `WORKSPACE` from attach, stop, or restart selects the project found
 from the current directory. Restart replaces the running host without attaching
 a TUI and retains its name. Stop and restart refuse while the host owns unsaved
 buffers, pending `--wait`
-requests, or live terminal children. Add `--force` to discard that protected
+requests, live terminal children, active plugin jobs or continuing activity
+leases. Add `--force` to discard that protected
 state; the refusal names each count first. Unsaved buffers never count the
 scratch buffer: it has no path, so nothing about it could be saved in place. A
 scratchpad someone typed into is therefore never what keeps a workspace alive,
@@ -578,7 +579,10 @@ day, then days, written as `5min ago`, `3h ago`, or `5days ago`. Partial units
 round up, including across a boundary, so 59 minutes and one second reads
 `1h ago`. The current session reads `0min ago`; leaving or switching away
 records the end of that visit, and elapsed values continue advancing while the
-manager remains open. `Status` reads `QUIET` when a running host owns at least
+manager remains open. `Status` first reports `CANCELLING` for plugin activity
+awaiting cleanup, `ACTIVE` for a continuing activity lease, or `WORKING` for a
+finite plugin job. The selected row's preview names each activity's owner, title
+and state. Otherwise, `Status` reads `QUIET` when a running host owns at least
 one live terminal session and none of those terminals has completed a new
 presentation line for two minutes. A newly created terminal begins that
 two-minute clock without treating its initial empty row as output. Line-feed,
@@ -587,12 +591,13 @@ scroll commit complete lines. Unterminated partial text, carriage-return
 rewrites such as a spinner, cursor-only movement, application-internal scroll
 regions, alternate-screen/full-screen repainting, and resize do not.
 Exited terminal sessions are retained for review but are not relevant to this
-live-output observation; a session with no live terminals, a stopped session,
+live-output observation; a session with no live terminals or protected plugin
+work, a stopped session,
 and a host from another protocol version leave the value empty. `QUIET` does
 not claim that a process is idle, blocked, finished, or unhealthy.
 
 While the manager remains open, it asks each compatible running host for this
-bounded scalar at most once every five seconds. It never fetches terminal
+bounded health information at most once every five seconds. It never fetches terminal
 contents or derives activity from the selected row's preview. When a row is too
 wide beside the preview, Runyte clips its middle identity columns while
 preserving `Last active` and `Status` together. A history entry written by an
@@ -3037,6 +3042,15 @@ open a terminal session, an HTTP/HTTPS URL in the system browser, or an existing
 workspace file with its system handler. A terminal handed to the editor survives
 plugin stop and follows normal terminal-session retention. See the
 [handoff example](plugins/applications.md#notifications-and-native-handoffs).
+
+Continuing playback or service work can hold a renewable
+[activity lease](plugins/applications.md#continuing-activity), lasting at most ten
+minutes per grant. Session health and `:service-health` identify its owner, title
+and state. Active leases and their two-second cancellation cleanup grace protect
+normal quit and idle retirement; detach keeps them running. An owner that does
+not acknowledge expiry or cancellation is stopped, cleaning up its managed
+helpers. The `:q!` spelling does not bypass this protection; explicit forced
+persistent-session stop remains available.
 
 The SFTP and FTP/FTPS reference browsers also provide `mkdir`, `rename` and
 `delete` actions for one remote file or empty directory. After preparation,

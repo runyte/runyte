@@ -131,6 +131,24 @@ pub struct CommandResult {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "method", content = "params", deny_unknown_fields)]
 pub enum Request {
+    #[serde(rename = "activity.acquire")]
+    ActivityAcquire {
+        title: String,
+        #[serde(default = "super::activity::default_seconds")]
+        duration_seconds: u64,
+    },
+    #[serde(rename = "activity.renew")]
+    ActivityRenew {
+        lease: String,
+        #[serde(default = "super::activity::default_seconds")]
+        duration_seconds: u64,
+    },
+    #[serde(rename = "activity.get")]
+    ActivityGet { lease: String },
+    #[serde(rename = "activity.release")]
+    ActivityRelease { lease: String },
+    #[serde(rename = "activity.cancel")]
+    ActivityCancel { lease: String },
     #[serde(rename = "process.start")]
     ProcessStart(super::process::Start),
     #[serde(rename = "terminal.open")]
@@ -443,6 +461,8 @@ pub struct Job {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Limits {
+    pub activity_leases: usize,
+    pub activity_seconds: u64,
     pub process_handles: usize,
     pub process_io_bytes: usize,
     pub process_output_bytes: usize,
@@ -460,6 +480,8 @@ pub struct Limits {
 impl Default for Limits {
     fn default() -> Self {
         Self {
+            activity_leases: super::activity::MAX_LEASES,
+            activity_seconds: super::activity::MAX_SECONDS,
             process_handles: super::process::MAX_HANDLES,
             process_io_bytes: super::process::MAX_IO_BYTES,
             process_output_bytes: super::process::MAX_OUTPUT_BYTES,
@@ -526,6 +548,7 @@ pub enum HostMessage {
 #[derive(Clone, Debug, Serialize)]
 #[serde(untagged)]
 pub enum EventData {
+    ActivityCancelled(super::activity::Cancelled),
     ValidationCancelled(super::interaction::ValidationCancelled),
     Observation(super::observation::Change),
     ObservationResync(super::observation::ResyncRequired),
@@ -552,6 +575,7 @@ pub enum Response {
 #[derive(Clone, Debug, Serialize)]
 #[serde(untagged)]
 pub enum ResultValue {
+    Activity(super::activity::Info),
     TerminalOpened {
         terminal: String,
     },
@@ -683,6 +707,7 @@ pub(crate) struct CapturedContext {
 
 /// Bounded host ownership, independent of a frontend and the ten-second control timer.
 pub(crate) struct Instance {
+    pub activities: BTreeMap<String, super::activity::Lease>,
     pub notification_at: Option<std::time::Instant>,
     pub processes: BTreeSet<String>,
     pub model_requests: BTreeMap<String, super::view::Pending>,
@@ -729,6 +754,7 @@ impl Default for Instance {
             .unwrap_or_default()
             .as_nanos();
         Self {
+            activities: Default::default(),
             notification_at: None,
             processes: Default::default(),
             model_requests: Default::default(),
@@ -816,6 +842,7 @@ impl Instance {
 }
 
 pub const CAPABILITIES: &[&str] = &[
+    "activity",
     "terminals",
     "external",
     "notifications",
@@ -855,7 +882,12 @@ pub(crate) fn decode(bytes: &[u8]) -> anyhow::Result<super::ClientMessage> {
         );
         if !matches!(
             method,
-            "terminal.open"
+            "activity.acquire"
+                | "activity.renew"
+                | "activity.get"
+                | "activity.release"
+                | "activity.cancel"
+                | "terminal.open"
                 | "external.open"
                 | "notification.publish"
                 | "process.start"
@@ -1529,6 +1561,52 @@ mod tests {
                     },
                 },
             },
+            HostMessage::Response {
+                id: "p:1200".into(),
+                outcome: Response::Success {
+                    result: ResultValue::Activity(activity_fixture(
+                        super::super::activity::State::Active,
+                    )),
+                },
+            },
+            HostMessage::Response {
+                id: "p:1201".into(),
+                outcome: Response::Success {
+                    result: ResultValue::Activity(activity_fixture(
+                        super::super::activity::State::Active,
+                    )),
+                },
+            },
+            HostMessage::Response {
+                id: "p:1202".into(),
+                outcome: Response::Success {
+                    result: ResultValue::Activity(activity_fixture(
+                        super::super::activity::State::Active,
+                    )),
+                },
+            },
+            HostMessage::Response {
+                id: "p:1203".into(),
+                outcome: Response::Success {
+                    result: ResultValue::Empty(Empty {}),
+                },
+            },
+            HostMessage::Response {
+                id: "p:1204".into(),
+                outcome: Response::Success {
+                    result: ResultValue::Activity(activity_fixture(
+                        super::super::activity::State::Cancelling,
+                    )),
+                },
+            },
+            HostMessage::Event {
+                sequence: "e:1200".into(),
+                event: "activity.cancel_requested",
+                data: EventData::ActivityCancelled(super::super::activity::Cancelled {
+                    lease: "a:g:1".into(),
+                    reason: super::super::activity::Reason::Expired,
+                }),
+            },
         ];
         let expected = fixtures
             .iter()
@@ -1537,6 +1615,15 @@ mod tests {
         assert_eq!(messages.len(), expected.len());
         for (message, fixture) in messages.into_iter().zip(expected) {
             assert_eq!(serde_json::to_value(message).unwrap(), fixture["message"]);
+        }
+    }
+
+    fn activity_fixture(state: super::super::activity::State) -> super::super::activity::Info {
+        super::super::activity::Info {
+            lease: "a:g:1".into(),
+            title: "Local playback".into(),
+            state,
+            duration_seconds: 600,
         }
     }
 

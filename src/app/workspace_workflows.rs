@@ -494,7 +494,7 @@ impl App {
             .map(ListAction::Workspace)
             .collect();
         // The manager reads as six columns — number, name, branch, directory,
-        // activity, and terminal-output status —
+        // last activity, and protected-work/terminal-output status —
         // padded to the widest value in the list so they line up down it, the
         // way the contextual action menu already lines its own columns up. A
         // row that is not in a Git repository still pays for its branch column
@@ -542,6 +542,12 @@ impl App {
             .max()
             .unwrap_or(0)
             .max("Last active".width());
+        let status_width = columns
+            .iter()
+            .map(|(_, _, _, _, status)| status.width())
+            .max()
+            .unwrap_or(0)
+            .max(6);
         let items = self
             .workspace_rows
             .iter()
@@ -579,7 +585,9 @@ impl App {
                         crate::git::display_path(&row.project_root)
                     );
                     PickerItem::searchable(label, detail, search, index)
-                        .with_trailing_detail(format!("{active:<activity_width$}  {status:<6}"))
+                        .with_trailing_detail(format!(
+                            "{active:<activity_width$}  {status:<status_width$}"
+                        ))
                         .with_preview(session_picker_preview(
                             row,
                             self.workspace_previews.get(&row.project_root),
@@ -598,7 +606,10 @@ impl App {
             .with_column_header(
                 format!("No. {:<name_width$}", "Name"),
                 format!("{:<branch_width$}  {:<directory_width$}", "Branch", "Path"),
-                format!("{:<activity_width$}  Status", "Last active"),
+                format!(
+                    "{:<activity_width$}  {:<status_width$}",
+                    "Last active", "Status"
+                ),
             )
             .with_preview("Session");
         picker.primary_action = Some("attach".to_owned());
@@ -659,6 +670,13 @@ impl App {
             .max()
             .unwrap_or(0)
             .max(unicode_width::UnicodeWidthStr::width("Last active"));
+        let status_width = self
+            .workspace_rows
+            .iter()
+            .map(|row| unicode_width::UnicodeWidthStr::width(terminal_output_status(row, now)))
+            .max()
+            .unwrap_or(0)
+            .max(6);
         let changed = picker.items.len() != self.workspace_rows.len()
             || picker
                 .items
@@ -672,7 +690,7 @@ impl App {
                     };
                     item.trailing_detail
                         != format!(
-                            "{:<activity_width$}  {:<6}",
+                            "{:<activity_width$}  {:<status_width$}",
                             compact_session_elapsed(last_active, now),
                             terminal_output_status(row, now),
                             activity_width = activity_width,

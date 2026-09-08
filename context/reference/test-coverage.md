@@ -41,6 +41,28 @@ days, and fails below 89% total line coverage. The floor is deliberately below
 the observed baseline because conditional Linux and macOS code changes both the
 instrumented denominator and the paths available to a run on one platform.
 
+## 2026-09-08 — continuing activity leases
+
+Measured on `x86_64-unknown-linux-gnu` at `9e2d672` plus the activity round,
+using Rust 1.97.1 and cargo-llvm-cov 0.9.0. Ordinary and canonical suites each
+passed 3,456 tests with 33 ignored. Formatting and warnings-as-errors Clippy
+passed; the floor remains 89%.
+
+| Measure | Covered | Total | Coverage |
+| --- | ---: | ---: | ---: |
+| Lines | 117,145 | 127,775 | 91.68% |
+| Functions | 10,560 | 11,484 | 91.95% |
+| Regions | 177,922 | 195,138 | 91.18% |
+
+Fourteen new Rust tests cover bounded leases, renewal/expiry races, cooperative
+and missed cleanup acknowledgement, queue failure, real worker/helper lifecycle,
+quit/detach guards and owner-labelled health. The catalog transport test now
+preserves activity metadata; the native picker regression checks shared column
+widths and avoids redundant refreshes. Five Python activity and ten application/
+schema checks passed. Native macOS and the complete application performance
+matrix remain outstanding. Real deadline and cleanup checks are functional
+evidence rather than the release workload gate.
+
 ## 2026-09-08 — native handoffs and notifications
 
 Measured on `x86_64-unknown-linux-gnu` at `63d2d5e` plus the handoff round,

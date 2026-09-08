@@ -67,6 +67,25 @@ class Application:
         """Publish bounded owner-labelled feedback without taking focus."""
         return self.request('notification.publish', severity=severity, title=title, body=body)
 
+    def acquire_activity(self, title, duration_seconds=600):
+        """Protect deliberate continuing work; renewal is an explicit owner decision."""
+        return self.request('activity.acquire', title=title, duration_seconds=duration_seconds)
+
+    def renew_activity(self, lease, duration_seconds=600):
+        """Renew a still-active lease once, without replaying or reviving expired work."""
+        return self.request('activity.renew', lease=lease, duration_seconds=duration_seconds)
+
+    def get_activity(self, lease):
+        return self.request('activity.get', lease=lease)
+
+    def release_activity(self, lease):
+        """Acknowledge that continuing work and its cleanup have finished."""
+        return self.request('activity.release', lease=lease)
+
+    def cancel_activity(self, lease):
+        """Request cooperative cleanup; release acknowledges its completion."""
+        return self.request('activity.cancel', lease=lease)
+
     def open_terminal(self, invocation, label, executable, args=(), *, cwd=None):
         """Hand a native terminal session to the user with exact argument boundaries."""
         params = {'invocation': invocation, 'label': label, 'executable': executable,
@@ -286,7 +305,8 @@ class Application:
                 self._queue_observation(callback, message['event'], message['sequence'], message['data'])
             return
         # Cancellation must still run while command handlers await host replies.
-        control = message.get('event') in ('job.cancel_requested', 'resource.released', 'ui.validation_cancelled')
+        control = message.get('event') in ('job.cancel_requested', 'activity.cancel_requested',
+                                         'resource.released', 'ui.validation_cancelled')
         resource = message.get('method', '').startswith('resource.')
         validation = message.get('method') == 'ui.validate'
         slots = (self._validation_slots if validation else self._resource_slots if resource

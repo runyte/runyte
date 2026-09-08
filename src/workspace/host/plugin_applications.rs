@@ -131,6 +131,9 @@ impl WorkspaceHost {
                 request,
             } => {
                 self.application_request_id(id, &request_id)?;
+                if super::plugin_activity::is_activity_request(&request) {
+                    return self.application_activity_request(id, request_id, request);
+                }
                 if let api::Request::NotificationPublish(notification) = request {
                     let result = self.application_notification_request(id, notification);
                     return self.application_local_reply(id, request_id, result);
@@ -566,6 +569,9 @@ impl WorkspaceHost {
             return Ok(());
         }
         instance.application.deadlines.remove(&token);
+        if self.activity_deadline(id, &token)? {
+            return Ok(());
+        }
         if self.model_deadline(id, &token) {
             return Ok(());
         }

@@ -2,6 +2,7 @@
 
 //! Versioned external-process extension boundary; bundled frontend DTOs stay private.
 
+pub mod activity;
 pub mod application;
 pub mod arguments;
 pub mod editor;

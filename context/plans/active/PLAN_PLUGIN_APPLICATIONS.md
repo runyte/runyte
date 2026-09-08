@@ -80,8 +80,8 @@ and FTP/FTPS examples. Binary download staging now uses native confirmed
 publication, and the examples now provide native-confirmed remote mkdir, rename
 and delete. The remaining provider conflict/lifecycle refinements and later
 milestones remain active. Milestone 5 now includes bounded managed processes, terminal/external handoffs
-and retained notifications; activity leases, settings/state and the plugin
-manager remain. Milestone 6 still needs the broader SDK,
+and retained notifications plus continuing activity leases. Settings/state and
+the plugin manager remain. Milestone 6 still needs the broader SDK,
 non-Python example, full conformance matrix and complete application performance
 and supported-platform evidence. Milestones 1–2 also retain their full overload,
 real-attachment and performance acceptance work; the implemented primitives do
@@ -778,6 +778,46 @@ checks (5) passed. The native PTY smoke verified retained owner-labelled feedbac
 real terminal command output and terminal survival after plugin stop, with zero
 terminal bytes during two settled idle seconds. Native macOS and the full
 release workload matrix remain outstanding; this smoke is functional evidence.
+
+## Continuing activity round — 2026-09-08
+
+Implemented the `activity` capability with acquire/renew/get/release/cancel.
+Two fixed-charge records per owner cover active leases and cancellation awaiting
+cleanup; each grant is one to 600 seconds, defaulting to ten minutes. Handles
+belong to the connection generation. Renewal checks the actual monotonic expiry
+before accepting a new grant, while old queued deadlines cannot cancel a renewed
+lease. Explicit cancellation and expiry send one reliable cleanup request;
+release acknowledges completion, and a missed two-second grace stops the owner
+through ordinary helper/provider teardown. Repeated cancellation does not extend
+the grace period, and no timer remains after release or owner stop.
+
+Protected host state now includes leases, and standalone quit applies the same
+activity/job guard. Force-discard quit still preserves live activity; explicit
+forced persistent-session stop remains available. Private protocol 52 carries
+job counts and bounded owner/title/state entries through health, session inventory
+and native session presentation. The service-health report identifies continuing
+work without a ticking countdown. The SDK uses its reserved cancellation worker
+and starts no implicit renewal thread. Schema fixtures cover every method, result
+and cancellation event.
+
+Comprehensive review fixed missing CLI columns, unequal native Status widths
+and core/private health DTO ownership. Clippy caught the enlarged transport error
+value; storing the immutable private health list as a boxed slice restored the
+small value size without changing JSON. The real worker fixture now registers a
+command as the existing contract requires, and canonical fixtures include the
+serialized default duration while separate tests verify omission handling.
+
+Formatting, warnings-as-errors Clippy, ordinary tests and canonical Linux coverage
+passed: 3,456 tests with 33 ignored. Coverage is 117,145/127,775 lines (91.68%),
+10,560/11,484 functions (91.95%) and 177,922/195,138 regions (91.18%); the 89%
+floor remains unchanged. Fourteen new Rust tests cover ownership, bounds,
+monotonic expiry, missed acknowledgement, quota/queue failures, real worker/helper
+cleanup, all quit aliases, detach and health presentation. Catalog transport
+coverage now checks protected metadata, and native picker regression coverage
+checks alignment and unchanged-refresh stability. Five Python activity checks
+and ten application/schema checks pass. Actual worker deadlines and helper
+reaping are functional evidence; native macOS and the complete release workload
+matrix remain outstanding.
 
 ## Investigation: existing foundation and missing boundaries
 

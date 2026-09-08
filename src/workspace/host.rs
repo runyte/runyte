@@ -237,6 +237,7 @@ struct CompletedGitSnapshot {
     mutation: bool,
 }
 
+mod plugin_activity;
 mod plugin_applications;
 mod plugin_documents;
 mod plugin_editor;
@@ -306,6 +307,7 @@ pub struct ProtectedHostState {
     pub pending_wait_requests: usize,
     pub live_terminals: usize,
     pub plugin_jobs: usize,
+    pub activity_leases: usize,
 }
 
 impl ProtectedHostState {
@@ -314,10 +316,14 @@ impl ProtectedHostState {
             && self.pending_wait_requests == 0
             && self.live_terminals == 0
             && self.plugin_jobs == 0
+            && self.activity_leases == 0
     }
 
     pub fn refusal(self) -> String {
         let mut parts = Vec::new();
+        if self.activity_leases > 0 {
+            parts.push(format!("{} plugin activity leases", self.activity_leases));
+        }
         if self.plugin_jobs > 0 {
             parts.push(format!("{} active plugin jobs", self.plugin_jobs));
         }
@@ -596,20 +602,8 @@ impl WorkspaceHost {
     /// The single lifecycle summary used by retirement, inspection and stop.
     pub fn protected_state(&self) -> ProtectedHostState {
         ProtectedHostState {
-            plugin_jobs: self
-                .app
-                .plugins
-                .instances
-                .values()
-                .map(|instance| {
-                    instance
-                        .application
-                        .jobs
-                        .values()
-                        .filter(|job| job.state.active())
-                        .count()
-                })
-                .sum::<usize>()
+            activity_leases: self.app.plugin_activity_count(),
+            plugin_jobs: self.app.plugin_active_job_count()
                 + self.pending_process_requests(None)
                 + self.plugin_handoffs.len()
                 + self.app.plugins.provider_save_intents.len()

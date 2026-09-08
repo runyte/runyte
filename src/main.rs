@@ -2957,6 +2957,14 @@ fn handle_workspace_request(
 
     let result = match request {
         ClientRequest::Health => Ok(HostResponse::Health {
+            plugin_jobs: host.protected_state().plugin_jobs,
+            activity_leases: host.protected_state().activity_leases,
+            activities: host
+                .app()
+                .plugin_activity_health()
+                .into_iter()
+                .map(Into::into)
+                .collect(),
             protocol: runyte::workspace::transport::PROTOCOL_VERSION,
             pid: std::process::id(),
             interactive_attached,
@@ -4569,6 +4577,12 @@ async fn list_sessions(state: &Path, include_hidden: bool) -> Result<()> {
                     .pending_wait_requests
                     .map_or_else(String::new, |count| count.to_string()),
                 workspace
+                    .plugin_jobs
+                    .map_or_else(String::new, |count| count.to_string()),
+                workspace
+                    .activity_leases
+                    .map_or_else(String::new, |count| count.to_string()),
+                workspace
                     .interactive_attached
                     .map_or_else(String::new, |attached| {
                         if attached { "yes" } else { "no" }.to_owned()
@@ -4584,9 +4598,11 @@ async fn list_sessions(state: &Path, include_hidden: bool) -> Result<()> {
         "UNSAVED".to_owned(),
         "TERMINALS".to_owned(),
         "WAITING".to_owned(),
+        "JOBS".to_owned(),
+        "ACTIVITIES".to_owned(),
         "TUI".to_owned(),
     ];
-    let mut widths = [0_usize; 8];
+    let mut widths = [0_usize; 10];
     for row in std::iter::once(&headings).chain(rows.iter()) {
         for (index, value) in row.iter().enumerate() {
             widths[index] =
@@ -4602,12 +4618,9 @@ async fn list_sessions(state: &Path, include_hidden: bool) -> Result<()> {
 }
 
 #[cfg(unix)]
-fn print_workspace_row(row: &[String; 8], widths: &[usize; 8]) {
-    let cells = std::array::from_fn::<_, 8, _>(|index| pad_table_cell(&row[index], widths[index]));
-    println!(
-        "{}  {}  {}  {}  {}  {}  {}  {}",
-        cells[0], cells[1], cells[2], cells[3], cells[4], cells[5], cells[6], cells[7]
-    );
+fn print_workspace_row(row: &[String; 10], widths: &[usize; 10]) {
+    let cells = std::array::from_fn::<_, 10, _>(|index| pad_table_cell(&row[index], widths[index]));
+    println!("{}", cells.join("  "));
 }
 
 #[cfg(unix)]

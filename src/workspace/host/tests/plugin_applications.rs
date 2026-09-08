@@ -3,6 +3,9 @@
 use super::*;
 use crate::plugin::application as api;
 
+#[path = "plugin_activity.rs"]
+mod activity;
+
 #[path = "plugin_document_jobs.rs"]
 mod document_jobs;
 #[path = "plugin_documents.rs"]

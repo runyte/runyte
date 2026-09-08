@@ -321,3 +321,26 @@ mod tests {
         );
     }
 }
+
+/// Host-owned continuing activity, bounded to two leases per application.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ActivityLeaseHealth {
+    pub owner: String,
+    pub title: String,
+    pub state: ActivityLeaseState,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ActivityLeaseState {
+    Active,
+    Cancelling,
+}
+
+impl ActivityLeaseState {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Active => "active",
+            Self::Cancelling => "cancelling",
+        }
+    }
+}

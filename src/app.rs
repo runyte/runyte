@@ -3701,6 +3701,8 @@ fn session_picker_preview(
     let health_available = row.unsaved_buffers.is_some()
         && row.open_buffers.is_some()
         && row.pending_wait_requests.is_some()
+        && row.plugin_jobs.is_some()
+        && row.activity_leases.is_some()
         && row.live_terminals.is_some()
         && row.terminal_sessions.is_some()
         && row.interactive_attached.is_some();
@@ -3766,6 +3768,8 @@ fn session_picker_preview(
         ("Buffers", count(row.open_buffers)),
         ("Unsaved", count(row.unsaved_buffers)),
         ("Waiting", count(row.pending_wait_requests)),
+        ("Plugin jobs", count(row.plugin_jobs)),
+        ("Activities", count(row.activity_leases)),
         ("Attached", attached),
         ("Branch", branch),
         ("Directory", directory),
@@ -3773,6 +3777,14 @@ fn session_picker_preview(
         ("Repo", remote),
     ] {
         lines.push(format!("{field:<10}  {value}"));
+    }
+    for lease in &row.activities {
+        lines.push(format!(
+            "Activity    {} · {} · {}",
+            lease.owner,
+            lease.title,
+            lease.state.label()
+        ));
     }
     if let Some(protocol) = row.incompatible_protocol {
         lines.push(String::new());
@@ -3815,13 +3827,28 @@ fn compact_session_elapsed(last_active_unix_seconds: Option<u64>, now: u64) -> S
 }
 
 #[cfg(unix)]
-/// Whole-session terminal-output status shown after the last-active age.
+/// Whole-session activity status shown after the last-active age.
 ///
 /// The latest live-terminal baseline is sufficient because `QUIET` requires
-/// every live terminal to have crossed the interval. Missing host health, no
-/// live terminals, stopped rows, and incompatible hosts deliberately make no
-/// claim.
+/// every live terminal to have crossed the interval. Protected application
+/// work takes precedence over terminal quietness. Missing health, stopped rows,
+/// and incompatible hosts deliberately make no claim about application work.
 fn terminal_output_status(row: &WorkspaceRow, now: u64) -> &'static str {
+    if row.running && row.incompatible_protocol.is_none() {
+        if row
+            .activities
+            .iter()
+            .any(|lease| lease.state == crate::service_health::ActivityLeaseState::Cancelling)
+        {
+            return "CANCELLING";
+        }
+        if row.activity_leases.is_some_and(|count| count > 0) {
+            return "ACTIVE";
+        }
+        if row.plugin_jobs.is_some_and(|count| count > 0) {
+            return "WORKING";
+        }
+    }
     let Some(last_line) = row.terminal_line_activity_unix_seconds else {
         return "";
     };
