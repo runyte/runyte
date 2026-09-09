@@ -34,10 +34,24 @@ pub struct Event {
 /// child until reaping and its final event until the host consumes it.
 pub struct Worker {
     cancelled: watch::Sender<bool>,
+    settled: tokio::sync::oneshot::Receiver<bool>,
 }
 impl Worker {
     pub fn stop(&self) {
         self.cancelled.send_replace(true);
+    }
+
+    /// Shutdown must retain the runtime until the child has been reaped, even
+    /// when the host has stopped draining the ordinary event queue.
+    pub(crate) async fn wait_stopped(mut self) -> Result<()> {
+        self.stop();
+        ensure!(
+            (&mut self.settled)
+                .await
+                .context("Plugin cleanup task stopped")?,
+            "Plugin process cleanup failed"
+        );
+        Ok(())
     }
 }
 impl Drop for Worker {
@@ -71,6 +85,7 @@ pub fn spawn(
         limit: sender.limit,
     };
     let (cancelled, cancellation) = watch::channel(false);
+    let (settled, completion) = tokio::sync::oneshot::channel();
     tokio::spawn(async move {
         let (failure, reaped) = supervise(
             config,
@@ -82,6 +97,7 @@ pub fn spawn(
             cancellation,
         )
         .await;
+        let _ = settled.send(reaped);
         // This is the worker's only terminal/failure event. It follows every
         // input, deadline and readiness notice from this same task in FIFO order.
         let _ = events
@@ -94,7 +110,13 @@ pub fn spawn(
             })
             .await;
     });
-    (Worker { cancelled }, sender)
+    (
+        Worker {
+            cancelled,
+            settled: completion,
+        },
+        sender,
+    )
 }
 
 async fn read_message(

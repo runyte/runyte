@@ -1806,6 +1806,7 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
     }
     let quit_directory = app.quit_directory().map(Path::to_path_buf);
     services.language_servers.send(LspCommand::Shutdown);
+    app.shutdown_plugins().await?;
     let cwd_file = arguments.cwd_file;
     if let (Some(cwd_file), Some(directory)) = (cwd_file.as_deref(), quit_directory) {
         write_cwd_file(cwd_file, &directory)?;
@@ -2668,6 +2669,7 @@ async fn run_host_server(
         log_error!("host", "could not retire the published endpoint: {error}");
     }
     flush_connections(&mut server, active, controls).await;
+    host.shutdown_plugins().await?;
     log_info!("host", "connections flushed and endpoint retired");
     diagnostic_log::flush(diagnostic_log::FLUSH_BUDGET);
     unpublished?;

@@ -13,6 +13,22 @@ use anyhow::{Result, ensure};
 use std::collections::BTreeSet;
 
 impl WorkspaceHost {
+    /// Cancels every worker before waiting, and keeps the runtime alive until
+    /// all owned plugin children have been reaped. No new input is dispatched.
+    pub async fn shutdown_plugins(&mut self) -> Result<()> {
+        let workers = std::mem::take(&mut self.plugin_workers);
+        for worker in workers.values() {
+            worker.stop();
+        }
+        let results =
+            futures_util::future::join_all(workers.into_values().map(plugin::Worker::wait_stopped))
+                .await;
+        for result in results {
+            result?;
+        }
+        Ok(())
+    }
+
     pub fn plugin_presentation_pending(&self) -> bool {
         self.app.plugins.presentation_dirty
     }

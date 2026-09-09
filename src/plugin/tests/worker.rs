@@ -612,6 +612,57 @@ async fn managed_worker_stop_interrupts_blocked_stdin_write_before_final_reap() 
 
 #[tokio::test]
 #[cfg(unix)]
+async fn shutdown_wait_reaps_worker_without_draining_a_full_event_queue() {
+    let root = crate::test_support::TestRuntimeRoot::new("plugin-shutdown-wait").unwrap();
+    let config = managed_worker_config(
+        &root,
+        "printf '%s\\n' \"$$\" > managed-worker.pid\nprintf '{\"type\":\"subscribe\",\"request\":\"ready\",\"buffer\":\"0\"}\\n'\nexec sleep 30\n",
+    );
+    let (events, mut receiver) = mpsc::channel(1);
+    let (worker, _sender) = spawn(config, root.path().to_path_buf(), 0, events.clone());
+    let ready = tokio::time::timeout(Duration::from_secs(3), receiver.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(matches!(ready.result, Ok(ClientMessage::Queued { .. })));
+    let pid: i32 = std::fs::read_to_string(root.join("managed-worker.pid"))
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    events
+        .try_send(Event {
+            plugin: 0,
+            result: Err("held event".into()),
+        })
+        .unwrap();
+    assert_eq!(events.capacity(), 0);
+
+    tokio::time::timeout(Duration::from_secs(3), worker.wait_stopped())
+        .await
+        .expect("shutdown waited for event delivery instead of child cleanup")
+        .unwrap();
+    assert_eq!(unsafe { libc::kill(pid, 0) }, -1);
+    assert_eq!(
+        std::io::Error::last_os_error().raw_os_error(),
+        Some(libc::ESRCH)
+    );
+    assert_eq!(
+        receiver.try_recv().unwrap().result.unwrap_err(),
+        "held event"
+    );
+    let final_event = tokio::time::timeout(Duration::from_secs(3), receiver.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(matches!(
+        final_event.result,
+        Ok(ClientMessage::WorkerStopped { reaped: true, .. })
+    ));
+}
+
+#[tokio::test]
+#[cfg(unix)]
 async fn managed_worker_cancel_before_first_poll_starts_no_process() {
     let root = crate::test_support::TestRuntimeRoot::new("plugin-stop-unstarted").unwrap();
     let config = managed_worker_config(&root, "touch should-not-exist\n");
