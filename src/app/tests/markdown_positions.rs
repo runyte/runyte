@@ -57,6 +57,8 @@ fn goto_file_follows_markdown_web_labels_and_keeps_explicit_selections_exact() {
     fs::create_dir_all(&root).unwrap();
     let opened = Arc::new(Mutex::new(Vec::new()));
     let mut app = App::new(Config::default(), None).unwrap();
+    // Keep selected "Docs" away from the checkout's "docs" on case-insensitive filesystems.
+    app.project_root = root.clone();
     let recorded = Arc::clone(&opened);
     app.ports.browser = Box::new(move |url| {
         recorded.lock().unwrap().push(url.to_owned());
