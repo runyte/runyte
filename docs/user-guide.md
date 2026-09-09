@@ -161,6 +161,8 @@ it into view. If the cursor is on markup removed by rendering, the page uses
 the nearest surviving text; toggling straight back restores the exact source
 position. Moving around the page before returning takes you to that new place
 in the source. `:render` (also `:markdown`) does the same from the command line.
+`g f` on a link or image label opens its destination, just as in the source.
+Relative paths resolve beside the source document and at the project root.
 The page is a generated read-only buffer beside the document rather than a mode
 the document is in, so both stay open and the source keeps every editing key.
 
@@ -2077,7 +2079,9 @@ cancellation keys.
 
 `g f` opens `https://`, `http://`, and `www.` links in the default browser;
 `www.` addresses use HTTPS. With a bare caret, surrounding Markdown wrappers
-and trailing prose punctuation are excluded. An explicit selection is used
+and trailing prose punctuation are excluded. In Markdown source and rendered
+`?` pages, a caret on an inline link or image label follows its destination,
+including paths wrapped in angle brackets. An explicit selection is used
 exactly. The same command works in terminal NORMAL/review mode, using the
 frozen review text and resolving relative paths against the terminal's latest
 validated directory (or its launch directory) and the project root. Multiple

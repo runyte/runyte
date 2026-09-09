@@ -1218,6 +1218,40 @@ struct ParsedLink {
     length: usize,
 }
 
+/// Resolves an inline link or image at a character offset in one source row.
+/// Use the renderer's parser so labels and bracketed image paths have the same
+/// meaning when navigating source and rendered text.
+pub(crate) fn link_under_cursor(line: &str, offset: usize) -> Option<String> {
+    let characters = line.chars().collect::<Vec<_>>();
+    let mut index = 0;
+    while index < characters.len() && index <= offset {
+        match characters[index] {
+            '\\' if characters.get(index + 1).is_some_and(|c| is_escapable(*c)) => {
+                index += 2;
+                continue;
+            }
+            '`' => {
+                if let Some((_, length)) = code_span(&characters, index) {
+                    index += length;
+                    continue;
+                }
+            }
+            '[' | '!' => {
+                if let Some(parsed) = link(&characters, index) {
+                    if offset < index + parsed.length {
+                        return Some(parsed.url);
+                    }
+                    index += parsed.length;
+                    continue;
+                }
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+    None
+}
+
 /// An inline link or image starting at `index`.
 fn link(characters: &[char], index: usize) -> Option<ParsedLink> {
     let image = characters[index] == '!';
@@ -1283,7 +1317,22 @@ fn link(characters: &[char], index: usize) -> Option<ParsedLink> {
             bracket + 1,
         )
     } else {
-        let end = scan_from(open, ')')?;
+        let mut depth = 0;
+        let end =
+            characters[open..].iter().take(INLINE_SCAN_LIMIT).position(
+                |character| match character {
+                    '(' => {
+                        depth += 1;
+                        false
+                    }
+                    ')' if depth == 0 => true,
+                    ')' => {
+                        depth -= 1;
+                        false
+                    }
+                    _ => false,
+                },
+            )? + open;
         let target = characters[open..end].iter().collect::<String>();
         // A title after the destination is help for a mouse that is not here.
         let url = target

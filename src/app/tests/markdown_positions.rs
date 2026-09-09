@@ -7,6 +7,172 @@ fn offset(text: &str, needle: &str) -> usize {
 }
 
 #[test]
+fn goto_file_follows_markdown_image_labels_in_source_and_rendered_pages() {
+    let root = temporary("markdown-image-navigation");
+    let directory = root.join("notes");
+    fs::create_dir_all(&directory).unwrap();
+    let image = directory.join("hé界llo (1).png");
+    fs::write(&image, b"\x89PNG\r\n\x1a\n\0").unwrap();
+    let source = directory.join("note.md");
+    for (markdown, label) in [
+        ("[Image 1](<hé界llo (1).png>)", "Image 1"),
+        ("![**Image 1**](<hé界llo (1).png>)", "Image 1"),
+        ("![](<hé界llo (1).png>)", "hé界llo (1).png"),
+        (
+            "| Picture |\n| --- |\n| [Image 1](<hé界llo (1).png>) |",
+            "Image 1",
+        ),
+    ] {
+        fs::write(&source, markdown).unwrap();
+        for rendered in [false, true] {
+            let mut app = App::new(Config::default(), Some(source.clone())).unwrap();
+            app.project_root = root.clone();
+            app.programs = external_open::ProgramCache::load(None);
+            if rendered {
+                press(&mut app, '?');
+            }
+            let page = app.active().buffer;
+            let start = offset(&text(&app), label);
+            for column in 0..label.chars().count() {
+                app.active_mut()
+                    .replace_selection(Selection::point(start + column));
+                press(&mut app, 'g');
+                press(&mut app, 'f');
+                assert_eq!(
+                    app.external_target.as_ref(),
+                    Some(&image),
+                    "{markdown}, rendered={rendered}, column={column}"
+                );
+                assert_eq!(app.active().buffer, page);
+                key(&mut app, KeyCode::Escape, Modifiers::NONE);
+            }
+        }
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn goto_file_follows_markdown_web_labels_and_keeps_explicit_selections_exact() {
+    let root = temporary("markdown-web-navigation");
+    fs::create_dir_all(&root).unwrap();
+    let opened = Arc::new(Mutex::new(Vec::new()));
+    let mut app = App::new(Config::default(), None).unwrap();
+    let recorded = Arc::clone(&opened);
+    app.ports.browser = Box::new(move |url| {
+        recorded.lock().unwrap().push(url.to_owned());
+        Ok(())
+    });
+    seed(
+        &mut app,
+        "界 [**Docs**](https://example.com/a_(b)?q=1#part) and [Docs](www.example.org)\n",
+    );
+    let source = app.active().buffer;
+    for rendered in [false, true] {
+        if rendered {
+            press(&mut app, '?');
+        }
+        let current = text(&app);
+        for start in [
+            offset(&current, "Docs"),
+            current[..current.rfind("Docs").unwrap()].chars().count(),
+        ] {
+            app.active_mut()
+                .replace_selection(Selection::point(start + 1));
+            press(&mut app, 'g');
+            press(&mut app, 'f');
+        }
+        app.active_mut()
+            .replace_selection(Selection::single(Range::new(
+                offset(&current, "Docs"),
+                offset(&current, "Docs") + 3,
+            )));
+        press(&mut app, 'g');
+        press(&mut app, 'f');
+        assert!(
+            app.displayed_status_message()
+                .contains("path not found: Docs")
+        );
+    }
+    assert_eq!(
+        *opened.lock().unwrap(),
+        [
+            "https://example.com/a_(b)?q=1#part",
+            "https://www.example.org",
+            "https://example.com/a_(b)?q=1#part",
+            "https://www.example.org"
+        ]
+    );
+    assert_ne!(app.active().buffer, source);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn markdown_link_inference_respects_inline_boundaries() {
+    for literal in [
+        "`[label](file.txt)`",
+        "\\[label](file.txt)",
+        "[label](<bad<path>)",
+        "[label](unfinished",
+        "[label](file.txt) after",
+    ] {
+        let caret = if literal.ends_with("after") {
+            literal.chars().count() - 1
+        } else {
+            offset(literal, "label")
+        };
+        assert_eq!(
+            crate::markdown::link_under_cursor(literal, caret),
+            None,
+            "{literal}"
+        );
+    }
+    assert_eq!(
+        crate::markdown::link_under_cursor("[label](file.txt \"title\")", 3).as_deref(),
+        Some("file.txt")
+    );
+    assert_eq!(
+        crate::markdown::link_under_cursor("[label](a_(b).txt)", 3).as_deref(),
+        Some("a_(b).txt")
+    );
+}
+
+#[test]
+fn goto_file_from_rendered_markdown_uses_the_source_directory_after_edits() {
+    let root = temporary("markdown-file-navigation");
+    let directory = root.join("notes");
+    fs::create_dir_all(&directory).unwrap();
+    let target = directory.join("target.txt");
+    fs::write(&target, "destination\n").unwrap();
+    let source_path = directory.join("note.md");
+    fs::write(&source_path, "[the file](target.txt)\n\ntarget.txt\n").unwrap();
+    let mut app = App::new(Config::default(), Some(source_path)).unwrap();
+    app.project_root = root.clone();
+    let source = app.active().buffer;
+    for rendered in [false, true] {
+        app.switch_buffer(source);
+        if rendered {
+            press(&mut app, '?');
+            app.apply_to_buffer(source, &Transaction::insert(0, "A new paragraph\n\n"));
+        }
+        let page = app.active().buffer;
+        let current = text(&app);
+        let label = offset(&current, "the file") + 2;
+        let bare_path = current[..current.rfind("target.txt").unwrap()]
+            .chars()
+            .count();
+        for position in [label, bare_path] {
+            app.switch_buffer(page);
+            app.active_mut()
+                .replace_selection(Selection::point(position));
+            press(&mut app, 'g');
+            press(&mut app, 'f');
+            assert_eq!(app.active_buffer().path.as_ref(), Some(&target));
+        }
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn markdown_toggle_tracks_characters_through_block_and_inline_formatting() {
     let examples = [
         ("# A **hé界llo** heading\n", "hé界llo"),

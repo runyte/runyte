@@ -896,7 +896,7 @@ impl App {
     }
 
     /// Whether a buffer holds a Markdown document Runyte can render.
-    fn is_markdown_document(&self, buffer: usize) -> bool {
+    pub(super) fn is_markdown_document(&self, buffer: usize) -> bool {
         super::buffer_language(&self.buffers[buffer], &self.registry)
             .is_some_and(|language| self.registry.language_name(language) == "markdown")
             || self.scratch_reads_as_markdown(buffer)
