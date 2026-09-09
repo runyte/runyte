@@ -50,7 +50,7 @@ pub(super) struct PendingActivation {
 
 /// A child process attached to a pseudoterminal.
 pub struct Pty {
-    master: OwnedFd,
+    master: Option<OwnedFd>,
     input: mpsc::SyncSender<Vec<u8>>,
     child: Child,
 }
@@ -327,7 +327,7 @@ impl Pty {
             })?;
 
         Ok(Self {
-            master,
+            master: Some(master),
             input,
             child: child.disarm(),
         })
@@ -345,7 +345,8 @@ impl Pty {
     }
 
     pub fn resize(&self, columns: u16, rows: u16) -> io::Result<()> {
-        set_size(self.master.as_raw_fd(), columns, rows)
+        let master = self.master.as_ref().expect("live PTY owns its master");
+        set_size(master.as_raw_fd(), columns, rows)
     }
 
     /// Asks the child's process group to end, then ends it.
@@ -365,6 +366,11 @@ impl Pty {
 
     pub(super) fn terminate_unpublished(&mut self) {
         self.signal_unpublished();
+        // Darwin can keep a killed session leader in its exiting state while
+        // Runyte's master and an external owner of the slave are both open.
+        // No unpublished terminal can use this descriptor after cancellation,
+        // so close it before waiting for the direct child to become reapable.
+        self.master.take();
         let _ = self.child.wait();
     }
 

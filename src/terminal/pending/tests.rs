@@ -109,9 +109,11 @@ fn pending_terminal_failed_and_cancelled_preparations_release_the_gate_and_lease
 fn pending_terminal_cleanup_kills_descendants_after_the_unreaped_leader_exits() {
     let _guard = pending_test_guard();
     // Preserve the descendant across the controlling terminal's leader-exit
-    // hangup, so only explicit pending cleanup can end it.
+    // hangup, so only explicit pending cleanup can end it. Its closed standard
+    // descriptors also let Darwin publish the leader's stable zombie state
+    // without waiting for the descendant to release the PTY slave.
     let (root, request) = fixture(
-        "trap '' HUP\nsleep 30 &\nprintf '%s' \"$!\" > descendant\nprintf 'ready'\nexit 0\n",
+        "trap '' HUP\nsleep 30 </dev/null >/dev/null 2>&1 &\nprintf '%s' \"$!\" > descendant\nprintf 'ready'\nexit 0\n",
     );
     let mut sessions = TerminalSessions::new();
     let output = sessions.take_events().unwrap();

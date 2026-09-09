@@ -6,7 +6,9 @@ use super::*;
 #[test]
 fn captured_symlink_targets_consume_the_metadata_budget() {
     let root = TempDir::new();
-    let target = "x".repeat(1024);
+    // Stay below macOS's own symlink-target ceiling so this exercises
+    // Runyte's metadata budget on every supported Unix platform.
+    let target = "x".repeat(900);
     std::os::unix::fs::symlink(&target, root.join("link")).unwrap();
     let mut limits = OperationLimits {
         entries: 2,
@@ -128,7 +130,7 @@ fn copied_symlink_target_growth_consumes_the_metadata_budget() {
     let error = apply(&plan, |step, source, _| {
         if step == IoStep::CopyEntry && source.file_name().is_some_and(|name| name == "link") {
             fs::remove_file(source)?;
-            std::os::unix::fs::symlink("x".repeat(1024), source)?;
+            std::os::unix::fs::symlink("x".repeat(900), source)?;
         }
         Ok(())
     })
@@ -141,7 +143,7 @@ fn copied_symlink_target_growth_consumes_the_metadata_budget() {
             .unwrap()
             .as_os_str()
             .len(),
-        1024
+        900
     );
     assert!(!root.join("destination").exists());
     assert_eq!(fs::read_dir(&root.0).unwrap().count(), 1);
