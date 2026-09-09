@@ -22,6 +22,7 @@ fn fixture(behavior: &str) -> (TestRuntimeRoot, TerminalRequest) {
     (root, request)
 }
 
+#[track_caller]
 fn wait_until(mut condition: impl FnMut() -> bool) {
     let until = Instant::now() + Duration::from_secs(5);
     while !condition() {
@@ -109,11 +110,12 @@ fn pending_terminal_failed_and_cancelled_preparations_release_the_gate_and_lease
 fn pending_terminal_cleanup_kills_descendants_after_the_unreaped_leader_exits() {
     let _guard = pending_test_guard();
     // Preserve the descendant across the controlling terminal's leader-exit
-    // hangup, so only explicit pending cleanup can end it. Its closed standard
-    // descriptors also let Darwin publish the leader's stable zombie state
-    // without waiting for the descendant to release the PTY slave.
+    // hangup, so only explicit pending cleanup can end it. Keep the descendant
+    // off the PTY and leave its output queue empty: the unpublished reader is
+    // gated, so Darwin's terminal drain during leader exit cannot rely on it.
+    // The non-reaping exit observation below is the readiness barrier.
     let (root, request) = fixture(
-        "trap '' HUP\nsleep 30 </dev/null >/dev/null 2>&1 &\nprintf '%s' \"$!\" > descendant\nprintf 'ready'\nexit 0\n",
+        "trap '' HUP\nsleep 30 </dev/null >/dev/null 2>&1 &\nprintf '%s' \"$!\" > descendant\nexit 0\n",
     );
     let mut sessions = TerminalSessions::new();
     let output = sessions.take_events().unwrap();
@@ -134,8 +136,8 @@ fn pending_terminal_cleanup_kills_descendants_after_the_unreaped_leader_exits() 
     drop(pending);
     completion.recv_timeout(Duration::from_secs(5)).unwrap();
     assert!(output.try_recv().is_err());
-    // The group is gone or contains only the killed descendant's zombie;
-    // descriptor liveness proves it cannot keep the reader or child alive.
+    // The descendant must be gone or a zombie; releasing the accounting lease
+    // alone would not prove it was killed, since it has no PTY descriptors.
     #[cfg(target_os = "linux")]
     wait_until(
         || match std::fs::read_to_string(format!("/proc/{descendant}/stat")) {
