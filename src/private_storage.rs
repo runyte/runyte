@@ -257,7 +257,11 @@ mod platform {
             // SAFETY: successful fstatat initialized the complete structure.
             let current = unsafe { current.assume_init() };
             let expected = file.metadata()?;
-            if current.st_dev == expected.dev() && current.st_ino == expected.ino() {
+            // MetadataExt exposes u64 IDs, but libc's types vary by platform
+            // (notably signed dev_t on macOS). Match MetadataExt's conversion.
+            #[allow(clippy::unnecessary_cast)]
+            let current_identity = (current.st_dev as u64, current.st_ino as u64);
+            if current_identity == (expected.dev(), expected.ino()) {
                 self.remove(name)?;
             }
             Ok(())
