@@ -1700,10 +1700,15 @@ async fn revision_protocol_is_stale_safe_undoable_and_bounded() {
         })
         .await
         .unwrap();
-    let command_frame = match response(&mut interactive).await {
-        HostResponse::Frame { frame } => *frame,
-        response => panic!("expected updated frame, got {response:?}"),
-    };
+    // Frames are asynchronous: a startup/Git update can arrive before the
+    // host handles the undo input. Only a changed revision of this buffer
+    // establishes that the edit completed before the control client reads it.
+    let command_frame = wait_for_frame(
+        &mut interactive,
+        "waiting for undo to change the edited buffer revision",
+        |frame| frame.active_buffer == id && frame.active_revision != revision,
+    )
+    .await;
     client
         .send(&ClientRequest::ReadBuffer { buffer: id })
         .await
