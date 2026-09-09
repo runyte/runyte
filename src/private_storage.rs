@@ -256,8 +256,14 @@ mod platform {
             }
             // SAFETY: successful fstatat initialized the complete structure.
             let current = unsafe { current.assume_init() };
-            let expected = file.metadata()?;
-            if current.st_dev == expected.dev() && current.st_ino == expected.ino() {
+            let mut expected = std::mem::MaybeUninit::<libc::stat>::uninit();
+            // SAFETY: the descriptor and output pointer are valid.
+            if unsafe { libc::fstat(file.as_raw_fd(), expected.as_mut_ptr()) } < 0 {
+                return Err(io::Error::last_os_error());
+            }
+            // SAFETY: successful fstat initialized the complete structure.
+            let expected = unsafe { expected.assume_init() };
+            if current.st_dev == expected.st_dev && current.st_ino == expected.st_ino {
                 self.remove(name)?;
             }
             Ok(())
