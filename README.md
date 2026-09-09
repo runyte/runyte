@@ -90,7 +90,8 @@ The [authoring kit](docs/plugins/authoring.md) includes local setup, a Python
 client, an independent Node example and a conformance matrix. The
 [todo showcase](docs/plugins/todo/README.md) implements the same native task list
 in Python, Rust and C.
-The broader application platform remains in development.
+The application API remains experimental after completing its planned
+implementation and validation.
 See the [user guide](docs/user-guide.md) for complete behavior and limits.
 
 ### Workspaces, panes, and navigation

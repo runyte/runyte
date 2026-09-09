@@ -2,18 +2,21 @@
 
 ## Status and intended outcome
 
-Active implementation plan, originally written 2026-09-08 against `c7c18bd`
+Completed implementation plan, originally written 2026-09-08 against `c7c18bd`
 (`Add experimental external-process plugins and versioned API schema`).
-Implementation authorized 2026-09-08. Milestones are being implemented in order;
-this record remains active until all acceptance gates have evidence.
+Implementation authorized 2026-09-08; final native-platform acceptance verified
+2026-09-09 against `8b0000a` (`Release cancelled PTY masters before reaping on macOS`).
 
 As of 2026-09-09, all six milestones' feature implementations and examples are
 delivered, reviewed and committed. Linux formatting, Clippy, 3,581 Rust tests,
 91.74% canonical line coverage and the complete release performance matrix pass.
 The unchanged example clients previously passed 322 plugin conformance tests.
-Native macOS CI execution is the remaining
-completion gate; the historical implementation rounds below retain their
-original intermediate scope descriptions.
+Native macOS tests, plugin conformance, lifecycle stress and canonical coverage
+also passed in [CI run 34340753713](https://github.com/runyte/runyte/actions/runs/34340753713),
+closing the remaining completion gate. The historical implementation rounds below
+retain their original intermediate scope descriptions. This completes the
+application implementation and validation plan; the public API remains experimental
+and makes no new compatibility commitment.
 
 The objective is an extension system that can host useful applications: a file
 manager, a remote file browser/editor with transfers, and a media controller.
@@ -25,6 +28,43 @@ responsiveness and coherent interaction remain release requirements.
 The implementation is complete when those application patterns work through
 documented public operations, without patches for individual example plugins.
 It is not complete merely when a larger collection of methods exists.
+
+## Native-platform acceptance — 2026-09-09
+
+[CI run 34340753713](https://github.com/runyte/runyte/actions/runs/34340753713)
+passed all twelve jobs at `8b0000a22e43649b79c4e6741cde70ec960b08e3` on `dev`.
+This commit includes native file-identity normalization, plugin process reaping
+before host exit, and release of cancelled PTY masters before macOS reaping.
+
+- [Native macOS tests](https://github.com/runyte/runyte/actions/runs/34340753713/job/102430711148)
+  and [lifecycle stress](https://github.com/runyte/runyte/actions/runs/34340753713/job/102430711158)
+  passed, including the existing persistent-host and process/PTY coverage.
+- [macOS plugin conformance](https://github.com/runyte/runyte/actions/runs/34340753713/job/102430711077)
+  passed all 26 suites (322 tests) through `check_all.py --require-backends`,
+  with no reported test skips. Node and mpv were installed; remote transport
+  cases used temporary local servers and mpv used null audio/video outputs.
+- [macOS canonical coverage](https://github.com/runyte/runyte/actions/runs/34340753713/job/102430711394)
+  passed with 119,962 of 130,887 lines covered (**91.65%**), above the unchanged
+  89% floor, using Rust 1.97.1 and cargo-llvm-cov 0.9.0 on
+  `aarch64-apple-darwin`. CI runs `cargo llvm-cov --locked --workspace --no-report`
+  followed by reports from the same profile. Existing platform-specific ignored
+  tests remain excluded; this is not a claim that every ignored case ran.
+- Linux formatting, Clippy, tests, coverage, plugin conformance, lifecycle stress
+  and performance jobs passed, as did dependency advisories, MSRV and the release
+  build floor. The full application workload measurements remain the separate
+  Linux evidence recorded in the release performance acceptance section below.
+
+Acceptance is tied to this commit. The later
+[run at `7233bab`](https://github.com/runyte/runyte/actions/runs/34352572183)
+passed plugin conformance and lifecycle stress on both platforms, but failed
+macOS tests and instrumented tests in the newly added
+`app::tests::markdown_positions::goto_file_follows_markdown_web_labels_and_keeps_explicit_selections_exact`.
+That subsequent Markdown-link failure remains a current CI problem; this completed
+record does not certify the later commit as passing release validation.
+
+Native CI establishes the recorded targets and fixtures, not every terminal,
+remote server, media output device or live service account. Stable API versioning
+and compatibility policy remain separate work.
 
 ## Implementation record — 2026-09-08
 

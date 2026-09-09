@@ -1,7 +1,7 @@
 # Application API development
 
-Epoch 2 (`runyte-experimental-2`) is being implemented in the
-[application plan](../../context/plans/active/PLAN_PLUGIN_APPLICATIONS.md).
+Epoch 2 (`runyte-experimental-2`) is implemented and validated as recorded in the
+[completed application plan](../../context/plans/completed/PLAN_PLUGIN_APPLICATIONS.md).
 The current implementation supports typed commands, finite background jobs,
 retained native views, explicit buffer reads/edits, immutable snapshots and
 pane selections, local metadata/browsing, document lifecycle operations, native
@@ -13,7 +13,7 @@ FTP/FTPS adapters share a native remote browser with explicit transport and
 overwrite guarantees. Metadata subscriptions provide consistent baselines,
 ordered changes and explicit resynchronization. Managed helpers, continuing
 activity leases, settings/state, a native manager and the local mpv controller
-support continuing applications. Full release validation remains in progress.
+support continuing applications. The API remains experimental.
 Epoch 1 remains the default and its uppercase example is unchanged.
 
 The [authoring guide](authoring.md) provides clean-checkout setup, method/event
@@ -300,9 +300,9 @@ budgets are reserved for bounded queues, decoding and publication copies.
 These measure payload, not allocator RSS or the external process's memory.
 Buffer/pane issuance is bounded at 1,024/128 handles per connection generation.
 
-Still required by the active plan: media examples;
-broader SDK/conformance coverage and the complete performance/platform
-acceptance matrix.
+The media examples, SDK/conformance coverage and planned performance/platform
+acceptance are delivered. See the [validation record](../../context/plans/completed/PLAN_PLUGIN_APPLICATIONS.md#native-platform-acceptance--2026-09-09)
+for the accepted commit, tested targets and limits of that evidence.
 
 ## Columns, blocks and atomic model updates
 

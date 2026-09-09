@@ -189,7 +189,7 @@ port. An all-valid-fixtures test alone is insufficient:
 - After a job, cancellation or pause settles, check that no periodic publication,
   renewal or polling continues without an active reason.
 
-## Evidence and remaining release gates
+## Acceptance evidence and release checks
 
 Keep test results specific: checkout/commit, command, target OS/architecture,
 dependency versions, passed/skipped cases and fixture type. Temporary native
@@ -197,13 +197,15 @@ smoke scripts or local logs are not reproducible conformance artifacts unless
 their harness is checked in. The matrix above is a coverage map, not a release
 certificate or a complete automated adversarial cross-product.
 
-The [active plan](../../context/plans/active/PLAN_PLUGIN_APPLICATIONS.md) still
-defines broader platform and performance acceptance. This guide does not claim
-that macOS, every terminal backend, startup comparisons, paused/idle CPU, slow
-consumer measurements or the full multi-application stress matrix have passed.
-Run and record them on the specified targets before making that claim. Pure
-controller tests and null-output mpv fixtures also do not establish audible
-playback quality or behavior with every video/output device.
+The [completed plan](../../context/plans/completed/PLAN_PLUGIN_APPLICATIONS.md)
+records Linux application performance acceptance and passing Linux/macOS CI at
+`8b0000a`, including native macOS tests, lifecycle stress, all 26 plugin suites
+and canonical line coverage of 91.65%. This closes the implementation plan's
+validation gate; subsequent releases still require their own passing checks.
+The public API remains experimental. These results do not establish behavior
+with every terminal backend or portable performance timings. Pure controller
+tests and null-output mpv fixtures also do not establish audible playback quality
+or behavior with every video/output device.
 
 Spotify and YouTube service access is optional, account-dependent validation;
 see the [service adapter guide](media-services.md). Passing local tests does not
