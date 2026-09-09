@@ -3221,7 +3221,7 @@ fn applied_explorer_moves_retarget_files_and_refresh_other_explorers() {
         }],
     };
     assert_eq!(
-        app.reconcile_applied_filesystem(&directory, root_buffer, &report, true),
+        app.reconcile_applied_filesystem(&directory, Some(root_buffer), &report, true),
         None
     );
     assert_eq!(

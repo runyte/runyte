@@ -430,7 +430,7 @@ may still manage the host.
 
 `runyte --session-list` (or `runyte -l`) lists running and recently visited
 persistent sessions with `ID`, `NAME`, `DIRECTORY`, `STATE`, `UNSAVED`, `TERMINALS`,
-`WAITING`, and `TUI` columns,
+`WAITING`, `JOBS`, `ACTIVITIES`, and `TUI` columns,
 in the manager's order: numbered sessions first in digit order, then the rest
 least recently visited first. The listing has no number column of its own, so
 that reads as the running sessions ahead of the stopped ones. By default it
@@ -486,7 +486,8 @@ Omitting `WORKSPACE` from attach, stop, or restart selects the project found
 from the current directory. Restart replaces the running host without attaching
 a TUI and retains its name. Stop and restart refuse while the host owns unsaved
 buffers, pending `--wait`
-requests, or live terminal children. Add `--force` to discard that protected
+requests, live terminal children, active plugin jobs or continuing activity
+leases. Add `--force` to discard that protected
 state; the refusal names each count first. Unsaved buffers never count the
 scratch buffer: it has no path, so nothing about it could be saved in place. A
 scratchpad someone typed into is therefore never what keeps a workspace alive,
@@ -618,7 +619,10 @@ day, then days, written as `5min ago`, `3h ago`, or `5days ago`. Partial units
 round up, including across a boundary, so 59 minutes and one second reads
 `1h ago`. The current session reads `0min ago`; leaving or switching away
 records the end of that visit, and elapsed values continue advancing while the
-manager remains open. `Status` reads `QUIET` when a running host owns at least
+manager remains open. `Status` first reports `CANCELLING` for plugin activity
+awaiting cleanup, `ACTIVE` for a continuing activity lease, or `WORKING` for a
+finite plugin job. The selected row's preview names each activity's owner, title
+and state. Otherwise, `Status` reads `QUIET` when a running host owns at least
 one live terminal session and none of those terminals has completed a new
 presentation line for two minutes. A newly created terminal begins that
 two-minute clock without treating its initial empty row as output. Line-feed,
@@ -627,12 +631,13 @@ scroll commit complete lines. Unterminated partial text, carriage-return
 rewrites such as a spinner, cursor-only movement, application-internal scroll
 regions, alternate-screen/full-screen repainting, and resize do not.
 Exited terminal sessions are retained for review but are not relevant to this
-live-output observation; a session with no live terminals, a stopped session,
+live-output observation; a session with no live terminals or protected plugin
+work, a stopped session,
 and a host from another protocol version leave the value empty. `QUIET` does
 not claim that a process is idle, blocked, finished, or unhealthy.
 
 While the manager remains open, it asks each compatible running host for this
-bounded scalar at most once every five seconds. It never fetches terminal
+bounded health information at most once every five seconds. It never fetches terminal
 contents or derives activity from the selected row's preview. When a row is too
 wide beside the preview, Runyte clips its middle identity columns while
 preserving `Last active` and `Status` together. A history entry written by an
@@ -2117,6 +2122,7 @@ targets stay within one buffer line or terminal review row.
 | `Space o s` | Inspect syntax, LSP, and Git service health |
 | `Ctrl-s`, `:write`, or `:save` | Save |
 | `:diff-disk` | Compare the active file buffer with a fresh immutable disk snapshot |
+| `:diff-remote` | Compare the active provider document with a fresh read-only remote snapshot |
 | `:diff-this` (`:difft`, `:dt`) | Mark this buffer, or compare it with the one marked before it |
 | `:diff-off` (`:do`) | Close the comparison this buffer is part of |
 | `:reload` | Reload the active file (confirming first when dirty), or refresh the active explorer or supported Git list |
@@ -3036,10 +3042,114 @@ likewise ignored after their open document advances.
 
 ### Experimental plugins
 
+`:plugins` opens the native manager for configured, disabled and failed plugins.
+Select an entry to inspect its capabilities, jobs, activity, helpers and diagnostic
+summary; Enter offers lifecycle actions. `:plugin-stop <id>` stops an owner and
+`:plugin-restart <id>` requests a fresh connection after cleanup finishes.
+Stopping a pending restart cancels it. Retained views remain readable and dirty
+provider documents remain editable. Restart does not replay old actions.
+
 Explicitly enabled process plugins can register commands, read the invoking
 buffer's text and selections, and return replacements as one undoable edit.
 They run asynchronously; changing the invoking text rejects stale results.
 Persistent hosts retain their plugin processes across TUI detach and reattach.
+Opt-in epoch 2 applications also provide retained native views, typed commands,
+finite background jobs, explicit buffer/selection operations and bounded local
+filesystem operations with native confirmation, plus native prompts, filterable
+choices and forms with masked secret fields. Applications can also create named
+unsaved documents and save them asynchronously: later edits stay dirty, and
+pending or uncertain writes cannot silently complete a close or `--wait` request.
+Applications can subscribe to buffer, pane, owned view/job and attachment metadata
+with consistent baselines and bounded ordered delivery. New-buffer discovery
+needs no polling; slow consumers receive an explicit resynchronization marker.
+Opted-in form fields can validate asynchronously after Enter. Editing keeps the
+form open and rejects stale results; secret values reach validation only when
+that field explicitly opts in. Validation runs without blocking editor input.
+Provider applications can also open version-bound UTF-8 documents with normal
+editing, syntax highlighting and remote saves. Providers with conditional writes
+save normally; weaker providers require native foreground confirmation describing
+the overwrite race and replacement guarantee. Cancelling preserves text and undo.
+Newer edits remain
+dirty during uploads; save-and-close waits for confirmed success. Explicit rebind
+reconciles restarted providers and uncertain writes. `:diff-remote` compares fresh
+remote text with local edits without changing the saved baseline; both sides must
+fit the 4 MiB comparison limit. Native `:reload` reads fresh remote text; dirty
+or uncertain documents offer reload, keeping local edits against a new baseline,
+or cancellation.
+Reload is one undoable edit and preserves earlier history. Unknown writes require
+provider settlement before accepting a baseline. Each side may contain at most
+8 MiB. See [provider recovery](plugins/applications.md#native-reload-and-conflict-recovery).
+The runnable
+[SFTP browser and editor](plugins/applications.md#sftp-browser-and-editor) verifies
+SSH host keys, uses explicit identity files or an existing SSH agent, and opens
+remote UTF-8 documents up to 8 MiB. Run `:plugin.sftp.browse .` with its documented
+profile; Enter opens a selected file, and native `:write` confirms the remaining
+remote overwrite race. The [FTP/FTPS example](plugins/applications.md#ftp-and-ftps-browser-and-editor)
+shares the browser and editor workflow using standard-library transport. It
+defaults to certificate-verified FTPS with encrypted data connections; unencrypted
+FTP is an explicit profile choice and is labeled in the UI. FTP and FTPS require
+native save confirmation of non-atomic replacement and read credentials from an
+explicit private file. In either remote browser, `download` prompts for a new local path
+and stages up to 8 MiB of arbitrary file bytes before native filesystem
+confirmation. When the browser shows `Download ready`, use `confirm-download`
+to present the native review; downloads never publish automatically.
+`cancel-download` cancels unaccepted work. Remote identities stay separate from
+local files. The
+[application guide](plugins/applications.md) also includes runnable task-list,
+local file-manager, document, memory-provider and background-job examples and
+lists the remaining work.
+
+Applications can launch [managed helpers](plugins/applications.md#managed-helpers)
+with bounded binary input and retained output. Their output stays separate from
+the plugin protocol. Closing a helper or stopping its plugin cleans up and reaps
+the owned process group; naturally exited output stays readable until released.
+The runnable helper controller demonstrates Send, Flood, EOF and Close actions
+without a network service. Enabled idle helpers alone do not prevent persistent
+host retirement. Applications can also publish owner-labelled notifications
+without changing focus or current action feedback. Explicit native handoffs can
+open a terminal session, an HTTP/HTTPS URL in the system browser, or an existing
+workspace file with its system handler. A terminal handed to the editor survives
+plugin stop and follows normal terminal-session retention. See the
+[handoff example](plugins/applications.md#notifications-and-native-handoffs).
+
+Continuing playback or service work can hold a renewable
+[activity lease](plugins/applications.md#continuing-activity), lasting at most ten
+minutes per grant. Session health and `:service-health` identify its owner, title
+and state. Active leases and their two-second cancellation cleanup grace protect
+normal quit and idle retirement; detach keeps them running. An owner that does
+not acknowledge expiry or cancellation is stopped, cleaning up its managed
+helpers. The `:q!` spelling does not bypass this protection. Use `:plugins` to
+stop the owner before quitting; in persistent mode, `:detach` leaves its work
+running. Explicit forced persistent-session stop remains available.
+
+The optional [local media controller](plugins/applications.md#local-media-controller)
+plays workspace audio and video files through an installed mpv. Its native
+playlist provides play, pause, relative seek, next, previous and stop actions;
+video appears in mpv's external window. Playback continues across detach and
+protects the persistent session while active. Pausing releases that protection;
+stop closes the owned player. The [service adapter guide](plugins/media-services.md)
+describes Spotify prerequisites and YouTube browser playback separately.
+
+Applications can read their configured settings and save bounded nonsecret
+workspace preferences through the [settings and state API](plugins/applications.md#settings-and-workspace-state).
+State updates check the revision observed by the application and preserve existing
+data on conflict. The runnable `preferences.py` example demonstrates a configured
+default and a saved destination that survives restarting the editor. Secrets
+belong in an established credential manager or authentication helper.
+
+The SFTP and FTP/FTPS browsers can upload a workspace disk file of at most 8 MiB
+with `upload`. Preparation freezes its bytes; `confirm-upload` then opens native
+confirmation for the remote destination. Unsaved editor text is separate from the
+disk file. `cancel-upload` cancels pending work, while an unknown promotion outcome
+remains visible and blocks another upload until explicit plugin restart. See
+[binary uploads](plugins/applications.md#binary-uploads-from-workspace-disk-files).
+
+The SFTP and FTP/FTPS reference browsers also provide `mkdir`, `rename` and
+`delete` actions for one remote file or empty directory. After preparation,
+`confirm-operation` opens native confirmation; `cancel-operation` cancels pending
+work. Deletion is permanent, checks are best effort, and an unknown outcome must
+be inspected before any retry. Existing remote documents keep their original
+identity and unsaved text. See the [remote operation guide](plugins/applications.md#confirmed-remote-directory-operations).
 
 The runnable example, installation and configuration, command bindings, errors,
 subscription behavior, limits and experimental API are in the
@@ -3076,6 +3186,7 @@ are enabled.
 :window-close           close the active pane, but not the last one (alias: wc)
 :buffer-new             open a new scratch buffer in the current pane (alias: new)
 :diff-disk              compare a fresh disk snapshot with the active file buffer
+:diff-remote            compare a fresh remote snapshot with the active provider document
 :diff-this              mark this buffer, or compare it with the one marked before it (aliases: difft, dt)
 :diff-off               close the comparison this buffer is part of (alias: do)
 :explorer [path]        open an editable directory explorer (alias: files)
@@ -3120,6 +3231,9 @@ are enabled.
 :lsp-status             report language server state
 :notifications          open retained notification history (alias: not)
 :service-health         inspect syntax, LSP, providers, and helper health (alias: health)
+:plugins                open the configured plugin manager
+:plugin-stop <id>       stop a configured plugin or cancel its pending restart
+:plugin-restart <id>    restart a configured plugin after its cleanup finishes
 :hsplit [path]          create a stacked split (alias: split)
 :open <path>            open a file or directory in the active pane (aliases: e, edit)
 :path                   show the active buffer's absolute path in a popup;
@@ -3132,7 +3246,7 @@ are enabled.
 :quit-all!              discard buffer changes and quit, without ending terminals (alias: qa!)
 :quit-here              quit and return the shell to the active directory (alias: qh)
 :quit-here!             discard changes, quit, and return there (alias: qh!)
-:reload                 reload the active file or refresh the active explorer or supported Git list
+:reload                 reload the active local/provider file or refresh the explorer or supported Git list
 :resize-right +/- N     grow or shrink the pane at its right edge by N cells
 :resize-left +/- N      grow or shrink the pane at its left edge by N cells
 :resize-top +/- N       grow or shrink the pane at its top edge by N cells

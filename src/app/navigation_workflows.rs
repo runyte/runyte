@@ -453,6 +453,13 @@ impl App {
 
     pub(super) fn complete_parent_wait(&mut self, cancel: bool) -> bool {
         let buffer = self.active().buffer;
+        if self.document_mutation_pending(buffer) {
+            self.action_warning(
+                "Save pending",
+                "Wait for the document write before returning",
+            );
+            return true;
+        }
         if self.active_terminal().is_some() || !self.parent_wait_buffers.contains_key(&buffer) {
             return false;
         }

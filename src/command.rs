@@ -58,6 +58,7 @@ pub enum ColonCommand {
     ChangeDirectory,
     CloseBuffer,
     DiffDisk,
+    DiffRemote,
     DiffOff,
     DiffThis,
     ForceCloseBuffer,
@@ -108,6 +109,9 @@ pub enum ColonCommand {
     ResizeTop,
     ResizeBottom,
     ServiceHealth,
+    Plugins,
+    PluginStop,
+    PluginRestart,
     WriteQuit,
     WriteBufferClose,
     SessionAttach,
@@ -219,6 +223,7 @@ impl ColonCommand {
         Self::ChangeDirectory,
         Self::CloseBuffer,
         Self::DiffDisk,
+        Self::DiffRemote,
         Self::DiffOff,
         Self::DiffThis,
         Self::ForceCloseBuffer,
@@ -269,6 +274,9 @@ impl ColonCommand {
         Self::ResizeTop,
         Self::ResizeBottom,
         Self::ServiceHealth,
+        Self::Plugins,
+        Self::PluginStop,
+        Self::PluginRestart,
         Self::WriteQuit,
         Self::WriteBufferClose,
         Self::SessionAttach,
@@ -289,9 +297,12 @@ impl ColonCommand {
             Self::ResizeRight | Self::ResizeLeft | Self::ResizeTop | Self::ResizeBottom => {
                 CommandCategory::Window
             }
-            Self::DiffThis | Self::DiffDisk | Self::DiffOff | Self::Notifications | Self::Path => {
-                CommandCategory::View
-            }
+            Self::DiffThis
+            | Self::DiffDisk
+            | Self::DiffRemote
+            | Self::DiffOff
+            | Self::Notifications
+            | Self::Path => CommandCategory::View,
             Self::Format | Self::LspTrust | Self::LspRestart | Self::LspStatus => {
                 CommandCategory::Language
             }
@@ -327,7 +338,12 @@ impl ColonCommand {
             | Self::ForceQuitAll
             | Self::QuitHere
             | Self::ForceQuitHere => CommandCategory::Application,
-            Self::Grammar | Self::LogOpen | Self::ServiceHealth => CommandCategory::Configuration,
+            Self::Grammar
+            | Self::LogOpen
+            | Self::ServiceHealth
+            | Self::Plugins
+            | Self::PluginStop
+            | Self::PluginRestart => CommandCategory::Configuration,
             Self::SessionAttach | Self::SessionList | Self::SessionStop | Self::SessionRename => {
                 CommandCategory::Application
             }
@@ -1467,6 +1483,14 @@ pub const COMMANDS: &[CommandSpec] = &[
         NoArguments
     ),
     spec!(
+        ColonId(Colon::DiffRemote),
+        "diff-remote",
+        [],
+        "diff-remote",
+        "Compare the active provider document with a fresh read-only remote snapshot",
+        NoArguments
+    ),
+    spec!(
         ColonId(Colon::DiffThis),
         "diff-this",
         ["difft", "dt"],
@@ -1653,6 +1677,30 @@ pub const COMMANDS: &[CommandSpec] = &[
         [],
         "fullscreen",
         NoArguments
+    ),
+    spec!(
+        ColonId(Colon::Plugins),
+        "plugins",
+        [],
+        "plugins",
+        "Inspect configured plugins and their state",
+        NoArguments
+    ),
+    spec!(
+        ColonId(Colon::PluginStop),
+        "plugin-stop",
+        [],
+        "plugin-stop <configured-id>",
+        "Stop a plugin or cancel its pending restart",
+        Required(FreeText)
+    ),
+    spec!(
+        ColonId(Colon::PluginRestart),
+        "plugin-restart",
+        [],
+        "plugin-restart <configured-id>",
+        "Restart a configured plugin after cleanup",
+        Required(FreeText)
     ),
     spec!(
         ColonId(Colon::ServiceHealth),
@@ -2241,8 +2289,10 @@ impl CommandInvocation {
     ) -> Result<Self, CommandInvocationError> {
         let valid = match id {
             CommandId::Plugin(_) => {
-                matches!(parameters, InvocationParameters::None)
-                    && execution == CommandExecutionContext::default()
+                matches!(
+                    parameters,
+                    InvocationParameters::None | InvocationParameters::OptionalText(_)
+                ) && execution == CommandExecutionContext::default()
             }
             CommandId::Editor(EditorCommand::ShowHelp) => {
                 matches!(parameters, InvocationParameters::Help(_))
@@ -2451,6 +2501,7 @@ fn valid_colon_parameters(command: ColonCommand, parameters: &InvocationParamete
         (
             Colon::CloseBuffer
             | Colon::DiffDisk
+            | Colon::DiffRemote
             | Colon::DiffOff
             | Colon::DiffThis
             | Colon::ForceCloseBuffer
@@ -2483,6 +2534,7 @@ fn valid_colon_parameters(command: ColonCommand, parameters: &InvocationParamete
             | Colon::Notifications
             | Colon::Path
             | Colon::ServiceHealth
+            | Colon::Plugins
             | Colon::Detach
             | Colon::Quit
             | Colon::ForceQuit
@@ -2512,6 +2564,10 @@ fn valid_colon_parameters(command: ColonCommand, parameters: &InvocationParamete
         (Colon::SessionRename, InvocationParameters::SessionRename { workspace, name }) => {
             !workspace.as_os_str().is_empty() && !name.trim().is_empty()
         }
+        (
+            Colon::PluginStop | Colon::PluginRestart,
+            InvocationParameters::OptionalText(Some(value)),
+        ) => crate::plugin::valid_name(value),
         (Colon::LspRestart, InvocationParameters::OptionalText(value)) => {
             value.as_ref().is_none_or(|value| !value.is_empty())
         }
@@ -2807,6 +2863,7 @@ fn invocation_from_parts(
             (
                 ColonCommand::CloseBuffer
                 | ColonCommand::DiffDisk
+                | ColonCommand::DiffRemote
                 | ColonCommand::DiffOff
                 | ColonCommand::DiffThis
                 | ColonCommand::ForceCloseBuffer
@@ -2839,6 +2896,7 @@ fn invocation_from_parts(
                 | ColonCommand::Notifications
                 | ColonCommand::Path
                 | ColonCommand::ServiceHealth
+                | ColonCommand::Plugins
                 | ColonCommand::Detach
                 | ColonCommand::Quit
                 | ColonCommand::ForceQuit
@@ -2880,6 +2938,13 @@ fn invocation_from_parts(
             ) => Ok(CommandInvocation::new(
                 id,
                 InvocationParameters::PaneResize(parse_pane_resize(command, &value)?),
+            )),
+            (
+                ColonCommand::PluginStop | ColonCommand::PluginRestart,
+                ParsedArgument::Text(Some(value)),
+            ) if crate::plugin::valid_name(&value) => Ok(CommandInvocation::new(
+                id,
+                InvocationParameters::OptionalText(Some(value)),
             )),
             (ColonCommand::LspRestart, ParsedArgument::Text(value)) => Ok(CommandInvocation::new(
                 id,

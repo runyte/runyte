@@ -339,7 +339,15 @@ pub(super) fn trailing_whitespace_changes(
     buffer: &Buffer,
     rows: impl Iterator<Item = usize>,
 ) -> Vec<Change> {
-    rows.filter_map(|row| {
+    trailing_whitespace_changes_iter(buffer, rows).collect()
+}
+
+/// Streams the shared trim decisions so retained previews can bound admission.
+pub(super) fn trailing_whitespace_changes_iter(
+    buffer: &Buffer,
+    rows: impl Iterator<Item = usize>,
+) -> impl Iterator<Item = Change> {
+    rows.filter_map(move |row| {
         let line = buffer.line_string(row);
         let trimmed = line.trim_end_matches([' ', '\t']);
         let trimmed_len = trimmed.chars().count();
@@ -349,7 +357,6 @@ pub(super) fn trailing_whitespace_changes(
             Change::new(start + trimmed_len, start + line_len, "")
         })
     })
-    .collect()
 }
 
 pub(super) fn operative_span(buffer: &Buffer, range: &Range) -> (Offset, Offset) {

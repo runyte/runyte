@@ -172,8 +172,23 @@ impl OwnedTree {
         self.check_root()?;
         let metadata = fs::symlink_metadata(source)?;
         let file_type = metadata.file_type();
-        if file_type.is_symlink() {
-            let link = fs::read_link(source)?;
+        let link = file_type
+            .is_symlink()
+            .then(|| fs::read_link(source))
+            .transpose()?;
+        if let Some(budget) = &mut io.copy_budget {
+            let payload = self.payload();
+            let relative = target.strip_prefix(&payload).map_err(io::Error::other)?;
+            budget
+                .charge(
+                    relative,
+                    entry_kind(file_type),
+                    link.as_ref()
+                        .map_or(metadata.len(), |link| link.as_os_str().len() as u64),
+                )
+                .map_err(io::Error::other)?;
+        }
+        if let Some(link) = link {
             super::create_symlink(source, &link, target).map_err(io::Error::other)?;
             self.record(target)?;
         } else if file_type.is_dir() {
@@ -187,7 +202,11 @@ impl OwnedTree {
         } else if file_type.is_file() {
             let mut source = File::open(source)?;
             let mut target = self.create_file(target)?;
-            super::platform::copy_file(&mut source, &mut target)?;
+            if io.copy_budget.is_some() {
+                super::platform::copy_file_bounded(&mut source, &mut target, metadata.len())?;
+            } else {
+                super::platform::copy_file(&mut source, &mut target)?;
+            }
         } else {
             return Err(io::Error::other("unsupported copy source"));
         }

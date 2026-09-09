@@ -166,7 +166,10 @@ use crate::workspace::{
 /// can start project-aware servers without asking and cannot honor revocation.
 /// Version 50 adds session navigation, authenticated parent-terminal requests,
 /// and bounded destination inventories.
-pub const VERSION: u32 = 50;
+/// Version 51 adds semantic diagnostic scopes used by application projections.
+/// Version 52 reports protected plugin jobs and activity leases, including
+/// bounded lease ownership and cancellation state, in session health.
+pub const VERSION: u32 = 52;
 pub const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const MAX_PATHS: usize = 32;
 pub const MAX_PATH_BYTES: usize = 32 * 1024;
@@ -890,6 +893,51 @@ pub enum ClientRole {
     Control,
 }
 
+/// Bounded host-owned activity metadata; no countdown or plugin payload.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ActivityLeaseHealth {
+    pub owner: String,
+    pub title: String,
+    pub state: ActivityLeaseState,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ActivityLeaseState {
+    Active,
+    Cancelling,
+}
+
+impl From<crate::service_health::ActivityLeaseHealth> for ActivityLeaseHealth {
+    fn from(value: crate::service_health::ActivityLeaseHealth) -> Self {
+        Self {
+            owner: value.owner,
+            title: value.title,
+            state: match value.state {
+                crate::service_health::ActivityLeaseState::Active => ActivityLeaseState::Active,
+                crate::service_health::ActivityLeaseState::Cancelling => {
+                    ActivityLeaseState::Cancelling
+                }
+            },
+        }
+    }
+}
+
+impl From<ActivityLeaseHealth> for crate::service_health::ActivityLeaseHealth {
+    fn from(value: ActivityLeaseHealth) -> Self {
+        Self {
+            owner: value.owner,
+            title: value.title,
+            state: match value.state {
+                ActivityLeaseState::Active => crate::service_health::ActivityLeaseState::Active,
+                ActivityLeaseState::Cancelling => {
+                    crate::service_health::ActivityLeaseState::Cancelling
+                }
+            },
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum HostResponse {
@@ -944,6 +992,9 @@ pub enum HostResponse {
         message: String,
     },
     Health {
+        plugin_jobs: usize,
+        activity_leases: usize,
+        activities: Box<[ActivityLeaseHealth]>,
         protocol: u32,
         pid: u32,
         interactive_attached: bool,
@@ -1063,8 +1114,32 @@ mod tests {
     use super::*;
 
     #[test]
+    fn activity_health_round_trip_preserves_owner_and_cancellation_without_deadlines() {
+        for state in [
+            crate::service_health::ActivityLeaseState::Active,
+            crate::service_health::ActivityLeaseState::Cancelling,
+        ] {
+            let core = crate::service_health::ActivityLeaseHealth {
+                owner: "remote-watch".into(),
+                title: "Observe remote changes".into(),
+                state,
+            };
+            let wire = ActivityLeaseHealth::from(core.clone());
+            let encoded = serde_json::to_value(&wire).unwrap();
+            assert_eq!(encoded.as_object().unwrap().len(), 3);
+            assert_eq!(encoded["owner"], "remote-watch");
+            assert_eq!(encoded["state"], state.label());
+            let decoded: ActivityLeaseHealth = serde_json::from_value(encoded).unwrap();
+            assert_eq!(
+                crate::service_health::ActivityLeaseHealth::from(decoded),
+                core
+            );
+        }
+    }
+
+    #[test]
     fn protocol_version_and_request_bounds_are_explicit() {
-        assert_eq!(VERSION, 50);
+        assert_eq!(VERSION, 52);
         let oversized_command = ClientRequest::Invoke {
             command: CommandRequest {
                 name: "open".to_owned(),

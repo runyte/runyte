@@ -169,6 +169,10 @@ impl App {
         if !self.lsp_workspace_allowed
             || !self.ports.has_lsp()
             || self.closed_buffers.contains(&buffer_id)
+            || self
+                .buffers
+                .get(buffer_id)
+                .is_some_and(|buffer| buffer.provider().is_some())
         {
             return false;
         }
@@ -2537,6 +2541,13 @@ impl App {
 
     /// Handles a key while a result picker is open.
     pub(super) fn handle_list_key(&mut self, key: KeyStroke) -> Result<()> {
+        if self.plugin_manager_actions_open()
+            && (key.code == KeyCode::Escape
+                || (key.code == KeyCode::Char('c') && key.modifiers.contains(Modifiers::CONTROL)))
+        {
+            self.return_to_plugin_manager();
+            return Ok(());
+        }
         if self.navigator_open() && self.navigator_selection_lost {
             if matches!(key.code, KeyCode::Enter | KeyCode::Tab) {
                 self.action_failed("selected destination closed; select a destination again");
@@ -2625,6 +2636,10 @@ impl App {
                 preview_changed = true;
             }
             (KeyCode::Tab, _) => {
+                if let Some(ListAction::PluginEntry(index)) = self.selected_list_action() {
+                    self.open_plugin_manager_actions(index);
+                    return Ok(());
+                }
                 if let Some(ListAction::Destination(destination)) = self.selected_list_action() {
                     self.open_navigator_actions(destination);
                     return Ok(());
@@ -3022,6 +3037,9 @@ impl App {
     }
 
     pub(super) fn open_context_actions(&mut self) -> bool {
+        if self.open_plugin_actions() {
+            return true;
+        }
         let actions = self
             .keymap
             .context_actions(self.key_binding_scope())
@@ -3225,7 +3243,7 @@ impl App {
         }
         match buffer_state.kind {
             BufferKind::File => vec![BufferAction::Save, BufferAction::Discard],
-            BufferKind::Scratch | BufferKind::CommitMessage => {
+            BufferKind::Provider(_) | BufferKind::Scratch | BufferKind::CommitMessage => {
                 vec![BufferAction::Discard]
             }
             BufferKind::Virtual { .. }
@@ -3288,12 +3306,21 @@ impl App {
     }
 
     pub(super) fn discard_buffer_changes(&mut self, buffer: usize) -> Result<()> {
+        anyhow::ensure!(
+            !self.document_mutation_pending(buffer),
+            "Document save is pending"
+        );
         if self.closed_buffers.contains(&buffer) || self.buffers[buffer].is_directory() {
             self.action_failed("this buffer cannot be discarded here");
             return Ok(());
         }
         let kind = self.buffers[buffer].kind.clone();
         match kind {
+            BufferKind::Provider(_) => {
+                let language_before = buffer_language(&self.buffers[buffer], &self.registry);
+                self.buffers[buffer].discard_provider_changes()?;
+                self.resync_replaced_buffer(buffer, language_before);
+            }
             BufferKind::File => {
                 let language_before = buffer_language(&self.buffers[buffer], &self.registry);
                 self.buffers[buffer].reload()?;
@@ -3347,6 +3374,10 @@ impl App {
     /// returns to its own most recently displayed live buffer, or uses another
     /// live buffer and finally a new scratch when no history remains.
     pub(super) fn close_active_buffer(&mut self, force: bool) {
+        if self.document_mutation_pending(self.active().buffer) {
+            self.action_warning("Save pending", "Wait for the document write before closing");
+            return;
+        }
         if self.active_terminal().is_some() {
             self.action_failed("a terminal is not a buffer; close it explicitly in :terminals");
             return;
@@ -3368,6 +3399,13 @@ impl App {
 
     /// Closes a buffer whose unsaved text the person has agreed to lose.
     pub(super) fn close_buffer_discarding(&mut self, buffer: usize) {
+        if self.document_mutation_pending(buffer) {
+            self.action_warning(
+                "Save pending",
+                "Wait for the document write before discarding",
+            );
+            return;
+        }
         if self.closed_buffers.contains(&buffer) {
             return;
         }
@@ -3399,6 +3437,10 @@ impl App {
     }
 
     fn retire_buffer(&mut self, buffer: usize, announce: bool) {
+        if self.document_mutation_pending(buffer) {
+            self.action_warning("Save pending", "Wait for the document write before closing");
+            return;
+        }
         if self.closed_buffers.contains(&buffer) {
             return;
         }
@@ -3510,6 +3552,9 @@ impl App {
             *page != buffer && self.buffers[*page].markdown_render_source() != Some(buffer)
         });
         self.closed_buffers.insert(buffer);
+        for pane in self.panes.values_mut() {
+            pane.plugin_view_positions.remove(&buffer);
+        }
         if let Some(path) = git_path
             && !self.buffers.iter().enumerate().any(|(candidate, entry)| {
                 candidate != buffer
@@ -3596,6 +3641,7 @@ impl App {
             }
             let candidate = self.special_buffer_recency.iter().copied().find(|index| {
                 !visible.contains(index)
+                    && !self.document_mutation_pending(*index)
                     && !self.closed_buffers.contains(index)
                     && self.buffers[*index].is_special()
                     && !self.buffers[*index].dirty
@@ -3626,7 +3672,10 @@ impl App {
                     && (buffer.dirty || !buffer.is_special() && !buffer.is_empty_clean_scratch())
             });
             let candidate = self.buffers.iter().enumerate().find_map(|(index, buffer)| {
-                if self.closed_buffers.contains(&index) || buffer.dirty {
+                if self.closed_buffers.contains(&index)
+                    || buffer.dirty
+                    || self.document_mutation_pending(index)
+                {
                     return None;
                 }
                 (buffer.is_empty_clean_scratch()
@@ -3646,6 +3695,25 @@ impl App {
 
     fn activate_list_selection(&mut self) -> Result<()> {
         let chosen = self.selected_list_action();
+        match &chosen {
+            Some(ListAction::PluginEntry(index)) => {
+                self.open_plugin_manager_actions(*index);
+                return Ok(());
+            }
+            Some(ListAction::PluginLifecycle(intent)) => {
+                if let Err(error) = self.queue_plugin_manager_action(intent.clone()) {
+                    self.action_failed(error.to_string());
+                } else {
+                    self.return_to_plugin_manager();
+                }
+                return Ok(());
+            }
+            Some(ListAction::PluginManagerBack) => {
+                self.return_to_plugin_manager();
+                return Ok(());
+            }
+            _ => {}
+        }
         if let Some(ListAction::LspTrust { allowed, remember }) = chosen {
             self.choose_lsp_trust(allowed, remember);
             return Ok(());
@@ -3678,6 +3746,11 @@ impl App {
         self.list = None;
         self.buffer_action_menu = None;
         match chosen {
+            Some(
+                ListAction::PluginEntry(_)
+                | ListAction::PluginLifecycle(_)
+                | ListAction::PluginManagerBack,
+            ) => unreachable!("plugin manager choices handled above"),
             Some(ListAction::LspTrust { .. }) => {
                 unreachable!("permission choices are handled before closing the list")
             }
@@ -3686,6 +3759,21 @@ impl App {
             Some(ListAction::CodeAction(index)) => self.run_code_action(index),
             Some(ListAction::Destination(destination)) => {
                 self.visit_open_destination(destination);
+            }
+            Some(ListAction::PluginCommand {
+                command,
+                buffer,
+                revision,
+                query_revision,
+            }) => {
+                if self.active().buffer != buffer
+                    || self.buffers[buffer].revision() != revision
+                    || self.plugin_view_query_revision(buffer) != query_revision
+                {
+                    self.action_failed("Application view changed; reopen the actions");
+                } else {
+                    self.invoke_plugin(command)?;
+                }
             }
             Some(ListAction::Buffer(buffer)) => self.switch_buffer(buffer),
             Some(ListAction::SyntaxOutline { buffer, target }) => {

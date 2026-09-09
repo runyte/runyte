@@ -1,0 +1,2374 @@
+[
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "register",
+      "version": "runyte-experimental-2",
+      "name": "Tasks",
+      "commands": [
+        {
+          "name": "open",
+          "description": "Open tasks",
+          "context": "workspace",
+          "primary": false,
+          "arguments": []
+        }
+      ],
+      "required_capabilities": [
+        "jobs"
+      ],
+      "optional_capabilities": [
+        "workspace"
+      ]
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "response",
+      "id": "h:1",
+      "result": {
+        "job": "j:g:1"
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "response",
+      "id": "h:2",
+      "error": {
+        "code": "cancelled",
+        "message": "Cancelled"
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:1",
+      "method": "buffer.list",
+      "params": {
+        "offset": 0,
+        "limit": 32
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:2",
+      "method": "pane.list",
+      "params": {}
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:3",
+      "method": "buffer.read",
+      "params": {
+        "buffer": "b:g:1",
+        "expected_revision": "m:1",
+        "from": 0,
+        "to": 0
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:4",
+      "method": "buffer.edit",
+      "params": {
+        "buffer": "b:g:1",
+        "expected_revision": "m:1",
+        "changes": []
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:5",
+      "method": "buffer.snapshot.open",
+      "params": {
+        "buffer": "b:g:1",
+        "expected_revision": "m:1"
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:6",
+      "method": "buffer.snapshot.read",
+      "params": {
+        "snapshot": "t:g:1",
+        "from": 0,
+        "to": 0
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:7",
+      "method": "buffer.snapshot.close",
+      "params": {
+        "snapshot": "t:g:1"
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:8",
+      "method": "selection.get",
+      "params": {
+        "pane": "p:g:1"
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:9",
+      "method": "selection.set",
+      "params": {
+        "pane": "p:g:1",
+        "buffer": "b:g:1",
+        "expected_revision": "m:1",
+        "ranges": [
+          {
+            "anchor": 0,
+            "head": 0
+          }
+        ],
+        "primary": 0
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:10",
+      "method": "view.create",
+      "params": {
+        "model": {
+          "title": "Tasks",
+          "purpose": "list",
+          "rows": [
+            {
+              "id": "task-1",
+              "text": "First task",
+              "role": "ordinary"
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:11",
+      "method": "view.get",
+      "params": {
+        "view": "v:g:1"
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:12",
+      "method": "view.publish",
+      "params": {
+        "view": "v:g:1",
+        "expected_revision": "m:1",
+        "model": {
+          "title": "Tasks",
+          "purpose": "list",
+          "rows": [
+            {
+              "id": "task-1",
+              "text": "First task",
+              "role": "ordinary"
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:13",
+      "method": "view.close",
+      "params": {
+        "view": "v:g:1"
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:14",
+      "method": "pane.show",
+      "params": {
+        "invocation": "h:1",
+        "view": "v:g:1"
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:15",
+      "method": "workspace.info",
+      "params": {}
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:16",
+      "method": "job.create",
+      "params": {
+        "title": "Download",
+        "deadline_seconds": 60
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:17",
+      "method": "job.get",
+      "params": {
+        "job": "j:g:1"
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:18",
+      "method": "job.update",
+      "params": {
+        "job": "j:g:1",
+        "progress": 50
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:19",
+      "method": "job.finish",
+      "params": {
+        "job": "j:g:1",
+        "state": "succeeded"
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:20",
+      "method": "job.cancel",
+      "params": {
+        "job": "j:g:1"
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "hello",
+      "version": "runyte-experimental-2",
+      "capabilities": [
+        "state",
+        "settings",
+        "activity",
+        "terminals",
+        "external",
+        "notifications",
+        "processes",
+        "providers",
+        "interaction",
+        "workspace",
+        "jobs",
+        "views",
+        "text",
+        "selections",
+        "filesystem",
+        "documents"
+      ],
+      "limits": {
+        "line_bytes": 1048576,
+        "commands": 64,
+        "requests": 16,
+        "finite_jobs": 4,
+        "control_queue_messages": 32,
+        "control_queue_bytes": 4194304,
+        "control_deadline_seconds": 10,
+        "job_deadline_seconds": 3600,
+        "cancellation_seconds": 2,
+        "process_handles": 4,
+        "process_io_bytes": 65536,
+        "process_output_bytes": 1048576,
+        "process_write_seconds": 5,
+        "activity_leases": 2,
+        "activity_seconds": 600,
+        "settings_bytes": 65536,
+        "state_document_bytes": 1044480,
+        "state_requests": 1,
+        "resources": {
+          "plugin_instances": 8,
+          "views": 16,
+          "model_bytes": 4194304,
+          "model_rows": 10000,
+          "model_projection_bytes": 4194304,
+          "model_stages": 2,
+          "model_snapshots": 2,
+          "model_chunk_bytes": 131072,
+          "model_idle_seconds": 30,
+          "text_chunk_bytes": 262144,
+          "transaction_changes": 1024,
+          "transaction_text_bytes": 524288,
+          "text_snapshots": 2,
+          "text_snapshot_bytes": 16777216,
+          "text_snapshot_idle_seconds": 30,
+          "retained_payload_bytes": 50331648,
+          "host_retained_payload_bytes": 167772160,
+          "subscriptions": 32,
+          "watched_sources": 256,
+          "observation_state_bytes": 4096,
+          "input_surfaces": 1,
+          "input_fields": 16
+        }
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "registered",
+      "commands": [
+        "plugin.tasks.open"
+      ],
+      "capabilities": [
+        "jobs"
+      ],
+      "limits": {
+        "line_bytes": 1048576,
+        "commands": 64,
+        "requests": 16,
+        "finite_jobs": 4,
+        "control_queue_messages": 32,
+        "control_queue_bytes": 4194304,
+        "control_deadline_seconds": 10,
+        "job_deadline_seconds": 3600,
+        "cancellation_seconds": 2,
+        "process_handles": 4,
+        "process_io_bytes": 65536,
+        "process_output_bytes": 1048576,
+        "process_write_seconds": 5,
+        "activity_leases": 2,
+        "activity_seconds": 600,
+        "settings_bytes": 65536,
+        "state_document_bytes": 1044480,
+        "state_requests": 1,
+        "resources": {
+          "plugin_instances": 8,
+          "views": 16,
+          "model_bytes": 4194304,
+          "model_rows": 10000,
+          "model_projection_bytes": 4194304,
+          "model_stages": 2,
+          "model_snapshots": 2,
+          "model_chunk_bytes": 131072,
+          "model_idle_seconds": 30,
+          "text_chunk_bytes": 262144,
+          "transaction_changes": 1024,
+          "transaction_text_bytes": 524288,
+          "text_snapshots": 2,
+          "text_snapshot_bytes": 16777216,
+          "text_snapshot_idle_seconds": 30,
+          "retained_payload_bytes": 50331648,
+          "host_retained_payload_bytes": 167772160,
+          "subscriptions": 32,
+          "watched_sources": 256,
+          "observation_state_bytes": 4096,
+          "input_surfaces": 1,
+          "input_fields": 16
+        }
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "request",
+      "id": "h:1",
+      "method": "command.invoke",
+      "params": {
+        "command": "open",
+        "context": "workspace",
+        "view": null,
+        "model_revision": null,
+        "rows": [],
+        "arguments": {},
+        "pane": "p:g:1",
+        "selection_revision": "q:0",
+        "buffer": "b:g:2",
+        "buffer_revision": "r:0"
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "response",
+      "id": "p:1",
+      "result": {
+        "name": "project"
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "response",
+      "id": "p:2",
+      "result": {
+        "job": "j:g:1",
+        "title": "Download",
+        "state": "running",
+        "progress": 0
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "response",
+      "id": "p:3",
+      "error": {
+        "code": "not_found",
+        "message": "Unknown job"
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "event",
+      "sequence": "e:1",
+      "event": "job.changed",
+      "data": {
+        "job": "j:g:1",
+        "title": "Download",
+        "state": "running",
+        "progress": 0
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:100",
+      "method": "filesystem.list",
+      "params": {
+        "path": ".",
+        "offset": 0,
+        "limit": 128,
+        "expected_revision": null
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:101",
+      "method": "filesystem.prepare",
+      "params": {
+        "directory": "d:g:1",
+        "expected_revision": "d:1",
+        "intent": {
+          "operation": "create_file",
+          "destination": "note.txt"
+        }
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:102",
+      "method": "filesystem.apply",
+      "params": {
+        "plan": "f:g:2",
+        "invocation": "h:1"
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:103",
+      "method": "filesystem.cancel",
+      "params": {
+        "plan": "f:g:2"
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:104",
+      "method": "filesystem.release",
+      "params": {
+        "directory": "d:g:1"
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:105",
+      "method": "buffer.open",
+      "params": {
+        "path": "note.txt",
+        "invocation": null
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "response",
+      "id": "p:100",
+      "result": {
+        "directory": "d:g:1",
+        "revision": "d:1",
+        "entries": [
+          {
+            "entry": "n:1",
+            "name": "note.txt",
+            "kind": "file",
+            "bytes": 5
+          }
+        ],
+        "next": null
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "response",
+      "id": "p:100",
+      "result": {
+        "plan": "f:g:2",
+        "operations": [
+          "create note.txt"
+        ]
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "response",
+      "id": "p:100",
+      "result": {
+        "buffer": "b:g:3",
+        "revision": "r:0"
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "event",
+      "sequence": "e:2",
+      "event": "filesystem.finished",
+      "data": {
+        "plan": "f:g:2",
+        "state": "succeeded",
+        "applied": 1,
+        "recovery": false
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:200",
+      "method": "ui.form",
+      "params": {
+        "invocation": "h:1",
+        "title": "Profile",
+        "fields": [
+          {
+            "id": "name",
+            "label": "Name",
+            "kind": "text",
+            "required": true,
+            "choices": [],
+            "minimum_length": 0,
+            "maximum_length": 4096
+          }
+        ]
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:201",
+      "method": "ui.prompt",
+      "params": {
+        "invocation": "h:1",
+        "title": "Name",
+        "field": {
+          "id": "name",
+          "label": "Name",
+          "kind": "text",
+          "required": true,
+          "choices": [],
+          "minimum_length": 0,
+          "maximum_length": 4096
+        }
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:202",
+      "method": "ui.pick",
+      "params": {
+        "invocation": "h:1",
+        "title": "Choose",
+        "choices": [
+          "one",
+          "two"
+        ]
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:203",
+      "method": "ui.confirm",
+      "params": {
+        "invocation": "h:1",
+        "title": "Confirm",
+        "message": "Continue?"
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:204",
+      "method": "ui.dismiss",
+      "params": {
+        "surface": "u:g:1"
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "response",
+      "id": "p:200",
+      "result": {
+        "surface": "u:g:1"
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "request",
+      "id": "h:2",
+      "method": "ui.submit",
+      "params": {
+        "surface": "u:g:1",
+        "accepted": true,
+        "values": {
+          "name": "é"
+        }
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:71",
+      "method": "buffer.create",
+      "params": {
+        "path": "notes.txt",
+        "text": "é猫\n",
+        "invocation": null
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:72",
+      "method": "buffer.save",
+      "params": {
+        "buffer": "b:g:1",
+        "expected_revision": "r:3"
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:73",
+      "method": "buffer.close",
+      "params": {
+        "buffer": "b:g:1",
+        "expected_revision": "r:3"
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "event",
+      "sequence": "e:12",
+      "event": "filesystem.started",
+      "data": {
+        "plan": "f:g:2",
+        "job": "j:g:3"
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:80",
+      "method": "filesystem.stat",
+      "params": {
+        "path": "notes.txt",
+        "expected_revision": null
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "response",
+      "id": "p:80",
+      "result": {
+        "path": "notes.txt",
+        "kind": "file",
+        "bytes": 5,
+        "revision": "s:1"
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:81",
+      "method": "provider.register",
+      "params": {
+        "name": "memory",
+        "conditional_write": false,
+        "atomic_replace": false
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:82",
+      "method": "resource.open",
+      "params": {
+        "plugin": "memory",
+        "provider": "memory",
+        "key": "notes",
+        "invocation": null
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "response",
+      "id": "h:3",
+      "result": {
+        "kind": "stat",
+        "value": {
+          "key": "notes",
+          "label": "Memory notes",
+          "syntax_hint": "markdown",
+          "version": "v1",
+          "encoding": "utf-8",
+          "bytes": 5
+        }
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "response",
+      "id": "h:4",
+      "result": {
+        "kind": "read",
+        "value": {
+          "version": "v1",
+          "offset": 0,
+          "text": "é猫",
+          "eof": true
+        }
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "request",
+      "id": "h:3",
+      "method": "resource.stat",
+      "params": {
+        "job": "j:g:1",
+        "provider": "memory",
+        "key": "notes"
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "request",
+      "id": "h:4",
+      "method": "resource.read",
+      "params": {
+        "job": "j:g:1",
+        "provider": "memory",
+        "key": "notes",
+        "version": "v1",
+        "offset": 0,
+        "limit": 131072
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "event",
+      "sequence": "e:13",
+      "event": "resource.opened",
+      "data": {
+        "job": "j:g:1",
+        "buffer": "b:g:1",
+        "revision": "r:0",
+        "error": null
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:83",
+      "method": "resource.rebind",
+      "params": {
+        "buffer": "b:g:1",
+        "expected_revision": "r:0"
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "response",
+      "id": "h:5",
+      "result": {
+        "kind": "write_started",
+        "value": {
+          "upload": "upload-1"
+        }
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "response",
+      "id": "h:6",
+      "result": {
+        "kind": "write_chunk",
+        "value": {
+          "offset": 5
+        }
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "response",
+      "id": "h:7",
+      "result": {
+        "kind": "write_committed",
+        "value": {
+          "version": "v2"
+        }
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "response",
+      "id": "h:8",
+      "result": {
+        "kind": "write_rejected",
+        "value": {
+          "error": {
+            "code": "conflict",
+            "message": "Remote resource changed"
+          }
+        }
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "response",
+      "id": "h:9",
+      "result": {
+        "kind": "write_aborted",
+        "value": {}
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "response",
+      "id": "h:10",
+      "result": {
+        "kind": "reconciled",
+        "value": {
+          "metadata": {
+            "key": "notes",
+            "label": "Memory notes",
+            "syntax_hint": "markdown",
+            "version": "v2",
+            "encoding": "utf-8",
+            "bytes": 5
+          },
+          "previous_write": "j:g:1"
+        }
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "request",
+      "id": "h:5",
+      "method": "resource.write.begin",
+      "params": {
+        "job": "j:g:1",
+        "provider": "memory",
+        "key": "notes",
+        "expected_version": "v1",
+        "bytes": 5,
+        "encoding": "utf-8",
+        "mode": "conditional"
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "request",
+      "id": "h:6",
+      "method": "resource.write.chunk",
+      "params": {
+        "job": "j:g:1",
+        "upload": "upload-1",
+        "offset": 0,
+        "text": "é猫"
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "request",
+      "id": "h:7",
+      "method": "resource.write.commit",
+      "params": {
+        "job": "j:g:1",
+        "upload": "upload-1",
+        "expected_version": "v1",
+        "mode": "conditional"
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "request",
+      "id": "h:8",
+      "method": "resource.write.abort",
+      "params": {
+        "job": "j:g:1",
+        "upload": "upload-1"
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "request",
+      "id": "h:9",
+      "method": "resource.reconcile",
+      "params": {
+        "job": "j:g:2",
+        "provider": "memory",
+        "key": "notes",
+        "previous_write": "j:g:1"
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "event",
+      "sequence": "e:14",
+      "event": "resource.saved",
+      "data": {
+        "job": "j:g:1",
+        "buffer": "b:g:1",
+        "revision": "r:0",
+        "error": null
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:84",
+      "method": "resource.inspect",
+      "params": {
+        "buffer": "b:g:1",
+        "expected_revision": "r:0",
+        "invocation": "h:10"
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "event",
+      "sequence": "e:15",
+      "event": "resource.inspected",
+      "data": {
+        "job": "j:g:3",
+        "buffer": "b:g:2",
+        "revision": "r:1",
+        "error": null
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "request",
+      "id": "h:11",
+      "method": "resource.write.begin",
+      "params": {
+        "job": "j:g:4",
+        "provider": "memory",
+        "key": "notes",
+        "expected_version": "v1",
+        "bytes": 5,
+        "encoding": "utf-8",
+        "mode": "confirmed_best_effort"
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "request",
+      "id": "h:12",
+      "method": "resource.write.commit",
+      "params": {
+        "job": "j:g:4",
+        "upload": "upload-2",
+        "expected_version": "v1",
+        "mode": "confirmed_best_effort"
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "event",
+      "sequence": "e:16",
+      "event": "resource.released",
+      "data": {
+        "job": "j:g:4"
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:701",
+      "method": "staging.create",
+      "params": {
+        "job": "j:g:5",
+        "bytes": 5
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:702",
+      "method": "staging.prepare",
+      "params": {
+        "staging": "s:g:1",
+        "directory": "d:g:1",
+        "expected_revision": "d:1",
+        "destination": "download.bin",
+        "sha256": "8ed3f6ad685b959ead7022518e1af76cd816f8e8ec7ccdda1ed4018e8f2223f8"
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:703",
+      "method": "staging.close",
+      "params": {
+        "staging": "s:g:1"
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "response",
+      "id": "p:701",
+      "result": {
+        "staging": "s:g:1",
+        "path": "/runtime/cache/downloads/generation/stage-1"
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:400",
+      "method": "event.subscribe",
+      "params": {
+        "sources": [
+          {
+            "kind": "buffers"
+          },
+          {
+            "kind": "attachment"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:401",
+      "method": "event.resync",
+      "params": {
+        "subscription": "o:g:1"
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:402",
+      "method": "event.unsubscribe",
+      "params": {
+        "subscription": "o:g:1"
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "response",
+      "id": "p:400",
+      "result": {
+        "subscription": "o:g:1",
+        "sequence": "e:1",
+        "sources": [
+          {
+            "source": {
+              "kind": "buffer",
+              "buffer": "b:g:1"
+            },
+            "revision": "o:1",
+            "state": {
+              "kind": "buffer",
+              "revision": "r:1",
+              "saved_revision": "r:1",
+              "name": "scratch",
+              "chars": 0,
+              "read_only": false,
+              "dirty": false
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "event",
+      "sequence": "e:2",
+      "event": "event.changed",
+      "data": {
+        "subscription": "o:g:1",
+        "sources": [
+          {
+            "source": {
+              "kind": "buffer",
+              "buffer": "b:g:1"
+            },
+            "revision": "o:1",
+            "state": {
+              "kind": "buffer",
+              "revision": "r:1",
+              "saved_revision": "r:1",
+              "name": "scratch",
+              "chars": 0,
+              "read_only": false,
+              "dirty": false
+            }
+          }
+        ],
+        "coalesced": 2
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "event",
+      "sequence": "e:3",
+      "event": "event.closed",
+      "data": {
+        "subscription": "o:g:1",
+        "sources": [
+          {
+            "source": {
+              "kind": "buffer",
+              "buffer": "b:g:1"
+            },
+            "revision": "o:2",
+            "state": {
+              "kind": "closed"
+            }
+          }
+        ],
+        "coalesced": 0
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "event",
+      "sequence": "e:4",
+      "event": "event.resync_required",
+      "data": {
+        "subscription": "o:g:1"
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:800",
+      "method": "ui.form",
+      "params": {
+        "invocation": "h:20",
+        "title": "Validate connection",
+        "fields": [
+          {
+            "id": "name",
+            "label": "Name",
+            "kind": "text",
+            "validate": true,
+            "validation_message": "Name is unavailable",
+            "required": false,
+            "choices": [],
+            "minimum_length": 0,
+            "maximum_length": 4096
+          }
+        ]
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "request",
+      "id": "h:21",
+      "method": "ui.validate",
+      "params": {
+        "surface": "u:g:1",
+        "revision": "i:1",
+        "fields": [
+          "name"
+        ],
+        "values": {
+          "name": "example"
+        }
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "response",
+      "id": "h:21",
+      "result": {
+        "kind": "validation",
+        "surface": "u:g:1",
+        "revision": "i:1",
+        "fields": [
+          {
+            "field": "name",
+            "status": "valid"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "event",
+      "sequence": "e:5",
+      "event": "ui.validation_cancelled",
+      "data": {
+        "request": "h:21",
+        "surface": "u:g:1",
+        "revision": "i:1"
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:900",
+      "method": "view.create",
+      "params": {
+        "model": {
+          "title": "Transfer dashboard",
+          "purpose": "dashboard",
+          "rows": [
+            {
+              "id": "transfer-1",
+              "text": "",
+              "role": "ordinary",
+              "cells": [
+                {
+                  "text": "notes.txt",
+                  "role": "ordinary"
+                },
+                {
+                  "text": "Ready",
+                  "role": "muted"
+                }
+              ]
+            }
+          ],
+          "columns": [
+            {
+              "id": "name",
+              "label": "Name"
+            },
+            {
+              "id": "state",
+              "label": "State"
+            }
+          ],
+          "detail": {
+            "text": "One transfer",
+            "role": "heading"
+          },
+          "preview": {
+            "text": "First line\nSecond line",
+            "role": "muted"
+          },
+          "status": {
+            "text": "Connected",
+            "role": "ordinary"
+          },
+          "actions": [
+            "refresh"
+          ]
+        }
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:901",
+      "method": "view.patch",
+      "params": {
+        "view": "v:g:1",
+        "expected_revision": "m:1",
+        "operations": [
+          {
+            "kind": "update",
+            "row": {
+              "id": "row",
+              "text": "Updated",
+              "role": "ordinary"
+            }
+          },
+          {
+            "kind": "reorder",
+            "ids": [
+              "row"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:902",
+      "method": "view.stage.open",
+      "params": {
+        "view": "v:g:1",
+        "expected_revision": "m:1",
+        "kind": "model",
+        "bytes": 2
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:903",
+      "method": "view.stage.write",
+      "params": {
+        "stage": "vs:g:1",
+        "offset": 0,
+        "text": "{}"
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:904",
+      "method": "view.stage.commit",
+      "params": {
+        "stage": "vs:g:1"
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:905",
+      "method": "view.stage.close",
+      "params": {
+        "stage": "vs:g:1"
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:906",
+      "method": "view.snapshot.open",
+      "params": {
+        "view": "v:g:1",
+        "expected_revision": "m:2"
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:907",
+      "method": "view.snapshot.read",
+      "params": {
+        "snapshot": "vr:g:1",
+        "offset": 0,
+        "limit": 128
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:908",
+      "method": "view.snapshot.close",
+      "params": {
+        "snapshot": "vr:g:1"
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "response",
+      "id": "p:900",
+      "result": {
+        "view": "v:g:1",
+        "revision": "m:2",
+        "bytes": 1500000,
+        "rows": 1
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "response",
+      "id": "p:902",
+      "result": {
+        "stage": "vs:g:1",
+        "bytes": 2
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "response",
+      "id": "p:903",
+      "result": {
+        "offset": 2
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "response",
+      "id": "p:906",
+      "result": {
+        "snapshot": "vr:g:1",
+        "revision": "m:2",
+        "bytes": 2
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "response",
+      "id": "p:907",
+      "result": {
+        "offset": 0,
+        "text": "{}",
+        "eof": true
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:950",
+      "method": "view.query.set",
+      "params": {
+        "view": "v:g:1",
+        "expected_revision": "m:1",
+        "text": "Topic 01"
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:951",
+      "method": "view.query.set",
+      "params": {
+        "view": "v:g:1",
+        "expected_revision": "m:1",
+        "expected_query_revision": "qv:1",
+        "text": "Topic 01"
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:952",
+      "method": "view.publish",
+      "params": {
+        "view": "v:g:1",
+        "expected_revision": "m:1",
+        "expected_query_revision": "qv:2",
+        "model": {
+          "title": "Rows",
+          "purpose": "list",
+          "rows": [
+            {
+              "id": "row",
+              "text": "Topic 01",
+              "role": "ordinary"
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:953",
+      "method": "view.stage.open",
+      "params": {
+        "view": "v:g:1",
+        "expected_revision": "m:1",
+        "expected_query_revision": "qv:2",
+        "kind": "model",
+        "bytes": 2
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:954",
+      "method": "event.subscribe",
+      "params": {
+        "sources": [
+          {
+            "kind": "viewport",
+            "view": "v:g:1",
+            "pane": "n:g:1"
+          },
+          {
+            "kind": "view_actions",
+            "view": "v:g:1"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "response",
+      "id": "p:950",
+      "result": {
+        "view": "v:g:1",
+        "revision": "m:1",
+        "query": {
+          "revision": "qv:1",
+          "text": "Topic 01",
+          "pending": true
+        }
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "event",
+      "sequence": "e:950",
+      "event": "event.changed",
+      "data": {
+        "subscription": "o:g:1",
+        "sources": [
+          {
+            "source": {
+              "kind": "view",
+              "view": "v:g:1"
+            },
+            "revision": "o:1",
+            "state": {
+              "kind": "view",
+              "revision": "m:1",
+              "query": {
+                "revision": "qv:1",
+                "text": "Topic 01",
+                "pending": true
+              }
+            }
+          }
+        ],
+        "coalesced": 0
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "event",
+      "sequence": "e:951",
+      "event": "event.changed",
+      "data": {
+        "subscription": "o:g:1",
+        "sources": [
+          {
+            "source": {
+              "kind": "viewport",
+              "view": "v:g:1",
+              "pane": "n:g:1"
+            },
+            "revision": "o:2",
+            "state": {
+              "kind": "viewport",
+              "model_revision": "m:1",
+              "visible": true,
+              "top": "row",
+              "bottom": "row"
+            }
+          }
+        ],
+        "coalesced": 0
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "event",
+      "sequence": "e:952",
+      "event": "event.action",
+      "data": {
+        "subscription": "o:g:1",
+        "source": {
+          "kind": "view_actions",
+          "view": "v:g:1"
+        },
+        "revision": "o:3",
+        "action": {
+          "id": "a:1",
+          "request": "h:950",
+          "command": "toggle",
+          "pane": "n:g:1",
+          "model_revision": "m:1",
+          "query_revision": "qv:2",
+          "selection_revision": "q:1",
+          "selected_count": 1
+        }
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "request",
+      "id": "h:950",
+      "method": "command.invoke",
+      "params": {
+        "command": "toggle",
+        "context": "view",
+        "view": "v:g:1",
+        "model_revision": "m:1",
+        "query_revision": "qv:2",
+        "rows": [
+          "row"
+        ],
+        "arguments": {},
+        "pane": "n:g:1",
+        "selection_revision": "q:1",
+        "buffer": "b:g:1",
+        "buffer_revision": "r:1"
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "response",
+      "id": "p:952",
+      "result": {
+        "view": "v:g:1",
+        "revision": "m:2",
+        "query": {
+          "revision": "qv:2",
+          "text": "Topic 01",
+          "pending": false
+        },
+        "model": {
+          "title": "Rows",
+          "purpose": "list",
+          "rows": [
+            {
+              "id": "row",
+              "text": "Topic 01",
+              "role": "ordinary"
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:1000",
+      "method": "process.start",
+      "params": {
+        "label": "Echo helper",
+        "executable": "python3",
+        "args": [
+          "echo_helper.py"
+        ],
+        "capture_stderr": false
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:1001",
+      "method": "process.get",
+      "params": {
+        "process": "pr:1"
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:1002",
+      "method": "process.read",
+      "params": {
+        "process": "pr:1",
+        "stream": "stdout",
+        "offset": 0,
+        "limit": 65536
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:1003",
+      "method": "process.write",
+      "params": {
+        "process": "pr:1",
+        "data": "aGVsbG8K",
+        "eof": true
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:1004",
+      "method": "process.close",
+      "params": {
+        "process": "pr:1"
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "response",
+      "id": "p:1000",
+      "result": {
+        "process": "pr:1",
+        "label": "Echo helper",
+        "state": "running",
+        "stdout": {
+          "start": 0,
+          "end": 6
+        },
+        "stderr": {
+          "start": 0,
+          "end": 0
+        },
+        "capture_stderr": false,
+        "stdin_closed": false,
+        "exit_code": null,
+        "signal": null,
+        "output_truncated": false
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "response",
+      "id": "p:1002",
+      "result": {
+        "process": "pr:1",
+        "stream": "stdout",
+        "offset": 0,
+        "data": "aGVsbG8K",
+        "next": 6,
+        "eof": false
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "response",
+      "id": "p:1003",
+      "result": {
+        "process": "pr:1",
+        "written": 6,
+        "stdin_closed": true
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "event",
+      "sequence": "e:1000",
+      "event": "event.changed",
+      "data": {
+        "subscription": "o:g:1",
+        "coalesced": 0,
+        "sources": [
+          {
+            "source": {
+              "kind": "process",
+              "process": "pr:1"
+            },
+            "revision": "o:2",
+            "state": {
+              "kind": "process",
+              "state": "exited",
+              "stdout": {
+                "start": 2,
+                "end": 8
+              },
+              "stderr": {
+                "start": 0,
+                "end": 0
+              },
+              "stdin_closed": true,
+              "output_truncated": true,
+              "exit_code": 0,
+              "signal": null
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:1100",
+      "method": "notification.publish",
+      "params": {
+        "severity": "warning",
+        "title": "Transfer failed",
+        "body": "Inspect before retrying."
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:1101",
+      "method": "terminal.open",
+      "params": {
+        "invocation": "h:1",
+        "label": "Shell",
+        "executable": "/bin/sh",
+        "args": [
+          "-i"
+        ]
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:1102",
+      "method": "external.open",
+      "params": {
+        "invocation": "h:2",
+        "target": {
+          "kind": "url",
+          "url": "https://example.org/login"
+        }
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:1103",
+      "method": "external.open",
+      "params": {
+        "invocation": "h:3",
+        "target": {
+          "kind": "file",
+          "path": "report.pdf"
+        }
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "response",
+      "id": "p:1101",
+      "result": {
+        "terminal": "t:1"
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:1200",
+      "method": "activity.acquire",
+      "params": {
+        "title": "Local playback",
+        "duration_seconds": 600
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "response",
+      "id": "p:1200",
+      "result": {
+        "lease": "a:g:1",
+        "title": "Local playback",
+        "state": "active",
+        "duration_seconds": 600
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:1201",
+      "method": "activity.renew",
+      "params": {
+        "lease": "a:g:1",
+        "duration_seconds": 600
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "response",
+      "id": "p:1201",
+      "result": {
+        "lease": "a:g:1",
+        "title": "Local playback",
+        "state": "active",
+        "duration_seconds": 600
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:1202",
+      "method": "activity.get",
+      "params": {
+        "lease": "a:g:1"
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "response",
+      "id": "p:1202",
+      "result": {
+        "lease": "a:g:1",
+        "title": "Local playback",
+        "state": "active",
+        "duration_seconds": 600
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:1203",
+      "method": "activity.release",
+      "params": {
+        "lease": "a:g:1"
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "response",
+      "id": "p:1203",
+      "result": {}
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:1204",
+      "method": "activity.cancel",
+      "params": {
+        "lease": "a:g:1"
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "response",
+      "id": "p:1204",
+      "result": {
+        "lease": "a:g:1",
+        "title": "Local playback",
+        "state": "cancelling",
+        "duration_seconds": 600
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "event",
+      "sequence": "e:1200",
+      "event": "activity.cancel_requested",
+      "data": {
+        "lease": "a:g:1",
+        "reason": "expired"
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:1300",
+      "method": "settings.get",
+      "params": {}
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "response",
+      "id": "p:1300",
+      "result": {
+        "settings": {
+          "default_destination": "."
+        }
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:1301",
+      "method": "state.get",
+      "params": {}
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "response",
+      "id": "p:1301",
+      "result": {
+        "revision": "s:missing",
+        "document": null
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:1302",
+      "method": "state.set",
+      "params": {
+        "expected_revision": "s:missing",
+        "document": {
+          "version": 1,
+          "data": {
+            "destination": "sample"
+          }
+        }
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "response",
+      "id": "p:1302",
+      "result": {
+        "revision": "s:a85b2e79e932efefd64f6a680e100c2a4fdc5ad68ff3279d8d9338c83cc020cc",
+        "document": {
+          "version": 1,
+          "data": {
+            "destination": "sample"
+          }
+        }
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "request",
+      "id": "p:1303",
+      "method": "state.delete",
+      "params": {
+        "expected_revision": "s:a85b2e79e932efefd64f6a680e100c2a4fdc5ad68ff3279d8d9338c83cc020cc"
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "message": {
+      "type": "response",
+      "id": "p:1303",
+      "result": {
+        "revision": "s:missing",
+        "document": null
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "message": {
+      "type": "register",
+      "version": "runyte-experimental-2",
+      "name": "Preferences",
+      "commands": [
+        {
+          "name": "open",
+          "description": "Inspect preferences",
+          "context": "workspace",
+          "primary": false,
+          "arguments": []
+        }
+      ],
+      "required_capabilities": [
+        "settings",
+        "state"
+      ],
+      "optional_capabilities": [],
+      "settings_schema": {
+        "fields": [
+          {
+            "name": "default_destination",
+            "type": "string",
+            "max_length": 256
+          }
+        ]
+      }
+    }
+  }
+]

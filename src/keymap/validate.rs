@@ -44,12 +44,23 @@ pub fn validate(
 ) -> Vec<Violation> {
     let mut violations = Vec::new();
     let mut views: HashMap<(Mode, BindingScope), Vec<&Binding>> = HashMap::new();
+    let mut scopes = BindingScope::ALL.to_vec();
+    for scope in bindings
+        .iter()
+        .map(|b| b.scope)
+        .chain(actions.iter().map(|a| a.scope))
+        .chain(namespaces.iter().map(|n| n.scope))
+    {
+        if !scopes.contains(&scope) {
+            scopes.push(scope);
+        }
+    }
     for mode in MODES {
         let globals = bindings
             .iter()
             .filter(|binding| binding.is_active_in(mode) && binding.scope == BindingScope::Global)
             .collect::<Vec<_>>();
-        for &scope in BindingScope::ALL {
+        for &scope in &scopes {
             let scoped = if scope == BindingScope::Global {
                 Vec::new()
             } else {

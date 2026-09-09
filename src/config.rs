@@ -1214,7 +1214,18 @@ impl TryFrom<&ThemeDefinition> for Theme {
             diff_added: value.diff_added.as_deref().map(parse_color).transpose()?,
             diff_removed: value.diff_removed.as_deref().map(parse_color).transpose()?,
             diff_changed: value.diff_changed.as_deref().map(parse_color).transpose()?,
-            syntax: resolve_syntax_colors(&value.syntax)?,
+            syntax: {
+                let mut colors = resolve_syntax_colors(&value.syntax)?;
+                for (name, fallback) in
+                    [("diagnostic.error", error), ("diagnostic.warning", warning)]
+                {
+                    let index = crate::syntax::Scope::named(name)
+                        .expect("registered diagnostic scope")
+                        .index();
+                    colors[index].get_or_insert(fallback);
+                }
+                colors
+            },
         })
     }
 }
@@ -2208,6 +2219,10 @@ mod tests {
             )
         }));
         for (role, color) in roles {
+            if role == "diagnostic.error" {
+                assert_eq!(color, theme.error);
+                continue;
+            }
             let (red, green, blue) = color.channels().unwrap();
             assert!(
                 green >= red && green > blue || blue >= red && blue > green,
@@ -2363,7 +2378,12 @@ mod tests {
         for (variant, theme) in [("ocean-dark", &dark), ("ocean-light", &light)] {
             for (role, color) in roles(theme) {
                 let (red, green, blue) = color.channels().unwrap();
-                if role == "warning" {
+                if role == "diagnostic.error" {
+                    assert_eq!(color, theme.error);
+                    continue;
+                }
+                if role == "warning" || role == "diagnostic.warning" {
+                    assert_eq!(color, theme.warning);
                     continue;
                 }
                 assert!(
@@ -2455,7 +2475,8 @@ mod tests {
             // both variants and tracks the selections, so it follows them.
             if matches!(
                 role.as_str(),
-                "background"
+                "diagnostic.error"
+                    | "background"
                     | "selection"
                     | "selection_primary"
                     | "fuzzy_match_secondary"
@@ -2600,7 +2621,12 @@ mod tests {
 
         // Nothing on screen outshines the text being read.
         let text = contrast(theme.foreground, theme.background);
-        for name in crate::syntax::SCOPES {
+        assert_eq!(scope("diagnostic.error"), Some(theme.error));
+        assert_eq!(scope("diagnostic.warning"), Some(theme.warning));
+        for name in crate::syntax::SCOPES
+            .iter()
+            .filter(|name| !name.starts_with("diagnostic."))
+        {
             let hue = contrast(scope(name).unwrap(), theme.background);
             assert!(hue <= text, "neon {name} outshines ordinary text: {hue}");
         }

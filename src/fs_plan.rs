@@ -13,7 +13,7 @@ use std::{
     fmt,
     fs::{self, OpenOptions},
     path::{Component, Path, PathBuf},
-    sync::atomic::AtomicU64,
+    sync::{Arc, atomic::AtomicU64},
     time::UNIX_EPOCH,
 };
 
@@ -42,6 +42,7 @@ type IoHook = Box<dyn FnMut(IoStep, &Path, &Path) -> std::io::Result<()>>;
 
 #[derive(Default)]
 struct ApplyIo {
+    copy_budget: Option<TreeBudget>,
     #[cfg(test)]
     hook: Option<IoHook>,
 }
@@ -62,6 +63,15 @@ impl ApplyIo {
 }
 
 static NEXT_TEMP: AtomicU64 = AtomicU64::new(1);
+
+#[derive(Debug)]
+pub(crate) struct DirectoryLimitExceeded;
+impl std::fmt::Display for DirectoryLimitExceeded {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("directory exceeds entry limit")
+    }
+}
+impl std::error::Error for DirectoryLimitExceeded {}
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct EntryId(u64);
@@ -118,6 +128,63 @@ struct UnixFingerprint {
     changed_nanoseconds: i64,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct OperationLimits {
+    pub entries: usize,
+    pub depth: usize,
+    pub bytes: u64,
+    pub metadata_bytes: usize,
+}
+
+#[derive(Debug)]
+pub(crate) struct OperationLimitExceeded;
+impl fmt::Display for OperationLimitExceeded {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("filesystem operation exceeds resource limits")
+    }
+}
+impl std::error::Error for OperationLimitExceeded {}
+
+#[derive(Debug)]
+struct TreeBudget {
+    limits: OperationLimits,
+    entries: usize,
+    bytes: u64,
+    metadata_bytes: usize,
+}
+impl TreeBudget {
+    fn new(limits: OperationLimits) -> Self {
+        Self {
+            limits,
+            entries: 0,
+            bytes: 0,
+            metadata_bytes: 0,
+        }
+    }
+    fn charge(&mut self, relative: &Path, kind: EntryKind, len: u64) -> Result<()> {
+        self.entries = self.entries.saturating_add(1);
+        self.metadata_bytes = self
+            .metadata_bytes
+            .saturating_add(relative.as_os_str().len())
+            .saturating_add(512);
+        if kind == EntryKind::File {
+            self.bytes = self.bytes.saturating_add(len);
+        } else if kind == EntryKind::Symlink {
+            self.metadata_bytes = self
+                .metadata_bytes
+                .saturating_add(usize::try_from(len).unwrap_or(usize::MAX));
+        }
+        if self.entries > self.limits.entries
+            || relative.components().count() > self.limits.depth
+            || self.bytes > self.limits.bytes
+            || self.metadata_bytes > self.limits.metadata_bytes
+        {
+            return Err(OperationLimitExceeded.into());
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SourceFingerprint {
     entry: EntryFingerprint,
@@ -126,19 +193,42 @@ pub struct SourceFingerprint {
 
 impl SourceFingerprint {
     pub fn capture(path: &Path) -> Result<Self> {
+        Self::capture_limited(path, None)
+    }
+
+    fn capture_limited(path: &Path, limits: Option<OperationLimits>) -> Result<Self> {
         let entry = EntryFingerprint::capture(path, "transfer source")?;
         let mut descendants = Vec::new();
-        if entry.kind == EntryKind::Directory {
-            capture_descendants(path, Path::new(""), &mut descendants)?;
+        let mut budget = limits.map(TreeBudget::new);
+        if let Some(budget) = &mut budget {
+            budget.charge(
+                Path::new(""),
+                entry.kind,
+                entry
+                    .symlink_target
+                    .as_ref()
+                    .map_or(entry.len, |target| target.as_os_str().len() as u64),
+            )?;
         }
+        if entry.kind == EntryKind::Directory {
+            capture_descendants(path, Path::new(""), &mut descendants, &mut budget)?;
+        }
+        descendants.sort_by(|left, right| left.0.cmp(&right.0));
         Ok(Self { entry, descendants })
     }
 
-    fn shallow(path: &Path, purpose: &str) -> Result<Self> {
+    pub(crate) fn shallow(path: &Path, purpose: &str) -> Result<Self> {
         Ok(Self {
             entry: EntryFingerprint::capture(path, purpose)?,
             descendants: Vec::new(),
         })
+    }
+
+    pub(crate) fn revision_key(&self) -> String {
+        format!(
+            "s:{}",
+            crate::hash::sha256_hex(format!("{self:?}").as_bytes())
+        )
     }
 
     pub fn kind(&self) -> EntryKind {
@@ -216,24 +306,31 @@ fn capture_descendants(
     root: &Path,
     relative: &Path,
     captured: &mut Vec<(PathBuf, EntryFingerprint)>,
+    budget: &mut Option<TreeBudget>,
 ) -> Result<()> {
     let directory = root.join(relative);
-    let mut children = fs::read_dir(&directory)
+    for entry in fs::read_dir(&directory)
         .with_context(|| format!("failed to inspect directory source {}", directory.display()))?
-        .map(|entry| {
-            entry
-                .map(|entry| (entry.file_name(), entry.path()))
-                .with_context(|| format!("failed to inspect entry in {}", directory.display()))
-        })
-        .collect::<Result<Vec<_>>>()?;
-    children.sort_by(|left, right| left.0.cmp(&right.0));
-    for (name, path) in children {
+    {
+        let entry = entry?;
+        let name = entry.file_name();
+        let path = entry.path();
         let child = relative.join(name);
         let fingerprint = EntryFingerprint::capture(&path, "directory source entry")?;
+        if let Some(budget) = budget {
+            budget.charge(
+                &child,
+                fingerprint.kind,
+                fingerprint
+                    .symlink_target
+                    .as_ref()
+                    .map_or(fingerprint.len, |target| target.as_os_str().len() as u64),
+            )?;
+        }
         let recurse = fingerprint.kind == EntryKind::Directory;
         captured.push((child.clone(), fingerprint));
         if recurse {
-            capture_descendants(root, &child, captured)?;
+            capture_descendants(root, &child, captured, budget)?;
         }
     }
     Ok(())
@@ -319,6 +416,14 @@ impl DirectoryListing {
 /// the editable explorer can represent, so a staleness check and a plan
 /// baseline never disagree about what the directory contains.
 fn read_listed_rows(root: &Path, show_hidden: bool) -> Result<Vec<(PathBuf, EntryKind)>> {
+    read_listed_rows_bounded(root, show_hidden, usize::MAX)
+}
+
+fn read_listed_rows_bounded(
+    root: &Path,
+    show_hidden: bool,
+    limit: usize,
+) -> Result<Vec<(PathBuf, EntryKind)>> {
     ensure!(root.is_dir(), "{} is not a directory", root.display());
     let mut rows = fs::read_dir(root)
         .with_context(|| format!("failed to read directory {}", root.display()))?
@@ -356,7 +461,11 @@ fn read_listed_rows(root: &Path, show_hidden: bool) -> Result<Vec<(PathBuf, Entr
                 Ok((PathBuf::from(&name), kind))
             })
         })
+        .take(limit.saturating_add(1))
         .collect::<Result<Vec<_>>>()?;
+    if rows.len() > limit {
+        return Err(DirectoryLimitExceeded.into());
+    }
     rows.sort_by(|left, right| left.0.cmp(&right.0));
     Ok(rows)
 }
@@ -393,7 +502,11 @@ impl DirectorySnapshot {
     /// it showed: an unlisted dotfile is neither deleted for being absent nor
     /// reported as a change when it appears.
     pub fn read_with(root: &Path, show_hidden: bool) -> Result<Self> {
-        let entries = read_listed_rows(root, show_hidden)?
+        Self::read_bounded(root, show_hidden, usize::MAX)
+    }
+
+    pub(crate) fn read_bounded(root: &Path, show_hidden: bool, limit: usize) -> Result<Self> {
+        let entries = read_listed_rows_bounded(root, show_hidden, limit)?
             .into_iter()
             .enumerate()
             .map(|(index, (path, _))| {
@@ -730,11 +843,13 @@ impl std::error::Error for ApplyError {}
 
 #[derive(Clone, Debug)]
 pub struct FsPlan {
+    limits: Option<OperationLimits>,
     root: PathBuf,
     expected: DirectorySnapshot,
     operations: Vec<FsOperation>,
     transfer_sources: Vec<(PathBuf, SourceFingerprint)>,
     confirmed_sources: Vec<(PathBuf, Option<SourceFingerprint>)>,
+    retained_sources: Vec<(PathBuf, Arc<crate::private_storage::OwnedFile>, String)>,
 }
 
 impl FsPlan {
@@ -742,6 +857,24 @@ impl FsPlan {
         root: PathBuf,
         expected: DirectorySnapshot,
         desired: Vec<DesiredEntry>,
+    ) -> Result<Self> {
+        Self::build_with_limits(root, expected, desired, None)
+    }
+
+    pub(crate) fn build_bounded(
+        root: PathBuf,
+        expected: DirectorySnapshot,
+        desired: Vec<DesiredEntry>,
+        limits: OperationLimits,
+    ) -> Result<Self> {
+        Self::build_with_limits(root, expected, desired, Some(limits))
+    }
+
+    fn build_with_limits(
+        root: PathBuf,
+        expected: DirectorySnapshot,
+        desired: Vec<DesiredEntry>,
+        limits: Option<OperationLimits>,
     ) -> Result<Self> {
         ensure!(root.is_absolute(), "directory plan root must be absolute");
         let root = fs::canonicalize(&root)
@@ -948,20 +1081,41 @@ impl FsPlan {
             })
             .filter(|source| seen_sources.insert((*source).clone()))
             .map(|source| {
-                (
-                    source.clone(),
-                    SourceFingerprint::capture(&root.join(source)).ok(),
-                )
+                let captured = SourceFingerprint::capture_limited(&root.join(source), limits);
+                let captured = if limits.is_some() {
+                    Some(captured?)
+                } else {
+                    captured.ok()
+                };
+                Ok((source.clone(), captured))
             })
-            .collect::<Vec<_>>();
+            .collect::<Result<Vec<_>>>()?;
 
         Ok(Self {
+            limits,
             root,
             expected,
             operations: creates,
             transfer_sources,
             confirmed_sources,
+            retained_sources: Vec::new(),
         })
+    }
+
+    pub(crate) fn retain_source(
+        &mut self,
+        source: Arc<crate::private_storage::OwnedFile>,
+        label: &str,
+    ) -> Result<()> {
+        let relative = relative_from_root(&self.root, source.path())?;
+        ensure!(
+            self.operations.iter().any(|operation| {
+                matches!(operation, FsOperation::Copy { from, .. } if from == &relative)
+            }),
+            "retained source is not copied by this plan"
+        );
+        self.retained_sources.push((relative, source, label.into()));
+        Ok(())
     }
 
     pub fn root(&self) -> &Path {
@@ -979,7 +1133,17 @@ impl FsPlan {
     pub fn lines(&self) -> Vec<String> {
         self.operations
             .iter()
-            .map(FsOperation::description)
+            .map(|operation| {
+                if let FsOperation::Copy { from, to, .. } = operation
+                    && let Some((_, _, label)) = self
+                        .retained_sources
+                        .iter()
+                        .find(|(path, _, _)| path == from)
+                {
+                    return format!("copy {label} → {}", to.display());
+                }
+                operation.description()
+            })
             .collect()
     }
 
@@ -1001,9 +1165,29 @@ impl FsPlan {
         trash: &dyn TrashBackend,
         io: &mut ApplyIo,
     ) -> Result<ApplyReport, ApplyError> {
+        self.apply_with_io_bounded(deletion, trash, io, usize::MAX)
+    }
+
+    pub(crate) fn apply_bounded(
+        &self,
+        deletion: DeletionMode,
+        trash: &dyn TrashBackend,
+        limit: usize,
+    ) -> Result<ApplyReport, ApplyError> {
+        self.apply_with_io_bounded(deletion, trash, &mut ApplyIo::default(), limit)
+    }
+
+    fn apply_with_io_bounded(
+        &self,
+        deletion: DeletionMode,
+        trash: &dyn TrashBackend,
+        io: &mut ApplyIo,
+        limit: usize,
+    ) -> Result<ApplyReport, ApplyError> {
+        io.copy_budget = self.limits.map(TreeBudget::new);
         for (source, expected) in &self.transfer_sources {
             let absolute = self.root.join(source);
-            let current = SourceFingerprint::capture(&absolute)
+            let current = SourceFingerprint::capture_limited(&absolute, self.limits)
                 .map_err(|error| ApplyError::new(ApplyReport::default(), None, error))?;
             if &current != expected {
                 return Err(ApplyError::new(
@@ -1016,8 +1200,9 @@ impl FsPlan {
                 ));
             }
         }
-        let current = DirectorySnapshot::read_with(&self.root, self.expected.show_hidden())
-            .map_err(|error| ApplyError::new(ApplyReport::default(), None, error))?;
+        let current =
+            DirectorySnapshot::read_bounded(&self.root, self.expected.show_hidden(), limit)
+                .map_err(|error| ApplyError::new(ApplyReport::default(), None, error))?;
         if !self.expected.matches_current(&current)
             || !self.operation_sources_unchanged()
             || !self.confirmed_sources_unchanged()
@@ -1218,7 +1403,7 @@ impl FsPlan {
     fn confirmed_sources_unchanged(&self) -> bool {
         self.confirmed_sources.iter().all(|(source, expected)| {
             expected.as_ref().is_some_and(|expected| {
-                SourceFingerprint::capture(&self.root.join(source))
+                SourceFingerprint::capture_limited(&self.root.join(source), self.limits)
                     .is_ok_and(|current| &current == expected)
             })
         })
@@ -1438,7 +1623,7 @@ fn normalize_desired_path(root: &Path, path: &Path) -> Result<PathBuf> {
     Ok(relative)
 }
 
-fn relative_from_root(root: &Path, target: &Path) -> Result<PathBuf> {
+pub(crate) fn relative_from_root(root: &Path, target: &Path) -> Result<PathBuf> {
     let root_components = root.components().collect::<Vec<_>>();
     let target_components = target.components().collect::<Vec<_>>();
     let common = root_components

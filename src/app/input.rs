@@ -487,6 +487,9 @@ impl App {
     }
 
     fn command_hint_count(&self) -> usize {
+        if let Some(hints) = self.matching_plugin_hints() {
+            return hints.len();
+        }
         self.matching_path_hints()
             .map_or_else(|| self.matching_commands().len(), |hints| hints.len())
     }
@@ -496,7 +499,14 @@ impl App {
     /// Literal text stays one event and one edit transaction. Macro recording
     /// stores the same raw event ordering that arrived at this boundary.
     pub fn handle_input(&mut self, input: InputEvent) -> Result<()> {
+        self.cancel_plugin_validation_intent();
+        let reload_owned_input = self.plugins.provider_reload.is_some();
+        self.sync_provider_reload();
+        let overwrite_owned_input = self.plugins.provider_overwrite.is_some();
+        self.sync_provider_overwrite();
+        self.sync_plugin_input();
         if !matches!(input, InputEvent::Pointer(_)) {
+            self.plugins.foreground_generation += 1;
             self.cancel_pointer_drag();
         }
         if self.macro_replay.is_some() {
@@ -507,10 +517,39 @@ impl App {
             }
             return Ok(());
         }
+        if reload_owned_input && self.plugins.provider_reload.is_some() {
+            self.last_interaction = Instant::now();
+            self.handle_provider_reload_input(input);
+            return Ok(());
+        }
+        if overwrite_owned_input && self.plugins.provider_overwrite.is_some() {
+            self.last_interaction = Instant::now();
+            self.handle_provider_overwrite_input(input);
+            return Ok(());
+        }
+        // A stale surface no longer owns ordinary editor input. Keep its
+        // original ownership latched so the same event cannot approve another
+        // surface that replaced it (or enter a newly started macro).
+        if (reload_owned_input || overwrite_owned_input) && self.plugin_has_input_surface() {
+            self.last_interaction = Instant::now();
+            return Ok(());
+        }
+        if self.plugins.input.is_some() {
+            self.last_interaction = Instant::now();
+            self.handle_plugin_input(input);
+            return Ok(());
+        }
         self.handle_input_inner(input, false)
     }
 
     pub(super) fn handle_replayed_input(&mut self, input: InputEvent) -> Result<()> {
+        if self.plugins.provider_reload.is_some()
+            || self.plugins.provider_overwrite.is_some()
+            || self.plugins.input.is_some()
+        {
+            self.cancel_plugin_validation_intent();
+            return Ok(());
+        }
         self.handle_input_inner(input, true)
     }
 
@@ -595,6 +634,14 @@ impl App {
         view: &PreparedView,
         repetitions: u16,
     ) -> Result<PointerOutcome> {
+        self.cancel_plugin_validation_intent();
+        let reload_owned_input = self.plugins.provider_reload.is_some();
+        self.sync_provider_reload();
+        let overwrite_owned_input = self.plugins.provider_overwrite.is_some();
+        self.sync_provider_overwrite();
+        if overwrite_owned_input || reload_owned_input {
+            return Ok(PointerOutcome::Unchanged);
+        }
         if self.macro_replay.is_some() {
             return Ok(PointerOutcome::Unchanged);
         }
@@ -606,6 +653,7 @@ impl App {
             self.forward_terminal_pointer(event, view, 1);
             return Ok(PointerOutcome::Unchanged);
         }
+        self.plugins.foreground_generation += 1;
         if !matches!(event.kind, PointerEventKind::Drag(PointerButton::Left)) {
             self.pointer_autoscroll = None;
         }
@@ -1296,6 +1344,9 @@ impl App {
     }
 
     fn handle_key_stroke(&mut self, mut key: KeyStroke) -> Result<()> {
+        if self.plugins.provider_reload.is_some() || self.plugins.provider_overwrite.is_some() {
+            return Ok(());
+        }
         if self.session_inventory_open() {
             return self.handle_session_inventory_key(key);
         }
@@ -1480,6 +1531,9 @@ impl App {
     }
 
     fn handle_text(&mut self, text: &str) -> Result<()> {
+        if self.plugins.provider_reload.is_some() || self.plugins.provider_overwrite.is_some() {
+            return Ok(());
+        }
         if text.is_empty() {
             return Ok(());
         }
@@ -2809,10 +2863,22 @@ impl App {
     }
 
     fn apply_fs_confirmation(&mut self, deletion: DeletionMode) {
+        if self.plugins.filesystem_applying || !self.plugins.document_saves.is_empty() {
+            self.action_warning(
+                "Save pending",
+                "Wait for document writes before applying filesystem changes",
+            );
+            return;
+        }
+        if self.plugins.filesystem_confirmation.is_some() {
+            self.plugins.filesystem_accepted = Some(deletion);
+            return;
+        }
         let Some(confirmation) = self.fs_confirmation.take() else {
             return;
         };
         let root = confirmation.plan.root().to_path_buf();
+        let initiating_buffer = Some(confirmation.buffer);
         match confirmation
             .plan
             .apply_with_trash(deletion, self.ports.trash())
@@ -2820,7 +2886,7 @@ impl App {
             Ok(report) => {
                 let count = report.applied.len();
                 let warning =
-                    self.reconcile_applied_filesystem(&root, confirmation.buffer, &report, true);
+                    self.reconcile_applied_filesystem(&root, initiating_buffer, &report, true);
                 let mut status = format!(
                     "applied {count} filesystem operation{}",
                     if count == 1 { "" } else { "s" }
@@ -2834,7 +2900,7 @@ impl App {
             Err(error) => {
                 let warning = self.reconcile_applied_filesystem(
                     &root,
-                    confirmation.buffer,
+                    initiating_buffer,
                     &error.report,
                     false,
                 );
@@ -2855,7 +2921,7 @@ impl App {
     pub(super) fn reconcile_applied_filesystem(
         &mut self,
         root: &Path,
-        initiating_buffer: usize,
+        initiating_buffer: Option<usize>,
         report: &ApplyReport,
         completed: bool,
     ) -> Option<String> {
@@ -2956,7 +3022,7 @@ impl App {
             if !buffer.is_directory() {
                 continue;
             }
-            let affected = index == initiating_buffer
+            let affected = Some(index) == initiating_buffer
                 || affected_directories.contains(path)
                 || affected_directories
                     .iter()
@@ -2964,13 +3030,13 @@ impl App {
             if !affected {
                 continue;
             }
-            if index == initiating_buffer && !completed {
+            if Some(index) == initiating_buffer && !completed {
                 warnings.push(
                     "directory edits retained after partial application; refresh before retrying"
                         .to_owned(),
                 );
             } else if buffer.dirty
-                && index != initiating_buffer
+                && Some(index) != initiating_buffer
                 && !self.contains_only_deletions(index, &moved_sources)
             {
                 rebase.push((index, path.to_path_buf()));
@@ -2991,7 +3057,7 @@ impl App {
         for index in reload {
             self.forget_directory_view(index);
             self.forget_directory_jumps(index);
-            let refresh = if index == initiating_buffer && completed {
+            let refresh = if Some(index) == initiating_buffer && completed {
                 self.buffers[index].accept_directory_plan(self.config.editor.show_hidden_files)
             } else {
                 self.buffers[index].reload_directory(view)
@@ -3152,12 +3218,23 @@ impl App {
                     return Ok(());
                 }
                 let name = command.split_whitespace().next().unwrap_or_default();
-                let Some(spec) = resolve_command(name) else {
+                let spec = resolve_command(name);
+                let plugin = self
+                    .plugins
+                    .commands
+                    .values()
+                    .find(|entry| entry.name == name);
+                let description = if let Some(spec) = spec {
+                    spec.description.to_owned()
+                } else if let Some(plugin) = plugin {
+                    plugin.description.clone()
+                } else {
                     self.complete_selected_command();
                     return Ok(());
                 };
-                let availability = self.command_capabilities().command_availability(spec);
-                if let CommandAvailability::Unavailable(reason) = availability {
+                let availability =
+                    spec.map(|spec| self.command_capabilities().command_availability(spec));
+                if let Some(CommandAvailability::Unavailable(reason)) = availability {
                     // Deliberately does not call report_completed_action: the
                     // palette is still open (the same "correctable input"
                     // treatment as a schema error below), and the
@@ -3166,13 +3243,16 @@ impl App {
                     // under whoever is still typing, which is exactly the
                     // "notifications never replace [the prompt]" rule this
                     // stays retained-only for; see the resolved issue file.
-                    self.mark_unavailable(format!("{} is unavailable: {reason}", spec.description));
+                    self.mark_unavailable(format!("{description} is unavailable: {reason}"));
                     return Ok(());
                 }
                 let has_argument = command
                     .split_once(char::is_whitespace)
                     .is_some_and(|(_, argument)| !argument.trim().is_empty());
-                if spec.arguments.is_required() && !has_argument {
+                if let Some(spec) = spec
+                    && spec.arguments.is_required()
+                    && !has_argument
+                {
                     self.command = format!("{} ", spec.name);
                     self.command_cursor = self.command.chars().count();
                     self.command_selection = 0;
@@ -3193,7 +3273,7 @@ impl App {
                 self.command_selection = 0;
                 self.mode = Mode::Normal;
                 let outcome = self.execute(invocation)?;
-                self.report_completed_action(&format!(":{name}"), spec.description, outcome);
+                self.report_completed_action(&format!(":{name}"), &description, outcome);
                 if let Some(mode) = self.grammar.preferred_mode()
                     && matches!(self.mode, Mode::Normal | Mode::Select)
                 {
@@ -4658,6 +4738,9 @@ impl App {
     /// outcomes; `Result::Err` is reserved for a fatal invariant failure at
     /// the application boundary.
     pub fn execute(&mut self, invocation: CommandInvocation) -> Result<CommandOutcome> {
+        self.plugins.foreground_generation += 1;
+        self.sync_provider_reload();
+        self.sync_provider_overwrite();
         self.cancel_pointer_drag();
         // Protocol and headless semantic commands bypass `handle_input`, but
         // they can move the originating selection just as surely as a key.
@@ -4670,7 +4753,11 @@ impl App {
         let before = CommandState::capture(self);
         let (id, parameters, execution, unavailable) = invocation.into_parts();
         if let CommandId::Plugin(id) = id {
-            return self.invoke_plugin(id);
+            let arguments = match &parameters {
+                InvocationParameters::OptionalText(Some(text)) => text.as_str(),
+                _ => "",
+            };
+            return self.invoke_plugin_arguments(id, arguments);
         }
         if let Some(unavailable) = unavailable {
             let CommandId::Editor(command) = id else {
@@ -5130,6 +5217,7 @@ impl App {
                 self.diff_disk();
                 Ok(())
             }
+            (Colon::DiffRemote, InvocationParameters::None) => self.queue_provider_inspection(),
             (Colon::DiffOff, InvocationParameters::None) => {
                 self.diff_off();
                 Ok(())
@@ -5269,6 +5357,21 @@ impl App {
                 self.open_path_popup();
                 Ok(())
             }
+            (Colon::Plugins, InvocationParameters::None) => {
+                self.open_plugin_manager();
+                Ok(())
+            }
+            (
+                Colon::PluginStop | Colon::PluginRestart,
+                InvocationParameters::OptionalText(Some(id)),
+            ) => {
+                let action = if command == Colon::PluginStop {
+                    crate::plugin::manager::Action::Stop
+                } else {
+                    crate::plugin::manager::Action::Restart
+                };
+                self.plugin_manager_action_by_id(&id, action)
+            }
             (Colon::ServiceHealth, InvocationParameters::None) => {
                 self.open_service_health();
                 Ok(())
@@ -5317,6 +5420,13 @@ impl App {
             }
             (Colon::WriteQuit, InvocationParameters::None) => {
                 let buffer = self.active().buffer;
+                if self.buffers[buffer].provider().is_some() {
+                    self.queue_provider_save(
+                        buffer,
+                        Some(super::plugin_providers::ProviderSaveClose::QuitView),
+                    );
+                    return Ok(());
+                }
                 let commit_message = self.buffers[buffer].is_commit_message();
                 self.save(None, false)?;
                 // Writing a commit message consumes that workflow buffer and
@@ -5330,6 +5440,13 @@ impl App {
             }
             (Colon::WriteBufferClose, InvocationParameters::None) => {
                 let buffer = self.active().buffer;
+                if self.buffers[buffer].provider().is_some() {
+                    self.queue_provider_save(
+                        buffer,
+                        Some(super::plugin_providers::ProviderSaveClose::CloseBuffer),
+                    );
+                    return Ok(());
+                }
                 let commit_message = self.buffers[buffer].is_commit_message();
                 self.save(None, false)?;
                 if !commit_message
@@ -5431,6 +5548,16 @@ impl App {
     }
 
     pub(super) fn complete_selected_command(&mut self) {
+        if let Some(hints) = self.matching_plugin_hints() {
+            let Some(entry) = hints.get(self.command_selection) else {
+                return;
+            };
+            let name = self.command.split_once(char::is_whitespace).unwrap().0;
+            self.command = format!("{name} {}", entry.configured_id);
+            self.command_cursor = self.command.chars().count();
+            self.command_selection = 0;
+            return;
+        }
         if let Some(hints) = self.matching_path_hints() {
             let Some(hint) = hints.get(self.command_selection) else {
                 return;

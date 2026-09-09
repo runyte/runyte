@@ -1530,11 +1530,19 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
         let hint_timeout = key_hints.time_until_expiry(Instant::now());
         let picker_pacing = app.picker_pacing_delay(Instant::now());
         let pointer_autoscroll = app.pointer_autoscroll_delay(Instant::now());
+        app.note_plugin_frontend(true);
         app.sync_plugin_observers();
         tokio::select! {
+            _ = std::future::ready(()), if app.plugin_presentation_pending() => { app.take_plugin_presentation_change(); }
             event = runyte::plugin::receive(&mut services.plugin_events) => {
-                if let Some(event) = event { app.handle_plugin_event(event); }
-                else { services.plugin_events = None; }
+                if let Some(event) = event {
+                    if !app.handle_plugin_event(event) && !app.plugin_presentation_pending() {
+                        continue;
+                    }
+                } else {
+                    services.plugin_events = None;
+                    continue;
+                }
             }
             input = terminal_events.next() => {
                 match input.transpose()? {
@@ -1580,11 +1588,14 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
                             continue;
                         }
                         #[cfg(debug_assertions)]
+                        let sensitive_input = app.app().plugin_input_active();
+                        #[cfg(debug_assertions)]
                         trace_input(
                             input_trace.as_mut(),
                             "before",
                             app.app(),
                             &input,
+                            sensitive_input,
                             repeated,
                             None,
                         )?;
@@ -1634,6 +1645,7 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
                             "after",
                             app.app(),
                             &input,
+                            sensitive_input,
                             repeated,
                             Some(hint_result),
                         )?;
@@ -2002,10 +2014,12 @@ async fn run_host_server(
             host.cancel_pointer_drag();
         }
         let pointer_autoscroll = host.pointer_autoscroll_delay(Instant::now());
+        host.note_plugin_frontend(active.is_some());
         host.sync_plugin_observers();
         tokio::select! {
+            _ = std::future::ready(()), if host.plugin_presentation_pending() => { changed = host.take_plugin_presentation_change(); }
             event = runyte::plugin::receive(&mut services.plugin_events) => {
-                if let Some(event) = event { host.handle_plugin_event(event); }
+                if let Some(event) = event { changed |= host.handle_plugin_event(event); }
                 else { services.plugin_events = None; }
             }
             event = server.recv() => {
@@ -2842,15 +2856,21 @@ fn open_input_trace() -> Result<Option<fs::File>> {
 
 #[cfg(debug_assertions)]
 fn trace_input(
-    trace: Option<&mut fs::File>,
+    trace: Option<&mut impl Write>,
     phase: &str,
     app: &App,
     input: &InputEvent,
+    sensitive: bool,
     repeated: bool,
     hint: Option<HintEventResult>,
 ) -> Result<()> {
     let Some(trace) = trace else {
         return Ok(());
+    };
+    let input = if sensitive {
+        "<application input redacted>".to_owned()
+    } else {
+        format!("{input:?}")
     };
     let terminal = app.active_terminal();
     let reviewing = terminal
@@ -2858,7 +2878,7 @@ fn trace_input(
         .is_some_and(|session| session.reviewing());
     writeln!(
         trace,
-        "{phase} input={input:?} repeated={repeated} hint={hint:?} mode={:?} pane={} \
+        "{phase} input={input} repeated={repeated} hint={hint:?} mode={:?} pane={} \
          terminal={terminal:?} reviewing={reviewing} pending={} fast_pane_keys={}",
         app.mode,
         app.active_pane,
@@ -2937,6 +2957,14 @@ fn handle_workspace_request(
 
     let result = match request {
         ClientRequest::Health => Ok(HostResponse::Health {
+            plugin_jobs: host.protected_state().plugin_jobs,
+            activity_leases: host.protected_state().activity_leases,
+            activities: host
+                .app()
+                .plugin_activity_health()
+                .into_iter()
+                .map(Into::into)
+                .collect(),
             protocol: runyte::workspace::transport::PROTOCOL_VERSION,
             pid: std::process::id(),
             interactive_attached,
@@ -4549,6 +4577,12 @@ async fn list_sessions(state: &Path, include_hidden: bool) -> Result<()> {
                     .pending_wait_requests
                     .map_or_else(String::new, |count| count.to_string()),
                 workspace
+                    .plugin_jobs
+                    .map_or_else(String::new, |count| count.to_string()),
+                workspace
+                    .activity_leases
+                    .map_or_else(String::new, |count| count.to_string()),
+                workspace
                     .interactive_attached
                     .map_or_else(String::new, |attached| {
                         if attached { "yes" } else { "no" }.to_owned()
@@ -4564,9 +4598,11 @@ async fn list_sessions(state: &Path, include_hidden: bool) -> Result<()> {
         "UNSAVED".to_owned(),
         "TERMINALS".to_owned(),
         "WAITING".to_owned(),
+        "JOBS".to_owned(),
+        "ACTIVITIES".to_owned(),
         "TUI".to_owned(),
     ];
-    let mut widths = [0_usize; 8];
+    let mut widths = [0_usize; 10];
     for row in std::iter::once(&headings).chain(rows.iter()) {
         for (index, value) in row.iter().enumerate() {
             widths[index] =
@@ -4582,12 +4618,9 @@ async fn list_sessions(state: &Path, include_hidden: bool) -> Result<()> {
 }
 
 #[cfg(unix)]
-fn print_workspace_row(row: &[String; 8], widths: &[usize; 8]) {
-    let cells = std::array::from_fn::<_, 8, _>(|index| pad_table_cell(&row[index], widths[index]));
-    println!(
-        "{}  {}  {}  {}  {}  {}  {}  {}",
-        cells[0], cells[1], cells[2], cells[3], cells[4], cells[5], cells[6], cells[7]
-    );
+fn print_workspace_row(row: &[String; 10], widths: &[usize; 10]) {
+    let cells = std::array::from_fn::<_, 10, _>(|index| pad_table_cell(&row[index], widths[index]));
+    println!("{}", cells.join("  "));
 }
 
 #[cfg(unix)]
@@ -5672,6 +5705,28 @@ Inside the editor press Space+? for the complete key reference."
 
 #[cfg(test)]
 mod tests {
+    #[cfg(debug_assertions)]
+    #[test]
+    fn application_input_trace_redacts_keys_before_and_after_surface_closure() {
+        let app = runyte::app::App::new(runyte::config::Config::default(), None).unwrap();
+        let mut trace = Vec::new();
+        for phase in ["before", "after"] {
+            super::trace_input(
+                Some(&mut trace),
+                phase,
+                &app,
+                &runyte::input::InputEvent::Key(runyte::input::KeyStroke::char('🔑')),
+                true,
+                false,
+                None,
+            )
+            .unwrap();
+        }
+        let text = String::from_utf8(trace).unwrap();
+        assert!(!text.contains('🔑'));
+        assert_eq!(text.matches("<application input redacted>").count(), 2);
+    }
+
     use std::{
         fs,
         path::{Path, PathBuf},

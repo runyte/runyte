@@ -2,6 +2,8 @@
 
 use super::*;
 use std::{io, sync::atomic::Ordering};
+mod plugin_budget_review;
+mod recursive_limits;
 
 #[cfg(target_os = "macos")]
 mod macos;
@@ -69,6 +71,7 @@ fn apply(
         DeletionMode::Permanent,
         &NoTrash,
         &mut ApplyIo {
+            copy_budget: None,
             hook: Some(Box::new(hook)),
         },
     )
@@ -257,6 +260,7 @@ fn allocation_collision_retries_without_touching_competing_entry() {
     let dir = TempDir::new();
     let mut collided = None;
     let mut io = ApplyIo {
+        copy_budget: None,
         hook: Some(Box::new(move |step, _, target| {
             if step == IoStep::Allocate && collided.is_none() {
                 fs::write(target, "competing staging name")?;
@@ -278,6 +282,7 @@ fn allocation_collision_retries_without_touching_competing_entry() {
         "competing staging name"
     );
     let mut io = ApplyIo {
+        copy_budget: None,
         hook: Some(Box::new(|_, _, target| {
             fs::create_dir(target)?;
             Ok(())
@@ -622,6 +627,7 @@ fn mixed_plan_reports_deletion_before_later_collision_in_both_modes() {
         };
         plan.operations.push(deletion.clone());
         let mut io = ApplyIo {
+            copy_budget: None,
             hook: Some(Box::new(|step, _, target| {
                 if step == IoStep::Publish {
                     fs::write(target, "concurrent destination")?;

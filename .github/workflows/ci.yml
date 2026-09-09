@@ -58,10 +58,50 @@ jobs:
       - name: Test
         run: cargo test --locked
 
+  plugin-conformance:
+    name: Plugin conformance (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    env:
+      TMPDIR: ${{ matrix.os == 'macos-latest' && '/private/tmp' || '/tmp' }}
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Linux example backends
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends mpv nodejs
+
+      - name: Install macOS example backends
+        if: runner.os == 'macOS'
+        run: brew install mpv node
+
+      - name: Validate plugin contracts and examples
+        run: |
+          python3 -m venv "$RUNNER_TEMP/plugin-schema"
+          plugin_schema_python="$RUNNER_TEMP/plugin-schema/bin/python"
+          "$plugin_schema_python" -m pip install jsonschema==4.23.0 -r docs/plugins/requirements-sftp.txt -r docs/plugins/requirements-ftp-test.txt
+          "$plugin_schema_python" docs/plugins/check_all.py --require-backends
+
   coverage:
-    name: Coverage (ubuntu-latest)
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
+    name: Coverage (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    env:
+      TMPDIR: ${{ matrix.os == 'macos-latest' && '/private/tmp' || '/tmp' }}
+      RUST_BACKTRACE: 1
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -69,7 +109,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          key: coverage
+          key: coverage-${{ matrix.os }}
 
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@742a3317eac7bd62f91cd888b4eead5e784ba833 # v2.87.1
@@ -99,7 +139,7 @@ jobs:
       - name: Upload HTML coverage report
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: rust-coverage-html
+          name: rust-coverage-html-${{ matrix.os }}
           path: |
             target/llvm-cov/html
             coverage-summary.txt

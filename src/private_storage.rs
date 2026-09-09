@@ -22,6 +22,7 @@ mod platform {
         sync::atomic::{AtomicU64, Ordering},
     };
 
+    #[derive(Debug)]
     pub struct Directory(File);
 
     fn cstring(value: &OsStr) -> io::Result<CString> {
@@ -54,7 +55,7 @@ mod platform {
                 "runtime storage requires an owned regular file with no hard links",
             ));
         }
-        file.set_permissions(std::fs::Permissions::from_mode(0o600))
+        Ok(())
     }
 
     impl Directory {
@@ -62,6 +63,12 @@ mod platform {
         /// private from creation. Only an explicitly private leaf is chmodded;
         /// an explicit log in /tmp must never change /tmp's permissions.
         pub fn open(path: &Path, private: bool) -> io::Result<Self> {
+            Self::open_inner(path, private, false)
+        }
+        pub(crate) fn open_durable(path: &Path, private: bool) -> io::Result<Self> {
+            Self::open_inner(path, private, true)
+        }
+        fn open_inner(path: &Path, private: bool, durable: bool) -> io::Result<Self> {
             let absolute = if path.is_absolute() {
                 path.to_owned()
             } else {
@@ -119,7 +126,12 @@ mod platform {
                     return Err(io::Error::last_os_error());
                 }
                 // SAFETY: openat returned a new owned descriptor.
-                directory = Self(unsafe { File::from_raw_fd(fd) });
+                let next = Self(unsafe { File::from_raw_fd(fd) });
+                // Retry a previous failed mkdir sync even when the entry exists.
+                if durable {
+                    directory.0.sync_all()?;
+                }
+                directory = next;
             }
             if private {
                 let metadata = directory.0.metadata()?;
@@ -135,13 +147,59 @@ mod platform {
             Ok(directory)
         }
 
-        fn open_file(&self, name: &OsStr, flags: i32) -> io::Result<File> {
+        /// Opens one owned private child relative to the pinned directory.
+        pub(crate) fn child(&self, name: &OsStr) -> io::Result<Self> {
             let name = leaf(name)?;
-            // Nonblocking open ensures a supplied FIFO cannot stall startup.
+            let created = unsafe { libc::mkdirat(self.0.as_raw_fd(), name.as_ptr(), 0o700) };
+            if created < 0 && io::Error::last_os_error().kind() != io::ErrorKind::AlreadyExists {
+                return Err(io::Error::last_os_error());
+            }
+            // Existing entries may be remnants of an interrupted creation.
+            self.0.sync_all()?;
             let fd = unsafe {
                 libc::openat(
                     self.0.as_raw_fd(),
                     name.as_ptr(),
+                    libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+                )
+            };
+            if fd < 0 {
+                return Err(io::Error::last_os_error());
+            }
+            let file = unsafe { File::from_raw_fd(fd) };
+            if file.metadata()?.uid() != unsafe { libc::geteuid() } {
+                return Err(io::Error::other(
+                    "Private directory is owned by another user",
+                ));
+            }
+            file.set_permissions(std::fs::Permissions::from_mode(0o700))?;
+            Ok(Self(file))
+        }
+
+        /// The caller owns both names under its stable advisory lock.
+        pub(crate) fn rename(&self, from: &OsStr, to: &OsStr) -> io::Result<()> {
+            let (from, to) = (leaf(from)?, leaf(to)?);
+            if unsafe {
+                libc::renameat(
+                    self.0.as_raw_fd(),
+                    from.as_ptr(),
+                    self.0.as_raw_fd(),
+                    to.as_ptr(),
+                )
+            } < 0
+            {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(())
+        }
+
+        fn open_file(&self, name: &OsStr, flags: i32, private: bool) -> io::Result<File> {
+            let name_c = leaf(name)?;
+            // Nonblocking open ensures a supplied FIFO cannot stall startup.
+            let fd = unsafe {
+                libc::openat(
+                    self.0.as_raw_fd(),
+                    name_c.as_ptr(),
                     flags | libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK,
                     0o600,
                 )
@@ -150,16 +208,63 @@ mod platform {
                 return Err(io::Error::last_os_error());
             }
             let file = unsafe { File::from_raw_fd(fd) };
-            owned_regular(&file)?;
+            let validated = owned_regular(&file).and_then(|()| {
+                if private {
+                    file.set_permissions(std::fs::Permissions::from_mode(0o600))
+                } else {
+                    Ok(())
+                }
+            });
+            if let Err(error) = validated {
+                // Exclusive creation owns the new directory entry even if
+                // subsequent metadata validation fails. Existing files must
+                // never be removed by a failed append/read admission.
+                if flags & libc::O_CREAT != 0 && flags & libc::O_EXCL != 0 {
+                    let _ = self.remove_owned(name, &file);
+                }
+                return Err(error);
+            }
             Ok(file)
         }
 
         pub fn append(&self, name: &OsStr) -> io::Result<File> {
-            self.open_file(name, libc::O_RDWR | libc::O_CREAT | libc::O_APPEND)
+            self.open_file(name, libc::O_RDWR | libc::O_CREAT | libc::O_APPEND, true)
+        }
+
+        pub fn create_new(&self, name: &OsStr) -> io::Result<File> {
+            self.open_file(name, libc::O_RDWR | libc::O_CREAT | libc::O_EXCL, true)
+        }
+
+        pub fn open_read(&self, name: &OsStr) -> io::Result<File> {
+            self.open_file(name, libc::O_RDONLY, false)
+        }
+
+        pub fn remove_owned(&self, name: &OsStr, file: &File) -> io::Result<()> {
+            let name_c = leaf(name)?;
+            let mut current = std::mem::MaybeUninit::<libc::stat>::uninit();
+            // SAFETY: the descriptor, C string and output pointer are valid.
+            if unsafe {
+                libc::fstatat(
+                    self.0.as_raw_fd(),
+                    name_c.as_ptr(),
+                    current.as_mut_ptr(),
+                    libc::AT_SYMLINK_NOFOLLOW,
+                )
+            } < 0
+            {
+                return Err(io::Error::last_os_error());
+            }
+            // SAFETY: successful fstatat initialized the complete structure.
+            let current = unsafe { current.assume_init() };
+            let expected = file.metadata()?;
+            if current.st_dev == expected.dev() && current.st_ino == expected.ino() {
+                self.remove(name)?;
+            }
+            Ok(())
         }
 
         pub fn read(&self, name: &OsStr, limit: usize) -> io::Result<Vec<u8>> {
-            let file = self.open_file(name, libc::O_RDONLY)?;
+            let file = self.open_file(name, libc::O_RDONLY, true)?;
             let mut bytes = Vec::new();
             file.take(limit as u64 + 1).read_to_end(&mut bytes)?;
             if bytes.len() > limit {
@@ -194,6 +299,7 @@ mod platform {
                 let mut file = match self.open_file(
                     pending.as_os_str(),
                     libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL,
+                    true,
                 ) {
                     Ok(file) => file,
                     Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
@@ -232,6 +338,7 @@ mod platform {
 mod platform {
     use super::*;
     use std::ffi::OsStr;
+    #[derive(Debug)]
     pub struct Directory;
     fn unsupported<T>() -> io::Result<T> {
         Err(io::Error::new(
@@ -243,7 +350,25 @@ mod platform {
         pub fn open(_: &Path, _: bool) -> io::Result<Self> {
             unsupported()
         }
+        pub(crate) fn open_durable(_: &Path, _: bool) -> io::Result<Self> {
+            unsupported()
+        }
+        pub(crate) fn child(&self, _: &OsStr) -> io::Result<Self> {
+            unsupported()
+        }
+        pub(crate) fn rename(&self, _: &OsStr, _: &OsStr) -> io::Result<()> {
+            unsupported()
+        }
         pub fn append(&self, _: &OsStr) -> io::Result<File> {
+            unsupported()
+        }
+        pub fn create_new(&self, _: &OsStr) -> io::Result<File> {
+            unsupported()
+        }
+        pub fn open_read(&self, _: &OsStr) -> io::Result<File> {
+            unsupported()
+        }
+        pub fn remove_owned(&self, _: &OsStr, _: &File) -> io::Result<()> {
             unsupported()
         }
         pub fn read(&self, _: &OsStr, _: usize) -> io::Result<Vec<u8>> {
@@ -262,3 +387,6 @@ mod platform {
 }
 
 pub(crate) use platform::Directory;
+
+mod owned_file;
+pub(crate) use owned_file::OwnedFile;

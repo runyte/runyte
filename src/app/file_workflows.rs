@@ -18,8 +18,32 @@ use crate::{
     settings::{SettingId, SettingValue},
 };
 
+/// Bounds retained hook metadata before a native overwrite is approved.
+pub(crate) const PROVIDER_SAVE_HOOK_LIMIT: usize = 4096;
+
+#[derive(Debug)]
+pub(crate) struct ProviderSavePreviewLimit;
+
+impl std::fmt::Display for ProviderSavePreviewLimit {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(
+            "Overwrite preview exceeds 4096 whitespace changes; trim the document before saving",
+        )
+    }
+}
+
+impl std::error::Error for ProviderSavePreviewLimit {}
+
+/// An immutable hook preview; only this module constructs its transaction.
+pub(crate) struct ProviderSavePreview {
+    pub source_revision: u64,
+    pub snapshot: crate::buffer::ProviderSave,
+    hooks: Transaction,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum ReloadDispatch {
+    Provider,
     Directory,
     GitStatus,
     GitBranches,
@@ -40,6 +64,7 @@ fn split_status(axis: Axis) -> &'static str {
 
 pub(super) fn reload_dispatch(kind: &BufferKind) -> ReloadDispatch {
     match kind {
+        BufferKind::Provider(_) => ReloadDispatch::Provider,
         BufferKind::Directory => ReloadDispatch::Directory,
         BufferKind::GitStatus => ReloadDispatch::GitStatus,
         BufferKind::GitBranches => ReloadDispatch::GitBranches,
@@ -486,6 +511,10 @@ impl App {
     }
 
     pub(super) fn reload_directory_buffer(&mut self, buffer: usize) -> Result<()> {
+        ensure!(
+            !self.document_mutation_pending(buffer),
+            "Filesystem write is pending"
+        );
         let view = self.listing_view();
         self.buffers
             .get_mut(buffer)
@@ -724,6 +753,10 @@ impl App {
     }
 
     pub(super) fn open_file(&mut self, path: PathBuf) -> Result<()> {
+        ensure!(
+            !self.plugins.filesystem_applying,
+            "Wait for filesystem changes before opening a path"
+        );
         let path = self.resolve_working_path(path);
         let requested_identity = crate::path_safety::path_identity(&path)?;
         self.remember_active_directory_view();
@@ -795,6 +828,68 @@ impl App {
     pub(crate) fn host_open_file(&mut self, path: PathBuf, activate: bool) -> Result<usize> {
         let opened = self.host_open_files(vec![path], activate)?;
         Ok(opened[0])
+    }
+
+    /// Publishes a file already read on the application IO worker. A live
+    /// buffer wins over that disk snapshot, including its unsaved edits.
+    pub(crate) fn install_plugin_document(&mut self, buffer: Buffer, activate: bool) -> usize {
+        let path = buffer.path.clone().expect("prepared ordinary file");
+        let index = if let Some(index) = self.live_buffer_for_identity(&path) {
+            index
+        } else {
+            let index = self.buffers.len();
+            self.buffers.push(buffer);
+            self.syntax.push(None);
+            self.reparse_whole(index);
+            self.track_in_git(&path);
+            self.lsp_touch(index);
+            index
+        };
+        if activate {
+            let covered = self.active_terminal();
+            self.switch_buffer(index);
+            if let Some(terminal) = covered {
+                self.active_mut().covered_terminal = Some((index, terminal));
+            }
+        }
+        index
+    }
+
+    pub(crate) fn install_provider_document(&mut self, buffer: Buffer, activate: bool) -> usize {
+        let identity = &buffer
+            .provider()
+            .expect("prepared provider document")
+            .identity;
+        let existing = self
+            .buffers
+            .iter()
+            .enumerate()
+            .find_map(|(index, candidate)| {
+                (!self.closed_buffers.contains(&index)
+                    && candidate
+                        .provider()
+                        .is_some_and(|document| &document.identity == identity))
+                .then_some(index)
+            });
+        let index = existing.unwrap_or_else(|| {
+            let index = self.buffers.len();
+            self.buffers.push(buffer);
+            self.syntax.push(None);
+            self.reparse_whole(index);
+            index
+        });
+        if activate {
+            self.show_provider_document(index);
+        }
+        index
+    }
+
+    pub(crate) fn show_provider_document(&mut self, index: usize) {
+        let covered = self.active_terminal();
+        self.switch_buffer(index);
+        if let Some(terminal) = covered {
+            self.active_mut().covered_terminal = Some((index, terminal));
+        }
     }
 
     fn live_buffer_for_path(&self, path: &Path) -> Option<usize> {
@@ -947,6 +1042,7 @@ impl App {
                     && !self.buffers[index].dirty
                     && self.buffers[index].kind == BufferKind::File
                     && !pending_wait_buffers.contains(&index)
+                    && !self.document_mutation_pending(index)
                     && !refreshed
                         .iter()
                         .any(|(refreshed_index, _)| *refreshed_index == index)
@@ -961,6 +1057,10 @@ impl App {
                 prepared.push(Prepared::Live(index));
                 continue;
             }
+            ensure!(
+                !self.plugins.filesystem_applying,
+                "Wait for filesystem changes before opening a new path"
+            );
             if let Some(slot) = staged
                 .iter()
                 .position(|(_, staged_identity, _)| staged_identity == identity)
@@ -1082,11 +1182,19 @@ impl App {
             buffer < self.buffers.len() && !self.closed_buffers.contains(&buffer),
             "unknown or closed buffer"
         );
+        ensure!(
+            self.buffers[buffer].provider().is_none(),
+            "provider documents require an asynchronous save request"
+        );
         self.buffers[buffer].commit_undo_group();
         self.save_buffer(buffer, None, false)
     }
 
     pub(crate) fn host_close_buffer(&mut self, buffer: usize, discard: bool) -> Result<()> {
+        ensure!(
+            !self.document_mutation_pending(buffer),
+            "Document save is pending"
+        );
         ensure!(
             buffer < self.buffers.len() && !self.closed_buffers.contains(&buffer),
             "unknown or closed buffer"
@@ -1100,6 +1208,11 @@ impl App {
         }
         self.close_buffer(buffer);
         Ok(())
+    }
+
+    /// Slots and retirement membership only grow; reopening issues a new slot.
+    pub(crate) fn plugin_buffer_membership_revision(&self) -> (usize, usize) {
+        (self.buffers.len(), self.closed_buffers.len())
     }
 
     pub(crate) fn host_buffer_is_closed(&self, buffer: usize) -> bool {
@@ -1132,6 +1245,11 @@ impl App {
         } else {
             self.active().directory_buffer
         };
+        let is_plugin_view = matches!(
+            self.buffers[buffer_id].generated_view_identity(),
+            Some(crate::buffer::GeneratedViewIdentity::Plugin { .. })
+        );
+        let saved_plugin_position = self.active().plugin_view_positions.get(&buffer_id).cloned();
         let selection = self
             .take_pending_launch_selection(buffer_id)
             .unwrap_or_else(|| Selection::point(0));
@@ -1143,6 +1261,18 @@ impl App {
         pane.scroll_wrap = 0;
         pane.scroll_col = 0;
         pane.preserve_scroll = false;
+        if let Some(saved) = saved_plugin_position {
+            saved.restore(pane);
+        }
+        if is_plugin_view
+            && (pane.plugin_view_positions.len() < 128
+                || pane.plugin_view_positions.contains_key(&buffer_id))
+        {
+            pane.plugin_view_positions.insert(
+                buffer_id,
+                super::plugin_views::PluginViewPosition::capture(pane),
+            );
+        }
         self.lsp_touch(buffer_id);
         self.status(format!("buffer {}", self.buffers[buffer_id].display_name()));
     }
@@ -1257,7 +1387,9 @@ impl App {
 
     pub(super) fn save(&mut self, path: Option<PathBuf>, replace: bool) -> Result<()> {
         let buffer_id = self.active().buffer;
-        self.buffers[buffer_id].commit_undo_group();
+        if self.buffers[buffer_id].provider().is_none() {
+            self.buffers[buffer_id].commit_undo_group();
+        }
         self.save_buffer(buffer_id, path, replace)
     }
 
@@ -1267,6 +1399,24 @@ impl App {
         path: Option<PathBuf>,
         replace: bool,
     ) -> Result<()> {
+        if self.buffers[buffer_id].provider().is_some() {
+            if path.is_some() || replace {
+                self.action_warning(
+                    "Save refused",
+                    "Provider save-as and forced overwrite are not available",
+                );
+            } else {
+                self.queue_provider_save(buffer_id, None);
+            }
+            return Ok(());
+        }
+        if self.plugins.filesystem_applying || self.document_mutation_pending(buffer_id) {
+            self.action_warning(
+                "Save pending",
+                "A captured document revision is still being written",
+            );
+            return Ok(());
+        }
         if let Some(reason) = self.buffers[buffer_id].read_only_reason() {
             self.action_warning("Save refused", reason);
             return Ok(());
@@ -1461,6 +1611,112 @@ impl App {
         })
     }
 
+    pub(crate) fn prepare_plugin_document_save(
+        &mut self,
+        buffer_id: usize,
+    ) -> crate::buffer::DocumentSave {
+        self.buffers[buffer_id].commit_undo_group();
+        if self.config.editor.trim_trailing_whitespace {
+            self.trim_trailing_whitespace(buffer_id);
+        }
+        self.buffers[buffer_id].commit_undo_group();
+        self.buffers[buffer_id]
+            .prepare_document_save()
+            .expect("validated document save")
+    }
+
+    /// Captures save hooks without changing text, selections, or undo history.
+    pub(crate) fn preview_provider_save(&self, buffer_id: usize) -> Result<ProviderSavePreview> {
+        ensure!(
+            buffer_id < self.buffers.len() && !self.host_buffer_is_closed(buffer_id),
+            "unknown or closed buffer"
+        );
+        let buffer = &self.buffers[buffer_id];
+        let mut snapshot = buffer.prepare_provider_save()?;
+        let source_revision = buffer.revision();
+        let hooks = if self.config.editor.trim_trailing_whitespace {
+            let mut changes = Vec::with_capacity(PROVIDER_SAVE_HOOK_LIMIT);
+            for change in
+                super::movement::trailing_whitespace_changes_iter(buffer, 0..buffer.len_lines())
+            {
+                if changes.len() >= PROVIDER_SAVE_HOOK_LIMIT {
+                    return Err(ProviderSavePreviewLimit.into());
+                }
+                changes.push(change);
+            }
+            Transaction::new(changes)
+        } else {
+            Transaction::default()
+        };
+        if !hooks.is_empty() {
+            snapshot.text.apply(&hooks);
+        }
+        Ok(ProviderSavePreview {
+            source_revision,
+            snapshot,
+            hooks,
+        })
+    }
+
+    /// Applies exactly the approved hooks after validating the captured input.
+    /// The caller owns foreground approval and resource admission.
+    pub(crate) fn apply_provider_save_preview(
+        &mut self,
+        buffer_id: usize,
+        mut preview: ProviderSavePreview,
+    ) -> Result<crate::buffer::ProviderSave> {
+        ensure!(
+            buffer_id < self.buffers.len() && !self.host_buffer_is_closed(buffer_id),
+            "unknown or closed buffer"
+        );
+        let current = self.buffers[buffer_id].prepare_provider_save()?;
+        ensure!(
+            self.buffers[buffer_id].revision() == preview.source_revision,
+            "Document changed after overwrite review"
+        );
+        ensure!(
+            current.identity == preview.snapshot.identity
+                && current.generation == preview.snapshot.generation
+                && current.epoch == preview.snapshot.epoch
+                && current.version == preview.snapshot.version,
+            "Resource save baseline changed after overwrite review"
+        );
+        self.buffers[buffer_id].commit_undo_group();
+        if !preview.hooks.is_empty() {
+            let applied = self.apply_to_buffer(buffer_id, &preview.hooks);
+            debug_assert!(applied, "validated provider save hooks must apply");
+        }
+        self.buffers[buffer_id].commit_undo_group();
+        debug_assert!(
+            self.buffers[buffer_id]
+                .text()
+                .same_content(&preview.snapshot.text),
+            "captured save hooks must reproduce the approved bytes"
+        );
+        // Text revisions are allocated globally. Applying the same hooks to the
+        // preview and live text produces identical bytes at different revisions.
+        preview.snapshot.text = self.buffers[buffer_id].text().clone();
+        Ok(preview.snapshot)
+    }
+
+    pub(crate) fn prepare_provider_save_text(
+        &mut self,
+        buffer_id: usize,
+    ) -> Result<crate::buffer::ProviderSave> {
+        ensure!(
+            buffer_id < self.buffers.len() && !self.host_buffer_is_closed(buffer_id),
+            "unknown or closed buffer"
+        );
+        // Validate before applying hooks: rejected writes leave text untouched.
+        self.buffers[buffer_id].prepare_provider_save()?;
+        self.buffers[buffer_id].commit_undo_group();
+        if self.config.editor.trim_trailing_whitespace {
+            self.trim_trailing_whitespace(buffer_id);
+        }
+        self.buffers[buffer_id].commit_undo_group();
+        self.buffers[buffer_id].prepare_provider_save()
+    }
+
     fn trim_trailing_whitespace(&mut self, buffer_id: usize) {
         let buffer = &self.buffers[buffer_id];
         let changes = trailing_whitespace_changes(buffer, 0..buffer.len_lines());
@@ -1471,6 +1727,10 @@ impl App {
 
     pub(super) fn reload_file(&mut self) -> Result<()> {
         let buffer_id = self.active().buffer;
+        ensure!(
+            !self.document_mutation_pending(buffer_id),
+            "Document save is pending"
+        );
         let was_dirty = self.buffers[buffer_id].dirty;
         ensure!(
             self.buffers[buffer_id].kind == BufferKind::File,
@@ -1524,6 +1784,10 @@ impl App {
         buffer_id: usize,
         observation: &FileObservation,
     ) -> Result<()> {
+        ensure!(
+            !self.document_mutation_pending(buffer_id),
+            "Document save is pending"
+        );
         let language_before = buffer_language(&self.buffers[buffer_id], &self.registry);
         self.buffers[buffer_id].reload_from_observation(observation)?;
         self.resync_replaced_buffer(buffer_id, language_before);
@@ -1554,6 +1818,7 @@ impl App {
 
     pub(super) fn reload_active(&mut self) -> Result<()> {
         match reload_dispatch(&self.active_buffer().kind) {
+            ReloadDispatch::Provider => self.queue_provider_reload(),
             ReloadDispatch::Directory => self.refresh_directory(),
             ReloadDispatch::GitStatus => {
                 self.refresh_git();
@@ -1849,12 +2114,18 @@ impl App {
     /// Left and right are read off the screen rather than off the order the
     /// two buffers were marked in, so the side that is coloured as added is
     /// always the one the person sees on the right.
-    fn diff_sides(&mut self, marked: usize, active: usize) -> Option<(DiffSide, DiffSide)> {
+    pub(super) fn diff_sides(
+        &mut self,
+        marked: usize,
+        active: usize,
+    ) -> Option<(DiffSide, DiffSide)> {
         let active_pane = self.active_pane;
         let marked_pane = match self
             .panes
             .iter()
-            .find(|(pane_id, pane)| **pane_id != active_pane && pane.buffer == marked)
+            .find(|(pane_id, pane)| {
+                **pane_id != active_pane && pane.terminal.is_none() && pane.buffer == marked
+            })
             .map(|(pane_id, _)| *pane_id)
         {
             Some(pane_id) => pane_id,

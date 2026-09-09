@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: MPL-2.0
+# Local FTP/FTPS fixture dependencies; the shipped transport uses the stdlib.
+pyftpdlib==2.2.0
+pyOpenSSL==26.4.0
