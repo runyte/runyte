@@ -27,6 +27,8 @@ pub const KEY_HINT_MAX_POPUP_HEIGHT: usize = 16;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct KeyHintRow {
     pub sequence: KeySequence,
+    /// Presentation spelling for a group; `sequence` retains its first binding.
+    pub grouped_keys: Option<String>,
     /// A shorter or historical spelling of the same command, when the registry
     /// names one. Discovery shows it so reaching a command through its
     /// namespace still teaches the key someone will want next time.
@@ -48,6 +50,7 @@ impl KeyHintRow {
     fn from_binding(binding: &Binding, exact: bool) -> Self {
         Self {
             sequence: binding.sequence.clone(),
+            grouped_keys: None,
             alias: binding.alias.clone(),
             alias_modes: binding.alias_modes,
             target: Some(binding.target),
@@ -64,6 +67,7 @@ impl KeyHintRow {
     fn from_namespace(namespace: &BindingNamespace) -> Self {
         Self {
             sequence: namespace.sequence.clone(),
+            grouped_keys: None,
             alias: None,
             alias_modes: None,
             target: None,
@@ -95,6 +99,9 @@ impl KeyHintRow {
 
 /// The complete key field shown for one hint, including its advertised alias.
 pub fn key_hint_keys(row: &KeyHintRow) -> String {
+    if let Some(keys) = &row.grouped_keys {
+        return keys.clone();
+    }
     match row.alias.as_ref() {
         Some(alias) => match row.alias_modes {
             Some(modes) => {
@@ -188,6 +195,47 @@ pub fn key_hint_description(row: &KeyHintRow) -> String {
         "key-hint description exceeds {KEY_HINT_MAX_DESCRIPTION_WIDTH} cells: {compact}"
     );
     compact
+}
+
+/// Collapse only a complete numbered family in the effective registry. A
+/// remapped destination must remain individually discoverable.
+fn collapse_session_hints(rows: &mut Vec<KeyHintRow>, prefix: &KeySequence) {
+    let commands = [
+        EditorCommand::Session1,
+        EditorCommand::Session2,
+        EditorCommand::Session3,
+        EditorCommand::Session4,
+        EditorCommand::Session5,
+        EditorCommand::Session6,
+        EditorCommand::Session7,
+        EditorCommand::Session8,
+        EditorCommand::Session9,
+    ];
+    let mut indices = Vec::with_capacity(commands.len());
+    for (digit, command) in ('1'..='9').zip(commands) {
+        let mut sequence = prefix.clone();
+        sequence.push(Key::char(digit));
+        let Some(index) = rows.iter().position(|row| {
+            row.sequence == sequence
+                && row.target == Some(BindingTarget::Editor(command))
+                && row.alias.is_none()
+                && row.availability == BindingAvailability::Implemented
+                && row.role == BindingRole::Primary
+                && !row.exact
+        }) else {
+            return;
+        };
+        indices.push(index);
+    }
+    let mut group = rows[indices[0]].clone();
+    group.grouped_keys = Some(format!("{prefix} 1-9"));
+    group.target = None;
+    group.description = "Attach to persistent session".into();
+    indices.sort_unstable();
+    for index in indices.into_iter().rev() {
+        rows.remove(index);
+    }
+    rows.push(group);
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -535,6 +583,7 @@ impl KeyHintState {
                 .collect(),
         };
         rows.extend(namespaces.into_iter().map(KeyHintRow::from_namespace));
+        collapse_session_hints(&mut rows, &self.pending);
         rows.sort_by(|left, right| {
             left.role
                 .cmp(&right.role)
@@ -688,6 +737,7 @@ mod tests {
         for target in targets {
             let mut row = KeyHintRow {
                 sequence: KeySequence::default(),
+                grouped_keys: None,
                 alias: None,
                 alias_modes: None,
                 target: Some(target),

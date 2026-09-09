@@ -687,8 +687,10 @@ Sessions carry a number from `1` to `9`, shown in the manager's first column.
 Pressing that digit in the manager attaches to its session directly, so
 `Space Space 1` reaches the first session as one gesture. In Normal and Select
 modes, `Space 1` through `Space 9` jump to the same numbered sessions without
-opening the manager. These bindings follow `keys.leader` and can be remapped
-as `session-1` through `session-9`. A missing number reports an error; numbered
+opening the manager. The key-hint popup groups them into one `Space 1-9` row.
+These bindings follow `keys.leader` and can be remapped as `session-1` through
+`session-9`; individually remapped shortcuts are listed separately in the popup.
+A missing number reports an error; numbered
 shortcuts never restart a stopped session or take over an occupied TUI.
 Inside the manager, the digit is a shortcut only while its filter is empty:
 Runyte's default names are `runyte`, `runyte-2`, `runyte-3`, and project paths

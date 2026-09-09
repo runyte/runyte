@@ -180,6 +180,80 @@ fn type_colon(app: &mut App, command: &str) {
 }
 
 #[test]
+fn numbered_session_hints_group_with_the_active_leader_and_keep_each_binding() {
+    for (section, leader, label) in [
+        ("{}", KeyStroke::char(' '), "Space 1-9"),
+        ("leader: Ctrl-x", KeyStroke::ctrl('x'), "Ctrl-x 1-9"),
+    ] {
+        let compiled = runyte::keymap::configured::compile(
+            &serde_yaml::from_str(section).unwrap(),
+            default_keymap(),
+        );
+        assert!(compiled.errors.is_empty(), "{:?}", compiled.errors);
+        for mode in [Mode::Normal, Mode::Select] {
+            let mut hints = KeyHintState::default();
+            hints.observe(leader, mode, &compiled.keymap);
+            let rows = hints.rows(&compiled.keymap, mode);
+            let groups = rows
+                .iter()
+                .filter(|row| key_hint_keys(row) == label)
+                .collect::<Vec<_>>();
+            assert_eq!(groups.len(), 1);
+            assert_eq!(
+                key_hint_description(groups[0]),
+                "Attach to persistent session"
+            );
+            for (digit, command) in ('1'..='9').zip([
+                EditorCommand::Session1,
+                EditorCommand::Session2,
+                EditorCommand::Session3,
+                EditorCommand::Session4,
+                EditorCommand::Session5,
+                EditorCommand::Session6,
+                EditorCommand::Session7,
+                EditorCommand::Session8,
+                EditorCommand::Session9,
+            ]) {
+                let sequence = [leader, KeyStroke::char(digit)].into();
+                let runyte::keymap::Lookup::Exact(binding) =
+                    compiled.keymap.lookup(mode, &sequence)
+                else {
+                    panic!("missing session binding for {digit}");
+                };
+                assert_eq!(binding.target, BindingTarget::Editor(command));
+                assert!(!rows.iter().any(|row| row.target == Some(binding.target)));
+            }
+            let app = App::new(Config::default(), None).unwrap();
+            let mut group = groups[0].clone();
+            group.apply_capabilities(&app.command_capabilities());
+            assert!(group.unavailable_reason.is_some());
+            assert!(key_hint_description(&group).contains("persistent only"));
+            assert!(key_hint_description(&group).width() <= 44);
+        }
+    }
+}
+
+#[test]
+fn remapped_session_destination_keeps_individual_hints() {
+    let compiled = runyte::keymap::configured::compile(
+        &serde_yaml::from_str("rebind:\n  Space 5: Space 0\n").unwrap(),
+        default_keymap(),
+    );
+    assert!(compiled.errors.is_empty(), "{:?}", compiled.errors);
+    let mut hints = KeyHintState::default();
+    hints.observe(KeyStroke::char(' '), Mode::Normal, &compiled.keymap);
+    let rows = hints.rows(&compiled.keymap, Mode::Normal);
+    assert!(rows.iter().all(|row| row.grouped_keys.is_none()));
+    let remapped = rows
+        .iter()
+        .find(|row| row.target == Some(BindingTarget::Editor(EditorCommand::Session5)))
+        .unwrap();
+    assert_eq!(key_hint_keys(remapped), "Space 0");
+    assert!(rows.iter().any(|row| key_hint_keys(row) == "Space 1"));
+    assert!(!rows.iter().any(|row| key_hint_keys(row) == "Space 5"));
+}
+
+#[test]
 fn prefix_popup_is_readable_at_standard_and_wide_sizes() {
     for (width, height) in [(80, 24), (160, 50)] {
         let mut app = App::new(Config::default(), None).unwrap();
@@ -192,9 +266,10 @@ fn prefix_popup_is_readable_at_standard_and_wide_sizes() {
 
         let mut screen = render(width, height, &mut app, &hints);
         assert!(screen.contains("Keys: Space"));
-        assert!(screen.contains("session 1"));
-        // The leader includes nine direct session destinations. On a narrow
-        // terminal, later namespaces remain readable by scrolling.
+        assert!(screen.contains("Space 1-9"));
+        assert!(screen.contains("Attach to persistent session"));
+        assert!(!screen.contains("Space 2 "));
+        // On a narrow terminal, later namespaces remain readable by scrolling.
         for _ in 0..hint_metrics(&app, &hints).2.len() {
             hints.observe(
                 KeyStroke::plain(KeyCode::Down),
